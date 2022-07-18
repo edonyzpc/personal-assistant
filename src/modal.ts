@@ -39,6 +39,9 @@ const ALL_DISABLED_PLUGIN = [
 export class PluginSuggestModal extends SuggestModal<DisabledPlugin> {
     // Returns all available suggestions.
     getSuggestions(query: string): DisabledPlugin[] {
+        for (var pluginId of window.app.plugins.enabledPlugins) {
+            new Notice(window.app.plugins.getPlugin(pluginId).manifest.name);
+        }
         return ALL_DISABLED_PLUGIN.filter((plugin) =>
             plugin.id.toLowerCase().includes(query.toLowerCase())
         );

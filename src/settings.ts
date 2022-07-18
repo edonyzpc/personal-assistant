@@ -1,19 +1,19 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
 
-import {MyPlugin} from "./plugin"
+import {PluginManager} from "./plugin"
 
 // [obsidian-link-archive](https://github.com/tomzorz/obsidian-link-archive/blob/master/settings.ts)
 // [obsidian-dev-tools](https://github.com/KjellConnelly/obsidian-dev-tools)
 export class SampleSettingTab extends PluginSettingTab {
-    plugin: MyPlugin;
+    plugin: PluginManager;
 
-    constructor(app: App, plugin: MyPlugin) {
+    constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
         this.plugin = plugin;
     }
 
     display(): void {
-        const plugin: MyPlugin = this.plugin;
+        const plugin: PluginManager = this.plugin;
         const { containerEl } = this;
 
         containerEl.empty();
