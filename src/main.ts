@@ -1,2 +1,2 @@
-import { MyPlugin } from './plugin';
-export default MyPlugin;
+import { PluginManager } from './plugin';
+export default PluginManager;

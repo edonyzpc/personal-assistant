@@ -3,33 +3,34 @@ import { Editor, MarkdownView, Notice, Plugin } from 'obsidian';
 import { SampleModal, PluginSuggestModal} from './modal'
 import { SampleSettingTab } from './settings'
 
-interface MyPluginSettings {
+interface PluginManagerSettings {
 	mySetting: string;
 }
 
-const DEFAULT_SETTINGS: MyPluginSettings = {
+const DEFAULT_SETTINGS: PluginManagerSettings = {
 	mySetting: 'default'
 }
 
-export class MyPlugin extends Plugin {
-	settings: MyPluginSettings = {
+export class PluginManager extends Plugin {
+	settings: PluginManagerSettings = {
 		mySetting: "sets"
 	}
 
 	async onload() {
+		new Notice("starting obsidian plugin manager");
 		await this.loadSettings();
 
 		// This creates an icon in the left ribbon.
-		const ribbonIconEl = this.addRibbonIcon('dice', 'Sample Plugin', (evt: MouseEvent) => {
+		const ribbonIconEl = this.addRibbonIcon('dice', 'Plugin Manager', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
 			new Notice('This is a notice!');
 		});
 		// Perform additional things with the ribbon
-		ribbonIconEl.addClass('my-plugin-ribbon-class');
+		ribbonIconEl.addClass('plugin-manager-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
-		statusBarItemEl.setText('Status Bar Text');
+		statusBarItemEl.setText('plugin manager status');
 
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
