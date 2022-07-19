@@ -39,12 +39,19 @@ const ALL_DISABLED_PLUGIN = [
 export class PluginSuggestModal extends SuggestModal<DisabledPlugin> {
     // Returns all available suggestions.
     getSuggestions(query: string): DisabledPlugin[] {
-        for (var pluginId of window.app.plugins.enabledPlugins) {
-            new Notice(window.app.plugins.getPlugin(pluginId).manifest.name);
+        'use strict'
+        const disabledPlugins: DisabledPlugin[] = [];
+        for (const key of Object.keys((window.app as any).plugins.manifests)) {
+            new Notice(key);
+            if (!(window.app as any).plugins.enabledPlugins.has((window.app as any).plugins.manifests[key].id)) {
+                disabledPlugins.push({
+                    id: (window.app as any).plugins.manifests[key].id,
+                    desc: (window.app as any).plugins.manifests[key].description,
+                });
+            }
         }
-        return ALL_DISABLED_PLUGIN.filter((plugin) =>
-            plugin.id.toLowerCase().includes(query.toLowerCase())
-        );
+        console.log(disabledPlugins);
+        return disabledPlugins;
     }
 
     // Renders each suggestion item.
