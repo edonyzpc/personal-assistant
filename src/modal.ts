@@ -17,6 +17,7 @@ export class SampleModal extends Modal {
 }
 
 interface DisabledPlugin {
+    name: string;
     id: string;
     desc: string;
 }
@@ -37,31 +38,37 @@ const ALL_DISABLED_PLUGIN = [
 ];
 
 export class PluginSuggestModal extends SuggestModal<DisabledPlugin> {
+    obsidianPlugins = (window.app as any).plugins;
     // Returns all available suggestions.
     getSuggestions(query: string): DisabledPlugin[] {
         'use strict'
         const disabledPlugins: DisabledPlugin[] = [];
         for (const key of Object.keys((window.app as any).plugins.manifests)) {
-            new Notice(key);
-            if (!(window.app as any).plugins.enabledPlugins.has((window.app as any).plugins.manifests[key].id)) {
+            if (!this.obsidianPlugins.enabledPlugins.has(this.obsidianPlugins.manifests[key].id)) {
                 disabledPlugins.push({
-                    id: (window.app as any).plugins.manifests[key].id,
-                    desc: (window.app as any).plugins.manifests[key].description,
+                    name: this.obsidianPlugins.manifests[key].name,
+                    id: this.obsidianPlugins.manifests[key].id,
+                    desc: this.obsidianPlugins.manifests[key].description,
                 });
             }
         }
-        console.log(disabledPlugins);
         return disabledPlugins;
     }
 
     // Renders each suggestion item.
     renderSuggestion(plugin: DisabledPlugin, el: HTMLElement) {
-        el.createEl("div", { text: plugin.id });
+        el.createEl("div", { text: plugin.name });
         el.createEl("small", { text: plugin.desc });
     }
 
     // Perform action on the selected suggestion.
     onChooseSuggestion(plugin: DisabledPlugin, evt: MouseEvent | KeyboardEvent) {
-        new Notice(`Selected ${plugin.id}`);
+        'use strict'
+        new Notice(`enabling plugin ${plugin.name}`);
+        if (this.obsidianPlugins.enablePlugin(plugin.id)) {
+            new Notice(`enable plugin[${plugin.name}] successfully`);
+        } else {
+            new Notice(`enable plugin[${plugin.name}] failed, try it again`);
+        }
     }
 }

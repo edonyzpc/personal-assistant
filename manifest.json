@@ -2,8 +2,8 @@
 	"id": "obsidian-plugins-mng",
 	"name": "Obsidian Plugins Manager",
 	"version": "1.0.1",
-	"minAppVersion": "0.15.4",
-	"description": "This is a sample plugin for Obsidian. This plugin demonstrates some of the capabilities of the Obsidian API.",
+	"minAppVersion": "0.15.0",
+	"description": "Obsidian plugins management, e.g. enable/disable plugin",
 	"author": "Obsidian",
 	"authorUrl": "https://obsidian.md",
 	"isDesktopOnly": false
