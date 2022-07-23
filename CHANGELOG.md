@@ -6,8 +6,8 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Featrues
 
-- add automatically release github action
-- support obsidian BRAT plugin install
+- add automatically release github action ([c0f78ae](https://github.com/edonyzpc/obsidian-plugins-mng/commit/c0f78ae))
+- support obsidian BRAT plugin install ([228dc5d](https://github.com/edonyzpc/obsidian-plugins-mng/commit/228dc5d))
 
 ## [1.0.1](https://github.com/edonyzpc/obsidian-plugins-mng/commit/c0f78aeae3571eda678d6fcc8ccbbae84736c7c9) (2022-7-23)
 
