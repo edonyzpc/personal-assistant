@@ -31,7 +31,8 @@ export class PluginManager extends Plugin {
 		addIcon('PluginMNG', icons['PluginMNG']);
 		const ribbonIconEl = this.addRibbonIcon('PluginMNG', 'Plugin Manager', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
-			new Notice('This is a notice!');
+			new Notice('Obsidian Plugins Manager Startup');
+			new PluginSuggestModal(this.app).open();
 		});
 		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('plugin-manager-ribbon-class');
