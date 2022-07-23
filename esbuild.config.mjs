@@ -1,6 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from 'builtin-modules'
+import builtins from 'builtin-modules';
+import copy from 'esbuild-plugin-copy';
 
 const banner =
 `/*
@@ -10,6 +11,17 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === 'production');
+
+const staticAssetsPlugin = {
+	name: 'static-assets-plugin',
+	setup(build) {
+	  build.onLoad({ filter: /.+/ }, (args) => {
+		return {
+		  watchFiles: ['styles.css', 'esbuild.config.mjs'],
+		};
+	  });
+	},
+  };
 
 esbuild.build({
 	banner: {
@@ -47,9 +59,19 @@ esbuild.build({
 		...builtins],
 	format: 'cjs',
 	watch: !prod,
-	target: 'es2016',
+	target: 'es2018',
 	logLevel: "info",
 	sourcemap: prod ? false : 'inline',
 	treeShaking: true,
-	outfile: 'main.js',
+	outfile: 'dist/main.js',
+	plugins: [
+		staticAssetsPlugin,
+		copy.default({
+		  verbose: false,
+		  assets: {
+			from: ['manifest*', 'styles.css'],
+			to: ['.'],
+		  }
+		}),
+	],
 }).catch(() => process.exit(1));
