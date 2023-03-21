@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-plugins-mng",
-	"name": "Obsidian Plugins Manager - BRAT",
-	"version": "1.0.3",
+	"name": "Obsidian Plugins Manager",
+	"version": "1.0.4",
 	"minAppVersion": "1.1.0",
 	"description": "Obsidian management utils for plugins, tasks and shortcuts",
 	"author": "edony",
