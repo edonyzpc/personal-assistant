@@ -41,8 +41,8 @@ export class PluginManager extends Plugin {
 			name: 'Open specific note to record',
 			callback: async () => {
 				//new SampleModal(this.app).open();
-				let fileFormat = moment().format(this.settings.fileFormat);
-				let targetDir = this.settings.targetPath;
+				const fileFormat = moment().format(this.settings.fileFormat);
+				const targetDir = this.settings.targetPath;
 				this.log(targetDir, fileFormat);
 				await this.createNewNote(targetDir, fileFormat);
 			}
@@ -187,7 +187,7 @@ export class PluginManager extends Plugin {
 			}
 			const File = await vault.create(filePath, '');
 			// Create the file and open it in the active leaf
-			let leaf = this.app.workspace.getLeaf(false);
+			const leaf = this.app.workspace.getLeaf(false);
 			await leaf.openFile(File);
 		} catch (error) {
 			new Notice(error.toString());

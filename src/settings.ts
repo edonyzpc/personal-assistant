@@ -22,7 +22,6 @@ export class SettingTab extends PluginSettingTab {
     constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
         this.plugin = plugin;
-        this.plugin.settings = DEFAULT_SETTINGS;
     }
 
     display(): void {
