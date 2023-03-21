@@ -177,8 +177,15 @@ export class PluginManager extends Plugin {
 		try {
 			const fileExists = await adapter.exists(filePath);
 			if (fileExists) {
-				// If the file already exists, respond with error
-				// TODO: open it without throwing error
+				// If the file already exists, open it and send notification
+				const files = vault.getMarkdownFiles();
+				for (const file of files) {
+					this.log(file);
+					if(file.path === filePath) {
+						const leaf = this.app.workspace.getLeaf(false);
+						await leaf.openFile(file);
+					}
+				}
 				throw new Error(`${filePath} already exists`);
 			}
 			if (directoryPath !== '') {
