@@ -1,9 +1,13 @@
-.PHONY: deploy clean
+.PHONY: deploy clean bin
 
-deploy:
-	cp main.js dist/.obsidian/plugins/obsidian-plugins-mng/
-	cp manifest.json dist/.obsidian/plugins/obsidian-plugins-mng/
-	cp styles.css dist/.obsidian/plugins/obsidian-plugins-mng/
+bin:
+	yarn build
+
+deploy: bin
+	cp dist/main.js test/.obsidian/plugins/obsidian-plugins-mng/
+	cp dist/manifest.json test/.obsidian/plugins/obsidian-plugins-mng/
+	cp dist/manifest-beta.json test/.obsidian/plugins/obsidian-plugins-mng/
+	cp dist/styles.css test/.obsidian/plugins/obsidian-plugins-mng/
 
 clean:
-	rm -rf dist/.obsidian/plugins/obsidian-plugins-mng/*
+	rm -rf test/.obsidian/plugins/obsidian-plugins-mng/*

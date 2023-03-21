@@ -1,0 +1,157 @@
+{
+  "main": {
+    "id": "4a93e93b538bede6",
+    "type": "split",
+    "children": [
+      {
+        "id": "37847e076b79aa9f",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "3688d7b1a7d21d00",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
+                "mode": "source",
+                "source": false
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "c488687d7c370786",
+    "type": "split",
+    "children": [
+      {
+        "id": "d3401c75713195a8",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "7c0dc3ae49de1492",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical"
+              }
+            }
+          },
+          {
+            "id": "cce9bdf9727d0de8",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              }
+            }
+          },
+          {
+            "id": "e2b7084981fab8f7",
+            "type": "leaf",
+            "state": {
+              "type": "starred",
+              "state": {}
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "44d6813b901e3a4d",
+    "type": "split",
+    "children": [
+      {
+        "id": "613eb1626bb8a99c",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "5e68cf189283c256",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              }
+            }
+          },
+          {
+            "id": "a5a7c1eccc6ed24e",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              }
+            }
+          },
+          {
+            "id": "685f99e86beffb8d",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true
+              }
+            }
+          },
+          {
+            "id": "e4d3d0f51123ebbe",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md"
+              }
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "obsidian-plugins-mng:Plugin Manager": false,
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false
+    }
+  },
+  "active": "3688d7b1a7d21d00",
+  "lastOpenFiles": [
+    "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
+    "2.fleeting/fleeting-thoughts",
+    "2.fleeting",
+    "2.fleeting/fleeting-thoughts/2023-03-21.md"
+  ]
+}
