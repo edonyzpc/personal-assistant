@@ -21,3 +21,8 @@ mkdir -p test/.obsidian/plugins/obsidian-plugins-mng/
 yarn build
 make deploy
 ```
+
+### lint
+```sh
+yarn lint
+```
