@@ -1,6 +1,29 @@
+# Obsidian Personal Assistant
+
+<p align="center">
+    <span>An [Obsidian](https://obsidian.md) plugin which help you to automatically manage Obsidian.</span>
+    <br/>
+    <a href="/README_cn.md">简体中文</a>
+    ·
+    <a href="/README.md">English</a>
+</p>
+
+## Features
+***NOTE***: The currently supported features are all from my personal needs, feature requested is welcome by submitting issues.
+
+1. automatically create note in the specified directory with the configured file name
+2. automatically update plugins(WIP, working-in-progress)
+3. automatically update themes(WIP)
+
+## Develop
+
+Please reference [HERE](./DEVELOPEMENT.md).
+
+## 
+
 # Obsidian Sample Plugin
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+This is a sample plugin for Obsidian.
 
 This project uses Typescript to provide type checking and documentation.
 The repo depends on the latest plugin API (obsidian.d.ts) in Typescript Definition format, which contains TSDoc comments describing what it does.
@@ -58,7 +81,7 @@ Quick starting guide for new plugin devs:
 - Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
 
 ## Improve code quality with eslint (optional)
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code. 
+- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code.
 - To use eslint with this project, make sure to install eslint from terminal:
   - `npm install -g eslint`
 - To use eslint to analyze this project use this command:
