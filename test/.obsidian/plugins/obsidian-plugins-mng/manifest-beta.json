@@ -1,9 +1,9 @@
 {
 	"id": "obsidian-plugins-mng",
-	"name": "Obsidian Plugins Manager - BRAT",
-	"version": "1.0.2",
-	"minAppVersion": "0.15.0",
-	"description": "Obsidian plugins management for enbale/disable plugin in command palette and other customized plugin function calling",
+	"name": "Obsidian Personal Assistant",
+	"version": "1.0.4",
+	"minAppVersion": "1.1.0",
+	"description": "Obsidian management utils for plugins, tasks and shortcuts",
 	"author": "edony",
 	"authorUrl": "https://github.com/edonyzpc",
 	"isDesktopOnly": false
