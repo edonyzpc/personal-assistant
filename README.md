@@ -3,7 +3,7 @@
 <p align="center">
     <span>An Obsidian plugin which help you to automatically manage Obsidian.</span>
     <br/>
-    <a href="/README_cn.md">简体中文</a>
+    <a href="/README-CN.md">简体中文</a>
     ·
     <a href="/README.md">English</a>
 </p>
