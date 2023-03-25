@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.0.5](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.4...1.0.5g) (2023-03-25)
+
+### Features
+- rename the plugin as obsidian-assistant
+
+### Docs
+- update README and README-CN
+- update CHANGELOG
+- update DEVELOPEMENT
+
 ## [1.0.4](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.2...1.0.4) (2023-03-21)
 
 ### Features
