@@ -64,6 +64,14 @@
               "type": "starred",
               "state": {}
             }
+          },
+          {
+            "id": "90e7ba16719598ae",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {}
+            }
           }
         ]
       }
@@ -138,7 +146,7 @@
   },
   "left-ribbon": {
     "hiddenItems": {
-      "obsidian-plugins-mng:Plugin Manager": false,
+      "obsidian-plugins-mng:Obsidian Assistant": false,
       "switcher:Open quick switcher": false,
       "graph:Open graph view": false,
       "canvas:Create new canvas": false,
