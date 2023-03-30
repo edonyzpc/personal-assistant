@@ -45,14 +45,18 @@ export class PluginManager extends Plugin {
 
 		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
-			id: 'startup-recording',
-			name: 'Open specific note to record',
+			id: 'assistant-memos',
+			name: 'assistant hover memos',
 			callback: async () => {
-				//new SampleModal(this.app).open();
-				const fileFormat = moment().format(this.settings.fileFormat);
-				const targetDir = this.settings.targetPath;
-				this.log(targetDir, fileFormat);
-				await this.createNewNote(targetDir, fileFormat);
+				let enabledMemos = this.isEnabledPlugin('obsidian-memos');
+				let enabledHover = this.isEnabledPlugin('obsidian-hover-editor');
+				if (enabledMemos && enabledHover) {
+					await (this.app as any).commands.executeCommandById("obsidian-memos:show-memos-in-popover");
+				} else {
+					let msg = enabledMemos === enabledHover ? "Memos and Hover are" : enabledMemos ? "Hover is" : "Memos is";
+					new Notice(`Can't work correctly! Plugin ${msg} missing`);
+				}
+
 			}
 		});
 		// This adds a simple command that can be triggered anywhere
@@ -216,9 +220,13 @@ export class PluginManager extends Plugin {
    * - Removes duplicate separators
    * - Removes trailing slash
    */
-	join(...strings: string[]): string {
+	private join(...strings: string[]): string {
 		const parts = strings.map((s) => String(s).trim()).filter((s) => s != null);
 		return normalizePath(parts.join('/'));
+	}
+
+	private isEnabledPlugin(name: string): boolean {
+		return (this.app as any).plugins.enabledPlugins.has(name) ? true : false;
 	}
 }
 
