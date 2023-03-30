@@ -43,10 +43,10 @@ export class PluginManager extends Plugin {
 		//statusBarItemEl.createSvg("svg", icons['PluginAST_STATUS']);
 		setIcon(div, 'PluginAST_STATUS');
 
-		// This adds a simple command that can be triggered anywhere
 		this.addCommand({
 			id: 'assistant-memos',
 			name: 'assistant hover memos',
+			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "m" }],
 			callback: async () => {
 				let enabledMemos = this.isEnabledPlugin('obsidian-memos');
 				let enabledHover = this.isEnabledPlugin('obsidian-hover-editor');
