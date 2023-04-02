@@ -2,7 +2,17 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.0.5](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.4...1.0.5g) (2023-03-25)
+## [1.0.7](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.5...1.0.6) (2023-04-02)
+
+### Features
+- add hover local graph command
+
+## [1.0.6](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.5...1.0.6) (2023-03-30)
+
+### Features
+- add hover memos command
+
+## [1.0.5](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.4...1.0.5) (2023-03-25)
 
 ### Features
 - rename the plugin as obsidian-assistant
