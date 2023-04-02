@@ -6,12 +6,30 @@ export interface PluginManagerSettings {
     debug: boolean;
     targetPath: string;
     fileFormat: string;
+    localGraph: {
+        notice: string,
+        type: string,
+        depth: number,
+        showTags: boolean,
+        showAttach: boolean,
+        showNeighbor: boolean,
+        collapse: boolean
+    }
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
     debug: true,
     targetPath: "2.fleeting/fleeting-thoughts/",
-    fileFormat: "YYYY-MM-DD"
+    fileFormat: "YYYY-MM-DD",
+    localGraph: {
+        notice: "show current note grah view",
+        type: "popover",
+        depth: 2,
+        showTags: true,
+        showAttach: true,
+        showNeighbor: true,
+        collapse: false
+    }
 }
 
 // [obsidian-link-archive](https://github.com/tomzorz/obsidian-link-archive/blob/master/settings.ts)

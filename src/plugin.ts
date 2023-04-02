@@ -1,7 +1,8 @@
-import { moment, Editor, MarkdownView, Notice, Plugin, Platform, addIcon, normalizePath, setIcon } from 'obsidian';
+import { Editor, MarkdownView, Notice, Plugin, Platform, addIcon, normalizePath, setIcon } from 'obsidian';
 
 import { SampleModal, PluginSuggestModal } from './modal'
 import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
+import { LocalGraph } from 'localGraph';
 
 const debug = (debug: boolean, ...msg: any) => {
 	if (debug) console.log(...msg);
@@ -37,7 +38,7 @@ export class PluginManager extends Plugin {
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
-		let div = statusBarItemEl.createDiv();
+		const div = statusBarItemEl.createDiv();
 		//statusBarItemEl.setText(icons['PluginAST_STATUS']);
 		addIcon('PluginAST_STATUS', icons['PluginAST_STATUS']);
 		//statusBarItemEl.createSvg("svg", icons['PluginAST_STATUS']);
@@ -48,12 +49,12 @@ export class PluginManager extends Plugin {
 			name: 'assistant hover memos',
 			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "m" }],
 			callback: async () => {
-				let enabledMemos = this.isEnabledPlugin('obsidian-memos');
-				let enabledHover = this.isEnabledPlugin('obsidian-hover-editor');
+				const enabledMemos = this.isEnabledPlugin('obsidian-memos');
+				const enabledHover = this.isEnabledPlugin('obsidian-hover-editor');
 				if (enabledMemos && enabledHover) {
 					await (this.app as any).commands.executeCommandById("obsidian-memos:show-memos-in-popover");
 				} else {
-					let msg = enabledMemos === enabledHover ? "Memos and Hover are" : enabledMemos ? "Hover is" : "Memos is";
+					const msg = enabledMemos === enabledHover ? "Memos and Hover are" : enabledMemos ? "Hover is" : "Memos is";
 					new Notice(`Can't work correctly! Plugin ${msg} missing`);
 				}
 
@@ -63,8 +64,9 @@ export class PluginManager extends Plugin {
 		this.addCommand({
 			id: 'assistant-local-graph',
 			name: 'hover local graph',
-			callback: () => {
-				new SampleModal(this.app).open();
+			callback: async () => {
+				const localGraph = new LocalGraph(this.app, this);
+				await localGraph.startup();
 			}
 		});
 		// This adds an editor command that can perform some operation on the current editor instance
