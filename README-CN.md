@@ -43,3 +43,12 @@
 - 打开命令面板找到对应的命令
 ![command 1](./docs/command-1.png)
 - note 自动创建并打开，此时可以直接开始你的记录了
+### 2. 在 hover 打开 memos
+- 打开命令面板找到对应的命令
+![command 2](./docs/command-2.png)
+- 开始你的 memos 之旅
+### 3. 打开当前笔记的关系图
+- 打开命令面板找到对应的命令
+![command 3](./docs/command-3.png)
+- 插件的设置中有更多设置选项，包括深度、展示标签等
+- 查看包括 backlink 和 outgoing-link 关系图

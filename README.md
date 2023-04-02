@@ -46,6 +46,15 @@ Please reference [HERE](./DEVELOPEMENT.md).
 - Open the command palette and find the command
 ![command 1](./docs/command-1.png)
 - New note is created and start your recording
+### 2. Open memos in hover editor
+- Open the command palette and find the command
+![command 2](./docs/command-2.png)
+- Do anything you like in memos
+### 3. Open graph view of current note
+- Open the command palette and find the command
+![command 3](./docs/command-3.png)
+- Open setting tab for more customize
+- Navigate your current note graph view with backlink and outgoing link
 
 ## Contact
 

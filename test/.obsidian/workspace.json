@@ -4,11 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "32e8f45469c161a7",
+        "id": "73d53b406fe53245",
         "type": "tabs",
         "children": [
           {
-            "id": "659cc8fe81f5c900",
+            "id": "225af35c60e23bcd",
             "type": "leaf",
             "state": {
               "type": "empty",
@@ -138,20 +138,22 @@
   },
   "left-ribbon": {
     "hiddenItems": {
+      "switcher:打开快速切换": false,
+      "graph:查看关系图谱": false,
+      "canvas:新建白板": false,
+      "daily-notes:打开/创建今天的日记": false,
+      "templates:插入模板": false,
+      "command-palette:打开命令面板": false,
       "obsidian-plugins-mng:Obsidian Assistant": false,
-      "switcher:Open quick switcher": false,
-      "graph:Open graph view": false,
-      "canvas:Create new canvas": false,
-      "daily-notes:Open today's daily note": false,
-      "templates:Insert template": false,
-      "command-palette:Open command palette": false,
       "obsidian-memos:Memos": false
     }
   },
-  "active": "659cc8fe81f5c900",
+  "active": "225af35c60e23bcd",
   "lastOpenFiles": [
-    "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
     "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-04-02.md",
+    "command-2.png",
+    "Pasted image 20230402185812.png",
+    "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
     "2.fleeting/fleeting-thoughts",
     "2.fleeting",
     "2.fleeting/fleeting-thoughts/2023-03-21.md"
