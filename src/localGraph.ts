@@ -11,44 +11,44 @@ export class LocalGraph {
     }
 
     async startup() {
-        const t = this.app.workspace
-        , n = t.getActiveFile();
-    if (n) {
-        await t.getLeaf("split","vertical").setViewState({
-            type: "localgraph",
-            active: true,
-            state: {
-                file:n.path
-            }
-        });
+        const t = this.app.workspace;
+        const n = t.getActiveFile();
+        if (n) {
+            await t.getLeaf("split","vertical").setViewState({
+                type: "localgraph",
+                active: true,
+                state: {
+                    file:n.path
+                }
+            });
 
-        await this.syncGlobalToLocal();
-    }
-    if (this.plugin.settings.localGraph.type === "popover") {
-        this.app.workspace.iterateAllLeaves((leaf) => {
+            await this.syncGlobalToLocal();
+        }
+        if (this.plugin.settings.localGraph.type === "popover") {
+            this.app.workspace.iterateAllLeaves((leaf) => {
             this.plugin.log(leaf.getViewState());
             // if (leaf.containerEl.hasClass("graph-controls")) {
             //     debug("setting active leaf!!!");
             //     this.app.workspace.setActiveLeaf(leaf);
             // }
-        });
-        await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover");
-    }
-
-    // resize the popover
-    const hovers = document.querySelectorAll("body .popover.hover-editor");
-    hovers.forEach((hover) => {
-        console.log(hover);
-        if (hover.querySelector('[data-type="localgraph"]')) {
-            hover.setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
-            hover.setAttribute("data-x", "290");
-            hover.setAttribute("data-y", "175");
+            });
+            await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover");
         }
-    })
-    // $("body .popover.hover-editor").setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
 
-    // notice the command executed
-    new Notice(this.plugin.settings.localGraph.notice);
+        // resize the popover
+        const hovers = document.querySelectorAll("body .popover.hover-editor");
+        hovers.forEach((hover) => {
+            console.log(hover);
+            if (hover.querySelector('[data-type="localgraph"]')) {
+                hover.setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
+                hover.setAttribute("data-x", "290");
+                hover.setAttribute("data-y", "175");
+            }
+        })
+        // $("body .popover.hover-editor").setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
+
+        // notice the command executed
+        new Notice(this.plugin.settings.localGraph.notice);
     }
 
     private async syncGlobalToLocal() {

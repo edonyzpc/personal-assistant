@@ -1,4 +1,4 @@
-import { Editor, MarkdownView, Notice, Plugin, Platform, addIcon, normalizePath, setIcon } from 'obsidian';
+import { Editor, MarkdownView, Notice, Plugin, Platform, addIcon, moment, normalizePath, setIcon } from 'obsidian';
 
 import { SampleModal, PluginSuggestModal } from './modal'
 import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
@@ -43,6 +43,18 @@ export class PluginManager extends Plugin {
 		addIcon('PluginAST_STATUS', icons['PluginAST_STATUS']);
 		//statusBarItemEl.createSvg("svg", icons['PluginAST_STATUS']);
 		setIcon(div, 'PluginAST_STATUS');
+
+		this.addCommand({
+			id: 'startup-recording',
+			name: 'Open specific note to record',
+			callback: async () => {
+				//new SampleModal(this.app).open();
+				const fileFormat = moment().format(this.settings.fileFormat);
+				const targetDir = this.settings.targetPath;
+				this.log(targetDir, fileFormat);
+				await this.createNewNote(targetDir, fileFormat);
+			}
+		});
 
 		this.addCommand({
 			id: 'assistant-memos',

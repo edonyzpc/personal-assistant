@@ -4,46 +4,11 @@
     "type": "split",
     "children": [
       {
-        "id": "d2db5b1391966630",
+        "id": "b08928046db3a4de",
         "type": "tabs",
         "children": [
           {
-            "id": "0d55b3fb949d2266",
-            "type": "leaf",
-            "state": {
-              "type": "localgraph",
-              "state": {
-                "file": "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
-                "options": {
-                  "collapse-filter": true,
-                  "search": "",
-                  "localJumps": 1,
-                  "localBacklinks": true,
-                  "localForelinks": true,
-                  "localInterlinks": false,
-                  "showTags": false,
-                  "showAttachments": false,
-                  "hideUnresolved": false,
-                  "collapse-color-groups": true,
-                  "colorGroups": [],
-                  "collapse-display": true,
-                  "showArrow": false,
-                  "textFadeMultiplier": 0,
-                  "nodeSizeMultiplier": 1,
-                  "lineSizeMultiplier": 1,
-                  "collapse-forces": true,
-                  "centerStrength": 0.518713248970312,
-                  "repelStrength": 10,
-                  "linkStrength": 1,
-                  "linkDistance": 250,
-                  "scale": 1,
-                  "close": false
-                }
-              }
-            }
-          },
-          {
-            "id": "476ddf4ba7241ecd",
+            "id": "1f0f8e3c92ef5ba2",
             "type": "leaf",
             "state": {
               "type": "markdown",
@@ -54,8 +19,7 @@
               }
             }
           }
-        ],
-        "currentTab": 1
+        ]
       }
     ],
     "direction": "vertical"
@@ -192,8 +156,9 @@
       "obsidian-memos:Memos": false
     }
   },
-  "active": "476ddf4ba7241ecd",
+  "active": "1f0f8e3c92ef5ba2",
   "lastOpenFiles": [
+    "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-04-02.md",
     "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-03-21.md",
     "2.fleeting/fleeting-thoughts",
     "2.fleeting",
