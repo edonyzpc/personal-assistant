@@ -24,3 +24,6 @@ data.json
 # output debug directory
 bin
 dist
+
+# obsidian configuration file
+test/.obsidian/workspace.json
