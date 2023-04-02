@@ -76,6 +76,7 @@ export class PluginManager extends Plugin {
 		this.addCommand({
 			id: 'assistant-local-graph',
 			name: 'hover local graph',
+			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "g" }],
 			callback: async () => {
 				const localGraph = new LocalGraph(this.app, this);
 				await localGraph.startup();
