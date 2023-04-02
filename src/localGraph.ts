@@ -1,12 +1,88 @@
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, WorkspaceLeaf } from "obsidian";
 
 import { PluginManager } from "./plugin"
 
 export class LocalGraph {
-    private prefix: string;
+    private app: App;
+    private plugin: PluginManager;
     constructor(app: App, plugin: PluginManager) {
-        super(app, plugin);
         this.plugin = plugin;
+        this.app = app;
+    }
+
+    async startup() {
+        const t = this.app.workspace
+        , n = t.getActiveFile();
+    if (n) {
+        await t.getLeaf("split","vertical").setViewState({
+            type: "localgraph",
+            active: true,
+            state: {
+                file:n.path
+            }
+        });
+
+        await this.syncGlobalToLocal();
+    }
+    if (this.plugin.settings.localGraph.type === "popover") {
+        this.app.workspace.iterateAllLeaves((leaf) => {
+            this.plugin.log(leaf.getViewState());
+            // if (leaf.containerEl.hasClass("graph-controls")) {
+            //     debug("setting active leaf!!!");
+            //     this.app.workspace.setActiveLeaf(leaf);
+            // }
+        });
+        await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover");
+    }
+
+    // resize the popover
+    const hovers = document.querySelectorAll("body .popover.hover-editor");
+    hovers.forEach((hover) => {
+        console.log(hover);
+        if (hover.querySelector('[data-type="localgraph"]')) {
+            hover.setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
+            hover.setAttribute("data-x", "290");
+            hover.setAttribute("data-y", "175");
+        }
+    })
+    // $("body .popover.hover-editor").setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
+
+    // notice the command executed
+    new Notice(this.plugin.settings.localGraph.notice);
+    }
+
+    private async syncGlobalToLocal() {
+        const configDir = this.app.vault.configDir;
+        this.plugin.log(configDir);
+        const graphConfigPath = configDir + '/graph.json';
+    
+        // this.app.vault.getAbstractFileByPath('.obsidian/graph.json') would return null
+        // So we're doing it the less safe way
+        const graphConfigJson = await this.app.vault.adapter.read(graphConfigPath);
+        const graphConfig = JSON.parse(graphConfigJson);
+        const graphColorGroups = graphConfig.colorGroups;
+        this.getLocalGraphLeaves().forEach((leaf:WorkspaceLeaf) => {
+            this.setColorGroups(leaf, graphColorGroups);
+        })
+
+    }
+    
+    private getLocalGraphLeaves() {
+        return this.app.workspace.getLeavesOfType('localgraph');
+    }
+    
+    private setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) {
+        const viewState = localGraphLeaf.getViewState();
+        this.plugin.log(viewState.state.options);
+        viewState.state.options.colorGroups = colorGroups;
+        viewState.state.options.localJumps = this.plugin.settings.localGraph.depth;
+        viewState.state.options.showTags = this.plugin.settings.localGraph.showTags;
+        viewState.state.options.showAttachments = this.plugin.settings.localGraph.showAttach;
+        viewState.state.options.localInterlinks = this.plugin.settings.localGraph.showNeighbor;
+        viewState.state.options.showArrow = true;
+        viewState.state.options.close = this.plugin.settings.localGraph.collapse;
+        viewState.state.options.scale = 0.38;
+        localGraphLeaf.setViewState(viewState);
     }
 }
 
@@ -125,45 +201,5 @@ async function start(params, settings) {
     new Notice(settings[OPTION_NOTICE]);
 }
 
-async function syncGlobalToLocal(params, settings) {
-    const configDir = params.app.vault.configDir;
-    debug(configDir);
-    const graphConfigPath = configDir + '/graph.json';
 
-    // this.app.vault.getAbstractFileByPath('.obsidian/graph.json') would return null
-    // So we're doing it the less safe way
-    // const graphConfigJson = await this.app.vault.adapter.read(graphConfigPath);
-    // const graphConfigFile = app.vault.getAbstractFileByPath(graphConfigPath);
-    // if (graphConfigFile instanceof TFile) {
-    if (true) {
-        // const graphConfigJson = await app.vault.read(graphConfigFile);
-        const graphConfigJson = await params.app.vault.adapter.read(graphConfigPath);
-        const graphConfig = JSON.parse(graphConfigJson);
-        const graphColorGroups = graphConfig.colorGroups;
-        getLocalGraphLeaves(params).forEach((leaf) => {
-            setColorGroups(leaf, graphColorGroups, settings);
-        })
-    } else {
-        // console.log(graphConfigPath);
-        // console.log(graphConfigFile);
-    }
-}
-
-function getLocalGraphLeaves(params) {
-    return params.app.workspace.getLeavesOfType('localgraph');
-}
-
-function setColorGroups(localGraphLeaf, colorGroups, settings) {
-    const viewState = localGraphLeaf.getViewState();
-    debug(viewState.state.options);
-    viewState.state.options.colorGroups = colorGroups;
-    viewState.state.options.localJumps = settings[OPTION_JUMP_DEPTH];
-    viewState.state.options.showTags = settings[OPTION_SHOW_TAGS];
-    viewState.state.options.showAttachments = settings[OPTION_SHOW_ATTACH];
-    viewState.state.options.localInterlinks = settings[OPTION_SHOW_NEIGHBOR];
-    viewState.state.options.showArrow = settings[OPTION_ARROW];
-    viewState.state.options.close = settings[OPTION_COLLAPSE];
-    viewState.state.options.scale = 0.38;
-    localGraphLeaf.setViewState(viewState);
-}
 */
