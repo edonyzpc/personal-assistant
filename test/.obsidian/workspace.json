@@ -11,8 +11,12 @@
             "id": "225af35c60e23bcd",
             "type": "leaf",
             "state": {
-              "type": "empty",
-              "state": {}
+              "type": "markdown",
+              "state": {
+                "file": "2.fleeting/fleeting-thoughts/2023-04-03.md",
+                "mode": "source",
+                "source": false
+              }
             }
           }
         ]
@@ -89,6 +93,7 @@
             "state": {
               "type": "backlink",
               "state": {
+                "file": "2.fleeting/fleeting-thoughts/2023-04-03.md",
                 "collapseAll": false,
                 "extraContext": false,
                 "sortOrder": "alphabetical",
@@ -105,6 +110,7 @@
             "state": {
               "type": "outgoing-link",
               "state": {
+                "file": "2.fleeting/fleeting-thoughts/2023-04-03.md",
                 "linksCollapsed": false,
                 "unlinkedCollapsed": true
               }
@@ -126,7 +132,9 @@
             "type": "leaf",
             "state": {
               "type": "outline",
-              "state": {}
+              "state": {
+                "file": "2.fleeting/fleeting-thoughts/2023-04-03.md"
+              }
             }
           }
         ]
@@ -138,18 +146,21 @@
   },
   "left-ribbon": {
     "hiddenItems": {
-      "switcher:打开快速切换": false,
-      "graph:查看关系图谱": false,
-      "canvas:新建白板": false,
-      "daily-notes:打开/创建今天的日记": false,
-      "templates:插入模板": false,
-      "command-palette:打开命令面板": false,
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
       "obsidian-plugins-mng:Obsidian Assistant": false,
       "obsidian-memos:Memos": false
     }
   },
   "active": "225af35c60e23bcd",
   "lastOpenFiles": [
+    "Diary-2023-04-03.md",
+    "2.fleeting/fleeting-thoughts/2023-04-03.md",
+    "3ipmr2023-2023-04-03.md",
     "command-2.png",
     "2.fleeting/fleeting-thoughts/fleeting-thoughts-2023-04-02.md",
     "Pasted image 20230402185812.png",
