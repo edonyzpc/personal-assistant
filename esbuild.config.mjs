@@ -1,7 +1,7 @@
 import esbuild from "esbuild";
 import process from "process";
-import builtins from 'builtin-modules';
-import copy from 'esbuild-plugin-copy';
+import builtins from "builtin-modules";
+import { copy } from 'esbuild-plugin-copy';
 
 const banner =
 `/*
@@ -10,68 +10,58 @@ if you want to view the source, please visit the github repository of this plugi
 */
 `;
 
-const prod = (process.argv[2] === 'production');
+const prod = (process.argv[2] === "production");
 
-const staticAssetsPlugin = {
-	name: 'static-assets-plugin',
-	setup(build) {
-	  build.onLoad({ filter: /.+/ }, (args) => {
-		return {
-		  watchFiles: ['styles.css', 'esbuild.config.mjs'],
-		};
-	  });
-	},
-  };
-
-esbuild.build({
+const context = await esbuild.context({
 	banner: {
 		js: banner,
 	},
-	entryPoints: ['main.ts'],
+	entryPoints: ["main.ts"],
 	bundle: true,
 	external: [
-		'obsidian',
-		'electron',
-		'@codemirror/autocomplete',
-		'@codemirror/closebrackets',
-		'@codemirror/collab',
-		'@codemirror/commands',
-		'@codemirror/comment',
-		'@codemirror/fold',
-		'@codemirror/gutter',
-		'@codemirror/highlight',
-		'@codemirror/history',
-		'@codemirror/language',
-		'@codemirror/lint',
-		'@codemirror/matchbrackets',
-		'@codemirror/panel',
-		'@codemirror/rangeset',
-		'@codemirror/rectangular-selection',
-		'@codemirror/search',
-		'@codemirror/state',
-		'@codemirror/stream-parser',
-		'@codemirror/text',
-		'@codemirror/tooltip',
-		'@codemirror/view',
-		'@lezer/common',
-		'@lezer/highlight',
-		'@lezer/lr',
+		"obsidian",
+		"electron",
+		"@codemirror/autocomplete",
+		"@codemirror/collab",
+		"@codemirror/commands",
+		"@codemirror/language",
+		"@codemirror/lint",
+		"@codemirror/search",
+		"@codemirror/state",
+		"@codemirror/view",
+		"@lezer/common",
+		"@lezer/highlight",
+		"@lezer/lr",
 		...builtins],
-	format: 'cjs',
-	watch: !prod,
-	target: 'es2018',
+	format: "cjs",
+	target: "es2018",
 	logLevel: "info",
-	sourcemap: prod ? false : 'inline',
+	sourcemap: prod ? false : "inline",
 	treeShaking: true,
-	outfile: 'dist/main.js',
+	outfile: "dist/main.js",
 	plugins: [
-		staticAssetsPlugin,
-		copy.default({
-		  verbose: false,
-		  assets: {
-			from: ['manifest*', 'styles.css'],
-			to: ['.'],
-		  }
+		copy({
+			assets: [
+				{
+					from: ['./manifest.json'],
+					to: ['manifest.json'],
+				},
+				{
+					from: ['./manifest-beta.json'],
+					to: ['manifest-beta.json'],
+				},
+				{
+					from: ['./styles.css'],
+					to: ['styles.css'],
+				},
+			],
 		}),
 	],
-}).catch(() => process.exit(1));
+});
+
+if (prod) {
+	await context.rebuild();
+	process.exit(0);
+} else {
+	await context.watch();
+}
