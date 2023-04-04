@@ -100,49 +100,65 @@ export class SettingTab extends PluginSettingTab {
         containerEl.createEl("p", { text: "Obsidian Management for Hover Local Graph" }).setAttr("style", "font-size:14px");
         new Setting(containerEl).setName('Type')
             .setDesc('Type of hover')
-            .addText(text => text
-                .setPlaceholder('popover')
-                .setValue(this.plugin.settings.localGraph.type)
-                .onChange(async (value) => {
-                    plugin.settings.localGraph.type = value;
-                    await this.plugin.saveSettings();
-                }));
+            .addText(text => {
+                text
+                    .setPlaceholder('popover')
+                    .setValue(this.plugin.settings.localGraph.type)
+                    .onChange(async (value) => {
+                        plugin.settings.localGraph.type = value;
+                        await this.plugin.saveSettings();
+                    })
+            });
         new Setting(containerEl).setName('Depth')
             .setDesc('Depth of link jumps')
-            .addText(text => text
-                .setPlaceholder('2')
-                .setValue(this.plugin.settings.localGraph.depth.toString())
-                .onChange(async (value) => {
-                    plugin.settings.localGraph.depth = parseInt(value);
-                    await this.plugin.saveSettings();
-                }));
+            .addText(text => {
+                text
+                    .setPlaceholder('2')
+                    .setValue(this.plugin.settings.localGraph.depth.toString())
+                    .onChange(async (value) => {
+                        plugin.settings.localGraph.depth = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
+            });
         new Setting(containerEl).setName('Show Tags')
             .setDesc('Show tags in local graph view')
             .addToggle(toggle => {
                 toggle
-                .setValue(this.plugin.settings.localGraph.showTags)
-                .onChange(async (value) => {
-                    plugin.settings.localGraph.showTags = value;
-                    await this.plugin.saveSettings();
-                })
+                    .setValue(this.plugin.settings.localGraph.showTags)
+                    .onChange(async (value) => {
+                        plugin.settings.localGraph.showTags = value;
+                        await this.plugin.saveSettings();
+                    })
             });
         new Setting(containerEl).setName('Show Attachment')
             .setDesc('Show attachments in local graph view')
-            .addToggle(toggle => {toggle
-                .setValue(this.plugin.settings.localGraph.showAttach)
-                .onChange(async (value) => {
-                    plugin.settings.localGraph.showAttach = value;
-                    await this.plugin.saveSettings();
-                })
+            .addToggle(toggle => {
+                toggle
+                    .setValue(this.plugin.settings.localGraph.showAttach)
+                    .onChange(async (value) => {
+                        plugin.settings.localGraph.showAttach = value;
+                        await this.plugin.saveSettings();
+                    })
             });
         new Setting(containerEl).setName('Show Neighbor')
             .setDesc('Show neighbors in local graph view')
-            .addToggle(toggle => {toggle
-                .setValue(this.plugin.settings.localGraph.showNeighbor)
-                .onChange(async (value) => {
-                    plugin.settings.localGraph.showNeighbor = value;
-                    await this.plugin.saveSettings();
-                })
+            .addToggle(toggle => {
+                toggle
+                    .setValue(this.plugin.settings.localGraph.showNeighbor)
+                    .onChange(async (value) => {
+                        plugin.settings.localGraph.showNeighbor = value;
+                        await this.plugin.saveSettings();
+                    })
+            });
+        new Setting(containerEl).setName('Collapse')
+            .setDesc('Collapse local graph view setting')
+            .addToggle(toggle => {
+                toggle
+                    .setValue(this.plugin.settings.localGraph.collapse)
+                    .onChange(async (value) => {
+                        plugin.settings.localGraph.collapse = value;
+                        await this.plugin.saveSettings();
+                    })
             });
     }
 
