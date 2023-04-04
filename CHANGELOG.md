@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.0.7](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.5...1.0.6) (2023-04-02)
+## [1.0.7](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.7...1.0.8) (2023-04-04)
+
+### Fix
+- local graph view setting option missed issue
+- statusbar icon position issue
+
+## [1.0.7](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.6...1.0.7) (2023-04-02)
 
 ### Features
 - add hover local graph command
