@@ -1,4 +1,7 @@
-.PHONY: deploy clean bin
+.PHONY: deploy clean bin install
+
+install:
+	yarn install
 
 bin:
 	yarn build
