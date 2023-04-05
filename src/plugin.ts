@@ -1,6 +1,6 @@
 import { Editor, MarkdownView, Notice, Plugin, Platform, addIcon, moment, normalizePath, setIcon } from 'obsidian';
 
-import { SampleModal, PluginSuggestModal } from './modal'
+import { SampleModal, PluginControlModal, OpenPlugin, ClosePlugin } from './modal'
 import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from 'localGraph';
 
@@ -30,7 +30,7 @@ export class PluginManager extends Plugin {
 		const ribbonIconEl = this.addRibbonIcon('PluginAST', 'Obsidian Assistant', (evt: MouseEvent) => {
 			// Called when the user clicks the icon.
 			new Notice('Obsidian Assistant Startup');
-			new PluginSuggestModal(this.app).open();
+			new PluginControlModal(this.app, OpenPlugin).open();
 		});
 		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('plugin-manager-ribbon-class');
@@ -44,7 +44,7 @@ export class PluginManager extends Plugin {
 		// status bar event handling
 		statusBarItemEl.onClickEvent((e) => {
 			//TODO: showup plugin mannual modal
-			new PluginSuggestModal(this.app).open();
+			new PluginControlModal(this.app, ClosePlugin).open();
 		});
 
 		this.addCommand({
@@ -85,6 +85,23 @@ export class PluginManager extends Plugin {
 				await localGraph.startup();
 			}
 		});
+
+		this.addCommand({
+			id: 'open-disabled-plugin',
+			name: 'open disabled plugin',
+			callback: () => {
+				new PluginControlModal(this.app, OpenPlugin).open();
+			}
+		});
+
+		this.addCommand({
+			id: 'close-enabled-plugin',
+			name: 'close enabled plugin',
+			callback: () => {
+				new PluginControlModal(this.app, ClosePlugin).open();
+			}
+		});
+
 		// This adds an editor command that can perform some operation on the current editor instance
 		this.addCommand({
 			id: 'open-sample-editor-command',
@@ -111,15 +128,6 @@ export class PluginManager extends Plugin {
 					// This command will only show up in Command Palette when the check function returns true
 					return true;
 				}
-			}
-		});
-		// fuzzy suggest modal
-		this.addCommand({
-			id: 'open-sample-modal-suggest',
-			name: 'Open sample modal (suggest)',
-			callback: () => {
-				new Notice("suggest modal");
-				new PluginSuggestModal(this.app).open();
 			}
 		});
 

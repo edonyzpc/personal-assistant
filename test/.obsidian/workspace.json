@@ -14,7 +14,7 @@
               "type": "markdown",
               "state": {
                 "file": "2.fleeting/fleeting-thoughts/2023-04-03.md",
-                "mode": "source",
+                "mode": "preview",
                 "source": false
               }
             }
@@ -152,8 +152,7 @@
       "daily-notes:Open today's daily note": false,
       "templates:Insert template": false,
       "command-palette:Open command palette": false,
-      "obsidian-plugins-mng:Obsidian Assistant": false,
-      "obsidian-memos:Memos": false
+      "obsidian-plugins-mng:Obsidian Assistant": false
     }
   },
   "active": "225af35c60e23bcd",
