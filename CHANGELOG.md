@@ -2,7 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.0.7](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.7...1.0.8) (2023-04-04)
+## [1.0.9](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.8...1.0.9) (2023-04-05)
+
+### Features
+- add enable/disable plugins command
+
+## [1.0.8](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.7...1.0.8) (2023-04-04)
 
 ### Fix
 - local graph view setting option missed issue
