@@ -55,6 +55,10 @@ Please reference [HERE](./DEVELOPEMENT.md).
 ![command 3](./docs/command-3.png)
 - Open setting tab for more customize
 - Navigate your current note graph view with backlink and outgoing link
+### 4. Enable/Disable plugins for obsidian with one command
+- Open the command palette and find the command
+![command 4](./docs/command-4.png)
+- Select the suggestion to enable/disable plugin
 
 ## Contact
 
