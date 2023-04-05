@@ -16,10 +16,11 @@ export class SampleModal extends Modal {
     }
 }
 
-interface DisabledPlugin {
+interface Plugin {
     name: string;
     id: string;
     desc: string;
+    enbaled: boolean;
 }
 
 const ALL_DISABLED_PLUGIN = [
@@ -37,38 +38,66 @@ const ALL_DISABLED_PLUGIN = [
     },
 ];
 
-export class PluginSuggestModal extends SuggestModal<DisabledPlugin> {
-    obsidianPlugins = (window.app as any).plugins;
+export const OpenPlugin = true;
+export const ClosePlugin = false;
+
+export class PluginControlModal extends SuggestModal<Plugin> {
+    private obsidianPlugins: any;
+    private toEnablePlugin: boolean;
+
+    constructor(app: App, toEnable: boolean) {
+        super(app);
+        this.obsidianPlugins = (app as any).plugins;
+        this.toEnablePlugin = toEnable;
+    }
+
     // Returns all available suggestions.
-    getSuggestions(query: string): DisabledPlugin[] {
+    getSuggestions(query: string): Plugin[] {
         'use strict'
-        const disabledPlugins: DisabledPlugin[] = [];
+        const disabledPlugins: Plugin[] = [];
+        const enabledPlugins: Plugin[] = [];
         for (const key of Object.keys((window.app as any).plugins.manifests)) {
+            // find disabled plugins
             if (!this.obsidianPlugins.enabledPlugins.has(this.obsidianPlugins.manifests[key].id)) {
                 disabledPlugins.push({
                     name: this.obsidianPlugins.manifests[key].name,
                     id: this.obsidianPlugins.manifests[key].id,
                     desc: this.obsidianPlugins.manifests[key].description,
+                    enbaled: false,
+                });
+            } else {
+                enabledPlugins.push({
+                    name: this.obsidianPlugins.manifests[key].name,
+                    id: this.obsidianPlugins.manifests[key].id,
+                    desc: this.obsidianPlugins.manifests[key].description,
+                    enbaled: true,
                 });
             }
         }
-        return disabledPlugins;
+        return this.toEnablePlugin ? disabledPlugins : enabledPlugins;
     }
 
     // Renders each suggestion item.
-    renderSuggestion(plugin: DisabledPlugin, el: HTMLElement) {
+    renderSuggestion(plugin: Plugin, el: HTMLElement) {
         el.createEl("div", { text: plugin.name });
         el.createEl("small", { text: plugin.desc });
     }
 
     // Perform action on the selected suggestion.
-    onChooseSuggestion(plugin: DisabledPlugin, evt: MouseEvent | KeyboardEvent) {
+    onChooseSuggestion(plugin: Plugin, evt: MouseEvent | KeyboardEvent) {
         'use strict'
-        new Notice(`enabling plugin ${plugin.name}`);
-        if (this.obsidianPlugins.enablePlugin(plugin.id)) {
-            new Notice(`enable plugin[${plugin.name}] successfully`);
+        if (this.toEnablePlugin) {
+            if (this.obsidianPlugins.enablePluginAndSave(plugin.id)) {
+                new Notice(`enable plugin[${plugin.name}] successfully`);
+            } else {
+                new Notice(`enable plugin[${plugin.name}] failed, try it again`);
+            }
         } else {
-            new Notice(`enable plugin[${plugin.name}] failed, try it again`);
+            if (this.obsidianPlugins.disablePluginAndSave(plugin.id)) {
+                new Notice(`disable plugin[${plugin.name}] successfully`);
+            } else {
+                new Notice(`disable plugin[${plugin.name}] failed, try it again`);
+            }
         }
     }
 }
