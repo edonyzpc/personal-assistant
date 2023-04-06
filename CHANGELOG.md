@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.0.10](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.9...1.0.10) (2023-04-06)
+
+### Features
+- hover local graph support auto-resize
+
 ## [1.0.9](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.8...1.0.9) (2023-04-05)
 
 ### Features
