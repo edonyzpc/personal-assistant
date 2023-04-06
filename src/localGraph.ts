@@ -5,16 +5,20 @@ import { PluginManager } from "./plugin"
 export class LocalGraph {
     private app: App;
     private plugin: PluginManager;
+    private resized: boolean;
+
     constructor(app: App, plugin: PluginManager) {
         this.plugin = plugin;
         this.app = app;
     }
 
     async startup() {
+        // reset the status
+        this.resized = false;
         const t = this.app.workspace;
         const n = t.getActiveFile();
         if (n) {
-            await t.getLeaf("split", "vertical").setViewState({
+            await t.getLeaf(true).setViewState({
                 type: "localgraph",
                 active: true,
                 state: {
@@ -25,30 +29,31 @@ export class LocalGraph {
             await this.syncGlobalToLocal();
         }
         if (this.plugin.settings.localGraph.type === "popover") {
-            this.app.workspace.iterateAllLeaves((leaf) => {
-                this.plugin.log(leaf.getViewState());
-                // if (leaf.containerEl.hasClass("graph-controls")) {
-                //     debug("setting active leaf!!!");
-                //     this.app.workspace.setActiveLeaf(leaf);
-                // }
-            });
-            await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover");
-        }
-
-        // resize the popover
-        const hovers = document.querySelectorAll("body .popover.hover-editor");
-        hovers.forEach((hover) => {
-            console.log(hover);
-            if (hover.querySelector('[data-type="localgraph"]')) {
-                hover.setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
-                hover.setAttribute("data-x", "290");
-                hover.setAttribute("data-y", "175");
+            const ret = await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover");
+            if (!ret) {
+                new Notice("hover local graph failed");
+                return;
             }
-        })
-        // $("body .popover.hover-editor").setAttribute("style", "height:250px;width:190px;top:180px;left:180px");
 
-        // notice the command executed
-        new Notice(this.plugin.settings.localGraph.notice);
+            // notice the command executed
+            new Notice(this.plugin.settings.localGraph.notice);
+        }
+    }
+
+    async resize(): Promise<void> {
+        if (this.resized) return;
+        // resize the popover
+        let hovers = document.querySelectorAll("body .popover.hover-editor");
+        hovers.forEach((hover) => {
+            this.plugin.log("iterating hovers...");
+            if (hover.querySelector('[data-type="localgraph"]')) {
+                this.plugin.log("setting hover editor attribute...");
+                hover.setAttribute("style", "height: 500px; width: 550px; top: 255px; left: 475px; cursor: move;");
+                hover.setAttribute("data-x", "475");
+                hover.setAttribute("data-y", "260");
+            }
+        });
+        this.resized = true;
     }
 
     private async syncGlobalToLocal() {

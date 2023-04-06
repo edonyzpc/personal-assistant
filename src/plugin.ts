@@ -20,10 +20,27 @@ const icons: Record<string, string> = {
 
 export class PluginManager extends Plugin {
 	settings: PluginManagerSettings
+	private localGraph = new LocalGraph(this.app, this);
 
 	async onload() {
 		new Notice("starting obsidian assistant");
 		await this.loadSettings();
+		// monitor element which is concerned by other command
+		let observer = new MutationObserver((mutations) => {
+			mutations.forEach((mutation) => {
+				mutation.addedNodes.forEach((node) => {
+					if ((node instanceof HTMLElement)) {
+						document.querySelectorAll('.popover.hover-popover.hover-editor').forEach((el) => {
+							this.localGraph.resize();
+						})
+					}
+				});
+			});
+		});
+		observer.observe(document.body, {
+			attributes: true,
+			childList: true
+		});
 
 		// This creates an icon in the left ribbon.
 		addIcon('PluginAST', icons['PluginAST']);
@@ -72,7 +89,6 @@ export class PluginManager extends Plugin {
 					const msg = enabledMemos === enabledHover ? "Memos and Hover are" : enabledMemos ? "Hover is" : "Memos is";
 					new Notice(`Can't work correctly! Plugin ${msg} missing`);
 				}
-
 			}
 		});
 
@@ -81,8 +97,7 @@ export class PluginManager extends Plugin {
 			name: 'hover local graph',
 			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "g" }],
 			callback: async () => {
-				const localGraph = new LocalGraph(this.app, this);
-				await localGraph.startup();
+				await this.localGraph.startup();
 			}
 		});
 
