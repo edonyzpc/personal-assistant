@@ -1,4 +1,4 @@
-import { App, Notice, Plugin, WorkspaceLeaf } from "obsidian";
+import { App, Notice, WorkspaceLeaf } from "obsidian";
 
 import { PluginManager } from "./plugin"
 
@@ -14,17 +14,15 @@ export class ViewResize {
     async resize(type: string): Promise<void> {
         if (this.resized) return;
         // resize the popover
-        let hovers = document.querySelectorAll("body .popover.hover-editor");
+        const hovers = document.querySelectorAll("body .popover.hover-editor");
         hovers.forEach((hover) => {
             this.log("iterating hovers...");
             if (hover.querySelector(`[data-type="${type}"]`)) {
                 this.log("setting hover editor attribute...");
                 // add some offset to show multiple views
-                let t = (10 + Math.random() * 100) + 255;
-                let l = (10 + Math.random() * 100) + 475;
+                const t = (10 + Math.random() * 100) + 255;
+                const l = (10 + Math.random() * 100) + 475;
                 hover.setAttribute("style", `height: 500px; width: 550px; top: ${t}px; left: ${l}px; cursor: move;`);
-                hover.setAttribute("data-x", "475");
-                hover.setAttribute("data-y", "260");
                 this.resized = true;
             }
         });
