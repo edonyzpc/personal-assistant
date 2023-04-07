@@ -1,9 +1,9 @@
 ---
 name: "[feat] your feature name"
-about: The template issue is for communicating efficiently for some required info
+about: Submit your feature request
 title: "[feat] your feature"
-labels: enhancement
-assignees: ''
+labels: enhancement, feature request
+assignees: edonyzpc
 
 ---
 
