@@ -2,6 +2,13 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 
 import { PluginManager } from "./plugin"
 
+interface ResizeStyle {
+    width: number,
+    height: number,
+    top: number,
+    left: number,
+}
+
 export interface PluginManagerSettings {
     debug: boolean;
     targetPath: string;
@@ -13,7 +20,11 @@ export interface PluginManagerSettings {
         showTags: boolean,
         showAttach: boolean,
         showNeighbor: boolean,
-        collapse: boolean
+        collapse: boolean,
+        resizeStyle: ResizeStyle,
+    }
+    memos: {
+        resizeStyle: ResizeStyle,
     }
 }
 
@@ -28,7 +39,21 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         showTags: true,
         showAttach: true,
         showNeighbor: true,
-        collapse: false
+        collapse: false,
+        resizeStyle: {
+            width: 550,
+            height: 500,
+            left:475,
+            top: 255
+        }
+    },
+    memos: {
+        resizeStyle: {
+            width: 550,
+            height: 500,
+            left:475,
+            top: 255
+        }
     }
 }
 
@@ -160,6 +185,128 @@ export class SettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     })
             });
+        containerEl.createEl("p", { text: "Graph Resize" }).setAttr("style", "font-size:15px");
+        const h = document.createDocumentFragment();
+        h.createEl('span', undefined, (p) => {
+            p.innerText = "height";
+            p.setAttr('style', 'margin:18px');
+        });
+        const w = document.createDocumentFragment();
+        w.createEl('span', undefined, (p) => {
+            p.innerText = "width";
+            p.setAttr('style', 'margin:18px');
+        });
+        const t = document.createDocumentFragment();
+        t.createEl('span', undefined, (p) => {
+            p.innerText = "top";
+            p.setAttr('style', 'margin:18px');
+        });
+        const l = document.createDocumentFragment();
+        l.createEl('span', undefined, (p) => {
+            p.innerText = "left";
+            p.setAttr('style', 'margin:18px');
+        });
+        new Setting(containerEl).setName(h)
+            .addText(text => {
+                text
+                .setPlaceholder('height')
+                .setValue(this.plugin.settings.localGraph.resizeStyle.height.toString())
+                .onChange(async (value) => {
+                    plugin.settings.localGraph.resizeStyle.height = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
+            });
+        new Setting(containerEl).setName(w)
+            .addText(text => {
+                text
+                .setPlaceholder('width')
+                .setValue(this.plugin.settings.localGraph.resizeStyle.width.toString())
+                .onChange(async (value) => {
+                    plugin.settings.localGraph.resizeStyle.width = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
+            });
+        new Setting(containerEl).setName(t)
+            .addText(text => {
+                text
+                .setPlaceholder('top')
+                .setValue(this.plugin.settings.localGraph.resizeStyle.top.toString())
+                .onChange(async (value) => {
+                    plugin.settings.localGraph.resizeStyle.top = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
+            });
+        new Setting(containerEl).setName(l)
+            .addText(text => {
+                text
+                .setPlaceholder('left')
+                .setValue(this.plugin.settings.localGraph.resizeStyle.left.toString())
+                .onChange(async (value) => {
+                    plugin.settings.localGraph.resizeStyle.left = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
+            });
+            containerEl.createEl("p", { text: "Memos Resize" }).setAttr("style", "font-size:15px");
+            const mh = document.createDocumentFragment();
+            mh.createEl('span', undefined, (p) => {
+                p.innerText = "height";
+                p.setAttr('style', 'margin:18px');
+            });
+            const mw = document.createDocumentFragment();
+            mw.createEl('span', undefined, (p) => {
+                p.innerText = "width";
+                p.setAttr('style', 'margin:18px');
+            });
+            const mt = document.createDocumentFragment();
+            mt.createEl('span', undefined, (p) => {
+                p.innerText = "top";
+                p.setAttr('style', 'margin:18px');
+            });
+            const ml = document.createDocumentFragment();
+            ml.createEl('span', undefined, (p) => {
+                p.innerText = "left";
+                p.setAttr('style', 'margin:18px');
+            });
+            new Setting(containerEl).setName(mh)
+                .addText(text => {
+                    text
+                    .setPlaceholder('height')
+                    .setValue(this.plugin.settings.memos.resizeStyle.height.toString())
+                    .onChange(async (value) => {
+                        plugin.settings.memos.resizeStyle.height = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
+                });
+            new Setting(containerEl).setName(mw)
+                .addText(text => {
+                    text
+                    .setPlaceholder('width')
+                    .setValue(this.plugin.settings.memos.resizeStyle.width.toString())
+                    .onChange(async (value) => {
+                        plugin.settings.memos.resizeStyle.width = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
+                });
+            new Setting(containerEl).setName(mt)
+                .addText(text => {
+                    text
+                    .setPlaceholder('top')
+                    .setValue(this.plugin.settings.memos.resizeStyle.top.toString())
+                    .onChange(async (value) => {
+                        plugin.settings.memos.resizeStyle.top = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
+                });
+            new Setting(containerEl).setName(ml)
+                .addText(text => {
+                    text
+                    .setPlaceholder('left')
+                    .setValue(this.plugin.settings.memos.resizeStyle.left.toString())
+                    .onChange(async (value) => {
+                        plugin.settings.memos.resizeStyle.left = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
+                });
     }
 
 }
