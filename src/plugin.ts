@@ -2,7 +2,8 @@ import { Editor, MarkdownView, Notice, Plugin, Platform, addIcon, moment, normal
 
 import { SampleModal, PluginControlModal, OpenPlugin, ClosePlugin } from './modal'
 import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
-import { LocalGraph } from 'localGraph';
+import { LocalGraph } from './localGraph';
+import { Memos } from './memos';
 
 const debug = (debug: boolean, ...msg: any) => {
 	if (debug) console.log(...msg);
@@ -21,6 +22,7 @@ const icons: Record<string, string> = {
 export class PluginManager extends Plugin {
 	settings: PluginManagerSettings
 	private localGraph = new LocalGraph(this.app, this);
+	private memos = new Memos(this.app, this);
 
 	async onload() {
 		new Notice("starting obsidian assistant");
@@ -31,7 +33,9 @@ export class PluginManager extends Plugin {
 				mutation.addedNodes.forEach((node) => {
 					if ((node instanceof HTMLElement)) {
 						document.querySelectorAll('.popover.hover-popover.hover-editor').forEach((el) => {
-							this.localGraph.resize();
+							this.log("obseving...")
+							this.localGraph.resize("localgraph");
+							this.memos.resize("memos_view");
 						})
 					}
 				});
@@ -81,14 +85,7 @@ export class PluginManager extends Plugin {
 			name: 'assistant hover memos',
 			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "m" }],
 			callback: async () => {
-				const enabledMemos = this.isEnabledPlugin('obsidian-memos');
-				const enabledHover = this.isEnabledPlugin('obsidian-hover-editor');
-				if (enabledMemos && enabledHover) {
-					await (this.app as any).commands.executeCommandById("obsidian-memos:show-memos-in-popover");
-				} else {
-					const msg = enabledMemos === enabledHover ? "Memos and Hover are" : enabledMemos ? "Hover is" : "Memos is";
-					new Notice(`Can't work correctly! Plugin ${msg} missing`);
-				}
+				await this.memos.startup();
 			}
 		});
 
@@ -264,10 +261,6 @@ export class PluginManager extends Plugin {
 	private join(...strings: string[]): string {
 		const parts = strings.map((s) => String(s).trim()).filter((s) => s != null);
 		return normalizePath(parts.join('/'));
-	}
-
-	private isEnabledPlugin(name: string): boolean {
-		return (this.app as any).plugins.enabledPlugins.has(name) ? true : false;
 	}
 }
 
