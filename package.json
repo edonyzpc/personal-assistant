@@ -22,6 +22,6 @@
 		"eslint": "8.37.0",
 		"obsidian": "latest",
 		"tslib": "2.5.0",
-		"typescript": "5.0.3"
+		"typescript": "5.0.4"
 	}
 }
