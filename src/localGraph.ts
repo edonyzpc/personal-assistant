@@ -1,13 +1,42 @@
-import { App, Notice, WorkspaceLeaf } from "obsidian";
+import { App, Notice, Plugin, WorkspaceLeaf } from "obsidian";
 
 import { PluginManager } from "./plugin"
 
-export class LocalGraph {
+export class ViewResize {
+    resized: boolean;
+    log: any;
+
+    constructor(plugin: PluginManager) {
+        this.resized = false;
+        this.log = (msg: any) => plugin.log(msg);
+    }
+
+    async resize(type: string): Promise<void> {
+        if (this.resized) return;
+        // resize the popover
+        let hovers = document.querySelectorAll("body .popover.hover-editor");
+        hovers.forEach((hover) => {
+            this.log("iterating hovers...");
+            if (hover.querySelector(`[data-type="${type}"]`)) {
+                this.log("setting hover editor attribute...");
+                // add some offset to show multiple views
+                let t = (10 + Math.random() * 100) + 255;
+                let l = (10 + Math.random() * 100) + 475;
+                hover.setAttribute("style", `height: 500px; width: 550px; top: ${t}px; left: ${l}px; cursor: move;`);
+                hover.setAttribute("data-x", "475");
+                hover.setAttribute("data-y", "260");
+                this.resized = true;
+            }
+        });
+    }
+}
+
+export class LocalGraph extends ViewResize {
     private app: App;
     private plugin: PluginManager;
-    private resized: boolean;
 
     constructor(app: App, plugin: PluginManager) {
+        super(plugin);
         this.plugin = plugin;
         this.app = app;
     }
@@ -40,25 +69,9 @@ export class LocalGraph {
         }
     }
 
-    async resize(): Promise<void> {
-        if (this.resized) return;
-        // resize the popover
-        let hovers = document.querySelectorAll("body .popover.hover-editor");
-        hovers.forEach((hover) => {
-            this.plugin.log("iterating hovers...");
-            if (hover.querySelector('[data-type="localgraph"]')) {
-                this.plugin.log("setting hover editor attribute...");
-                hover.setAttribute("style", "height: 500px; width: 550px; top: 255px; left: 475px; cursor: move;");
-                hover.setAttribute("data-x", "475");
-                hover.setAttribute("data-y", "260");
-            }
-        });
-        this.resized = true;
-    }
-
     private async syncGlobalToLocal() {
         const configDir = this.app.vault.configDir;
-        this.plugin.log(configDir);
+        this.log(configDir);
         const graphConfigPath = configDir + '/graph.json';
 
         // this.app.vault.getAbstractFileByPath('.obsidian/graph.json') would return null
@@ -78,7 +91,7 @@ export class LocalGraph {
 
     private setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) {
         const viewState = localGraphLeaf.getViewState();
-        this.plugin.log(viewState.state.options);
+        this.log(viewState.state.options);
         viewState.state.options.colorGroups = colorGroups;
         viewState.state.options.localJumps = this.plugin.settings.localGraph.depth;
         viewState.state.options.showTags = this.plugin.settings.localGraph.showTags;

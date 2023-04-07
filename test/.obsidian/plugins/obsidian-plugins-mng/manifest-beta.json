@@ -1,7 +1,7 @@
 {
 	"id": "obsidian-plugins-mng",
 	"name": "Obsidian Personal Assistant",
-	"version": "1.0.8",
+	"version": "1.0.10",
 	"minAppVersion": "1.1.0",
 	"description": "Obsidian management utils for plugins, tasks and shortcuts",
 	"author": "edony",
