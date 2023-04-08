@@ -8,7 +8,11 @@
     <a href="/README.md">English</a>
 </p>
 <div align="center">
-  <video src="docs/personal-assistant-using.mp4" width="600" />
+
+
+https://user-images.githubusercontent.com/7744664/230714987-6d74bd8f-453b-464e-8095-ce4028b9bb30.mp4
+
+
 </div>
 
 ## 功能特性
