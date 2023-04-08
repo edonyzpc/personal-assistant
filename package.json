@@ -1,12 +1,12 @@
 {
 	"name": "obsidian-plugins-mng",
-	"version": "1.0.11",
+	"version": "1.0.12",
 	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
 	"main": "main.js",
 	"scripts": {
 		"dev": "node esbuild.config.mjs",
 		"build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
-		"version": "node version-bump.mjs && git add manifest-beta.json manifest.json versions.json",
+		"version": "node version-bump.mjs && git add manifest-beta.json manifest.json versions.json CHANGELOG.md",
 		"lint": "eslint . --ext .ts"
 	},
 	"keywords": [],

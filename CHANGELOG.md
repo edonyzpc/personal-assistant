@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.0.11](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.11...1.0.12) (2023-04-08)
+
+### Improve
+- hover commands are supported to configure resize style in setting tab
+
 ## [1.0.11](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.10...1.0.11) (2023-04-07)
 
 ### Features
