@@ -8,6 +8,10 @@
     <a href="/README.md">English</a>
 </p>
 
+<div align="center">
+  <video src="docs/personal-assistant-using.mp4" width="600" />
+</div>
+
 ## Features
 > ***NOTE***: The currently supported features are all from my personal needs, feature requested is welcome by submitting issues.
 

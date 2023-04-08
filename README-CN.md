@@ -7,6 +7,9 @@
     ·
     <a href="/README.md">English</a>
 </p>
+<div align="center">
+  <video src="docs/personal-assistant-using.mp4" width="600" />
+</div>
 
 ## 功能特性
 > ***注意***: 当前支持的特性都是出于我个人使用 Obsdiain 的需求，欢迎提交你们期望的功能特性需求。
