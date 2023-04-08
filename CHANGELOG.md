@@ -2,7 +2,13 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.0.11](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.11...1.0.12) (2023-04-08)
+## [1.0.13, 1.0.14](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.12...1.0.14) (2023-04-08)
+
+### Docs
+- update readme by adding video to show usage
+- update manifest for plugin info
+
+## [1.0.12](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.11...1.0.12) (2023-04-08)
 
 ### Improve
 - hover commands are supported to configure resize style in setting tab
