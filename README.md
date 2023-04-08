@@ -20,8 +20,11 @@ https://user-images.githubusercontent.com/7744664/230714861-36463ab8-12be-48f5-8
 > ***NOTE***: The currently supported features are all from my personal needs, feature requested is welcome by submitting issues.
 
 1. automatically create note in the specified directory with the configured file name
-2. automatically update plugins(WIP, working-in-progress)
-3. automatically update themes(WIP)
+2. automatically open current note related graph view
+3. automatically open Memos like quick note in macOS
+4. switch on/off plugin in command palette
+5. automatically update plugins(WIP, working-in-progress)
+6. automatically update themes(WIP)
 
 ## Develop
 
