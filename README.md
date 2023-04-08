@@ -9,7 +9,11 @@
 </p>
 
 <div align="center">
-  <video src="docs/personal-assistant-using.mp4" width="600" />
+
+
+https://user-images.githubusercontent.com/7744664/230714861-36463ab8-12be-48f5-8d04-2166957b8b19.mp4
+
+
 </div>
 
 ## Features
