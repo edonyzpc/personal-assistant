@@ -3,7 +3,7 @@
 	"name": "Obsidian Personal Assistant",
 	"version": "1.0.12",
 	"minAppVersion": "1.1.0",
-	"description": "Obsidian management utils for plugins, tasks and shortcuts",
+	"description": "Obsidian management tool for plugins, notes and shortcuts which help you to use Obsidian efficiently.",
 	"author": "edony",
 	"authorUrl": "https://github.com/edonyzpc",
 	"isDesktopOnly": false
