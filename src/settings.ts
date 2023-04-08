@@ -2,7 +2,7 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 
 import { PluginManager } from "./plugin"
 
-interface ResizeStyle {
+export interface ResizeStyle {
     width: number,
     height: number,
     top: number,

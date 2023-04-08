@@ -28,14 +28,14 @@ export class PluginManager extends Plugin {
 		new Notice("starting obsidian assistant");
 		await this.loadSettings();
 		// monitor element which is concerned by other command
-		let observer = new MutationObserver((mutations) => {
+		const observer = new MutationObserver((mutations) => {
 			mutations.forEach((mutation) => {
 				mutation.addedNodes.forEach((node) => {
 					if ((node instanceof HTMLElement)) {
 						document.querySelectorAll('.popover.hover-popover.hover-editor').forEach((el) => {
 							this.log("obseving...")
-							this.localGraph.resize("localgraph");
-							this.memos.resize("memos_view");
+							this.localGraph.resize();
+							this.memos.resize();
 						})
 					}
 				});

@@ -1,41 +1,14 @@
 import { App, Notice, WorkspaceLeaf } from "obsidian";
 
 import { PluginManager } from "./plugin"
+import { ViewType, ViewResize } from "./view";
 
-export class ViewResize {
-    resized: boolean;
-    log: any;
-
-    constructor(plugin: PluginManager) {
-        this.resized = false;
-        this.log = (msg: any) => plugin.log(msg);
-    }
-
-    async resize(type: string): Promise<void> {
-        if (this.resized) return;
-        // resize the popover
-        const hovers = document.querySelectorAll("body .popover.hover-editor");
-        hovers.forEach((hover) => {
-            this.log("iterating hovers...");
-            if (hover.querySelector(`[data-type="${type}"]`)) {
-                this.log("setting hover editor attribute...");
-                // add some offset to show multiple views
-                const t = (10 + Math.random() * 100) + 255;
-                const l = (10 + Math.random() * 100) + 475;
-                hover.setAttribute("style", `height: 500px; width: 550px; top: ${t}px; left: ${l}px; cursor: move;`);
-                this.resized = true;
-            }
-        });
-    }
-}
 
 export class LocalGraph extends ViewResize {
     private app: App;
-    private plugin: PluginManager;
 
     constructor(app: App, plugin: PluginManager) {
-        super(plugin);
-        this.plugin = plugin;
+        super(plugin, ViewType.LocalGraphView);
         this.app = app;
     }
 

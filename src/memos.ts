@@ -1,13 +1,13 @@
 import { App, Notice } from "obsidian";
 
-import { ViewResize } from "localGraph";
+import { ViewType, ViewResize } from "./view";
 import { PluginManager } from "plugin";
 
 export class Memos extends ViewResize {
     private app: App;
 
     constructor(app: App, plugin: PluginManager) {
-        super(plugin);
+        super(plugin, ViewType.MemosView);
         this.app = app;
     }
 
