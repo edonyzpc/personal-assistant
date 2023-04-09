@@ -9,7 +9,7 @@ export class ViewResize {
     resized: boolean;
     log: any;
     plugin: PluginManager;
-    viewType: ViewType;
+    private viewType: ViewType;
     private viewDataType = {
         memos: "memos_view",
         localGraph: "localgraph",
