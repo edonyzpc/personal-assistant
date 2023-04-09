@@ -1,4 +1,5 @@
 import { App, PluginSettingTab, Setting } from "obsidian";
+import Picker from "vanilla-picker";
 
 import { PluginManager } from "./plugin"
 
@@ -22,10 +23,18 @@ export interface PluginManagerSettings {
         showNeighbor: boolean,
         collapse: boolean,
         resizeStyle: ResizeStyle,
-    }
+    };
     memos: {
         resizeStyle: ResizeStyle,
-    }
+    };
+    enableGraphColors: boolean;
+    colorGroups: {
+      query: string,
+      color: {
+        a: number,
+        rgb: number,
+      }
+    }[];
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -54,11 +63,19 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
             left:475,
             top: 255
         }
-    }
+    },
+    enableGraphColors: false,
+    colorGroups: [
+        {
+            query: "./",
+            color: {
+                a: 1,
+                rgb: 6617700,
+            }
+        }
+    ]
 }
 
-// [obsidian-link-archive](https://github.com/tomzorz/obsidian-link-archive/blob/master/settings.ts)
-// [obsidian-dev-tools](https://github.com/KjellConnelly/obsidian-dev-tools)
 export class SettingTab extends PluginSettingTab {
     plugin: PluginManager;
 
@@ -81,7 +98,6 @@ export class SettingTab extends PluginSettingTab {
         link.href = "https://github.com/edonyzpc/obsidian-plugins-mng";
         link.setAttr("style", "font-style: italic;");
         containerEl.createEl("p", { text: "Obsidian Assistant by Shadow Walker, " }).appendChild(link);
-        //containerEl.createEl("a", { text: "Open GitHub repository", href: "https://github.com/edonyzpc/obsidian-plugins-mng" });
 
         new Setting(containerEl).setName("Debug").addToggle((cb) =>
             cb.setValue(this.plugin.settings.debug)
@@ -246,67 +262,156 @@ export class SettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 })
             });
-            containerEl.createEl("p", { text: "Memos Resize" }).setAttr("style", "font-size:15px");
-            const mh = document.createDocumentFragment();
-            mh.createEl('span', undefined, (p) => {
-                p.innerText = "height";
-                p.setAttr('style', 'margin:18px');
+        
+        containerEl.createEl('h2', { text: 'Settings for Memos' });
+        containerEl.createEl("p", { text: "Memos Resize" }).setAttr("style", "font-size:15px");
+        const mh = document.createDocumentFragment();
+        mh.createEl('span', undefined, (p) => {
+            p.innerText = "height";
+            p.setAttr('style', 'margin:18px');
+        });
+        const mw = document.createDocumentFragment();
+        mw.createEl('span', undefined, (p) => {
+            p.innerText = "width";
+            p.setAttr('style', 'margin:18px');
+        });
+        const mt = document.createDocumentFragment();
+        mt.createEl('span', undefined, (p) => {
+            p.innerText = "top";
+            p.setAttr('style', 'margin:18px');
+        });
+        const ml = document.createDocumentFragment();
+        ml.createEl('span', undefined, (p) => {
+            p.innerText = "left";
+            p.setAttr('style', 'margin:18px');
+        });
+        new Setting(containerEl).setName(mh)
+            .addText(text => {
+                text
+                .setPlaceholder('height')
+                .setValue(this.plugin.settings.memos.resizeStyle.height.toString())
+                .onChange(async (value) => {
+                    plugin.settings.memos.resizeStyle.height = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
             });
-            const mw = document.createDocumentFragment();
-            mw.createEl('span', undefined, (p) => {
-                p.innerText = "width";
-                p.setAttr('style', 'margin:18px');
+        new Setting(containerEl).setName(mw)
+            .addText(text => {
+                text
+                .setPlaceholder('width')
+                .setValue(this.plugin.settings.memos.resizeStyle.width.toString())
+                .onChange(async (value) => {
+                    plugin.settings.memos.resizeStyle.width = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
             });
-            const mt = document.createDocumentFragment();
-            mt.createEl('span', undefined, (p) => {
-                p.innerText = "top";
-                p.setAttr('style', 'margin:18px');
+        new Setting(containerEl).setName(mt)
+            .addText(text => {
+                text
+                .setPlaceholder('top')
+                .setValue(this.plugin.settings.memos.resizeStyle.top.toString())
+                .onChange(async (value) => {
+                    plugin.settings.memos.resizeStyle.top = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
             });
-            const ml = document.createDocumentFragment();
-            ml.createEl('span', undefined, (p) => {
-                p.innerText = "left";
-                p.setAttr('style', 'margin:18px');
+        new Setting(containerEl).setName(ml)
+            .addText(text => {
+                text
+                .setPlaceholder('left')
+                .setValue(this.plugin.settings.memos.resizeStyle.left.toString())
+                .onChange(async (value) => {
+                    plugin.settings.memos.resizeStyle.left = parseInt(value);
+                    await this.plugin.saveSettings();
+                })
             });
-            new Setting(containerEl).setName(mh)
-                .addText(text => {
-                    text
-                    .setPlaceholder('height')
-                    .setValue(this.plugin.settings.memos.resizeStyle.height.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.height = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-                });
-            new Setting(containerEl).setName(mw)
-                .addText(text => {
-                    text
-                    .setPlaceholder('width')
-                    .setValue(this.plugin.settings.memos.resizeStyle.width.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.width = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-                });
-            new Setting(containerEl).setName(mt)
-                .addText(text => {
-                    text
-                    .setPlaceholder('top')
-                    .setValue(this.plugin.settings.memos.resizeStyle.top.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.top = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-                });
-            new Setting(containerEl).setName(ml)
-                .addText(text => {
-                    text
-                    .setPlaceholder('left')
-                    .setValue(this.plugin.settings.memos.resizeStyle.left.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.left = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-                });
-    }
 
+        new Setting(containerEl).setName('Enable Graph Colors')
+            .setDesc('Use personal assistant set colors of graph view.')
+            .addToggle(cb => {
+                cb.setValue(plugin.settings.enableGraphColors).onChange(async value => {
+                plugin.settings.enableGraphColors = value;
+                await plugin.saveSettings();
+                this.display();
+            })
+        });
+
+        if (plugin.settings.enableGraphColors) {
+            this.plugin.log(plugin.settings.colorGroups.length);
+            plugin.settings.colorGroups.forEach((colorGroup, idx) => {
+                this.plugin.log(colorGroup);
+                const color = `#${colorGroup.color.rgb.toString(16)}`;
+                const hexToRGB = (hex: string) => {
+                    const r = parseInt(hex.slice(1, 3), 16);
+                    const g = parseInt(hex.slice(3, 5), 16);
+                    const b = parseInt(hex.slice(5, 7), 16);
+                    return "rgb(" + r + ", " + g + ", " + b + ")";
+                };
+                const colorRgb = hexToRGB(color);
+                const nameEl = document.createDocumentFragment();
+                nameEl.createSpan({ text: "●", attr: { style: `color: ${color}` } });
+                nameEl.appendText(` Color for #${colorGroup.query}`);
+                new Setting(containerEl)
+                    .setName(nameEl)
+                    .setDesc('This will be the Color used in the graph view.')
+                    .addText(text => {
+                        text
+                        .setValue(plugin.settings.colorGroups[idx].query)
+                        .onChange(async (value) => {
+                            plugin.settings.colorGroups[idx].query = value;
+                            await this.plugin.saveSettings();
+                        })})
+                    .addButton(btn => {
+                        btn.setButtonText("Change Color");
+                        new Picker({
+                            parent: btn.buttonEl,
+                            onDone: async (color) => {
+                                // hex format color: #00000000, [0] '#', [1-6] rgb, [7-8] alpha
+                                let hexColor = color.hex.split('#')[1];
+                                this.plugin.log(hexColor);
+                                this.plugin.log("length= ", hexColor.length);
+                                // only get the color value without alpha, obsidian set alpha as 0xff by default
+                                if(hexColor.length === 8) {
+                                    hexColor = hexColor.substring(0, 6);
+                                }
+                                this.plugin.log("hexColor without alpha = ", hexColor);
+                                this.plugin.settings.colorGroups[idx].color.rgb = parseInt(hexColor, 16);
+                                await this.plugin.saveSettings();
+                                this.display();
+                            },
+                            popup: "left",
+                            color: colorRgb,
+                            alpha: false,
+                        });
+                    })
+                    .addExtraButton(btn => {
+                        btn.setIcon("trash").setTooltip("Remove").onClick(async () => {
+                            this.plugin.settings.colorGroups.remove(colorGroup);
+                            await this.plugin.saveSettings();
+                            this.display();
+                        });
+                        if (this.plugin.settings.colorGroups.length === 1) {
+                            btn.setDisabled(true);
+                        }
+                    })
+                    .addExtraButton(btn => {
+                        btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+                            this.plugin.settings.colorGroups[idx] = DEFAULT_SETTINGS.colorGroups[0] ?? "#ffffff";
+                            await this.plugin.saveSettings();
+                            this.display();
+                        });
+                    });
+            });
+            new Setting(containerEl)
+                .addButton(btn => {
+                    btn.setButtonText("Add Color").onClick(async () => {
+                        this.plugin.log(this.plugin.settings.colorGroups.length);
+                        this.plugin.settings.colorGroups.push(DEFAULT_SETTINGS.colorGroups[0]);
+                        this.plugin.log(this.plugin.settings.colorGroups.length);
+                        await this.plugin.saveSettings();
+                        this.display();
+                })
+            });
+        }
+    }
 }

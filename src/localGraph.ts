@@ -1,4 +1,4 @@
-import { App, Notice, WorkspaceLeaf } from "obsidian";
+import { App, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
 
 import { PluginManager } from "./plugin"
 import { ViewType, ViewResize } from "./view";
@@ -43,8 +43,9 @@ export class LocalGraph extends ViewResize {
     private async syncGlobalToLocal() {
         const configDir = this.app.vault.configDir;
         this.log(configDir);
-        const graphConfigPath = configDir + '/graph.json';
+        const graphConfigPath = normalizePath(configDir + '/graph.json');
 
+        // **NOTE**:
         // this.app.vault.getAbstractFileByPath('.obsidian/graph.json') would return null
         // So we're doing it the less safe way
         const graphConfigJson = await this.app.vault.adapter.read(graphConfigPath);
@@ -72,5 +73,22 @@ export class LocalGraph extends ViewResize {
         viewState.state.options.close = this.plugin.settings.localGraph.collapse;
         viewState.state.options.scale = 0.38;
         localGraphLeaf.setViewState(viewState);
+    }
+
+    async updateGraphColors() {
+        const configDir = this.app.vault.configDir;
+        const graphConfigPath = normalizePath(configDir + '/graph.json');
+        const graphConfigJson = await this.app.vault.adapter.read(graphConfigPath);
+        const graphConfig = JSON.parse(graphConfigJson);
+        const graphColorsToSet = this.plugin.settings.colorGroups;
+        graphColorsToSet.forEach(color => graphConfig.colorGroups.push(color));
+
+        this.app.workspace.getLeavesOfType('localgraph').forEach((leaf: WorkspaceLeaf) => {
+            this.plugin.log("setting colors");
+            const viewState = leaf.getViewState();
+            this.plugin.log(viewState.state.options);
+            viewState.state.options.colorGroups = graphColorsToSet;
+            leaf.setViewState(viewState);
+        })
     }
 }

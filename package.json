@@ -23,5 +23,8 @@
 		"obsidian": "latest",
 		"tslib": "2.5.0",
 		"typescript": "5.0.4"
+	},
+	"dependencies": {
+		"vanilla-picker": "2.11.2"
 	}
 }

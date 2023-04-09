@@ -13,4 +13,7 @@ deploy: clean bin
 	cp dist/styles.css test/.obsidian/plugins/personal-assistant/
 
 clean:
-	rm -rf test/.obsidian/plugins/personal-assistant/*
+	rm -rf test/.obsidian/plugins/personal-assistant/main.js
+	rm -rf test/.obsidian/plugins/personal-assistant/manifest.json
+	rm -rf test/.obsidian/plugins/personal-assistant/manifest-beta.json
+	rm -rf test/.obsidian/plugins/personal-assistant/styles.css

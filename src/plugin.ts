@@ -72,7 +72,6 @@ export class PluginManager extends Plugin {
 			id: 'startup-recording',
 			name: 'Open specific note to record',
 			callback: async () => {
-				//new SampleModal(this.app).open();
 				const fileFormat = moment().format(this.settings.fileFormat);
 				const targetDir = this.settings.targetPath;
 				this.log(targetDir, fileFormat);
@@ -114,6 +113,14 @@ export class PluginManager extends Plugin {
 			}
 		});
 
+		this.addCommand({
+			id: 'set-local-graph-view-colors',
+			name: 'Set graph view colors',
+			callback: async () => {
+				await this.localGraph.updateGraphColors();
+			}
+		});
+
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SettingTab(this.app, this));
 
@@ -140,7 +147,7 @@ export class PluginManager extends Plugin {
 	}
 
 	log(...msg: any) {
-		debug(this.settings.debug, msg);
+		debug(this.settings.debug, ...msg);
 	}
 
 	private async createDirectory(dir: string): Promise<void> {
