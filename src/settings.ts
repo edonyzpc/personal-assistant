@@ -67,7 +67,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     enableGraphColors: false,
     colorGroups: [
         {
-            query: "./",
+            query: "path:/",
             color: {
                 a: 1,
                 rgb: 6617700,
@@ -76,12 +76,30 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     ]
 }
 
+const GRAPH_COLOR:GraphColor = {
+            query: "path:/",
+            color: {
+                a: 1,
+                rgb: 6617700,
+            }
+        }
+
+interface GraphColor {
+    query: string;
+    color: {
+        a: number,
+        rgb: number,
+    }
+}
+
 export class SettingTab extends PluginSettingTab {
     plugin: PluginManager;
+    private log;
 
     constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
         this.plugin = plugin;
+        this.log = (...msg: any) => plugin.log(...msg);
     }
 
     display(): void {
@@ -114,7 +132,7 @@ export class SettingTab extends PluginSettingTab {
                 .setPlaceholder('2.fleeting/fleeting-thoughts/')
                 .setValue(this.plugin.settings.targetPath)
                 .onChange(async (value) => {
-                    this.plugin.log('target path: ' + value);
+                    this.log('target path: ' + value);
                     plugin.settings.targetPath = value;
                     await this.plugin.saveSettings();
                 }));
@@ -132,7 +150,7 @@ export class SettingTab extends PluginSettingTab {
                 .setPlaceholder('YYYY-MM-DD')
                 .setValue(this.plugin.settings.fileFormat)
                 .onChange(async (value) => {
-                    this.plugin.log('format setting: ' + value);
+                    this.log('format setting: ' + value);
                     plugin.settings.fileFormat = value;
                     await this.plugin.saveSettings();
                 }));
@@ -337,9 +355,9 @@ export class SettingTab extends PluginSettingTab {
         });
 
         if (plugin.settings.enableGraphColors) {
-            this.plugin.log(plugin.settings.colorGroups.length);
-            plugin.settings.colorGroups.forEach((colorGroup, idx) => {
-                this.plugin.log(colorGroup);
+            const colorGroups:{query:string,color:{a:number, rgb:number}}[] = JSON.parse(JSON.stringify(plugin.settings.colorGroups));
+            colorGroups.forEach((colorGroup) => {
+                this.log("looping color groups");
                 const color = `#${colorGroup.color.rgb.toString(16)}`;
                 const hexToRGB = (hex: string) => {
                     const r = parseInt(hex.slice(1, 3), 16);
@@ -359,8 +377,11 @@ export class SettingTab extends PluginSettingTab {
                         .setValue(plugin.settings.colorGroups[idx].query)
                         .onChange(async (value) => {
                             plugin.settings.colorGroups[idx].query = value;
+                            this.log(`1-1(idx=${idx}) `, DEFAULT_SETTINGS.colorGroups);
                             await this.plugin.saveSettings();
-                        })})
+                            this.log(`1-1(idx=${idx}) `, DEFAULT_SETTINGS.colorGroups);
+                        })
+                    })
                     .addButton(btn => {
                         btn.setButtonText("Change Color");
                         new Picker({
@@ -368,16 +389,16 @@ export class SettingTab extends PluginSettingTab {
                             onDone: async (color) => {
                                 // hex format color: #00000000, [0] '#', [1-6] rgb, [7-8] alpha
                                 let hexColor = color.hex.split('#')[1];
-                                this.plugin.log(hexColor);
-                                this.plugin.log("length= ", hexColor.length);
+                                this.log(hexColor);
                                 // only get the color value without alpha, obsidian set alpha as 0xff by default
                                 if(hexColor.length === 8) {
                                     hexColor = hexColor.substring(0, 6);
                                 }
-                                this.plugin.log("hexColor without alpha = ", hexColor);
+                                this.log("hexColor without alpha = ", hexColor);
                                 this.plugin.settings.colorGroups[idx].color.rgb = parseInt(hexColor, 16);
                                 await this.plugin.saveSettings();
                                 this.display();
+                                this.log(`2(idx=${idx}) `, DEFAULT_SETTINGS.colorGroups);
                             },
                             popup: "left",
                             color: colorRgb,
@@ -387,31 +408,38 @@ export class SettingTab extends PluginSettingTab {
                     .addExtraButton(btn => {
                         btn.setIcon("trash").setTooltip("Remove").onClick(async () => {
                             this.plugin.settings.colorGroups.remove(colorGroup);
+                            this.log("removing");
                             await this.plugin.saveSettings();
                             this.display();
+                            this.log(`3(idx=${idx}) `, DEFAULT_SETTINGS.colorGroups);
                         });
-                        if (this.plugin.settings.colorGroups.length === 1) {
-                            btn.setDisabled(true);
-                        }
                     })
                     .addExtraButton(btn => {
                         btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
-                            this.plugin.settings.colorGroups[idx] = DEFAULT_SETTINGS.colorGroups[0] ?? "#ffffff";
+                            this.plugin.settings.colorGroups[idx] = GRAPH_COLOR;
                             await this.plugin.saveSettings();
                             this.display();
+                            this.log(`4(idx=${idx}) `, DEFAULT_SETTINGS.colorGroups);
                         });
                     });
             });
             new Setting(containerEl)
                 .addButton(btn => {
                     btn.setButtonText("Add Color").onClick(async () => {
-                        this.plugin.log(this.plugin.settings.colorGroups.length);
-                        this.plugin.settings.colorGroups.push(DEFAULT_SETTINGS.colorGroups[0]);
-                        this.plugin.log(this.plugin.settings.colorGroups.length);
+                        this.plugin.settings.colorGroups.push(GRAPH_COLOR);
                         await this.plugin.saveSettings();
                         this.display();
+                        this.log(`5 `, DEFAULT_SETTINGS.colorGroups);
                 })
             });
         }
+    }
+
+    private findGraphColor(graphColor: GraphColor) {
+        this.plugin.settings.colorGroups.findIndex((color) => {
+            return graphColor.query === color.query && 
+                graphColor.color.a === color.color.a && 
+                graphColor.color.rgb === color.color.rgb;
+        });
     }
 }
