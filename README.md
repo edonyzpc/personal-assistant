@@ -17,7 +17,7 @@ https://user-images.githubusercontent.com/7744664/230714861-36463ab8-12be-48f5-8
 </div>
 
 ## Features
-> ***NOTE***: The currently supported features are all from my personal needs, feature requested is welcome by submitting issues.
+> ***NOTE***: The currently supported features are all from my personal needs, feature request is welcome by submitting issues.
 
 1. automatically create note in the specified directory with the configured file name
 2. automatically open current note related graph view
