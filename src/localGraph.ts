@@ -38,6 +38,11 @@ export class LocalGraph extends ViewResize {
             // notice the command executed
             new Notice(this.plugin.settings.localGraph.notice);
         }
+
+        if (this.plugin.settings.localGraph.autoColors && this.plugin.settings.enableGraphColors) {
+            // auto-set colors of local graph view when grap color configuration is enabled
+            await this.updateGraphColors();
+        }
     }
 
     private async syncGlobalToLocal() {
