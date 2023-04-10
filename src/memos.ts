@@ -1,7 +1,7 @@
 import { App, Notice } from "obsidian";
 
 import { ViewType, ViewResize } from "./view";
-import { PluginManager } from "plugin";
+import { PluginManager } from "./plugin";
 
 export class Memos extends ViewResize {
     private app: App;

@@ -27,7 +27,7 @@ export class PluginManager extends Plugin {
 	async onload() {
 		new Notice("starting obsidian assistant");
 		await this.loadSettings();
-		// monitor element which is concerned by other command
+		// observe element which is concerned by commands
 		const observer = new MutationObserver((mutations) => {
 			mutations.forEach((mutation) => {
 				mutation.addedNodes.forEach((node) => {
@@ -123,14 +123,6 @@ export class PluginManager extends Plugin {
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SettingTab(this.app, this));
-
-		// If the plugin hooks up any global DOM events (on parts of the app that doesn't belong to this plugin)
-		// Using this function will automatically remove the event listener when this plugin is disabled.
-		this.registerDomEvent(document, 'click', (evt: MouseEvent) => {
-			this.log('click', evt);
-		});
-		// When registering intervals, this function will automatically clear the interval when the plugin is disabled.
-		this.registerInterval(window.setInterval(() => this.log('setInterval'), 5 * 60 * 1000));
 	}
 
 	onunload() {
@@ -150,6 +142,7 @@ export class PluginManager extends Plugin {
 		debug(this.settings.debug, ...msg);
 	}
 
+	// the following is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102
 	private async createDirectory(dir: string): Promise<void> {
 		const { vault } = this.app;
 		const { adapter } = vault;
@@ -189,12 +182,11 @@ export class PluginManager extends Plugin {
 		}
 	}
 
-
 	/**
-   * Handles creating the new note
-   * A new markdown file will be created at the given file path (`input`)
-   * in the specified parent folder (`this.folder`)
-   */
+	 * Handles creating the new note
+	 * A new markdown file will be created at the given file path (`input`)
+	 * in the specified parent folder (`this.folder`)
+	 **/
 	async createNewNote(targetPath: string, fileName: string): Promise<void> {
 		const { vault } = this.app;
 		const { adapter } = vault;
@@ -230,12 +222,12 @@ export class PluginManager extends Plugin {
 	}
 
 	/**
-   * Joins multiple strings into a path using Obsidian's preferred format.
-   * The resulting path is normalized with Obsidian's `normalizePath` func.
-   * - Converts path separators to '/' on all platforms
-   * - Removes duplicate separators
-   * - Removes trailing slash
-   */
+	 * Joins multiple strings into a path using Obsidian's preferred format.
+	 * The resulting path is normalized with Obsidian's `normalizePath` func.
+	 * - Converts path separators to '/' on all platforms
+	 * - Removes duplicate separators
+	 * - Removes trailing slash
+	 **/
 	private join(...strings: string[]): string {
 		const parts = strings.map((s) => String(s).trim()).filter((s) => s != null);
 		return normalizePath(parts.join('/'));

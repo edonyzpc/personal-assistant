@@ -1,20 +1,4 @@
-import { App, Notice, Modal, SuggestModal } from 'obsidian'
-
-export class SampleModal extends Modal {
-    constructor(app: App) {
-        super(app);
-    }
-
-    onOpen() {
-        const { contentEl } = this;
-        contentEl.setText('Woah!');
-    }
-
-    onClose() {
-        const { contentEl } = this;
-        contentEl.empty();
-    }
-}
+import { App, Notice, SuggestModal } from 'obsidian'
 
 interface Plugin {
     name: string;
@@ -22,21 +6,6 @@ interface Plugin {
     desc: string;
     enbaled: boolean;
 }
-
-const ALL_DISABLED_PLUGIN = [
-    {
-        id: "How to Take Smart Notes",
-        desc: "Sönke Ahrens",
-    },
-    {
-        id: "Thinking, Fast and Slow",
-        desc: "Daniel Kahneman",
-    },
-    {
-        id: "Deep Work",
-        desc: "Cal Newport",
-    },
-];
 
 export const OpenPlugin = true;
 export const ClosePlugin = false;

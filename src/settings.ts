@@ -78,14 +78,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     ]
 }
 
-const GRAPH_COLOR: GraphColor = {
-    query: "path:/",
-    color: {
-        a: 1,
-        rgb: 6617700,
-    }
-}
-
 interface GraphColor {
     query: string;
     color: {
@@ -93,6 +85,15 @@ interface GraphColor {
         rgb: number,
     }
 }
+
+const DEFAULT_GRAPH_COLOR: GraphColor = {
+    query: "path:/",
+    color: {
+        a: 1,
+        rgb: 6617700,
+    }
+}
+
 
 export class SettingTab extends PluginSettingTab {
     plugin: PluginManager;
@@ -119,6 +120,7 @@ export class SettingTab extends PluginSettingTab {
         link.setAttr("style", "font-style: italic;");
         containerEl.createEl("p", { text: "Obsidian Assistant by Shadow Walker, " }).appendChild(link);
 
+        // setting option for debug
         new Setting(containerEl).setName("Debug").addToggle((cb) =>
             cb.setValue(this.plugin.settings.debug)
                 .onChange((value) => {
@@ -126,6 +128,8 @@ export class SettingTab extends PluginSettingTab {
                     this.plugin.saveSettings();
                 }));
 
+
+        // settiong options for recording
         containerEl.createEl('h2', { text: 'Settings for Record' });
         containerEl.createEl("p", { text: "Obsidian Management for Recording in Specific Path" }).setAttr("style", "font-size:14px");
         new Setting(containerEl).setName('Target Path')
@@ -156,6 +160,8 @@ export class SettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 }));
 
+
+        // setting options for local graph
         containerEl.createEl('h2', { text: 'Settings for Hover Local Graph' });
         containerEl.createEl("p", { text: "Obsidian Management for Hover Local Graph" }).setAttr("style", "font-size:14px");
         new Setting(containerEl).setName('Type')
@@ -280,6 +286,8 @@ export class SettingTab extends PluginSettingTab {
                     })
             });
 
+
+        // setting options for memos
         containerEl.createEl('h2', { text: 'Settings for Memos' });
         containerEl.createEl("p", { text: "Memos Resize" }).setAttr("style", "font-size:15px");
         const mh = document.createDocumentFragment();
@@ -339,6 +347,8 @@ export class SettingTab extends PluginSettingTab {
                     })
             });
 
+
+        // setting options for graph colors
         new Setting(containerEl).setName('Enable Graph Colors')
             .setDesc('Use personal assistant set colors of graph view.')
             .addToggle(toggle => {
@@ -348,7 +358,6 @@ export class SettingTab extends PluginSettingTab {
                     this.display();
                 })
             });
-
         if (plugin.settings.enableGraphColors) {
             // deep copy setting.colorGroups for rendering
             const colorGroups: { query: string, color: { a: number, rgb: number } }[] = JSON.parse(JSON.stringify(plugin.settings.colorGroups));
@@ -418,7 +427,7 @@ export class SettingTab extends PluginSettingTab {
                         btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
                             if (index > -1) {
                                 this.log(`resetting ${this.plugin.settings.colorGroups[index]}`);
-                                this.plugin.settings.colorGroups[index] = JSON.parse(JSON.stringify(GRAPH_COLOR));
+                                this.plugin.settings.colorGroups[index] = JSON.parse(JSON.stringify(DEFAULT_GRAPH_COLOR));
                             }
                             await this.plugin.saveSettings();
                             this.display();
@@ -429,7 +438,7 @@ export class SettingTab extends PluginSettingTab {
                 .addButton(btn => {
                     btn.setButtonText("Add Color").onClick(async () => {
                         this.log("adding new color");
-                        this.plugin.settings.colorGroups.push(JSON.parse(JSON.stringify(GRAPH_COLOR)));
+                        this.plugin.settings.colorGroups.push(JSON.parse(JSON.stringify(DEFAULT_GRAPH_COLOR)));
                         await this.plugin.saveSettings();
                         this.display();
                     })
