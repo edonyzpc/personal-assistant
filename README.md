@@ -79,6 +79,9 @@ Please reference [HERE](./DEVELOPEMENT.md).
 ![command 4](./docs/command-4.png)
 - Select the suggestion to enable/disable plugin
 
+## Attribution
+- Best thanks for project [obsidian-advanced-new-file](https://github.com/vanadium23/obsidian-advanced-new-file) for the code of `createNote`, `createDirectory`
+
 ## Contact
 
 If you've got any kind of feedback or questions, feel free to reach out via [GitHub issues](https://github.com/edonyzpc/personal-assistant/issues).
