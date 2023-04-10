@@ -15,6 +15,11 @@ https://user-images.githubusercontent.com/7744664/230714861-36463ab8-12be-48f5-8
 
 
 </div>
+<div align="center">
+
+https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b246-b6c7500194ef.webm
+
+</div>
 
 ## Features
 > ***NOTE***: The currently supported features are all from my personal needs, feature request is welcome by submitting issues.
