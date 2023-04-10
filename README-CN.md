@@ -62,3 +62,7 @@ https://user-images.githubusercontent.com/7744664/230714987-6d74bd8f-453b-464e-8
 ![command 3](./docs/command-3.png)
 - 插件的设置中有更多设置选项，包括深度、展示标签等
 - 查看包括 backlink 和 outgoing-link 关系图
+### 4. 开关插件
+- 打开命令面板找到对应的命令
+![command 4](./docs/command-4.png)
+- 选择你要开关的插件

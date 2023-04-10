@@ -25,6 +25,7 @@ https://user-images.githubusercontent.com/7744664/230714861-36463ab8-12be-48f5-8
 4. switch on/off plugin in command palette
 5. automatically update plugins(WIP, working-in-progress)
 6. automatically update themes(WIP)
+7. automatically set color of graph view
 
 ## Develop
 
@@ -66,6 +67,8 @@ Please reference [HERE](./DEVELOPEMENT.md).
 ![command 3](./docs/command-3.png)
 - Open setting tab for more customize
 - Navigate your current note graph view with backlink and outgoing link
+- configure color of graph view
+
 ### 4. Enable/Disable plugins for obsidian with one command
 - Open the command palette and find the command
 ![command 4](./docs/command-4.png)
