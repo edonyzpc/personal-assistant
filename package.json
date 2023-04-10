@@ -25,6 +25,6 @@
 		"typescript": "5.0.4"
 	},
 	"dependencies": {
-		"vanilla-picker": "2.11.2"
+		"vanilla-picker": "2.12.1"
 	}
 }
