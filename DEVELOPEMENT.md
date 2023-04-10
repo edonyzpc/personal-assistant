@@ -17,7 +17,7 @@ yarn build
 
 ### test
 ```sh
-mkdir -p test/.obsidian/plugins/obsidian-plugins-mng/
+mkdir -p test/.obsidian/plugins/personal-assistant/
 yarn build
 make deploy
 ```

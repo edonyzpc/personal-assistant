@@ -41,7 +41,7 @@ https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b
 
 - 在 Obsidian 中安装 BRAT 插件；
 - 打开命令面板输入 BRAT 命令：`Add a beta plugin for testing`；
-- 将字符串 `https://github.com/edonyzpc/obsidian-plugins-mng` 拷贝到对话框中；
+- 将字符串 `https://github.com/edonyzpc/personal-assistant` 拷贝到对话框中；
 - 点击添加插件，等待 BRAT 自动下载插件文件；
 - BRAT 提示安装完成之后在设置的插件页面查找安装号的插件；
 - 刷新插件列表找到安装的插件；
@@ -49,8 +49,8 @@ https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b
 
 ### 手动安装
 
-- 通过源码编译: `yarn install && yarn build` 或者直接从 [release page](https://github.com/edonyzpc/obsidian-plugins-mng/releases) 下载
-- 将这些文件 `main.js`, `styles.css`, `manifest.json` 拷贝到 Obsidian 的插件目录 `{VaultFolder}/.obsidian/plugins/obsidian-plugins-mng/`.
+- 通过源码编译: `yarn install && yarn build` 或者直接从 [release page](https://github.com/edonyzpc/personal-assistant/releases) 下载
+- 将这些文件 `main.js`, `styles.css`, `manifest.json` 拷贝到 Obsidian 的插件目录 `{VaultFolder}/.obsidian/plugins/perosonal-assistant/`.
 
 ## 使用
 

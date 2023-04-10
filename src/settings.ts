@@ -115,7 +115,7 @@ export class SettingTab extends PluginSettingTab {
         const link = document.createElement("a");
         link.setText("Open GitHub repository");
         // set the href property
-        link.href = "https://github.com/edonyzpc/obsidian-plugins-mng";
+        link.href = "https://github.com/edonyzpc/personal-assistant";
         link.setAttr("style", "font-style: italic;");
         containerEl.createEl("p", { text: "Obsidian Assistant by Shadow Walker, " }).appendChild(link);
 

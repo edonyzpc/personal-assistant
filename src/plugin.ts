@@ -59,7 +59,7 @@ export class PluginManager extends Plugin {
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
 		const statusBarItemEl = this.addStatusBarItem();
 		// status bar style setting
-		statusBarItemEl.addClass('obsidian-plugins-mng-statusbar');
+		statusBarItemEl.addClass('personal-assistant-statusbar');
 		addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
 		setIcon(statusBarItemEl, 'PluginAST_STATUSBAR');
 		// status bar event handling

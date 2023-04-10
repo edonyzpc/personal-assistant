@@ -46,7 +46,7 @@ Please reference [HERE](./DEVELOPEMENT.md).
 
 - Install BRAT from the Community Plugins in Obsidian
 - Open the command palette and run the command BRAT: Add a beta plugin for testing
-- Copy `https://github.com/edonyzpc/obsidian-plugins-mng` into the modal that opens up
+- Copy `https://github.com/edonyzpc/personal-assistant` into the modal that opens up
 - Click on Add Plugin -- wait a few seconds and BRAT will tell you what is going on
 - After BRAT confirms the installation, in Settings go to the **Community plugins ** tab.
 - Refresh the list of plugins
@@ -54,8 +54,8 @@ Please reference [HERE](./DEVELOPEMENT.md).
 
 ### Manually Install
 
-- Build with commandline: `yarn install && yarn build` or download from [release page](https://github.com/edonyzpc/obsidian-plugins-mng/releases)
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `{VaultFolder}/.obsidian/plugins/obsidian-plugins-mng/`.
+- Build with commandline: `yarn install && yarn build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
+- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
 
 ## Use
 
@@ -81,4 +81,4 @@ Please reference [HERE](./DEVELOPEMENT.md).
 
 ## Contact
 
-If you've got any kind of feedback or questions, feel free to reach out via [GitHub issues](https://github.com/edonyzpc/obsidian-plugins-mng/issues).
+If you've got any kind of feedback or questions, feel free to reach out via [GitHub issues](https://github.com/edonyzpc/personal-assistant/issues).

@@ -2,12 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.0.16](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.15...1.0.16) (2023-04-10)
+## [1.0.16](https://github.com/edonyzpc/personal-assistant/compare/1.0.15...1.0.16) (2023-04-10)
 
 ### Featrues
 - support graph view color configuration and auto-setting
 
-## [1.0.13, 1.0.14, 1.0.15](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.12...1.0.15) (2023-04-09)
+## [1.0.13, 1.0.14, 1.0.15](https://github.com/edonyzpc/personal-assistant/compare/1.0.12...1.0.15) (2023-04-09)
 
 ### Test
 - update Makefile for plugin manifest changed
@@ -16,44 +16,44 @@ All notable changes to this project will be documented in this file. See [standa
 - update readme by adding video to show usage
 - update manifest for plugin info
 
-## [1.0.12](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.11...1.0.12) (2023-04-08)
+## [1.0.12](https://github.com/edonyzpc/personal-assistant/compare/1.0.11...1.0.12) (2023-04-08)
 
 ### Improve
 - hover commands are supported to configure resize style in setting tab
 
-## [1.0.11](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.10...1.0.11) (2023-04-07)
+## [1.0.11](https://github.com/edonyzpc/personal-assistant/compare/1.0.10...1.0.11) (2023-04-07)
 
 ### Features
 - support multiple views auto-resize
 - support hover memos auto-resize
 
-## [1.0.10](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.9...1.0.10) (2023-04-06)
+## [1.0.10](https://github.com/edonyzpc/personal-assistant/compare/1.0.9...1.0.10) (2023-04-06)
 
 ### Features
 - hover local graph support auto-resize
 
-## [1.0.9](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.8...1.0.9) (2023-04-05)
+## [1.0.9](https://github.com/edonyzpc/personal-assistant/compare/1.0.8...1.0.9) (2023-04-05)
 
 ### Features
 - add enable/disable plugins command
 
-## [1.0.8](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.7...1.0.8) (2023-04-04)
+## [1.0.8](https://github.com/edonyzpc/personal-assistant/compare/1.0.7...1.0.8) (2023-04-04)
 
 ### Fix
 - local graph view setting option missed issue
 - statusbar icon position issue
 
-## [1.0.7](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.6...1.0.7) (2023-04-02)
+## [1.0.7](https://github.com/edonyzpc/personal-assistant/compare/1.0.6...1.0.7) (2023-04-02)
 
 ### Features
 - add hover local graph command
 
-## [1.0.6](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.5...1.0.6) (2023-03-30)
+## [1.0.6](https://github.com/edonyzpc/personal-assistant/compare/1.0.5...1.0.6) (2023-03-30)
 
 ### Features
 - add hover memos command
 
-## [1.0.5](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.4...1.0.5) (2023-03-25)
+## [1.0.5](https://github.com/edonyzpc/personal-assistant/compare/1.0.4...1.0.5) (2023-03-25)
 
 ### Features
 - rename the plugin as obsidian-assistant
@@ -63,24 +63,24 @@ All notable changes to this project will be documented in this file. See [standa
 - update CHANGELOG
 - update DEVELOPEMENT
 
-## [1.0.4](https://github.com/edonyzpc/obsidian-plugins-mng/compare/1.0.2...1.0.4) (2023-03-21)
+## [1.0.4](https://github.com/edonyzpc/personal-assistant/compare/1.0.2...1.0.4) (2023-03-21)
 
 ### Features
 - create note in specified directory
 
-## [1.0.2](https://github.com/edonyzpc/obsidian-plugins-mng/compare/v0.0.1...v0.0.2) (2022-07-23)
+## [1.0.2](https://github.com/edonyzpc/personal-assistant/compare/v0.0.1...v0.0.2) (2022-07-23)
 
 ### Featrues
 
-- add automatically release github action ([c0f78ae](https://github.com/edonyzpc/obsidian-plugins-mng/commit/c0f78ae))
-- support obsidian BRAT plugin install ([228dc5d](https://github.com/edonyzpc/obsidian-plugins-mng/commit/228dc5d))
+- add automatically release github action ([c0f78ae](https://github.com/edonyzpc/personal-assistant/commit/c0f78ae))
+- support obsidian BRAT plugin install ([228dc5d](https://github.com/edonyzpc/personal-assistant/commit/228dc5d))
 
-## [1.0.1](https://github.com/edonyzpc/obsidian-plugins-mng/commit/c0f78aeae3571eda678d6fcc8ccbbae84736c7c9) (2022-7-23)
+## [1.0.1](https://github.com/edonyzpc/personal-assistant/commit/c0f78aeae3571eda678d6fcc8ccbbae84736c7c9) (2022-7-23)
 
 ### Features
 
-- selecting suggested disabled plugins to trigger enable command ([72a44e5](https://github.com/edonyzpc/obsidian-plugins-mng/commit/72a44e5))
+- selecting suggested disabled plugins to trigger enable command ([72a44e5](https://github.com/edonyzpc/personal-assistant/commit/72a44e5))
 
 ### Bugfix
 
-- callback command related issue ([a37e3f6](https://github.com/edonyzpc/obsidian-plugins-mng/commit/a37e3f6))
+- callback command related issue ([a37e3f6](https://github.com/edonyzpc/personal-assistant/commit/a37e3f6))
