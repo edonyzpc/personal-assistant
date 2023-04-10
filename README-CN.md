@@ -14,6 +14,11 @@ https://user-images.githubusercontent.com/7744664/230714987-6d74bd8f-453b-464e-8
 
 
 </div>
+<div align="center">
+
+https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b246-b6c7500194ef.webm
+
+</div>
 
 ## 功能特性
 > ***注意***: 当前支持的特性都是出于我个人使用 Obsdiain 的需求，欢迎提交你们期望的功能特性需求。
