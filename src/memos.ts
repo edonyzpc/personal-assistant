@@ -17,7 +17,7 @@ export class Memos extends ViewResize {
         const enabledMemos = this.isEnabledPlugin('obsidian-memos');
         const enabledHover = this.isEnabledPlugin('obsidian-hover-editor');
         if (enabledMemos && enabledHover) {
-            await (this.app as any).commands.executeCommandById("obsidian-memos:show-memos-in-popover");
+            await (this.app as any).commands.executeCommandById("obsidian-memos:show-memos-in-popover"); // eslint-disable-line @typescript-eslint/no-explicit-any
         } else {
             const msg = enabledMemos === enabledHover ? "Memos and Hover are" : enabledMemos ? "Hover is" : "Memos is";
             new Notice(`Can't work correctly! Plugin ${msg} missing`);
@@ -25,6 +25,6 @@ export class Memos extends ViewResize {
     }
 
     private isEnabledPlugin(name: string): boolean {
-        return (this.app as any).plugins.enabledPlugins.has(name) ? true : false;
+        return (this.app as any).plugins.enabledPlugins.has(name) ? true : false; // eslint-disable-line @typescript-eslint/no-explicit-any
     }
 }

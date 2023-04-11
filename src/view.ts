@@ -7,7 +7,7 @@ export enum ViewType {
 
 export class ViewResize {
     resized: boolean;
-    log: any;
+    log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     plugin: PluginManager;
     private viewType: ViewType;
     private viewDataType = {
@@ -17,16 +17,16 @@ export class ViewResize {
 
     constructor(plugin: PluginManager, type: ViewType) {
         this.resized = false;
-        this.log = (...msg: any) => plugin.log(...msg);
+        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
         this.plugin = plugin;
         this.viewType = type;
     }
 
     async resize(): Promise<void> {
         if (this.resized) return;
-        const {localGraph, memos} = this.plugin.settings;
-        let width:number, height:number, left:number, top:number, dataType:string;
-        switch(this.viewType) {
+        const { localGraph, memos } = this.plugin.settings;
+        let width: number, height: number, left: number, top: number, dataType: string;
+        switch (this.viewType) {
             case ViewType.MemosView:
                 width = memos.resizeStyle.width;
                 height = memos.resizeStyle.height;

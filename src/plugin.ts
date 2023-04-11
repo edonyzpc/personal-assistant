@@ -5,7 +5,7 @@ import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
 import { Memos } from './memos';
 
-const debug = (debug: boolean, ...msg: any) => {
+const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
 	if (debug) console.log(...msg);
 };
 
@@ -138,7 +138,7 @@ export class PluginManager extends Plugin {
 		await this.saveData(this.settings);
 	}
 
-	log(...msg: any) {
+	log(...msg: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
 		debug(this.settings.debug, ...msg);
 	}
 

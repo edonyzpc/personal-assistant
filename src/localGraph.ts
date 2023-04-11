@@ -29,7 +29,7 @@ export class LocalGraph extends ViewResize {
             await this.syncGlobalToLocal();
         }
         if (this.plugin.settings.localGraph.type === "popover") {
-            const ret = await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover");
+            const ret = await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover"); // eslint-disable-line @typescript-eslint/no-explicit-any
             if (!ret) {
                 new Notice("hover local graph failed");
                 return;
@@ -66,7 +66,7 @@ export class LocalGraph extends ViewResize {
         return this.app.workspace.getLeavesOfType('localgraph');
     }
 
-    private setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) {
+    private setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
         const viewState = localGraphLeaf.getViewState();
         this.log(viewState.state.options);
         viewState.state.options.colorGroups = colorGroups;

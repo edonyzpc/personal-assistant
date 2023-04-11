@@ -1,6 +1,4 @@
-import { App } from 'obsidian'
-
-export {};
+export { };
 
 declare global {
 }

@@ -102,7 +102,7 @@ export class SettingTab extends PluginSettingTab {
     constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
         this.plugin = plugin;
-        this.log = (...msg: any) => plugin.log(...msg);
+        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
     }
 
     display(): void {
@@ -363,7 +363,7 @@ export class SettingTab extends PluginSettingTab {
             const colorGroups: { query: string, color: { a: number, rgb: number } }[] = JSON.parse(JSON.stringify(plugin.settings.colorGroups));
             colorGroups.forEach((colorGroup) => {
                 // find if the item is exist in plugin.settings
-                let index = this.findGraphColor(colorGroup);
+                const index = this.findGraphColor(colorGroup);
                 const color = `#${colorGroup.color.rgb.toString(16)}`;
                 const hexToRGB = (hex: string) => {
                     const r = parseInt(hex.slice(1, 3), 16);

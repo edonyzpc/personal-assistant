@@ -11,12 +11,12 @@ export const OpenPlugin = true;
 export const ClosePlugin = false;
 
 export class PluginControlModal extends SuggestModal<Plugin> {
-    private obsidianPlugins: any;
+    private obsidianPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     private toEnablePlugin: boolean;
 
     constructor(app: App, toEnable: boolean) {
         super(app);
-        this.obsidianPlugins = (app as any).plugins;
+        this.obsidianPlugins = (app as any).plugins; // eslint-disable-line @typescript-eslint/no-explicit-any
         this.toEnablePlugin = toEnable;
     }
 
@@ -25,7 +25,7 @@ export class PluginControlModal extends SuggestModal<Plugin> {
         'use strict'
         const disabledPlugins: Plugin[] = [];
         const enabledPlugins: Plugin[] = [];
-        for (const key of Object.keys((window.app as any).plugins.manifests)) {
+        for (const key of Object.keys((window.app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
             // find disabled plugins
             if (!this.obsidianPlugins.enabledPlugins.has(this.obsidianPlugins.manifests[key].id)) {
                 disabledPlugins.push({
