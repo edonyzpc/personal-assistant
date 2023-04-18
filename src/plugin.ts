@@ -1,4 +1,4 @@
-import { Notice, Plugin, Platform, addIcon, moment, normalizePath, setIcon } from 'obsidian';
+import { Notice, Plugin, addIcon, moment, normalizePath, setIcon } from 'obsidian';
 
 import { PluginControlModal, OpenPlugin, ClosePlugin } from './modal'
 import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
@@ -142,40 +142,15 @@ export class PluginManager extends Plugin {
 	// the following is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102
 	private async createDirectory(dir: string): Promise<void> {
 		const { vault } = this.app;
-		const { adapter } = vault;
 		const root = vault.getRoot().path;
 		const directoryPath = this.join(root, dir);
-		const directoryExists = await adapter.exists(directoryPath);
-		// ===============================================================
-		// -> Desktop App
-		// ===============================================================
-		if (!Platform.isIosApp) {
-			if (!directoryExists) {
-				return adapter.mkdir(normalizePath(directoryPath));
-			}
-		}
-		// ===============================================================
-		// -> Mobile App (IOS)
-		// ===============================================================
-		// This is a workaround for a bug in the mobile app:
-		// To get the file explorer view to update correctly, we have to create
-		// each directory in the path one at time.
-
-		// Split the path into an array of sub paths
-		// Note: `normalizePath` converts path separators to '/' on all platforms
-		// @example '/one/two/three/' ==> ['one', 'one/two', 'one/two/three']
-		// @example 'one\two\three' ==> ['one', 'one/two', 'one/two/three']
-		const subPaths: string[] = normalizePath(directoryPath)
-			.split('/')
-			.filter((part) => part.trim() !== '')
-			.map((_, index, arr) => arr.slice(0, index + 1).join('/'));
-
-		// Create each directory if it does not exist
-		for (const subPath of subPaths) {
-			const directoryExists = await adapter.exists(this.join(root, subPath));
-			if (!directoryExists) {
-				await adapter.mkdir(this.join(root, subPath));
-			}
+		/**
+		 * NOTE: `getAbstractFileByPath` will return TAbstractFile or null,
+		 * so, to check if the directory is exists, so compare the return
+		 * value by using `==`.
+		 **/
+		if (vault.getAbstractFileByPath(directoryPath) == undefined) {
+			await vault.createFolder(directoryPath);
 		}
 	}
 
@@ -207,8 +182,10 @@ export class PluginManager extends Plugin {
 			}
 			if (directoryPath !== '') {
 				// If `input` includes a directory part, create it
+				this.log("creating directory path: ", directoryPath);
 				await this.createDirectory(directoryPath);
 			}
+			this.log("creating file: ", filePath);
 			const File = await vault.create(filePath, '');
 			// Create the file and open it in the active leaf
 			const leaf = this.app.workspace.getLeaf(false);
