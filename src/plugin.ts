@@ -79,7 +79,7 @@ export class PluginManager extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'assistant-memos',
+			id: 'memos',
 			name: 'assistant hover memos',
 			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "m" }],
 			callback: async () => {
@@ -88,7 +88,7 @@ export class PluginManager extends Plugin {
 		});
 
 		this.addCommand({
-			id: 'assistant-local-graph',
+			id: 'local-graph',
 			name: 'hover local graph',
 			hotkeys: [{ modifiers: ["Mod", "Shift"], key: "g" }],
 			callback: async () => {
