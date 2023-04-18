@@ -53,7 +53,6 @@ export class PluginManager extends Plugin {
 			new Notice('Obsidian Assistant Startup');
 			new PluginControlModal(this.app, OpenPlugin).open();
 		});
-		// Perform additional things with the ribbon
 		ribbonIconEl.addClass('plugin-manager-ribbon-class');
 
 		// This adds a status bar item to the bottom of the app. Does not work on mobile apps.
