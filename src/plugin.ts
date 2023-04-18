@@ -1,4 +1,4 @@
-import { Notice, Plugin, addIcon, moment, normalizePath, setIcon } from 'obsidian';
+import { Notice, Plugin, TFile, addIcon, moment, normalizePath, setIcon } from 'obsidian';
 
 import { PluginControlModal, OpenPlugin, ClosePlugin } from './modal'
 import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
@@ -161,14 +161,12 @@ export class PluginManager extends Plugin {
 	 **/
 	async createNewNote(targetPath: string, fileName: string): Promise<void> {
 		const { vault } = this.app;
-		const { adapter } = vault;
 		const root = vault.getRoot().path;
 		const directoryPath = this.join(root, targetPath);
 		const filePath = this.join(directoryPath, `${fileName}.md`);
 
 		try {
-			const fileExists = await adapter.exists(filePath);
-			if (fileExists) {
+			if (this.app.vault.getAbstractFileByPath(filePath) instanceof TFile) {
 				// If the file already exists, open it and send notification
 				const files = vault.getMarkdownFiles();
 				for (const file of files) {
