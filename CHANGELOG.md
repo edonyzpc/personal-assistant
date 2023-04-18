@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.0.17, 1.0.18](https://github.com/edonyzpc/personal-assistant/compare/1.0.16...1.0.17) (2023-04-10)
+## [1.0.19](https://github.com/edonyzpc/personal-assistant/compare/1.0.18...1.0.19) (2023-04-18)
+### Improve
+- fix review issue of obsidian plugin community
+
+## [1.0.17, 1.0.18](https://github.com/edonyzpc/personal-assistant/compare/1.0.16...1.0.18) (2023-04-10)
 
 ### Imporve
 - update old plugin-id as new one
