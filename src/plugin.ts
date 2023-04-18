@@ -146,7 +146,7 @@ export class PluginManager extends Plugin {
 		const directoryPath = this.join(root, dir);
 		/**
 		 * NOTE: `getAbstractFileByPath` will return TAbstractFile or null,
-		 * so, to check if the directory is exists, so compare the return
+		 * so, to check if the directory is exists, compare the return
 		 * value by using `==`.
 		 **/
 		if (vault.getAbstractFileByPath(directoryPath) == undefined) {
