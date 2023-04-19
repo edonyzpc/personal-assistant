@@ -1,4 +1,4 @@
-import { App, Notice } from "obsidian";
+import { App, Notice, Platform } from "obsidian";
 
 import { ViewType, ViewResize } from "./view";
 import { PluginManager } from "./plugin";
@@ -17,7 +17,12 @@ export class Memos extends ViewResize {
         const enabledMemos = this.isEnabledPlugin('obsidian-memos');
         const enabledHover = this.isEnabledPlugin('obsidian-hover-editor');
         if (enabledMemos && enabledHover) {
-            await (this.app as any).commands.executeCommandById("obsidian-memos:show-memos-in-popover"); // eslint-disable-line @typescript-eslint/no-explicit-any
+            // only hover memos in desktop
+            if (Platform.isDesktop) {
+                await (this.app as any).commands.executeCommandById("obsidian-memos:show-memos-in-popover"); // eslint-disable-line @typescript-eslint/no-explicit-any
+            } else {
+                await (this.app as any).commands.executeCommandById("obsidian-memos:open-memos"); // eslint-disable-line @typescript-eslint/no-explicit-any
+            }
         } else {
             const msg = enabledMemos === enabledHover ? "Memos and Hover are" : enabledMemos ? "Hover is" : "Memos is";
             new Notice(`Can't work correctly! Plugin ${msg} missing`);

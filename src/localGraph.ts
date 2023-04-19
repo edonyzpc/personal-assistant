@@ -1,4 +1,4 @@
-import { App, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
+import { App, Platform, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
 
 import { PluginManager } from "./plugin"
 import { ViewType, ViewResize } from "./view";
@@ -28,7 +28,8 @@ export class LocalGraph extends ViewResize {
 
             await this.syncGlobalToLocal();
         }
-        if (this.plugin.settings.localGraph.type === "popover") {
+        // only hover local graph in desktop
+        if (Platform.isDesktop && this.plugin.settings.localGraph.type === "popover") {
             const ret = await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover"); // eslint-disable-line @typescript-eslint/no-explicit-any
             if (!ret) {
                 new Notice("hover local graph failed");
