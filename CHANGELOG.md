@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.0.20](https://github.com/edonyzpc/personal-assistant/compare/1.0.19...1.0.20) (2023-04-19)
+### Fix
+- fix mobile hover command view issue
+
+
 ## [1.0.19](https://github.com/edonyzpc/personal-assistant/compare/1.0.18...1.0.19) (2023-04-18)
 ### Improve
 - fix review issue of obsidian plugin community
