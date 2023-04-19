@@ -76,7 +76,7 @@ export class LocalGraph extends ViewResize {
         viewState.state.options.localInterlinks = this.plugin.settings.localGraph.showNeighbor;
         viewState.state.options.showArrow = true;
         viewState.state.options.close = this.plugin.settings.localGraph.collapse;
-        viewState.state.options.scale = 0.38;
+        viewState.state.options.scale = 1.0;
         localGraphLeaf.setViewState(viewState);
     }
 
