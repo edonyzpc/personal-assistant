@@ -18,7 +18,9 @@
       "ES6",
       "ES7"
     ],
-    "typeRoots": ["./src/types"]
+    "typeRoots": [
+      "./src/types"
+    ]
   },
   "include": [
     "**/*.ts"
