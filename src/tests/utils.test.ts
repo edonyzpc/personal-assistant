@@ -1,5 +1,5 @@
-import { describe, test } from '@jest/globals';
-import { Memos } from '../memos';
+import { describe,expect, test } from '@jest/globals';
+import { TEST_TOKEN } from '../utils';
 
 /*
 jest.mock('../plugin');
@@ -12,8 +12,8 @@ jest.mocked(PluginManager).mockImplementation(() => {
 */
 
 
-describe('memos module', () => {
-    test('memos init', () => {
-        console.log(Memos);
+describe('utils module', () => {
+    test('utils init', () => {
+        expect(TEST_TOKEN).toBe("personal-assistant");
     });
 });
