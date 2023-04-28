@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.0.21](https://github.com/edonyzpc/personal-assistant/compare/1.0.20...1.0.21) (2023-04-28)
+### Test
+- init test framework for UT
+
+### Improve
+- update dependencies
+- update github action configuration
+
 ## [1.0.20](https://github.com/edonyzpc/personal-assistant/compare/1.0.19...1.0.20) (2023-04-19)
 ### Fix
 - fix mobile hover command view issue
