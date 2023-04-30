@@ -25,8 +25,11 @@ export class PluginManager extends Plugin {
 	private memos = new Memos(this.app, this);
 
 	async onload() {
-		new Notice("starting obsidian assistant");
 		await this.loadSettings();
+		// showup notification of plugin starting when it is in debug mode
+		if (this.settings.debug) {
+			new Notice("starting obsidian assistant");
+		}
 		// observe element which is concerned by commands
 		const observer = new MutationObserver((mutations) => {
 			mutations.forEach((mutation) => {
