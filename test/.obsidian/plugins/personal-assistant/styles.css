@@ -7,3 +7,9 @@
     order: 1;
     color: #2fcc7099;
 }
+
+.plugin-swith-on-off-svg {
+    top: 0.24em;
+    position: relative;
+    margin-right: 4px;
+}
