@@ -78,8 +78,9 @@ Please reference [HERE](./DEVELOPEMENT.md).
 
 ### 4. Enable/Disable plugins for obsidian with one command
 - Open the command palette and find the command
-![command 4](./docs/command-4.png)
-- Select the suggestion to enable/disable plugin
+![command 4](./docs/command-5.png)
+- Select the suggestion to enable/disable plugin(or you can search the plugin by its name)
+- [***Note***] In suggestion tab, the green checkbox means plugin is already enabled and the red uncheckbox means plugin is already disabled
 
 ## Attribution
 - Best thanks for project [obsidian-advanced-new-file](https://github.com/vanadium23/obsidian-advanced-new-file) for the code of `createNote`, `createDirectory`
