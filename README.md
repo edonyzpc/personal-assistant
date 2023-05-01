@@ -63,7 +63,7 @@ Please reference [HERE](./DEVELOPEMENT.md).
 - Open the command palette and find the command
 ![command 1](./docs/command-1.png)
 - New note is created and start your recording
-- ***Recommendation***: use Folder Templates of plugin [Templater](https://github.com/SilentVoid13/Templater) to format your created notes, the example is as following
+- [***Recommendation***] Use `Folder Templates` of plugin [Templater](https://github.com/SilentVoid13/Templater) to format the created notes by the command above, the example is as following
 ![folder templates](./docs/folder-templates.png)
 ### 2. Open memos in hover editor
 - Open the command palette and find the command
