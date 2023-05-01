@@ -58,7 +58,7 @@ https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b
 - 打开命令面板找到对应的命令
 ![command 1](./docs/command-1.png)
 - note 自动创建并打开，此时可以直接开始你的记录了
-- ***推荐***：使用 [Templater](https://github.com/SilentVoid13/Templater) 插件的 Folder Templates 配置 note 模版，从而实现需要模版自定义能力
+- 【***推荐***】使用 [Templater](https://github.com/SilentVoid13/Templater) 插件的 `Folder Templates` 配置 note 模版，从而实现目录级别的模版自定义
 ### 2. 在 hover 打开 memos
 - 打开命令面板找到对应的命令
 ![command 2](./docs/command-2.png)
