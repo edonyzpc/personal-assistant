@@ -39,7 +39,7 @@ export interface PluginManagerSettings {
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
-    debug: true,
+    debug: false,
     targetPath: "2.fleeting/fleeting-thoughts/",
     fileFormat: "YYYY-MM-DD",
     localGraph: {
