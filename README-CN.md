@@ -70,5 +70,6 @@ https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b
 - 查看包括 backlink 和 outgoing-link 关系图
 ### 4. 开关插件
 - 打开命令面板找到对应的命令
-![command 4](./docs/command-4.png)
-- 选择你要开关的插件
+![command 4](./docs/command-5.png)
+- 选择你要开关的插件，该命令支持根据插件名检索
+- 【***注意***】插件选择界面中，插件名前面绿色的 checkbox 代表插件已经打开，红色的 uncheckbox 代表插件已经关闭
