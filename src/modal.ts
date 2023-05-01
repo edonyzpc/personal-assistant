@@ -43,7 +43,7 @@ export class PluginControlModal extends SuggestModal<Plugin> {
                 });
             }
         }
-        return this.toEnablePlugin ? disabledPlugins : enabledPlugins;
+        return this.toEnablePlugin ? disabledPlugins.filter((plugin) => plugin.name.toLowerCase().includes(query.toLowerCase())) : enabledPlugins.filter((plugin) => plugin.name.toLowerCase().includes(query.toLowerCase()));
     }
 
     // Renders each suggestion item.
