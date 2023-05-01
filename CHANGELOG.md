@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.1.0](https://github.com/edonyzpc/personal-assistant/compare/1.0.21...1.1.0) (2023-05-01)
+### Improve
+- plugin switch on/off command support searching by its name
+- plugin switch on/off command UX improving
+
+### Docs
+- update the related documents
+
 ## [1.0.21](https://github.com/edonyzpc/personal-assistant/compare/1.0.20...1.0.21) (2023-04-28)
 ### Test
 - init test framework for UT
