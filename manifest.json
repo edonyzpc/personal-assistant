@@ -3,7 +3,7 @@
 	"name": "Personal Assistant",
 	"version": "1.1.0",
 	"minAppVersion": "1.1.0",
-	"description": "Streamline workflows within managing memos and plugins with just one command.",
+	"description": "Streamline workflows within Obsidian, managing memos and plugins with just one command.",
 	"author": "edony",
 	"authorUrl": "https://github.com/edonyzpc",
 	"isDesktopOnly": false

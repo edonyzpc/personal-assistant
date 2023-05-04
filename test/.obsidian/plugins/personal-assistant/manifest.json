@@ -3,7 +3,7 @@
 	"name": "Personal Assistant",
 	"version": "1.1.0",
 	"minAppVersion": "1.1.0",
-	"description": "Obsidian management tool for plugins, notes and shortcuts which help you to use Obsidian efficiently.",
+	"description": "Streamline workflows within Obsidian, managing memos and plugins with just one command.",
 	"author": "edony",
 	"authorUrl": "https://github.com/edonyzpc",
 	"isDesktopOnly": false
