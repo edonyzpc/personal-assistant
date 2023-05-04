@@ -88,16 +88,6 @@ export class PluginManager extends Plugin {
 			}
 		});
 
-		/*
-		this.addCommand({
-			id: 'switch-on-plugin',
-			name: 'switch on plugin which is disabled',
-			callback: () => {
-				new PluginControlModal(this.app, OpenPlugin).open();
-			}
-		});
-		*/
-
 		this.addCommand({
 			id: 'switch-on-or-off-plugin',
 			name: 'switch on/off plugin according to its status',

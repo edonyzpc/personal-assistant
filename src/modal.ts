@@ -26,7 +26,7 @@ export class PluginControlModal extends SuggestModal<Plugin> {
         const disabledPlugins: Plugin[] = [];
         const enabledPlugins: Plugin[] = [];
         const plugins: Plugin[] = [];
-        for (const key of Object.keys((window.app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
+        for (const key of Object.keys((this.app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
             const pluginObject: Plugin = {
                 name: this.obsidianPlugins.manifests[key].name,
                 id: this.obsidianPlugins.manifests[key].id,
