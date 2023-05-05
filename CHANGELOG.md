@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.1.1, 1.1.2](https://github.com/edonyzpc/personal-assistant/compare/1.1.0...1.1.2) (2023-05-05)
+### Docs
+- update README for releasing int Obsidian plugin market
+
+### Improve
+- update description for plugin market display
+
+### Fix
+- fix `window.app` using issue
+
 ## [1.1.0](https://github.com/edonyzpc/personal-assistant/compare/1.0.21...1.1.0) (2023-05-01)
 ### Improve
 - plugin switch on/off command support searching by its name
