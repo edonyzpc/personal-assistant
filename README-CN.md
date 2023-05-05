@@ -7,17 +7,9 @@
     ·
     <a href="/README.md">English</a>
 </p>
+
 <div align="center">
-
-
-https://user-images.githubusercontent.com/7744664/230714987-6d74bd8f-453b-464e-8095-ce4028b9bb30.mp4
-
-
-</div>
-<div align="center">
-
-https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b246-b6c7500194ef.webm
-
+<img src="./docs/personal-assistant-v1.1.1.gif" alt="usage video"/>
 </div>
 
 ## 功能特性

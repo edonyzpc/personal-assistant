@@ -9,16 +9,7 @@
 </p>
 
 <div align="center">
-
-
-https://user-images.githubusercontent.com/7744664/230714861-36463ab8-12be-48f5-8d04-2166957b8b19.mp4
-
-
-</div>
-<div align="center">
-
-https://user-images.githubusercontent.com/7744664/230832328-2f2bd2f4-6e5a-4d13-b246-b6c7500194ef.webm
-
+<img src="./docs/personal-assistant-v1.1.1.gif" alt="usage video"/>
 </div>
 
 ## Features
