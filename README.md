@@ -28,7 +28,8 @@
 Please reference [HERE](./DEVELOPEMENT.md).
 
 ## Install
-> ***NOTE***: Now this plugin is not submit to Obsidian plugin market.
+Now Personal Assistant plugin is available in [plugin market](https://obsidian.md/plugins?search=personal%20assistant#), you can install this plugin directly within Obsidian App, please check this [mannual](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin) to get more details.
+![install with plugin market](./docs/install-within-plugin-market.png)
 
 ### Install
 - Download from the release

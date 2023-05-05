@@ -27,7 +27,9 @@
 请参考[这里](./DEVELOPEMENT.md).
 
 ## 安装
-> ***注意***: 该插件暂时还没有提交到 Obsidian 插件商城。
+
+插件已经在[插件市场](https://obsidian.md/plugins?search=personal%20assistant#)上架了，现在你可以直接在 Obsidian 应用程序中安装这个插件，请查看[手册](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin)获取更多详细信息。
+![install with plugin market](./docs/install-within-plugin-market.png)
 
 ### 通过 BRAT 安装
 
