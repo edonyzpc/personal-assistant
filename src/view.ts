@@ -50,6 +50,8 @@ export class ViewResize {
                 this.log("setting hover editor attribute...");
                 // add some offset to show multiple views
                 hover.setAttribute("style", `height: ${height}px; width: ${width}px; top: ${top}px; left: ${left}px; cursor: move;`);
+                document.body.style.setProperty('--resize-popover-width', `${width} !important`);
+                hover.addClass("resize-popover-width");
                 this.resized = true;
             }
         });

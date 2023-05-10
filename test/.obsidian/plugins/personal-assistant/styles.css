@@ -13,3 +13,7 @@
     position: relative;
     margin-right: 4px;
 }
+
+.resize-popover-width {
+    --popover-width: var(--resize-popover-width);
+}
