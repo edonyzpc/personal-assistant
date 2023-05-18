@@ -19,6 +19,13 @@ interface PluginReleaseFiles {
     styles:     string | null;
 }
 
+/*
+interface ThemeReleaseFiles {
+    manifest:   string | null;
+    theme:     string | null;
+}
+*/
+
 export class PluginsUpdater implements ObsidianManifest {
     /*
     private plugins: ObsidianManifest[];
@@ -149,6 +156,51 @@ export class PluginsUpdater implements ObsidianManifest {
             }
         })
     }
+}
+
+export class ThemeUpdater implements ObsidianManifest {
+    items: Manifest[];
+    URLCDN: string;
+    app: App;
+
+    public async init(app: App): Promise<ThemeUpdater> {
+        const themeUpdater = new ThemeUpdater(app);
+        themeUpdater.items = await listThemes(this.app);
+        return themeUpdater;
+    }
+
+    private constructor(app: App) {
+        this.app = app;
+        this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases/community-css-themes.json`;
+    }
+
+    async getRepo(pluginID: string): Promise<string | null> {
+        return null;
+    }
+
+    async isNeedToUpdate(m: Manifest): Promise<boolean> {
+        return false;
+    }
+
+    async update(): Promise<void> {
+        return;
+    }
+}
+
+// list obsidian themes
+async function listThemes(app: App): Promise<Manifest[]> {
+    const themes:Manifest[] = [];
+    const themeDirs = await app.vault.adapter.list(app.vault.configDir + '/themes');
+    themeDirs.folders.forEach(async (f) => {
+        const themeFile = normalizePath(f + '/manifest.json');
+        const m = await app.vault.adapter.read(themeFile);
+        const object = JSON.parse(m);
+        themes.push({
+            id: object.name,
+            version: object.version,
+        });
+    })
+    return themes;
 }
 
 // get all of the plugins whose manifests can be parsed
