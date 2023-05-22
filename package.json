@@ -30,6 +30,7 @@
     "typescript": "5.0.4"
   },
   "dependencies": {
+    "semver": "^7.5.1",
     "vanilla-picker": "2.12.1"
   }
 }
