@@ -5,6 +5,7 @@ import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
 import { Memos } from './memos';
 import { icons } from './utils';
+import { PluginsUpdater } from './manifest';
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
 	if (debug) console.log(...msg);
@@ -105,6 +106,15 @@ export class PluginManager extends Plugin {
 				await this.localGraph.updateGraphColors();
 			}
 		});
+
+		this.addCommand({
+			id: 'update-plugin',
+			name: "Update plugins with one command",
+			callback:async () => {
+				const pluginUpdater = new PluginsUpdater(this.app);
+				await pluginUpdater.update();
+			}
+		})
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SettingTab(this.app, this));
