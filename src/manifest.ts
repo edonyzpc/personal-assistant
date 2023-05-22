@@ -1,4 +1,5 @@
-import { App, PluginManifest, normalizePath, request } from "obsidian";
+import { App, Notice, PluginManifest, normalizePath, request } from "obsidian";
+import { gt } from "semver";
 
 interface Manifest {
     id: string,
@@ -73,7 +74,10 @@ export class PluginsUpdater implements ObsidianManifest {
     }
 
     private async getLatestRelease(repo: string | null): Promise<JSON | null> {
-        if (!repo) return null;
+        if (!repo) {
+            new Notice("repo is null");
+            return null;
+        }
         const URL = `https://api.github.com/repos/${repo}/releases/latest`;
         try {
             const response = await request({ url: URL });
@@ -87,22 +91,42 @@ export class PluginsUpdater implements ObsidianManifest {
     }
 
     private getLatestTag(latest: JSON | null): string | null {
-        if (!latest) return null;
+        if (!latest) {
+            console.log("JSON is null");
+            return null;
+        }
+        for (let index = 0; index < Object.getOwnPropertyNames(latest).length; index++) {
+            if (this.TagName === Object.getOwnPropertyNames(latest)[index]) {
+                return Object(latest)[this.TagName] as string;
+            }
+        }
+        /*
         Object.getOwnPropertyNames(latest).forEach(key => {
-            if (key === this.TagName) return Object(latest)[key];
+            if (key === this.TagName) {
+                console.log(key, Object(latest)[key]);
+                return Object(latest)[key];
+            }
         })
+        */
+
+        console.log("final return null");
         return null;
     }
 
     async isNeedToUpdate(m: Manifest): Promise<boolean> {
         const repo = await this.getRepo(m.id);
         if (repo) {
+            new Notice("checking need to update for "+repo);
             const latestRelease = await this.getLatestRelease(repo);
             if (latestRelease) {
                 let tag = this.getLatestTag(latestRelease);
+                console.log("tag ==== ", tag);
                 if (tag) {
+                    new Notice("tag == " + tag);
                     if (tag.startsWith('v')) tag = tag.split('v')[1];
-                    if (tag > m.version) {
+                    console.log("tag = " + tag, "current tag: " + m.version);
+                    // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
+                    if (gt(tag, m.version)) {
                         return true;
                     }
                 }
@@ -140,10 +164,14 @@ export class PluginsUpdater implements ObsidianManifest {
         };
 
         this.items.forEach(async (plugin) => {
+            new Notice("start to update " + plugin.id);
             const repo = await this.getRepo(plugin.id);
             const latestRlease = await this.getLatestRelease(repo);
             const tag = getLatestTag(latestRlease);
-            if (await this.isNeedToUpdate(plugin)) {
+            const need2Update = await this.isNeedToUpdate(plugin);
+            console.log(repo + " need to update: ", need2Update);
+            if (need2Update) {
+                new Notice("updateing plugin " + plugin.id, 10);
                 const releases:PluginReleaseFiles = {
                     mainJs:null,
                     manifest:null,
