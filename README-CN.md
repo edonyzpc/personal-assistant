@@ -8,6 +8,12 @@
     <a href="/README.md">English</a>
 </p>
 
+> ***号外***: 新特性来啦：一键更新插件并且不需要考虑 `raw.githubusercontent.com` 相关的问题。
+<div align="center">
+<img src="./docs/personal-assistant-v1.1.4.gif" alt="usage video"/>
+</div>
+
+> ***使用示例***
 <div align="center">
 <img src="./docs/personal-assistant-v1.1.1.gif" alt="usage video"/>
 </div>
@@ -67,3 +73,8 @@
 ![command 4](./docs/command-5.png)
 - 选择你要开关的插件，该命令支持根据插件名检索
 - 【***注意***】插件选择界面中，插件名前面绿色的 checkbox 代表插件已经打开，红色的 uncheckbox 代表插件已经关闭
+### 5. 更新插件
+- 打开命令面板找到对应的命令
+![command 6](./docs/command-6.png)
+- 触发该命令
+- 在右上角的通知窗口查看插件更新状态
