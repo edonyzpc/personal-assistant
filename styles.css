@@ -17,3 +17,9 @@
 .resize-popover-width {
     --popover-width: var(--resize-popover-width);
 }
+
+.plugin-update-svg {
+    top: 0.36em;
+    position: relative;
+    margin-right: 4px;
+}
