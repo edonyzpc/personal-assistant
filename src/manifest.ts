@@ -1,9 +1,17 @@
-import { App, Notice, PluginManifest, normalizePath, request } from "obsidian";
+import { App, Notice, PluginManifest, normalizePath, addIcon, setIcon, request } from "obsidian";
+import { PluginManager } from "plugin";
 import { gt } from "semver";
+
+import { icons } from "./utils";
 
 interface Manifest {
     id: string,
     version: string,
+    toUpdate?: {
+        needUpdate: boolean,
+        repo: string,
+        targetVersion: string,
+    },
 }
 
 interface ObsidianManifest {
@@ -20,28 +28,25 @@ interface PluginReleaseFiles {
     styles:     string | null;
 }
 
-/*
 interface ThemeReleaseFiles {
     manifest:   string | null;
     theme:     string | null;
 }
-*/
 
 export class PluginsUpdater implements ObsidianManifest {
-    /*
-    private plugins: ObsidianManifest[];
-    private PluginListURLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases/community-plugins.json`;
-    private themes: ObsidianManifest[];
-    private ThemeListURLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases/community-css-themes.json`;
-    */
-
     items: Manifest[];
     URLCDN: string;
-    private TagName = 'tag_name';
     app: App;
+    private TagName = 'tag_name';
+    private commandPlugin: PluginManager;
+    private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private notice: Notice;
+    private noticeEl: DocumentFragment;
 
-    constructor(app: App) {
+    constructor(app: App, plugin: PluginManager) {
         this.app = app;
+        this.commandPlugin = plugin;
+        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases/community-plugins.json`;
         this.items = [];
         for (const m of Object.values((app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -51,6 +56,12 @@ export class PluginsUpdater implements ObsidianManifest {
             };
             this.items.push(i);
         }
+
+        this.noticeEl = document.createDocumentFragment();
+        addIcon('PLUGIN_UPDATE_STATUS', icons['PLUGIN_UPDATE_STATUS']);
+        addIcon('PLUGIN_UPDATED_STATUS', icons['PLUGIN_UPDATED_STATUS']);
+        addIcon('SWITCH_ON_STATUS', icons['SWITCH_ON_STATUS']);
+        addIcon('SWITCH_OFF_STATUS', icons['SWITCH_OFF_STATUS']);
     }
 
     async getRepo(pluginID: string): Promise<string | null> {
@@ -68,14 +79,14 @@ export class PluginsUpdater implements ObsidianManifest {
             };
             return (response === "404: Not Found" ? null : getPluginRepo(response));
         } catch (error) {
-            console.log("error in getPluginRepo", error)
+            this.log("error in getPluginRepo", error)
             return null;
         }
     }
 
     private async getLatestRelease(repo: string | null): Promise<JSON | null> {
         if (!repo) {
-            new Notice("repo is null");
+            this.log("repo is null");
             return null;
         }
         const URL = `https://api.github.com/repos/${repo}/releases/latest`;
@@ -84,7 +95,7 @@ export class PluginsUpdater implements ObsidianManifest {
             return (response === "404: Not Found" ? null : await JSON.parse(response));
         } catch (error) {
             if(error!="Error: Request failed, status 404")  { //normal error, ignore
-                console.log(`error in grabManifestJsonFromRepository for ${URL}`, error);
+                this.log(`error in grabManifestJsonFromRepository for ${URL}`, error);
             }
             return null;
         }
@@ -92,7 +103,7 @@ export class PluginsUpdater implements ObsidianManifest {
 
     private getLatestTag(latest: JSON | null): string | null {
         if (!latest) {
-            console.log("JSON is null");
+            this.log("JSON is null");
             return null;
         }
         for (let index = 0; index < Object.getOwnPropertyNames(latest).length; index++) {
@@ -100,31 +111,23 @@ export class PluginsUpdater implements ObsidianManifest {
                 return Object(latest)[this.TagName] as string;
             }
         }
-        /*
-        Object.getOwnPropertyNames(latest).forEach(key => {
-            if (key === this.TagName) {
-                console.log(key, Object(latest)[key]);
-                return Object(latest)[key];
-            }
-        })
-        */
 
-        console.log("final return null");
+        this.log("final return null");
         return null;
     }
 
     async isNeedToUpdate(m: Manifest): Promise<boolean> {
         const repo = await this.getRepo(m.id);
         if (repo) {
-            new Notice("checking need to update for "+repo);
+            this.log("checking need to update for "+repo);
             const latestRelease = await this.getLatestRelease(repo);
             if (latestRelease) {
                 let tag = this.getLatestTag(latestRelease);
-                console.log("tag ==== ", tag);
+                this.log("tag ==== ", tag);
                 if (tag) {
-                    new Notice("tag == " + tag);
+                    this.log("tag == " + tag);
                     if (tag.startsWith('v')) tag = tag.split('v')[1];
-                    console.log("tag = " + tag, "current tag: " + m.version);
+                    this.log("tag = " + tag, "current tag: " + m.version);
                     // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
                     if (gt(tag, m.version)) {
                         return true;
@@ -142,7 +145,7 @@ export class PluginsUpdater implements ObsidianManifest {
                 const download = await request({ url: URL });
                 return ((download === "Not Found" || download === `{"error":"Not Found"}`) ? null : download);
             } catch (error) {
-                console.log("error in grabReleaseFileFromRepository", URL, error)
+                this.log("error in grabReleaseFileFromRepository", URL, error)
                 return null;
             }
         };
@@ -150,7 +153,7 @@ export class PluginsUpdater implements ObsidianManifest {
             const pluginTargetFolderPath = normalizePath(this.app.vault.configDir + "/plugins/" + pluginID) + "/";
             const adapter = this.app.vault.adapter;
             if (!files.mainJs || !files.manifest) {
-                console.log("downloaded files are empty");
+                this.log("downloaded files are empty");
                 return;
             }
             if (await adapter.exists(pluginTargetFolderPath) === false ||
@@ -161,26 +164,61 @@ export class PluginsUpdater implements ObsidianManifest {
             await adapter.write(pluginTargetFolderPath + "main.js", files.mainJs);
             await adapter.write(pluginTargetFolderPath + "manifest.json", files.manifest);
             if (files.styles) await adapter.write(pluginTargetFolderPath + "styles.css", files.styles);
+            this.log(`updated plugin[${pluginID}]`);
         };
 
-        this.items.forEach(async (plugin) => {
-            new Notice("start to update " + plugin.id);
+        for (let i = 0; i < this.items.length; i++) {
+            const plugin = this.items[i];
             const repo = await this.getRepo(plugin.id);
             const latestRlease = await this.getLatestRelease(repo);
-            const tag = getLatestTag(latestRlease);
+            const tag = this.getLatestTag(latestRlease);
             const need2Update = await this.isNeedToUpdate(plugin);
-            console.log(repo + " need to update: ", need2Update);
-            if (need2Update) {
-                new Notice("updateing plugin " + plugin.id, 10);
-                const releases:PluginReleaseFiles = {
-                    mainJs:null,
-                    manifest:null,
-                    styles:null,
-                }
+            if (need2Update && repo && tag) {
+                this.items[i].toUpdate = {
+                    needUpdate: true,
+                    repo: repo,
+                    targetVersion: tag,
+                };
+                const div = this.noticeEl.createEl("div", { attr: { style: `color: red`, id: `div-${plugin.id}` } });
+                setIcon(div, 'SWITCH_OFF_STATUS');
+                div.createSpan({ text: `update ${plugin.id} to ${tag}`, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
+                div.querySelector('svg')?.addClass("plugin-update-svg");
+            }
+        }
+        new Notice(this.noticeEl, 0);
+        this.items.forEach(async (plugin) => {
+            this.log("start to update " + plugin.id);
+            if (plugin.toUpdate?.needUpdate) {
+                this.log("updateing plugin " + plugin.id, 10);
+                const releases: PluginReleaseFiles = {
+                    mainJs: null,
+                    manifest: null,
+                    styles: null,
+                };
+                const repo = plugin.toUpdate.repo;
+                const tag = plugin.toUpdate.targetVersion;
                 releases.mainJs = await getReleaseFile(repo, tag, 'main.js');
                 releases.manifest = await getReleaseFile(repo, tag, 'manifest.json');
-                releases.mainJs = await getReleaseFile(repo, tag, 'styles.css');
+                releases.styles = await getReleaseFile(repo, tag, 'styles.css');
                 await writeToPluginFolder(plugin.id, releases);
+                // reload plugins after updated
+                (this.app as any).plugins.enablePluginAndSave(plugin.id); // eslint-disable-line @typescript-eslint/no-explicit-any
+                // update notice display
+                const div2Display = document.getElementById(`div-${plugin.id}`);
+                if (div2Display) {
+                    const spanItem = div2Display.getElementsByTagName('span').item(0);
+                    if (spanItem) {
+                        div2Display.removeChild(spanItem);
+                    }
+                    const svgItem = div2Display.getElementsByTagName('svg').item(0);
+                    if (svgItem) {
+                        div2Display.removeChild(svgItem);
+                    }
+                    setIcon(div2Display, 'SWITCH_ON_STATUS');
+                    div2Display.createSpan({ text: `update ${plugin.id} to ${tag}`, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
+                    div2Display.querySelector('svg')?.addClass("plugin-update-svg");
+                    //setIcon(div2Display, 'PLUGIN_UPDATED_STATUS');
+                }
             }
         })
     }
@@ -190,16 +228,20 @@ export class ThemeUpdater implements ObsidianManifest {
     items: Manifest[];
     URLCDN: string;
     app: App;
+    private commandPlugin: PluginManager;
+    private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-    public async init(app: App): Promise<ThemeUpdater> {
-        const themeUpdater = new ThemeUpdater(app);
+    public async init(app: App, plugin:PluginManager): Promise<ThemeUpdater> {
+        const themeUpdater = new ThemeUpdater(app, plugin);
         themeUpdater.items = await listThemes(this.app);
         return themeUpdater;
     }
 
-    private constructor(app: App) {
+    private constructor(app: App, plugin: PluginManager) {
         this.app = app;
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases/community-css-themes.json`;
+        this.commandPlugin = plugin;
+        this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
     }
 
     async getRepo(pluginID: string): Promise<string | null> {
@@ -211,6 +253,11 @@ export class ThemeUpdater implements ObsidianManifest {
     }
 
     async update(): Promise<void> {
+        const files: ThemeReleaseFiles = {
+            manifest: "",
+            theme: ""
+        };
+        this.log(files.manifest);
         return;
     }
 }
@@ -250,7 +297,7 @@ export async function graLatestRelease(repo: string | null): Promise<JSON | null
         return (response === "404: Not Found" ? null : await JSON.parse(response));
     } catch (error) {
         if(error!="Error: Request failed, status 404")  { //normal error, ignore
-            console.log(`error in grabManifestJsonFromRepository for ${URL}`, error);
+            this.log(`error in grabManifestJsonFromRepository for ${URL}`, error);
         }
         return null;
     }
@@ -283,7 +330,7 @@ export async function getPluginRepo(ID: string): Promise<string|null> {
         }
         return (response === "404: Not Found" ? null : getRepo(response));
     } catch (error) {
-        console.log("error in getPluginRepo", error)
+        this.log("error in getPluginRepo", error)
         return null;
     }
 }
@@ -312,7 +359,7 @@ export async function getReleaseFile(repo:string|null, version:string|null, file
         const download = await request({ url: URL });
         return ((download === "Not Found" || download === `{"error":"Not Found"}`) ? null : download);
     } catch (error) {
-        console.log("error in grabReleaseFileFromRepository", URL, error)
+        this.log("error in grabReleaseFileFromRepository", URL, error)
         return null;
     }
 }
