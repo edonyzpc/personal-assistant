@@ -110,7 +110,7 @@ export class PluginManager extends Plugin {
 		this.addCommand({
 			id: 'update-plugins',
 			name: "Update plugins with one command",
-			callback:async () => {
+			callback: async () => {
 				const pluginUpdater = new PluginsUpdater(this.app, this);
 				await pluginUpdater.update();
 			}
