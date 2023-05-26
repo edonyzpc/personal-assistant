@@ -58,15 +58,27 @@ export class PluginsUpdater implements ObsidianManifest {
             };
             this.items.push(i);
         }
-        this.totalPlugins = this.items.length;
+        this.totalPlugins = 0;
         this.checkedPlugins = 0;
 
         this.noticeEl = document.createDocumentFragment();
-        // add progress bar: `<div class='meter'><span style='width:" + dayPercent + "%'>" + dayPercent + "%</span></div>`
-        const divPluginUpdateProgressBar = this.noticeEl.createEl("div", { attr: { style: `color: green`, id: `div-plugin-updating-progress-bar` } });
-        divPluginUpdateProgressBar.addClass('meter');
-        const spanPluginUpdateProgressBar = divPluginUpdateProgressBar.createEl('span', { attr: { style: `width: ${100*(this.checkedPlugins/this.totalPlugins)}%`, id: `span-plugin-updating-progress-bar` } });
-        spanPluginUpdateProgressBar.setText(`${100*(this.checkedPlugins/this.totalPlugins)}`);
+        // add progress bar:
+        // ```
+        // <div class='progress-bar-grid' >
+        //   <div class='meter' >
+        //     <span style='width:39.3%' > </span>
+        //   </div >
+        //   <div class='progress-bar-number' > 39.3 % </div > 
+        // </div >
+        // ```
+        const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-grid` } });
+        divPluginUpdateProgressBarGrid.addClass('progress-bar-grid');
+        const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar` } });
+        divProgressBarMeter.addClass('meter');
+        divProgressBarMeter.createEl('span', { attr: { style: `width: 0%`, id: `span-plugin-updating-progress-bar` } });
+        const divProgressBarText = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-text` } });
+        divProgressBarText.addClass('progress-bar-number');
+        divProgressBarText.setText(`0%`);
         addIcon('PLUGIN_UPDATE_STATUS', icons['PLUGIN_UPDATE_STATUS']);
         addIcon('PLUGIN_UPDATED_STATUS', icons['PLUGIN_UPDATED_STATUS']);
         addIcon('SWITCH_ON_STATUS', icons['SWITCH_ON_STATUS']);
@@ -183,6 +195,7 @@ export class PluginsUpdater implements ObsidianManifest {
             const tag = this.getLatestTag(latestRlease);
             const need2Update = await this.isNeedToUpdate(plugin);
             if (need2Update && repo && tag) {
+                this.totalPlugins++;
                 this.items[i].toUpdate = {
                     needUpdate: true,
                     repo: repo,
@@ -196,7 +209,6 @@ export class PluginsUpdater implements ObsidianManifest {
         }
         new Notice(this.noticeEl, 0);
         this.items.forEach(async (plugin) => {
-            this.checkedPlugins++;
             this.log("start to update " + plugin.id);
             if (plugin.toUpdate?.needUpdate) {
                 this.log("updateing plugin " + plugin.id, 10);
@@ -214,10 +226,14 @@ export class PluginsUpdater implements ObsidianManifest {
                 // reload plugins after updated
                 (this.app as any).plugins.enablePluginAndSave(plugin.id); // eslint-disable-line @typescript-eslint/no-explicit-any
                 // update notice display
+                this.checkedPlugins++;
                 const spanProgressBar = document.getElementById(`span-plugin-updating-progress-bar`);
                 console.log(spanProgressBar);
+                console.log(this.checkedPlugins);
                 console.log(100 * (this.checkedPlugins / this.totalPlugins));
-                spanProgressBar?.setAttr("style", `width:${100*(this.checkedPlugins / this.totalPlugins)}`);
+                spanProgressBar?.setAttr("style", `width:${100 * (this.checkedPlugins / this.totalPlugins)}%`);
+                const divProgressBarText = document.getElementById(`div-plugin-updating-progress-bar-text`);
+                divProgressBarText?.setText(`${100 * (this.checkedPlugins / this.totalPlugins)}%`);
                 const div2Display = document.getElementById(`div-${plugin.id}`);
                 if (div2Display) {
                     const spanItem = div2Display.getElementsByTagName('span').item(0);
