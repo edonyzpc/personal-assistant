@@ -10,7 +10,7 @@
 
 > ***号外***: 新特性来啦：一键更新插件并且不需要考虑 `raw.githubusercontent.com` 相关的问题。
 <div align="center">
-<img src="./docs/personal-assistant-v1.1.5.gif" alt="usage video"/>
+<img src="./docs/personal-assistant-v1.1.6.gif" alt="usage video"/>
 </div>
 
 > ***使用示例***

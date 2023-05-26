@@ -10,7 +10,7 @@
 
 > ***NOTE***: New shiny feature: update plugins with one command without considering `raw.githubusercontent.com` related issue.
 <div align="center">
-<img src="./docs/personal-assistant-v1.1.5.gif" alt="usage video"/>
+<img src="./docs/personal-assistant-v1.1.6.gif" alt="usage video"/>
 </div>
 
 > ***Basic Example***
