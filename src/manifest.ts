@@ -44,6 +44,9 @@ export class PluginsUpdater implements ObsidianManifest {
     private noticeEl: DocumentFragment;
     private totalPlugins: number;
     private checkedPlugins: number;
+    // json object of obsidian community plugins,
+    // and source is in https://raw.githubusercontent.com/obsidianmd/obsidian-releases/master/community-plugins.json
+    private communityPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
 
     constructor(app: App, plugin: PluginManager) {
         this.app = app;
@@ -85,24 +88,31 @@ export class PluginsUpdater implements ObsidianManifest {
         addIcon('SWITCH_OFF_STATUS', icons['SWITCH_OFF_STATUS']);
     }
 
-    async getRepo(pluginID: string): Promise<string | null> {
+    private async getCommunityPluginsJson(): Promise<string|null> {
         try {
             const response = await request({ url: this.URLCDN });
-            const getPluginRepo = (r: string): string | null => {
-                const lists = JSON.parse(r);
-                for (let i = 0; i < lists.length; i++) {
-                    const { id, repo } = lists[i];
-                    if (id === pluginID) {
-                        return repo;
-                    }
-                }
-                return null;
-            };
-            return (response === "404: Not Found" ? null : getPluginRepo(response));
+            return (response === "404: Not Found" ? null : response);
         } catch (error) {
-            this.log("error in getPluginRepo", error)
+            this.log("error in getCommunityPlugins", error)
             return null;
         }
+    }
+
+    async getRepo(pluginID: string): Promise<string | null> {
+        if (!this.communityPlugins) {
+            // cache the community plugins json
+            const communityPluginsJson = await this.getCommunityPluginsJson();
+            if (communityPluginsJson) {
+                this.communityPlugins = JSON.parse(communityPluginsJson);
+            }
+        }
+        for (let i = 0; i < this.communityPlugins.length; i++) {
+            const { id, repo } = this.communityPlugins[i];
+            if (id === pluginID) {
+                return repo;
+            }
+        }
+        return null;
     }
 
     private async getLatestRelease(repo: string | null): Promise<JSON | null> {
@@ -124,7 +134,7 @@ export class PluginsUpdater implements ObsidianManifest {
 
     private getLatestTag(latest: JSON | null): string | null {
         if (!latest) {
-            this.log("JSON is null");
+            this.log("the input JSON for getLatestTag is null");
             return null;
         }
         for (let index = 0; index < Object.getOwnPropertyNames(latest).length; index++) {
@@ -133,7 +143,7 @@ export class PluginsUpdater implements ObsidianManifest {
             }
         }
 
-        this.log("final return null");
+        this.log(`getLatestTag cannot find the object named ${this.TagName}`);
         return null;
     }
 
@@ -144,11 +154,9 @@ export class PluginsUpdater implements ObsidianManifest {
             const latestRelease = await this.getLatestRelease(repo);
             if (latestRelease) {
                 let tag = this.getLatestTag(latestRelease);
-                this.log("tag ==== ", tag);
                 if (tag) {
-                    this.log("tag == " + tag);
                     if (tag.startsWith('v')) tag = tag.split('v')[1];
-                    this.log("tag = " + tag, "current tag: " + m.version);
+                    this.log("latest tag: " + tag, "current tag: " + m.version);
                     // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
                     if (gt(tag, m.version)) {
                         return true;
@@ -188,6 +196,7 @@ export class PluginsUpdater implements ObsidianManifest {
             this.log(`updated plugin[${pluginID}]`);
         };
 
+        const notice = new Notice(this.noticeEl, 0);
         for (let i = 0; i < this.items.length; i++) {
             const plugin = this.items[i];
             const repo = await this.getRepo(plugin.id);
@@ -201,17 +210,25 @@ export class PluginsUpdater implements ObsidianManifest {
                     repo: repo,
                     targetVersion: tag,
                 };
-                const div = this.noticeEl.createEl("div", { attr: { style: `color: red`, id: `div-${plugin.id}` } });
-                setIcon(div, 'SWITCH_OFF_STATUS');
-                div.createSpan({ text: `update ${plugin.id} to ${tag}`, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
-                div.querySelector('svg')?.addClass("plugin-update-svg");
+                const noticeEl = document.getElementById(`div-plugin-updating-progress-bar-grid`);
+                if (noticeEl) {
+                    const div = noticeEl.parentElement?.createEl("div", { attr: { style: `color: red`, id: `div-${plugin.id}` } });
+                    if (div) {
+                        setIcon(div, 'SWITCH_OFF_STATUS');
+                        div.createSpan({ text: `update ${plugin.id} to ${tag}`, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
+                        div.querySelector('svg')?.addClass("plugin-update-svg");
+                    } else {
+                        this.log("fail to find notice DocumentFragment");
+                    }
+                } else {
+                    this.log("fail to find plugin updating notice HTML Element");
+                }
             }
         }
-        new Notice(this.noticeEl, 0);
-        this.items.forEach(async (plugin) => {
-            this.log("start to update " + plugin.id);
+
+        const promisePluginsUpdating = this.items.map(async (plugin) => {
             if (plugin.toUpdate?.needUpdate) {
-                this.log("updateing plugin " + plugin.id, 10);
+                this.log("updating plugin " + plugin.id);
                 const releases: PluginReleaseFiles = {
                     mainJs: null,
                     manifest: null,
@@ -244,10 +261,18 @@ export class PluginsUpdater implements ObsidianManifest {
                     setIcon(div2Display, 'SWITCH_ON_STATUS');
                     div2Display.createSpan({ text: `update ${plugin.id} to ${tag}`, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
                     div2Display.querySelector('svg')?.addClass("plugin-update-svg");
-                    //setIcon(div2Display, 'PLUGIN_UPDATED_STATUS');
                 }
             }
-        })
+        });
+        await Promise.all(promisePluginsUpdating);
+        this.log('All async plugin updating completed')
+        // finally plugin updating has been done, whether there are plugins that need to be updated
+        const spanProgressBar = document.getElementById(`span-plugin-updating-progress-bar`);
+        spanProgressBar?.setAttr("style", `width:100%`);
+        const divProgressBarText = document.getElementById(`div-plugin-updating-progress-bar-text`);
+        divProgressBarText?.setText(`100%`);
+        // hide notice
+        setInterval(() => { notice.hide(); }, 1000);
     }
 }
 
