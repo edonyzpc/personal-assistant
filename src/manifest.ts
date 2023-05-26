@@ -228,9 +228,6 @@ export class PluginsUpdater implements ObsidianManifest {
                 // update notice display
                 this.checkedPlugins++;
                 const spanProgressBar = document.getElementById(`span-plugin-updating-progress-bar`);
-                console.log(spanProgressBar);
-                console.log(this.checkedPlugins);
-                console.log(100 * (this.checkedPlugins / this.totalPlugins));
                 spanProgressBar?.setAttr("style", `width:${100 * (this.checkedPlugins / this.totalPlugins)}%`);
                 const divProgressBarText = document.getElementById(`div-plugin-updating-progress-bar-text`);
                 divProgressBarText?.setText(`${100 * (this.checkedPlugins / this.totalPlugins)}%`);
