@@ -66,30 +66,6 @@ export class PluginsUpdater implements ObsidianManifest {
         this.checkedPlugins = 0;
 
         this.progressBar = new ProgressBar(plugin, "plugin-updating", this.totalPlugins);
-        /*
-        this.noticeEl = document.createDocumentFragment();
-        // add progress bar:
-        // ```
-        // <div class='progress-bar-grid' >
-        //   <div class='meter' >
-        //     <span style='width:39.3%' > </span>
-        //   </div >
-        //   <div class='progress-bar-number' > 39.3 % </div > 
-        // </div >
-        // ```
-        const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-grid` } });
-        divPluginUpdateProgressBarGrid.addClass('progress-bar-grid');
-        const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar` } });
-        divProgressBarMeter.addClass('meter');
-        divProgressBarMeter.createEl('span', { attr: { style: `width: 0%`, id: `span-plugin-updating-progress-bar` } });
-        const divProgressBarText = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-text` } });
-        divProgressBarText.addClass('progress-bar-number');
-        divProgressBarText.setText(`0%`);
-        addIcon('PLUGIN_UPDATE_STATUS', icons['PLUGIN_UPDATE_STATUS']);
-        addIcon('PLUGIN_UPDATED_STATUS', icons['PLUGIN_UPDATED_STATUS']);
-        addIcon('SWITCH_ON_STATUS', icons['SWITCH_ON_STATUS']);
-        addIcon('SWITCH_OFF_STATUS', icons['SWITCH_OFF_STATUS']);
-        */
     }
 
     private async getCommunityPluginsJson(): Promise<string|null> {
@@ -200,9 +176,6 @@ export class PluginsUpdater implements ObsidianManifest {
             this.log(`updated plugin[${pluginID}]`);
         };
 
-        /*
-        const notice = new Notice(this.noticeEl, 0);
-        */
         this.progressBar.show();
         for (let i = 0; i < this.items.length; i++) {
             const plugin = this.items[i];
@@ -218,21 +191,6 @@ export class PluginsUpdater implements ObsidianManifest {
                     targetVersion: tag,
                 };
                 this.progressBar.addDiv(plugin.id, `update ${plugin.id} to ${tag}`);
-                /*
-                const noticeEl = document.getElementById(`div-plugin-updating-progress-bar-grid`);
-                if (noticeEl) {
-                    const div = noticeEl.parentElement?.createEl("div", { attr: { style: `color: red`, id: `div-${plugin.id}` } });
-                    if (div) {
-                        setIcon(div, 'SWITCH_OFF_STATUS');
-                        div.createSpan({ text: `update ${plugin.id} to ${tag}`, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
-                        div.querySelector('svg')?.addClass("plugin-update-svg");
-                    } else {
-                        this.log("fail to find notice DocumentFragment");
-                    }
-                } else {
-                    this.log("fail to find plugin updating notice HTML Element");
-                }
-                */
             }
         }
 
@@ -255,38 +213,12 @@ export class PluginsUpdater implements ObsidianManifest {
                 // update notice display
                 this.progressBar.stepin(plugin.id, `update ${plugin.id} to ${tag}`, this.totalPlugins);
                 this.checkedPlugins++;
-                /*
-                const spanProgressBar = document.getElementById(`span-plugin-updating-progress-bar`);
-                spanProgressBar?.setAttr("style", `width:${100 * (this.checkedPlugins / this.totalPlugins)}%`);
-                const divProgressBarText = document.getElementById(`div-plugin-updating-progress-bar-text`);
-                divProgressBarText?.setText(`${100 * (this.checkedPlugins / this.totalPlugins)}%`);
-                const div2Display = document.getElementById(`div-${plugin.id}`);
-                if (div2Display) {
-                    const spanItem = div2Display.getElementsByTagName('span').item(0);
-                    if (spanItem) {
-                        div2Display.removeChild(spanItem);
-                    }
-                    const svgItem = div2Display.getElementsByTagName('svg').item(0);
-                    if (svgItem) {
-                        div2Display.removeChild(svgItem);
-                    }
-                    setIcon(div2Display, 'SWITCH_ON_STATUS');
-                    div2Display.createSpan({ text: `update ${plugin.id} to ${tag}`, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
-                    div2Display.querySelector('svg')?.addClass("plugin-update-svg");
-                }
-                */
             }
         });
         await Promise.all(promisePluginsUpdating);
         this.log('All async plugin updating completed')
         // finally plugin updating has been done, whether there are plugins that need to be updated
         this.progressBar.updateProgress(100);
-        /*
-        const spanProgressBar = document.getElementById(`span-plugin-updating-progress-bar`);
-        spanProgressBar?.setAttr("style", `width:100%`);
-        const divProgressBarText = document.getElementById(`div-plugin-updating-progress-bar-text`);
-        divProgressBarText?.setText(`100%`);
-        */
         // hide notice
         setInterval(() => { this.progressBar.hide(); }, 1500);
     }
