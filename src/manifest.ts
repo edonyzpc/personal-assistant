@@ -130,7 +130,7 @@ export class PluginsUpdater implements ObsidianManifest {
             return (response === "404: Not Found" ? null : await JSON.parse(response));
         } catch (error) {
             if(error!="Error: Request failed, status 404")  { //normal error, ignore
-                this.log(`error in grabManifestJsonFromRepository for ${URL}`, error);
+                this.log(`error in getLatestRelease for ${URL}`, error);
             }
             return null;
         }
@@ -298,10 +298,16 @@ export class ThemeUpdater implements ObsidianManifest {
     app: App;
     private commandPlugin: PluginManager;
     private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private communityThemes: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private TagName = 'tag_name';
+    private totalThemes: number;
+    private checkedThemes: number;
+    private progressBar: ProgressBar;
 
-    public async init(app: App, plugin:PluginManager): Promise<ThemeUpdater> {
+    static async init(app: App, plugin:PluginManager): Promise<ThemeUpdater> {
         const themeUpdater = new ThemeUpdater(app, plugin);
-        themeUpdater.items = await this.listThemes(this.app);
+        themeUpdater.items = await themeUpdater.listThemes(themeUpdater.app);
+        themeUpdater.communityThemes = await themeUpdater.getCommunityThemesJson();
         return themeUpdater;
     }
 
@@ -321,27 +327,171 @@ export class ThemeUpdater implements ObsidianManifest {
         return themes;
     }
 
+    private async getCommunityThemesJson(): Promise<string|null> {
+        try {
+            const response = await request({ url: this.URLCDN });
+            return (response === "404: Not Found" ? null : response);
+        } catch (error) {
+            this.log("error in getCommunityThemes", error)
+            return null;
+        }
+    }
+
     private constructor(app: App, plugin: PluginManager) {
         this.app = app;
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases/community-css-themes.json`;
         this.commandPlugin = plugin;
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.totalThemes = 0;
+        this.checkedThemes = 0;
+
+        this.progressBar = new ProgressBar(plugin, "theme-updating", this.totalThemes);
     }
 
-    async getRepo(pluginID: string): Promise<string | null> {
+    async getRepo(themeID: string): Promise<string | null> {
+        if (!this.communityThemes) {
+            // cache the community plugins json
+            const communityThemesJson = await this.getCommunityThemesJson();
+            if (communityThemesJson) {
+                this.communityThemes = JSON.parse(communityThemesJson);
+            }
+        }
+        for (let i = 0; i < this.communityThemes.length; i++) {
+            const { id, repo } = this.communityThemes[i];
+            if (id === themeID) {
+                return repo;
+            }
+        }
+        return null;
+    }
+
+    private async getLatestRelease(repo: string | null): Promise<JSON | null> {
+        if (!repo) {
+            this.log("repo is null");
+            return null;
+        }
+        const URL = `https://api.github.com/repos/${repo}/releases/latest`;
+        try {
+            const response = await request({ url: URL });
+            return (response === "404: Not Found" ? null : await JSON.parse(response));
+        } catch (error) {
+            if(error!="Error: Request failed, status 404")  { //normal error, ignore
+                this.log(`error in getLatestRelease for ${URL}`, error);
+            }
+            return null;
+        }
+    }
+
+    private getLatestTag(latest: JSON | null): string | null {
+        if (!latest) {
+            this.log("the input JSON for getLatestTag is null");
+            return null;
+        }
+        for (let index = 0; index < Object.getOwnPropertyNames(latest).length; index++) {
+            if (this.TagName === Object.getOwnPropertyNames(latest)[index]) {
+                return Object(latest)[this.TagName] as string;
+            }
+        }
+
+        this.log(`getLatestTag cannot find the object named ${this.TagName}`);
         return null;
     }
 
     async isNeedToUpdate(m: Manifest): Promise<boolean> {
+        const repo = await this.getRepo(m.id);
+        if (repo) {
+            this.log("checking need to update for "+repo);
+            const latestRelease = await this.getLatestRelease(repo);
+            if (latestRelease) {
+                let tag = this.getLatestTag(latestRelease);
+                if (tag) {
+                    if (tag.startsWith('v')) tag = tag.split('v')[1];
+                    this.log("latest tag: " + tag, "current tag: " + m.version);
+                    // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
+                    if (gt(tag, m.version)) {
+                        return true;
+                    }
+                }
+            }
+        }
         return false;
     }
 
     async update(): Promise<void> {
-        const files: ThemeReleaseFiles = {
-            manifest: "",
-            theme: ""
+        const getReleaseFile = async (repo: string | null, version: string | null, fileName: string) => {
+            const URL = `https://github.com/${repo}/releases/download/${version}/${fileName}`;
+            try {
+                const download = await request({ url: URL });
+                return ((download === "Not Found" || download === `{"error":"Not Found"}`) ? null : download);
+            } catch (error) {
+                this.log("error in grabReleaseFileFromRepository", URL, error)
+                return null;
+            }
         };
-        this.log(files.manifest);
-        return;
+        const writeToThemeFolder = async (themeID: string, files: ThemeReleaseFiles): Promise<void> => {
+            const themeTargetFolderPath = normalizePath(this.app.vault.configDir + "/themes/" + themeID) + "/";
+            const adapter = this.app.vault.adapter;
+            if (!files.theme || !files.manifest) {
+                this.log("downloaded files are empty");
+                return;
+            }
+            if (await adapter.exists(themeTargetFolderPath) === false ||
+                !(await adapter.exists(themeTargetFolderPath + "manifest.json"))) {
+                // if plugin folder doesnt exist or manifest.json doesn't exist, create it and save the plugin files
+                await adapter.mkdir(themeTargetFolderPath);
+            }
+            await adapter.write(themeTargetFolderPath + "theme.css", files.theme);
+            await adapter.write(themeTargetFolderPath + "manifest.json", files.manifest);
+            this.log(`updated theme[${themeID}]`);
+        };
+
+        this.progressBar.show();
+        for (let i = 0; i < this.items.length; i++) {
+            const theme = this.items[i];
+            const repo = await this.getRepo(theme.id);
+            const latestRlease = await this.getLatestRelease(repo);
+            const tag = this.getLatestTag(latestRlease);
+            const need2Update = await this.isNeedToUpdate(theme);
+            if (need2Update && repo && tag) {
+                this.totalThemes++;
+                this.items[i].toUpdate = {
+                    needUpdate: true,
+                    repo: repo,
+                    targetVersion: tag,
+                };
+                this.progressBar.addDiv(theme.id, `update ${theme.id} to ${tag}`);
+            }
+        }
+
+        const promiseThemesUpdating = this.items.map(async (theme) => {
+            if (theme.toUpdate?.needUpdate) {
+                this.log("updating theme " + theme.id);
+                const releases: ThemeReleaseFiles = {
+                    manifest: null,
+                    theme: null,
+                };
+                const repo = theme.toUpdate.repo;
+                const tag = theme.toUpdate.targetVersion;
+                releases.theme = await getReleaseFile(repo, tag, 'theme.css');
+                releases.manifest = await getReleaseFile(repo, tag, 'manifest.json');
+                await writeToThemeFolder(theme.id, releases);
+                // update notice display
+                this.progressBar.stepin(theme.id, `update ${theme.id} to ${tag}`, this.totalThemes);
+                this.checkedThemes++;
+            }
+        });
+        await Promise.all(promiseThemesUpdating);
+        this.log('All async theme updating completed')
+        // finally plugin updating has been done, whether there are plugins that need to be updated
+        this.progressBar.updateProgress(100);
+        /*
+        const spanProgressBar = document.getElementById(`span-plugin-updating-progress-bar`);
+        spanProgressBar?.setAttr("style", `width:100%`);
+        const divProgressBarText = document.getElementById(`div-plugin-updating-progress-bar-text`);
+        divProgressBarText?.setText(`100%`);
+        */
+        // hide notice
+        setInterval(() => { this.progressBar.hide(); }, 1500);
+        // TODO: reload theme after updated
     }
 }

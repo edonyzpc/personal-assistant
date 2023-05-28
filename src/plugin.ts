@@ -5,7 +5,7 @@ import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
 import { Memos } from './memos';
 import { icons } from './utils';
-import { PluginsUpdater } from './manifest';
+import { PluginsUpdater, ThemeUpdater } from './manifest';
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
 	if (debug) console.log(...msg);
@@ -113,6 +113,15 @@ export class PluginManager extends Plugin {
 			callback: async () => {
 				const pluginUpdater = new PluginsUpdater(this.app, this);
 				await pluginUpdater.update();
+			}
+		})
+
+		this.addCommand({
+			id: 'update-themes',
+			name: "Update themes with one command",
+			callback: async () => {
+				const themeUpdater = await ThemeUpdater.init(this.app, this);
+				await themeUpdater.update();
 			}
 		})
 
