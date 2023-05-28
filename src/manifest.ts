@@ -307,7 +307,12 @@ export class ThemeUpdater implements ObsidianManifest {
     static async init(app: App, plugin:PluginManager): Promise<ThemeUpdater> {
         const themeUpdater = new ThemeUpdater(app, plugin);
         themeUpdater.items = await themeUpdater.listThemes(themeUpdater.app);
-        themeUpdater.communityThemes = await themeUpdater.getCommunityThemesJson();
+        const themeJson  = await themeUpdater.getCommunityThemesJson();
+        if (themeJson) {
+            themeUpdater.communityThemes = JSON.parse(themeJson);
+        } else {
+            new Notice("fail to get community themes", 1500);
+        }
         return themeUpdater;
     }
 
@@ -357,8 +362,8 @@ export class ThemeUpdater implements ObsidianManifest {
             }
         }
         for (let i = 0; i < this.communityThemes.length; i++) {
-            const { id, repo } = this.communityThemes[i];
-            if (id === themeID) {
+            const { name, repo } = this.communityThemes[i];
+            if (name === themeID) {
                 return repo;
             }
         }
@@ -484,12 +489,6 @@ export class ThemeUpdater implements ObsidianManifest {
         this.log('All async theme updating completed')
         // finally plugin updating has been done, whether there are plugins that need to be updated
         this.progressBar.updateProgress(100);
-        /*
-        const spanProgressBar = document.getElementById(`span-plugin-updating-progress-bar`);
-        spanProgressBar?.setAttr("style", `width:100%`);
-        const divProgressBarText = document.getElementById(`div-plugin-updating-progress-bar-text`);
-        divProgressBarText?.setText(`100%`);
-        */
         // hide notice
         setInterval(() => { this.progressBar.hide(); }, 1500);
         // TODO: reload theme after updated
