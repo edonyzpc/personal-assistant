@@ -8,7 +8,7 @@
     <a href="/README.md">English</a>
 </p>
 
-> ***号外***: 新特性来啦：一键更新插件并且不需要考虑 `raw.githubusercontent.com` 相关的问题。
+> ***号外***: 新特性来啦：一键更新插件和主题并且不需要考虑 `raw.githubusercontent.com` 相关的问题。
 <div align="center">
 <img src="./docs/personal-assistant-v1.1.6.gif" alt="usage video"/>
 </div>

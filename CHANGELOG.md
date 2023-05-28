@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.1.7](https://github.com/edonyzpc/personal-assistant/compare/1.1.6...1.1.7) (2023-05-28)
+### Features
+- supporting updating themes with one command
+
 ## [1.1.6](https://github.com/edonyzpc/personal-assistant/compare/1.1.5...1.1.6) (2023-05-26)
 ### Improve
 - updating plugin performance improvement
