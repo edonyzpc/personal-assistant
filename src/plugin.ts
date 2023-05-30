@@ -125,6 +125,26 @@ export class PluginManager extends Plugin {
 			}
 		})
 
+		this.addCommand({
+			id: 'update-metadata',
+			name: "Update metadata with one command",
+			callback: async () => {
+				const meta = this.app.metadataCache.getCache('Diary-2023-04-03.md');
+				console.log(meta);
+				if (meta && meta.frontmatter) {
+					for (const key of Object.getOwnPropertyNames(meta.frontmatter)) {
+						if (key === 'modify') {
+							console.log((meta.frontmatter as any)[key]);
+							(meta.frontmatter as any)[key] = moment().format("YYYY-MM-DD");
+						}
+					}
+				}
+				this.registerEvent(this.app.vault.on('modify', (file) => {
+					console.log(`${file.path} is modified`);
+				}));
+			}
+		})
+
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SettingTab(this.app, this));
 	}
