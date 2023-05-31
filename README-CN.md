@@ -6,6 +6,9 @@
     <a href="/README_cn.md">简体中文</a>
     ·
     <a href="/README.md">English</a>
+    <br/>
+    <img alt="Tag" src="https://img.shields.io/github/v/tag/edonyzpc/personal-assistant?color=%23000000&label=版本&logo=tga&logoColor=%23008cff&sort=semver&style=social" />
+    <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
 > ***号外***: 新特性来啦：一键更新插件和主题并且不需要考虑 `raw.githubusercontent.com` 相关的问题。

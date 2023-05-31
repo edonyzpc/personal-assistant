@@ -6,6 +6,13 @@
     <a href="/README-CN.md">简体中文</a>
     ·
     <a href="/README.md">English</a>
+    <br/>
+    <img alt="Tag" src="https://img.shields.io/github/v/tag/edonyzpc/personal-assistant?color=%23000000&label=Version&logo=tga&logoColor=%23008cff&sort=semver&style=social" />
+    <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?logo=obsidian&logoColor=%23b300ff&style=social" />
+</p>
+
+<p align="center">
+ 
 </p>
 
 > ***NOTE***: New shiny feature: update plugins and themes with one command without considering `raw.githubusercontent.com` related issue.
