@@ -35,7 +35,7 @@ export class ProgressBar {
         // </div >
         // ```
         //const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-grid` } });
-        const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: this.gridID } });
+        const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: this.gridID, style: "width:240px;" } });
         divPluginUpdateProgressBarGrid.addClass('progress-bar-grid');
         //const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar` } });
         const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridDivID } });
