@@ -25,8 +25,8 @@
 2. automatically open current note related graph view
 3. automatically open Memos like quick note in macOS
 4. switch on/off plugin in command palette
-5. automatically update plugins(WIP, working-in-progress)
-6. automatically update themes(WIP)
+5. automatically update plugins with one command
+6. automatically update themes with one command
 7. automatically set color of graph view
 
 ## Develop
