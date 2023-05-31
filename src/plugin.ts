@@ -177,13 +177,13 @@ export class PluginManager extends Plugin {
 				// If the file already exists, open it and send notification
 				const files = vault.getMarkdownFiles();
 				for (const file of files) {
-					this.log(file);
 					if (file.path === filePath) {
-						const leaf = this.app.workspace.getLeaf(false);
+						const leaf = this.app.workspace.getLeaf('tab');
 						await leaf.openFile(file);
+						return;
 					}
 				}
-				throw new Error(`${filePath} already exists`);
+				throw new Error(`${filePath} already exists but fail to open`);
 			}
 			if (directoryPath !== '') {
 				// If `input` includes a directory part, create it
@@ -193,7 +193,7 @@ export class PluginManager extends Plugin {
 			this.log("creating file: ", filePath);
 			const File = await vault.create(filePath, '');
 			// Create the file and open it in the active leaf
-			const leaf = this.app.workspace.getLeaf(false);
+			const leaf = this.app.workspace.getLeaf('tab');
 			await leaf.openFile(File);
 		} catch (error) {
 			new Notice(error.toString());
