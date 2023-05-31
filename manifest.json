@@ -1,7 +1,7 @@
 {
 	"id": "personal-assistant",
 	"name": "Personal Assistant",
-	"version": "1.1.7",
+	"version": "1.1.8",
 	"minAppVersion": "1.1.0",
 	"description": "Streamline workflows within Obsidian, managing memos and plugins with just one command.",
 	"author": "edony",

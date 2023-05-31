@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.1.7](https://github.com/edonyzpc/personal-assistant/compare/1.1.7...1.1.8) (2023-05-31)
+### Fix
+- fix recording command will hide tab header issue
+- remove debugging log which is not related
+
+### Docs
+- add plugin status in README
+
 ## [1.1.7](https://github.com/edonyzpc/personal-assistant/compare/1.1.6...1.1.7) (2023-05-28)
 ### Features
 - supporting updating themes with one command
