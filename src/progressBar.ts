@@ -34,15 +34,11 @@ export class ProgressBar {
         //   <div class='progress-bar-number' > 39.3 % </div > 
         // </div >
         // ```
-        //const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-grid` } });
         const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: this.gridID } });
         divPluginUpdateProgressBarGrid.addClass('progress-bar-grid');
-        //const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar` } });
         const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridDivID } });
         divProgressBarMeter.addClass('meter');
-        //divProgressBarMeter.createEl('span', { attr: { style: `width: 0%`, id: `span-plugin-updating-progress-bar` } });
         divProgressBarMeter.createEl('span', { attr: { style: `width: 0%`, id: this.gridDivSpanID } });
-        //const divProgressBarText = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-text` } });
         const divProgressBarText = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridTextID } });
         divProgressBarText.addClass('progress-bar-number');
         divProgressBarText.setText(`0%`);
