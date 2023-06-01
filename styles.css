@@ -78,7 +78,7 @@
             transparent 75%,
             transparent);
     z-index: 1;
-    background-size: 50px 50px;
+    background-size: 40px 40px;
     animation: move 2s linear infinite;
     border-top-right-radius: 20px;
     border-bottom-right-radius: 20px;
@@ -98,7 +98,7 @@
     }
 
     100% {
-        background-position: 50px 50px;
+        background-position: 40px 40px;
     }
 }
 
@@ -117,9 +117,8 @@
 
 .progress-bar-grid {
     display: grid;
-    grid-template-columns: 10fr 1fr;
+    grid-template-columns: 9fr 1fr;
     column-gap: 8px;
-    max-width: 480px;
     margin-bottom: 8px;
     width: 100%;
 }
@@ -131,7 +130,7 @@
 .progress-bar-notice {
     max-width: 480px !important;
     background-color: #363636;
-    border: 0.05em dashed #ff00005e;
+    border: 0.08em dashed #ff00005e;
 }
 
 .progress-bar-items-grid {
@@ -139,7 +138,6 @@
     grid-template-columns: 18px 9fr;
     grid-template-rows: repeat(auto-fill, 37px);
     column-gap: 8px;
-    max-width: 480px;
 }
 
 .progress-bar-items-text {

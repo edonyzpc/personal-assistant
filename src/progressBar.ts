@@ -113,7 +113,7 @@ export class ProgressBar {
 
     updateProgress(percentage: number) {
         const spanProgressBar = document.getElementById(this.gridDivSpanID);
-        spanProgressBar?.setAttr("style", `max-width: inherit;width:${percentage}%`);
+        spanProgressBar?.setAttr("style", `width:${percentage}%`);
         const divProgressBarText = document.getElementById(this.gridTextID);
         divProgressBarText?.setText(`${percentage}%`);
     }
