@@ -2,7 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.1.7](https://github.com/edonyzpc/personal-assistant/compare/1.1.7...1.1.8) (2023-05-31)
+## [1.1.9](https://github.com/edonyzpc/personal-assistant/compare/1.1.8...1.1.9) (2023-06-01)
+### Fix
+- apply css grid layout for progress bar
+- fix notice UI reentrant issue
+- progressing related width display issue
+
+
+## [1.1.8](https://github.com/edonyzpc/personal-assistant/compare/1.1.7...1.1.8) (2023-05-31)
 ### Fix
 - fix recording command will hide tab header issue
 - remove debugging log which is not related
