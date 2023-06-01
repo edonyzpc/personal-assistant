@@ -36,6 +36,8 @@ export interface PluginManagerSettings {
             rgb: number,
         }
     }[];
+    enableMetadataUpdating: boolean;
+    metadatas: { key:string, value:any }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -75,7 +77,11 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
                 rgb: 6617700,
             }
         }
-    ]
+    ],
+    enableMetadataUpdating: false,
+    metadatas: [
+        { key: "modify", value: "YYYY-MM-DD HH:mm:ss" },
+    ],
 }
 
 interface GraphColor {
@@ -444,6 +450,65 @@ export class SettingTab extends PluginSettingTab {
                     })
                 });
         }
+
+        // setting options for updating metadata
+        const descFormat = document.createDocumentFragment();
+        descFormat.createEl('p', undefined, (p) => {
+            p.innerText = "Auto updating metadata in frontmatter when file is modified.\nTimestamp format follows `moment.js` and syntax details, ";
+            p.createEl('a', undefined, (link) => {
+                link.innerText = 'please check moment format.';
+                link.href = 'https://momentjs.com/docs/#/displaying/format/';
+            });
+        });
+        new Setting(containerEl).setName('Enable Updating Metadata')
+            .setDesc(descFormat)
+            .addToggle(toggle => {
+                toggle.setValue(plugin.settings.enableMetadataUpdating).onChange(async value => {
+                    plugin.settings.enableMetadataUpdating = value;
+                    await plugin.saveSettings();
+                    this.display();
+                })
+            });
+        if (plugin.settings.enableMetadataUpdating) {
+            // deep copy metadata for rendering
+            const metas: { key: string, value: any }[] = JSON.parse(JSON.stringify(plugin.settings.metadatas)); // eslint-disable-line @typescript-eslint/no-explicit-any
+            const nameEl1 = document.createDocumentFragment();
+            nameEl1.createSpan({ text: "---" });
+            new Setting(containerEl)
+                .setName(nameEl1);
+            for (let i = 0; i < metas.length; i++) {
+                const index = this.findMetadata(metas[i].key);
+                const nameEl = document.createDocumentFragment();
+                nameEl.appendText(`${metas[i].key}: `);
+                new Setting(containerEl)
+                    .setName(nameEl)
+                    .addText(text => {
+                        text.setValue(plugin.settings.metadatas[index].value)
+                            .onChange(async (value) => {
+                                if (index > -1) {
+                                    plugin.settings.metadatas[index].value = value;
+                                    await this.plugin.saveSettings();
+                                }
+                            })
+                    })
+            }
+            const nameEl2 = document.createDocumentFragment();
+            nameEl2.createSpan({ text: "---" });
+            new Setting(containerEl)
+                .setName(nameEl2);
+            // TODO: design better UX to configure frontmatter auto-updating
+            /*
+            new Setting(containerEl)
+                .addButton(btn => {
+                    btn.setButtonText("Add Frontmatter").onClick(async () => {
+                        this.log("adding new frontmatter");
+                        this.plugin.settings.metadatas.push({key: 'Key', value: 'Value'});
+                        await this.plugin.saveSettings();
+                        this.display();
+                    })
+                });
+            */
+        }
     }
 
     private findGraphColor(graphColor: GraphColor): number {
@@ -452,5 +517,11 @@ export class SettingTab extends PluginSettingTab {
                 graphColor.color.a === color.color.a &&
                 graphColor.color.rgb === color.color.rgb;
         });
+    }
+
+    private findMetadata(metaKey: string) {
+        return this.plugin.settings.metadatas.findIndex((m) => {
+            return m.key === metaKey;
+        })
     }
 }
