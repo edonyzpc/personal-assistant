@@ -27,7 +27,7 @@
     "obsidian": "latest",
     "ts-jest": "^29.1.0",
     "tslib": "2.5.2",
-    "typescript": "5.0.4"
+    "typescript": "5.1.3"
   },
   "dependencies": {
     "semver": "^7.5.1",
