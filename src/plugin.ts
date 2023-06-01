@@ -141,7 +141,19 @@ export class PluginManager extends Plugin {
 											for (const metaConfig of this.settings.metadatas) {
 												if (key === metaConfig.key) {
 													this.log((frontmatter as any)[key]); // eslint-disable-line @typescript-eslint/no-explicit-any
-													(frontmatter as any)[key] = moment().format(metaConfig.value); // eslint-disable-line @typescript-eslint/no-explicit-any
+													let valut2Change: string;
+													switch (metaConfig.t) {
+														case 'moment':
+															valut2Change = moment().format(metaConfig.value);
+															break;
+														case 'string':
+															valut2Change = metaConfig.value;
+															break;
+														default:
+															valut2Change = metaConfig.value;
+															break;
+													}
+													(frontmatter as any)[key] = valut2Change; // eslint-disable-line @typescript-eslint/no-explicit-any
 												}
 											}
 										}
