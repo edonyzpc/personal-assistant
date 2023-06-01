@@ -19,9 +19,9 @@
 }
 
 .plugin-update-svg {
-    top: 0.36em;
     position: relative;
     margin-right: 4px;
+    align-self: center;
 }
 
 .meter {
@@ -40,6 +40,7 @@
     font-size: 13px;
     font-style: oblique 40deg;;
     color: brown;
+    width: auto;
 }
 
 .meter>span {
@@ -57,6 +58,7 @@
         inset 0 -2px 6px rgba(0, 0, 0, 0.4);
     position: relative;
     overflow: hidden;
+    width: auto;
 }
 
 .meter>span:after,
@@ -83,6 +85,7 @@
     border-top-left-radius: 20px;
     border-bottom-left-radius: 20px;
     overflow: hidden;
+    width: auto;
 }
 
 .animate>span:after {
@@ -112,16 +115,36 @@
     background-image: none;
 }
 
-* {
-    box-sizing: border-box;
-}
-
 .progress-bar-grid {
     display: grid;
-    grid-template-columns: 5fr 1fr;
+    grid-template-columns: 10fr 1fr;
     column-gap: 8px;
+    max-width: 480px;
+    margin-bottom: 8px;
+    width: 100%;
 }
 
 .progress-bar-number {
     color: rgba(84, 240, 84, 0.69);
+}
+
+.progress-bar-notice {
+    max-width: 480px !important;
+    background-color: #363636;
+    border: 0.05em dashed #ff00005e;
+}
+
+.progress-bar-items-grid {
+    display: grid;
+    grid-template-columns: 18px 9fr;
+    grid-template-rows: repeat(auto-fill, 37px);
+    column-gap: 8px;
+    max-width: 480px;
+}
+
+.progress-bar-items-text {
+    color: var(--text-normal);
+    display: inline-block;
+    height: 18px;
+    align-self: center;
 }

@@ -35,7 +35,7 @@ export class ProgressBar {
         // </div >
         // ```
         //const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: `div-plugin-updating-progress-bar-grid` } });
-        const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: this.gridID, style: "width:240px;" } });
+        const divPluginUpdateProgressBarGrid = this.noticeEl.createEl("div", { attr: { id: this.gridID } });
         divPluginUpdateProgressBarGrid.addClass('progress-bar-grid');
         //const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: `div-plugin-updating-progress-bar` } });
         const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridDivID } });
@@ -55,10 +55,11 @@ export class ProgressBar {
     addDiv(itemID: string, divText: string) {
         const noticeEl = document.getElementById(this.gridID);
         if (noticeEl) {
-            const div = noticeEl.parentElement?.createEl("div", { attr: { style: `color: red`, id: `div-${itemID}` } });
+            const div = noticeEl.parentElement?.createEl("div", { attr: { style: `color: red`, id: `div-${itemID}-${this.idNumber}` } });
             if (div) {
+                div.addClass('progress-bar-items-grid');
                 setIcon(div, 'SWITCH_OFF_STATUS');
-                div.createSpan({ text: divText, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
+                div.createSpan({ text: divText, attr: { class: "progress-bar-items-text" } });
                 div.querySelector('svg')?.addClass("plugin-update-svg");
             } else {
                 this.log("fail to find notice DocumentFragment");
@@ -74,6 +75,9 @@ export class ProgressBar {
             return;
         }
         this.notice = new Notice(this.noticeEl, 0);
+        const progressBarGrid = document.getElementById(this.gridID);
+        progressBarGrid?.parentElement?.setAttribute("id", `progress-bar-${this.idNumber}`);
+        progressBarGrid?.parentElement?.addClass('progress-bar-notice');
     }
 
     hide() {
@@ -91,7 +95,7 @@ export class ProgressBar {
         spanProgressBar?.setAttr("style", `width:${100 * (progress / totalSteps)}%`);
         const divProgressBarText = document.getElementById(this.gridTextID);
         divProgressBarText?.setText(`${100 * (progress / totalSteps)}%`);
-        const div2Display = document.getElementById(`div-${itemID}`);
+        const div2Display = document.getElementById(`div-${itemID}-${this.idNumber}`);
         if (div2Display) {
             const spanItem = div2Display.getElementsByTagName('span').item(0);
             if (spanItem) {
@@ -102,14 +106,14 @@ export class ProgressBar {
                 div2Display.removeChild(svgItem);
             }
             setIcon(div2Display, 'SWITCH_ON_STATUS');
-            div2Display.createSpan({ text: divText, attr: { style: "color: var(--text-normal);display: inline-block; height: 18px;top: 0.24em" } });
+            div2Display.createSpan({ text: divText, attr: { class: "progress-bar-items-text" } });
             div2Display.querySelector('svg')?.addClass("plugin-update-svg");
         }
     }
 
     updateProgress(percentage: number) {
         const spanProgressBar = document.getElementById(this.gridDivSpanID);
-        spanProgressBar?.setAttr("style", `width:${percentage}%`);
+        spanProgressBar?.setAttr("style", `max-width: inherit;width:${percentage}%`);
         const divProgressBarText = document.getElementById(this.gridTextID);
         divProgressBarText?.setText(`${percentage}%`);
     }

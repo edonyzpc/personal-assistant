@@ -220,7 +220,7 @@ export class PluginsUpdater implements ObsidianManifest {
         // finally plugin updating has been done, whether there are plugins that need to be updated
         this.progressBar.updateProgress(100);
         // hide notice
-        setInterval(() => { this.progressBar.hide(); }, 1500);
+        //setInterval(() => { this.progressBar.hide(); }, 1500);
     }
 }
 
