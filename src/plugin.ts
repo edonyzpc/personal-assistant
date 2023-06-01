@@ -129,19 +129,28 @@ export class PluginManager extends Plugin {
 			id: 'update-metadata',
 			name: "Update metadata with one command",
 			callback: async () => {
-				const meta = this.app.metadataCache.getCache('Diary-2023-04-03.md');
-				console.log(meta);
-				if (meta && meta.frontmatter) {
-					for (const key of Object.getOwnPropertyNames(meta.frontmatter)) {
-						if (key === 'modify') {
-							console.log((meta.frontmatter as any)[key]);
-							(meta.frontmatter as any)[key] = moment().format("YYYY-MM-DD");
+				if (this.settings.enableMetadataUpdating) {
+					this.registerEvent(this.app.vault.on('modify', (file) => {
+						if (file instanceof TFile) {
+							if ((file as TFile).extension === 'md') {
+								// update metadata
+								const meta = this.app.metadataCache.getCache(file.path);
+								if (meta && meta.frontmatter) {
+									this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+										for (const key of Object.getOwnPropertyNames(frontmatter)) {
+											for (const metaConfig of this.settings.metadatas) {
+												if (key === metaConfig.key) {
+													this.log((frontmatter as any)[key]); // eslint-disable-line @typescript-eslint/no-explicit-any
+													(frontmatter as any)[key] = moment().format(metaConfig.value); // eslint-disable-line @typescript-eslint/no-explicit-any
+												}
+											}
+										}
+									});
+								}
+							}
 						}
-					}
+					}));
 				}
-				this.registerEvent(this.app.vault.on('modify', (file) => {
-					console.log(`${file.path} is modified`);
-				}));
 			}
 		})
 
