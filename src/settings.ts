@@ -37,7 +37,7 @@ export interface PluginManagerSettings {
         }
     }[];
     enableMetadataUpdating: boolean;
-    metadatas: { key:string, value:any }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
+    metadatas: { key:string, value:any, t:string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -80,7 +80,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     ],
     enableMetadataUpdating: false,
     metadatas: [
-        { key: "modify", value: "YYYY-MM-DD HH:mm:ss" },
+        { key: "modify", value: "YYYY-MM-DD HH:mm:ss", t: "moment" },
     ],
 }
 
@@ -491,23 +491,58 @@ export class SettingTab extends PluginSettingTab {
                                 }
                             })
                     })
+                    .addExtraButton(btn => {
+                        btn.setIcon("trash").setTooltip("Remove").onClick(async () => {
+                            //this.plugin.settings.colorGroups.remove(colorGroup);
+                            if (index > -1) {
+                                this.log(`removing  ${this.plugin.settings.metadatas[index]}`);
+                                this.plugin.settings.metadatas.splice(index, 1);
+                            }
+
+                            await this.plugin.saveSettings();
+                            this.display();
+                        });
+                    })
             }
             const nameEl2 = document.createDocumentFragment();
             nameEl2.createSpan({ text: "---" });
             new Setting(containerEl)
                 .setName(nameEl2);
             // TODO: design better UX to configure frontmatter auto-updating
-            /*
+
+            let key: string;
+            let value: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+            let t: string;
             new Setting(containerEl)
+                .setName("Key-Value to add to frontmatter")
+                .addText(text => { 
+                    text.setValue(key)
+                    .onChange(async (val) => {
+                        key = val;
+                    })
+                })
+                .addText(text => {
+                    text.setValue(value)
+                    .onChange(async (val) => {
+                        value = val;
+                    })
+                })
+                .addDropdown(dropDown => {
+                    dropDown.addOption('moment', '1 Timestamp');
+                    dropDown.addOption('string', '2 Regular String');
+                    dropDown.onChange(async (value) => {
+                        t = value;
+                    });
+                })
                 .addButton(btn => {
                     btn.setButtonText("Add Frontmatter").onClick(async () => {
                         this.log("adding new frontmatter");
-                        this.plugin.settings.metadatas.push({key: 'Key', value: 'Value'});
+                        this.plugin.settings.metadatas.push({key: key, value: value, t: t});
                         await this.plugin.saveSettings();
                         this.display();
                     })
                 });
-            */
+
         }
     }
 
