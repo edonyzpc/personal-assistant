@@ -79,7 +79,7 @@
             transparent);
     z-index: 1;
     background-size: 40px 40px;
-    animation: move 2s linear infinite;
+    animation: move 4s linear infinite;
     border-top-right-radius: 20px;
     border-bottom-right-radius: 20px;
     border-top-left-radius: 20px;
