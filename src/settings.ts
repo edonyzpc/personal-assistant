@@ -514,28 +514,31 @@ export class SettingTab extends PluginSettingTab {
             let value: any; // eslint-disable-line @typescript-eslint/no-explicit-any
             let t: string;
             new Setting(containerEl)
-                .setName("Key-Value to add to frontmatter")
+                .setName("Add Key:Value in frontmatter")
+                .setDesc('Value now only upport formatted timestamp and regular string.')
                 .addText(text => { 
-                    text.setValue(key)
+                    text.setPlaceholder('key')
+                    .setValue(key)
                     .onChange(async (val) => {
                         key = val;
                     })
                 })
                 .addText(text => {
-                    text.setValue(value)
+                    text.setPlaceholder('value')
+                    .setValue(value)
                     .onChange(async (val) => {
                         value = val;
                     })
                 })
                 .addDropdown(dropDown => {
-                    dropDown.addOption('moment', '1 Timestamp');
-                    dropDown.addOption('string', '2 Regular String');
+                    dropDown.addOption('string', '1 Regular String');
+                    dropDown.addOption('moment', '2 Timestamp');
                     dropDown.onChange(async (value) => {
                         t = value;
                     });
                 })
                 .addButton(btn => {
-                    btn.setButtonText("Add Frontmatter").onClick(async () => {
+                    btn.setButtonText("Add").onClick(async () => {
                         this.log("adding new frontmatter");
                         this.plugin.settings.metadatas.push({key: key, value: value, t: t});
                         await this.plugin.saveSettings();
