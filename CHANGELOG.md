@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.1](https://github.com/edonyzpc/personal-assistant/compare/1.2.0...1.2.1) (2023-06-02)
+### Improve
+- improve status bar to reflecting metadata updating status
+- status bar click to open pluging setting tab
+
 ## [1.2.0](https://github.com/edonyzpc/personal-assistant/compare/1.1.9...1.2.0) (2023-06-02)
 ### Improve
 - improve setting tab of auto-updating frontmatter of notes
