@@ -166,6 +166,8 @@ export class PluginManager extends Plugin {
 							}
 						}
 					}));
+				} else {
+					new Notice("update metadata need to enable in setting tab.");
 				}
 			}
 		})
