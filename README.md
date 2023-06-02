@@ -15,12 +15,17 @@
  
 </p>
 
-> ***NOTE***: New shiny feature: update plugins and themes with one command without considering `raw.githubusercontent.com` related issue.
+> ***NOTE***: New shiny feature: auto-updating metadata in note's frontmatter
+<div align="center">
+<img src="./docs/personal-assistant-v1.2.0.gif" alt="usage video"/>
+</div>
+
+> ***Update Plugins and Themes***
 <div align="center">
 <img src="./docs/personal-assistant-v1.1.6.gif" alt="usage video"/>
 </div>
 
-> ***Basic Example***
+> ***Basic Usage***
 <div align="center">
 <img src="./docs/personal-assistant-v1.1.1.gif" alt="usage video"/>
 </div>

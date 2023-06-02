@@ -11,7 +11,12 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦：一键更新插件和主题并且不需要考虑 `raw.githubusercontent.com` 相关的问题。
+> ***号外***: 新特性来啦！支持自动更新笔记中 frontmatter 的元数据。
+<div align="center">
+<img src="./docs/personal-assistant-v1.2.0.gif" alt="usage video"/>
+</div>
+
+> ***Update Plugins and Themes***
 <div align="center">
 <img src="./docs/personal-assistant-v1.1.6.gif" alt="usage video"/>
 </div>
