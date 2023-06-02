@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.0](https://github.com/edonyzpc/personal-assistant/compare/1.1.9...1.2.0) (2023-06-02)
+### Improve
+- improve setting tab of auto-updating frontmatter of notes
+- improve progress bar animation
+
 ## [1.1.9](https://github.com/edonyzpc/personal-assistant/compare/1.1.8...1.1.9) (2023-06-01)
 ### Fix
 - apply css grid layout for progress bar
