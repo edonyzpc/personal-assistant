@@ -54,12 +54,14 @@ export class PluginManager extends Plugin {
 		const statusBarItemEl = this.addStatusBarItem();
 		// status bar style setting
 		statusBarItemEl.addClass('personal-assistant-statusbar');
+        statusBarItemEl.setAttribute("id", `personal-assistant-statusbar`);
 		addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
 		setIcon(statusBarItemEl, 'PluginAST_STATUSBAR');
 		// status bar event handling
 		statusBarItemEl.onClickEvent((e) => {
-			//TODO: showup plugin mannual modal
-			new PluginControlModal(this.app).open();
+			// showup setting tab of this plugin
+			(this.app as any).setting.open(); // eslint-disable-line @typescript-eslint/no-explicit-any
+			(this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
 		});
 
 		this.addCommand({
@@ -130,6 +132,8 @@ export class PluginManager extends Plugin {
 			name: "Update metadata with one command",
 			callback: async () => {
 				if (this.settings.enableMetadataUpdating) {
+					const statusBar = document.getElementById("personal-assistant-statusbar");
+					statusBar?.addClass("personal-assistant-statusbar-breathing");
 					this.registerEvent(this.app.vault.on('modify', (file) => {
 						if (file instanceof TFile) {
 							if ((file as TFile).extension === 'md') {

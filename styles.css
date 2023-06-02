@@ -1,11 +1,38 @@
 .personal-assistant-statusbar:hover {
-    color: #2fcc71;
+    color: #9e2ff9;
 }
 
 .personal-assistant-statusbar {
     /* fill="#2fcc7099" */
     order: 1;
-    color: #2fcc7099;
+    color: #2fcc70ee;
+
+}
+
+.personal-assistant-statusbar-breathing {
+    animation: svg-blink 2s infinite;
+    opacity: 1;
+}
+@keyframes svg-blink {
+    0% {
+        opacity: 1;
+        color: #2fcc71;
+    }
+    50% {
+        opacity: .8;
+        transform: scale(0.8);
+        filter: drop-shadow(6px 6px 10px #0280ff);
+        color: #2fcc70ee;
+    }
+    100% {
+        opacity: 1;
+        color: #2fcc71;
+    }
+}
+
+#svg-animate {
+    /*fill:#f42323 !important;*/
+    filter: drop-shadow(6px 6px 10px #fa1515);
 }
 
 .plugin-swith-on-off-svg {
