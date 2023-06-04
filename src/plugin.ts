@@ -7,6 +7,7 @@ import { Memos } from './memos';
 import { icons } from './utils';
 import { PluginsUpdater, ThemeUpdater } from './manifest';
 import { monkeyPatchConsole } from 'obsidian-hack/obsidian-mobile-debug';
+import { CalloutModal } from './callout';
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
 	if (debug) console.log(...msg);
@@ -174,6 +175,20 @@ export class PluginManager extends Plugin {
 				}
 			}
 		})
+
+
+		this.addCommand({
+			id: "test-command",
+			name: "Test Command (dev)",
+			callback: () => {
+				console.log(`Test QuickAdd (dev)`);
+				const fn = () => {
+					new CalloutModal("0.12.0").open();
+				};
+
+				void fn();
+			},
+		});
 
 		// This adds a settings tab so the user can configure various aspects of the plugin
 		this.addSettingTab(new SettingTab(this.app, this));
