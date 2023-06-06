@@ -6,6 +6,7 @@ import { LocalGraph } from './localGraph';
 import { Memos } from './memos';
 import { icons } from './utils';
 import { PluginsUpdater, ThemeUpdater } from './manifest';
+import { monkeyPatchConsole } from 'obsidian-hack/obsidian-mobile-debug';
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
 	if (debug) console.log(...msg);
@@ -21,6 +22,8 @@ export class PluginManager extends Plugin {
 		// showup notification of plugin starting when it is in debug mode
 		if (this.settings.debug) {
 			new Notice("starting obsidian assistant");
+			// register mobile debug log
+			monkeyPatchConsole(this);
 		}
 		// observe element which is concerned by commands
 		const observer = new MutationObserver((mutations) => {
