@@ -1,4 +1,4 @@
-import { App, Notice, PluginManifest, normalizePath, request } from "obsidian";
+import { App, Notice, type PluginManifest, normalizePath, request } from "obsidian";
 import { PluginManager } from "plugin";
 import { gt, prerelease } from "semver";
 
