@@ -1,7 +1,8 @@
-import { Notice, Plugin, TFile, addIcon, moment, normalizePath, setIcon } from 'obsidian';
+import { Notice, Plugin, TFile, addIcon, normalizePath, setIcon } from 'obsidian';
+import moment from 'moment';
 
 import { PluginControlModal } from './modal'
-import { SettingTab, PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
 import { Memos } from './memos';
 import { icons } from './utils';
