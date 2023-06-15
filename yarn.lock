@@ -2531,6 +2531,18 @@ npm-run-path@^4.0.1:
   dependencies:
     path-key "^3.0.0"
 
+obsidian-callout-manager@^1.0.2-alpha1:
+  version "1.0.2-alpha1"
+  resolved "https://registry.npmmirror.com/obsidian-callout-manager/-/obsidian-callout-manager-1.0.2-alpha1.tgz#bc2f185d3a2b1c2f62263fa73f4a0f96636dff95"
+  integrity sha512-aAFxpQ8rWSgCMOTKl7iYV2Zh2ecEjohxXJUzCtvnMak76dniTKvr+hp24hfyUC/S7KydsF5WqyL1I4/WsvdOSQ==
+  dependencies:
+    obsidian-extra "^0.1.3"
+
+obsidian-extra@^0.1.3:
+  version "0.1.5"
+  resolved "https://registry.npmmirror.com/obsidian-extra/-/obsidian-extra-0.1.5.tgz#437dd7a3e3e7d80ccc45e274b67e2a826b76bbac"
+  integrity sha512-QD6sVlRwNgtefk/7DHrZ4uyhyveth+HXyVJvEx1/XVxIDpD4+kGoLkdUzH3XCTD4TUeXdS3PerlhhS6tT9EcBQ==
+
 obsidian@latest:
   version "1.2.8"
   resolved "https://registry.npmmirror.com/obsidian/-/obsidian-1.2.8.tgz#294e76d9021cbf341ffd5d49e2bcfa15432da7d7"

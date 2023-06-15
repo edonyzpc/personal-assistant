@@ -34,6 +34,7 @@
     "typescript": "5.1.3"
   },
   "dependencies": {
+    "obsidian-callout-manager": "^1.0.2-alpha1",
     "semver": "^7.5.1",
     "vanilla-picker": "2.12.1"
   }
