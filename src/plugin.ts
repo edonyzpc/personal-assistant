@@ -1,5 +1,6 @@
 import { Notice, Plugin, TFile, addIcon, normalizePath, setIcon } from 'obsidian';
 import moment from 'moment';
+import { type CalloutManager, getApi} from "obsidian-callout-manager";
 
 import { PluginControlModal } from './modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
@@ -18,6 +19,7 @@ export class PluginManager extends Plugin {
 	settings: PluginManagerSettings
 	private localGraph = new LocalGraph(this.app, this);
 	private memos = new Memos(this.app, this);
+	private calloutManager: CalloutManager<true> | undefined;
 
 	async onload() {
 		await this.loadSettings();
@@ -68,6 +70,13 @@ export class PluginManager extends Plugin {
 			(this.app as any).setting.open(); // eslint-disable-line @typescript-eslint/no-explicit-any
 			(this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
 		});
+
+		// get callout manager api
+		this.app.workspace.onLayoutReady(async () => {
+			console.log("ready to use callout manager API");
+			this.calloutManager = await getApi(this);
+			console.log(this.calloutManager);
+		})
 
 		this.addCommand({
 			id: 'startup-recording',
@@ -184,6 +193,13 @@ export class PluginManager extends Plugin {
 			callback: () => {
 				console.log(`Test QuickAdd (dev)`);
 				const fn = () => {
+					const callouts = this.calloutManager?.getCallouts();
+					if (callouts) {
+						console.log("callouts iterating");
+						for (let i = 0; i < callouts.length; i++) {
+							console.log(callouts[i]);
+						}
+					}
 					new CalloutModal("0.12.0").open();
 				};
 
