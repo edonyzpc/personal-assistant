@@ -1,6 +1,6 @@
 import { App, Notice, PluginManifest, normalizePath, request } from "obsidian";
 import { PluginManager } from "plugin";
-import { gt } from "semver";
+import { gt, prerelease } from "semver";
 
 import { ProgressBar } from "progressBar";
 
@@ -138,6 +138,13 @@ export class PluginsUpdater implements ObsidianManifest {
                     if (tag.startsWith('v')) tag = tag.split('v')[1];
                     this.log("latest tag: " + tag, "current tag: " + m.version);
                     // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
+                    const pre = prerelease(tag);
+                    if (pre) {
+                        if (pre.length > 0) {
+                            // do not update pre-release version
+                            return false;
+                        }
+                    }
                     if (gt(tag, m.version)) {
                         return true;
                     }
@@ -345,6 +352,13 @@ export class ThemeUpdater implements ObsidianManifest {
                     if (tag.startsWith('v')) tag = tag.split('v')[1];
                     this.log("latest tag: " + tag, "current tag: " + m.version);
                     // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
+                    const pre = prerelease(tag);
+                    if (pre) {
+                        if (pre.length > 0) {
+                            // do not update pre-release version
+                            return false;
+                        }
+                    }
                     if (gt(tag, m.version)) {
                         return true;
                     }
