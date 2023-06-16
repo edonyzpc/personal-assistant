@@ -106,6 +106,7 @@ Now Personal Assistant plugin is available in [plugin market](https://obsidian.m
 
 ## Attribution
 - Best thanks for project [obsidian-advanced-new-file](https://github.com/vanadium23/obsidian-advanced-new-file) for the code of `createNote`, `createDirectory`
+- Best thanks for project [obsidian-callout-manager](https://github.com/eth-p/obsidian-callout-manager) for the `class CalloutPreviewComponent` and `color.ts`
 
 ## Contact
 
