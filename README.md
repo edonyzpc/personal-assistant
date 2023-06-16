@@ -15,7 +15,12 @@
  
 </p>
 
-> ***NOTE***: New shiny feature: auto-updating metadata in note's frontmatter
+> ***NOTE***: New shiny feature: list built-in, snippets, theme callouts styles for quickly inserting
+<div align="center">
+<img src="./docs/personal-assistant-v1.2.2.gif" alt="usage video"/>
+</div>
+
+> ***Update metadata***
 <div align="center">
 <img src="./docs/personal-assistant-v1.2.0.gif" alt="usage video"/>
 </div>
@@ -40,6 +45,7 @@
 5. automatically update plugins with one command
 6. automatically update themes with one command
 7. automatically set color of graph view
+8. list all callouts css configuration for quickly inserting
 
 ## Develop
 
