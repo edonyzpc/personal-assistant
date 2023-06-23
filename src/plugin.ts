@@ -1,4 +1,4 @@
-import { Notice, Plugin, TFile, addIcon, normalizePath, setIcon } from 'obsidian';
+import { type Debouncer, Notice, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
 import moment from 'moment';
 import { type CalloutManager, getApi} from "obsidian-callout-manager";
 
@@ -20,6 +20,7 @@ export class PluginManager extends Plugin {
 	private localGraph = new LocalGraph(this.app, this);
 	private memos = new Memos(this.app, this);
 	calloutManager: CalloutManager<true> | undefined;
+	private updateDebouncer:Debouncer<[file: TFile | null], void>;
 
 	async onload() {
 		await this.loadSettings();
@@ -73,9 +74,7 @@ export class PluginManager extends Plugin {
 
 		// get callout manager api
 		this.app.workspace.onLayoutReady(async () => {
-			console.log("ready to use callout manager API");
 			this.calloutManager = await getApi(this);
-			console.log(this.calloutManager);
 		})
 
 		this.addCommand({
@@ -146,42 +145,28 @@ export class PluginManager extends Plugin {
 			name: "Update metadata with one command",
 			callback: async () => {
 				if (this.settings.enableMetadataUpdating) {
-					const statusBar = document.getElementById("personal-assistant-statusbar");
-					statusBar?.addClass("personal-assistant-statusbar-breathing");
-					this.registerEvent(this.app.vault.on('modify', (file) => {
-						if (file instanceof TFile) {
-							if ((file as TFile).extension === 'md') {
-								// update metadata
-								const meta = this.app.metadataCache.getCache(file.path);
-								if (meta && meta.frontmatter) {
-									this.app.fileManager.processFrontMatter(file, (frontmatter) => {
-										for (const key of Object.getOwnPropertyNames(frontmatter)) {
-											for (const metaConfig of this.settings.metadatas) {
-												if (key === metaConfig.key) {
-													this.log((frontmatter as any)[key]); // eslint-disable-line @typescript-eslint/no-explicit-any
-													let valut2Change: string;
-													switch (metaConfig.t) {
-														case 'moment':
-															valut2Change = moment().format(metaConfig.value);
-															break;
-														case 'string':
-															valut2Change = metaConfig.value;
-															break;
-														default:
-															valut2Change = metaConfig.value;
-															break;
-													}
-													(frontmatter as any)[key] = valut2Change; // eslint-disable-line @typescript-eslint/no-explicit-any
-												}
-											}
-										}
-									});
-								}
-							}
-						}
-					}));
+					if (this.settings.isEnabledMetadataUpdating) {
+						// if the command has already triggered, disable it and remove status
+						const statusBar = document.getElementById("personal-assistant-statusbar");
+						statusBar?.removeClass("personal-assistant-statusbar-breathing");
+						console.log("statusBar", statusBar);
+						// empty debounce which will stop updating metadata
+						this.updateDebouncer = debounce((file) => { }, 100, true);
+						// update the command triggered status
+						this.settings.isEnabledMetadataUpdating = false;
+					} else {
+						this.updateDebouncer = debounce(this.updateMetadata, 100, true);
+						// if updating metadata is enabled, set the status and monitor the events to update metadata
+						const statusBar = document.getElementById("personal-assistant-statusbar");
+						statusBar?.addClass("personal-assistant-statusbar-breathing");
+						this.registerEvent(this.app.workspace.on('file-open', (file) => {
+							this.updateDebouncer(file);
+						}));
+						// update the command triggered status
+						this.settings.isEnabledMetadataUpdating = true;
+					}
 				} else {
-					new Notice("update metadata need to enable in setting tab.");
+					new Notice("update metadata command is not enabled in setting tab");
 				}
 			}
 		})
@@ -281,5 +266,42 @@ export class PluginManager extends Plugin {
 		const parts = strings.map((s) => String(s).trim()).filter((s) => s != null);
 		return normalizePath(parts.join('/'));
 	}
+
+	private updateMetadata = (file: TFile|null) => {
+		if (file instanceof TFile) {
+			if ((file as TFile).extension === 'md') {
+				this.log(file.stat.ctime, file.stat.mtime, file.stat.size);
+				// update metadata
+				const meta = this.app.metadataCache.getCache(file.path);
+				if (meta && meta.frontmatter) {
+					this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+						for (const key of Object.getOwnPropertyNames(frontmatter)) {
+							for (const metaConfig of this.settings.metadatas) {
+								if (key === metaConfig.key) {
+									this.log((frontmatter as any)[key]); // eslint-disable-line @typescript-eslint/no-explicit-any
+									let valut2Change: string;
+									switch (metaConfig.t) {
+										case 'moment':
+											valut2Change = moment(new Date(file.stat.mtime)).format(metaConfig.value);
+											break;
+										case 'string':
+											valut2Change = metaConfig.value;
+											break;
+										default:
+											valut2Change = metaConfig.value;
+											break;
+									}
+									(frontmatter as any)[key] = valut2Change; // eslint-disable-line @typescript-eslint/no-explicit-any
+								}
+							}
+						}
+						setTimeout(() => {
+							this.updateDebouncer.cancel();
+						}, 100);
+					});
+				}
+			}
+		}
+	};
 }
 

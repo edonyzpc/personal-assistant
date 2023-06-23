@@ -37,7 +37,8 @@ export interface PluginManagerSettings {
         }
     }[];
     enableMetadataUpdating: boolean;
-    metadatas: { key:string, value:any, t:string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
+    metadatas: { key: string, value: any, t: string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
+    isEnabledMetadataUpdating: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -82,6 +83,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     metadatas: [
         { key: "modify", value: "YYYY-MM-DD HH:mm:ss", t: "moment" },
     ],
+    isEnabledMetadataUpdating: false,
 }
 
 interface GraphColor {
