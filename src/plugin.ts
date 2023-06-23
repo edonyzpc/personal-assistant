@@ -149,7 +149,6 @@ export class PluginManager extends Plugin {
                         // if the command has already triggered, disable it and remove status
                         const statusBar = document.getElementById("personal-assistant-statusbar");
                         statusBar?.removeClass("personal-assistant-statusbar-breathing");
-                        console.log("statusBar", statusBar);
                         // empty debounce which will stop updating metadata
                         this.updateDebouncer = debounce((file) => { }, 100, true);
                         // update the command triggered status
@@ -270,7 +269,6 @@ export class PluginManager extends Plugin {
     private updateMetadata = (file: TFile|null) => {
         if (file instanceof TFile) {
             if ((file as TFile).extension === 'md') {
-                this.log(file.stat.ctime, file.stat.mtime, file.stat.size);
                 // update metadata
                 const meta = this.app.metadataCache.getCache(file.path);
                 if (meta && meta.frontmatter) {
