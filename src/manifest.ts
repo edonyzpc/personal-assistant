@@ -79,6 +79,9 @@ export class PluginsUpdater implements ObsidianManifest {
     }
 
     async getRepo(pluginID: string): Promise<string | null> {
+        if (this.commandPlugin.settings.cachePluginRepo[pluginID]) {
+            return this.commandPlugin.settings.cachePluginRepo[pluginID];
+        }
         if (!this.communityPlugins) {
             // cache the community plugins json
             const communityPluginsJson = await this.getCommunityPluginsJson();
@@ -89,6 +92,9 @@ export class PluginsUpdater implements ObsidianManifest {
         for (let i = 0; i < this.communityPlugins.length; i++) {
             const { id, repo } = this.communityPlugins[i];
             if (id === pluginID) {
+                // cache the `repo <----> plugin-id` into data.json for fast getting
+                this.commandPlugin.settings.cachePluginRepo[pluginID] = repo;
+                await this.commandPlugin.saveSettings();
                 return repo;
             }
         }
