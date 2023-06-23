@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.3](https://github.com/edonyzpc/personal-assistant/compare/1.2.2...1.2.3) (2023-06-23)
+### Fix
+- fix metadata upating conflict issues
+
 ## [1.2.2](https://github.com/edonyzpc/personal-assistant/compare/1.2.1...1.2.2) (2023-06-16)
 ### Feature
 - list all callout css style including theme, css snippets, built-in for quick-insert callout
