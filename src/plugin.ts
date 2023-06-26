@@ -10,6 +10,7 @@ import { icons } from './utils';
 import { PluginsUpdater, ThemeUpdater } from './manifest';
 import { monkeyPatchConsole } from 'obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
+import { ExampleView } from 'preview';
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -178,6 +179,16 @@ export class PluginManager extends Plugin {
                 new CalloutModal(this.app, this).open();
             },
         });
+
+        this.addCommand({
+            id: "preview-records",
+            name: "Preview records as configured",
+            callback: () => {
+                const leaf = this.app.workspace.getLeaf('tab');
+                const view = new ExampleView(leaf);
+                leaf.open(view);
+            }
+        })
 
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new SettingTab(this.app, this));
