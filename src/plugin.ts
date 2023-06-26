@@ -185,7 +185,7 @@ export class PluginManager extends Plugin {
             name: "Preview records as configured",
             callback: () => {
                 const leaf = this.app.workspace.getLeaf('tab');
-                const view = new ExampleView(leaf);
+                const view = new ExampleView(this.app, this, leaf);
                 leaf.open(view);
             }
         })
