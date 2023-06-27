@@ -33,7 +33,7 @@ export class ExampleView extends ItemView {
                 variable: 1,
                 app: this.app,
                 plugin: this.plugin,
-                fileName: "Diary-2023-04-03.md",
+                fileNames: ["Diary-2023-04-03.md", "Diary-2023-04-08.md"],
                 container: this.containerEl,
             }
         });
