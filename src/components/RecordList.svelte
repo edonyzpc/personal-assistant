@@ -3,22 +3,24 @@
 	import type { PluginManager } from "plugin";
     export let variable: number;
     export let app: App;
-    export let fileName: string;
+    export let fileNames: string[];
     export let container: HTMLElement;
     export let plugin: PluginManager
 
-    async function readMarkdownFile() {
-        return app.vault.adapter.read(fileName);
+    async function readMarkdownFile(file: string) {
+        return app.vault.adapter.read(file);
     }
 
-    let readMarkdown = readMarkdownFile();
-
-    const subContainer = () => {
+    const subContainer = (id: string) => {
         //const element = container.querySelector(".recordlist-wrapper");
-        const element = document.getElementById("persoanl-assistant-record-list-wrapper-1");
+        console.log("----");
+        console.log(document.getElementById("persoanl-assistant-record-list-wrapper-1"));
+        const element = document.getElementById(id);
         if (element) {
+            console.log("get the element");
             return element;
         } else {
+            console.log("fail over to get parent element");
             return container;
         }
     }
@@ -33,10 +35,13 @@
     <span>My number is {variable}!</span>
     </div>
     <div class="record-wrapper" id="persoanl-assistant-record-list-wrapper-1">
-        {#await readMarkdown then fileString }
-            {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(), fileName, plugin) then }
+        {#each fileNames as fileName, idx}
+            <div id="record-wrapper-sub-{idx}"></div>
+            {#await readMarkdownFile(fileName) then fileString }
+                <!-- svelte-ignore empty-block -->
+                {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
             {/await}
-        {/await}
+        {/each}
     </div>
 </div>
 
