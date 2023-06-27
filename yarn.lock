@@ -1430,9 +1430,9 @@ esbuild-plugin-copy@2.1.1:
     globby "^11.0.3"
 
 esbuild-svelte@^0.7.3:
-  version "0.7.3"
-  resolved "https://registry.npmmirror.com/esbuild-svelte/-/esbuild-svelte-0.7.3.tgz#676c49b3892215fc706e73d24b03d0ed83c50ccf"
-  integrity sha512-aq4PjZowV2LhW5U6KYKDkaHiAp9q/NquthbX1tddGRGYrlaBBGgDNis58jNU4wU6+iHsNWfLVsg8G3W6ccszdw==
+  version "0.7.4"
+  resolved "https://registry.yarnpkg.com/esbuild-svelte/-/esbuild-svelte-0.7.4.tgz#62f2d663ee93acf13f3909ea767029e9407a25b0"
+  integrity sha512-d4Vafj5nFTmZPXznW6YL3ZHXiWwNiPLcE8yfq/5oE8nbyrZlIB92ZCVh3JMbMje+vCb4jnKdH+WoV2sLZRdOJA==
 
 esbuild@0.18.10:
   version "0.18.10"
