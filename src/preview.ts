@@ -1,32 +1,35 @@
-import RecordList from './components/RecordList.svelte'
-
-import { App, ItemView, WorkspaceLeaf } from "obsidian";
+import { App, ItemView, WorkspaceLeaf, addIcon } from "obsidian";
 
 import { PluginManager } from './plugin';
+import RecordList from './components/RecordList.svelte'
+import { icons } from './utils';
 
-export const VIEW_TYPE_EXAMPLE = "example-view";
+export const RECORD_PREVIEW_TYPE = "record-preview";
 
-export class ExampleView extends ItemView {
+export class RecordPreview extends ItemView {
     component: RecordList;
     app: App;
     plugin: PluginManager;
 
     constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
         super(leaf);
+        addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
+        super.icon = 'PluginAST_STATUSBAR';
+        super.navigation = false;
         this.app = app;
         this.plugin = plugin;
+        console.log(super.getIcon());
     }
 
     getViewType() {
-        return VIEW_TYPE_EXAMPLE;
+        return RECORD_PREVIEW_TYPE;
     }
 
     getDisplayText() {
-        return "Example view";
+        return "Records Preview";
     }
 
     async onOpen() {
-        console.log("opening...");
         this.component = new RecordList({
             target: this.contentEl,
             props: {
