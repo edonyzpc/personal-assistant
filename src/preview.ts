@@ -14,8 +14,8 @@ export class RecordPreview extends ItemView {
 
     constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf, files: string[]) {
         super(leaf);
-        addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
-        super.icon = 'PluginAST_STATUSBAR';
+        addIcon('PluginAST_PREVIEW', icons['PluginAST_PREVIEW']);
+        super.icon = 'PluginAST_PREVIEW';
         super.navigation = false;
         this.app = app;
         this.plugin = plugin;
@@ -34,7 +34,6 @@ export class RecordPreview extends ItemView {
         this.component = new RecordList({
             target: this.contentEl,
             props: {
-                variable: 1,
                 app: this.app,
                 plugin: this.plugin,
                 fileNames: this.files,
