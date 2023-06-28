@@ -1,7 +1,6 @@
 <script lang="ts">
     import { App, MarkdownRenderer } from "obsidian";
 	import type { PluginManager } from "plugin";
-    export let variable: number;
     export let app: App;
     export let fileNames: string[];
     export let container: HTMLElement;
@@ -53,11 +52,11 @@
         justify-content: flex-start;
         align-items: flex-start;
         */
-        width: 70%;
+        width: 50%;
         padding: 12px 18px;
         background-color: var(--pa-record-background-color);
         color: var(--pa-record-font-color);
         border-radius: 8px;
-        border: 1px solid #f1f1f1;
+        border: 0.2px solid #f1f1f1;
     }
 </style>
