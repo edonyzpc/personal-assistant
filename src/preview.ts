@@ -18,7 +18,6 @@ export class RecordPreview extends ItemView {
         super.navigation = false;
         this.app = app;
         this.plugin = plugin;
-        console.log(super.getIcon());
     }
 
     getViewType() {

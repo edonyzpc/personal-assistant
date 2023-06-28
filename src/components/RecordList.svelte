@@ -12,15 +12,12 @@
     }
 
     const subContainer = (id: string) => {
-        //const element = container.querySelector(".recordlist-wrapper");
-        console.log("----");
-        console.log(document.getElementById("persoanl-assistant-record-list-wrapper-1"));
         const element = document.getElementById(id);
         if (element) {
-            console.log("get the element");
+            console.debug("get the element");
             return element;
         } else {
-            console.log("fail over to get parent element");
+            console.debug("fail over to get parent element");
             return container;
         }
     }
@@ -34,15 +31,13 @@
     <div class="record-wrapper">
     <span>My number is {variable}!</span>
     </div>
-    <div class="record-wrapper" id="persoanl-assistant-record-list-wrapper-1">
-        {#each fileNames as fileName, idx}
-            <div id="record-wrapper-sub-{idx}"></div>
-            {#await readMarkdownFile(fileName) then fileString }
-                <!-- svelte-ignore empty-block -->
-                {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
-            {/await}
-        {/each}
-    </div>
+    {#each fileNames as fileName, idx}
+        <div class="record-wrapper" id="record-wrapper-sub-{idx}"></div>
+        {#await readMarkdownFile(fileName) then fileString }
+            <!-- svelte-ignore empty-block -->
+            {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
+        {/await}
+    {/each}
 </div>
 
 <style>
