@@ -79,9 +79,10 @@ export class PluginManager extends Plugin {
         })
 
         // register preview view type
+        const dir = await this.app.vault.adapter.list(this.settings.targetPath);
         this.registerView(
             RECORD_PREVIEW_TYPE,
-            (leaf) => new RecordPreview(this.app, this, leaf)
+            (leaf) => new RecordPreview(this.app, this, leaf, dir.files.reverse())
         );
 
         this.addCommand({
@@ -189,7 +190,7 @@ export class PluginManager extends Plugin {
         this.addCommand({
             id: "preview-records",
             name: "Preview records as configured",
-            callback: () => {
+            callback: async () => {
                 this.activateView();
             }
         })

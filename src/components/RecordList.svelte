@@ -25,12 +25,6 @@
 </script>
 
 <div class="recordlist-wrapper" id="persoanl-assistant-record-list">
-    <div class="record-wrapper">
-    <span>My number is {variable}!</span>
-    </div>
-    <div class="record-wrapper">
-    <span>My number is {variable}!</span>
-    </div>
     {#each fileNames as fileName, idx}
         <div class="record-wrapper" id="record-wrapper-sub-{idx}"></div>
         {#await readMarkdownFile(fileName) then fileString }
@@ -61,8 +55,8 @@
         */
         width: 70%;
         padding: 12px 18px;
-        background-color: #ffffff;
-        color: #000000;
+        background-color: var(--pa-record-background-color);
+        color: var(--pa-record-font-color);
         border-radius: 8px;
         border: 1px solid #f1f1f1;
     }

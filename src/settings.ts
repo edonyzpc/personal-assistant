@@ -14,6 +14,7 @@ export interface PluginManagerSettings {
     debug: boolean;
     targetPath: string;
     fileFormat: string;
+    previewLimits: number;
     localGraph: {
         notice: string,
         type: string,
@@ -46,6 +47,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     debug: false,
     targetPath: "2.fleeting/fleeting-thoughts/",
     fileFormat: "YYYY-MM-DD",
+    previewLimits: 5,
     localGraph: {
         notice: "show current note grah view",
         type: "popover",
@@ -171,6 +173,16 @@ export class SettingTab extends PluginSettingTab {
                     plugin.settings.fileFormat = value;
                     await this.plugin.saveSettings();
                 }));
+        new Setting(containerEl).setName("Preview Number")
+            .setDesc("File numbers to preview")
+            .addText(text => {
+                text.setPlaceholder('5')
+                    .setValue(this.plugin.settings.previewLimits.toString())
+                    .onChange(async (value) => {
+                        plugin.settings.previewLimits = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
+            });
 
 
         // setting options for local graph
