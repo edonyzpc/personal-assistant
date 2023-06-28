@@ -37,7 +37,7 @@ export class PluginManager extends Plugin {
                 mutation.addedNodes.forEach((node) => {
                     if ((node instanceof HTMLElement)) {
                         document.querySelectorAll('.popover.hover-popover.hover-editor').forEach((el) => {
-                            this.log("obseving...")
+                            this.log("observing...")
                             this.localGraph.resize();
                             this.memos.resize();
                         })
@@ -190,18 +190,6 @@ export class PluginManager extends Plugin {
             id: "preview-records",
             name: "Preview records as configured",
             callback: () => {
-                /*
-                const leaf = this.app.workspace.getLeaf('tab');
-                console.log(leaf.getDisplayText());
-                const view = new RecordPreview(this.app, this, leaf);
-                addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
-                view.addAction('PluginAST_STATUSBAR', 'Personal Assistant Preview', () => {
-                    (this.app as any).setting.open();
-                    (this.app as any).setting.openTabById("personal-assistant");
-                });
-                leaf.open(view);
-                this.app.workspace.setActiveLeaf(leaf, { focus: true });
-                */
                 this.activateView();
             }
         })
@@ -333,8 +321,6 @@ export class PluginManager extends Plugin {
         this.app.workspace.detachLeavesOfType(RECORD_PREVIEW_TYPE);
 
         const viewLeaf = this.app.workspace.getLeaf('tab');
-        //viewLeaf.view.icon = 'PluginAST_STATUSBAR';
-        console.log(viewLeaf.getIcon());
         await viewLeaf.setViewState({
             type: RECORD_PREVIEW_TYPE,
             active: true,
