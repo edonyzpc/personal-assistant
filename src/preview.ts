@@ -10,14 +10,16 @@ export class RecordPreview extends ItemView {
     component: RecordList;
     app: App;
     plugin: PluginManager;
+    files: string[];
 
-    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
+    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf, files: string[]) {
         super(leaf);
         addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
         super.icon = 'PluginAST_STATUSBAR';
         super.navigation = false;
         this.app = app;
         this.plugin = plugin;
+        this.files = files;
     }
 
     getViewType() {
@@ -35,7 +37,7 @@ export class RecordPreview extends ItemView {
                 variable: 1,
                 app: this.app,
                 plugin: this.plugin,
-                fileNames: ["Diary-2023-04-03.md", "Diary-2023-04-08.md"],
+                fileNames: this.files,
                 container: this.containerEl,
             }
         });

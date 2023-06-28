@@ -8,11 +8,15 @@ body {
 .theme-light {
     --pa-text-normal: rgb(198, 208, 245);
     --pa-background-primary: rgb(30, 30, 46);
+    --pa-record-font-color: #000000;
+    --pa-record-background-color: #ffffff;
 }
 
 .theme-dark {
-    --pa-text-normal: rgb(198, 208, 245);
-    --pa-background-primary: rgb(30, 30, 46);
+    --pa-text-normal: #e1e7fe;
+    --pa-background-primary: #1e1e2e;
+    --pa-record-font-color: #e1e7fe;
+    --pa-record-background-color: #1e1e2e;
 }
 
 .personal-assistant-statusbar:hover {
