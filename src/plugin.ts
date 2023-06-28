@@ -10,7 +10,7 @@ import { icons } from './utils';
 import { PluginsUpdater, ThemeUpdater } from './manifest';
 import { monkeyPatchConsole } from 'obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
-import { ExampleView } from 'preview';
+import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -77,6 +77,12 @@ export class PluginManager extends Plugin {
         this.app.workspace.onLayoutReady(async () => {
             this.calloutManager = await getApi(this);
         })
+
+        // register preview view type
+        this.registerView(
+            RECORD_PREVIEW_TYPE,
+            (leaf) => new RecordPreview(this.app, this, leaf)
+        );
 
         this.addCommand({
             id: 'startup-recording',
@@ -184,9 +190,19 @@ export class PluginManager extends Plugin {
             id: "preview-records",
             name: "Preview records as configured",
             callback: () => {
+                /*
                 const leaf = this.app.workspace.getLeaf('tab');
-                const view = new ExampleView(this.app, this, leaf);
+                console.log(leaf.getDisplayText());
+                const view = new RecordPreview(this.app, this, leaf);
+                addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
+                view.addAction('PluginAST_STATUSBAR', 'Personal Assistant Preview', () => {
+                    (this.app as any).setting.open();
+                    (this.app as any).setting.openTabById("personal-assistant");
+                });
                 leaf.open(view);
+                this.app.workspace.setActiveLeaf(leaf, { focus: true });
+                */
+                this.activateView();
             }
         })
 
@@ -312,5 +328,21 @@ export class PluginManager extends Plugin {
             }
         }
     };
+
+    async activateView() {
+        this.app.workspace.detachLeavesOfType(RECORD_PREVIEW_TYPE);
+
+        const viewLeaf = this.app.workspace.getLeaf('tab');
+        //viewLeaf.view.icon = 'PluginAST_STATUSBAR';
+        console.log(viewLeaf.getIcon());
+        await viewLeaf.setViewState({
+            type: RECORD_PREVIEW_TYPE,
+            active: true,
+        });
+
+        this.app.workspace.revealLeaf(
+            this.app.workspace.getLeavesOfType(RECORD_PREVIEW_TYPE)[0]
+        );
+  }
 }
 

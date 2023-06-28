@@ -50,7 +50,7 @@
         display: flex;
         flex-direction: column;
         justify-content: flex-start;
-        align-items: flex-start;
+        align-items: center;
         flex-grow: 1;
         width: 100%;
         overflow-y: scroll;
@@ -60,11 +60,14 @@
     .record-wrapper {
         display: flex;
         flex-direction: column;
+        /*
         justify-content: flex-start;
         align-items: flex-start;
-        width: 100%;
+        */
+        width: 70%;
         padding: 12px 18px;
         background-color: #ffffff;
+        color: #000000;
         border-radius: 8px;
         border: 1px solid #f1f1f1;
     }
