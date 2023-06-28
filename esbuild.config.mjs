@@ -66,7 +66,7 @@ const context = await esbuild.context({
 	plugins: [
 		cssPlugin,
 		esbuildSvelte({
-			compilerOptions: { css: true },
+			compilerOptions: { css: "injected" },
 			preprocess: sveltePreprocess(),
 		}),
 		copy({
