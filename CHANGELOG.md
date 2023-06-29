@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.4](https://github.com/edonyzpc/personal-assistant/compare/1.2.3...1.2.4) (2023-06-29)
+### Feature
+- preview multiple records in one view as configured
+
+### Imporve
+- plugin updating performance imprvoment
+
+### Fix
+- fix CVE-2022-25883
+
 ## [1.2.3](https://github.com/edonyzpc/personal-assistant/compare/1.2.2...1.2.3) (2023-06-23)
 ### Fix
 - fix metadata upating conflict issues
