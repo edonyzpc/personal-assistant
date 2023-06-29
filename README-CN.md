@@ -11,7 +11,12 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦！支持列举系统所有的 callout 样式（支持检索）帮助快速输入 callout。
+> ***号外***: 新特性来啦！支持在一个视图中预览插件配置好的 records。
+<div align="center">
+<img src="./docs/personal-assistant-v1.2.4.gif" alt="usage video"/>
+</div>
+
+> ***NOTE***: list callout
 <div align="center">
 <img src="./docs/personal-assistant-v1.2.2.gif" alt="usage video"/>
 </div>
