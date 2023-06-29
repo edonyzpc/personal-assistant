@@ -82,7 +82,7 @@ export class PluginManager extends Plugin {
         const dir = await this.app.vault.adapter.list(this.settings.targetPath);
         this.registerView(
             RECORD_PREVIEW_TYPE,
-            (leaf) => new RecordPreview(this.app, this, leaf, dir.files.reverse())
+            (leaf) => new RecordPreview(this.app, this, leaf, dir.files.sort())
         );
 
         this.addCommand({

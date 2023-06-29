@@ -31,12 +31,14 @@ export class RecordPreview extends ItemView {
     }
 
     async onOpen() {
+        let limits = this.plugin.settings.previewLimits;
+        if (limits > this.files.length) limits = this.files.length;
         this.component = new RecordList({
             target: this.contentEl,
             props: {
                 app: this.app,
                 plugin: this.plugin,
-                fileNames: this.files,
+                fileNames: this.files.reverse().slice(0, limits),
                 container: this.containerEl,
             }
         });
