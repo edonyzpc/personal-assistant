@@ -12,14 +12,13 @@ export class RecordPreview extends ItemView {
     plugin: PluginManager;
     files: string[];
 
-    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf, files: string[]) {
+    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
         super(leaf);
         addIcon('PluginAST_PREVIEW', icons['PluginAST_PREVIEW']);
         super.icon = 'PluginAST_PREVIEW';
         super.navigation = false;
         this.app = app;
         this.plugin = plugin;
-        this.files = files;
     }
 
     getViewType() {
@@ -31,6 +30,10 @@ export class RecordPreview extends ItemView {
     }
 
     async onOpen() {
+        const dir = await this.app.vault.adapter.list(this.plugin.settings.targetPath);
+        this.files = dir.files.sort().filter((fileName, idx, _) => {
+            return fileName.endsWith(".md");
+        });
         let limits = this.plugin.settings.previewLimits;
         if (limits > this.files.length) limits = this.files.length;
         this.component = new RecordList({

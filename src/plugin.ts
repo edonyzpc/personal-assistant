@@ -78,10 +78,9 @@ export class PluginManager extends Plugin {
         })
 
         // register preview view type
-        const dir = await this.app.vault.adapter.list(this.settings.targetPath);
         this.registerView(
             RECORD_PREVIEW_TYPE,
-            (leaf) => new RecordPreview(this.app, this, leaf, dir.files.sort())
+            (leaf) => new RecordPreview(this.app, this, leaf)
         );
 
         this.addCommand({
