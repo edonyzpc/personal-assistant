@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.2.5](https://github.com/edonyzpc/personal-assistant/compare/1.2.4...1.2.5) (2023-06-29)
+## [1.2.6](https://github.com/edonyzpc/personal-assistant/compare/1.2.5...1.2.6) (2023-06-30)
+### Fix
+- view no update after preview-record setting updated
+
+## [1.2.5](https://github.com/edonyzpc/personal-assistant/compare/1.2.4...1.2.5) (2023-06-30)
 ### Fix
 - default setting cause loading failure
 
