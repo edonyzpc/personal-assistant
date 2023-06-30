@@ -45,7 +45,7 @@ export interface PluginManagerSettings {
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
     debug: false,
-    targetPath: "2.fleeting/fleeting-thoughts/",
+    targetPath: ".",
     fileFormat: "YYYY-MM-DD",
     previewLimits: 5,
     localGraph: {
@@ -149,7 +149,7 @@ export class SettingTab extends PluginSettingTab {
         new Setting(containerEl).setName('Target Path')
             .setDesc('Target directory to do recording')
             .addText(text => text
-                .setPlaceholder('2.fleeting/fleeting-thoughts/')
+                .setPlaceholder('.')
                 .setValue(this.plugin.settings.targetPath)
                 .onChange(async (value) => {
                     this.log('target path: ' + value);
