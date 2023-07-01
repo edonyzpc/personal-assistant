@@ -88,9 +88,9 @@ export class ProgressBar {
         this.steps++;
         const progress = this.steps >= totalSteps ? totalSteps : this.steps;
         const spanProgressBar = document.getElementById(this.gridDivSpanID);
-        spanProgressBar?.setAttr("style", `width:${100 * (progress / totalSteps)}%`);
+        spanProgressBar?.setAttr("style", `width:${(100 * (progress / totalSteps)).toFixed(1)}%`);
         const divProgressBarText = document.getElementById(this.gridTextID);
-        divProgressBarText?.setText(`${100 * (progress / totalSteps)}%`);
+        divProgressBarText?.setText(`${(100 * (progress / totalSteps)).toFixed(1)}%`);
         const div2Display = document.getElementById(`div-${itemID}-${this.idNumber}`);
         if (div2Display) {
             const spanItem = div2Display.getElementsByTagName('span').item(0);
