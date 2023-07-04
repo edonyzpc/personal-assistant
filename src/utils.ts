@@ -1,3 +1,6 @@
+import { App, requestUrl, normalizePath } from 'obsidian';
+import JSZip from 'jszip';
+
 export const TEST_TOKEN = "personal-assistant";
 
 export const icons: Record<string, string> = {
@@ -14,3 +17,32 @@ export const icons: Record<string, string> = {
 export const generateRandomString = () => {
     return Math.floor(Math.random() * Date.now()).toString(6);
 };
+
+export const downloadZipFile = async (url: string) => {
+    const fetched = await requestUrl({ url });
+    const bytes = fetched.arrayBuffer;
+    return bytes;
+};
+
+export const extractToFold = async (writer: App, zipBytes: ArrayBuffer, targetPath: string) => {
+    const zip = new JSZip();
+    zip.loadAsync(zipBytes);
+    zip.forEach(async (_, file) => {
+        const data = await zip.file(file.name)?.async("string");
+        if (data) {
+            const path2Write = normalizePath(targetPath + '/' + file.name);
+            writer.vault.adapter.write(path2Write, data);
+        }
+    });
+}
+
+export const extractFile = async (writer: App, zipBytes: ArrayBuffer, fileName: string) => {
+    let zip = new JSZip();
+    zip = await zip.loadAsync(zipBytes);
+    const file = zip.file(fileName);
+    if (file) {
+        return await file.async("string");
+    } else {
+        return null;
+    }
+}
