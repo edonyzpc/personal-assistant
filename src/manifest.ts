@@ -2,7 +2,8 @@ import { App, Notice, type PluginManifest, normalizePath, request } from "obsidi
 import { PluginManager } from "plugin";
 import { gt, prerelease } from "semver";
 
-import { ProgressBar } from "progressBar";
+import { ProgressBar } from "./progressBar";
+import { downloadZipFile, extractFile } from "./utils";
 
 interface Manifest {
     id: string,
@@ -11,6 +12,7 @@ interface Manifest {
         needUpdate: boolean,
         repo: string,
         targetVersion: string,
+        isZipFile: boolean,
     },
 }
 
@@ -202,6 +204,8 @@ export class PluginsUpdater implements ObsidianManifest {
                     needUpdate: true,
                     repo: repo,
                     targetVersion: tag,
+                    // plugin release has `main.js + styles.css + manifest.json`
+                    isZipFile: false,
                 };
                 this.progressBar.addDiv(plugin.id, `update ${plugin.id} to ${tag}`);
             }
@@ -374,12 +378,47 @@ export class ThemeUpdater implements ObsidianManifest {
         return false;
     }
 
+    async onlyHaveZipFile(m: Manifest): Promise<boolean> {
+        const repo = await this.getRepo(m.id);
+        if (repo) {
+            this.log("checking need to only has zip file for " + repo);
+            const latestRelease = await this.getLatestRelease(repo);
+            if (latestRelease) {
+                for (let index = 0; index < Object.getOwnPropertyNames(latestRelease).length; index++) {
+                    console.log(Object.getOwnPropertyNames(latestRelease)[index]);
+                    if ("assets" === Object.getOwnPropertyNames(latestRelease)[index]) {
+                        console.log(".....");
+                        console.log(Object(latestRelease)["assets"] as Array<string>);
+                        if ((Object(latestRelease)["assets"] as Array<string>).length > 0) {
+                            return false;
+                        }
+                    }
+                }
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     async update(): Promise<void> {
         const getReleaseFile = async (repo: string | null, version: string | null, fileName: string) => {
             const URL = `https://github.com/${repo}/releases/download/${version}/${fileName}`;
             try {
                 const download = await request({ url: URL });
                 return ((download === "Not Found" || download === `{"error":"Not Found"}`) ? null : download);
+            } catch (error) {
+                this.log("error in grabReleaseFileFromRepository", URL, error)
+                return null;
+            }
+        };
+        const getReleaseZipFile = async (repo: string | null, version: string | null) => {
+            const ZIPURL = `https://github.com/${repo}/archive/refs/tags/${version}.zip`;
+            //const URL = `https://github.com/${repo}/releases/download/${version}/${fileName}`;
+            try {
+                //const download = await request({ url: ZIPURL });
+                //return ((download === "Not Found" || download === `{"error":"Not Found"}`) ? null : download);
+                return await downloadZipFile(ZIPURL);
             } catch (error) {
                 this.log("error in grabReleaseFileFromRepository", URL, error)
                 return null;
@@ -411,10 +450,14 @@ export class ThemeUpdater implements ObsidianManifest {
             const need2Update = await this.isNeedToUpdate(theme);
             if (need2Update && repo && tag) {
                 this.totalThemes++;
+                const isZip = await this.onlyHaveZipFile(this.items[i]);
+                console.log(isZip);
+                console.log("xxxxxx");
                 this.items[i].toUpdate = {
                     needUpdate: true,
                     repo: repo,
                     targetVersion: tag,
+                    isZipFile: isZip
                 };
                 this.progressBar.addDiv(theme.id, `update ${theme.id} to ${tag}`);
             }
@@ -429,8 +472,16 @@ export class ThemeUpdater implements ObsidianManifest {
                 };
                 const repo = theme.toUpdate.repo;
                 const tag = theme.toUpdate.targetVersion;
-                releases.theme = await getReleaseFile(repo, tag, 'theme.css');
-                releases.manifest = await getReleaseFile(repo, tag, 'manifest.json');
+                if (theme.toUpdate.isZipFile) {
+                    const zipBytes = await getReleaseZipFile(repo, tag);
+                    if (zipBytes) {
+                        releases.theme = await extractFile(this.app, zipBytes, 'theme.css');
+                        releases.manifest = await extractFile(this.app, zipBytes, 'manifest.json');
+                    }
+                } else {
+                    releases.theme = await getReleaseFile(repo, tag, 'theme.css');
+                    releases.manifest = await getReleaseFile(repo, tag, 'manifest.json');
+                }
                 await writeToThemeFolder(theme.id, releases);
                 // update notice display
                 this.progressBar.stepin(theme.id, `update ${theme.id} to ${tag}`, this.totalThemes);
