@@ -41,6 +41,7 @@ export interface PluginManagerSettings {
     metadatas: { key: string, value: any, t: string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
     isEnabledMetadataUpdating: boolean;
     cachePluginRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
+    cacheThemeRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -89,6 +90,9 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     isEnabledMetadataUpdating: false,
     cachePluginRepo: {
         "personal-assistant": "edonyzpc/personal-assistant",
+    },
+    cacheThemeRepo: {
+        "Minimal": "kepano/obsidian-minimal",
     }
 }
 
