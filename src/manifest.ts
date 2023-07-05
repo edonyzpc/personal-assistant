@@ -385,10 +385,7 @@ export class ThemeUpdater implements ObsidianManifest {
             const latestRelease = await this.getLatestRelease(repo);
             if (latestRelease) {
                 for (let index = 0; index < Object.getOwnPropertyNames(latestRelease).length; index++) {
-                    console.log(Object.getOwnPropertyNames(latestRelease)[index]);
                     if ("assets" === Object.getOwnPropertyNames(latestRelease)[index]) {
-                        console.log(".....");
-                        console.log(Object(latestRelease)["assets"] as Array<string>);
                         if ((Object(latestRelease)["assets"] as Array<string>).length > 0) {
                             return false;
                         }
@@ -451,8 +448,6 @@ export class ThemeUpdater implements ObsidianManifest {
             if (need2Update && repo && tag) {
                 this.totalThemes++;
                 const isZip = await this.onlyHaveZipFile(this.items[i]);
-                console.log(isZip);
-                console.log("xxxxxx");
                 this.items[i].toUpdate = {
                     needUpdate: true,
                     repo: repo,
@@ -475,8 +470,8 @@ export class ThemeUpdater implements ObsidianManifest {
                 if (theme.toUpdate.isZipFile) {
                     const zipBytes = await getReleaseZipFile(repo, tag);
                     if (zipBytes) {
-                        releases.theme = await extractFile(this.app, zipBytes, 'theme.css');
-                        releases.manifest = await extractFile(this.app, zipBytes, 'manifest.json');
+                        releases.theme = await extractFile(this.app, zipBytes, `theme.css`);
+                        releases.manifest = await extractFile(this.app, zipBytes, `manifest.json`);
                     }
                 } else {
                     releases.theme = await getReleaseFile(repo, tag, 'theme.css');
