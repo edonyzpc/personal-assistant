@@ -303,6 +303,9 @@ export class ThemeUpdater implements ObsidianManifest {
     }
 
     async getRepo(themeID: string): Promise<string | null> {
+        if (this.commandPlugin.settings.cacheThemeRepo[themeID]) {
+            return this.commandPlugin.settings.cacheThemeRepo[themeID];
+        }
         if (!this.communityThemes) {
             // cache the community plugins json
             const communityThemesJson = await this.getCommunityThemesJson();
@@ -313,6 +316,9 @@ export class ThemeUpdater implements ObsidianManifest {
         for (let i = 0; i < this.communityThemes.length; i++) {
             const { name, repo } = this.communityThemes[i];
             if (name === themeID) {
+                // cache the `repo <----> theme-id` into data.json for fast getting
+                this.commandPlugin.settings.cacheThemeRepo[themeID] = repo;
+                await this.commandPlugin.saveSettings();
                 return repo;
             }
         }
