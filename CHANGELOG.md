@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.7](https://github.com/edonyzpc/personal-assistant/compare/1.2.6...1.2.7) (2023-07-05)
+### Fix
+- theme updater support download zip file of release to update
+
 ## [1.2.6](https://github.com/edonyzpc/personal-assistant/compare/1.2.5...1.2.6) (2023-06-30)
 ### Fix
 - view no update after preview-record setting updated
