@@ -36,9 +36,11 @@ export const extractToFold = async (writer: App, zipBytes: ArrayBuffer, targetPa
     });
 }
 
-export const extractFile = async (writer: App, zipBytes: ArrayBuffer, fileName: string) => {
+export const extractFile = async (zipBytes: ArrayBuffer, fileName: string) => {
     let zip = new JSZip();
     zip = await zip.loadAsync(zipBytes);
+    // the downloaded zip file might have root directory which is defined by github actions,
+    // filter the file path with the given file name which is unique in release.
     const fileReg = new RegExp(`.*${fileName}$`);
     const file = zip.file(fileReg);
 

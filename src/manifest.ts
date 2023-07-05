@@ -392,6 +392,7 @@ export class ThemeUpdater implements ObsidianManifest {
             if (latestRelease) {
                 for (let index = 0; index < Object.getOwnPropertyNames(latestRelease).length; index++) {
                     if ("assets" === Object.getOwnPropertyNames(latestRelease)[index]) {
+                        // if the object has `assets: []`, it means the theme release only has zip/tar file
                         if ((Object(latestRelease)["assets"] as Array<string>).length > 0) {
                             return false;
                         }
@@ -417,10 +418,7 @@ export class ThemeUpdater implements ObsidianManifest {
         };
         const getReleaseZipFile = async (repo: string | null, version: string | null) => {
             const ZIPURL = `https://github.com/${repo}/archive/refs/tags/${version}.zip`;
-            //const URL = `https://github.com/${repo}/releases/download/${version}/${fileName}`;
             try {
-                //const download = await request({ url: ZIPURL });
-                //return ((download === "Not Found" || download === `{"error":"Not Found"}`) ? null : download);
                 return await downloadZipFile(ZIPURL);
             } catch (error) {
                 this.log("error in grabReleaseFileFromRepository", URL, error)
@@ -476,8 +474,8 @@ export class ThemeUpdater implements ObsidianManifest {
                 if (theme.toUpdate.isZipFile) {
                     const zipBytes = await getReleaseZipFile(repo, tag);
                     if (zipBytes) {
-                        releases.theme = await extractFile(this.app, zipBytes, `theme.css`);
-                        releases.manifest = await extractFile(this.app, zipBytes, `manifest.json`);
+                        releases.theme = await extractFile(zipBytes, `theme.css`);
+                        releases.manifest = await extractFile(zipBytes, `manifest.json`);
                     }
                 } else {
                     releases.theme = await getReleaseFile(repo, tag, 'theme.css');
