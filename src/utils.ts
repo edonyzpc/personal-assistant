@@ -39,9 +39,12 @@ export const extractToFold = async (writer: App, zipBytes: ArrayBuffer, targetPa
 export const extractFile = async (writer: App, zipBytes: ArrayBuffer, fileName: string) => {
     let zip = new JSZip();
     zip = await zip.loadAsync(zipBytes);
-    const file = zip.file(fileName);
+    const fileReg = new RegExp(`.*${fileName}$`);
+    const file = zip.file(fileReg);
+
     if (file) {
-        return await file.async("string");
+        // the result of RegExp matching must be one item
+        return await file[0].async("string");
     } else {
         return null;
     }
