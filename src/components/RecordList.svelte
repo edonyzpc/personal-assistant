@@ -13,10 +13,10 @@
     const subContainer = (id: string) => {
         const element = document.getElementById(id);
         if (element) {
-            console.debug("get the element");
+            plugin.log("get the element");
             return element;
         } else {
-            console.debug("fail over to get parent element");
+            plugin.log("fail over to get parent element");
             return container;
         }
     }

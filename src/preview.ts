@@ -1,4 +1,4 @@
-import { App, ItemView, WorkspaceLeaf, addIcon } from "obsidian";
+import { App, ItemView, TFile, WorkspaceLeaf, addIcon } from "obsidian";
 
 import { PluginManager } from './plugin';
 import RecordList from './components/RecordList.svelte'
@@ -13,6 +13,7 @@ export class RecordPreview extends ItemView {
     files: string[];
 
     constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
+        plugin.log("startup new RecordList");
         super(leaf);
         addIcon('PluginAST_PREVIEW', icons['PluginAST_PREVIEW']);
         super.icon = 'PluginAST_PREVIEW';
@@ -31,7 +32,15 @@ export class RecordPreview extends ItemView {
 
     async onOpen() {
         const dir = await this.app.vault.adapter.list(this.plugin.settings.targetPath);
-        const formattedFiles = dir.files.sort().filter((fileName, idx, _) => {
+        const files = dir.files.sort((file1, file2) => {
+            const tFile1 = this.app.vault.getAbstractFileByPath(file1);
+            const tFile2 = this.app.vault.getAbstractFileByPath(file2);
+            if (tFile1 instanceof TFile && tFile2 instanceof TFile) {
+                return tFile1.stat.mtime - tFile2.stat.mtime;
+            }
+            return file1 < file2 ? -1 : file1 > file2 ? 1 : 0;
+        });
+        const formattedFiles = files.filter((fileName, idx, _) => {
             const reg = RegExp(/\[(.*)\]/, "i");
             const formattedName = reg.exec(this.plugin.settings.fileFormat);
             if (formattedName && formattedName.length > 1) {
@@ -43,7 +52,7 @@ export class RecordPreview extends ItemView {
                 return false;
             }
         });
-        const nonformattedFiles = dir.files.sort().filter((fileName, idx, _) => {
+        const nonformattedFiles = files.filter((fileName, idx, _) => {
             return fileName.endsWith(".md") && !formattedFiles.contains(fileName);
         });
         this.files = formattedFiles.reverse().concat(...nonformattedFiles.reverse());

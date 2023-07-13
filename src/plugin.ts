@@ -75,13 +75,12 @@ export class PluginManager extends Plugin {
         // get callout manager api
         this.app.workspace.onLayoutReady(async () => {
             this.calloutManager = await getApi(this);
+            // register preview view type after the layout is ready
+            this.registerView(
+                RECORD_PREVIEW_TYPE,
+                (leaf) => { return new RecordPreview(this.app, this, leaf); }
+            );
         })
-
-        // register preview view type
-        this.registerView(
-            RECORD_PREVIEW_TYPE,
-            (leaf) => new RecordPreview(this.app, this, leaf)
-        );
 
         this.addCommand({
             id: 'startup-recording',
