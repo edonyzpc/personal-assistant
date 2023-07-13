@@ -187,7 +187,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "preview-records",
-            name: "Preview records as configured",
+            name: "Preview records that are created by `startup-recording` command",
             callback: async () => {
                 this.activateView();
             }

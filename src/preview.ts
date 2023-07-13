@@ -31,9 +31,22 @@ export class RecordPreview extends ItemView {
 
     async onOpen() {
         const dir = await this.app.vault.adapter.list(this.plugin.settings.targetPath);
-        this.files = dir.files.sort().filter((fileName, idx, _) => {
-            return fileName.endsWith(".md");
+        const formattedFiles = dir.files.sort().filter((fileName, idx, _) => {
+            const reg = RegExp(/\[(.*)\]/, "i");
+            const formattedName = reg.exec(this.plugin.settings.fileFormat);
+            if (formattedName && formattedName.length > 1) {
+                // find the formatted files which format style is set in `setting.fileFormat`
+                const fileNameWithoutPath = fileName.substring(fileName.lastIndexOf('/')+1);
+                return fileNameWithoutPath.endsWith(".md") && fileNameWithoutPath.includes(formattedName[1]);
+            } else {
+                // no foramtted files
+                return false;
+            }
         });
+        const nonformattedFiles = dir.files.sort().filter((fileName, idx, _) => {
+            return fileName.endsWith(".md") && !formattedFiles.contains(fileName);
+        });
+        this.files = formattedFiles.reverse().concat(...nonformattedFiles.reverse());
         let limits = this.plugin.settings.previewLimits;
         if (limits > this.files.length) limits = this.files.length;
         this.component = new RecordList({
@@ -41,7 +54,7 @@ export class RecordPreview extends ItemView {
             props: {
                 app: this.app,
                 plugin: this.plugin,
-                fileNames: this.files.reverse().slice(0, limits),
+                fileNames: this.files.slice(0, limits),
                 container: this.containerEl,
             }
         });
