@@ -24,7 +24,7 @@
     "esbuild": "0.18.16",
     "esbuild-plugin-copy": "2.1.1",
     "esbuild-svelte": "^0.7.3",
-    "eslint": "8.44.0",
+    "eslint": "8.45.0",
     "jest": "^29.5.0",
     "jszip": "^3.10.1",
     "obsidian": "latest",
