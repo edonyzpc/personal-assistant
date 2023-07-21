@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.8](https://github.com/edonyzpc/personal-assistant/compare/1.2.7...1.2.8) (2023-07-21)
+### Improve
+- refact manifest module for improving updating plugins/themes performance
+- optimize cache mechanism
+
 ## [1.2.7](https://github.com/edonyzpc/personal-assistant/compare/1.2.6...1.2.7) (2023-07-05)
 ### Fix
 - theme updater support download zip file of release to update

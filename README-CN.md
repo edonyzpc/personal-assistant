@@ -16,7 +16,7 @@
 <img src="./docs/personal-assistant-v1.2.4.gif" alt="usage video"/>
 </div>
 
-> ***NOTE***: list callout
+> ***list callout***
 <div align="center">
 <img src="./docs/personal-assistant-v1.2.2.gif" alt="usage video"/>
 </div>
