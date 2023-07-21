@@ -7,8 +7,9 @@ import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './sett
 import { LocalGraph } from './localGraph';
 import { Memos } from './memos';
 import { icons } from './utils';
-import { PluginsUpdater, ThemeUpdater } from './manifest';
-import { monkeyPatchConsole } from 'obsidian-hack/obsidian-mobile-debug';
+import { PluginsUpdater } from './pluginManifest';
+import { ThemeUpdater } from './themeManifest';
+import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 
