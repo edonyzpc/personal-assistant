@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { App, MarkdownRenderer } from "obsidian";
+    import { App, MarkdownRenderer, Platform } from "obsidian";
 	import type { PluginManager } from "plugin";
     export let app: App;
     export let fileNames: string[];
@@ -21,8 +21,24 @@
         }
     }
 
+    const isMobile = () => {
+        plugin.log("this is Mobile", Platform.isMobile);
+        return Platform.isMobile;
+    }
+
 </script>
 
+{#if isMobile()}
+<div class="recordlist-wrapper" id="persoanl-assistant-record-list">
+    {#each fileNames as fileName, idx}
+        <div class="record-wrapper-mobile" id="record-wrapper-sub-{idx}"></div>
+        {#await readMarkdownFile(fileName) then fileString }
+            <!-- svelte-ignore empty-block -->
+            {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
+        {/await}
+    {/each}
+</div>
+{:else}
 <div class="recordlist-wrapper" id="persoanl-assistant-record-list">
     {#each fileNames as fileName, idx}
         <div class="record-wrapper" id="record-wrapper-sub-{idx}"></div>
@@ -32,6 +48,7 @@
         {/await}
     {/each}
 </div>
+{/if}
 
 <style>
     .recordlist-wrapper {
@@ -52,7 +69,21 @@
         justify-content: flex-start;
         align-items: flex-start;
         */
-        width: 50%;
+        width: 60%;
+        padding: 12px 18px;
+        background-color: var(--pa-record-background-color);
+        color: var(--pa-record-font-color);
+        border-radius: 8px;
+        border: 0.2px solid #f1f1f1;
+    }
+    .record-wrapper-mobile {
+        display: flex;
+        flex-direction: column;
+        /*
+        justify-content: flex-start;
+        align-items: flex-start;
+        */
+        width: 90%;
         padding: 12px 18px;
         background-color: var(--pa-record-background-color);
         color: var(--pa-record-font-color);
