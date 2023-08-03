@@ -283,8 +283,16 @@ export class PluginManager extends Plugin {
     private updateMetadata = (file: TFile|null) => {
         if (file instanceof TFile) {
             if ((file as TFile).extension === 'md') {
+                let filterPath = file.path;
+                // filter with excluding setting paths
+                for (const path of this.settings.metadataExcludePath) {
+                    if (file.path.startsWith(path)) {
+                        filterPath = "";
+                        break;
+                    }
+                }
                 // update metadata
-                const meta = this.app.metadataCache.getCache(file.path);
+                const meta = this.app.metadataCache.getCache(filterPath);
                 if (meta && meta.frontmatter) {
                     this.app.fileManager.processFrontMatter(file, (frontmatter) => {
                         for (const key of Object.getOwnPropertyNames(frontmatter)) {
