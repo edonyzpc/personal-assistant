@@ -6,8 +6,6 @@ import { PluginManager } from "./plugin"
 export interface ResizeStyle {
     width: number,
     height: number,
-    top: number,
-    left: number,
 }
 
 export interface PluginManagerSettings {
@@ -64,16 +62,12 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         resizeStyle: {
             width: 550,
             height: 500,
-            left: 475,
-            top: 255
         }
     },
     memos: {
         resizeStyle: {
             width: 550,
             height: 500,
-            left: 475,
-            top: 255
         }
     },
     enableGraphColors: false,
@@ -299,24 +293,6 @@ export class SettingTab extends PluginSettingTab {
                         await this.plugin.saveSettings();
                     })
             });
-        new Setting(containerEl).setName(t)
-            .addText(text => {
-                text.setPlaceholder('top')
-                    .setValue(this.plugin.settings.localGraph.resizeStyle.top.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.localGraph.resizeStyle.top = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-            });
-        new Setting(containerEl).setName(l)
-            .addText(text => {
-                text.setPlaceholder('left')
-                    .setValue(this.plugin.settings.localGraph.resizeStyle.left.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.localGraph.resizeStyle.left = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-            });
 
 
         // setting options for memos
@@ -330,16 +306,6 @@ export class SettingTab extends PluginSettingTab {
         const mw = document.createDocumentFragment();
         mw.createEl('span', undefined, (p) => {
             p.innerText = "width";
-            p.setAttr('style', 'margin:18px');
-        });
-        const mt = document.createDocumentFragment();
-        mt.createEl('span', undefined, (p) => {
-            p.innerText = "top";
-            p.setAttr('style', 'margin:18px');
-        });
-        const ml = document.createDocumentFragment();
-        ml.createEl('span', undefined, (p) => {
-            p.innerText = "left";
             p.setAttr('style', 'margin:18px');
         });
         new Setting(containerEl).setName(mh)
@@ -357,24 +323,6 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.memos.resizeStyle.width.toString())
                     .onChange(async (value) => {
                         plugin.settings.memos.resizeStyle.width = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-            });
-        new Setting(containerEl).setName(mt)
-            .addText(text => {
-                text.setPlaceholder('top')
-                    .setValue(this.plugin.settings.memos.resizeStyle.top.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.top = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-            });
-        new Setting(containerEl).setName(ml)
-            .addText(text => {
-                text.setPlaceholder('left')
-                    .setValue(this.plugin.settings.memos.resizeStyle.left.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.left = parseInt(value);
                         await this.plugin.saveSettings();
                     })
             });
