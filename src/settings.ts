@@ -15,6 +15,7 @@ export interface PluginManagerSettings {
     targetPath: string;
     fileFormat: string;
     previewLimits: number;
+    previewTags: string[];
     localGraph: {
         notice: string,
         type: string,
@@ -39,6 +40,7 @@ export interface PluginManagerSettings {
     }[];
     enableMetadataUpdating: boolean;
     metadatas: { key: string, value: any, t: string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
+    metadataExcludePath: string[];
     isEnabledMetadataUpdating: boolean;
     cachePluginRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
     cacheThemeRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -49,6 +51,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     targetPath: ".",
     fileFormat: "YYYY-MM-DD",
     previewLimits: 5,
+    previewTags: [],
     localGraph: {
         notice: "show current note grah view",
         type: "popover",
@@ -87,6 +90,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     metadatas: [
         { key: "modify", value: "YYYY-MM-DD HH:mm:ss", t: "moment" },
     ],
+    metadataExcludePath: [],
     isEnabledMetadataUpdating: false,
     cachePluginRepo: {
         "personal-assistant": "edonyzpc/personal-assistant",
@@ -567,6 +571,16 @@ export class SettingTab extends PluginSettingTab {
                         this.display();
                     })
                 });
+            new Setting(containerEl).setName("Meta Updating Exclude Path")
+                .setDesc("Exclude files in the directory to update metadata")
+                .addText(text => {
+                    text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
+                    .setValue(this.plugin.settings.metadataExcludePath.join(','))
+                    .onChange(async (value) => {
+                        plugin.settings.metadataExcludePath = value.split(",");
+                        await this.plugin.saveSettings();
+                    })
+            });
 
         }
     }
