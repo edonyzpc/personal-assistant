@@ -67,6 +67,22 @@ export class RecordPreview extends ItemView {
                 container: this.containerEl,
             }
         });
+        this.app.vault.on("modify", (file) => {
+            this.plugin.log(`update preview record for file[${file.path}] changed`);
+            if (this.files.slice(0, limits).contains(file.path)) {
+                // refresh the view after file content changed
+                this.component.$destroy();
+                this.component = new RecordList({
+                    target: this.contentEl,
+                    props: {
+                        app: this.app,
+                        plugin: this.plugin,
+                        fileNames: this.files.slice(0, limits),
+                        container: this.containerEl,
+                    }
+                });
+            }
+        });
     }
 
     async onClose() {
