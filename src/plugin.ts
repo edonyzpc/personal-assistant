@@ -286,7 +286,8 @@ export class PluginManager extends Plugin {
                 let filterPath = file.path;
                 // filter with excluding setting paths
                 for (const path of this.settings.metadataExcludePath) {
-                    if (file.path.startsWith(path)) {
+                    if (path !== "" && file.path.startsWith(path)) {
+                        this.log(`filtered ${file.path} in ${path}`)
                         filterPath = "";
                         break;
                     }
