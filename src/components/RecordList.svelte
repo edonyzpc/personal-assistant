@@ -1,6 +1,6 @@
 <script lang="ts">
-    import { App, MarkdownRenderer, Platform } from "obsidian";
-	import type { PluginManager } from "plugin";
+    import { App, Component, MarkdownRenderer, Platform, Vault } from "obsidian";
+    import type { PluginManager } from "plugin";
     export let app: App;
     export let fileNames: string[];
     export let container: HTMLElement;
@@ -26,29 +26,260 @@
         return Platform.isMobile;
     }
 
+    // code from https://github.com/prncc/obsidian-repeat-plugin/blob/master/src/repeat/obsidian/RepeatView.tsx#L215
+    enum EmbedType {
+        Image = 'Image',
+        Audio = 'Audio',
+        Video = 'Video',
+        PDF = 'PDF',
+        Note = 'Note',
+        Unknown = 'Unknown',
+    }
+    // https://help.obsidian.md/Advanced+topics/Accepted+file+formats
+    const embedTypeToAcceptedExtensions = {
+      [EmbedType.Image]: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg'],
+      [EmbedType.Audio]: ['mp3', 'webm', 'wav', 'm4a', 'ogg', '3gp', 'flac'],
+      [EmbedType.Video]: ['mp4', 'webm', 'ogv', 'mov', 'mkv'],
+      [EmbedType.PDF]: ['pdf'],
+    }
+
+    // Form src regexes that detect the type of embed.
+    const embedTypeToSrcRegex = {};
+    Object.keys(embedTypeToAcceptedExtensions).forEach((key) => {
+        (embedTypeToSrcRegex as any)[key] = new RegExp([
+            '.+\\.(',
+            (embedTypeToAcceptedExtensions as any)[key].join('|'),
+            ').*',
+            ].join(''), 'i');
+    });
+    /**
+     * Determines embed type based on src of the span element containing an embed.
+     * @param node The span embed container.
+     * @returns One of the plugin's recognized embed types.
+     */
+    function determineEmbedType(node: Element): EmbedType {
+      const src = node.getAttribute('src')
+      if (!src) {
+        return EmbedType.Unknown;
+      }
+      for (const [embedTypeKey, embedTypeRegex] of Object.entries(embedTypeToSrcRegex)) {
+        if (src.match(embedTypeRegex as RegExp)) {
+          return (EmbedType as any)[embedTypeKey];
+        }
+      }
+      // Markdown embeds don't have an extension.
+      return EmbedType.Note;
+    }
+    /**
+     * Resolved path suitable for constructing a canonical file URI.
+     *
+     * Obsidian does some path inference in case links don't specify a full path.
+     * @param vault Vault which contains the file.
+     * @param mediaSrc Path suffix of file to display.
+     * @returns Full path of file, or just pathSuffix if no file matched.
+     */
+    function getClosestMatchingFilePath(
+      vault: Vault,
+      mediaSrc: string,
+      containingNotePath: string,
+    ) {
+      const containingDir = (() => {
+        const parts = containingNotePath.split('/');
+        parts.pop();
+        return parts.join('/');
+      })();
+      let normalizedPathSuffix = mediaSrc;
+      if (mediaSrc.startsWith('.')) {
+        const resourcePathParts = containingNotePath.split('/');
+        // Remove the note file name.
+        resourcePathParts.pop();
+        for (const suffixPart of mediaSrc.split('/')) {
+          if (suffixPart === '..') {
+            resourcePathParts.pop();
+          }
+          else if (suffixPart === '.') {
+            continue;
+          } else {
+            resourcePathParts.push(suffixPart);
+          }
+        }
+        normalizedPathSuffix = resourcePathParts.join('/');
+      }
+
+      // Keep track of all matches to choose between later.
+      // This is only useful if multiple folders contain the same file name.
+      const allMatches: string[] = [];
+      for (const file of vault.getFiles()) {
+        if (file.path.endsWith(normalizedPathSuffix)) {
+          // End things right away if we have an exact match.
+          if (file.path === normalizedPathSuffix) {
+            return file.path;
+          }
+          allMatches.push(file.path);
+        }
+      }
+      // Matches closer to note are prioritized over alphanumeric sorting.
+      allMatches.sort((left, right) => {
+        if (left.startsWith(containingDir) && !right.startsWith(containingDir)) {
+          return -1
+        }
+        if (right.startsWith(containingDir) && !left.startsWith(containingDir)) {
+          return 1;
+        }
+        return (left <= right) ? -1 : 1;
+      });
+      if (allMatches) {
+        return allMatches[0];
+      }
+      // No matches probably means a broken link.
+      return mediaSrc;
+    }
+    /**
+     * Gets resource URI Obsidian can render.
+     * @param vault Vault which contains the note.
+     * @param mediaSrc src in containing span, something like a filename or path.
+     * @returns URI
+     */
+     const getMediaUri = (
+      vault: Vault,
+      mediaSrc: string,
+      containingNotePath: string,
+    ) => {
+      const matchingPath = getClosestMatchingFilePath(vault, mediaSrc, containingNotePath);
+      return vault.adapter.getResourcePath(matchingPath);
+    }
+    /**
+     * Gets note URI that Obsidian can open.
+     * @param vault Vault which contains the note.
+     * @param noteHref href of link, something like a relative note path or base name.
+     * @returns URI
+     */
+    const getNoteUri = (
+      vault: Vault,
+      noteHref: string,
+    ) => ([
+      'obsidian://open?vault=',
+      encodeURIComponent(vault.getName()),
+      '&file=',
+      encodeURIComponent(noteHref),
+    ].join(''));
+
+
+    const renderMarkdown = async (
+        markdown: string,
+        containerEl: HTMLElement,
+        sourcePath: string,
+        lifecycleComponent: Component,
+    ) => {
+        await MarkdownRenderer.renderMarkdown(
+          markdown,
+          containerEl,
+          sourcePath,
+          lifecycleComponent,
+        );
+        plugin.log("rendering.........");
+        const nodes = containerEl.querySelectorAll('span.internal-embed');
+        nodes.forEach((node) => {
+          const embedType = determineEmbedType(node);
+          if (embedType === EmbedType.Image) {
+            plugin.log("parsing image");
+            const img = createEl('img');
+            img.src = getMediaUri(
+              app.vault,
+              node.getAttribute('src') as string,
+              sourcePath);
+            node.empty();
+            node.appendChild(img);
+          }
+          else if (embedType === EmbedType.Audio) {
+            const audio = createEl('audio');
+            audio.controls = true;
+            audio.src = getMediaUri(
+              app.vault,
+              node.getAttribute('src') as string,
+              sourcePath);
+            node.empty();
+            node.appendChild(audio);
+          }
+          else if (embedType === EmbedType.Video) {
+            const video = createEl('video');
+            video.controls = true;
+            video.src = getMediaUri(
+              app.vault,
+              node.getAttribute('src') as string,
+              sourcePath);
+            node.empty();
+            node.appendChild(video);
+          }
+          else if (embedType === EmbedType.PDF) {
+            if (!Platform.isDesktop) {
+              console.error(
+                'Repeat Plugin: Embedded PDFs are only supported on the desktop.')
+              return;
+            }
+            const iframe = createEl('iframe');
+            iframe.src = getMediaUri(
+              app.vault,
+              node.getAttribute('src') as string,
+              sourcePath);
+            iframe.width = '100%';
+            iframe.height = '800px';
+            node.empty();
+            node.appendChild(iframe);
+          }
+          else if (embedType === EmbedType.Note) {
+            console.error('Repeat Plugin: Embedded notes are not yet supported.')
+          }
+          else {
+            console.error('Repeat Plugin: Could not determine embedding type for element:');
+            console.error(node);
+          }
+        });
+    
+        const links = containerEl.querySelectorAll('a.internal-link');
+        plugin.log("parsing internal link");
+        links.forEach((node: HTMLLinkElement) => {
+          if (!node.getAttribute('href')) {
+            return;
+          }
+          node.href = getNoteUri(app.vault, node.getAttribute('href') as string);
+        });
+}
+
 </script>
 
-{#if isMobile()}
-<div class="recordlist-wrapper" id="persoanl-assistant-record-list">
-    {#each fileNames as fileName, idx}
-        <div class="record-wrapper-mobile" id="record-wrapper-sub-{idx}"></div>
-        {#await readMarkdownFile(fileName) then fileString }
-            <!-- svelte-ignore empty-block -->
-            {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
-        {/await}
-    {/each}
+<div class="markdown-reading-view" style="width: 100%; height: 100%;">
+    <div class="markdown-preview-view markdown-rendered node-insert-event is-readable-line-width allow-fold-headings show-indentation-guide allow-fold-lists show-properties" tabindex="-1" style="tab-size: 4;">
+        <div class="markdown-preview-sizer markdown-preview-section">
+            <div class="markdown-preview-pusher" style="width: 1px; height: 0.1px; margin-bottom: 0px;"></div>
+        </div>
+
+        {#if isMobile()}
+        <div class="recordlist-wrapper" id="persoanl-assistant-record-list">
+            {#each fileNames as fileName, idx}
+                <div class="record-wrapper-mobile" id="record-wrapper-sub-{idx}"></div>
+                {#await readMarkdownFile(fileName) then fileString }
+                    <!-- svelte-ignore empty-block -->
+                    <!-- {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await} -->
+                    {#await renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
+                {/await}
+            {/each}
+        </div>
+        {:else}
+        <div class="recordlist-wrapper" id="persoanl-assistant-record-list">
+            {#each fileNames as fileName, idx}
+                <div class="record-wrapper" id="record-wrapper-sub-{idx}"></div>
+                {#await readMarkdownFile(fileName) then fileString }
+                    <!-- svelte-ignore empty-block -->
+                    <!-- {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await} -->
+                    {#await renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
+                {/await}
+            {/each}
+        </div>
+        {/if}
+
+    </div>
 </div>
-{:else}
-<div class="recordlist-wrapper" id="persoanl-assistant-record-list">
-    {#each fileNames as fileName, idx}
-        <div class="record-wrapper" id="record-wrapper-sub-{idx}"></div>
-        {#await readMarkdownFile(fileName) then fileString }
-            <!-- svelte-ignore empty-block -->
-            {#await MarkdownRenderer.renderMarkdown(fileString, subContainer(`record-wrapper-sub-${idx}`), fileName, plugin) then _}{/await}
-        {/await}
-    {/each}
-</div>
-{/if}
 
 <style>
     .recordlist-wrapper {
