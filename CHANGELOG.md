@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.2.9](https://github.com/edonyzpc/personal-assistant/compare/1.2.8...1.2.9) (2023-08-04)
+### Feature
+- `preview record` command supports mobile
+- `update metadata` command supports excluding path configuration
+- `preview record` command supports refresh when the related file content is changed
+
+### Fix
+- fix view resizing issue of `hover memos` and `local graph` commands
+- fix excluding path configuration empty string issue
+
 ## [1.2.8](https://github.com/edonyzpc/personal-assistant/compare/1.2.7...1.2.8) (2023-07-21)
 ### Improve
 - refact manifest module for improving updating plugins/themes performance
