@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.0](https://github.com/edonyzpc/personal-assistant/compare/1.2.9...1.3.0) (2023-08-05)
+### Fix
+- `preview record` command cannot preview image
+- `preview record` command cannot click the link
+
+### Improvement
+- code style
+
 ## [1.2.9](https://github.com/edonyzpc/personal-assistant/compare/1.2.8...1.2.9) (2023-08-04)
 ### Feature
 - `preview record` command supports mobile
