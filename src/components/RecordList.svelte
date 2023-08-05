@@ -27,7 +27,8 @@
     }
 
     const isPluginEnabled = (pluginID: string) => {
-        return (this.app as any).plugins.manifests.hasOwnProperty(pluginID) && (this.app as any).plugins.enabledPlugins.has(pluginID);
+        return (this.app as any).plugins.manifests.hasOwnProperty(pluginID) &&
+            (this.app as any).plugins.enabledPlugins.has(pluginID);
     }
 
     // code from https://github.com/prncc/obsidian-repeat-plugin/blob/master/src/repeat/obsidian/RepeatView.tsx#L215
@@ -186,7 +187,8 @@
         sourcePath: string,
         lifecycleComponent: Component,
     ) => {
-        await MarkdownRenderer.renderMarkdown(
+        await MarkdownRenderer.render(
+            app,
             markdown,
             containerEl,
             sourcePath,
@@ -198,7 +200,6 @@
             const embedType = determineEmbedType(node);
             switch(embedType) {
                 case EmbedType.Image:
-                    plugin.log("parsing image");
                     const img = createEl('img');
                     img.src = getMediaUri(
                         app.vault,
@@ -229,7 +230,7 @@
                     break;
                 case EmbedType.PDF:
                     if (!Platform.isDesktop) {
-                        console.error('Repeat Plugin: Embedded PDFs are only supported on the desktop.');
+                        plugin.log('Embedded PDFs are only supported on the desktop.');
                         return;
                     }
                     const iframe = createEl('iframe');
@@ -243,12 +244,22 @@
                     node.appendChild(iframe);
                     break;
                 case EmbedType.Note:
-                    console.error('Repeat Plugin: Embedded notes are not yet supported.');
+                    plugin.log('Embedded notes are not perfectly supported.');
+                    // not support note block preview and use internal link instead
+                    const nodeSrc = (node.getAttribute('src') as string);
+                    const herf = createEl("a");
+                    herf.href = getNoteUri(app.vault, nodeSrc);
+                    herf.target = "_blank";
+                    herf.rel = "noopener";
+                    herf.addClass("internal-link");
+                    herf.setText(nodeSrc);
+                    node.empty()
+                    node.appendChild(herf);
                     break;
                 case EmbedType.Unknown:
                 default:
-                    console.error('Repeat Plugin: Could not determine embedding type for element:');
-                    console.error(node);
+                    plugin.log('Could not determine embedding type for element:');
+                    plugin.log(node);
             }
         });
     
