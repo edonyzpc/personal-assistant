@@ -26,6 +26,10 @@
         return Platform.isMobile;
     }
 
+    const isPluginEnabled = (pluginID: string) => {
+        return (this.app as any).plugins.manifests.hasOwnProperty(pluginID) && (this.app as any).plugins.enabledPlugins.has(pluginID);
+    }
+
     // code from https://github.com/prncc/obsidian-repeat-plugin/blob/master/src/repeat/obsidian/RepeatView.tsx#L215
     enum EmbedType {
         Image = 'Image',
@@ -37,10 +41,10 @@
     }
     // https://help.obsidian.md/Advanced+topics/Accepted+file+formats
     const embedTypeToAcceptedExtensions = {
-      [EmbedType.Image]: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg'],
-      [EmbedType.Audio]: ['mp3', 'webm', 'wav', 'm4a', 'ogg', '3gp', 'flac'],
-      [EmbedType.Video]: ['mp4', 'webm', 'ogv', 'mov', 'mkv'],
-      [EmbedType.PDF]: ['pdf'],
+        [EmbedType.Image]: ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg'],
+        [EmbedType.Audio]: ['mp3', 'webm', 'wav', 'm4a', 'ogg', '3gp', 'flac'],
+        [EmbedType.Video]: ['mp4', 'webm', 'ogv', 'mov', 'mkv'],
+        [EmbedType.PDF]: ['pdf'],
     }
 
     // Form src regexes that detect the type of embed.
@@ -58,17 +62,17 @@
      * @returns One of the plugin's recognized embed types.
      */
     function determineEmbedType(node: Element): EmbedType {
-      const src = node.getAttribute('src')
-      if (!src) {
-        return EmbedType.Unknown;
-      }
-      for (const [embedTypeKey, embedTypeRegex] of Object.entries(embedTypeToSrcRegex)) {
-        if (src.match(embedTypeRegex as RegExp)) {
-          return (EmbedType as any)[embedTypeKey];
+        const src = node.getAttribute('src')
+        if (!src) {
+            return EmbedType.Unknown;
         }
-      }
-      // Markdown embeds don't have an extension.
-      return EmbedType.Note;
+        for (const [embedTypeKey, embedTypeRegex] of Object.entries(embedTypeToSrcRegex)) {
+            if (src.match(embedTypeRegex as RegExp)) {
+                return (EmbedType as any)[embedTypeKey];
+            }
+        }
+        // Markdown embeds don't have an extension.
+        return EmbedType.Note;
     }
     /**
      * Resolved path suitable for constructing a canonical file URI.
@@ -79,60 +83,59 @@
      * @returns Full path of file, or just pathSuffix if no file matched.
      */
     function getClosestMatchingFilePath(
-      vault: Vault,
-      mediaSrc: string,
-      containingNotePath: string,
+        vault: Vault,
+        mediaSrc: string,
+        containingNotePath: string,
     ) {
-      const containingDir = (() => {
-        const parts = containingNotePath.split('/');
-        parts.pop();
-        return parts.join('/');
-      })();
-      let normalizedPathSuffix = mediaSrc;
-      if (mediaSrc.startsWith('.')) {
-        const resourcePathParts = containingNotePath.split('/');
-        // Remove the note file name.
-        resourcePathParts.pop();
-        for (const suffixPart of mediaSrc.split('/')) {
-          if (suffixPart === '..') {
+        const containingDir = (() => {
+            const parts = containingNotePath.split('/');
+            parts.pop();
+            return parts.join('/');
+        })();
+        let normalizedPathSuffix = mediaSrc;
+        if (mediaSrc.startsWith('.')) {
+            const resourcePathParts = containingNotePath.split('/');
+            // Remove the note file name.
             resourcePathParts.pop();
-          }
-          else if (suffixPart === '.') {
-            continue;
-          } else {
-            resourcePathParts.push(suffixPart);
-          }
+            for (const suffixPart of mediaSrc.split('/')) {
+                if (suffixPart === '..') {
+                resourcePathParts.pop();
+                } else if (suffixPart === '.') {
+                    continue;
+                } else {
+                    resourcePathParts.push(suffixPart);
+                }
+            }
+            normalizedPathSuffix = resourcePathParts.join('/');
         }
-        normalizedPathSuffix = resourcePathParts.join('/');
-      }
 
-      // Keep track of all matches to choose between later.
-      // This is only useful if multiple folders contain the same file name.
-      const allMatches: string[] = [];
-      for (const file of vault.getFiles()) {
-        if (file.path.endsWith(normalizedPathSuffix)) {
-          // End things right away if we have an exact match.
-          if (file.path === normalizedPathSuffix) {
-            return file.path;
-          }
-          allMatches.push(file.path);
+        // Keep track of all matches to choose between later.
+        // This is only useful if multiple folders contain the same file name.
+        const allMatches: string[] = [];
+        for (const file of vault.getFiles()) {
+            if (file.path.endsWith(normalizedPathSuffix)) {
+                // End things right away if we have an exact match.
+                if (file.path === normalizedPathSuffix) {
+                    return file.path;
+                }
+                allMatches.push(file.path);
+            }
         }
-      }
-      // Matches closer to note are prioritized over alphanumeric sorting.
-      allMatches.sort((left, right) => {
-        if (left.startsWith(containingDir) && !right.startsWith(containingDir)) {
-          return -1
+        // Matches closer to note are prioritized over alphanumeric sorting.
+        allMatches.sort((left, right) => {
+            if (left.startsWith(containingDir) && !right.startsWith(containingDir)) {
+                return -1
+            }
+            if (right.startsWith(containingDir) && !left.startsWith(containingDir)) {
+                return 1;
+            }
+            return (left <= right) ? -1 : 1;
+        });
+        if (allMatches) {
+            return allMatches[0];
         }
-        if (right.startsWith(containingDir) && !left.startsWith(containingDir)) {
-          return 1;
-        }
-        return (left <= right) ? -1 : 1;
-      });
-      if (allMatches) {
-        return allMatches[0];
-      }
-      // No matches probably means a broken link.
-      return mediaSrc;
+        // No matches probably means a broken link.
+        return mediaSrc;
     }
     /**
      * Gets resource URI Obsidian can render.
@@ -141,12 +144,12 @@
      * @returns URI
      */
      const getMediaUri = (
-      vault: Vault,
-      mediaSrc: string,
-      containingNotePath: string,
+        vault: Vault,
+        mediaSrc: string,
+        containingNotePath: string,
     ) => {
-      const matchingPath = getClosestMatchingFilePath(vault, mediaSrc, containingNotePath);
-      return vault.adapter.getResourcePath(matchingPath);
+        const matchingPath = getClosestMatchingFilePath(vault, mediaSrc, containingNotePath);
+        return vault.adapter.getResourcePath(matchingPath);
     }
     /**
      * Gets note URI that Obsidian can open.
@@ -155,14 +158,26 @@
      * @returns URI
      */
     const getNoteUri = (
-      vault: Vault,
-      noteHref: string,
-    ) => ([
-      'obsidian://open?vault=',
-      encodeURIComponent(vault.getName()),
-      '&file=',
-      encodeURIComponent(noteHref),
-    ].join(''));
+        vault: Vault,
+        noteHref: string,
+    ) => {
+        if(isPluginEnabled('obsidian-advanced-uri')) {
+            // Use Advanced URI plugin if it is enabled.
+            // obsidian://advanced-uri?vault=<your-vault>&filepath=my-file
+            return ['obsidian://advanced-uri?vault=',
+                    encodeURIComponent(vault.getName()),
+                    '&filepath=',
+                    encodeURIComponent(noteHref),
+                ].join('');
+        } else {
+            // Use Obsidian default URI
+            return ['obsidian://open?vault=',
+                    encodeURIComponent(vault.getName()),
+                    '&file=',
+                    encodeURIComponent(noteHref),
+                ].join('');
+    }
+    };
 
 
     const renderMarkdown = async (
@@ -172,77 +187,78 @@
         lifecycleComponent: Component,
     ) => {
         await MarkdownRenderer.renderMarkdown(
-          markdown,
-          containerEl,
-          sourcePath,
-          lifecycleComponent,
+            markdown,
+            containerEl,
+            sourcePath,
+            lifecycleComponent,
         );
-        plugin.log("rendering.........");
+
         const nodes = containerEl.querySelectorAll('span.internal-embed');
         nodes.forEach((node) => {
-          const embedType = determineEmbedType(node);
-          if (embedType === EmbedType.Image) {
-            plugin.log("parsing image");
-            const img = createEl('img');
-            img.src = getMediaUri(
-              app.vault,
-              node.getAttribute('src') as string,
-              sourcePath);
-            node.empty();
-            node.appendChild(img);
-          }
-          else if (embedType === EmbedType.Audio) {
-            const audio = createEl('audio');
-            audio.controls = true;
-            audio.src = getMediaUri(
-              app.vault,
-              node.getAttribute('src') as string,
-              sourcePath);
-            node.empty();
-            node.appendChild(audio);
-          }
-          else if (embedType === EmbedType.Video) {
-            const video = createEl('video');
-            video.controls = true;
-            video.src = getMediaUri(
-              app.vault,
-              node.getAttribute('src') as string,
-              sourcePath);
-            node.empty();
-            node.appendChild(video);
-          }
-          else if (embedType === EmbedType.PDF) {
-            if (!Platform.isDesktop) {
-              console.error(
-                'Repeat Plugin: Embedded PDFs are only supported on the desktop.')
-              return;
+            const embedType = determineEmbedType(node);
+            switch(embedType) {
+                case EmbedType.Image:
+                    plugin.log("parsing image");
+                    const img = createEl('img');
+                    img.src = getMediaUri(
+                        app.vault,
+                        node.getAttribute('src') as string,
+                        sourcePath);
+                    node.empty();
+                    node.appendChild(img);
+                    break;
+                case EmbedType.Audio:
+                    const audio = createEl('audio');
+                    audio.controls = true;
+                    audio.src = getMediaUri(
+                      app.vault,
+                      node.getAttribute('src') as string,
+                      sourcePath);
+                    node.empty();
+                    node.appendChild(audio);
+                    break;
+                case EmbedType.Video:
+                    const video = createEl('video');
+                    video.controls = true;
+                    video.src = getMediaUri(
+                      app.vault,
+                      node.getAttribute('src') as string,
+                      sourcePath);
+                    node.empty();
+                    node.appendChild(video);
+                    break;
+                case EmbedType.PDF:
+                    if (!Platform.isDesktop) {
+                        console.error('Repeat Plugin: Embedded PDFs are only supported on the desktop.');
+                        return;
+                    }
+                    const iframe = createEl('iframe');
+                    iframe.src = getMediaUri(
+                      app.vault,
+                      node.getAttribute('src') as string,
+                      sourcePath);
+                    iframe.width = '100%';
+                    iframe.height = '500px';
+                    node.empty();
+                    node.appendChild(iframe);
+                    break;
+                case EmbedType.Note:
+                    console.error('Repeat Plugin: Embedded notes are not yet supported.');
+                    break;
+                case EmbedType.Unknown:
+                default:
+                    console.error('Repeat Plugin: Could not determine embedding type for element:');
+                    console.error(node);
             }
-            const iframe = createEl('iframe');
-            iframe.src = getMediaUri(
-              app.vault,
-              node.getAttribute('src') as string,
-              sourcePath);
-            iframe.width = '100%';
-            iframe.height = '800px';
-            node.empty();
-            node.appendChild(iframe);
-          }
-          else if (embedType === EmbedType.Note) {
-            console.error('Repeat Plugin: Embedded notes are not yet supported.')
-          }
-          else {
-            console.error('Repeat Plugin: Could not determine embedding type for element:');
-            console.error(node);
-          }
         });
     
         const links = containerEl.querySelectorAll('a.internal-link');
         plugin.log("parsing internal link");
         links.forEach((node: HTMLLinkElement) => {
-          if (!node.getAttribute('href')) {
-            return;
-          }
-          node.href = getNoteUri(app.vault, node.getAttribute('href') as string);
+            if (!node.getAttribute('href')) {
+                return;
+            }
+            node.href = getNoteUri(app.vault, node.getAttribute('href') as string);
         });
 }
 
