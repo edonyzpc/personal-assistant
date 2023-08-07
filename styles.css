@@ -203,3 +203,9 @@ body {
     height: 18px;
     align-self: center;
 }
+
+/* callout setting if it is nessecary to use in preview */
+div.callout[data-callout="abstract"] {
+    --callout-icon: loader;
+    --callout-color: rgb(34, 152, 225);
+}
