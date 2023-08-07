@@ -1,5 +1,6 @@
 <script lang="ts">
     import { App, Component, MarkdownRenderer, Platform, Vault, setIcon } from "obsidian";
+    import { tick } from "svelte";
     import type { PluginManager } from "plugin";
     export let app: App;
     export let fileNames: string[];
@@ -180,7 +181,6 @@
     }
     };
 
-
     const renderMarkdown = async (
         markdown: string,
         containerEl: HTMLElement,
@@ -313,6 +313,22 @@
         });
 }
 
+    const addClickableforRecord = async (id: string, target: string) => {
+        // Waits until Svelte finished updating the DOM
+        await tick();
+        const element = document.getElementById(id);
+        if (element) {
+            plugin.log("get the element");
+            const noteName = target.split('\\').pop()?.split('/').pop();
+            if (noteName) {
+                const uri = getNoteUri(app.vault, noteName);
+                element.setAttribute("onclick", `location.href='${uri}'`);
+                element.setAttribute("style", "cursor:pointer");
+            }
+        } else {
+            plugin.log("fail to find element with ", id);
+        }
+    }
 </script>
 
 <div class="markdown-reading-view" style="width: 100%; height: 100%;">
@@ -345,6 +361,10 @@
         </div>
         {/if}
 
+         {#each fileNames as fileName, idx}
+            <!-- svelte-ignore empty-block -->
+            {#await addClickableforRecord(`record-wrapper-sub-${idx}`, fileName) then _}{/await}
+         {/each}
     </div>
 </div>
 
