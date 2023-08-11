@@ -285,13 +285,13 @@
                     setIcon(calloutIcon, 'loader');
                     const calloutTitleInner = calloutTitle.createDiv();
                     calloutTitleInner.addClass("callout-title-inner");
-                    const herf = createEl("a");
-                    herf.target = "_blank";
-                    herf.rel = "noopener";
-                    herf.addClass("internal-link");
-                    herf.setText(nodeSrc + " 💨");
-                    herf.href = getNoteUri(app.vault, nodeSrc);
-                    calloutTitleInner.appendChild(herf);
+                    const link = createEl("a");
+                    link.target = "_blank";
+                    link.rel = "noopener";
+                    link.addClass("internal-link");
+                    link.setText(nodeSrc + " 💨");
+                    link.href = getNoteUri(app.vault, nodeSrc);
+                    calloutTitleInner.appendChild(link);
                     node.empty()
                     node.appendChild(callout);
                     break;
