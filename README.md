@@ -15,7 +15,12 @@
  
 </p>
 
-> ***NOTE***: New shiny feature: configured recording note supports preview in one view
+> ***NOTE***: New shiny feature: preview record supports rendering block reference wiki link and jumping from preview card to original note file
+<div align="center">
+<img src="./docs/personal-assistant-v1.3.1.gif" alt="usage video"/>
+</div>
+
+> ***Preview records***
 <div align="center">
 <img src="./docs/personal-assistant-v1.2.4.gif" alt="usage video"/>
 </div>

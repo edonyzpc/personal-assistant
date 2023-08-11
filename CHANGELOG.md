@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.1](https://github.com/edonyzpc/personal-assistant/compare/1.3.0...1.3.1) (2023-08-11)
+### Improve
+- support block reference of internal link preview with callout
+- support review card jumping to the original note file
+
 ## [1.3.0](https://github.com/edonyzpc/personal-assistant/compare/1.2.9...1.3.0) (2023-08-05)
 ### Fix
 - `preview record` command cannot preview image

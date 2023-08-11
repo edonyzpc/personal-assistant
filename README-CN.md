@@ -11,12 +11,17 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦！支持在一个视图中预览插件配置好的 records。
+> ***号外***: 新特性来啦！记录预览支持渲染块引用wiki链接以及从预览卡跳转到原始笔记文件。
+<div align="center">
+<img src="./docs/personal-assistant-v1.3.1.gif" alt="usage video"/>
+</div>
+
+> ***记录预览***
 <div align="center">
 <img src="./docs/personal-assistant-v1.2.4.gif" alt="usage video"/>
 </div>
 
-> ***list callout***
+> ***快速输入 callout***
 <div align="center">
 <img src="./docs/personal-assistant-v1.2.2.gif" alt="usage video"/>
 </div>
