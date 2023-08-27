@@ -7,7 +7,7 @@ import { icons } from './utils';
 export const RECORD_PREVIEW_TYPE = "record-preview";
 
 export class RecordPreview extends ItemView {
-    component: RecordList;
+    component!: RecordList;
     app: App;
     plugin: PluginManager;
     files: string[];
@@ -20,6 +20,7 @@ export class RecordPreview extends ItemView {
         super.navigation = false;
         this.app = app;
         this.plugin = plugin;
+        this.files = [];
     }
 
     getViewType() {

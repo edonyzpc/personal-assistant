@@ -13,7 +13,7 @@ export class ProgressBar {
     private gridDivID: string;
     private gridDivSpanID: string;
     private gridTextID: string;
-    private notice: Notice;
+    private notice!: Notice;
 
     constructor(plugin: PluginManager, ID: string, total: number) {
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any

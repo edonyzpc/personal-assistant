@@ -11,7 +11,6 @@ interface Plugin {
 
 export class PluginControlModal extends SuggestModal<Plugin> {
     private obsidianPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    private toEnablePlugin: boolean;
     private enabledColor = "green";
     private disabledColor = "red";
 

@@ -14,6 +14,7 @@
     "isolatedModules": true,
     "strictNullChecks": true,
     "esModuleInterop": true,
+    "strictPropertyInitialization": true,
     "lib": [
       "DOM",
       "ES5",

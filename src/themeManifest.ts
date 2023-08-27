@@ -62,6 +62,7 @@ export class ThemeUpdater implements ObsidianManifest {
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
         this.totalThemes = 0;
         this.checkedThemes = 0;
+        this.items = [];
 
         this.progressBar = new ProgressBar(plugin, "theme-updating", this.totalThemes);
     }

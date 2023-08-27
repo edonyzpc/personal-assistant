@@ -18,11 +18,11 @@ const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescr
 };
 
 export class PluginManager extends Plugin {
-    settings: PluginManagerSettings
+    settings!: PluginManagerSettings
     private localGraph = new LocalGraph(this.app, this);
     private memos = new Memos(this.app, this);
     calloutManager: CalloutManager<true> | undefined;
-    private updateDebouncer:Debouncer<[file: TFile | null], void>;
+    private updateDebouncer!:Debouncer<[file: TFile | null], void>;
 
     async onload() {
         await this.loadSettings();
@@ -263,8 +263,8 @@ export class PluginManager extends Plugin {
             // Create the file and open it in the active leaf
             const leaf = this.app.workspace.getLeaf('tab');
             await leaf.openFile(File);
-        } catch (error) {
-            new Notice(error.toString());
+        } catch (error: unknown) {
+            new Notice((error as Error).toString());
         }
     }
 
