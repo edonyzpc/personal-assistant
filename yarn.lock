@@ -850,9 +850,9 @@
     undici-types "~5.26.4"
 
 "@types/pug@^2.0.6":
-  version "2.0.8"
-  resolved "https://registry.yarnpkg.com/@types/pug/-/pug-2.0.8.tgz#1a85ecb760f7472d9ec3bab19bfe17454c69499d"
-  integrity sha512-QzhsZ1dMGyJbn/D9V80zp4GIA4J4rfAjCCxc3MP+new0E8dyVdSkR735Lx+n3LIaHNFcjHL5+TbziccuT+fdoQ==
+  version "2.0.9"
+  resolved "https://registry.yarnpkg.com/@types/pug/-/pug-2.0.9.tgz#97e765bb8eb0b90380524583f1f10838f29822f9"
+  integrity sha512-Yg4LkgFYvn1faISbDNWmcAC1XoDT8IoMUFspp5mnagKk+UvD2N0IWt5A7GRdMubsNWqgCLmrkf8rXkzNqb4szA==
 
 "@types/semver@^7.5.0":
   version "7.5.3"
@@ -3127,9 +3127,9 @@ supports-preserve-symlinks-flag@^1.0.0:
   integrity sha512-ot0WnXS9fgdkgIcePe6RHNk1WA8+muPa6cSjeR3V8K27q9BB1rTE3R1p7Hv0z1ZyAc8s6Vvv8DIyWf681MAt0w==
 
 svelte-preprocess@^5.0.4:
-  version "5.0.4"
-  resolved "https://registry.yarnpkg.com/svelte-preprocess/-/svelte-preprocess-5.0.4.tgz#2123898e079a074f7f4ef1799e10e037f5bcc55b"
-  integrity sha512-ABia2QegosxOGsVlsSBJvoWeXy1wUKSfF7SWJdTjLAbx/Y3SrVevvvbFNQqrSJw89+lNSsM58SipmZJ5SRi5iw==
+  version "5.1.0"
+  resolved "https://registry.yarnpkg.com/svelte-preprocess/-/svelte-preprocess-5.1.0.tgz#824a1b072da118cba46ad2e5e88a568083acad4b"
+  integrity sha512-EkErPiDzHAc0k2MF5m6vBNmRUh338h2myhinUw/xaqsLs7/ZvsgREiLGj03VrSzbY/TB5ZXgBOsKraFee5yceA==
   dependencies:
     "@types/pug" "^2.0.6"
     detect-indent "^6.1.0"
