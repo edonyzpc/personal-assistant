@@ -23,7 +23,7 @@
 
 > ***快速输入 callout***
 <div align="center">
-<img src="./docs/personal-assistant-v1.2.2.gif" alt="usage video"/>
+<img src="./docs/personal-assistant-v1.3.2.gif" alt="usage video"/>
 </div>
 
 > ***自动更新 metadata***
