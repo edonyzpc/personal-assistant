@@ -27,7 +27,7 @@
 
 > ***List callout***
 <div align="center">
-<img src="./docs/personal-assistant-v1.2.2.gif" alt="usage video"/>
+<img src="./docs/personal-assistant-v1.3.2.gif" alt="usage video"/>
 </div>
 
 > ***Update metadata***
