@@ -1,4 +1,4 @@
-import { App, Component, SuggestModal, getIcon } from 'obsidian'
+import { App, Component, SuggestModal, MarkdownView, Notice, getIcon } from 'obsidian'
 import type {  Callout, CalloutID } from 'obsidian-callout-manager';
 
 import type { PluginManager } from './plugin';
@@ -54,11 +54,28 @@ export class CalloutModal extends SuggestModal<Callout> {
     // Perform action on the selected suggestion.
     async onChooseSuggestion(callout: Callout, evt: MouseEvent | KeyboardEvent) {
         const title = getTitleFromCallout(callout);
-        const calloutMarkdownContent = `> [!${callout.id}] ${title}
+        const calloutMarkdownContent = `
+> [!${callout.id}] ${title}
 > Contents
 
-`
+`;
         await navigator.clipboard.writeText(calloutMarkdownContent);
+
+        const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (view) {
+            const mode = view.getMode();
+            if (mode === "preview") {
+                new Notice("Tips: please switch to edit mode to insert", 5000);
+                return;
+            }
+            const cursor = view.editor.getCursor();
+            view.editor.replaceRange(calloutMarkdownContent, cursor);
+            // move the cursor down with 4 lines to preview the callout display
+            cursor.line = cursor.line + 4;
+            view.editor.setCursor(cursor);
+        } else {
+            new Notice("Error: not a editable markdown file", 5000);
+        }
     }
 }
 
