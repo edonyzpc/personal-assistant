@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { App, Component, SuggestModal, MarkdownView, Notice, getIcon } from 'obsidian'
 import type {  Callout, CalloutID } from 'obsidian-callout-manager';
 

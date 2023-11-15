@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 export interface Manifest {
     id: string,
     version: string,
