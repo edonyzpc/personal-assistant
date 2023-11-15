@@ -30,8 +30,8 @@
     }
 
     const isPluginEnabled = (pluginID: string) => {
-        return (this.app as any).plugins.manifests.hasOwnProperty(pluginID) &&
-            (this.app as any).plugins.enabledPlugins.has(pluginID);
+        return (app as any).plugins.manifests.hasOwnProperty(pluginID) &&
+            (app as any).plugins.enabledPlugins.has(pluginID);
     }
 
     // code from https://github.com/prncc/obsidian-repeat-plugin/blob/master/src/repeat/obsidian/RepeatView.tsx#L215
@@ -305,13 +305,18 @@
         });
     
         const links = containerEl.querySelectorAll('a.internal-link');
-        links.forEach((node: HTMLLinkElement) => {
+        links.forEach((node) => {
             if (!node.getAttribute('href')) {
                 return;
             }
+            const link = (node as HTMLLinkElement);
+            // prevents click event from parent element other than the current link element
+            link.addEventListener('click', (evt) => {
+                evt.stopPropagation();
+            });
             // do not change the hyperlink if it is changed
-            if (node.href.startsWith("obsidian://")) return;
-            node.href = getNoteUri(app.vault, node.getAttribute('href') as string);
+            if (link.href.startsWith("obsidian://")) return;
+            link.href = getNoteUri(app.vault, link.getAttribute('href') as string);
         });
 }
 
