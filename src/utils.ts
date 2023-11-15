@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { App, requestUrl, normalizePath } from 'obsidian';
 import JSZip from 'jszip';
 

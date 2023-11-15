@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { App, Notice, normalizePath, request } from 'obsidian';
 import { gt, prerelease } from "semver";
 import { PluginManager } from "./plugin";

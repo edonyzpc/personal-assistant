@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { App, Platform, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
 
 import { PluginManager } from "./plugin"

@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { describe,expect, test } from '@jest/globals';
 import { TEST_TOKEN } from '../utils';
 

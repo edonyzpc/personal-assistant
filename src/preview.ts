@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { App, ItemView, TFile, WorkspaceLeaf, addIcon } from "obsidian";
 
 import { PluginManager } from './plugin';

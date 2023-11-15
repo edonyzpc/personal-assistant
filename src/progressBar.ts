@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { Notice, addIcon, setIcon } from "obsidian";
 
 import { PluginManager } from "./plugin";

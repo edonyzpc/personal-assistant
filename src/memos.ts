@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { App, Notice, Platform } from "obsidian";
 
 import { ViewType, ViewResize } from "./view";

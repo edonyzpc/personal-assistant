@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { type Debouncer, Notice, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
 import moment from 'moment';
 import { type CalloutManager, getApi} from "obsidian-callout-manager";

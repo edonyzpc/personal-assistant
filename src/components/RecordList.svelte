@@ -1,3 +1,5 @@
+<!-- Copyright 2023 edonyzpc -->
+
 <script lang="ts">
     import { App, Component, MarkdownRenderer, Platform, Vault, setIcon } from "obsidian";
     import { tick } from "svelte";

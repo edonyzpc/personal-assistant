@@ -1,3 +1,5 @@
+/* Copyright 2023 edonyzpc */
+
 import { App, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
