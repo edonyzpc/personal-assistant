@@ -1,4 +1,4 @@
-.PHONY: deploy clean bin install
+.PHONY: deploy clean bin install release tag
 
 install:
 	yarn install
@@ -17,3 +17,11 @@ clean:
 	rm -rf test/.obsidian/plugins/personal-assistant/manifest.json
 	rm -rf test/.obsidian/plugins/personal-assistant/manifest-beta.json
 	rm -rf test/.obsidian/plugins/personal-assistant/styles.css
+
+release:
+	yarn version
+	echo "CHANGELOG.md needs to be updated"
+
+tag:
+	git tag -a `node tag.mjs`
+	git push --tags
