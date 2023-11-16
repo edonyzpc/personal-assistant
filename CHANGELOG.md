@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.2](https://github.com/edonyzpc/personal-assistant/compare/1.3.1...1.3.2) (2023-11-16)
+### Improve
+- list callout command support inserting in current cursor
+- release cmdline
+
+### Fix
+- svelte lint checking issue
+
 ## [1.3.1](https://github.com/edonyzpc/personal-assistant/compare/1.3.0...1.3.1) (2023-08-11)
 ### Improve
 - support block reference of internal link preview with callout
