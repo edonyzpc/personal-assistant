@@ -35,8 +35,10 @@
     "typescript": "5.4.2"
   },
   "dependencies": {
+    "chart.js": "^4.4.2",
     "obsidian-callout-manager": "^1.0.2-alpha1",
     "semver": "^7.5.2",
+    "svelte-chartjs": "^3.1.5",
     "vanilla-picker": "2.12.2"
   }
 }

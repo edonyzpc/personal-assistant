@@ -2,6 +2,7 @@ import { App, ItemView, WorkspaceLeaf } from "obsidian";
 
 import { PluginManager } from "./plugin";
 import RecordList from './components/RecordList.svelte'
+import Statistics from './components/Statistics.svelte'
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
 
@@ -25,6 +26,7 @@ export class Stat extends ItemView {
     }
 
     async onOpen() {
+        this.component = new Statistics()
     }
 
     async onClose() {
