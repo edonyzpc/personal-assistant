@@ -14,6 +14,7 @@ import { ThemeUpdater } from './themeManifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
+import { STAT_PREVIEW_TYPE } from './stat'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -195,6 +196,14 @@ export class PluginManager extends Plugin {
             }
         })
 
+        this.addCommand({
+            id: "show-statistics",
+            name: "Show statistics",
+            callback: async () => {
+                await this.activeStatView();
+            }
+        })
+
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(new SettingTab(this.app, this));
     }
@@ -339,6 +348,20 @@ export class PluginManager extends Plugin {
         this.app.workspace.revealLeaf(
             this.app.workspace.getLeavesOfType(RECORD_PREVIEW_TYPE)[0]
         );
-  }
+    }
+
+    async activeStatView() {
+        this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
+
+        const viewLeaf = this.app.workspace.getLeaf('tab');
+        await viewLeaf.setViewState({
+            type: STAT_PREVIEW_TYPE,
+            active: true,
+        });
+
+        this.app.workspace.revealLeaf(
+            this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE)[0]
+        );
+    }
 }
 
