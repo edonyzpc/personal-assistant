@@ -14,7 +14,7 @@ import { ThemeUpdater } from './themeManifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
-import { STAT_PREVIEW_TYPE } from './stat'
+import { STAT_PREVIEW_TYPE, Stat } from './stat'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -84,6 +84,10 @@ export class PluginManager extends Plugin {
                 RECORD_PREVIEW_TYPE,
                 (leaf) => { return new RecordPreview(this.app, this, leaf); }
             );
+            this.registerView(
+                STAT_PREVIEW_TYPE,
+                (leaf) => { return new Stat(this.app, this, leaf); }
+            )
         })
 
         this.addCommand({

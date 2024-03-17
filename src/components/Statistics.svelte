@@ -1,3 +1,5 @@
+<!-- Copyright 2024 edonyzpc -->
+
 <script lang="ts">
   import { Line } from 'svelte-chartjs';
 
@@ -11,6 +13,7 @@
     PointElement,
     CategoryScale,
   } from 'chart.js';
+  import ChartDataset from 'chart.js'
 
 
   const data = {
@@ -22,10 +25,10 @@
     lineTension: 0.3,
     backgroundColor: 'rgba(225, 204,230, .3)',
     borderColor: 'rgb(205, 130, 158)',
-    borderCapStyle: 'butt',
+    //borderCapStyle: "butt",
     borderDash: [],
     borderDashOffset: 0.0,
-    borderJoinStyle: 'miter',
+    //borderJoinStyle: 'miter',
     pointBorderColor: 'rgb(205, 130,1 58)',
     pointBackgroundColor: 'rgb(255, 255, 255)',
     pointBorderWidth: 10,
@@ -43,10 +46,10 @@
     lineTension: 0.3,
     backgroundColor: 'rgba(184, 185, 210, .3)',
     borderColor: 'rgb(35, 26, 136)',
-    borderCapStyle: 'butt',
+    //borderCapStyle: "butt",
     borderDash: [],
     borderDashOffset: 0.0,
-    borderJoinStyle: 'miter',
+    //borderJoinStyle: 'miter',
     pointBorderColor: 'rgb(35, 26, 136)',
     pointBackgroundColor: 'rgb(255, 255, 255)',
     pointBorderWidth: 10,
