@@ -1,7 +1,8 @@
-import { App, ItemView, WorkspaceLeaf } from "obsidian";
+import { App, ItemView, WorkspaceLeaf, addIcon } from "obsidian";
 
 import { PluginManager } from "./plugin";
 import Statistics from './components/Statistics.svelte'
+import { icons } from './utils'
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
 
@@ -14,6 +15,7 @@ export class Stat extends ItemView {
         super(leaf);
         this.app = app;
         this.plugin = plugin;
+        addIcon('PluginAST_STAT', icons['PluginAST_STAT']);
     }
 
     getViewType() {
@@ -24,14 +26,34 @@ export class Stat extends ItemView {
         return "Vault Statistics Preview";
     }
 
+    getIcon(): string {
+        return "PluginAST_STAT";
+    }
+
     async onOpen() {
+        const el = this.containerEl.getElementsByClassName("view-content");
         this.component = new Statistics({
-            target: this.containerEl,
+            target: el[0],
             props: {},
         })
+
+        const charts = this.containerEl.getElementsByTagName("canvas");
+        charts[0].setAttribute("style", "position: absolute;top: 50%;left: 50%;transform: translate(-50%, -50%);")
     }
 
     async onClose() {
         this.component.$destroy();
+    }
+
+    onResize(): void {
+        this.component.$destroy();
+        const el = this.containerEl.getElementsByClassName("view-content");
+        this.component = new Statistics({
+            target: el[0],
+            props: {},
+        })
+
+        const charts = this.containerEl.getElementsByTagName("canvas");
+        charts[0].setAttribute("style", "position: absolute;top: 50%;left: 50%;transform: translate(-50%, -50%);")
     }
 }
