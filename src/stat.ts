@@ -10,11 +10,13 @@ export class Stat extends ItemView {
     component!: Statistics;
     app: App;
     plugin: PluginManager;
+    staticsFileData: string;
 
-    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
+    constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf, staticsFileData: string) {
         super(leaf);
         this.app = app;
         this.plugin = plugin;
+        this.staticsFileData = staticsFileData;
         addIcon('PluginAST_STAT', icons['PluginAST_STAT']);
     }
 
@@ -34,7 +36,11 @@ export class Stat extends ItemView {
         const el = this.containerEl.getElementsByClassName("view-content");
         this.component = new Statistics({
             target: el[0],
-            props: {},
+            props: {
+                app: this.app,
+                plugin: this.plugin,
+                staticsFileData: this.staticsFileData
+            },
         })
 
         const charts = this.containerEl.getElementsByTagName("canvas");
@@ -50,7 +56,11 @@ export class Stat extends ItemView {
         const el = this.containerEl.getElementsByClassName("view-content");
         this.component = new Statistics({
             target: el[0],
-            props: {},
+            props: {
+                app: this.app,
+                plugin: this.plugin,
+                staticsFileData: this.staticsFileData
+            },
         })
 
         const charts = this.containerEl.getElementsByTagName("canvas");

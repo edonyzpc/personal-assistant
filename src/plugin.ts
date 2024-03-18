@@ -84,9 +84,11 @@ export class PluginManager extends Plugin {
                 RECORD_PREVIEW_TYPE,
                 (leaf) => { return new RecordPreview(this.app, this, leaf); }
             );
+            const staticsDataDir = this.app.vault.configDir + "/vault-stats.json";
+            const staticsFileData = await this.app.vault.adapter.read(staticsDataDir);
             this.registerView(
                 STAT_PREVIEW_TYPE,
-                (leaf) => { return new Stat(this.app, this, leaf); }
+                (leaf) => { return new Stat(this.app, this, leaf, staticsFileData); }
             )
         })
 
