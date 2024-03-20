@@ -46,6 +46,7 @@ export interface PluginManagerSettings {
     cachePluginRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
     cacheThemeRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
     statisticsType: string;
+    statsPath: string;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -97,6 +98,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         "Minimal": "kepano/obsidian-minimal",
     },
     statisticsType: "none",
+    statsPath: ".obsidian/stats.json",
 }
 
 interface GraphColor {
@@ -565,6 +567,17 @@ export class SettingTab extends PluginSettingTab {
                         this.app.workspace.revealLeaf(leaf);
                     });
                 });
+            new Setting(containerEl)
+                .setName("Vault Stats File Path")
+                .setDesc("Reload required for change to take effect. The location of the vault statistics file, relative to the vault root.")
+                .addText((text) => {
+                    text.setPlaceholder(".obsidian/stats.json");
+                    text.setValue(this.plugin.settings.statsPath.toString());
+                    text.onChange(async (value: string) => {
+                        this.plugin.settings.statsPath = value;
+                        await this.plugin.saveSettings();
+                    });
+    });
         }
     }
 

@@ -15,6 +15,8 @@ import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { STAT_PREVIEW_TYPE, Stat } from './stat'
+import StatsManager from './stats/StatsManager'
+import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/EditorPlugin'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -27,6 +29,7 @@ export class PluginManager extends Plugin {
     calloutManager: CalloutManager<true> | undefined;
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
     private settingTab: SettingTab = new SettingTab(this.app, this);
+    statsManager: StatsManager|undefined;
 
     async onload() {
         await this.loadSettings();
@@ -91,7 +94,8 @@ export class PluginManager extends Plugin {
                 STAT_PREVIEW_TYPE,
                 (leaf) => { return new Stat(this.app, this, leaf, staticsFileData); }
             )
-        })
+        });
+        this.statsManager = new StatsManager(this.app, this);
 
         this.addCommand({
             id: 'startup-recording',
@@ -210,6 +214,22 @@ export class PluginManager extends Plugin {
                 await this.activeStatView();
             }
         })
+
+         // Handle the Editor Plugins
+        this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
+
+        this.registerEvent(
+            this.app.workspace.on("active-leaf-change", async (leaf) => {
+                if (this.statsManager)
+                await this.statsManager.recalcTotals();
+            })
+        );
+        this.registerEvent(
+            this.app.vault.on("delete", async () => {
+              if (this.statsManager)
+            await this.statsManager.recalcTotals();
+          })
+        );
 
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(this.settingTab);
