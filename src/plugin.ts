@@ -25,7 +25,8 @@ export class PluginManager extends Plugin {
     private localGraph = new LocalGraph(this.app, this);
     private memos = new Memos(this.app, this);
     calloutManager: CalloutManager<true> | undefined;
-    private updateDebouncer!:Debouncer<[file: TFile | null], void>;
+    private updateDebouncer!: Debouncer<[file: TFile | null], void>;
+    private settingTab: SettingTab = new SettingTab(this.app, this);
 
     async onload() {
         await this.loadSettings();
@@ -211,7 +212,7 @@ export class PluginManager extends Plugin {
         })
 
         // This adds a settings tab so the user can configure various aspects of the plugin
-        this.addSettingTab(new SettingTab(this.app, this));
+        this.addSettingTab(this.settingTab);
     }
 
     onunload() {
@@ -357,17 +358,23 @@ export class PluginManager extends Plugin {
     }
 
     async activeStatView() {
-        this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
-
+        //this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
+        const leaves = this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE);
+        const count = leaves.length;
         const viewLeaf = this.app.workspace.getLeaf('tab');
+
         await viewLeaf.setViewState({
             type: STAT_PREVIEW_TYPE,
             active: true,
         });
-
         this.app.workspace.revealLeaf(
-            this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE)[0]
+            this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE)[count]
         );
+
+        // detach all the other stat views
+        for (let i = 0; i < count; i++) {
+            leaves[i].detach();
+        }
     }
 }
 
