@@ -22,6 +22,11 @@
   export let plugin: PluginManager;
   export let staticsFileData: string;
 
+  type CustomChartData = {
+    key: string;
+    value: number;
+  };
+
   const statics = JSON.parse(staticsFileData);
   let wordsData = [];
   let filesData = [];
@@ -29,17 +34,10 @@
   const history = Object.keys(statics.history);
   for (const date of history) {
     wordsData.push({ key: date, value: statics.history[date].words });
-    filesData.push({ x: Number(date), y: Number(statics.history[date].files) });
-    pagesData.push({ x: Number(date), y: Number(statics.history[date].totalPages) });
+    filesData.push({ key: date, value: Number(statics.history[date].files) });
+    pagesData.push({ key: date, value: Number(statics.history[date].totalPages) });
   }
 
-  let chartElement: ChartJS<"line"> | undefined;
-
-
-  type CustomChartData = {
-    key: string;
-    value: number;
-};
   const data: ChartData<"line", CustomChartData[]> = {
     datasets: [
     {
@@ -54,29 +52,35 @@
         yAxisKey: 'value'
       }
     },
-    /*
-    {
-      label: 'My Second dataset',
-      fill: true,
-      lineTension: 0.3,
-      backgroundColor: 'rgba(184, 185, 210, .9)',
-      borderColor: 'rgb(35, 26, 136)',
-      //borderCapStyle: "butt",
-      borderDash: [],
-      borderDashOffset: 0.0,
-      //borderJoinStyle: 'miter',
-      pointBorderColor: 'rgb(35, 26, 136)',
-      pointBackgroundColor: 'rgb(255, 255, 255)',
-      pointBorderWidth: 10,
-      pointHoverRadius: 5,
-      pointHoverBackgroundColor: 'rgb(0, 0, 0)',
-      pointHoverBorderColor: 'rgba(220, 220, 220, 1)',
-      pointHoverBorderWidth: 2,
-      pointRadius: 1,
-      pointHitRadius: 10,
-      data: [28, 48, 40, 19, 86, 27, 90],
-    },
-    */
+    ],
+  };
+
+  const dataFilePage: ChartData<"line", CustomChartData[]> = {
+    datasets: [
+      {
+        label: "Total Files",
+        data: filesData,
+        backgroundColor: ["rgba(153, 102, 255, 0.2)"],
+        borderColor: ['rgba(153, 102, 255, 1)'],
+        borderWidth: 1.0,
+        yAxisID: 'y',
+        parsing: {
+          xAxisKey: 'key',
+          yAxisKey: 'value'
+        }
+      },
+      {
+        label: "Total Pages",
+        data: pagesData,
+        backgroundColor: ["rgba(255, 205, 86, 0.2)"],
+        borderColor: ['rgba(255, 205, 86, 1)'],
+        borderWidth: 1.0,
+        yAxisID: 'y1',
+        parsing: {
+          xAxisKey: 'key',
+          yAxisKey: 'value'
+        }
+      },
     ],
   };
 
@@ -151,6 +155,94 @@
     },
   }
 
+  const optionsFilePage: ChartOptions<"line"> = {
+        interaction: {
+            mode: 'index',
+            axis: 'y',
+        },
+        plugins: {
+            title: {
+                display: true,
+                text: 'Statistics of Obsidian Vault',
+                font: {weight: 'bold', size: 16, family: 'Barlow'},
+            },
+            subtitle: {
+                display: true,
+                text: "total files/pages of vault named as " + app.vault.getName(),
+                font: {size: 14, style: 'italic', family: 'sans-serif'}
+            },
+            legend: {
+                labels: {
+                    color: "rgba(0,0,0,1)",
+                },
+            }
+        },
+        animations: {
+            tension: {
+                duration: 1600,
+                easing: 'easeInOutExpo',
+                from: 1.5,
+                to: 0,
+                loop: true
+            }
+        },
+        scales: {
+            y: {
+                border: {
+                    display: true,
+                    width: 0.8,
+                },
+                grid: {
+                    display: true,
+                    drawOnChartArea: true,
+                    drawTicks: true,
+                    color: "rgba(59, 59, 59, 0.2)",
+                },
+                title: {
+                    display: true,
+                    //text: "files",
+                    font: {size: 15, style: 'italic', family: 'Recursive',},
+                },
+                ticks: {
+                    color: "rgba(153, 102, 255, 0.5)",
+                    showLabelBackdrop: false,
+                },
+                suggestedMin: 1373,
+            },
+            y1: {
+                type: 'linear',
+                display: true,
+                position: 'right',
+                // grid line settings
+                grid: {
+                  drawOnChartArea: false, // only want the grid lines for one axis to show up
+                },
+                title: {
+                    display: true,
+                    //text: "pages",
+                    font: {size: 15, style: 'italic', family: 'Recursive',},
+                },
+                ticks: {
+                    color: "rgba(255, 205, 86, 1)",
+                    showLabelBackdrop: false,
+                },
+                suggestedMin: 4045,
+            },
+            x: {
+                border: {
+                    display: false,
+                    width: 0.8,
+                },
+                grid: {
+                    color: "rgba(59, 59, 59, 0.2)",
+                },
+            },
+        },
+  }
+
+  const isTotal = () => {
+    return plugin.settings.statisticsType === 'total';
+  }
 
   ChartJS.register(
     Title,
@@ -166,7 +258,13 @@
 </script>
 
 <div id="statistics-line-chart">
-  <Line data={data} options={options} />
+  {#if isTotal()}
+    <!-- total files/pages -->
+    <Line data={dataFilePage} options={optionsFilePage} />
+  {:else}
+    <!-- daily words-->
+    <Line data={data} options={options} />
+  {/if}
 </div>
 
 <style>
