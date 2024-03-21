@@ -15,8 +15,8 @@ import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { STAT_PREVIEW_TYPE, Stat } from './statsView'
-import StatsManager from './stats/statsManager'
-import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editorPlugin'
+import StatsManager from './stats/StatsManager'
+import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/EditorPlugin'
 import { STATS_FILE_NAME } from './constant'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any

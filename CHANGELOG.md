@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.3](https://github.com/edonyzpc/personal-assistant/compare/1.3.2...1.3.3) (2024-03-21)
+### Feature
+- show vault statistics data in chart view
+
 ## [1.3.2](https://github.com/edonyzpc/personal-assistant/compare/1.3.1...1.3.2) (2023-11-16)
 ### Improve
 - list callout command support inserting in current cursor

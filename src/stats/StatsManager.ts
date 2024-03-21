@@ -83,6 +83,11 @@ export default class StatsManager {
         }
 
         this.today = moment().format("YYYY-MM-DD");
+        let counter = 1;
+        while (!this.vaultStats.history.hasOwnProperty(moment().subtract(counter, 'days').format("YYYY-MM-DD"))) {
+            counter++;
+        }
+        const lastRecordDay = moment().subtract(counter, 'days').format("YYYY-MM-DD");
         const totalWords = await this.calcTotalWords();
         const totalCharacters = await this.calcTotalCharacters();
         const totalSentences = await this.calcTotalSentences();
@@ -95,7 +100,7 @@ export default class StatsManager {
             characters: 0,
             sentences: 0,
             pages: 0,
-            files: 0,
+            files: this.vaultStats.history[lastRecordDay].files,
             footnotes: 0,
             citations: 0,
             totalWords: totalWords,
