@@ -18,8 +18,6 @@ export class RecordPreview extends ItemView {
         plugin.log("startup new RecordList");
         super(leaf);
         addIcon('PluginAST_PREVIEW', icons['PluginAST_PREVIEW']);
-        super.icon = 'PluginAST_PREVIEW';
-        super.navigation = false;
         this.app = app;
         this.plugin = plugin;
         this.files = [];
@@ -31,6 +29,10 @@ export class RecordPreview extends ItemView {
 
     getDisplayText() {
         return "Records Preview";
+    }
+
+    getIcon(): string {
+        return "PluginAST_PREVIEW";
     }
 
     async onOpen() {

@@ -15,6 +15,11 @@
   "author": "edonyzpc",
   "license": "MIT",
   "devDependencies": {
+    "@codemirror/commands": "^6.1.2",
+    "@codemirror/language": "https://github.com/lishid/cm-language",
+    "@codemirror/search": "^6.2.2",
+    "@codemirror/state": "^6.1.2",
+    "@codemirror/view": "^6.4.0",
     "@jest/globals": "^29.5.0",
     "@tsconfig/svelte": "^5.0.0",
     "@types/node": "^20.0.0",
@@ -35,8 +40,10 @@
     "typescript": "5.4.2"
   },
   "dependencies": {
+    "chart.js": "^4.4.2",
     "obsidian-callout-manager": "^1.0.2-alpha1",
     "semver": "^7.5.2",
+    "svelte-chartjs": "^3.1.5",
     "vanilla-picker": "2.12.2"
   }
 }

@@ -4,6 +4,7 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import { PluginManager } from "./plugin"
+import { STAT_PREVIEW_TYPE } from './statsView'
 
 export interface ResizeStyle {
     width: number,
@@ -43,7 +44,9 @@ export interface PluginManagerSettings {
     metadataExcludePath: string[];
     isEnabledMetadataUpdating: boolean;
     cachePluginRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
-    cacheThemeRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
+    cacheThemeRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
+    statisticsType: string;
+    statsPath: string;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -93,7 +96,9 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     },
     cacheThemeRepo: {
         "Minimal": "kepano/obsidian-minimal",
-    }
+    },
+    statisticsType: "none",
+    statsPath: ".obsidian/stats.json",
 }
 
 interface GraphColor {
@@ -532,6 +537,47 @@ export class SettingTab extends PluginSettingTab {
                     })
             });
 
+
+            // setting for show statistics
+            new Setting(containerEl).setName("Show Statistics")
+                .setDesc("Show statistics in the status bar")
+                .addDropdown(dropDown => {
+                    // reset to default
+                    this.log(this.plugin.settings.statisticsType);
+                    const daily = dropDown.addOption('daily', 'Daily Statistcs');
+                    const total = dropDown.addOption('total', 'Total Statistics');
+                    if (this.plugin.settings.statisticsType === 'daily') {
+                        daily.setDisabled(false);
+                        dropDown.setValue('daily');
+                    } else {
+                        total.setDisabled(false);
+                        dropDown.setValue('total');
+                    }
+                    dropDown.onChange(async (value) => {
+                        console.log("changing statistics type", value);
+                        this.plugin.settings.statisticsType = value;
+                        await this.plugin.saveSettings();
+
+                        // popup view
+                        const leaf = this.app.workspace.getLeaf("window");
+                        await leaf.setViewState({
+                            type: STAT_PREVIEW_TYPE,
+                            active: false,
+                        });
+                        this.app.workspace.revealLeaf(leaf);
+                    });
+                });
+            new Setting(containerEl)
+                .setName("Vault Stats File Path")
+                .setDesc("Reload required for change to take effect. The location of the vault statistics file, relative to the vault root.")
+                .addText((text) => {
+                    text.setPlaceholder(".obsidian/stats.json");
+                    text.setValue(this.plugin.settings.statsPath.toString());
+                    text.onChange(async (value: string) => {
+                        this.plugin.settings.statsPath = value;
+                        await this.plugin.saveSettings();
+                    });
+    });
         }
     }
 

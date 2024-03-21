@@ -1,0 +1,47 @@
+{
+  "history": {
+    "2024-03-20": {
+      "words": 3,
+      "characters": 5,
+      "sentences": 0,
+      "pages": 0,
+      "files": 14,
+      "footnotes": 0,
+      "citations": 0,
+      "totalWords": 502,
+      "totalCharacters": 3438,
+      "totalSentences": 35,
+      "totalFootnotes": 45,
+      "totalCitations": 45,
+      "totalPages": 1.5
+    }
+  },
+  "modifiedFiles": {
+    "Diary-2023-04-08.md": {
+      "words": {
+        "initial": 186,
+        "current": 189
+      },
+      "characters": {
+        "initial": 1234,
+        "current": 1239
+      },
+      "sentences": {
+        "initial": 9,
+        "current": 9
+      },
+      "footnotes": {
+        "initial": 0,
+        "current": 0
+      },
+      "citations": {
+        "initial": 0,
+        "current": 0
+      },
+      "pages": {
+        "initial": 0.6,
+        "current": 0.6
+      }
+    }
+  }
+}

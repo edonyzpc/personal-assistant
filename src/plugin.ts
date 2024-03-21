@@ -14,6 +14,10 @@ import { ThemeUpdater } from './themeManifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
+import { STAT_PREVIEW_TYPE, Stat } from './statsView'
+import StatsManager from './stats/statsManager'
+import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editorPlugin'
+import { STATS_FILE_NAME } from './constant'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -24,7 +28,9 @@ export class PluginManager extends Plugin {
     private localGraph = new LocalGraph(this.app, this);
     private memos = new Memos(this.app, this);
     calloutManager: CalloutManager<true> | undefined;
-    private updateDebouncer!:Debouncer<[file: TFile | null], void>;
+    private updateDebouncer!: Debouncer<[file: TFile | null], void>;
+    private settingTab: SettingTab = new SettingTab(this.app, this);
+    statsManager: StatsManager|undefined;
 
     async onload() {
         await this.loadSettings();
@@ -83,7 +89,14 @@ export class PluginManager extends Plugin {
                 RECORD_PREVIEW_TYPE,
                 (leaf) => { return new RecordPreview(this.app, this, leaf); }
             );
-        })
+            const staticsDataDir = this.app.vault.configDir + "/" + STATS_FILE_NAME;
+            const staticsFileData = await this.app.vault.adapter.read(staticsDataDir);
+            this.registerView(
+                STAT_PREVIEW_TYPE,
+                (leaf) => { return new Stat(this.app, this, leaf, staticsFileData); }
+            )
+        });
+        this.statsManager = new StatsManager(this.app, this);
 
         this.addCommand({
             id: 'startup-recording',
@@ -195,8 +208,32 @@ export class PluginManager extends Plugin {
             }
         })
 
+        this.addCommand({
+            id: "show-statistics",
+            name: "Show statistics",
+            callback: async () => {
+                await this.activeStatView();
+            }
+        })
+
+         // Handle the Editor Plugins
+        this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
+
+        this.registerEvent(
+            this.app.workspace.on("active-leaf-change", async (leaf) => {
+                if (this.statsManager)
+                await this.statsManager.recalcTotals();
+            })
+        );
+        this.registerEvent(
+            this.app.vault.on("delete", async () => {
+              if (this.statsManager)
+            await this.statsManager.recalcTotals();
+          })
+        );
+
         // This adds a settings tab so the user can configure various aspects of the plugin
-        this.addSettingTab(new SettingTab(this.app, this));
+        this.addSettingTab(this.settingTab);
     }
 
     onunload() {
@@ -339,6 +376,26 @@ export class PluginManager extends Plugin {
         this.app.workspace.revealLeaf(
             this.app.workspace.getLeavesOfType(RECORD_PREVIEW_TYPE)[0]
         );
-  }
+    }
+
+    async activeStatView() {
+        //this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
+        const leaves = this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE);
+        const count = leaves.length;
+        const viewLeaf = this.app.workspace.getLeaf('tab');
+
+        await viewLeaf.setViewState({
+            type: STAT_PREVIEW_TYPE,
+            active: true,
+        });
+        this.app.workspace.revealLeaf(
+            this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE)[count]
+        );
+
+        // detach all the other stat views
+        for (let i = 0; i < count; i++) {
+            leaves[i].detach();
+        }
+    }
 }
 
