@@ -3,6 +3,7 @@ import { App, ItemView, WorkspaceLeaf, addIcon } from "obsidian";
 import { PluginManager } from "./plugin";
 import Statistics from './components/Statistics.svelte'
 import { icons } from './utils'
+import { PluginAST_STAT_ICON } from './constant'
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
 
@@ -17,7 +18,7 @@ export class Stat extends ItemView {
         this.app = app;
         this.plugin = plugin;
         this.staticsFileData = staticsFileData;
-        addIcon('PluginAST_STAT', icons['PluginAST_STAT']);
+        addIcon(PluginAST_STAT_ICON, icons[PluginAST_STAT_ICON]);
     }
 
     getViewType() {
@@ -29,7 +30,7 @@ export class Stat extends ItemView {
     }
 
     getIcon(): string {
-        return "PluginAST_STAT";
+        return PluginAST_STAT_ICON;
     }
 
     async onOpen() {

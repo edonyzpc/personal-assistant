@@ -4,7 +4,7 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import { PluginManager } from "./plugin"
-import { STAT_PREVIEW_TYPE } from './stat'
+import { STAT_PREVIEW_TYPE } from './statsView'
 
 export interface ResizeStyle {
     width: number,
