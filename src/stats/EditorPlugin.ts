@@ -112,18 +112,17 @@ class SectionWordCountEditorPlugin implements PluginValue {
 
     constructor(view: EditorView) {
         const plugin = view.state.field(pluginField);
-        /*
-      if (!plugin.settings.displaySectionCounts) {
-        this.decorations = Decoration.none;
-        return;
-      }*/
+        if (plugin && !plugin.settings.displaySectionCounts) {
+            this.decorations = Decoration.none;
+            return;
+        }
 
         if (plugin) this.calculateLineCounts(view.state, plugin);
         this.decorations = this.mkDeco(view);
     }
 
     calculateLineCounts(state: EditorState, plugin: PluginManager) {
-        const stripComments = false;
+        const stripComments = plugin.settings.countComments;
         let docStr = state.doc.toString();
 
         if (stripComments) {
@@ -151,9 +150,10 @@ class SectionWordCountEditorPlugin implements PluginValue {
 
     update(update: ViewUpdate) {
         const plugin = update.view.state.field(pluginField);
-        // const { displaySectionCounts, countComments: stripComments } = plugin.settings;
-        const displaySectionCounts = false;
-        const stripComments = false;
+        if (!plugin) {
+            return
+        }
+        const { displaySectionCounts, countComments: stripComments } = plugin.settings;
         let didSettingsChange = false;
 
         if (this.lineCounts.length && !displaySectionCounts) {
@@ -234,9 +234,9 @@ class SectionWordCountEditorPlugin implements PluginValue {
     }
 
     mkDeco(view: EditorView) {
-        //const plugin = view.state.field(pluginField);
+        const plugin = view.state.field(pluginField);
         const b = new RangeSetBuilder<Decoration>();
-        //if (!plugin.settings.displaySectionCounts) return b.finish();
+        if (plugin && !plugin.settings.displaySectionCounts) return b.finish();
 
         const tree = syntaxTree(view.state);
         const getHeaderLevel = (line: Line) => {

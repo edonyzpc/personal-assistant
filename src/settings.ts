@@ -47,6 +47,8 @@ export interface PluginManagerSettings {
     cacheThemeRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
     statisticsType: string;
     statsPath: string;
+    displaySectionCounts: boolean;
+    countComments: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -99,6 +101,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     },
     statisticsType: "none",
     statsPath: ".obsidian/stats.json",
+    displaySectionCounts: false,
+    countComments: false,
 }
 
 interface GraphColor {
