@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.4, 1.3.5](https://github.com/edonyzpc/personal-assistant/compare/1.3.3...1.3.5) (2024-03-25)
+### Fix
+- fix: heading count display error
+- fix: refresh data when rendering the statistics UI
+
 ## [1.3.3](https://github.com/edonyzpc/personal-assistant/compare/1.3.2...1.3.3) (2024-03-21)
 ### Feature
 - show vault statistics data in chart view
