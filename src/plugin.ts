@@ -17,7 +17,6 @@ import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { STAT_PREVIEW_TYPE, Stat } from './statsView'
 import StatsManager from './stats/StatsManager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/EditorPlugin'
-import { STATS_FILE_NAME } from './constant'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -89,11 +88,9 @@ export class PluginManager extends Plugin {
                 RECORD_PREVIEW_TYPE,
                 (leaf) => { return new RecordPreview(this.app, this, leaf); }
             );
-            const staticsDataDir = this.app.vault.configDir + "/" + STATS_FILE_NAME;
-            const staticsFileData = await this.app.vault.adapter.read(staticsDataDir);
             this.registerView(
                 STAT_PREVIEW_TYPE,
-                (leaf) => { return new Stat(this.app, this, leaf, staticsFileData); }
+                (leaf) => { return new Stat(this.app, this, leaf); }
             )
         });
         this.statsManager = new StatsManager(this.app, this);
