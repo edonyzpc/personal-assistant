@@ -38,10 +38,59 @@
     pagesData.push({ key: date, value: Number(statics.history[date].totalPages) });
   }
 
+  // statistics support progressive animation
+  const totalDuration = 10000;
+  const delayBetweenPoints = totalDuration / history.length;
+  const previousY = (ctx: any) => ctx.index === 0 ? ctx.chart.scales.y.getPixelForValue(100) : ctx.chart.getDatasetMeta(ctx.datasetIndex).data[ctx.index - 1].getProps(['y'], true).y;
+  const animationProgressive = {
+    x: {
+      type: 'number',
+      easing: 'linear',
+      duration: delayBetweenPoints,
+      from: NaN, // the point is initially skipped
+      delay(ctx: any) {
+        if (ctx.type !== 'data' || ctx.xStarted) {
+          return 0;
+        }
+        ctx.xStarted = true;
+        return ctx.index * delayBetweenPoints;
+      }
+    },
+    y: {
+      type: 'number',
+      easing: 'linear',
+      duration: delayBetweenPoints,
+      from: previousY,
+      delay(ctx: any) {
+        if (ctx.type !== 'data' || ctx.yStarted) {
+          return 0;
+        }
+        ctx.yStarted = true;
+        return ctx.index * delayBetweenPoints;
+      }
+    }
+  };
+  const animationRegular = {
+    tension: {
+        duration: 1000,
+        easing: 'linear',
+        from: 1,
+        to: 0,
+        loop: true
+    }
+  };
+  let animation: any;
+  if (plugin.settings.animation) {
+    animation = animationProgressive;
+  } else {
+    animation = animationRegular;
+  }
+
   const data: ChartData<"line", CustomChartData[]> = {
     datasets: [
     {
       label: "Daily Words",
+      fill: true,
       data: wordsData,
       backgroundColor: ["rgba(255, 99, 132, 0.2)"],
       borderColor: ['rgba(255, 99, 132, 1)'],
@@ -50,7 +99,9 @@
       parsing: {
         xAxisKey: 'key',
         yAxisKey: 'value'
-      }
+      },
+      cubicInterpolationMode: "monotone",
+      pointStyle: "rectRounded",
     },
     ],
   };
@@ -59,6 +110,7 @@
     datasets: [
       {
         label: "Total Files",
+        fill: true,
         data: filesData,
         backgroundColor: ["rgba(153, 102, 255, 0.2)"],
         borderColor: ['rgba(153, 102, 255, 1)'],
@@ -67,10 +119,13 @@
         parsing: {
           xAxisKey: 'key',
           yAxisKey: 'value'
-        }
+        },
+        cubicInterpolationMode: "monotone",
+        pointStyle: "rectRounded",
       },
       {
         label: "Total Pages",
+        fill: true,
         data: pagesData,
         backgroundColor: ["rgba(255, 205, 86, 0.2)"],
         borderColor: ['rgba(255, 205, 86, 1)'],
@@ -79,7 +134,9 @@
         parsing: {
           xAxisKey: 'key',
           yAxisKey: 'value'
-        }
+        },
+        cubicInterpolationMode: "monotone",
+        pointStyle: "rectRounded",
       },
     ],
   };
@@ -107,9 +164,14 @@
         labels: {
             color: "rgba(0,0,0,1)",
             usePointStyle: true,
+            pointStyle: "rectRounded",
         },
+      },
+      tooltip: {
+        usePointStyle: true,
       }
     },
+    /*
     animations: {
       tension: {
           duration: 1000,
@@ -119,6 +181,8 @@
           loop: true
       }
     },
+    */
+    animations: animation,
     scales: {
       y: {
           border: {
@@ -174,9 +238,15 @@
             legend: {
                 labels: {
                     color: "rgba(0,0,0,1)",
+                    usePointStyle: true,
+                    pointStyle: "rectRounded",
                 },
+            },
+            tooltip: {
+              usePointStyle: true,
             }
         },
+        /*
         animations: {
             tension: {
                 duration: 1600,
@@ -186,6 +256,8 @@
                 loop: true
             }
         },
+        */
+        animations: animation,
         scales: {
             y: {
                 border: {

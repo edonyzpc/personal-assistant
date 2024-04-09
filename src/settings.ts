@@ -49,6 +49,7 @@ export interface PluginManagerSettings {
     statsPath: string;
     displaySectionCounts: boolean;
     countComments: boolean;
+    animation: boolean;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -103,6 +104,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     statsPath: ".obsidian/stats.json",
     displaySectionCounts: false,
     countComments: false,
+    animation: false,
 }
 
 interface GraphColor {
@@ -581,7 +583,14 @@ export class SettingTab extends PluginSettingTab {
                         this.plugin.settings.statsPath = value;
                         await this.plugin.saveSettings();
                     });
-    });
+                });
+            new Setting(containerEl).setName("Animation").addToggle((cb) =>
+                cb.setValue(this.plugin.settings.animation)
+                    .onChange((value) => {
+                        this.plugin.settings.animation = value;
+                        this.plugin.saveSettings();
+                    })
+            );
         }
     }
 
