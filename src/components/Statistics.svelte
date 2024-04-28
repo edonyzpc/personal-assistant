@@ -29,11 +29,13 @@
 
   const statics = JSON.parse(staticsFileData);
   let wordsData = [];
+  let pageData = [];
   let filesData = [];
   let pagesData = [];
   const history = Object.keys(statics.history);
   for (const date of history) {
     wordsData.push({ key: date, value: statics.history[date].words });
+    pageData.push({ key: date, value: -statics.history[date].pages });
     filesData.push({ key: date, value: Number(statics.history[date].files) });
     pagesData.push({ key: date, value: Number(statics.history[date].totalPages) });
   }
@@ -103,6 +105,21 @@
       cubicInterpolationMode: "monotone",
       pointStyle: "rectRounded",
     },
+    {
+      label: "Daily Pages",
+      fill: true,
+      data: pageData,
+      backgroundColor: ["rgba(238, 130, 238, 0.2)"],
+      borderColor: ['rgba(238, 130, 238, 1)'],
+      borderWidth: 1.0,
+      yAxisID: 'y1',
+      parsing: {
+        xAxisKey: 'key',
+        yAxisKey: 'value'
+      },
+      cubicInterpolationMode: "monotone",
+      pointStyle: "rectRounded",
+    },
     ],
   };
 
@@ -157,7 +174,7 @@
       subtitle: {
           display: true,
           text: "words of vault named as Anthelion",
-          font: {size: 14, style: 'italic', family: 'sans-serif'},
+          font: {size: 14, style: 'italic', family: 'sans-serif', weight: 'bold'},
           color: "rgba(48,48,48,0.8)",
       },
       legend: {
@@ -197,24 +214,48 @@
           },
           title: {
               display: true,
-              //text: "words",
-              font: {size: 15, style: 'italic',family: 'Recursive',},
+              text: "+words",
+              font: {size: 15, style: 'italic', weight: 'bold'},
+              color: "rgba(255, 99, 132, 1)",
           },
           ticks: {
               color: "rgba(255, 99, 132, 1)",
               showLabelBackdrop: false,
           },
       },
+      y1: {
+        position: 'right',
+        border: {
+            display: true,
+            width: 0.8,
+        },
+        grid: {
+            display: true,
+            drawOnChartArea: true,
+            drawTicks: true,
+            color: "rgba(59, 59, 59, 0.2)",
+        },
+        title: {
+            display: true,
+            text: "-pages",
+            font: {size: 15, style: 'italic', weight: 'bold'},
+            color: "rgba(238, 130, 238, 1)",
+        },
+        ticks: {
+            color: "rgba(238, 130, 238, 1)",
+            showLabelBackdrop: false,
+        },
+      },
       x: {
-          border: {
-              display: false,
-              width: 0.8,
-          },
-          grid: {
-              color: "rgba(59, 59, 59, 0.2)",
-          },
-          ticks: {
-          },
+        border: {
+            display: false,
+            width: 0.8,
+        },
+        grid: {
+            color: "rgba(59, 59, 59, 0.2)",
+        },
+        ticks: {
+        },
       },
     },
   }
@@ -348,6 +389,7 @@
     --pointBackgroundColor: rgb(255, 255, 255);
     --pointHoverBackgroundColor: rgb(0, 0, 0);
     --pointHoverBorderColor: rgba(220, 220, 220,1);
+    --pageDataColor: rgb(255, 136, 0);
     position: relative;
     height: 100%;
     width: 100%;
