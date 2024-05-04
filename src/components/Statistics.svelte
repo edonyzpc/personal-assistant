@@ -313,8 +313,9 @@
                 },
                 title: {
                     display: true,
-                    //text: "files",
-                    font: {size: 15, style: 'italic', family: 'Recursive',},
+                    text: "total-files",
+                    font: {size: 15, style: 'italic', weight: 'bold', family: 'Courier New'},
+                    color: 'rgba(153, 102, 255, 1)',
                 },
                 ticks: {
                     color: "rgba(153, 102, 255, 0.5)",
@@ -332,8 +333,9 @@
                 },
                 title: {
                     display: true,
-                    //text: "pages",
-                    font: {size: 15, style: 'italic', family: 'Recursive',},
+                    text: "total-pages",
+                    font: {size: 15, style: 'italic', weight: 'bold', family: 'Courier New'},
+                    color: 'rgba(255, 205, 86, 1)',
                 },
                 ticks: {
                     color: "rgba(255, 205, 86, 1)",
