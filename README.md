@@ -15,9 +15,9 @@
  
 </p>
 
-> ***NOTE***: New shiny feature: Rendering statistics of the current vault including characters, words, sections, citations, lines and pages.
+> ***NOTE***: New shiny feature: Animation rendering statistics of the current vault including characters, words, sections, citations, lines and pages.
 <div align="center">
-<img src="./docs/personal-assistant-v1.3.3.gif" alt="usage video"/>
+<img src="./docs/personal-assistant-v1.3.6.gif" alt="usage video"/>
 </div>
 
 <div align="center">
