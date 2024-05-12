@@ -84,10 +84,19 @@ export default class StatsManager {
 
         this.today = moment().format("YYYY-MM-DD");
         let counter = 1;
-        while (!this.vaultStats.history.hasOwnProperty(moment().subtract(counter, 'days').format("YYYY-MM-DD"))) {
-            counter++;
+        let files = 0;
+        const recordDays = Object.keys(this.vaultStats.history).length;
+        if (recordDays > 0) {
+            // try to iterate all of the recorded days and find the last record stat.
+            while (!this.vaultStats.history.hasOwnProperty(moment().subtract(counter, 'days').format("YYYY-MM-DD")) &&
+                counter <= recordDays) {
+                counter++;
+            }
+            files = this.vaultStats.history[moment().subtract(counter, 'days').format("YYYY-MM-DD")].files;
+        } else {
+            files = 0;
         }
-        const lastRecordDay = moment().subtract(counter, 'days').format("YYYY-MM-DD");
+
         const totalWords = await this.calcTotalWords();
         const totalCharacters = await this.calcTotalCharacters();
         const totalSentences = await this.calcTotalSentences();
@@ -100,7 +109,7 @@ export default class StatsManager {
             characters: 0,
             sentences: 0,
             pages: 0,
-            files: this.vaultStats.history[lastRecordDay].files,
+            files: files,
             footnotes: 0,
             citations: 0,
             totalWords: totalWords,

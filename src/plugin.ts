@@ -213,7 +213,7 @@ export class PluginManager extends Plugin {
             }
         })
 
-         // Handle the Editor Plugins
+        // Handle the Editor Plugins
         this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
 
         this.registerEvent(
