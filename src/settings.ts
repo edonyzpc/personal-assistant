@@ -544,54 +544,54 @@ export class SettingTab extends PluginSettingTab {
             });
 
 
-            // setting for show statistics
-            new Setting(containerEl).setName("Show Statistics")
-                .setDesc("Show statistics in the status bar")
-                .addDropdown(dropDown => {
-                    // reset to default
-                    this.log(this.plugin.settings.statisticsType);
-                    const daily = dropDown.addOption('daily', 'Daily Statistcs');
-                    const total = dropDown.addOption('total', 'Total Statistics');
-                    if (this.plugin.settings.statisticsType === 'daily') {
-                        daily.setDisabled(false);
-                        dropDown.setValue('daily');
-                    } else {
-                        total.setDisabled(false);
-                        dropDown.setValue('total');
-                    }
-                    dropDown.onChange(async (value) => {
-                        console.log("changing statistics type", value);
-                        this.plugin.settings.statisticsType = value;
-                        await this.plugin.saveSettings();
-
-                        // popup view
-                        const leaf = this.app.workspace.getLeaf("window");
-                        await leaf.setViewState({
-                            type: STAT_PREVIEW_TYPE,
-                            active: false,
-                        });
-                        this.app.workspace.revealLeaf(leaf);
-                    });
-                });
-            new Setting(containerEl)
-                .setName("Vault Stats File Path")
-                .setDesc("Reload required for change to take effect. The location of the vault statistics file, relative to the vault root.")
-                .addText((text) => {
-                    text.setPlaceholder(".obsidian/stats.json");
-                    text.setValue(this.plugin.settings.statsPath.toString());
-                    text.onChange(async (value: string) => {
-                        this.plugin.settings.statsPath = value;
-                        await this.plugin.saveSettings();
-                    });
-                });
-            new Setting(containerEl).setName("Animation").addToggle((cb) =>
-                cb.setValue(this.plugin.settings.animation)
-                    .onChange((value) => {
-                        this.plugin.settings.animation = value;
-                        this.plugin.saveSettings();
-                    })
-            );
         }
+        // setting for show statistics
+        new Setting(containerEl).setName("Show Statistics")
+            .setDesc("Show statistics in the status bar")
+            .addDropdown(dropDown => {
+                // reset to default
+                this.log(this.plugin.settings.statisticsType);
+                const daily = dropDown.addOption('daily', 'Daily Statistcs');
+                const total = dropDown.addOption('total', 'Total Statistics');
+                if (this.plugin.settings.statisticsType === 'daily') {
+                    daily.setDisabled(false);
+                    dropDown.setValue('daily');
+                } else {
+                    total.setDisabled(false);
+                    dropDown.setValue('total');
+                }
+                dropDown.onChange(async (value) => {
+                    console.log("changing statistics type", value);
+                    this.plugin.settings.statisticsType = value;
+                    await this.plugin.saveSettings();
+
+                    // popup view
+                    const leaf = this.app.workspace.getLeaf("window");
+                    await leaf.setViewState({
+                        type: STAT_PREVIEW_TYPE,
+                        active: false,
+                    });
+                    this.app.workspace.revealLeaf(leaf);
+                });
+            });
+        new Setting(containerEl)
+            .setName("Vault Stats File Path")
+            .setDesc("Reload required for change to take effect. The location of the vault statistics file, relative to the vault root.")
+            .addText((text) => {
+                text.setPlaceholder(".obsidian/stats.json");
+                text.setValue(this.plugin.settings.statsPath.toString());
+                text.onChange(async (value: string) => {
+                    this.plugin.settings.statsPath = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+        new Setting(containerEl).setName("Animation").addToggle((cb) =>
+            cb.setValue(this.plugin.settings.animation)
+                .onChange((value) => {
+                    this.plugin.settings.animation = value;
+                    this.plugin.saveSettings();
+                })
+        );
     }
 
     private findGraphColor(graphColor: GraphColor): number {
