@@ -14,6 +14,10 @@ Obsidian 最大的优势就是社区化支持了自定义插件，目前已经�
 如下视频所示，演示了如果通过命令面板（Command Palette）输入 `update plugins` 即可自动化完成插件的升级。
 
 
+https://github.com/user-attachments/assets/e25804e5-007d-4951-b76a-d7076d25a5d1
+
+
+
 ### 3. 配置说明
 自动升级插件功能目前还没有配置项，如果你有好的想法欢迎提交 [issue](https://github.com/edonyzpc/personal-assistant/issues) 交流。
 
@@ -25,6 +29,10 @@ Obsidian 最大的优势就是社区化支持了自定义插件，目前已经�
 如下视频所示，演示了如果通过命令面板（Command Palette）输入 `update themes` 即可自动化完成主题的升级。
 
 
+https://github.com/user-attachments/assets/3c6910d7-2790-4dd2-88b6-2721de473d35
+
+
+
 ### 3. 配置说明
 自动升级主题功能目前还没有配置项，如果你有好的想法欢迎提交 [issue](https://github.com/edonyzpc/personal-assistant/issues) 交流。
 
@@ -34,6 +42,10 @@ Obsidian 最大的优势就是社区化支持了自定义插件，目前已经�
 
 ### 2. 示例
 如下视频所示，演示了如果通过命令面板（Command Palette）输入 `switch plugin` 即可自动化完成需要打开或着关闭的插件了，如果插件比较多的话还支持模糊搜索帮助快速定位到需要开关的目标。
+
+
+https://github.com/user-attachments/assets/cfa64ee9-9b91-4469-abb7-13064b1458cc
+
 
 
 ### 3. 配置说明
@@ -54,6 +66,10 @@ callouts 是一种带了格式、形状、颜色的 blockquote，为文档内容
 如下视频所示，演示了通过命令面板（Command Palette）输入 `list callouts` 即可自动化完成 callouts 样式的检索和预览，如果 callouts 样式比较多的话还支持模糊搜索帮助快速定位到目标 callouts，按下 Enter 键确认后 Personal Assistant 插件会自动将样式复制到操作系统的剪切板，用户只需在文档需要的位置 `Ctrl/CMD + V` 粘贴即可专注编辑自己需要的内容。
 
 
+https://github.com/user-attachments/assets/dbd6d6be-54bb-4172-b023-1ff526a086c7
+
+
+
 ### 3. 配置说明
 自动快捷输入 callouts 功能目前还没有配置项，如果你有好的想法欢迎提交 [issue](https://github.com/edonyzpc/personal-assistant/issues) 交流。
 
@@ -62,12 +78,17 @@ callouts 是一种带了格式、形状、颜色的 blockquote，为文档内容
 按照卢曼笔记法（Zettelkasten）的理念，笔记从本质上讲，它不是一种「技巧」，而是一个「流程」，一种存储和组织知识、扩展记忆以及生成新连接和想法的方法。简单来说，就是把你感兴趣或者觉得自己将来会用到的知识收集起来，然后用一种标准化的方式去处理这些笔记，建立笔记之间的联系，供你使用。关于笔记系统可以参考我的另外一篇文章：[我的 PKM 系统](https://www.edony.ink/my-pkm/)。
 
 当我们利用 Obsidian 的做笔记回顾的时候，Graph View 就是一个非常好的工具帮助我们结构化整理和思考每篇笔记，最终形成自己的知识。如下图所示是我的 Obsidian 的 Global Graph View：
-![[Pasted image 20240713151128.png]]
+![image](https://github.com/user-attachments/assets/de3a97c6-8386-4766-afe4-1385d3dc689c)
+
 
 Obsidian 的 Local Graph 可以帮助用户查看当前笔记与其他笔记的关系，Personal Assistant 帮助自动化展示当前笔记的 Graph View 从而能够更好的结构化整理和思考。
 
 ### 2. 示例
 如下视频所示，演示了通过面板（Command Palette）输入 `hover local` 即可自动化完成 Local Graph View 的建立和预览，由于这个是我个人的常用功能，所以绑定了快捷键 `CMD + Shift + G` 进行一键查看 Local Graph View，
+
+
+https://github.com/user-attachments/assets/8ad70c26-8ffb-44bc-9d1d-2c99053a3e47
+
 
 
 ### 3. 配置说明
@@ -79,6 +100,8 @@ Personal Assistant 插件的 Local Graph 功能提供了与 Graph View 一致的
 - Collapse，是否折叠配置窗口；
 - Auto Local Graph Colors，是否自动化设置 Graph view 节点颜色；
 - Enable Graph Colors，是否进行 Graph view 颜色自定义配置，通过 `Add Color` 按钮增加颜色配置，可以是目录维度、类型维度、Tag 维度等进行颜色配置；
+![image](https://github.com/user-attachments/assets/29a53342-a851-4158-8d80-686c97cd6a35)
+![image](https://github.com/user-attachments/assets/87754ac8-814f-44cd-9d5c-c7007b1055cb)
 
 
 ## fleeting thoughts 记录功能
@@ -94,11 +117,16 @@ Obsidian 提供了 Daily notes 功能可以用作跟日期相关的记录（例�
 如下视频所示，演示了通过面板（Command Palette）输入 `note record` 即可自动化完成 fleeting thoughts 专题笔记的模版化创建，同时还展示了fleeting thoughts 的路径以及文件格式的配置，最后还展示了创建该笔记时用的 Templater 结构化模版。
 
 
+https://github.com/user-attachments/assets/fe13b2e9-2f3b-497f-b2b5-b9ff08f57bf3
+
+
+
 #### 3. configuration
 Personal Assistant 插件的 Note Record 功能提供了两个配置项：
 1. target path，fleeting thought 记录的目录配置
 2. file format，fleeting thought 文件格式，方便其他工具自动化处理（例如识别专题）；
-![[Pasted image 20240713153329.png]]
+![image](https://github.com/user-attachments/assets/89254e0b-75ae-4df3-9323-ba97ba48fcfa)
+
 
 ### 一键预览 fleeting thoughts 记录
 #### 1.description
@@ -108,8 +136,13 @@ Personal Assistant 插件的 Note Record 功能提供了两个配置项：
 如下视频所示，演示了通过面板（Command Palette）输入 `preview record` 即可自动化完成 fleeting thoughts 专题笔记的一键预览，同时还可以针对感兴趣的记录通过点击的方式直接跳转到对应的笔记文件。
 
 
+https://github.com/user-attachments/assets/e40ea7f2-24a6-4e0c-a204-fc252a3149e6
+
+
+
 #### 3. configuration
 Personal Assistant 插件的 Preview Record 功能提供了一个配置项：配置预览记录文件的数目即一次性预览多少个 fleeting thoughts 文件。
+![image](https://github.com/user-attachments/assets/4472191a-5da4-4331-a224-0e46e1971061)
 
 
 ## 统计状态显示功能
@@ -122,10 +155,15 @@ Personal Assistant 插件的 Preview Record 功能提供了一个配置项：配
 2. vault 总共的笔记数量和页数；
 
 
+https://github.com/user-attachments/assets/4fedeff6-6e81-45ae-8cd8-55cf0781d4fd
+
+
+
 ### 3. configuration
 Personal Assistant 插件的 Show Statistics 功能提供了3个配置项：
 1. show statistics，展示统计状态的类型，可选 daily 和 total；
 2. vault statistics file path，statistics 统计文件的路径；
+![image](https://github.com/user-attachments/assets/97deae5d-e30f-44b6-a0b8-f59c1fca1de7)
 
 
 ## 元数据自动更新功能
@@ -136,11 +174,16 @@ Personal Assistant 插件的 Show Statistics 功能提供了3个配置项：
 如下视频所示，演示了通过面板（Command Palette）输入 `update metadata` 即可自动化更新 frontmatter 中的元数据，为了提示用户在自动更新元数据，右下角的 icon 会呈现呼吸状态。
 
 
+https://github.com/user-attachments/assets/0f78362e-3b6a-4d67-8dd3-ba5fdf9317e7
+
+
+
 ### 3. configuration
 Personal Assistant 插件的 Update Metadata 功能提供了3个配置项：
 1. enable updating metadata，打开自动更新元数据；
 2. add key-value in frontmatter，添加 frontmatter 需要自动更新的元数据，目前支持两种数据：字符串和时间戳；
 3. metadata updating exclude path，配置不需要更新元数据的目录，多路径以逗号作为分隔符；
+![image](https://github.com/user-attachments/assets/12bcae96-5611-4b4b-8df2-060960756c47)
 
 
 ## References
