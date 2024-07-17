@@ -19,6 +19,11 @@ The biggest advantage of Obsidian lies in its community-supported custom plugins
 
 As shown in the video below, you can automate the plugin update process by entering `update plugins` in the Command Palette.
 
+
+https://github.com/user-attachments/assets/e25804e5-007d-4951-b76a-d7076d25a5d1
+
+
+
 ### 3. Configuration
 
 The auto-update plugins feature currently has no configuration options. If you have good ideas, feel free to submit an [issue](https://github.com/edonyzpc/personal-assistant/issues) for discussion.
@@ -33,6 +38,11 @@ A good tool should not only excel in functionality but also be aesthetically ple
 
 As shown in the video below, you can automate the theme update process by entering `update themes` in the Command Palette.
 
+
+https://github.com/user-attachments/assets/3c6910d7-2790-4dd2-88b6-2721de473d35
+
+
+
 ### 3. Configuration
 
 The auto-update themes feature currently has no configuration options. If you have good ideas, feel free to submit an [issue](https://github.com/edonyzpc/personal-assistant/issues) for discussion.
@@ -46,6 +56,11 @@ During my use of Obsidian, I often need to temporarily toggle plugins on or off,
 ### 2. Demo
 
 As shown in the video below, you can automate the process of turning plugins on or off by entering `switch plugin` in the Command Palette. If there are many plugins, fuzzy search is supported to quickly locate the target plugin to toggle.
+
+
+https://github.com/user-attachments/assets/cfa64ee9-9b91-4469-abb7-13064b1458cc
+
+
 
 ### 3. Configuration
 
@@ -68,6 +83,11 @@ To help with writing and recording in Obsidian and reducing the complexity of in
 
 As shown in the video below, you can automate the retrieval and preview of callout styles by entering `list callouts` in the Command Palette. If there are many callout styles, fuzzy search is supported for quick location of the target callouts. Upon pressing Enter, the Personal Assistant plugin will automatically copy the style to the system clipboard, allowing users to simply `Ctrl/CMD + V` paste it at the needed document location, thus focusing on editing the content they need.
 
+
+https://github.com/user-attachments/assets/dbd6d6be-54bb-4172-b023-1ff526a086c7
+
+
+
 ### 3. Configuration
 
 The auto-quick input of callouts feature currently has no configuration options. If you have good ideas, feel free to submit an [issue](https://github.com/edonyzpc/personal-assistant/issues) for discussion.
@@ -79,12 +99,18 @@ The auto-quick input of callouts feature currently has no configuration options.
 Following the Zettelkasten methodology, notes are essentially not a "technique," but a "process," a way to store and organize knowledge, expand memory, and generate new connections and ideas. Simply put, it involves collecting knowledge that interests you or that you may find useful in the future, and then processing these notes in a standardized way to create links between them. For more on note systems, you can refer to my other article: [My PKM System](https://www.edony.ink/my-pkm/).
 
 When reviewing notes using Obsidian, the Graph View is an excellent tool to help structure and think through each note, eventually forming one's own knowledge. Below is a screenshot of my Obsidian Global Graph View:
+![image](https://github.com/user-attachments/assets/de3a97c6-8386-4766-afe4-1385d3dc689c)
 
 Obsidian's Local Graph helps users view the relationships between the current note and other notes. The Personal Assistant aids in automating the display of the current note's Graph View, allowing for better structural organization and thought.
 
 ### 2. Demo
 
 As shown in the video below, you can automate the establishment and preview of the Local Graph View by entering `hover local` in the Command Palette. As this is one of my frequently used features, I have bound it to the shortcut `CMD + Shift + G` for one-click Local Graph View.
+
+
+https://github.com/user-attachments/assets/8ad70c26-8ffb-44bc-9d1d-2c99053a3e47
+
+
 
 ### 3. Configuration
 
@@ -97,6 +123,8 @@ The Local Graph feature of the Personal Assistant plugin provides configuration 
 - Collapse: whether to collapse the configuration window;
 - Auto Local Graph Colors: whether to automate setting node colors in Graph View;
 - Enable Graph Colors: whether to customize Graph View colors. You can add color configurations based on dimensions like directory, type, tag, etc.
+![image](https://github.com/user-attachments/assets/29a53342-a851-4158-8d80-686c97cd6a35)
+![image](https://github.com/user-attachments/assets/87754ac8-814f-44cd-9d5c-c7007b1055cb)
 
 ## Records in Specific Catalog
 
@@ -114,12 +142,18 @@ For fleeting thoughts, the Personal Assistant plugin provides an automated, stru
 
 As shown in the video below, entering `note record` in the Command Palette automates the structured template creation for fleeting thoughts. The video also shows the configuration for the path and file format of fleeting thoughts and displays the Templater structured template used for creating these records.
 
+
+https://github.com/user-attachments/assets/fe13b2e9-2f3b-497f-b2b5-b9ff08f57bf3
+
+
+
 #### 3. Configuration
 
 The Note Record function of the Personal Assistant plugin offers two configuration items:
 
 1. target path: the directory configuration for fleeting thought records
 2. file format: the file format of fleeting thought records, convenient for other tools to handle automation (like identifying themes).
+![image](https://github.com/user-attachments/assets/89254e0b-75ae-4df3-9323-ba97ba48fcfa)
 
 ### Preview Record in One Tab
 
@@ -131,9 +165,15 @@ Reflecting on and organizing inspiration records requires a centralized place fo
 
 As shown in the video below, entering `preview record` in the Command Palette enables one-click viewing of fleeting thoughts records, while also allowing users to jump directly to the corresponding note file by clicking on the record of interest.
 
+
+https://github.com/user-attachments/assets/e40ea7f2-24a6-4e0c-a204-fc252a3149e6
+
+
+
 #### 3. Configuration
 
 The Preview Record function of the Personal Assistant plugin provides one configuration item: setting the number of files to preview at once for the fleeting thoughts.
+![image](https://github.com/user-attachments/assets/4472191a-5da4-4331-a224-0e46e1971061)
 
 ## Show Statistics
 
@@ -148,6 +188,11 @@ As shown in the video below, entering `statistics` in the Command Palette automa
 1. Daily word count and page count;
 2. Total note count and page count in the vault;
 
+
+https://github.com/user-attachments/assets/4fedeff6-6e81-45ae-8cd8-55cf0781d4fd
+
+
+
 ### 3. Configuration
 
 The Show Statistics function of the Personal Assistant plugin offers 3 configuration items:
@@ -155,6 +200,7 @@ The Show Statistics function of the Personal Assistant plugin offers 3 configura
 1. show statistics: type of statistics to display, optional daily and total;
 2. vault statistics file path: the path for the statistics file;
 3. Number of words per page: the word count used for calculating page numbers.
+![image](https://github.com/user-attachments/assets/97deae5d-e30f-44b6-a0b8-f59c1fca1de7)
 
 ## Update Metadatas
 
@@ -166,6 +212,11 @@ Similar to Notion, Obsidian frontmatter can have various metadata for recording 
 
 As shown in the video below, entering `update metadata` in the Command Palette automates the frontmatter metadata update. To notify the user of the automated metadata update, there's a breathing icon in the bottom right corner.
 
+
+https://github.com/user-attachments/assets/0f78362e-3b6a-4d67-8dd3-ba5fdf9317e7
+
+
+
 ### 3. Configuration
 
 The Update Metadata feature of the Personal Assistant plugin offers 3 configuration items:
@@ -173,4 +224,4 @@ The Update Metadata feature of the Personal Assistant plugin offers 3 configurat
 1. enable updating metadata: enable the automatic metadata update;
 2. add key-value in frontmatter: add frontmatter metadata to be automatically updated, currently supporting two data types: string and timestamp;
 3. metadata updating exclude path: configure directories to exclude from metadata updates, with multiple paths separated by commas.
-
+![image](https://github.com/user-attachments/assets/12bcae96-5611-4b4b-8df2-060960756c47)
