@@ -32,7 +32,7 @@
     "eslint": "8.57.0",
     "jest": "^29.5.0",
     "jszip": "^3.10.1",
-    "obsidian": "latest",
+    "obsidian": "^1.6.6",
     "svelte": "^4.0.0",
     "svelte-preprocess": "^5.0.4",
     "ts-jest": "^29.1.0",
