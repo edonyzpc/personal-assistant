@@ -1,9 +1,10 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, Notice, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
 import moment from 'moment';
-import { type CalloutManager, getApi} from "obsidian-callout-manager";
+import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
+import { AssistantHelper } from "./ai"
 import { PluginControlModal } from './modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
@@ -29,7 +30,7 @@ export class PluginManager extends Plugin {
     calloutManager: CalloutManager<true> | undefined;
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
     private settingTab: SettingTab = new SettingTab(this.app, this);
-    statsManager: StatsManager|undefined;
+    statsManager: StatsManager | undefined;
 
     async onload() {
         await this.loadSettings();
@@ -213,20 +214,37 @@ export class PluginManager extends Plugin {
             }
         })
 
+        this.addCommand({
+            id: 'ai-assistant-helper',
+            name: 'AI Helper',
+            editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+                const sel = editor.getSelection();
+                const v = editor.getValue()
+
+                console.log(`You have selected: ${sel}`);
+                console.log(`You have value: ${v}`);
+                if (view instanceof MarkdownView) {
+                    console.log("invoking LLM")
+                    const helper = new AssistantHelper(this, editor, view)
+                    await helper.generate()
+                }
+            }
+        });
+
         // Handle the Editor Plugins
         this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
 
         this.registerEvent(
             this.app.workspace.on("active-leaf-change", async (leaf) => {
                 if (this.statsManager)
-                await this.statsManager.recalcTotals();
+                    await this.statsManager.recalcTotals();
             })
         );
         this.registerEvent(
             this.app.vault.on("delete", async () => {
-              if (this.statsManager)
-            await this.statsManager.recalcTotals();
-          })
+                if (this.statsManager)
+                    await this.statsManager.recalcTotals();
+            })
         );
 
         // This adds a settings tab so the user can configure various aspects of the plugin
@@ -316,7 +334,7 @@ export class PluginManager extends Plugin {
         return normalizePath(parts.join('/'));
     }
 
-    private updateMetadata = (file: TFile|null) => {
+    private updateMetadata = (file: TFile | null) => {
         if (file instanceof TFile) {
             if ((file as TFile).extension === 'md') {
                 let filterPath = file.path;
