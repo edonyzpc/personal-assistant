@@ -62,6 +62,7 @@ const utf8Decoder = new TextDecoder();
 const iterations = 1000;
 const salt = utf8Encoder.encode('XHWnDAT6ehMVY2zD');
 export const personalAssitant = "personal-assistant-plugin-api-token";
+export const queryAI = "X-Api-Auth=36fb38ddc202fec";
 
 export class CryptoHelper {
 

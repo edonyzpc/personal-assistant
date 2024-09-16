@@ -9,7 +9,7 @@ import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tong
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
 import { PluginManager } from './plugin'
-import { icons } from './utils';
+import { CryptoHelper, personalAssitant, icons, queryAI } from './utils';
 
 export class AssistantHelper {
     private editor: Editor
@@ -43,15 +43,15 @@ export class AssistantHelper {
         const notice = new Notice(noticeEl, 0);
 
         const result = await this.qwenLLM(this.query)
+        if (result.length <= 0) {
+            notice.hide();
+            new Notice("AI is not available.");
+            return;
+        }
         const { summary, keywords } = JSON.parse(result)
-        console.log(summary);
-        console.log(keywords[0]);
-
-        const url = `https://webhook.worker.edony.ink/unsplash?query=${encodeURI(keywords[0])}&X-Api-Auth=36fb38ddc202fec`
-        console.log(url)
+        const url = `https://webhook.worker.edony.ink/unsplash?query=${encodeURI(keywords[0])}&${queryAI}`
         const imgSearchRes = await fetch(url)
         const imageURL = await imgSearchRes.text()
-        console.log(imageURL)
 
         const addAI = StateEffect.define<{
             id: string
@@ -67,9 +67,6 @@ export class AssistantHelper {
             },
         });
         const id = nanoid();
-        const lastNum = this.editor.lastLine();
-        const counts = this.editor.lineCount();
-        console.log(`lastNum: ${lastNum} counts: ${counts}`)
         const line = this.view.state.doc.lineAt(0);
         // append line breaks
         this.view.dispatch({
@@ -87,10 +84,17 @@ export class AssistantHelper {
     }
 
     private async qwenLLM(query: string) {
+        const encryptedToken = this.plugin.settings.apiToken;
+        const crypto = new CryptoHelper();
+        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
+        if (!token) {
+            new Notice("Prepare LLM failed!", 3000);
+            return "";
+        }
         const qwenMax = new ChatAlibabaTongyi({
             model: "qwen-max", // Available models: qwen-turbo, qwen-plus, qwen-max
             temperature: 0.8,
-            alibabaApiKey: "API-KEY", // In Node.js defaults to process.env.ALIBABA_API_KEY
+            alibabaApiKey: token, // In Node.js defaults to process.env.ALIBABA_API_KEY
         });
 
         const systemTemplate = `你是一个专业编辑，擅长文字总结、概括等工作。
@@ -131,7 +135,7 @@ export class AssistantHelper {
         globalThis.Request = originRequest
         globalThis.Response = originResponse
 
-        console.log(res.content)
+        this.plugin.log(res.content)
         return res.content.toString()
     }
 }
