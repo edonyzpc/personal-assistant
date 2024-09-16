@@ -14,7 +14,12 @@
  <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
 </p>
 
-> ***NOTE***: New shiny feature: Animation rendering statistics of the current vault including characters, words, sections, citations, lines and pages.
+> ***NOTE***: New shiny feature: Personal Assitant Supporting AI Helper to import your Obsidian notes management.
+<div align="center">
+<img src="./docs/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
+</div>
+
+> ***Animation rendering statistics***
 <div align="center">
 <img src="./docs/personal-assistant-v1.3.6.gif" alt="usage video"/>
 </div>
