@@ -5,6 +5,7 @@ import Picker from "vanilla-picker";
 
 import { PluginManager } from "./plugin"
 import { STAT_PREVIEW_TYPE } from './statsView'
+import { CryptoHelper, personalAssitant } from './utils'
 
 export interface ResizeStyle {
     width: number,
@@ -43,13 +44,15 @@ export interface PluginManagerSettings {
     metadatas: { key: string, value: any, t: string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
     metadataExcludePath: string[];
     isEnabledMetadataUpdating: boolean;
-    cachePluginRepo: {[key: string]: any;}; // eslint-disable-line @typescript-eslint/no-explicit-any
+    cachePluginRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
     cacheThemeRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
     statisticsType: string;
     statsPath: string;
     displaySectionCounts: boolean;
     countComments: boolean;
     animation: boolean;
+    modelName: string;
+    apiToken: string;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -105,6 +108,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     displaySectionCounts: false,
     countComments: false,
     animation: false,
+    modelName: "qwen-plus",
+    apiToken: "sk-xxx",
 }
 
 interface GraphColor {
@@ -342,6 +347,7 @@ export class SettingTab extends PluginSettingTab {
 
 
         // setting options for graph colors
+        containerEl.createEl('h2', { text: 'Graph Colors' })
         new Setting(containerEl).setName('Enable Graph Colors')
             .setDesc('Use personal assistant set colors of graph view.')
             .addToggle(toggle => {
@@ -439,6 +445,7 @@ export class SettingTab extends PluginSettingTab {
         }
 
         // setting options for updating metadata
+        containerEl.createEl('h2', { text: 'Metadata Management' })
         const descFormat = document.createDocumentFragment();
         descFormat.createEl('p', undefined, (p) => {
             p.innerText = "Auto updating metadata in frontmatter when file is modified.\nTimestamp format follows `moment.js` and syntax details, ";
@@ -503,19 +510,19 @@ export class SettingTab extends PluginSettingTab {
             new Setting(containerEl)
                 .setName("Add Key:Value in frontmatter")
                 .setDesc('Value now only upport formatted timestamp and regular string.')
-                .addText(text => { 
+                .addText(text => {
                     text.setPlaceholder('key')
-                    .setValue(key)
-                    .onChange(async (val) => {
-                        key = val;
-                    })
+                        .setValue(key)
+                        .onChange(async (val) => {
+                            key = val;
+                        })
                 })
                 .addText(text => {
                     text.setPlaceholder('value')
-                    .setValue(value)
-                    .onChange(async (val) => {
-                        value = val;
-                    })
+                        .setValue(value)
+                        .onChange(async (val) => {
+                            value = val;
+                        })
                 })
                 .addDropdown(dropDown => {
                     dropDown.addOption('string', '1 Regular String');
@@ -527,7 +534,7 @@ export class SettingTab extends PluginSettingTab {
                 .addButton(btn => {
                     btn.setButtonText("Add").onClick(async () => {
                         this.log("adding new frontmatter");
-                        this.plugin.settings.metadatas.push({key: key, value: value, t: t});
+                        this.plugin.settings.metadatas.push({ key: key, value: value, t: t });
                         await this.plugin.saveSettings();
                         this.display();
                     })
@@ -536,16 +543,18 @@ export class SettingTab extends PluginSettingTab {
                 .setDesc("Exclude files in the directory to update metadata")
                 .addText(text => {
                     text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
-                    .setValue(this.plugin.settings.metadataExcludePath.join(','))
-                    .onChange(async (value) => {
-                        plugin.settings.metadataExcludePath = value.split(",");
-                        await this.plugin.saveSettings();
-                    })
-            });
+                        .setValue(this.plugin.settings.metadataExcludePath.join(','))
+                        .onChange(async (value) => {
+                            plugin.settings.metadataExcludePath = value.split(",");
+                            await this.plugin.saveSettings();
+                        })
+                });
 
 
         }
+
         // setting for show statistics
+        containerEl.createEl('h2', { text: 'Vault Statistics' })
         new Setting(containerEl).setName("Show Statistics")
             .setDesc("Show statistics in the status bar")
             .addDropdown(dropDown => {
@@ -592,6 +601,45 @@ export class SettingTab extends PluginSettingTab {
                     this.plugin.saveSettings();
                 })
         );
+
+        // setting for AI assistant
+        containerEl.createEl('h2', { text: 'AI Assistant' });
+        containerEl.createEl("p", { text: 'AI Helper Only Support 通义千问 LLM' }).setAttr("style", "font-size:15px");
+        new Setting(containerEl).setName("Set Model Name")
+            .setDesc("Select the model name for AI Helper, only support qwen-max, qwen-turbo, qwen-plus")
+            .addDropdown(dropDown => {
+                const qwenMax = dropDown.addOption('qwen-max', 'qwen max');
+                const qwenTurbo = dropDown.addOption('qwen-turbo', 'qwen turbo');
+                const qwenPlus = dropDown.addOption('qwen-plus', 'qwen plus');
+                if (this.plugin.settings.modelName === 'qwen-max') {
+                    qwenMax.setDisabled(false);
+                    dropDown.setValue('qwen-max');
+                } else if (this.plugin.settings.modelName === 'qwen-turbo') {
+                    qwenTurbo.setDisabled(false);
+                    dropDown.setValue('qwen-turbo');
+                } else {
+                    qwenPlus.setDisabled(false);
+                    dropDown.setValue('qwen-plus');
+                }
+                dropDown.onChange(async (value) => {
+                    console.log("changing modle provider", value);
+                    this.plugin.settings.modelName = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+        new Setting(containerEl)
+            .setName("API Token")
+            .setDesc("LLM Model related API Token. NOTE: your input token is protected by AES-GCM encryption.")
+            .addText((text) => {
+                text.setPlaceholder("llm api token");
+                text.setValue(this.plugin.settings.apiToken);
+                text.onChange(async (value: string) => {
+                    const crypto = new CryptoHelper();
+                    const data = await crypto.encryptToBase64(value, personalAssitant);
+                    this.plugin.settings.apiToken = data;
+                    await this.plugin.saveSettings();
+                });
+            });
     }
 
     private findGraphColor(graphColor: GraphColor): number {
