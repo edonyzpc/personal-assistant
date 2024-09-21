@@ -69,18 +69,19 @@ export class LocalGraph extends ViewResize {
         return this.app.workspace.getLeavesOfType('localgraph');
     }
 
-    private setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    private async setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
         const viewState = localGraphLeaf.getViewState();
-        this.log(viewState.state.options);
-        viewState.state.options.colorGroups = colorGroups;
-        viewState.state.options.localJumps = this.plugin.settings.localGraph.depth;
-        viewState.state.options.showTags = this.plugin.settings.localGraph.showTags;
-        viewState.state.options.showAttachments = this.plugin.settings.localGraph.showAttach;
-        viewState.state.options.localInterlinks = this.plugin.settings.localGraph.showNeighbor;
-        viewState.state.options.showArrow = true;
-        viewState.state.options.close = this.plugin.settings.localGraph.collapse;
-        viewState.state.options.scale = 1.0;
-        localGraphLeaf.setViewState(viewState);
+        this.log("view state", viewState.state);
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        (viewState.state?.options as any).colorGroups = colorGroups;
+        (viewState.state?.options as any).localJumps = this.plugin.settings.localGraph.depth;
+        (viewState.state?.options as any).showTags = this.plugin.settings.localGraph.showTags;
+        (viewState.state?.options as any).showAttachments = this.plugin.settings.localGraph.showAttach;
+        (viewState.state?.options as any).localInterlinks = this.plugin.settings.localGraph.showNeighbor;
+        (viewState.state?.options as any).showArrow = true;
+        (viewState.state?.options as any).close = this.plugin.settings.localGraph.collapse;
+        (viewState.state?.options as any).scale = 1.0;
+        await localGraphLeaf.setViewState(viewState);
     }
 
     async updateGraphColors() {
@@ -91,12 +92,12 @@ export class LocalGraph extends ViewResize {
         const graphColorsToSet = this.plugin.settings.colorGroups;
         graphColorsToSet.forEach(color => graphConfig.colorGroups.push(color));
 
-        this.app.workspace.getLeavesOfType('localgraph').forEach((leaf: WorkspaceLeaf) => {
+        this.app.workspace.getLeavesOfType('localgraph').forEach(async (leaf: WorkspaceLeaf) => {
             this.plugin.log("setting colors");
             const viewState = leaf.getViewState();
-            this.plugin.log(viewState.state.options);
-            viewState.state.options.colorGroups = graphColorsToSet;
-            leaf.setViewState(viewState);
+            this.plugin.log(viewState.state?.options);
+            (viewState.state?.options as any).colorGroups = graphColorsToSet;
+            await leaf.setViewState(viewState);
         })
     }
 }
