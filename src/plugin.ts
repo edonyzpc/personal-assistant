@@ -388,29 +388,19 @@ export class PluginManager extends Plugin {
             active: true,
         });
 
-        this.app.workspace.revealLeaf(
-            this.app.workspace.getLeavesOfType(RECORD_PREVIEW_TYPE)[0]
-        );
+        await this.app.workspace.revealLeaf(viewLeaf);
     }
 
     async activeStatView() {
-        //this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
-        const leaves = this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE);
-        const count = leaves.length;
-        const viewLeaf = this.app.workspace.getLeaf('tab');
+        this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
 
+        const viewLeaf = this.app.workspace.getLeaf('tab');
         await viewLeaf.setViewState({
             type: STAT_PREVIEW_TYPE,
             active: true,
         });
-        this.app.workspace.revealLeaf(
-            this.app.workspace.getLeavesOfType(STAT_PREVIEW_TYPE)[count]
-        );
 
-        // detach all the other stat views
-        for (let i = 0; i < count; i++) {
-            leaves[i].detach();
-        }
+        await this.app.workspace.revealLeaf(viewLeaf);
     }
 }
 
