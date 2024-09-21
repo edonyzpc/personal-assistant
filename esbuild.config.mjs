@@ -37,6 +37,8 @@ const cssPlugin = {
 
 const context = await esbuild.context({
 	platform: "node",
+	mainFields: ["svelte", "browser", "module", "main"],
+	conditions: ["svelte", "browser"],
 	banner: {
 		js: banner,
 	},
