@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.9](https://github.com/edonyzpc/personal-assistant/compare/1.3.8...1.3.9) (2024-09-21)
+### Fix
+- local graph command css position issue
+- statiscs preview svelte component display issue
+
+### Improve
+- activating view logic
+- upgrade dependencies
+
+## [1.3.8](https://github.com/edonyzpc/personal-assistant/compare/1.3.7...1.3.8) (2024-09-15)
+### Features
+- support AI helper, which is powered by Qwen, to manage Obsidian notes
+
+## [1.3.7](https://github.com/edonyzpc/personal-assistant/compare/1.3.6...1.3.7) (2024-09-13)
+### Improve
+- add manual document for user
+
 ## [1.3.6](https://github.com/edonyzpc/personal-assistant/compare/1.3.5...1.3.6) (2024-05-12)
 ### Features
 - new icon for statistics preview tab
