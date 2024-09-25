@@ -1,5 +1,5 @@
 /* Copyright 2023 edonyzpc */
-import { Editor, MarkdownView, Notice, addIcon, setIcon } from 'obsidian'
+import { Editor, MarkdownView, Notice, addIcon, setIcon, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
 import fetch, { Headers, Request, Response } from "node-fetch";
 import { EditorView } from '@codemirror/view'
 import { StateEffect } from '@codemirror/state'
@@ -20,6 +20,8 @@ export class AssistantHelper {
 
     private plugin: PluginManager
 
+    private fontmatterInfo: FrontMatterInfo
+
     constructor(
         plugin: PluginManager,
         editor: Editor,
@@ -27,7 +29,9 @@ export class AssistantHelper {
     ) {
         this.plugin = plugin
         this.editor = editor
-        this.query = this.editor.getValue()
+        const markdown = this.editor.getValue()
+        this.fontmatterInfo = getFrontMatterInfo(markdown);
+        this.query = markdown.slice(this.fontmatterInfo.contentStart);
         // @ts-expect-error, not typed
         this.view = view.editor.cm
     }
@@ -67,14 +71,19 @@ export class AssistantHelper {
             },
         });
         const id = nanoid();
-        const line = this.view.state.doc.lineAt(0);
+        let line;
+        if (this.fontmatterInfo.exists) {
+            line = this.view.state.doc.lineAt(this.fontmatterInfo.contentStart);
+        } else {
+            line = this.view.state.doc.lineAt(0);
+        }
         // append line breaks
         this.view.dispatch({
             changes: [
                 {
                     from: line.from,
                     // insert a callout block
-                    insert: `\n\n>[!personal-assistant]+ AI\n> ![](${imageURL})\n> \n> ${summary}\n\n`,
+                    insert: `\n>[!personal-assistant]+ AI\n> ![](${imageURL})\n> \n> ${summary}\n\n`,
                 },
             ],
             effects: [addAI.of({ from: line.to, to: line.to, id })],

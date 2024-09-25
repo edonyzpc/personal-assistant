@@ -219,14 +219,14 @@ export class PluginManager extends Plugin {
             name: 'AI Helper',
             editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
                 const sel = editor.getSelection();
-                const v = editor.getValue()
+                const v = editor.getValue();
 
-                console.log(`You have selected: ${sel}`);
-                console.log(`You have value: ${v}`);
+                this.log(`You have selected: ${sel}`);
+                this.log(`You have value: ${v}`);
                 if (view instanceof MarkdownView) {
-                    console.log("invoking LLM")
-                    const helper = new AssistantHelper(this, editor, view)
-                    await helper.generate()
+                    this.log("invoking LLM");
+                    const helper = new AssistantHelper(this, editor, view);
+                    await helper.generate();
                 }
             }
         });
