@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.3.9](https://github.com/edonyzpc/personal-assistant/compare/1.3.9...1.4.0) (2024-09-25)
+### Fix
+- AI helper summary content position issue
+
 ## [1.3.9](https://github.com/edonyzpc/personal-assistant/compare/1.3.8...1.3.9) (2024-09-21)
 ### Fix
 - local graph command css position issue
