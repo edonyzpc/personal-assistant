@@ -18,6 +18,7 @@ import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { STAT_PREVIEW_TYPE, Stat } from './statsView'
 import StatsManager from './stats/StatsManager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/EditorPlugin'
+import AIWindow from './components/AIWindow.svelte'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -31,6 +32,7 @@ export class PluginManager extends Plugin {
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
+    private aiFloatingHelper!: AIWindow;
 
     async onload() {
         await this.loadSettings();
@@ -227,6 +229,20 @@ export class PluginManager extends Plugin {
                     this.log("invoking LLM");
                     const helper = new AssistantHelper(this, editor, view);
                     await helper.generate();
+                }
+            }
+        });
+
+        this.addCommand({
+            id: "ai-assistant-floating",
+            name: "Floating AI Robot",
+            callback: async () => {
+                if (this.aiFloatingHelper) {
+                    this.aiFloatingHelper.$destroy();
+                } else {
+                    this.aiFloatingHelper = new AIWindow({
+                        target: globalThis.document.getElementsByClassName('app-container')[0],
+                    });
                 }
             }
         });
