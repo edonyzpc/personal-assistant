@@ -547,12 +547,19 @@
   resolved "https://registry.yarnpkg.com/@eslint/js/-/js-8.57.0.tgz#a5417ae8427873f1dd08b70b3574b453e67b5f7f"
   integrity sha512-Ys+3g2TaW7gADOJzPt83SJtCDhMjndcDMFVQ/Tj9iA1BfJzFKD9mAUXT3OenpuPHbI6P/myECxRJrofUsDx/5g==
 
-"@floating-ui/core@^1.5.0", "@floating-ui/core@^1.6.0", "@floating-ui/core@^1.6.8":
+"@floating-ui/core@^1.2.6", "@floating-ui/core@^1.5.0", "@floating-ui/core@^1.6.0", "@floating-ui/core@^1.6.8":
   version "1.6.8"
   resolved "https://registry.npmmirror.com/@floating-ui/core/-/core-1.6.8.tgz#aa43561be075815879305965020f492cdb43da12"
   integrity sha512-7XJ9cPU+yI2QeLS+FCSlqNFZJq8arvswefkZrYI1yQBbftw6FyrZOxYSh+9S7z7TpeWlRt9zJ5IhM1WIL334jA==
   dependencies:
     "@floating-ui/utils" "^0.2.8"
+
+"@floating-ui/dom@1.2.8":
+  version "1.2.8"
+  resolved "https://registry.npmmirror.com/@floating-ui/dom/-/dom-1.2.8.tgz#aee0f6ccc0787ab8fe741487a6e5e95b7b125375"
+  integrity sha512-XLwhYV90MxiHDq6S0rzFZj00fnDM+A1R9jhSioZoMsa7G0Q0i+Q4x40ajR8FHSdYDE1bgjG45mIWe6jtv9UPmg==
+  dependencies:
+    "@floating-ui/core" "^1.2.6"
 
 "@floating-ui/dom@^1.5.3":
   version "1.6.11"
@@ -961,6 +968,24 @@
   version "2.2.2"
   resolved "https://registry.npmmirror.com/@sphinxxxx/color-conversion/-/color-conversion-2.2.2.tgz#03ecc29279e3c0c832f6185a5bfa3497858ac8ca"
   integrity sha512-XExJS3cLqgrmNBIP3bBw6+1oQ1ksGjFh0+oClDKFYpCCqx/hlqwWO5KO/S63fzUo67SxI9dMrF0y5T/Ey7h8Zw==
+
+"@stitches/core@1.2.8":
+  version "1.2.8"
+  resolved "https://registry.npmmirror.com/@stitches/core/-/core-1.2.8.tgz#dce3b8fdc764fbc6dbea30c83b73bfb52cf96173"
+  integrity sha512-Gfkvwk9o9kE9r9XNBmJRfV8zONvXThnm1tcuojL04Uy5uRyqg93DC83lDebl0rocZCfKSjUv+fWYtMQmEDJldg==
+
+"@svelteuidev/composables@^0.15.7":
+  version "0.15.7"
+  resolved "https://registry.npmmirror.com/@svelteuidev/composables/-/composables-0.15.7.tgz#0e97b0c387d27bc311d1ca0ce5236fd2390b3642"
+  integrity sha512-tVA+0bNtsYsJqlpNx9ZArzHFBJYfoKM+nspkv+wzOx40HsCg33MutqNexOvrMYSj5/tSxxBefLQKdwNumErF6Q==
+
+"@svelteuidev/core@^0.15.7":
+  version "0.15.7"
+  resolved "https://registry.npmmirror.com/@svelteuidev/core/-/core-0.15.7.tgz#32ef178ec9cbe4306863c3093e299a95e41a3615"
+  integrity sha512-lTUjQdGhiNK5as3mBZgsixNsgH/RcwhGdSQpc7wNEASkgJSyPsv2hiak/m4a78pDJ3owrRAWbURu17hE9eF/tw==
+  dependencies:
+    "@floating-ui/dom" "1.2.8"
+    "@stitches/core" "1.2.8"
 
 "@tsconfig/svelte@^5.0.0":
   version "5.0.4"
@@ -3831,6 +3856,11 @@ svelte-preprocess@^5.0.4:
     magic-string "^0.30.5"
     sorcery "^0.11.0"
     strip-indent "^3.0.0"
+
+svelte-radix@^1.1.1:
+  version "1.1.1"
+  resolved "https://registry.npmmirror.com/svelte-radix/-/svelte-radix-1.1.1.tgz#e8e4e4cc691c5eacacae7b87e6950391ec47b7c4"
+  integrity sha512-TCbV7fzlJ2aEUB0nu2EodVA+r1eYj526IYpmGUTV32Z0bIrCUvx3K8xX3tcxR5dDFA5ZBU1Hxr4RYC4TDFEQ4A==
 
 svelte@^4.0.0:
   version "4.2.19"

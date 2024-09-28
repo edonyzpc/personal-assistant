@@ -34,6 +34,11 @@ body {
 	opacity: 1;
 }
 
+.personal-assistant-ai-breathing {
+	animation: svg-blink 2s infinite;
+	opacity: 1;
+}
+
 @keyframes svg-blink {
 	0% {
 		opacity: 1;
