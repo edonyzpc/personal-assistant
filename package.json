@@ -53,6 +53,6 @@
     "svelte-chartjs": "^3.1.5",
     "svelte-floating-ui": "^1.5.9",
     "svelte-radix": "^1.1.1",
-    "vanilla-picker": "2.12.2"
+    "vanilla-picker": "2.12.3"
   }
 }

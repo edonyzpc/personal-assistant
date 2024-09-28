@@ -4019,10 +4019,10 @@ v8-to-istanbul@^9.0.1:
     "@types/istanbul-lib-coverage" "^2.0.1"
     convert-source-map "^1.6.0"
 
-vanilla-picker@2.12.2:
-  version "2.12.2"
-  resolved "https://registry.npmmirror.com/vanilla-picker/-/vanilla-picker-2.12.2.tgz#b4c6a3f4015dbd208080265fe7edd311709aa251"
-  integrity sha512-dk0gNeNL9fQFGd1VEhNDQfFlbCqAiksRh1H2tVPlavkH88n/a/y30rXi9PPKrYPTK5kEfPO4xcldt4ts/1wIAg==
+vanilla-picker@2.12.3:
+  version "2.12.3"
+  resolved "https://registry.npmmirror.com/vanilla-picker/-/vanilla-picker-2.12.3.tgz#1cc47b641a2b9c9afc5ac3a9a02febace0f1b17a"
+  integrity sha512-qVkT1E7yMbUsB2mmJNFmaXMWE2hF8ffqzMMwe9zdAikd8u2VfnsVY2HQcOUi2F38bgbxzlJBEdS1UUhOXdF9GQ==
   dependencies:
     "@sphinxxxx/color-conversion" "^2.2.2"
 
