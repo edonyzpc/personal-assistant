@@ -27,6 +27,7 @@
 
 	import AiLoader from "./AILoader.svelte";
 	import AiActionTimeline from "./AIActionTimeline.svelte";
+	import AiIcon from "./AIIcon.svelte";
 
 	export let parentRef: any;
 	export let plugin: PluginManager;
@@ -107,8 +108,9 @@
 				data={prompts}
 				bind:value={selected}
 				placeholder="Pick one"
-				label="Select AI Helper"
-				icon={StarFilled}
+				label="选择你的助手"
+				icon={AiIcon}
+				size="md"
 			>
 				<svelte:component this={ChevronDown} slot="rightSection" />
 			</NativeSelect>
@@ -116,8 +118,18 @@
 				selected {selected}
 			</div>
 			<Flex justify="space-around">
-				<Button color="green" on:click={dispatchRobotTask}>ok</Button>
-				<Button color="red" on:click={closeAIButton}>cancel</Button>
+				<Button
+					ripple
+					variant="gradient"
+					gradient={{ from: "teal", to: "green", deg: 55 }}
+					on:click={dispatchRobotTask}>execute</Button
+				>
+				<Button
+					ripple
+					variant="gradient"
+					gradient={{ from: "orange", to: "red", deg: 45 }}
+					on:click={closeAIButton}>cancel</Button
+				>
 			</Flex>
 			<!--Loader color="blue" size="xs" variant="dots" style="float:left" /-->
 		</Flex>

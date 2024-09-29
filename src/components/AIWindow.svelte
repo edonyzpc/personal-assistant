@@ -90,9 +90,11 @@
 		<ActionIcon
 			color="blue"
 			id="floating-ai-robot-button"
+			size={48}
 			on:click={() => popupAIButton()}
+			override={{ "border-radius": "16px" }}
 		>
-			<Transform class="personal-assistant-ai-breathing" size={48} />
+			<Transform class="personal-assistant-ai-breathing" size={40} />
 		</ActionIcon>
 	</div>
 </SvelteUIProvider>

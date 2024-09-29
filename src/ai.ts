@@ -188,7 +188,6 @@ export class AssistantRobot {
         this.editor = editor
         const markdown = this.editor.getValue()
         this.fontmatterInfo = getFrontMatterInfo(markdown);
-        console.log(this.fontmatterInfo.frontmatter);
         this.query = markdown.slice(this.fontmatterInfo.contentStart);
         // @ts-expect-error, not typed
         this.view = view.editor.cm;
@@ -214,7 +213,6 @@ export class AssistantRobot {
         const messages = [systemMessage, generateMessage];
 
         const res = await this.qwenLLM(messages);
-        console.log(res);
         const tags: string[] = JSON.parse(res);
 
         const addAI = StateEffect.define<{

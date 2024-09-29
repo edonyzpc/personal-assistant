@@ -570,7 +570,7 @@ export class SettingTab extends PluginSettingTab {
                     dropDown.setValue('total');
                 }
                 dropDown.onChange(async (value) => {
-                    console.log("changing statistics type", value);
+                    this.plugin.log("changing statistics type", value);
                     this.plugin.settings.statisticsType = value;
                     await this.plugin.saveSettings();
 
@@ -622,7 +622,7 @@ export class SettingTab extends PluginSettingTab {
                     dropDown.setValue('qwen-plus');
                 }
                 dropDown.onChange(async (value) => {
-                    console.log("changing modle provider", value);
+                    this.plugin.log("changing modle provider", value);
                     this.plugin.settings.modelName = value;
                     await this.plugin.saveSettings();
                 });
