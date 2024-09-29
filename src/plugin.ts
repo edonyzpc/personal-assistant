@@ -32,7 +32,7 @@ export class PluginManager extends Plugin {
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
-    private aiFloatingHelper!: AIWindow;
+    private aiFloatingHelper: AIWindow | undefined;
 
     async onload() {
         await this.loadSettings();
@@ -235,14 +235,26 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "ai-assistant-floating",
-            name: "Floating AI Robot",
-            callback: async () => {
-                if (this.aiFloatingHelper) {
+            name: "AI Auto Robot",
+            editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+                const aiEl = document.getElementById("floating-ai");
+                if (aiEl && this.aiFloatingHelper) {
                     this.aiFloatingHelper.$destroy();
+                    this.aiFloatingHelper = undefined;
                 } else {
-                    this.aiFloatingHelper = new AIWindow({
-                        target: globalThis.document.getElementsByClassName('app-container')[0],
-                    });
+                    const sel = editor.getSelection();
+                    if (view instanceof MarkdownView) {
+                        this.aiFloatingHelper = new AIWindow({
+                            target: globalThis.document.getElementsByClassName('app-container')[0],
+                            props: {
+                                plugin: this,
+                                editor: editor,
+                                view: view,
+                                app: this.app,
+                                selectedQuery: sel
+                            }
+                        });
+                    }
                 }
             }
         });
