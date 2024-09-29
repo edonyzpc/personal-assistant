@@ -45,13 +45,13 @@
     "@langchain/core": "^0.3.1",
     "@svelteuidev/composables": "^0.15.7",
     "@svelteuidev/core": "^0.15.7",
+    "@svelteuidev/motion": "^0.15.7",
     "chart.js": "^4.4.4",
     "nanoid": "^5.0.7",
     "node-fetch": "^3.3.2",
     "obsidian-callout-manager": "^1.0.2-alpha1",
     "semver": "^7.5.2",
     "svelte-chartjs": "^3.1.5",
-    "svelte-floating-ui": "^1.5.9",
     "svelte-radix": "^1.1.1",
     "vanilla-picker": "2.12.2"
   }
