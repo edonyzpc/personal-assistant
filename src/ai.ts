@@ -1,15 +1,17 @@
 /* Copyright 2023 edonyzpc */
-import { App, Editor, MarkdownView, Notice, addIcon, setIcon, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
+import { App, Editor, MarkdownView, Notice, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
 import fetch, { Headers, Request, Response } from "node-fetch";
 import { EditorView } from '@codemirror/view'
 import { StateEffect } from '@codemirror/state'
 import { nanoid } from 'nanoid'
 
+import { Notification } from '@svelteuidev/core';
+
 import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tongyi";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
 import { PluginManager } from './plugin'
-import { CryptoHelper, personalAssitant, icons, queryAI } from './utils';
+import { CryptoHelper, personalAssitant, queryAI } from './utils';
 
 export class AssistantHelper {
     private editor: Editor
@@ -38,16 +40,27 @@ export class AssistantHelper {
 
     async generate() {
         const noticeEl = document.createDocumentFragment();
-        const div = noticeEl.createEl("div", { attr: { id: "ai-breahting-icon" } });
-        div.addClass("personal-assistant-statusbar-breathing");
-        addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
-        setIcon(div, 'PluginAST_STATUSBAR');
-        const divInfo = noticeEl.createEl("div", { attr: { id: "ai-breahting-icon" } });
-        divInfo.innerHTML = `<span style="color: #fff;font-weight:bold;">AI is Thinking...</span>`;
+        const div = noticeEl.createEl("div", { attr: { id: "ai-breahting-icon", style: "background: white;" } });
+        const notification = new Notification({
+            target: div,
+            props: {
+                title: "AI is Thinking...",
+                color: "green",
+                loading: true,
+                withCloseButton: false,
+                override: {
+                    "border-width": "0px",
+                    "color": "white !important",
+                },
+            }
+        });
         const notice = new Notice(noticeEl, 0);
+        // keep the same theme of notice and notification
+        notice.noticeEl.style.backgroundColor = "white";
 
         const result = await this.qwenLLM(this.query)
         if (result.length <= 0) {
+            notification.$destroy();
             notice.hide();
             new Notice("AI is not available.");
             return;
