@@ -1,26 +1,35 @@
 <script lang="ts">
-	import { autoPlacement, offset, flip, shift } from "svelte-floating-ui/dom";
-	import { createFloatingActions } from "svelte-floating-ui";
-	import { ActionIcon, SvelteUIProvider, Button } from "@svelteuidev/core";
+	import { App, Editor, MarkdownView } from "obsidian";
+	import {
+		ActionIcon,
+		type ColorScheme,
+		SvelteUIProvider,
+		Button,
+	} from "@svelteuidev/core";
 	import { LockClosed, Transform } from "svelte-radix";
 
 	import AIButton from "./AIButton.svelte";
+	import type { PluginManager } from "plugin";
 
-	const [floatingRef, floatingContent] = createFloatingActions({
-		strategy: "absolute",
-		placement: "right-end",
-		middleware: [autoPlacement(), offset(6), flip(), shift()],
-	});
+	export let plugin: PluginManager;
+	export let editor: Editor;
+	export let view: MarkdownView;
+	export let app: App;
+	export let selectedQuery: string;
 
+	let aiWinRef: any;
+	let theme: ColorScheme = document.body.hasClass("theme-dark")
+		? "dark"
+		: "light";
 	let showTooltip: boolean = false;
 	function dragMe(node: HTMLElement) {
 		let moving = false;
-		let right = 300;
-		let bottom = 100;
+		let left = window.innerWidth / 6;
+		let top = window.innerHeight / 6;
 
 		node.style.position = "absolute";
-		node.style.bottom = `${bottom}px`;
-		node.style.right = `${right}px`;
+		node.style.top = `${top}px`;
+		node.style.left = `${left}px`;
 		node.style.cursor = "move";
 		node.style.userSelect = "none";
 
@@ -30,10 +39,10 @@
 
 		window.addEventListener("mousemove", (e) => {
 			if (moving) {
-				right -= e.movementX;
-				bottom -= e.movementY;
-				node.style.bottom = `${bottom}px`;
-				node.style.right = `${right}px`;
+				left += e.movementX;
+				top += e.movementY;
+				node.style.top = `${top}px`;
+				node.style.left = `${left}px`;
 			}
 		});
 
@@ -59,6 +68,14 @@
 		}
 		new AIButton({
 			target: el,
+			props: {
+				parentRef: aiWinRef,
+				plugin: plugin,
+				view: view,
+				editor: editor,
+				app: app,
+				selectedQuery: selectedQuery,
+			},
 		});
 		// hide the origin element
 		let originEl = document.getElementById("floating-ai-robot-button");
@@ -68,21 +85,14 @@
 	}
 </script>
 
-<SvelteUIProvider themeObserver="dark">
+<SvelteUIProvider themeObserver={theme} bind:this={aiWinRef}>
 	<div id="floating-ai" style="height:200px;width:360px" use:dragMe>
 		<ActionIcon
 			color="blue"
-			variant="hover"
 			id="floating-ai-robot-button"
-			on:mouseenter={() => (showTooltip = true)}
-			on:mouseleave={() => (showTooltip = false)}
 			on:click={() => popupAIButton()}
 		>
 			<Transform class="personal-assistant-ai-breathing" size={48} />
 		</ActionIcon>
 	</div>
 </SvelteUIProvider>
-
-{#if showTooltip}
-	<div style="position:absolute" use:floatingContent>Tooltip</div>
-{/if}

@@ -1,8 +1,13 @@
 <script lang="ts">
-	import { SvelteUIProvider, type SelectItem } from "@svelteuidev/core";
+	import {
+		SvelteUIProvider,
+		type SelectItem,
+		type ColorScheme,
+	} from "@svelteuidev/core";
 	import {
 		ActionIcon,
 		Button,
+		Center,
 		CloseButton,
 		Divider,
 		Flex,
@@ -10,48 +15,93 @@
 		Text,
 		Paper,
 		Space,
+		Skeleton,
 	} from "@svelteuidev/core";
 	import { NativeSelect } from "@svelteuidev/core";
+	import { typewriter } from "@svelteuidev/motion";
+	import { App, Editor, MarkdownView } from "obsidian";
 	import { ChevronDown, StarFilled, ClipboardCopy } from "svelte-radix";
+
+	import type { PluginManager } from "plugin";
+	import { AssistantRobot } from "ai";
+
+	import AiLoader from "./AILoader.svelte";
+	import AiActionTimeline from "./AIActionTimeline.svelte";
+
+	export let parentRef: any;
+	export let plugin: PluginManager;
+	export let editor: Editor;
+	export let view: MarkdownView;
+	export let app: App;
+	export let selectedQuery: string;
 	// dropdown item
 	let prompts: SelectItem[] = [
-		{ label: "1", value: `Where did you go to school?` },
-		{ label: "2", value: `What is your mother's name?` },
+		{ label: "自动backlink管理", value: `AssitantRobotBacklink` },
+		{ label: "自动标签管理", value: `AssistantRobot` },
 		{
-			label: "3",
+			label: "待定...",
 			value: `What is another personal fact that an attacker could easily find with Google?`,
+			disabled: true,
 		},
 	];
 
-	let selected: SelectItem = {
-		label: "1",
-		value: `Where did you go to school?`,
+	let selected: string;
+	let theme: ColorScheme = document.body.hasClass("theme-dark")
+		? "dark"
+		: "light";
+	let aiButtonRef: any;
+
+	const dispatchRobotTask = async () => {
+		if (selected === "AssistantRobot") {
+			const robot = new AssistantRobot(
+				plugin,
+				editor,
+				view,
+				app,
+				selectedQuery,
+			);
+			const el = document.getElementById("ai-robot-paper");
+			let ailoader: AiLoader;
+			if (el) {
+				ailoader = new AiLoader({ target: el });
+			} else {
+				return;
+			}
+			const res = await robot.assitantTags();
+			ailoader.$destroy();
+			new AiActionTimeline({
+				target: el,
+				props: { aiContent: res, aiRobot: selected },
+			});
+			setTimeout(() => {
+				(app as any).commands.executeCommandById(
+					"personal-assistant:local-graph",
+				);
+			}, 5000);
+		} else if (selected === "AssitantRobotBacklink") {
+			return;
+		} else {
+			return;
+		}
 	};
 
-	let aiButtonRef: any;
-	let answer = "";
-
-	function handleSubmit() {
-		alert(
-			`answered question ${selected.label} (${selected.value}) with "${answer}"`,
-		);
-	}
+	const closeAIButton = () => {
+		aiButtonRef.$destroy();
+		// clear parent ref
+		parentRef.$destroy();
+	};
 </script>
 
 <SvelteUIProvider
 	id="ai-button-container"
-	themeObserver="light"
+	themeObserver={theme}
 	bind:this={aiButtonRef}
 >
-	<div>
-		<CloseButton
-			style="float: right;"
-			on:click={() => {
-				aiButtonRef.$destroy();
-			}}
-		/>
-	</div>
 	<div id="floating-ai-inner">
+		<div>
+			<CloseButton style="float: right;" on:click={closeAIButton} />
+		</div>
+
 		<Flex justify="space-between" direction="column">
 			<NativeSelect
 				data={prompts}
@@ -62,27 +112,17 @@
 			>
 				<svelte:component this={ChevronDown} slot="rightSection" />
 			</NativeSelect>
-			<Text>selected {selected}<br /></Text>
+			<div id="ai-robot-selected-item" out:typewriter={{}}>
+				selected {selected}
+			</div>
 			<Flex justify="space-around">
-				<Button color="green" on:click={() => (answer = "abc")}
-					>ok</Button
-				>
-				<Button color="red" on:click={() => (answer = "abc")}
-					>cancel</Button
-				>
+				<Button color="green" on:click={dispatchRobotTask}>ok</Button>
+				<Button color="red" on:click={closeAIButton}>cancel</Button>
 			</Flex>
-			<Loader color="blue" size="xs" variant="dots" style="float:left" />
+			<!--Loader color="blue" size="xs" variant="dots" style="float:left" /-->
 		</Flex>
 		<Divider size="sm" />
-		<Paper shadow="md" withBorder>
-			<Loader
-				color="blue"
-				size="xs"
-				variant="bars"
-				style="float:left"
-			/><br />
-			...
-		</Paper>
+		<Paper id="ai-robot-paper" shadow="md" withBorder></Paper>
 	</div>
 </SvelteUIProvider>
 
@@ -91,6 +131,10 @@
 		display: block;
 		height: 100%;
 		width: 100%;
-		background-color: rgba(233, 244, 244, 0.1);
+		background-color: rgba(130, 132, 132, 0.2);
+		padding: 5px 5px 5px 5px;
+	}
+	#ai-robot-selected-item {
+		margin: 2px 2px 2px 2px;
 	}
 </style>
