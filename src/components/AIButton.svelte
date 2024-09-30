@@ -121,13 +121,13 @@
 				<Button
 					ripple
 					variant="gradient"
-					gradient={{ from: "teal", to: "green", deg: 55 }}
+					gradient={{ from: "teal", to: "green", deg: 105 }}
 					on:click={dispatchRobotTask}>execute</Button
 				>
 				<Button
 					ripple
 					variant="gradient"
-					gradient={{ from: "orange", to: "red", deg: 45 }}
+					gradient={{ from: "orange", to: "red", deg: 85 }}
 					on:click={closeAIButton}>cancel</Button
 				>
 			</Flex>

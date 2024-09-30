@@ -2639,6 +2639,21 @@
       "totalFootnotes": 0,
       "totalCitations": 0,
       "totalPages": 1.5
+    },
+    "2024-09-30": {
+      "words": 0,
+      "characters": 0,
+      "sentences": 0,
+      "pages": 0,
+      "files": 17,
+      "footnotes": 0,
+      "citations": 0,
+      "totalWords": 2169,
+      "totalCharacters": 6862,
+      "totalSentences": 38,
+      "totalFootnotes": 0,
+      "totalCitations": 0,
+      "totalPages": 7.099999999999999
     }
   },
   "2024-01-28": {
@@ -2656,5 +2671,32 @@
     "totalCitations": 0,
     "totalPages": 4492.7999999999965
   },
-  "modifiedFiles": {}
+  "modifiedFiles": {
+    "波斯猫.md": {
+      "words": {
+        "initial": 647,
+        "current": 542
+      },
+      "characters": {
+        "initial": 1135,
+        "current": 792
+      },
+      "sentences": {
+        "initial": 1,
+        "current": 1
+      },
+      "footnotes": {
+        "initial": 0,
+        "current": 0
+      },
+      "citations": {
+        "initial": 0,
+        "current": 0
+      },
+      "pages": {
+        "initial": 2.2,
+        "current": 1.8
+      }
+    }
+  }
 }

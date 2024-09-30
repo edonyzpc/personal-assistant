@@ -6,5 +6,5 @@
 	"description": "Streamline workflows within Obsidian, managing memos and plugins with just one command.",
 	"author": "edony",
 	"authorUrl": "https://github.com/edonyzpc",
-	"isDesktopOnly": false
+	"isDesktopOnly": true
 }

@@ -1,0 +1,10 @@
+{
+  "id": "current-file",
+  "name": "Current File",
+  "version": "1.0.0",
+  "minAppVersion": "0.12.0",
+  "description": "Allows external applications to know what file the desktop app is currently viewing.",
+  "author": "Mark Fowler",
+  "authorUrl": "https://twoshortplanks.com",
+  "isDesktopOnly": true
+}
