@@ -4,7 +4,7 @@ import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Pl
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { AssistantHelper } from "./ai"
+import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai"
 import { PluginControlModal } from './modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
@@ -228,6 +228,23 @@ export class PluginManager extends Plugin {
                 if (view instanceof MarkdownView) {
                     this.log("invoking LLM");
                     const helper = new AssistantHelper(this, editor, view);
+                    await helper.generate();
+                }
+            }
+        });
+
+        this.addCommand({
+            id: 'ai-assistant-featured-images',
+            name: 'AI Featured Images',
+            editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+                const sel = editor.getSelection();
+                const v = editor.getValue();
+
+                this.log(`You have selected: ${sel}`);
+                this.log(`You have value: ${v}`);
+                if (view instanceof MarkdownView) {
+                    this.log("invoking LLM");
+                    const helper = new AssistantFeaturedImageHelper(this.app, this, editor, view);
                     await helper.generate();
                 }
             }
