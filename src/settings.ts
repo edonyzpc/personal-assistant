@@ -53,6 +53,8 @@ export interface PluginManagerSettings {
     animation: boolean;
     modelName: string;
     apiToken: string;
+    featuredImagePath: string;
+    numFeaturedImages: number;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -110,6 +112,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     animation: false,
     modelName: "qwen-plus",
     apiToken: "sk-xxx",
+    featuredImagePath: "9.src",
+    numFeaturedImages: 2,
 }
 
 interface GraphColor {
@@ -639,6 +643,27 @@ export class SettingTab extends PluginSettingTab {
                     this.plugin.settings.apiToken = data;
                     await this.plugin.saveSettings();
                 });
+            });
+        new Setting(containerEl)
+            .setName("AI Featured Image Path")
+            .setDesc("AI feautured image helper will download the images and save them to this path.")
+            .addText((text) => {
+                text.setPlaceholder("9.src");
+                text.setValue(this.plugin.settings.featuredImagePath.toString());
+                text.onChange(async (value: string) => {
+                    this.plugin.settings.featuredImagePath = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+        new Setting(containerEl).setName("AI Featured Images Generating Number")
+            .setDesc("The number of images to generate when using AI Featured Image Helper.")
+            .addText(text => {
+                text.setPlaceholder('2')
+                    .setValue(this.plugin.settings.numFeaturedImages.toString())
+                    .onChange(async (value) => {
+                        plugin.settings.numFeaturedImages = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
             });
     }
 
