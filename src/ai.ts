@@ -283,3 +283,373 @@ export class AssistantRobot {
         return res.content.toString()
     }
 }
+
+
+interface ImageGenerationResult {
+    output: {
+        task_status: string;
+        task_id: string;
+    };
+    request_id: string;
+    code: string;
+    message: string;
+}
+
+interface TaskData {
+    request_id: string;
+    output: {
+        task_id: string;
+        task_status: string;
+        task_metrics: {
+            TOTAL: number;
+            SUCCEEDED: number;
+            FAILED: number;
+        };
+        results: Array<{
+            url: string;
+            code: string;
+            message: string;
+        }>;
+    };
+    usage: {
+        image_count: number;
+    };
+    code: string;
+    message: string;
+}
+export class AssistantFeaturedImageHelper {
+    private app: App;
+
+    private editor: Editor
+
+    private view: EditorView
+
+    private query: string = ''
+
+    private plugin: PluginManager
+
+    private fontmatterInfo: FrontMatterInfo
+
+    constructor(
+        app: App,
+        plugin: PluginManager,
+        editor: Editor,
+        view: MarkdownView,
+    ) {
+        this.app = app;
+        this.plugin = plugin;
+        this.editor = editor
+        const markdown = this.editor.getValue()
+        this.fontmatterInfo = getFrontMatterInfo(markdown);
+        this.query = markdown.slice(this.fontmatterInfo.contentStart);
+        // @ts-expect-error, not typed
+        this.view = view.editor.cm
+    }
+
+    async generate() {
+        const noticeEl = document.createDocumentFragment();
+        const div = noticeEl.createEl("div", { attr: { id: "ai-breahting-icon", style: "background: white;" } });
+        const notification = new Notification({
+            target: div,
+            props: {
+                title: "AI is Generating Featured Images...",
+                color: "green",
+                loading: true,
+                withCloseButton: false,
+                override: {
+                    "border-width": "0px",
+                    "color": "white !important",
+                },
+            }
+        });
+        const notice = new Notice(noticeEl, 0);
+        // keep the same theme of notice and notification
+        notice.noticeEl.style.backgroundColor = "white";
+
+        const result = await this.qwenLLMImageDes(this.query)
+        if (result.length <= 0) {
+            notification.$destroy();
+            notice.hide();
+            new Notice("AI is not available.");
+            return;
+        }
+
+        const imagesGen = await this.generateImage(result);
+
+        if (imagesGen) {
+            const imageUrls = await this.getImage(imagesGen);
+            if (imageUrls) {
+                const addAI = StateEffect.define<{
+                    id: string
+                    from: number
+                    to: number
+                }>({
+                    map: (value, change) => {
+                        return {
+                            from: change.mapPos(value.from),
+                            to: change.mapPos(value.to, 1),
+                            id: value.id,
+                        }
+                    },
+                });
+                const id = nanoid();
+                let line;
+                if (this.fontmatterInfo.exists) {
+                    line = this.view.state.doc.lineAt(this.fontmatterInfo.contentStart);
+                } else {
+                    line = this.view.state.doc.lineAt(0);
+                }
+                let imagesCallout = "";
+                const featuredImagePath = this.plugin.settings.featuredImagePath;
+                for (let i = 0; i < imageUrls.length; i++) {
+                    const imageUrlStr = imageUrls[i].url;
+                    const response = await this.downloadImageToVault(this.app, imageUrlStr, featuredImagePath);
+                    if (response) {
+                        imagesCallout += `![[${response}]]\n> `;
+                    }
+                }
+                // append line breaks
+                imagesCallout += "\n\n";
+                this.view.dispatch({
+                    changes: [
+                        {
+                            from: line.from,
+                            // insert a callout block
+                            insert: `\n>[!personal-assistant]+ Featured Images\n> ${imagesCallout}`,
+                        },
+                    ],
+                    effects: [addAI.of({ from: line.to, to: line.to, id })],
+                })
+
+                notice.hide();
+            }
+        } else {
+            notification.$destroy();
+            notice.hide();
+            new Notice("AI feautured image generation failed.");
+            return;
+        }
+    }
+
+    private async qwenLLMImageDes(query: string): Promise<string> {
+        const encryptedToken = this.plugin.settings.apiToken;
+        const crypto = new CryptoHelper();
+        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
+        if (!token) {
+            new Notice("Prepare LLM failed!", 3000);
+            return "";
+        }
+        const qwenMax = new ChatAlibabaTongyi({
+            model: "qwen-max", // Available models: qwen-turbo, qwen-plus, qwen-max
+            temperature: 0.8,
+            alibabaApiKey: token, // In Node.js defaults to process.env.ALIBABA_API_KEY
+        });
+
+        const systemTemplate = `你是一个精通文字编辑和图片处理的专家，你会根据我给出的文字内容生成一段图片描述，该图片会作为给出的文字内容的特色图片（特色图片featured image代表博客或页面的文字内容，情绪或主题，并在整个网站中使用），要求：
+1. 该描述能够帮助AI理解并生成与文字内容相关的图片；
+2. 该描述能够概括出文字内容中的主要信息和主题，为了让图片更有创意性，你可适当的增加天马行空的元素和描述；
+3. 你会从图片专家的角度思考，描述中尽量包括图片中心主题，环境信息，图片中的物体位置、图片中的物体大小、图片中的物体颜色、图片中的物体形状、图片中的物体材质、图片中的物体风格、图片中的物体数量、图片中的物体关系等等；
+4. 同时你还会给出图片艺术风格的描述，具体图片艺术风格你可以根据自己对给出的文字内容的理解自行决定，图片风格你只可以从如下选项中选择：
+    - <photography>：摄影。
+    - <portrait>：人像写真。
+    - <3d cartoon>：3D卡通。
+    - <anime>：动画。
+    - <oil painting>：油画。
+    - <watercolor>：水彩。
+    - <sketch>：素描。
+    - <chinese painting>：中国画。
+    - <flat illustration>：扁平插画。；
+5. 你会从图片专家的角度思考，给出一些用于AI生成图片时可以利用的技术参数从而让图片变得更加美观，你可以根据自身对图片以及美观的理解自行选择需要设置的图片技术参数例如近景镜头、半身特写、锐化等等；`
+        const systemMessage = new SystemMessage(systemTemplate)
+        const generateMessageTemplate = `**文字内容：**${query}`
+        const generateMessage = new HumanMessage(generateMessageTemplate)
+        const messages = [systemMessage, generateMessage];
+
+        const originFetch = globalThis.fetch
+        const originHeaders = globalThis.Headers
+        const originRequest = globalThis.Request
+        const originResponse = globalThis.Response
+        // @ts-ignore
+        globalThis.fetch = fetch
+        // @ts-ignore
+        globalThis.Headers = Headers
+        // @ts-ignore
+        globalThis.Request = Request
+        // @ts-ignore
+        globalThis.Response = Response
+        const res = await qwenMax.invoke(messages);
+        globalThis.fetch = originFetch
+        globalThis.Headers = originHeaders
+        globalThis.Request = originRequest
+        globalThis.Response = originResponse
+
+        this.plugin.log(res.content)
+        return res.content.toString()
+    }
+
+    private async generateImage(genMsg: string) {
+        const encryptedToken = this.plugin.settings.apiToken;
+        const crypto = new CryptoHelper();
+        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
+        if (!token) {
+            new Notice("Prepare LLM failed!", 3000);
+            return null;
+        }
+        const originFetch = globalThis.fetch;
+        const originHeaders = globalThis.Headers;
+        const originRequest = globalThis.Request;
+        const originResponse = globalThis.Response;
+        // @ts-ignore
+        globalThis.fetch = fetch;
+        // @ts-ignore
+        globalThis.Headers = Headers;
+        // @ts-ignore
+        globalThis.Request = Request;
+        // @ts-ignore
+        globalThis.Response = Response;
+        const resp = await globalThis.fetch(
+            "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+            {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                    "X-DashScope-Async": "enable",
+                    "Authorization": "Bearer " + token,
+                },
+                body: JSON.stringify({
+                    "model": "wanx-v1",
+                    "input": {
+                        "prompt": genMsg,
+                    },
+                    "parameters": {
+                        "size": "1024*1024",
+                        "n": this.plugin.settings.numFeaturedImages,
+                        "seed": 42,
+                        "strength": 0.5,
+                        "ref_mode": "repaint"
+                    }
+                })
+            },
+        );
+        globalThis.fetch = originFetch;
+        globalThis.Headers = originHeaders;
+        globalThis.Request = originRequest;
+        globalThis.Response = originResponse;
+
+        if (resp.ok) {
+            const result: ImageGenerationResult = await resp.json();
+            this.plugin.log(result);
+            return result;
+        } else {
+            return null;
+        }
+    }
+
+
+    private async getImage(generateResult: ImageGenerationResult) {
+        const encryptedToken = this.plugin.settings.apiToken;
+        const crypto = new CryptoHelper();
+        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
+        if (!token) {
+            new Notice("Prepare LLM failed!", 3000);
+            return null;
+        }
+
+        const taskID = generateResult.output.task_id;
+
+        const pollTaskStatus = async (taskId: string, baseUrl: string, timeoutMs = 300000) => {
+            const startTime = Date.now();
+
+            while (Date.now() - startTime <= timeoutMs) {
+                // 检查是否超时
+                try {
+                    const originFetch = globalThis.fetch;
+                    const originHeaders = globalThis.Headers;
+                    const originRequest = globalThis.Request;
+                    const originResponse = globalThis.Response;
+                    // @ts-ignore
+                    globalThis.fetch = fetch;
+                    // @ts-ignore
+                    globalThis.Headers = Headers;
+                    // @ts-ignore
+                    globalThis.Request = Request;
+                    // @ts-ignore
+                    globalThis.Response = Response;
+                    const response = await fetch(`${baseUrl}/${taskId}`, { method: "GET", headers: { "Authorization": "Bearer " + token } });
+                    globalThis.fetch = originFetch;
+                    globalThis.Headers = originHeaders;
+                    globalThis.Request = originRequest;
+                    globalThis.Response = originResponse;
+                    if (response.ok) {
+                        const data = await response.json() as TaskData;
+                        if (data.output.task_status === 'SUCCEEDED') {
+                            return data;
+                        }
+                    }
+
+                    // 等待60秒
+                    await new Promise(resolve => setTimeout(resolve, 60000));
+
+                } catch (error) {
+                    console.error('Error polling task:', error);
+                    throw error;
+                }
+            }
+
+            return null;
+        }
+
+        const baseUrl = 'https://dashscope.aliyuncs.com/api/v1/tasks';
+        const taskId = taskID;
+        const timeout = 10 * 60 * 1000; // 10分钟超时
+
+        const imagesTaskData = await pollTaskStatus(taskId, baseUrl, timeout);
+
+        if (imagesTaskData && imagesTaskData.output.task_status === 'SUCCEEDED') {
+            // 处理成功的情况
+            this.plugin.log(imagesTaskData);
+            return imagesTaskData.output.results; // 假设返回的结果在 output.result 中
+        } else {
+            new Notice("Failed to get image: Task did not succeed or timed out.", 3000);
+            return null;
+        }
+    }
+
+    private async downloadImageToVault(app: App, imageUrl: string, folderPath: string) {
+        try {
+            // 从 URL 中提取文件名
+            const filename = imageUrl.split('/').pop()?.split('?')[0] || 'image.png';
+
+            // 构建完整的保存路径
+            const savePath = `${folderPath}/${filename}`;
+
+            // 确保目标文件夹存在
+            const folder = app.vault.getAbstractFileByPath(folderPath);
+            if (!folder) {
+                await app.vault.createFolder(folderPath);
+            }
+
+            // 下载图片
+            const response = await fetch(imageUrl);
+            if (!response.ok) {
+                throw new Error(`Failed to download image: ${response.statusText}`);
+            }
+
+            // 将响应转换为 ArrayBuffer
+            const buffer = await response.arrayBuffer();
+
+            // 保存文件到 Obsidian vault
+            await app.vault.createBinary(savePath, buffer);
+
+            // 显示成功通知
+            new Notice(`Image downloaded successfully to ${savePath}`);
+
+            // 返回创建的文件路径
+            return savePath;
+
+        } catch (error) {
+            new Notice(`Failed to download image: ${error}`);
+            throw error;
+        }
+    }
+}
