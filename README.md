@@ -17,6 +17,11 @@
 > ***NOTE***: New shiny feature: Supporting featured image generation by AI according to the content of the note.
 <div align="center">
 <video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
+
+
+https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
+
+
 </div>
 
 > ***AI Helper to improve your Obsidian notes management***
