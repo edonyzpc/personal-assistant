@@ -11,7 +11,12 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦！Perosnal Assistant 支持 AI 助手管理 Obsidian 笔记啦！
+> ***号外***: 新特性来啦！Perosnal Assistant 支持 AI 生成 featured images，再也不用为题图烦恼了！
+<div align="center">
+<video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
+</div>
+
+> ***AI 助手帮助管理 Obsidian***
 <div align="center">
 <img src="./docs/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
 </div>

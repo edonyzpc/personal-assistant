@@ -14,7 +14,12 @@
  <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
 </p>
 
-> ***NOTE***: New shiny feature: Personal Assitant Supporting AI Helper to improve your Obsidian notes management.
+> ***NOTE***: New shiny feature: Supporting featured image generation by AI according to the content of the note.
+<div align="center">
+<video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
+</div>
+
+> ***AI Helper to improve your Obsidian notes management***
 <div align="center">
 <img src="./docs/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
 </div>
