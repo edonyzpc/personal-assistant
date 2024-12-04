@@ -330,6 +330,8 @@ export class AssistantFeaturedImageHelper {
 
     private fontmatterInfo: FrontMatterInfo
 
+    private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
     constructor(
         app: App,
         plugin: PluginManager,
@@ -338,7 +340,8 @@ export class AssistantFeaturedImageHelper {
     ) {
         this.app = app;
         this.plugin = plugin;
-        this.editor = editor
+        this.log = plugin.log;
+        this.editor = editor;
         const markdown = this.editor.getValue()
         this.fontmatterInfo = getFrontMatterInfo(markdown);
         this.query = markdown.slice(this.fontmatterInfo.contentStart);
@@ -373,8 +376,14 @@ export class AssistantFeaturedImageHelper {
             new Notice("AI is not available.");
             return;
         }
-
+        const progress1Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-1", style: "background: white;color: black;" } });
+        progress1Div.setText("✅   Agent Generating Prompt Success!");
+        const progress2Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-2", style: "background: white;color: black;" } });
+        progress2Div.setText("🚧   Agent Generating Images...");
         const imagesGen = await this.generateImage(result);
+        progress2Div.setText("✅   Agent Generating Images Success!");
+        const progress3Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-3", style: "background: white;color: black;" } });
+        progress3Div.setText("🚧   Agent Downloading Images...");
 
         if (imagesGen) {
             const imageUrls = await this.getImage(imagesGen);
@@ -408,6 +417,7 @@ export class AssistantFeaturedImageHelper {
                         imagesCallout += `![[${response}]]\n> `;
                     }
                 }
+                progress3Div.setText("✅   Agent Download Images Success!");
                 // append line breaks
                 imagesCallout += "\n\n";
                 this.view.dispatch({
@@ -420,7 +430,9 @@ export class AssistantFeaturedImageHelper {
                     ],
                     effects: [addAI.of({ from: line.to, to: line.to, id })],
                 })
-
+                const progress4Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-4", style: "background: white;color: black;" } });
+                progress4Div.setText("✅   Agent Generating Featured Images Success!");
+                notification.$destroy();
                 notice.hide();
             }
         } else {
