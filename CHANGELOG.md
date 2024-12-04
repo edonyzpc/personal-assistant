@@ -2,7 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.4.2](https://github.com/edonyzpc/personal-assistant/compare/1.4.1...1.421) (2024-12-02)
+## [1.4.3](https://github.com/edonyzpc/personal-assistant/compare/1.4.2...1.4.3) (2024-12-04)
+### Improve
+- add more details of AI running when generating featured images
+
+## [1.4.2](https://github.com/edonyzpc/personal-assistant/compare/1.4.1...1.4.2) (2024-12-02)
 ### Features
 - AI helps to generating feature images according to the content of current note
 
