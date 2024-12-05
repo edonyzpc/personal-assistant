@@ -6,6 +6,7 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai"
 import { PluginControlModal } from './modal'
+import { BatchPluginControlModal } from './batchModal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
 import { Memos } from './memos';
@@ -131,6 +132,15 @@ export class PluginManager extends Plugin {
             callback: () => {
                 const modal = new PluginControlModal(this.app);
                 modal.setPlaceholder("Type plugin name to find it");
+                modal.open();
+            }
+        });
+
+        this.addCommand({
+            id: "batch-switch-on-or-off-plugins",
+            name: "Batch switch on/off plugins according to their status",
+            callback: () => {
+                const modal = new BatchPluginControlModal(this.app);
                 modal.open();
             }
         });

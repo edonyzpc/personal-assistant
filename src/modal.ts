@@ -4,7 +4,7 @@ import { App, Notice, SuggestModal, addIcon, setIcon } from 'obsidian'
 
 import { icons } from './utils';
 
-interface Plugin {
+export interface Plugin {
     name: string;
     id: string;
     desc: string;
