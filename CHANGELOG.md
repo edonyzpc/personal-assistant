@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.4.4](https://github.com/edonyzpc/personal-assistant/compare/1.4.3...1.4.4) (2024-12-05)
+### Feature
+- support batch plugin management
+
 ## [1.4.3](https://github.com/edonyzpc/personal-assistant/compare/1.4.2...1.4.3) (2024-12-04)
 ### Improve
 - add more details of AI running when generating featured images
