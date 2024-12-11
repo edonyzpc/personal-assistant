@@ -29,9 +29,6 @@ export interface PluginManagerSettings {
         autoColors: boolean,
         resizeStyle: ResizeStyle,
     };
-    memos: {
-        resizeStyle: ResizeStyle,
-    };
     enableGraphColors: boolean;
     colorGroups: {
         query: string,
@@ -72,12 +69,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         showNeighbor: true,
         collapse: false,
         autoColors: false,
-        resizeStyle: {
-            width: 550,
-            height: 500,
-        }
-    },
-    memos: {
         resizeStyle: {
             width: 550,
             height: 500,
@@ -312,39 +303,6 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.localGraph.resizeStyle.width.toString())
                     .onChange(async (value) => {
                         plugin.settings.localGraph.resizeStyle.width = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-            });
-
-
-        // setting options for memos
-        containerEl.createEl('h2', { text: 'Settings for Memos' });
-        containerEl.createEl("p", { text: "Memos Resize" }).setAttr("style", "font-size:15px");
-        const mh = document.createDocumentFragment();
-        mh.createEl('span', undefined, (p) => {
-            p.innerText = "height";
-            p.setAttr('style', 'margin:18px');
-        });
-        const mw = document.createDocumentFragment();
-        mw.createEl('span', undefined, (p) => {
-            p.innerText = "width";
-            p.setAttr('style', 'margin:18px');
-        });
-        new Setting(containerEl).setName(mh)
-            .addText(text => {
-                text.setPlaceholder('height')
-                    .setValue(this.plugin.settings.memos.resizeStyle.height.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.height = parseInt(value);
-                        await this.plugin.saveSettings();
-                    })
-            });
-        new Setting(containerEl).setName(mw)
-            .addText(text => {
-                text.setPlaceholder('width')
-                    .setValue(this.plugin.settings.memos.resizeStyle.width.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.memos.resizeStyle.width = parseInt(value);
                         await this.plugin.saveSettings();
                     })
             });

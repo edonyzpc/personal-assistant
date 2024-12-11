@@ -9,7 +9,6 @@ import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batchModal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
-import { Memos } from './memos';
 import { icons } from './utils';
 import { PluginsUpdater } from './pluginManifest';
 import { ThemeUpdater } from './themeManifest';
@@ -28,7 +27,6 @@ const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescr
 export class PluginManager extends Plugin {
     settings!: PluginManagerSettings
     private localGraph = new LocalGraph(this.app, this);
-    private memos = new Memos(this.app, this);
     calloutManager: CalloutManager<true> | undefined;
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
     private settingTab: SettingTab = new SettingTab(this.app, this);
@@ -51,7 +49,6 @@ export class PluginManager extends Plugin {
                         document.querySelectorAll('.popover.hover-popover.hover-editor').forEach((el) => {
                             this.log("observing...")
                             this.localGraph.resize();
-                            this.memos.resize();
                         })
                     }
                 });
@@ -107,14 +104,6 @@ export class PluginManager extends Plugin {
                 const targetDir = this.settings.targetPath;
                 this.log(targetDir, fileFormat);
                 await this.createNewNote(targetDir, fileFormat);
-            }
-        });
-
-        this.addCommand({
-            id: 'memos',
-            name: 'assistant hover memos',
-            callback: async () => {
-                await this.memos.startup();
             }
         });
 

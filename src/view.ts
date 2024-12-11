@@ -3,7 +3,6 @@
 import { PluginManager } from "./plugin"
 
 export enum ViewType {
-    MemosView = 0,
     LocalGraphView,
 }
 
@@ -13,7 +12,6 @@ export class ViewResize {
     plugin: PluginManager;
     private viewType: ViewType;
     private viewDataType = {
-        memos: "memos_view",
         localGraph: "localgraph",
     }
 
@@ -26,21 +24,12 @@ export class ViewResize {
 
     async resize(): Promise<void> {
         if (this.resized) return;
-        const { localGraph, memos } = this.plugin.settings;
+        const { localGraph } = this.plugin.settings;
         let width: number, height: number, left: number, top: number, dataType: string;
         const maxWidth = window.innerWidth;
         const maxHeight = window.innerHeight;
 
         switch (this.viewType) {
-            case ViewType.MemosView:
-                width = memos.resizeStyle.width;
-                height = memos.resizeStyle.height;
-                top = maxHeight / 2 - height / 2;
-                left = maxWidth / 2 - width / 2;
-                top = top + (10 + Math.random() * 100);
-                left = left + (10 + Math.random() * 100);
-                dataType = this.viewDataType.memos;
-                break;
             case ViewType.LocalGraphView:
                 width = localGraph.resizeStyle.width;
                 height = localGraph.resizeStyle.height;
