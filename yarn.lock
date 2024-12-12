@@ -3485,10 +3485,10 @@ svelte-preprocess@^6.0.0:
   resolved "https://registry.npmmirror.com/svelte-preprocess/-/svelte-preprocess-6.0.3.tgz#fdc1f9dc41b6f22bf8b1f059e9f21eaaae181eeb"
   integrity sha512-PLG2k05qHdhmRG7zR/dyo5qKvakhm8IJ+hD2eFRQmMLHp7X3eJnjeupUtvuRpbNiF31RjVw45W+abDwHEmP5OA==
 
-svelte-radix@^1.1.1:
-  version "1.1.1"
-  resolved "https://registry.npmmirror.com/svelte-radix/-/svelte-radix-1.1.1.tgz#e8e4e4cc691c5eacacae7b87e6950391ec47b7c4"
-  integrity sha512-TCbV7fzlJ2aEUB0nu2EodVA+r1eYj526IYpmGUTV32Z0bIrCUvx3K8xX3tcxR5dDFA5ZBU1Hxr4RYC4TDFEQ4A==
+svelte-radix@^2.0.0:
+  version "2.0.1"
+  resolved "https://registry.npmmirror.com/svelte-radix/-/svelte-radix-2.0.1.tgz#ff5f545cc8539529c083fe780f6ca884374434d3"
+  integrity sha512-YrX44Dj+Rp6YZuPSjdmyd6P8QTkb2NXwySUCZYzjwkP6Cl3dZaTBPPeaSOutP3v3ycQ2XwyNOpyn4p0QcN+uYQ==
 
 svelte@^4.0.0:
   version "4.2.19"
