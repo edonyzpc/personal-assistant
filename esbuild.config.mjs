@@ -1,10 +1,10 @@
-import esbuild from "esbuild";
-import process from "process";
-import builtins from "builtin-modules";
+import { context, transform } from 'esbuild';
+import process from 'process';
+import builtins from 'builtin-modules';
 import { copy } from 'esbuild-plugin-copy';
-import esbuildSvelte from "esbuild-svelte";
-import sveltePreprocess from "svelte-preprocess";
-import { readFile } from "fs"
+import esbuildSvelte from 'esbuild-svelte';
+import { sveltePreprocess } from 'svelte-preprocess';
+import { readFile } from 'fs/promises';
 
 const banner =
 	`/*
@@ -14,28 +14,23 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
-const cssPlugin = {
+const cssMinifyPlugin = {
 	name: 'cssPlugin',
 	setup(build) {
 		console.debug("starting....");
 		build.onLoad(
 			{ filter: /\.css$/, namespace: "css-plugin-ns" },
 			async (args) => {
-				console.debug("*********");
-				console.debug(args)
 				let css = await readFile("styles.css")
-				console.debug("--------")
-				console.debug(css)
-				console.debug("--------")
-				css = await esbuild.transform(css, { loader: 'css', minify: true })
-				return { loader: 'text', contents: css }
+				css = await transform(css, { loader: 'css', minify: true })
+				return { loader: 'text', contents: css.code }
 			}
 		);
 		console.debug("ending....");
 	},
 };
 
-const context = await esbuild.context({
+const buildContext = await context({
 	platform: "node",
 	mainFields: ["svelte", "browser", "module", "main"],
 	conditions: ["svelte", "browser"],
@@ -67,7 +62,7 @@ const context = await esbuild.context({
 	outfile: "dist/main.js",
 	minify: prod ? true : false,
 	plugins: [
-		cssPlugin,
+		cssMinifyPlugin,
 		esbuildSvelte({
 			compilerOptions: { css: "injected" },
 			preprocess: sveltePreprocess(),
@@ -92,8 +87,8 @@ const context = await esbuild.context({
 });
 
 if (prod) {
-	await context.rebuild();
+	await buildContext.rebuild();
 	process.exit(0);
 } else {
-	await context.watch();
+	await buildContext.watch();
 }

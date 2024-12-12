@@ -5,7 +5,7 @@
   "main": "main.js",
   "scripts": {
     "dev": "node esbuild.config.mjs",
-    "build": "tsc -noEmit -skipLibCheck && node esbuild.config.mjs production",
+    "build": "tsc -noEmit -skipLibCheck && node --no-warnings=ExperimentalWarning esbuild.config.mjs production",
     "version": "node version-bump.mjs && git add manifest-beta.json manifest.json versions.json CHANGELOG.md",
     "lint": "eslint . --ext .ts",
     "init-test": "jest --init",
@@ -23,6 +23,7 @@
     "@jest/globals": "^29.5.0",
     "@tsconfig/svelte": "^5.0.0",
     "@types/node": "^20.0.0",
+    "@types/semver": "^7.5.8",
     "@typescript-eslint/eslint-plugin": "8.18.0",
     "@typescript-eslint/parser": "8.18.0",
     "builtin-modules": "4.0.0",
