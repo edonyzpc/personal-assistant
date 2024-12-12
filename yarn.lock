@@ -1650,10 +1650,10 @@ esbuild-plugin-copy@2.1.1:
     fs-extra "^10.0.1"
     globby "^11.0.3"
 
-esbuild-svelte@^0.8.0:
-  version "0.8.2"
-  resolved "https://registry.npmmirror.com/esbuild-svelte/-/esbuild-svelte-0.8.2.tgz#f6c09b57879caabd068685684b47f42dbd266396"
-  integrity sha512-tG97WrhH/OH8wFCmRBk6sRggMVMPNZDktGx1jJcvh9Obvjwm8M1UYoXmliuLL+4fs/wfyVVwM2fvyNYz2e6UPQ==
+esbuild-svelte@^0.9.0:
+  version "0.9.0"
+  resolved "https://registry.npmmirror.com/esbuild-svelte/-/esbuild-svelte-0.9.0.tgz#e369b48ba0c94c698811f1fb5ae4b9348d7fd2c2"
+  integrity sha512-ebGQYTuM4U1Tfx9HdkNtfBjaxY7t7LirlD1yylpSIkhRW+zLzff1wOK1jhuM7ZCnBVCGpt6sGZqiPb5c99KzJg==
   dependencies:
     "@jridgewell/trace-mapping" "^0.3.19"
 
