@@ -291,6 +291,11 @@
   resolved "https://registry.npmmirror.com/@bcoe/v8-coverage/-/v8-coverage-0.2.3.tgz#75a2e8b51cb758a7553d6804a5932d7aace75c39"
   integrity sha512-0hYQ8SB4Db5zvZB4axdMHGwEaQjkZzFjQiN9LVYvIFB2nSUHW9tYpxWriPrWDASIxiaXax83REcLxuSdnGPZtw==
 
+"@cfworker/json-schema@^4.0.2":
+  version "4.0.3"
+  resolved "https://registry.npmmirror.com/@cfworker/json-schema/-/json-schema-4.0.3.tgz#30fc6b72322c74ceb27014a779de0ccdfa0dfb9e"
+  integrity sha512-ZykIcDTVv5UNmKWSTLAs3VukO6NDJkkSKxrgUTDPBkAlORVT3H9n5DbRjRl8xIotklscHdbLIa0b9+y3mQq73g==
+
 "@codemirror/commands@^6.1.2":
   version "6.6.2"
   resolved "https://registry.npmmirror.com/@codemirror/commands/-/commands-6.6.2.tgz#a8ddb191e00dcc0efa03ea1ff8dc486f902dab91"
@@ -794,15 +799,16 @@
     zod-to-json-schema "^3.22.5"
 
 "@langchain/core@^0.3.1":
-  version "0.3.4"
-  resolved "https://registry.npmmirror.com/@langchain/core/-/core-0.3.4.tgz#6b12290bab387d7a2abeba540757ab483806edb6"
-  integrity sha512-ULxB0rTCW5+Ej3uO8gg1tep06Nm2rO7KVMwNFF7cVz4OPIEN2eQa25rMTFeja22YINn01msxB1A25y8skMa6TA==
+  version "0.3.23"
+  resolved "https://registry.npmmirror.com/@langchain/core/-/core-0.3.23.tgz#aa7362df6eda59a110dc221d2cf214092c7c1631"
+  integrity sha512-Aut43dEJYH/ibccSErFOLQzymkBG4emlN16P0OHWwx02bDosOR9ilZly4JJiCSYcprn2X2H8nee6P/4VMg1oQA==
   dependencies:
+    "@cfworker/json-schema" "^4.0.2"
     ansi-styles "^5.0.0"
     camelcase "6"
     decamelize "1.2.0"
     js-tiktoken "^1.0.12"
-    langsmith "^0.1.56"
+    langsmith "^0.2.8"
     mustache "^4.2.0"
     p-queue "^6.6.2"
     p-retry "4"
@@ -2831,18 +2837,6 @@ kleur@^3.0.3:
     yaml "^2.2.1"
     zod "^3.22.4"
     zod-to-json-schema "^3.22.3"
-
-langsmith@^0.1.56:
-  version "0.1.61"
-  resolved "https://registry.npmmirror.com/langsmith/-/langsmith-0.1.61.tgz#4c3d2677fe79d9f936198918c3af6c48e54f79d7"
-  integrity sha512-XQE4KPScwPmdaT0mWDzhNxj9gvqXUR+C7urLA0QFi27XeoQdm17eYpudenn4wxC0gIyUJutQCyuYJpfwlT5JnQ==
-  dependencies:
-    "@types/uuid" "^10.0.0"
-    commander "^10.0.1"
-    p-queue "^6.6.2"
-    p-retry "4"
-    semver "^7.6.3"
-    uuid "^10.0.0"
 
 langsmith@^0.2.8:
   version "0.2.12"
