@@ -772,9 +772,9 @@
   integrity sha512-M5UknZPHRu3DEDWoipU6sE8PdkZ6Z/S+v4dD+Ke8IaNlpdSQah50lz1KtcFBa2vsdOnwbbnxJwVM4wty6udA5w==
 
 "@langchain/community@^0.3.0":
-  version "0.3.18"
-  resolved "https://registry.npmmirror.com/@langchain/community/-/community-0.3.18.tgz#fbf623996939367fcb20e3f3d6390a26fa8a3974"
-  integrity sha512-hKXjf+K9NKZW/Ji3Y03npWDtvewPLGdevkGDtDKEBgxBMyDXN/AXxI0vt0mVAI3qsbeLmyzF3yLI7UZEN+S6fA==
+  version "0.3.19"
+  resolved "https://registry.npmmirror.com/@langchain/community/-/community-0.3.19.tgz#6104f244f5c0161e3f7e4929cd69e9fa25ebe94b"
+  integrity sha512-7ygPPC9eaIq6Bkv7Z3Vz8PxKjCEi0FCyOuK3e5fafm7ahqX0JXDxnBADObDJ7euFWTKXYFiXDYdoJI/BGlm1PQ==
   dependencies:
     "@langchain/openai" ">=0.2.0 <0.4.0"
     binary-extensions "^2.2.0"
@@ -3033,9 +3033,9 @@ onetime@^5.1.2:
     mimic-fn "^2.1.0"
 
 openai@^4.71.0:
-  version "4.76.1"
-  resolved "https://registry.npmmirror.com/openai/-/openai-4.76.1.tgz#3e844cef2f2d55814ff7c6e134700eacb7c9897b"
-  integrity sha512-ci63/WFEMd6QjjEVeH0pV7hnFS6CCqhgJydSti4Aak/8uo2SpgzKjteUDaY+OkwziVj11mi6j+0mRUIiGKUzWw==
+  version "4.76.3"
+  resolved "https://registry.npmmirror.com/openai/-/openai-4.76.3.tgz#67ea81b9ad330997593ba8bd0910d2f4a992740a"
+  integrity sha512-BISkI90m8zT7BAMljK0j00TzOoLvmc7AulPxv6EARa++3+hhIK5G6z4xkITurEaA9bvDhQ09kSNKA3DL+rDMwA==
   dependencies:
     "@types/node" "^18.11.18"
     "@types/node-fetch" "^2.6.4"
