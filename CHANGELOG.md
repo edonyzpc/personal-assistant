@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.4.5](https://github.com/edonyzpc/personal-assistant/compare/1.4.5...1.4.6) (2024-12-19)
+### Fix
+- fix element display :bug: in new Obsidian v1.8.0 when updating plugins
+
 ## [1.4.5](https://github.com/edonyzpc/personal-assistant/compare/1.4.4...1.4.5) (2024-12-12)
 ### Improve
 - upgrade dependencies and its related configurations
