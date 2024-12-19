@@ -68,7 +68,7 @@ export class ProgressBar {
     }
 
     show() {
-        if(this.notice) {
+        if (this.notice) {
             //  the Notice will stay visible until the user manually hide() it.
             return;
         }

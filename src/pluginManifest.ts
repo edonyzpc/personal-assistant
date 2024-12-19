@@ -28,7 +28,7 @@ export class PluginsUpdater implements ObsidianManifest {
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases@master/community-plugins.json`;
         this.items = [];
         for (const m of Object.values((app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
-            const i:Manifest = {
+            const i: Manifest = {
                 id: (m as PluginManifest).id,
                 version: (m as PluginManifest).version,
             };
@@ -40,7 +40,7 @@ export class PluginsUpdater implements ObsidianManifest {
         this.progressBar = new ProgressBar(plugin, "plugin-updating", this.totalPlugins);
     }
 
-    private async getCommunityPluginsJson(): Promise<string|null> {
+    private async getCommunityPluginsJson(): Promise<string | null> {
         try {
             const response = await request({ url: this.URLCDN });
             return (response === "404: Not Found" ? null : response);
@@ -90,7 +90,7 @@ export class PluginsUpdater implements ObsidianManifest {
             const response = await request({ url: URL });
             return (response === "404: Not Found" ? null : await JSON.parse(response));
         } catch (error) {
-            if(error!="Error: Request failed, status 404")  { //normal error, ignore
+            if (error != "Error: Request failed, status 404") { //normal error, ignore
                 this.log(`error in getLatestRelease for ${URL}`, error);
             }
             return null;
@@ -112,7 +112,7 @@ export class PluginsUpdater implements ObsidianManifest {
         return null;
     }
 
-    async isNeedToUpdate(latestRelease: JSON|null, currentVersion: string): Promise<UpdateStatus> {
+    async isNeedToUpdate(latestRelease: JSON | null, currentVersion: string): Promise<UpdateStatus> {
         if (latestRelease) {
             let tag = this.getLatestTag(latestRelease);
             if (tag) {

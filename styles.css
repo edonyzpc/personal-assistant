@@ -203,15 +203,17 @@ body {
 
 .progress-bar-number {
 	color: rgba(84, 240, 84, 0.69);
+	width: 36px;
 }
 
 .progress-bar-notice {
 	max-width: 480px !important;
-	/*background-color: #363636;*/
 	background-color: var(--pa-background-primary);
+	/*
 	border: 0.08em dashed #ff00005e;
 	box-shadow: inset 0 -3em 3em rgba(0, 0, 0, 0.1),
 		0 0 0 1px rgba(172, 172, 172, 0.9), 0.3em 0.3em 1em rgba(0, 0, 0, 0.1);
+	*/
 }
 
 .progress-bar-items-grid {
@@ -226,6 +228,10 @@ body {
 	display: inline-block;
 	height: 18px;
 	align-self: center;
+}
+
+.notice {
+	background-color: var(--pa-background-primary);
 }
 
 /* callout setting if it is nessecary to use in preview */
