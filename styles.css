@@ -113,7 +113,7 @@ body {
 	font-family: "Courier New", "Comic Mono";
 	font-size: 13px;
 	font-style: oblique 40deg;
-	color: brown;
+	/*color: brown;*/
 	width: auto;
 }
 
@@ -203,7 +203,7 @@ body {
 
 .progress-bar-number {
 	color: rgba(84, 240, 84, 0.69);
-	width: 36px;
+	width: 41px;
 }
 
 .progress-bar-notice {
