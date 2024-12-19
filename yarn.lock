@@ -788,9 +788,9 @@
     zod-to-json-schema "^3.22.5"
 
 "@langchain/core@^0.3.1":
-  version "0.3.23"
-  resolved "https://registry.npmmirror.com/@langchain/core/-/core-0.3.23.tgz#aa7362df6eda59a110dc221d2cf214092c7c1631"
-  integrity sha512-Aut43dEJYH/ibccSErFOLQzymkBG4emlN16P0OHWwx02bDosOR9ilZly4JJiCSYcprn2X2H8nee6P/4VMg1oQA==
+  version "0.3.25"
+  resolved "https://registry.npmmirror.com/@langchain/core/-/core-0.3.25.tgz#b647fbeb825af79e6de2f3896c26116ef744008c"
+  integrity sha512-kB4BhGK2XQu/c9RtHD+ocixZ7fziakvXzzVJhkd3KdR5RBcZNigzDVLf83cYAQbqeeEpLdbKb/6N+KWDc7zX/g==
   dependencies:
     "@cfworker/json-schema" "^4.0.2"
     ansi-styles "^5.0.0"
