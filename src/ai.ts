@@ -368,7 +368,12 @@ export class AssistantFeaturedImageHelper {
         const notice = new Notice(noticeEl, 0);
         // keep the same theme of notice and notification
         notice.noticeEl.style.backgroundColor = "white";
-
+        notice.noticeEl.parentElement?.setCssStyles({
+            "backgroundColor": "white",
+        });
+        notice.noticeEl.createEl("hr", { attr: { id: "ai-featured-image-progress-hr", style: "margin:unset;" } });
+        const progress1Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-1", style: "background: white;color: black;margin-top: 4px;" } });
+        progress1Div.setText("    🚧   Agent Generating Prompt...");
         const result = await this.qwenLLMImageDes(this.query)
         if (result.length <= 0) {
             notification.$destroy();
@@ -376,14 +381,13 @@ export class AssistantFeaturedImageHelper {
             new Notice("AI is not available.");
             return;
         }
-        const progress1Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-1", style: "background: white;color: black;" } });
-        progress1Div.setText("✅   Agent Generating Prompt Success!");
-        const progress2Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-2", style: "background: white;color: black;" } });
-        progress2Div.setText("🚧   Agent Generating Images...");
+        progress1Div.setText("    ✅   Generating Prompt Success!");
+        const progress2Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-2", style: "background: white;color: black;margin-top: 4px;" } });
+        progress2Div.setText("    🚧   Agent Generating Images...");
         const imagesGen = await this.generateImage(result);
-        progress2Div.setText("✅   Agent Generating Images Success!");
-        const progress3Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-3", style: "background: white;color: black;" } });
-        progress3Div.setText("🚧   Agent Downloading Images...");
+        progress2Div.setText("    ✅   Generating Images Success!");
+        const progress3Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-3", style: "background: white;color: black;margin-top: 4px;" } });
+        progress3Div.setText("    🚧   Agent Downloading Images...");
 
         if (imagesGen) {
             const imageUrls = await this.getImage(imagesGen);
@@ -417,7 +421,7 @@ export class AssistantFeaturedImageHelper {
                         imagesCallout += `![[${response}]]\n> `;
                     }
                 }
-                progress3Div.setText("✅   Agent Download Images Success!");
+                progress3Div.setText("    ✅   Downloading Images Success!");
                 // append line breaks
                 imagesCallout += "\n\n";
                 this.view.dispatch({
@@ -430,8 +434,8 @@ export class AssistantFeaturedImageHelper {
                     ],
                     effects: [addAI.of({ from: line.to, to: line.to, id })],
                 })
-                const progress4Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-4", style: "background: white;color: black;" } });
-                progress4Div.setText("✅   Agent Generating Featured Images Success!");
+                const progress4Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-4", style: "background: white;color: black;margin-top: 4px;" } });
+                progress4Div.setText("    ✅   Generating Featured Images Success!");
                 notification.$destroy();
                 notice.hide();
             }
