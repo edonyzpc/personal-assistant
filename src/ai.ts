@@ -57,6 +57,9 @@ export class AssistantHelper {
         const notice = new Notice(noticeEl, 0);
         // keep the same theme of notice and notification
         notice.noticeEl.style.backgroundColor = "white";
+        notice.noticeEl.parentElement?.setCssStyles({
+            "backgroundColor": "white",
+        });
 
         const result = await this.qwenLLM(this.query)
         if (result.length <= 0) {
