@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.4.8](https://github.com/edonyzpc/personal-assistant/compare/1.4.7...1.4.8) (2025-01-10)
+### Fix
+- fix AI Helper notification element display issue
+
 ## [1.4.7](https://github.com/edonyzpc/personal-assistant/compare/1.4.6...1.4.7) (2024-12-31)
 ### Fix
 - fix AI notification element display issue
