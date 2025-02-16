@@ -11,7 +11,7 @@ import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tong
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
 import { PluginManager } from './plugin'
-import { CryptoHelper, personalAssitant, queryAI } from './utils';
+import { CryptoHelper, personalAssitant } from './utils';
 
 export class AssistantHelper {
     private editor: Editor
@@ -24,6 +24,8 @@ export class AssistantHelper {
 
     private fontmatterInfo: FrontMatterInfo
 
+    private readonly markdownView: MarkdownView;
+
     constructor(
         plugin: PluginManager,
         editor: Editor,
@@ -35,7 +37,8 @@ export class AssistantHelper {
         this.fontmatterInfo = getFrontMatterInfo(markdown);
         this.query = markdown.slice(this.fontmatterInfo.contentStart);
         // @ts-expect-error, not typed
-        this.view = view.editor.cm
+        this.view = view.editor.cm;
+        this.markdownView = view;
     }
 
     async generate() {
@@ -69,6 +72,7 @@ export class AssistantHelper {
             return;
         }
         const { summary, keywords } = JSON.parse(result)
+        /*
         const url = `https://webhook.worker.edony.ink/unsplash?query=${encodeURI(keywords[0])}&${queryAI}`
         const imgSearchRes = await fetch(url)
         const imageURL = await imgSearchRes.text()
@@ -104,6 +108,14 @@ export class AssistantHelper {
             ],
             effects: [addAI.of({ from: line.to, to: line.to, id })],
         })
+        */
+        if (this.markdownView.file) {
+            this.plugin.app.fileManager.processFrontMatter(this.markdownView.file, (frontmatter) => {
+                frontmatter["AI Summary"] = summary;
+                const oldTags = frontmatter["tags"] || [];
+                frontmatter["tags"] = oldTags.concat(keywords);
+            })
+        }
 
         notice.hide();
     }
@@ -129,8 +141,9 @@ export class AssistantHelper {
 
 **要求：**
 - 概括总结的字数要求不超过120字
-- 提炼的关键词数目要求是2个
+- 提炼的关键词数目要求是3个左右
 - 提炼的关键词要求是英文
+- 关键词只能使用：英文字母、数字、连字符，不可以使用其他字符
 - 输出结果的格式为：
 {
   "summary": "...",
