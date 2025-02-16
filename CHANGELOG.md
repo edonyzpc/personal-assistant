@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.4.9](https://github.com/edonyzpc/personal-assistant/compare/1.4.8...1.4.9) (2025-02-16)
+### Improvement
+- change AI Helper as AI Summary
+- summary the content into the frontmatter property
+
 ## [1.4.8](https://github.com/edonyzpc/personal-assistant/compare/1.4.7...1.4.8) (2025-01-10)
 ### Fix
 - fix AI Helper notification element display issue
