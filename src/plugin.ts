@@ -216,8 +216,8 @@ export class PluginManager extends Plugin {
         })
 
         this.addCommand({
-            id: 'ai-assistant-helper',
-            name: 'AI Helper',
+            id: 'ai-assistant-summary',
+            name: 'AI Summary',
             editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
                 const sel = editor.getSelection();
                 const v = editor.getValue();
