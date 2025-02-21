@@ -4,7 +4,7 @@ import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Pl
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai"
+import { AssistantFeaturedImageHelper, AssistantHelper, SimilaritySearch } from "./ai"
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batchModal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
@@ -271,6 +271,26 @@ export class PluginManager extends Plugin {
                             }
                         });
                     }
+                }
+            }
+        });
+
+        this.addCommand({
+            id: "ai-assistant-similarity-search",
+            name: "AI Similarity Search",
+            editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+                const sel = editor.getSelection();
+                const v = editor.getValue();
+                const { vault } = this.app;
+                const configDir = vault.configDir;
+                const dbPath = this.join(configDir, "vss-cache.json");
+                console.log("dbPath: ", dbPath);
+                this.log(`You have selected: ${sel}`);
+                this.log(`You have value: ${v}`);
+                if (view instanceof MarkdownView) {
+                    this.log("invoking LLM");
+                    const search = new SimilaritySearch(dbPath, this, editor, view);
+                    await search.vectorStore();
                 }
             }
         });
