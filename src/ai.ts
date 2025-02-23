@@ -721,9 +721,6 @@ export class SimilaritySearch {
         this.markdownView = view;
     }
 
-    async search() {
-    }
-
     async vectorStore() {
         const encryptedToken = this.plugin.settings.apiToken;
         const crypto = new CryptoHelper();
@@ -770,12 +767,25 @@ export class SimilaritySearch {
         console.log(vectorStore.memoryVectors);
         const objStr = JSON.stringify(vectorStore.memoryVectors, null, 0);
         await this.plugin.app.vault.adapter.write(this.dbFile, objStr);
+        const filter = (doc: Document) => doc.metadata.source === "https://example.com";
 
         const readStr = await this.plugin.app.vault.adapter.read(this.dbFile);
         const memoryVectors2 = JSON.parse(readStr);
         const vectorStore2 = new MemoryVectorStore(embeddings);
         vectorStore2.memoryVectors = memoryVectors2;
-        const filter = (doc: Document) => doc.metadata.source === "https://example.com";
+        // MMR search to increase diversity and relevance
+        const retriver = vectorStore2.asRetriever({
+            k: 2,
+            filter: filter,
+            //tags: ['example', 'test'],
+            verbose: true,
+            searchType: 'mmr',
+            searchKwargs: { fetchK: 4, lambda: 0.8 },
+        });
+        const doc = await retriver.invoke("biology")
+        console.log(doc);
+
+        // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
             await vectorStore2.similaritySearchWithScore("biology", 2, filter);
 
