@@ -83,16 +83,25 @@ export default class StatsManager {
         }
 
         this.today = moment().format("YYYY-MM-DD");
-        let counter = 1;
         let files = 0;
         const recordDays = Object.keys(this.vaultStats.history).length;
         if (recordDays > 0) {
-            // try to iterate all of the recorded days and find the last record stat.
-            while (!this.vaultStats.history.hasOwnProperty(moment().subtract(counter, 'days').format("YYYY-MM-DD")) &&
-                counter <= recordDays) {
-                counter++;
-            }
-            files = this.vaultStats.history[moment().subtract(counter, 'days').format("YYYY-MM-DD")].files;
+            const recordsDays = Object.keys(this.vaultStats.history);
+            recordsDays.sort((a, b) => {
+                // 将字符串日期转换为 Date 对象
+                const dateA = new Date(a);
+                const dateB = new Date(b);
+
+                // 比较两个日期对象
+                if (dateA < dateB) {
+                    return 1; // a 应该排在 b 后面
+                }
+                if (dateA > dateB) {
+                    return -1; // a 应该排在 b 前面
+                }
+                return 0; // 两者相等
+            });
+            files = this.vaultStats.history[recordsDays[0]].files;
         } else {
             files = 0;
         }
