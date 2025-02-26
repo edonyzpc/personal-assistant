@@ -553,7 +553,7 @@ export class AssistantFeaturedImageHelper {
                     "Authorization": "Bearer " + token,
                 },
                 body: JSON.stringify({
-                    "model": "wanx-v1",
+                    "model": "wanx2.1-t2i-plus",
                     "input": {
                         "prompt": genMsg,
                     },
@@ -561,8 +561,8 @@ export class AssistantFeaturedImageHelper {
                         "size": "1024*1024",
                         "n": this.plugin.settings.numFeaturedImages,
                         "seed": 42,
-                        "strength": 0.5,
-                        "ref_mode": "repaint"
+                        "prompt_extend": true,
+                        "watermark": false,
                     }
                 })
             },
