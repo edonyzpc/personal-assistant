@@ -4,7 +4,8 @@ import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Pl
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { AssistantFeaturedImageHelper, AssistantHelper, SimilaritySearch } from "./ai"
+import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai"
+import { SimilaritySearch, VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batchModal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
@@ -279,21 +280,47 @@ export class PluginManager extends Plugin {
             id: "ai-assistant-similarity-search",
             name: "AI Similarity Search",
             editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-                const sel = editor.getSelection();
-                const v = editor.getValue();
-                const { vault } = this.app;
-                const configDir = vault.configDir;
-                const dbPath = this.join(configDir, "vss-cache.json");
-                console.log("dbPath: ", dbPath);
-                this.log(`You have selected: ${sel}`);
-                this.log(`You have value: ${v}`);
+                const vssCacheDir = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
+                if (!await this.app.vault.adapter.exists(vssCacheDir)) {
+                    await this.app.vault.adapter.mkdir(vssCacheDir);
+                }
                 if (view instanceof MarkdownView) {
-                    this.log("invoking LLM");
-                    const search = new SimilaritySearch(dbPath, this, editor, view);
+                    const search = new SimilaritySearch(vssCacheDir, this, editor, view);
                     await search.vectorStore();
                 }
             }
         });
+
+        this.addCommand({
+            id: "init-vss",
+            name: "Startup Vector Store Cache of Current Obisidna Vault",
+            callback: async () => {
+                const vssCacheDir = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
+                if (!await this.app.vault.adapter.exists(vssCacheDir)) {
+                    await this.app.vault.adapter.mkdir(vssCacheDir);
+                }
+
+                const vssFiles = this.getVSSFiles();
+                const vss = new VSS(this, vssCacheDir);
+                for (const file of vssFiles) {
+                    vss.cacheFileVectorStore(file);
+                }
+            }
+        })
+
+        this.addCommand({
+            id: "load-vss",
+            name: "Load Vector Store Cache of Current Obisidna Vault into Memory",
+            callback: async () => {
+                const vssCacheDir = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
+                if (!await this.app.vault.adapter.exists(vssCacheDir)) {
+                    await this.app.vault.adapter.mkdir(vssCacheDir);
+                }
+                const vssFiles = this.getVSSFiles();
+                const vss = new VSS(this, vssCacheDir);
+                await vss.loadVectorStore(vssFiles);
+            }
+        })
 
         // Handle the Editor Plugins
         this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
@@ -393,7 +420,7 @@ export class PluginManager extends Plugin {
      * - Removes duplicate separators
      * - Removes trailing slash
      **/
-    private join(...strings: string[]): string {
+    join(...strings: string[]): string {
         const parts = strings.map((s) => String(s).trim()).filter((s) => s != null);
         return normalizePath(parts.join('/'));
     }
@@ -465,6 +492,24 @@ export class PluginManager extends Plugin {
         });
 
         await this.app.workspace.revealLeaf(viewLeaf);
+    }
+
+    private getVSSFiles() {
+        const files = this.app.vault.getMarkdownFiles();
+        // TODO: config exclude paths
+        const excluePaths = [".obsidian"]
+        const excludeFiles: TFile[] = [];
+        // filter all markdown files which are in exclude-paths
+        for (const file of files) {
+            for (const exclude of excluePaths) {
+                if (file.path.startsWith(exclude)) {
+                    excludeFiles.push(file);
+                }
+            }
+        }
+        const vssFiles = files.filter(file => !excludeFiles.includes(file));
+
+        return vssFiles;
     }
 }
 

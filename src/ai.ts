@@ -9,9 +9,6 @@ import { Notification } from '@svelteuidev/core';
 
 import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tongyi";
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
-import { MemoryVectorStore } from "langchain/vectorstores/memory";
-import { AlibabaTongyiEmbeddings } from "@langchain/community/embeddings/alibaba_tongyi";
-import type { Document } from "@langchain/core/documents";
 
 
 import { PluginManager } from './plugin'
@@ -746,119 +743,5 @@ export class AssistantFeaturedImageHelper {
             new Notice(`Failed to download image: ${error}`);
             throw error;
         }
-    }
-}
-
-export class SimilaritySearch {
-    private editor: Editor
-
-    private view: EditorView
-
-    private query: string = ''
-
-    private plugin: PluginManager
-
-    private fontmatterInfo: FrontMatterInfo
-
-    private readonly markdownView: MarkdownView;
-
-    private dbFile: string
-    constructor(
-        dbFile: string,
-        plugin: PluginManager,
-        editor: Editor,
-        view: MarkdownView,
-    ) {
-        this.dbFile = dbFile;
-        this.plugin = plugin
-        this.editor = editor
-        const markdown = this.editor.getValue()
-        this.fontmatterInfo = getFrontMatterInfo(markdown);
-        this.query = markdown.slice(this.fontmatterInfo.contentStart);
-        // @ts-expect-error, not typed
-        this.view = view.editor.cm;
-        this.markdownView = view;
-    }
-
-    async vectorStore() {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return "";
-        }
-        const embeddings = new AlibabaTongyiEmbeddings({
-            apiKey: token,
-            modelName: "text-embedding-v2",
-        });
-
-
-        const vectorStore = new MemoryVectorStore(embeddings);
-        const document1: Document = {
-            pageContent: "The powerhouse of the cell is the mitochondria",
-            metadata: { source: "https://example.com" },
-        };
-        const document2: Document = {
-            pageContent: "Buildings are made out of brick",
-            metadata: { source: "https://example.com" },
-        };
-        const document3: Document = {
-            pageContent: "Mitochondria are made out of lipids",
-            metadata: { source: "https://example.com" },
-        };
-
-        const documents = [document1, document2, document3];
-
-        const originFetch = globalThis.fetch
-        const originHeaders = globalThis.Headers
-        const originRequest = globalThis.Request
-        const originResponse = globalThis.Response
-        // @ts-ignore
-        globalThis.fetch = fetch
-        // @ts-ignore
-        globalThis.Headers = Headers
-        // @ts-ignore
-        globalThis.Request = Request
-        // @ts-ignore
-        globalThis.Response = Response
-        await vectorStore.addDocuments(documents);
-        console.log(vectorStore.memoryVectors);
-        const objStr = JSON.stringify(vectorStore.memoryVectors, null, 0);
-        await this.plugin.app.vault.adapter.write(this.dbFile, objStr);
-        const filter = (doc: Document) => doc.metadata.source === "https://example.com";
-
-        const readStr = await this.plugin.app.vault.adapter.read(this.dbFile);
-        const memoryVectors2 = JSON.parse(readStr);
-        const vectorStore2 = new MemoryVectorStore(embeddings);
-        vectorStore2.memoryVectors = memoryVectors2;
-        // MMR search to increase diversity and relevance
-        const retriver = vectorStore2.asRetriever({
-            k: 2,
-            filter: filter,
-            //tags: ['example', 'test'],
-            verbose: true,
-            searchType: 'mmr',
-            searchKwargs: { fetchK: 4, lambda: 0.8 },
-        });
-        const doc = await retriver.invoke("biology")
-        console.log(doc);
-
-        // similarity search to find the most relevance
-        const similaritySearchWithScoreResults =
-            await vectorStore2.similaritySearchWithScore("biology", 2, filter);
-
-        for (const [doc, score] of similaritySearchWithScoreResults) {
-            console.log(
-                `* [SIM=${score.toFixed(3)}] ${doc.pageContent} [${JSON.stringify(
-                    doc.metadata
-                )}]`
-            );
-        }
-
-        globalThis.fetch = originFetch
-        globalThis.Headers = originHeaders
-        globalThis.Request = originRequest
-        globalThis.Response = originResponse
     }
 }
