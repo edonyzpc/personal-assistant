@@ -4,7 +4,8 @@ import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Pl
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai"
+import { VIEW_TYPE_OLLAMA, type ChatMessage, OllamaView } from "./chatView";
+import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { SimilaritySearch, VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batchModal'
@@ -93,7 +94,11 @@ export class PluginManager extends Plugin {
             this.registerView(
                 STAT_PREVIEW_TYPE,
                 (leaf) => { return new Stat(this.app, this, leaf); }
-            )
+            );
+            this.registerView(
+                VIEW_TYPE_OLLAMA,
+                (leaf) => new OllamaView(leaf, this)
+            );
         });
         this.statsManager = new StatsManager(this.app, this);
 
@@ -334,6 +339,13 @@ export class PluginManager extends Plugin {
             }
         })
 
+        this.addCommand({
+            id: 'open-chat',
+            name: 'Open Chat in Sidebar',
+            callback: () => {
+                this.activeChatView();
+            }
+        });
         // Handle the Editor Plugins
         this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
 
@@ -506,6 +518,28 @@ export class PluginManager extends Plugin {
         await this.app.workspace.revealLeaf(viewLeaf);
     }
 
+    async activeChatView() {
+        const { workspace } = this.app;
+
+        let leaf = workspace.getLeavesOfType(VIEW_TYPE_OLLAMA)[0];
+
+        if (!leaf) {
+            const newLeaf = workspace.getRightLeaf(false);
+            if (newLeaf) {
+                leaf = newLeaf;
+                await leaf.setViewState({
+                    type: VIEW_TYPE_OLLAMA,
+                    active: true,
+                });
+            }
+        }
+
+        if (leaf) {
+            workspace.revealLeaf(leaf);
+        }
+
+    }
+
     private getVSSFiles() {
         const files = this.app.vault.getMarkdownFiles();
         // TODO: config exclude paths
@@ -522,6 +556,69 @@ export class PluginManager extends Plugin {
         const vssFiles = files.filter(file => !excludeFiles.includes(file));
 
         return vssFiles;
+    }
+
+    async streamOllama(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
+        const formattedHistory = (chatHistory || [])
+            .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.content}`)
+            .join('\n');
+
+        const contextualPrompt = formattedHistory ?
+            `${formattedHistory}\nHuman: ${prompt}\nAssistant:` :
+            `Human: ${prompt}\nAssistant:`;
+
+        const response = await fetch(`/api/generate`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model: this.settings.modelName,
+                prompt: contextualPrompt,
+                temperature: 0.8,
+                stream: true
+            }),
+            signal,
+        });
+
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+
+        if (!response.body) {
+            throw new Error('Response body is null');
+        }
+
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let fullResponse = '';
+
+        try {
+            while (true) {
+                const { value, done } = await reader.read();
+                if (done) break;
+
+                const chunk = decoder.decode(value);
+                const lines = chunk.split('\n').filter(line => line.trim());
+
+                for (const line of lines) {
+                    try {
+                        const data = JSON.parse(line);
+                        fullResponse += data.response;
+                        onChunk(fullResponse);
+                    } catch (e) {
+                        console.error('Error parsing JSON:', e);
+                    }
+                }
+
+                if (signal?.aborted) {
+                    throw new DOMException('Aborted', 'AbortError');
+                }
+            }
+        } catch (err) {
+            reader.releaseLock();
+            throw err;
+        }
     }
 }
 
