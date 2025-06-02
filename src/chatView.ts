@@ -1,6 +1,9 @@
 import { App, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, MarkdownView, Notice, ItemView, addIcon, MarkdownRenderer, setIcon } from 'obsidian';
 
+import { ChatOpenAI } from '@langchain/openai';
+
 import type PluginManager from "./main";
+import { CryptoHelper, personalAssitant } from './utils';
 
 
 export const VIEW_TYPE_OLLAMA = "sidellama-view";
@@ -138,7 +141,7 @@ export class OllamaView extends ItemView {
                 let streamingMessageEl: HTMLDivElement | null = null;
                 let contentDiv: HTMLElement | null = null;
 
-                await this.plugin.streamOllama(
+                await this.streamOllama(
                     prompt,
                     (chunk) => {
                         responseContent = chunk;
@@ -226,5 +229,51 @@ export class OllamaView extends ItemView {
                 new Notice('Added response to editor');
             }
         };
+    }
+
+    async streamOllama(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
+        const formattedHistory = (chatHistory || [])
+            .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.content}`)
+            .join('\n');
+
+        const contextualPrompt = formattedHistory ?
+            `${formattedHistory}\nHuman: ${prompt}\nAssistant:` :
+            `Human: ${prompt}\nAssistant:`;
+
+        const encryptedToken = this.plugin.settings.apiToken;
+        const crypto = new CryptoHelper();
+        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
+        if (!token) {
+            new Notice("Prepare LLM failed!", 3000);
+            throw new Error(`LLM error!`);
+        }
+        const llm = new ChatOpenAI({
+            model: "qwen-max",
+            apiKey: token,
+            configuration: {
+                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            },
+            temperature: 0.8,
+        });
+        const response = await llm.stream(contextualPrompt, { signal: signal });
+
+        let fullResponse = '';
+        try {
+            for await (const chunk of response) {
+                try {
+                    const data = chunk.content.toString();
+                    fullResponse += data;
+                    onChunk(fullResponse);
+                } catch (e) {
+                    console.error('Error parsing chunk:', e);
+                }
+            }
+
+            if (signal?.aborted) {
+                throw new DOMException('Aborted', 'AbortError');
+            }
+        } catch (err) {
+            throw err;
+        }
     }
 }
