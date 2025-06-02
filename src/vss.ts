@@ -84,14 +84,11 @@ export class SimilaritySearch {
                 metadata: metadata,
             }));
         }
-        console.log(this.markdownView.file);
         const childDir = this.plugin.join(this.vssCacheDir, this.markdownView.file.path.split(this.markdownView.file.name)[0]);
         if (!await this.plugin.app.vault.adapter.exists(childDir)) {
             await this.plugin.app.vault.adapter.mkdir(childDir);
         }
         const vssFile = this.plugin.join(this.vssCacheDir, this.markdownView.file.path + ".json");
-        console.log(vssFile);
-        console.log(childDir);
 
         const vectorStore = new MemoryVectorStore(embeddings);
         const originFetch = globalThis.fetch
@@ -124,7 +121,6 @@ export class SimilaritySearch {
             searchKwargs: { fetchK: 4, lambda: 0.8 },
         });
         const doc = await retriver.invoke("cat")
-        //console.log(doc);
 
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
@@ -145,23 +141,12 @@ export class SimilaritySearch {
     }
 }
 
-/**
- * Interface representing a vector in memory. It includes the content
- * (text), the corresponding embedding (vector), and any associated
- * metadata.
- */
-interface MemoryVector {
-    content: string;
-    embedding: number[];
-    metadata: Record<string, any>;
-    id?: string;
-}
-
 export class VSS {
     private plugin: PluginManager;
     private encryptedToken: string;
     private mdSplitter: MarkdownTextSplitter
     private vssCacheDir: string;
+    private vectorStore!: MemoryVectorStore;
     constructor(
         plugin: PluginManager,
         vssCacheDir: string,
@@ -212,8 +197,6 @@ export class VSS {
             await this.plugin.app.vault.adapter.mkdir(childDir);
         }
         const vssFile = this.plugin.join(this.vssCacheDir, cacheFile.path + ".json");
-        console.log(vssFile);
-        console.log(childDir);
 
         const vectorStore = new MemoryVectorStore(embeddings);
         const originFetch = globalThis.fetch
@@ -237,6 +220,8 @@ export class VSS {
 
         const objStr = JSON.stringify(vectorStore.memoryVectors, null, 0);
         await this.plugin.app.vault.adapter.write(vssFile, objStr);
+        // clear the cache vector store
+        //vectorStore.delete();
     }
 
     async loadVectorStore(vssFiles: TFile[]) {
@@ -256,24 +241,42 @@ export class VSS {
             }
         });
 
-        const vectorStore2 = new MemoryVectorStore(embeddings);
+        if (!this.vectorStore) {
+            this.vectorStore = new MemoryVectorStore(embeddings);
+        }
         for (const f of vssFiles) {
             const fpath = this.plugin.join(this.vssCacheDir, f.path + ".json")
             const readStr = await this.plugin.app.vault.adapter.read(fpath);
             const memoryVectors2 = JSON.parse(readStr);
-            vectorStore2.memoryVectors = vectorStore2.memoryVectors.concat(memoryVectors2);
+            for (const v of this.vectorStore.memoryVectors) {
+                // remove old vectors
+                if (v.metadata.path === f.path) {
+                    this.vectorStore.memoryVectors.remove(v);
+                }
+            }
+            this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.concat(memoryVectors2);
         }
+    }
 
+    async searchSimilarity(prompt: string) {
+        if (!this.vectorStore) {
+            new Notice("Please wait for the vector store to be loaded.");
+            return "";
+        }
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
-            await vectorStore2.similaritySearchWithScore("animal", 3);
-        console.log(similaritySearchWithScoreResults);
+            await this.vectorStore.similaritySearchWithScore(prompt, 3);
+
+        let content = '';
         for (const [doc, score] of similaritySearchWithScoreResults) {
             console.log(
                 `* [SIM=${score.toFixed(3)}] ${doc.pageContent} [${JSON.stringify(
                     doc.metadata
                 )}]`
             );
+            content = content + '\n---\n' + doc.pageContent;
         }
+
+        return content;
     }
 }

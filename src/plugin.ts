@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Plugin, TAbstractFile, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
@@ -34,6 +34,7 @@ export class PluginManager extends Plugin {
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
     private aiFloatingHelper: AIWindow | undefined;
+    vss!: VSS;
 
     async onload() {
         await this.loadSettings();
@@ -97,7 +98,10 @@ export class PluginManager extends Plugin {
             );
             this.registerView(
                 VIEW_TYPE_OLLAMA,
-                (leaf) => new OllamaView(leaf, this)
+                (leaf) => {
+                    if (!this.vss) throw new Error("please setup vss!");
+                    return new OllamaView(leaf, this, this.vss);
+                }
             );
         });
         this.statsManager = new StatsManager(this.app, this);
@@ -306,21 +310,29 @@ export class PluginManager extends Plugin {
                 }
 
                 const vssFiles = this.getVSSFiles();
-                const vss = new VSS(this, vssCacheDir);
+                this.vss = new VSS(this, vssCacheDir);
                 for (const file of vssFiles) {
-                    vss.cacheFileVectorStore(file);
+                    this.vss.cacheFileVectorStore(file);
                 }
 
                 // TODO: update vss cache when file is modified(create, modified, delete)
-                this.app.vault.on("modify", async (file) => {
-                    // debounce calling
-                    if (file instanceof TFile) {
-                        for (const vssFile of vssFiles) {
-                            if (vssFile.path === file.path) {
-                                vss.cacheFileVectorStore(file);
+                const debounceChange = debounce(
+                    async (file: TAbstractFile) => {
+                        // debounce calling
+                        if (file instanceof TFile) {
+                            for (const vssFile of vssFiles) {
+                                if (vssFile.path === file.path) {
+                                    await this.vss.cacheFileVectorStore(file);
+                                    await this.vss.loadVectorStore([file]);
+                                }
                             }
                         }
-                    }
+                    },
+                    1000,
+                    false
+                );
+                this.app.vault.on("modify", async (file) => {
+                    debounceChange(file);
                 })
             }
         })
@@ -329,20 +341,18 @@ export class PluginManager extends Plugin {
             id: "load-vss",
             name: "Load Vector Store Cache of Current Obisidna Vault into Memory",
             callback: async () => {
-                const vssCacheDir = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
-                if (!await this.app.vault.adapter.exists(vssCacheDir)) {
-                    await this.app.vault.adapter.mkdir(vssCacheDir);
+                if (!this.vss) {
+                    throw new Error("VSS not initialized");
                 }
                 const vssFiles = this.getVSSFiles();
-                const vss = new VSS(this, vssCacheDir);
-                await vss.loadVectorStore(vssFiles);
+                await this.vss.loadVectorStore(vssFiles);
             }
         })
 
         this.addCommand({
             id: 'open-chat',
             name: 'Open Chat in Sidebar',
-            callback: () => {
+            callback: async () => {
                 this.activeChatView();
             }
         });

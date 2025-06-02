@@ -1,9 +1,11 @@
 import { App, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, MarkdownView, Notice, ItemView, addIcon, MarkdownRenderer, setIcon } from 'obsidian';
 
 import { ChatOpenAI } from '@langchain/openai';
+import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from "@langchain/core/prompts";
 
 import type PluginManager from "./main";
 import { CryptoHelper, personalAssitant } from './utils';
+import { SimilaritySearch, VSS } from './vss'
 
 
 export const VIEW_TYPE_OLLAMA = "sidellama-view";
@@ -19,10 +21,12 @@ export class OllamaView extends ItemView {
     responseDiv!: HTMLDivElement;
     abortController: AbortController | null = null;
     chatHistory: ChatMessage[] = [];
+    vss: VSS;
 
-    constructor(leaf: WorkspaceLeaf, plugin: PluginManager) {
+    constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
         this.plugin = plugin;
+        this.vss = vss;
     }
 
     getViewType(): string {
@@ -240,6 +244,13 @@ export class OllamaView extends ItemView {
             `${formattedHistory}\nHuman: ${prompt}\nAssistant:` :
             `Human: ${prompt}\nAssistant:`;
 
+        const ragPrompt = ChatPromptTemplate.fromMessages([
+            SystemMessagePromptTemplate.fromTemplate("你是一个严格根据知识库的内容回答问题的助手。\n\n** 知识库内容：**\n{rag_content}\n---\n"),
+            HumanMessagePromptTemplate.fromTemplate("{input}"),
+        ]);
+
+        const ragContent = await this.plugin.vss.searchSimilarity(prompt);
+
         const encryptedToken = this.plugin.settings.apiToken;
         const crypto = new CryptoHelper();
         const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
@@ -255,7 +266,11 @@ export class OllamaView extends ItemView {
             },
             temperature: 0.8,
         });
-        const response = await llm.stream(contextualPrompt, { signal: signal });
+        const chain = ragPrompt.pipe(llm);
+        const response = await chain.stream({
+            rag_content: ragContent,
+            input: contextualPrompt,
+        }, { signal: signal });
 
         let fullResponse = '';
         try {

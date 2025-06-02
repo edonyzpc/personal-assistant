@@ -822,7 +822,6 @@ export class SimilaritySearch {
         // @ts-ignore
         globalThis.Response = Response
         await vectorStore.addDocuments(documents);
-        console.log(vectorStore.memoryVectors);
         const objStr = JSON.stringify(vectorStore.memoryVectors, null, 0);
         await this.plugin.app.vault.adapter.write(this.dbFile, objStr);
         const filter = (doc: Document) => doc.metadata.source === "https://example.com";
@@ -841,7 +840,6 @@ export class SimilaritySearch {
             searchKwargs: { fetchK: 4, lambda: 0.8 },
         });
         const doc = await retriver.invoke("biology")
-        console.log(doc);
 
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
