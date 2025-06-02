@@ -305,6 +305,18 @@ export class PluginManager extends Plugin {
                 for (const file of vssFiles) {
                     vss.cacheFileVectorStore(file);
                 }
+
+                // TODO: update vss cache when file is modified(create, modified, delete)
+                this.app.vault.on("modify", async (file) => {
+                    // debounce calling
+                    if (file instanceof TFile) {
+                        for (const vssFile of vssFiles) {
+                            if (vssFile.path === file.path) {
+                                vss.cacheFileVectorStore(file);
+                            }
+                        }
+                    }
+                })
             }
         })
 
