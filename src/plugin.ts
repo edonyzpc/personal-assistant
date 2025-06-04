@@ -11,7 +11,7 @@ import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batchModal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
 import { LocalGraph } from './localGraph';
-import { icons } from './utils';
+import { CryptoHelper, icons, personalAssitant } from './utils';
 import { PluginsUpdater } from './pluginManifest';
 import { ThemeUpdater } from './themeManifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
@@ -37,6 +37,8 @@ export class PluginManager extends Plugin {
     vss!: VSS;
     private vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
+    cryptoHelper: CryptoHelper = new CryptoHelper();
+    private token: string = "";
 
 
     async onload() {
@@ -574,6 +576,21 @@ export class PluginManager extends Plugin {
             statusBarItemEl?.removeClass("personal-assistant-ai-breathing");
             statusBarItemEl?.addClass("personal-assistant-vss-statusbar-done");
         }
+    }
+
+    async getAPIToken() {
+        if (this.token !== "") {
+            return this.token;
+        }
+        const encryptedToken = this.settings.apiToken;
+        const token = await this.cryptoHelper.decryptFromBase64(encryptedToken, personalAssitant);
+        if (!token) {
+            new Notice("Prepare LLM failed!", 3000);
+            return "";
+        }
+        this.token = token;
+
+        return token;
     }
 }
 

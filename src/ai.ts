@@ -14,7 +14,6 @@ import { AlibabaTongyiEmbeddings } from "@langchain/community/embeddings/alibaba
 import type { Document } from "@langchain/core/documents";
 
 import { PluginManager } from './plugin'
-import { CryptoHelper, personalAssitant } from './utils';
 
 export class AssistantHelper {
     private editor: Editor
@@ -124,13 +123,7 @@ export class AssistantHelper {
     }
 
     private async qwenLLM(query: string) {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return "";
-        }
+        const token = await this.plugin.getAPIToken();
         const qwenMax = new ChatAlibabaTongyi({
             model: "qwen-max", // Available models: qwen-turbo, qwen-plus, qwen-max
             temperature: 0.8,
@@ -267,13 +260,7 @@ export class AssistantRobot {
     }
 
     private async qwenLLM(messages: (SystemMessage | HumanMessage)[]) {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return "";
-        }
+        const token = await this.plugin.getAPIToken();
         const qwenMax = new ChatAlibabaTongyi({
             model: "qwen-max", // Available models: qwen-turbo, qwen-plus, qwen-max
             temperature: 0.8,
@@ -467,13 +454,7 @@ export class AssistantFeaturedImageHelper {
     }
 
     private async qwenLLMImageDes(query: string): Promise<string> {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return "";
-        }
+        const token = await this.plugin.getAPIToken();
         const qwenMax = new ChatAlibabaTongyi({
             model: "qwen-max", // Available models: qwen-turbo, qwen-plus, qwen-max
             temperature: 0.8,
@@ -582,13 +563,7 @@ export class AssistantFeaturedImageHelper {
     }
 
     private async generateImage(genMsg: string) {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return null;
-        }
+        const token = await this.plugin.getAPIToken();
         const originFetch = globalThis.fetch;
         const originHeaders = globalThis.Headers;
         const originRequest = globalThis.Request;
@@ -641,13 +616,7 @@ export class AssistantFeaturedImageHelper {
 
 
     private async getImage(generateResult: ImageGenerationResult) {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return null;
-        }
+        const token = await this.plugin.getAPIToken();
 
         const taskID = generateResult.output.task_id;
 
@@ -780,13 +749,7 @@ export class SimilaritySearch {
     }
 
     async vectorStore() {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return "";
-        }
+        const token = await this.plugin.getAPIToken();
         const embeddings = new AlibabaTongyiEmbeddings({
             apiKey: token,
             modelName: "text-embedding-v2",
@@ -839,7 +802,7 @@ export class SimilaritySearch {
             searchType: 'mmr',
             searchKwargs: { fetchK: 4, lambda: 0.8 },
         });
-        const doc = await retriver.invoke("biology")
+        const doc = await retriver.invoke("biology"); // eslint-disable-line @typescript-eslint/no-unused-vars
 
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =

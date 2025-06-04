@@ -10,7 +10,6 @@ import { MarkdownTextSplitter } from '@langchain/textsplitters';
 
 
 import { PluginManager } from './plugin'
-import { CryptoHelper, personalAssitant } from './utils';
 
 export class SimilaritySearch {
     private editor: Editor
@@ -49,13 +48,7 @@ export class SimilaritySearch {
     }
 
     async vectorStore() {
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            return "";
-        }
+        const token = await this.plugin.getAPIToken();
 
         const embeddings = new OpenAIEmbeddings({
             model: "text-embedding-v3",
@@ -159,12 +152,7 @@ export class VSS {
     }
 
     async cacheFileVectorStore(cacheFile: TFile) {
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(this.encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare token failed!", 3000);
-            throw new Error("Prepare token failed!");
-        }
+        const token = await this.plugin.getAPIToken();
 
         const embeddings = new OpenAIEmbeddings({
             model: "text-embedding-v3",
@@ -235,12 +223,7 @@ export class VSS {
     }
 
     async loadVectorStore(vssFiles: TFile[]) {
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(this.encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare token failed!", 3000);
-            throw new Error("Prepare token failed!");
-        }
+        const token = await this.plugin.getAPIToken();
 
         const embeddings = new OpenAIEmbeddings({
             model: "text-embedding-v3",

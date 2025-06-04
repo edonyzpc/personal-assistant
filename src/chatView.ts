@@ -4,7 +4,6 @@ import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from "@langchain/core/prompts";
 
 import type PluginManager from "./main";
-import { CryptoHelper, personalAssitant } from './utils';
 import { VSS } from './vss'
 
 
@@ -272,13 +271,7 @@ export class LLMView extends ItemView {
 
         const ragContent = await this.plugin.vss.searchSimilarity(prompt);
 
-        const encryptedToken = this.plugin.settings.apiToken;
-        const crypto = new CryptoHelper();
-        const token = await crypto.decryptFromBase64(encryptedToken, personalAssitant);
-        if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
-            throw new Error(`LLM error!`);
-        }
+        const token = await this.plugin.getAPIToken();
         const llm = new ChatOpenAI({
             model: "qwen-max",
             apiKey: token,
