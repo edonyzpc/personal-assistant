@@ -206,7 +206,7 @@ export class VSS {
                 const cachedVectors = JSON.parse(cachedVSSFile);
                 if (cacheFile.stat.mtime - cachedVectors[0]["metadata"]["lastModified"] <= 60000) {
                     // according the vss cache file record, if file is not modified in 60 seconds, skip
-                    console.log(`skip ${vssFile}`);
+                    this.plugin.log(`skip ${vssFile}`);
                     return false;
                 }
             } catch (e) {
