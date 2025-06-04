@@ -1,22 +1,22 @@
-import { App, Plugin, PluginSettingTab, Setting, WorkspaceLeaf, MarkdownView, Notice, ItemView, addIcon, MarkdownRenderer, setIcon } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, TAbstractFile, TFile, setIcon, debounce } from 'obsidian';
 
 import { ChatOpenAI } from '@langchain/openai';
 import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from "@langchain/core/prompts";
 
 import type PluginManager from "./main";
 import { CryptoHelper, personalAssitant } from './utils';
-import { SimilaritySearch, VSS } from './vss'
+import { VSS } from './vss'
 
 
-export const VIEW_TYPE_OLLAMA = "sidellama-view";
+export const VIEW_TYPE_LLM = "sidellm-view";
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
 }
 
-export class OllamaView extends ItemView {
-    plugin: PluginManager;;
+export class LLMView extends ItemView {
+    plugin: PluginManager;
     result: string = '';
     responseDiv!: HTMLDivElement;
     abortController: AbortController | null = null;
@@ -30,25 +30,25 @@ export class OllamaView extends ItemView {
     }
 
     getViewType(): string {
-        return VIEW_TYPE_OLLAMA;
+        return VIEW_TYPE_LLM;
     }
 
     getDisplayText(): string {
-        return "Ollama Chat";
+        return "Personal Assistant Chat";
     }
 
     getIcon(): string {
-        return "cloud";
+        return "bot-message-square";
     }
 
     async onOpen() {
         const { containerEl } = this;
         containerEl.empty();
-        containerEl.classList.add('ollama-view');
+        containerEl.classList.add('llm-view');
 
-        const chatContainer = containerEl.createDiv({ cls: 'ollama-chat-container' });
+        const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container' });
 
-        const inputDiv = containerEl.createDiv({ cls: 'ollama-input' });
+        const inputDiv = containerEl.createDiv({ cls: 'llm-input' });
         const textArea = inputDiv.createEl('textarea', {
             attr: { rows: '4', placeholder: 'Type your message here...' }
         });
@@ -64,7 +64,7 @@ export class OllamaView extends ItemView {
             }
         });
 
-        const buttonDiv = inputDiv.createDiv({ cls: 'ollama-buttons' });
+        const buttonDiv = inputDiv.createDiv({ cls: 'llm-buttons' });
         const sendButton = buttonDiv.createEl('button', { text: 'Ask' });
         const clearButton = buttonDiv.createEl('button', { text: 'Clear Chat' });
         const addToEditorButton = buttonDiv.createEl('button', { text: 'Add to Editor' });
@@ -85,8 +85,8 @@ export class OllamaView extends ItemView {
         };
 
         const renderMessage = (message: ChatMessage, index?: number) => {
-            const messageDiv = this.responseDiv.createDiv({ cls: `ollama-message ${message.role}` });
-            const roleLabel = messageDiv.createDiv({ cls: 'message-role', text: message.role === 'user' ? 'You' : 'Assistant' });
+            const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
+            const roleLabel = messageDiv.createDiv({ cls: 'message-role', text: message.role === 'user' ? 'You' : 'Assistant' }); // eslint-disable-line @typescript-eslint/no-unused-vars
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
             const actionDiv = messageDiv.createDiv({ cls: 'message-actions' });
             const copyButton = actionDiv.createEl('button', {
@@ -145,13 +145,13 @@ export class OllamaView extends ItemView {
                 let streamingMessageEl: HTMLDivElement | null = null;
                 let contentDiv: HTMLElement | null = null;
 
-                await this.streamOllama(
+                await this.streamLLM(
                     prompt,
                     (chunk) => {
                         responseContent = chunk;
                         if (!streamingMessageEl) {
-                            streamingMessageEl = this.responseDiv.createDiv({ cls: 'ollama-message assistant' });
-                            const roleLabel = streamingMessageEl.createDiv({ cls: 'message-role', text: 'Assistant' });
+                            streamingMessageEl = this.responseDiv.createDiv({ cls: 'llm-message assistant' });
+                            const roleLabel = streamingMessageEl.createDiv({ cls: 'message-role', text: 'Assistant' }); // eslint-disable-line @typescript-eslint/no-unused-vars
                             contentDiv = streamingMessageEl.createDiv({ cls: 'message-content' });
 
                             const actionDiv = streamingMessageEl.createDiv({ cls: 'message-actions' });
@@ -233,9 +233,30 @@ export class OllamaView extends ItemView {
                 new Notice('Added response to editor');
             }
         };
+
+        // update vss cache when file is modified(create, modified, delete)
+        const vssFiles = this.plugin.getVSSFiles();
+        const debounceChange = debounce(
+            async (file: TAbstractFile) => {
+                // debounce calling
+                if (file instanceof TFile) {
+                    for (const vssFile of vssFiles) {
+                        if (vssFile.path === file.path) {
+                            await this.vss.cacheFileVectorStore(file);
+                            await this.vss.loadVectorStore([file]);
+                        }
+                    }
+                }
+            },
+            1200,
+            true
+        );
+        this.app.vault.on("modify", async (file) => {
+            debounceChange(file);
+        })
     }
 
-    async streamOllama(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
+    async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
         const formattedHistory = (chatHistory || [])
             .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.content}`)
             .join('\n');
@@ -273,22 +294,19 @@ export class OllamaView extends ItemView {
         }, { signal: signal });
 
         let fullResponse = '';
-        try {
-            for await (const chunk of response) {
-                try {
-                    const data = chunk.content.toString();
-                    fullResponse += data;
-                    onChunk(fullResponse);
-                } catch (e) {
-                    console.error('Error parsing chunk:', e);
-                }
+        for await (const chunk of response) {
+            try {
+                const data = chunk.content.toString();
+                fullResponse += data;
+                onChunk(fullResponse);
+            } catch (e) {
+                console.error('Error parsing chunk:', e);
+                throw e;
             }
+        }
 
-            if (signal?.aborted) {
-                throw new DOMException('Aborted', 'AbortError');
-            }
-        } catch (err) {
-            throw err;
+        if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
         }
     }
 }

@@ -120,7 +120,7 @@ export class SimilaritySearch {
             searchType: 'mmr',
             searchKwargs: { fetchK: 4, lambda: 0.8 },
         });
-        const doc = await retriver.invoke("cat")
+        const doc = await retriver.invoke("cat"); // eslint-disable-line @typescript-eslint/no-unused-vars
 
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
@@ -197,6 +197,14 @@ export class VSS {
             await this.plugin.app.vault.adapter.mkdir(childDir);
         }
         const vssFile = this.plugin.join(this.vssCacheDir, cacheFile.path + ".json");
+        if (!await this.plugin.app.vault.adapter.exists(vssFile)) {
+            const vssTFile = this.plugin.app.vault.getAbstractFileByPath(vssFile);
+            if (cacheFile.stat.mtime - (vssTFile as TFile).stat.mtime <= 60000) {
+                // according the vss cache file record, if file is not modified in 60 seconds, skip
+                console.log(`skip ${vssFile}`);
+                return;
+            }
+        }
 
         const vectorStore = new MemoryVectorStore(embeddings);
         const originFetch = globalThis.fetch
@@ -222,6 +230,8 @@ export class VSS {
         await this.plugin.app.vault.adapter.write(vssFile, objStr);
         // clear the cache vector store
         //vectorStore.delete();
+        // bypass ratelimit
+        await new Promise(f => setTimeout(f, 1000));
     }
 
     async loadVectorStore(vssFiles: TFile[]) {

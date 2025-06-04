@@ -1,10 +1,10 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Plugin, TAbstractFile, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { VIEW_TYPE_OLLAMA, type ChatMessage, OllamaView } from "./chatView";
+import { VIEW_TYPE_LLM, LLMView } from "./chatView";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { SimilaritySearch, VSS } from './vss'
 import { PluginControlModal } from './modal'
@@ -35,6 +35,9 @@ export class PluginManager extends Plugin {
     statsManager: StatsManager | undefined;
     private aiFloatingHelper: AIWindow | undefined;
     vss!: VSS;
+    private vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
+    private isVssCached: boolean = false;
+
 
     async onload() {
         await this.loadSettings();
@@ -84,6 +87,12 @@ export class PluginManager extends Plugin {
             (this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
         });
 
+        // prepare vss cache directory
+        if (!await this.app.vault.adapter.exists(this.vssCacheDir)) {
+            await this.app.vault.adapter.mkdir(this.vssCacheDir);
+        }
+        this.vss = this.initVss();
+
         // get callout manager api
         this.app.workspace.onLayoutReady(async () => {
             this.calloutManager = await getApi(this);
@@ -97,10 +106,9 @@ export class PluginManager extends Plugin {
                 (leaf) => { return new Stat(this.app, this, leaf); }
             );
             this.registerView(
-                VIEW_TYPE_OLLAMA,
+                VIEW_TYPE_LLM,
                 (leaf) => {
-                    if (!this.vss) throw new Error("please setup vss!");
-                    return new OllamaView(leaf, this, this.vss);
+                    return new LLMView(leaf, this, this.vss);
                 }
             );
         });
@@ -302,48 +310,10 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "init-vss",
-            name: "Startup Vector Store Cache of Current Obisidna Vault",
+            name: "Init Vector Store Cache of Current Obisidna Vault",
             callback: async () => {
-                const vssCacheDir = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
-                if (!await this.app.vault.adapter.exists(vssCacheDir)) {
-                    await this.app.vault.adapter.mkdir(vssCacheDir);
-                }
-
-                const vssFiles = this.getVSSFiles();
-                this.vss = new VSS(this, vssCacheDir);
-                for (const file of vssFiles) {
-                    this.vss.cacheFileVectorStore(file);
-                }
-
-                // TODO: update vss cache when file is modified(create, modified, delete)
-                const debounceChange = debounce(
-                    async (file: TAbstractFile) => {
-                        // debounce calling
-                        if (file instanceof TFile) {
-                            for (const vssFile of vssFiles) {
-                                if (vssFile.path === file.path) {
-                                    await this.vss.cacheFileVectorStore(file);
-                                    await this.vss.loadVectorStore([file]);
-                                }
-                            }
-                        }
-                    },
-                    1000,
-                    false
-                );
-                this.app.vault.on("modify", async (file) => {
-                    debounceChange(file);
-                })
-            }
-        })
-
-        this.addCommand({
-            id: "load-vss",
-            name: "Load Vector Store Cache of Current Obisidna Vault into Memory",
-            callback: async () => {
-                if (!this.vss) {
-                    throw new Error("VSS not initialized");
-                }
+                // cache vectors into vss
+                await this.cacheVectors();
                 const vssFiles = this.getVSSFiles();
                 await this.vss.loadVectorStore(vssFiles);
             }
@@ -531,14 +501,14 @@ export class PluginManager extends Plugin {
     async activeChatView() {
         const { workspace } = this.app;
 
-        let leaf = workspace.getLeavesOfType(VIEW_TYPE_OLLAMA)[0];
+        let leaf = workspace.getLeavesOfType(VIEW_TYPE_LLM)[0];
 
         if (!leaf) {
             const newLeaf = workspace.getRightLeaf(false);
             if (newLeaf) {
                 leaf = newLeaf;
                 await leaf.setViewState({
-                    type: VIEW_TYPE_OLLAMA,
+                    type: VIEW_TYPE_LLM,
                     active: true,
                 });
             }
@@ -550,10 +520,10 @@ export class PluginManager extends Plugin {
 
     }
 
-    private getVSSFiles() {
+    getVSSFiles() {
         const files = this.app.vault.getMarkdownFiles();
         // TODO: config exclude paths
-        const excluePaths = [".obsidian"]
+        const excluePaths = [".obsidian", "8.template", "9.src", "a.subjects", "b.notion"]
         const excludeFiles: TFile[] = [];
         // filter all markdown files which are in exclude-paths
         for (const file of files) {
@@ -566,6 +536,44 @@ export class PluginManager extends Plugin {
         const vssFiles = files.filter(file => !excludeFiles.includes(file));
 
         return vssFiles;
+    }
+
+    private initVss() {
+        if (this.vss) {
+            return this.vss;
+        }
+
+        return new VSS(this, this.vssCacheDir);
+    }
+
+    private async cacheVectors() {
+        if (this.vss) {
+            const statusBarItemEl = this.addStatusBarItem();
+            // status bar style setting
+            statusBarItemEl.addClass('personal-assistant-vss-statusbar');
+            statusBarItemEl.setAttribute("id", `personal-assistant-vss-statusbar`);
+            addIcon('PLUGIN_AI_BOT', icons['PLUGIN_AI_BOT']);
+            setIcon(statusBarItemEl, 'PLUGIN_AI_BOT');
+            statusBarItemEl?.addClass("personal-assistant-ai-breathing");
+
+            const vssFiles = this.getVSSFiles();
+            let count = 0;
+            for (const file of vssFiles) {
+                if (count++ === 10) {
+                    // bypass ratelimit, stop for 60s per 10 file-pasrsing
+                    await new Promise(f => setTimeout(f, 60000));
+                    count = 0;
+                    console.log("sleeping 60s");
+                }
+
+                await this.vss.cacheFileVectorStore(file);
+
+            }
+            this.isVssCached = true;
+
+            statusBarItemEl?.removeClass("personal-assistant-ai-breathing");
+            statusBarItemEl?.addClass("personal-assistant-vss-statusbar-done");
+        }
     }
 }
 
