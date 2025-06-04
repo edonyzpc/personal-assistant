@@ -88,6 +88,17 @@ export class PluginManager extends Plugin {
             (this.app as any).setting.open(); // eslint-disable-line @typescript-eslint/no-explicit-any
             (this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
         });
+        // status bar for ai
+        const aiStatusBarItemEl = this.addStatusBarItem();
+        aiStatusBarItemEl.addClass('personal-assistant-ai-statusbar');
+        aiStatusBarItemEl.setAttribute("id", `personal-assistant-ai-statusbar`);
+        addIcon('PLUGIN_AI_BRAIN', icons['PLUGIN_AI_BRAIN']);
+        setIcon(aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
+        // ai status bar event handling
+        aiStatusBarItemEl.onClickEvent((e) => {
+            // init vss in status bar
+            (this.app as any).commands.executeCommandById("personal-assistant:init-vss");// eslint-disable-line @typescript-eslint/no-explicit-any
+        });
 
         // prepare vss cache directory
         if (!await this.app.vault.adapter.exists(this.vssCacheDir)) {
@@ -550,31 +561,31 @@ export class PluginManager extends Plugin {
 
     private async cacheVectors() {
         if (this.vss) {
-            const statusBarItemEl = this.addStatusBarItem();
+            const statusBar = document.getElementById("personal-assistant-ai-statusbar");
             // status bar style setting
-            statusBarItemEl.addClass('personal-assistant-vss-statusbar');
-            statusBarItemEl.setAttribute("id", `personal-assistant-vss-statusbar`);
-            addIcon('PLUGIN_AI_BOT', icons['PLUGIN_AI_BOT']);
-            setIcon(statusBarItemEl, 'PLUGIN_AI_BOT');
-            statusBarItemEl?.addClass("personal-assistant-ai-breathing");
+            statusBar?.addClass("personal-assistant-ai-breathing");
 
             const vssFiles = this.getVSSFiles();
             let count = 0;
-            for (const file of vssFiles) {
-                if (count++ === 10) {
-                    // bypass ratelimit, stop for 60s per 10 file-pasrsing
-                    await new Promise(f => setTimeout(f, 60000));
-                    count = 0;
-                    console.log("sleeping 60s");
+            try {
+                for (const file of vssFiles) {
+                    if (count++ === 15) {
+                        // bypass ratelimit, stop for 10s per 15 file-pasrsing
+                        await new Promise(f => setTimeout(f, 10000));
+                        count = 0;
+                    }
+
+                    await this.vss.cacheFileVectorStore(file);
+
                 }
-
-                await this.vss.cacheFileVectorStore(file);
-
+            } catch (e) {
+                this.log(e);
             }
-            this.isVssCached = true;
 
-            statusBarItemEl?.removeClass("personal-assistant-ai-breathing");
-            statusBarItemEl?.addClass("personal-assistant-vss-statusbar-done");
+            // finish init
+            this.isVssCached = true;
+            statusBar?.removeClass("personal-assistant-ai-breathing");
+            statusBar?.addClass("personal-assistant-ai-statusbar-done");
         }
     }
 

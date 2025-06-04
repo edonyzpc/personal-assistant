@@ -3,7 +3,9 @@ body {
 	--status-bar-animate: #2fcc70;
 	--status-bar-animate-shadow: #0280ff;
 	--status-bar-hover: #9e2ff9;
-	--status-bar-ai: #f92f72;
+	--status-bar-ai: #0544ff;
+	--status-bar-ai-breathing: #ac05ff;
+	--status-bar-ai-hover: #ff0101;
 }
 
 .theme-light {
@@ -35,12 +37,16 @@ body {
 	opacity: 1;
 }
 
-.personal-assistant-vss-statusbar svg {
+.personal-assistant-ai-statusbar:hover svg {
+	color: var(--status-bar-ai-hover);
+}
+
+.personal-assistant-ai-statusbar svg {
 	order: 1;
 	color: var(--status-bar-ai);
 }
 
-.personal-assistant-vss-statusbar-done svg {
+.personal-assistant-ai-statusbar-done svg {
 	order: 1;
 	color: var(--status-bar);
 }
@@ -50,9 +56,14 @@ body {
 	opacity: 1;
 }
 
+.personal-assistant-ai-breathing svg {
+	order: 1;
+	color: var(--status-bar-ai);
+}
+
 @keyframes svg-blink {
 	0% {
-		opacity: 1;
+		opacity: 1.2;
 		color: var(--status-bar-animate);
 	}
 
@@ -64,7 +75,7 @@ body {
 	}
 
 	100% {
-		opacity: 1;
+		opacity: 1.2;
 		color: var(--status-bar-animate);
 	}
 }
