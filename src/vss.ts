@@ -166,7 +166,18 @@ export class VSS {
         const documents = [];
         const markdown = await this.plugin.app.vault.adapter.read(cacheFile.path);
         const fontmatterInfo = getFrontMatterInfo(markdown);
-        const mdStr = markdown.slice(fontmatterInfo.contentStart);
+        let mdStr = markdown.slice(fontmatterInfo.contentStart);
+        //filter codeblock string which is not knowledge that AI should care about
+        const cleanMarkdown = (md: string) =>
+            md.replace(/^```.*?$(?:\n.*?)*^```$/gm, '');
+        const cleanComment = (md: string) =>
+            md.replace(/%%[\s\S]*?%%/g, '');
+        const cleanFileRef = (mdStr: string) => {
+            return mdStr.replace(/\[\[[\w-]+\.[a-z]{1,}\]\]/g, '');
+        }
+        mdStr = cleanMarkdown(mdStr);
+        mdStr = cleanComment(mdStr);
+        mdStr = cleanFileRef(mdStr);
         const subStrList = await this.mdSplitter.splitText(mdStr);
         const metadata = {
             path: cacheFile.path,
@@ -185,12 +196,17 @@ export class VSS {
             await this.plugin.app.vault.adapter.mkdir(childDir);
         }
         const vssFile = this.plugin.join(this.vssCacheDir, cacheFile.path + ".json");
-        if (!await this.plugin.app.vault.adapter.exists(vssFile)) {
-            const vssTFile = this.plugin.app.vault.getAbstractFileByPath(vssFile);
-            if (cacheFile.stat.mtime - (vssTFile as TFile).stat.mtime <= 60000) {
-                // according the vss cache file record, if file is not modified in 60 seconds, skip
-                console.log(`skip ${vssFile}`);
-                return;
+        if (await this.plugin.app.vault.adapter.exists(vssFile)) {
+            try {
+                const cachedVSSFile = await this.plugin.app.vault.adapter.read(vssFile);
+                const cachedVectors = JSON.parse(cachedVSSFile);
+                if (cacheFile.stat.mtime - cachedVectors[0]["metadata"]["lastModified"] <= 60000) {
+                    // according the vss cache file record, if file is not modified in 60 seconds, skip
+                    console.log(`skip ${vssFile}`);
+                    return;
+                }
+            } catch (e) {
+                console.error(e, vssFile);
             }
         }
 
@@ -207,7 +223,17 @@ export class VSS {
         globalThis.Request = Request
         // @ts-ignore
         globalThis.Response = Response
-        await vectorStore.addDocuments(documents);
+        if (documents.length > 3) {
+            // 每3个document做一次addDocument
+            for (let i = 0; i < documents.length; i += 3) {
+                const chunk = documents.slice(i, i + 3);
+                await vectorStore.addDocuments(chunk);
+                // stop 3s for rate limit
+                await new Promise(f => setTimeout(f, 3000));
+            }
+        } else {
+            await vectorStore.addDocuments(documents);
+        }
 
         globalThis.fetch = originFetch
         globalThis.Headers = originHeaders
@@ -218,8 +244,6 @@ export class VSS {
         await this.plugin.app.vault.adapter.write(vssFile, objStr);
         // clear the cache vector store
         //vectorStore.delete();
-        // bypass ratelimit
-        await new Promise(f => setTimeout(f, 1000));
     }
 
     async loadVectorStore(vssFiles: TFile[]) {
@@ -238,16 +262,20 @@ export class VSS {
             this.vectorStore = new MemoryVectorStore(embeddings);
         }
         for (const f of vssFiles) {
-            const fpath = this.plugin.join(this.vssCacheDir, f.path + ".json")
-            const readStr = await this.plugin.app.vault.adapter.read(fpath);
-            const memoryVectors2 = JSON.parse(readStr);
-            for (const v of this.vectorStore.memoryVectors) {
-                // remove old vectors
-                if (v.metadata.path === f.path) {
-                    this.vectorStore.memoryVectors.remove(v);
+            try {
+                const fpath = this.plugin.join(this.vssCacheDir, f.path + ".json")
+                const readStr = await this.plugin.app.vault.adapter.read(fpath);
+                const memoryVectors2 = JSON.parse(readStr);
+                for (const v of this.vectorStore.memoryVectors) {
+                    // remove old vectors
+                    if (v.metadata.path === f.path) {
+                        this.vectorStore.memoryVectors.remove(v);
+                    }
                 }
+                this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.concat(memoryVectors2);
+            } catch (e) {
+                console.error(e);
             }
-            this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.concat(memoryVectors2);
         }
     }
 
@@ -258,16 +286,14 @@ export class VSS {
         }
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
-            await this.vectorStore.similaritySearchWithScore(prompt, 3);
+            await this.vectorStore.similaritySearchWithScore(prompt, 2);
 
         let content = '';
         for (const [doc, score] of similaritySearchWithScoreResults) {
-            console.log(
-                `* [SIM=${score.toFixed(3)}] ${doc.pageContent} [${JSON.stringify(
-                    doc.metadata
-                )}]`
+            this.plugin.log(
+                `* [SIM=${score.toFixed(3)}] [${JSON.stringify(doc.metadata)}]`
             );
-            content = content + '\n---\n' + doc.pageContent;
+            content = content + '\n---\n' + JSON.stringify(doc, null, 0);
         }
 
         return content;
