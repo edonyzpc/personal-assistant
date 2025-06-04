@@ -269,6 +269,7 @@ export class LLMView extends ItemView {
     }
 
     async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
+        // TODO: filter the RAG References from the history string
         const formattedHistory = (chatHistory || [])
             .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.content}`)
             .join('\n');
