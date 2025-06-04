@@ -266,7 +266,7 @@ export class LLMView extends ItemView {
 
         const ragPrompt = ChatPromptTemplate.fromMessages([
             SystemMessagePromptTemplate.fromTemplate("你是一个严格根据知识库的内容回答问题的助手。\n\n** 知识库内容：**\n{rag_content}\n---\n"),
-            HumanMessagePromptTemplate.fromTemplate("{input}"),
+            HumanMessagePromptTemplate.fromTemplate("{input}\n**注意**：最后以列表形式附上你回答问题中引用知识库内容的来源，即知识库内容中metadata中的path字段，格式为：```1. <metadata1.path>\n2. <metadata2.path>\n 3. <metadata3.path>\n...```"),
         ]);
 
         const ragContent = await this.plugin.vss.searchSimilarity(prompt);
