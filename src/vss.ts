@@ -151,7 +151,7 @@ export class VSS {
         this.vssCacheDir = vssCacheDir;
     }
 
-    async cacheFileVectorStore(cacheFile: TFile) {
+    async cacheFileVectorStore(cacheFile: TFile): Promise<boolean> {
         const token = await this.plugin.getAPIToken();
 
         const embeddings = new OpenAIEmbeddings({
@@ -178,6 +178,10 @@ export class VSS {
         mdStr = cleanMarkdown(mdStr);
         mdStr = cleanComment(mdStr);
         mdStr = cleanFileRef(mdStr);
+        if (mdStr.length === 0) {
+            // no content to process
+            return false;
+        }
         const subStrList = await this.mdSplitter.splitText(mdStr);
         const metadata = {
             path: cacheFile.path,
@@ -203,7 +207,7 @@ export class VSS {
                 if (cacheFile.stat.mtime - cachedVectors[0]["metadata"]["lastModified"] <= 60000) {
                     // according the vss cache file record, if file is not modified in 60 seconds, skip
                     console.log(`skip ${vssFile}`);
-                    return;
+                    return false;
                 }
             } catch (e) {
                 console.error(e, vssFile);
@@ -244,6 +248,9 @@ export class VSS {
         await this.plugin.app.vault.adapter.write(vssFile, objStr);
         // clear the cache vector store
         //vectorStore.delete();
+
+        // cache vector store with LLM service
+        return true;
     }
 
     async loadVectorStore(vssFiles: TFile[]) {
@@ -286,7 +293,7 @@ export class VSS {
         }
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
-            await this.vectorStore.similaritySearchWithScore(prompt, 2);
+            await this.vectorStore.similaritySearchWithScore(prompt, 3);
 
         let content = '';
         for (const [doc, score] of similaritySearchWithScoreResults) {

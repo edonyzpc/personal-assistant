@@ -569,13 +569,16 @@ export class PluginManager extends Plugin {
             let count = 0;
             try {
                 for (const file of vssFiles) {
-                    if (count++ === 15) {
+                    if (count === 15) {
                         // bypass ratelimit, stop for 10s per 15 file-pasrsing
                         await new Promise(f => setTimeout(f, 10000));
                         count = 0;
                     }
 
-                    await this.vss.cacheFileVectorStore(file);
+                    // cache file vector store by calling llm service
+                    if (await this.vss.cacheFileVectorStore(file)) {
+                        count++;
+                    }
 
                 }
             } catch (e) {
