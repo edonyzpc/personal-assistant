@@ -1,6 +1,6 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, TAbstractFile, TFile, setIcon, debounce } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, TAbstractFile, TFile, Vault, setIcon, debounce } from 'obsidian';
 
-import { ChatOpenAI } from '@langchain/openai';
+import { ChatOpenAI, type ChatOpenAICallOptions } from '@langchain/openai';
 import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from "@langchain/core/prompts";
 
 import type PluginManager from "./main";
@@ -21,6 +21,7 @@ export class LLMView extends ItemView {
     abortController: AbortController | null = null;
     chatHistory: ChatMessage[] = [];
     vss: VSS;
+    private llm!: ChatOpenAI<ChatOpenAICallOptions>;
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
@@ -41,6 +42,15 @@ export class LLMView extends ItemView {
     }
 
     async onOpen() {
+        const token = await this.plugin.getAPIToken();
+        this.llm = new ChatOpenAI({
+            model: "qwen-max",
+            apiKey: token,
+            configuration: {
+                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            },
+            temperature: 0.8,
+        });
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
@@ -118,11 +128,13 @@ export class LLMView extends ItemView {
                 };
             }
 
-            MarkdownRenderer.renderMarkdown(message.content, contentDiv, '', this.plugin);
+            //MarkdownRenderer.renderMarkdown(message.content, contentDiv, '', this.plugin);
+            MarkdownRenderer.render(this.plugin.app, message.content, contentDiv, '', this.plugin);
             this.responseDiv.scrollTo({
                 top: this.responseDiv.scrollHeight,
                 behavior: 'smooth'
             });
+            this.updateClickableLink(contentDiv);
         };
 
         sendButton.onclick = async () => {
@@ -168,7 +180,8 @@ export class LLMView extends ItemView {
 
                         if (contentDiv) {
                             contentDiv.empty();
-                            MarkdownRenderer.renderMarkdown(responseContent, contentDiv, '', this.plugin);
+                            //MarkdownRenderer.renderMarkdown(responseContent, contentDiv, '', this.plugin);
+                            MarkdownRenderer.render(this.plugin.app, responseContent, contentDiv, '', this.plugin);
                             this.responseDiv.scrollTo({
                                 top: this.responseDiv.scrollHeight,
                                 behavior: 'smooth'
@@ -273,26 +286,18 @@ export class LLMView extends ItemView {
 <AI 回答>
 
 ---
-<引用的来源>
-1. [[<metadata1.path>]]
-2. [[<metadata2.path>]]
-3. [[<metadata3.path>]]
-4. ...
+> [!summary]- RAG Referencs
+> 
+> 1. [[<metadata1.path>]]
+> 2. [[<metadata2.path>]]
+> 3. [[<metadata3.path>]]
+> 4. ...
 \`\`\``),
         ]);
 
         const ragContent = await this.plugin.vss.searchSimilarity(prompt);
 
-        const token = await this.plugin.getAPIToken();
-        const llm = new ChatOpenAI({
-            model: "qwen-max",
-            apiKey: token,
-            configuration: {
-                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            },
-            temperature: 0.8,
-        });
-        const chain = ragPrompt.pipe(llm);
+        const chain = ragPrompt.pipe(this.llm);
         const response = await chain.stream({
             rag_content: ragContent,
             input: contextualPrompt,
@@ -304,6 +309,8 @@ export class LLMView extends ItemView {
                 const data = chunk.content.toString();
                 fullResponse += data;
                 onChunk(fullResponse);
+                // trikcy, smooth the streaming display
+                await new Promise(f => setTimeout(f, 120));
             } catch (e) {
                 console.error('Error parsing chunk:', e);
                 throw e;
@@ -313,5 +320,54 @@ export class LLMView extends ItemView {
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
+    }
+
+
+    private updateClickableLink(containerEl: HTMLElement) {
+        const isPluginEnabled = (pluginID: string) => {
+            return (
+                (this.plugin.app as any).plugins.manifests.hasOwnProperty(pluginID) &&
+                (this.plugin.app as any).plugins.enabledPlugins.has(pluginID)
+            );
+        };
+        const getNoteUri = (vault: Vault, noteHref: string) => {
+            if (isPluginEnabled("obsidian-advanced-uri")) {
+                // Use Advanced URI plugin if it is enabled.
+                // obsidian://advanced-uri?vault=<your-vault>&filepath=my-file
+                return [
+                    "obsidian://advanced-uri?vault=",
+                    encodeURIComponent(vault.getName()),
+                    "&filepath=",
+                    encodeURIComponent(noteHref),
+                    "&openmode=true",
+                ].join("");
+            } else {
+                // Use Obsidian default URI
+                return [
+                    "obsidian://open?vault=",
+                    encodeURIComponent(vault.getName()),
+                    "&file=",
+                    encodeURIComponent(noteHref)
+                ].join("");
+            }
+        };
+
+        const links = containerEl.querySelectorAll("a.internal-link");
+        links.forEach((node) => {
+            if (!node.getAttribute("href")) {
+                return;
+            }
+            const link = node as HTMLLinkElement;
+            // prevents click event from parent element other than the current link element
+            link.addEventListener("click", (evt) => {
+                evt.stopPropagation();
+            });
+            // do not change the hyperlink if it is changed
+            if (link.href.startsWith("obsidian://")) return;
+            link.href = getNoteUri(
+                this.plugin.app.vault,
+                link.getAttribute("href") as string,
+            );
+        });
     }
 }
