@@ -52,6 +52,7 @@ export interface PluginManagerSettings {
     apiToken: string;
     featuredImagePath: string;
     numFeaturedImages: number;
+    vssCacheExcludePath: string[];
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -105,6 +106,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     apiToken: "sk-xxx",
     featuredImagePath: "9.src",
     numFeaturedImages: 2,
+    vssCacheExcludePath: [".obsidian", "8.template", "9.src", "a.subjects", "b.notion"],
 }
 
 interface GraphColor {
@@ -620,6 +622,16 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(this.plugin.settings.numFeaturedImages.toString())
                     .onChange(async (value) => {
                         plugin.settings.numFeaturedImages = parseInt(value);
+                        await this.plugin.saveSettings();
+                    })
+            });
+        new Setting(containerEl).setName("VSS Exclude Path")
+            .setDesc("Exclude files in the directory to cache vector store")
+            .addText(text => {
+                text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
+                    .setValue(this.plugin.settings.vssCacheExcludePath.join(','))
+                    .onChange(async (value) => {
+                        plugin.settings.vssCacheExcludePath = value.split(",");
                         await this.plugin.saveSettings();
                     })
             });
