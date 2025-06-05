@@ -269,7 +269,7 @@ export class LLMView extends ItemView {
         this.app.vault.on("delete", async (file) => {
             const vssFile = this.plugin.join(this.plugin.vssCacheDir, file.path + ".json");
             await this.plugin.app.vault.adapter.remove(vssFile);
-            console.log("delete", vssFile);
+            this.plugin.log("delete", vssFile);
             if (file instanceof TFile) {
                 await this.vss.loadVectorStore([file], true);
             }
@@ -309,7 +309,6 @@ export class LLMView extends ItemView {
             .slice(0, 3)
             .map((doc) => JSON.stringify(doc, null, 0))
             .join("\n---\n");
-        console.log(ragContent);
 
         const chain = ragPrompt.pipe(this.llm);
         const response = await chain.stream({
