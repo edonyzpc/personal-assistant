@@ -253,7 +253,7 @@ export class VSS {
         return true;
     }
 
-    async loadVectorStore(vssFiles: TFile[]) {
+    async loadVectorStore(vssFiles: TFile[], isDelete: boolean = false) {
         const token = await this.plugin.getAPIToken();
 
         const embeddings = new OpenAIEmbeddings({
@@ -269,19 +269,28 @@ export class VSS {
             this.vectorStore = new MemoryVectorStore(embeddings);
         }
         for (const f of vssFiles) {
-            try {
-                const fpath = this.plugin.join(this.vssCacheDir, f.path + ".json")
-                const readStr = await this.plugin.app.vault.adapter.read(fpath);
-                const memoryVectors2 = JSON.parse(readStr);
+            if (isDelete) {
                 for (const v of this.vectorStore.memoryVectors) {
-                    // remove old vectors
+                    // delete old vectors record
                     if (v.metadata.path === f.path) {
                         this.vectorStore.memoryVectors.remove(v);
                     }
                 }
-                this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.concat(memoryVectors2);
-            } catch (e) {
-                console.error(e);
+            } else {
+                try {
+                    const fpath = this.plugin.join(this.vssCacheDir, f.path + ".json")
+                    const readStr = await this.plugin.app.vault.adapter.read(fpath);
+                    const memoryVectors2 = JSON.parse(readStr);
+                    for (const v of this.vectorStore.memoryVectors) {
+                        // remove old vectors
+                        if (v.metadata.path === f.path) {
+                            this.vectorStore.memoryVectors.remove(v);
+                        }
+                    }
+                    this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.concat(memoryVectors2);
+                } catch (e) {
+                    console.error(e);
+                }
             }
         }
     }
@@ -289,18 +298,18 @@ export class VSS {
     async searchSimilarity(prompt: string) {
         if (!this.vectorStore) {
             new Notice("Please wait for the vector store to be loaded.");
-            return "";
+            return [];
         }
         // similarity search to find the most relevance
         const similaritySearchWithScoreResults =
-            await this.vectorStore.similaritySearchWithScore(prompt, 3);
+            await this.vectorStore.similaritySearchWithScore(prompt, 8);
 
-        let content = '';
+        const content = [];
         for (const [doc, score] of similaritySearchWithScoreResults) {
             this.plugin.log(
                 `* [SIM=${score.toFixed(3)}] [${JSON.stringify(doc.metadata)}]`
             );
-            content = content + '\n---\n' + JSON.stringify(doc, null, 0);
+            content.push({ "score": score, "doc": doc });
         }
 
         return content;

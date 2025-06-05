@@ -35,7 +35,7 @@ export class PluginManager extends Plugin {
     statsManager: StatsManager | undefined;
     private aiFloatingHelper: AIWindow | undefined;
     vss!: VSS;
-    private vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
+    vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
     cryptoHelper: CryptoHelper = new CryptoHelper();
     private token: string = "";

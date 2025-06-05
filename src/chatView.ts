@@ -265,6 +265,14 @@ export class LLMView extends ItemView {
         );
         this.app.vault.on("modify", async (file) => {
             debounceChange(file);
+        });
+        this.app.vault.on("delete", async (file) => {
+            const vssFile = this.plugin.join(this.plugin.vssCacheDir, file.path + ".json");
+            await this.plugin.app.vault.adapter.remove(vssFile);
+            console.log("delete", vssFile);
+            if (file instanceof TFile) {
+                await this.vss.loadVectorStore([file], true);
+            }
         })
     }
 
