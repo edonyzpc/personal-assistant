@@ -156,7 +156,7 @@ export class VSS {
 
         const embeddings = new OpenAIEmbeddings({
             model: "text-embedding-v3",
-            dimensions: 256, // 指定向量维度（仅 text-embedding-v3 支持该参数）
+            dimensions: 512, // 指定向量维度（仅 text-embedding-v3 支持该参数）
             apiKey: token,
             configuration: {
                 baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
@@ -204,8 +204,8 @@ export class VSS {
             try {
                 const cachedVSSFile = await this.plugin.app.vault.adapter.read(vssFile);
                 const cachedVectors = JSON.parse(cachedVSSFile);
-                if (cacheFile.stat.mtime - cachedVectors[0]["metadata"]["lastModified"] <= 60000) {
-                    // according the vss cache file record, if file is not modified in 60 seconds, skip
+                if (cacheFile.stat.mtime - cachedVectors[0]["metadata"]["lastModified"] <= 1000) {
+                    // according the vss cache file record, if file is not modified in 1 seconds, skip
                     this.plugin.log(`skip ${vssFile}`);
                     return false;
                 }
@@ -258,7 +258,7 @@ export class VSS {
 
         const embeddings = new OpenAIEmbeddings({
             model: "text-embedding-v3",
-            dimensions: 256, // 指定向量维度（仅 text-embedding-v3 支持该参数）
+            dimensions: 512, // 指定向量维度（仅 text-embedding-v3 支持该参数）
             apiKey: token,
             configuration: {
                 baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
