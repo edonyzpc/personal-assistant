@@ -23,5 +23,5 @@ release:
 	@echo "\033[92m\033[1mCHANGELOG.md needs to be updated \033[0m"
 
 tag:
-	git tag -a `node tag.mjs` -m "[release] v`node tag.mjs`, check the CHANGELOG.md for details"
+# git tag -a `node tag.mjs` -m "[release] v`node tag.mjs`, check the CHANGELOG.md for details"
 	git push --tags

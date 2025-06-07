@@ -11,16 +11,27 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦！Perosnal Assistant 支持 AI 生成 featured images，再也不用为题图烦恼了！
+> ***号外***: 新特性来啦: 支持由智能 RAG 知识库驱动的大语言模型（LLM）聊天助手，旨在提升用户学习和工作效率，可在 Obsidian 知识库中提供全面的阅读、搜索及写作支持。
+
+<div align="center">
+
+https://github.com/user-attachments/assets/bbf8021c-9e94-4ba3-8e11-dc95be8b288d
+
+</div>
+
+---
+> Perosnal Assistant 支持 AI 生成 featured images，再也不用为题图烦恼了！
 <div align="center">
 <video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
 </div>
 
+---
 > ***AI 助手帮助管理 Obsidian***
 <div align="center">
 <img src="./docs/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
 </div>
 
+---
 > ***展示 vault 的统计数据***
 <div align="center">
 <img src="./docs/personal-assistant-v1.3.3.gif" alt="usage video"/>
