@@ -2,6 +2,10 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.5.0](https://github.com/edonyzpc/personal-assistant/compare/1.4.9...1.5.0) (2025-06-07)
+### Features
+- LLM chat assistant powered by an intelligent RAG knowledge base, designed to improve the efficiency of users in learning and work, providing comprehensive reading, searching and writing.
+
 ## [1.4.9](https://github.com/edonyzpc/personal-assistant/compare/1.4.8...1.4.9) (2025-02-16)
 ### Improvement
 - change AI Helper as AI Summary

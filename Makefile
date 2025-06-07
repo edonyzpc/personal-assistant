@@ -20,7 +20,7 @@ clean:
 
 release:
 	yarn version
-	@echo "CHANGELOG.md needs to be updated"
+	@echo "\033[92m\033[1mCHANGELOG.md needs to be updated \033[0m"
 
 tag:
 	git tag -a `node tag.mjs` -m "[release] v`node tag.mjs`, check the CHANGELOG.md for details"

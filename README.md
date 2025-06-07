@@ -14,7 +14,12 @@
  <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
 </p>
 
-> ***NOTE***: New shiny feature: Supporting featured image generation by AI according to the content of the note.
+> ***NOTE***: New shiny feature: Support LLM chat assistant powered by an intelligent RAG knowledge base, designed to improve the efficiency of users in learning and work, providing comprehensive reading, searching and writing in Obsidian vault.
+<div align="center">
+
+
+</div>
+
 <div align="center">
 <video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
 
