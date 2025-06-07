@@ -15,20 +15,22 @@
 </p>
 
 > ***NOTE***: New shiny feature: Support LLM chat assistant powered by an intelligent RAG knowledge base, designed to improve the efficiency of users in learning and work, providing comprehensive reading, searching and writing in Obsidian vault.
+
 <div align="center">
 
+https://github.com/user-attachments/assets/bbf8021c-9e94-4ba3-8e11-dc95be8b288d
 
 </div>
 
+---
+> Supporting featured image generation by AI according to the content of the note.
 <div align="center">
-<video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
-
-
+	
 https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 
-
 </div>
 
+---
 > ***AI Helper to improve your Obsidian notes management***
 <div align="center">
 <img src="./docs/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
