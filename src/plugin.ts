@@ -6,7 +6,7 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { VIEW_TYPE_LLM, LLMView } from "./chatView";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
-import { SimilaritySearch, VSS } from './vss'
+import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batchModal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
@@ -302,21 +302,6 @@ export class PluginManager extends Plugin {
                             }
                         });
                     }
-                }
-            }
-        });
-
-        this.addCommand({
-            id: "ai-assistant-similarity-search",
-            name: "AI Similarity Search",
-            editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-                const vssCacheDir = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
-                if (!await this.app.vault.adapter.exists(vssCacheDir)) {
-                    await this.app.vault.adapter.mkdir(vssCacheDir);
-                }
-                if (view instanceof MarkdownView) {
-                    const search = new SimilaritySearch(vssCacheDir, this, editor, view);
-                    await search.vectorStore();
                 }
             }
         });
