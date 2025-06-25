@@ -1,0 +1,61 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+## Personal Assistant 项目 Cursor Rules
+
+### 项目说明
+Personal Assistant是一个可以在Obsidian运行的插件，基于[Obsidian插件开发规范](https://docs.obsidian.md/Plugins/Getting+started/Build+a+plugin)进行开发的。主要的技术栈包括nodejs、obsidian api(https://github.com/obsidianmd/obsidian-api)、typescript、svelte等。
+
+### 1. 依赖与环境管理
+- **依赖管理统一使用 `yarn` 工具**，所有依赖应通过 `yarn` 安装和管理。
+
+### 2. 代码结构说明
+- `./docs`，文档目录
+- `./test`，测试目录
+- `./src`，源码目录
+```
+./src
+|-- ai.ts         # ai 相关的功能实现
+|-- batchModal.ts # 批量功能实现
+|-- callout.ts    # callout功能实现
+|-- chatView.ts   # ai chat功能实现
+|-- color.ts      # RGB等颜色数据处理功能
+|-- components    # svelte 实现的前端组件
+|   |-- AIActionTimeline.svelte # ai 功能用到的时间线组件
+|   |-- AIButton.svelte         # ai 功能用到的按钮组件
+|   |-- AIIcon.svelte           # ai 功能用到的icon组件
+|   |-- AILoader.svelte         # ai 功能用到的loading组件
+|   |-- AIWindow.svelte         # ai 功能用到的窗口组件
+|   |-- RecordList.svelte       # record 记录展示的组件
+|   `-- Statistics.svelte       # 统计数据展示的组件
+|-- constant.ts                 # 用到的一些常量
+|-- localGraph.ts               # local graph 功能实现
+|-- main.ts                     # 主入口，导出插件模块
+|-- modal.ts                    # 插件管理功能用到的modal实现
+|-- obsidian-hack               # obsidian 移动端调试功能实现
+|   `-- obsidian-mobile-debug.ts
+|-- plugin.ts                   # obsidian 插件主体实现，所有功能均在这里进行汇总有obsidian加载和触发执行
+|-- pluginManifest.ts           # obsidian manifest数据管理功能
+|-- preview.ts                  # record记录预览功能实现
+|-- progressBar.ts              # 插件管理功能涉及的精度条功能
+|-- settings.ts                 # 插件在 obsidian 的设置实现
+|-- stats                       # obsidian vault 数据统计功能
+|   |-- EditorPlugin.ts         # 根据 obsidian 编辑器状态触发vault数据统计计算（包括字数word、字符数character、sentences句子数等等）
+|   |-- StatsManager.ts         # vault 统计数据计算和管理
+|   |-- statsTypes.ts           # 统计数据一些类型定义
+|   `-- statsUtils.ts           # 计算统计数据用到的工具函数
+|-- statsView.ts                # vault统计数据obsidian view实现
+|-- tests                       # 测试目录
+|   `-- utils.test.ts
+|-- themeManifest.ts            # obsidian 主题更新与管理功能实现
+|-- types                       # 类型导出
+|   |-- global.d.ts
+|   `-- manifest.ts
+|-- utils.ts                    # 一些工具性函数实现
+|-- view.ts                     # local graph功能obsidian view实现
+`-- vss.ts                      # 文本向量检索功能实现，为ai chat功能提供vault中相关的markdown记录
+```
+
+
