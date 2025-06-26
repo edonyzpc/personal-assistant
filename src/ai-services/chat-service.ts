@@ -24,44 +24,63 @@ export class ChatService {
     /**
      * 流式LLM调用
      */
-    async streamLLM(
-        prompt: string,
-        onChunk: (chunk: string) => void,
-        signal?: AbortSignal,
-        chatHistory?: ChatMessage[]
-    ): Promise<void> {
+    async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
         const llm = await this.aiUtils.createOpenAICompatibleLLM();
+        // TODO: filter the RAG References from the history string
+        const formattedHistory = (chatHistory || [])
+            .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.role === 'assistant' ? msg.content.split("\n\n---\n> [!personal-assistant-ai]- RAG References")[0] : msg.content}`)
+            .join('\n');
 
-        const systemTemplate = `你是一个专业的AI助手，擅长回答各种问题。
-请根据用户的问题提供准确、有用的回答。
-如果用户提到了vault中的内容，请结合相关内容进行回答。`;
+        const contextualPrompt = formattedHistory ?
+            `${formattedHistory}\nHuman: ${prompt}\nAssistant:` :
+            `Human: ${prompt}\nAssistant:`;
 
-        const systemMessagePrompt = SystemMessagePromptTemplate.fromTemplate(systemTemplate);
-        const humanMessagePrompt = HumanMessagePromptTemplate.fromTemplate("{input}");
+        const ragPrompt = ChatPromptTemplate.fromMessages([
+            SystemMessagePromptTemplate.fromTemplate("你是一个严格根据知识库的内容回答问题的助手。\n\n** 知识库内容：**\n{rag_content}\n---\n"),
+            HumanMessagePromptTemplate.fromTemplate(`{input}
+**注意**：1. 最后以列表形式附上你回答问题中引用知识库内容的来源，即知识库内容中metadata中的path字段
+2. 输出格式为：
+<AI 回答>
 
-        const chatPrompt = ChatPromptTemplate.fromMessages([
-            systemMessagePrompt,
-            humanMessagePrompt,
+---
+> [!personal-assistant-ai]- RAG Referencs
+> 
+> 1. [[<metadata1.path>]]
+> 2. [[<metadata2.path>]]
+> 3. [[<metadata3.path>]]
+> 4. ...
+`),
         ]);
 
-        const formattedPrompt = await chatPrompt.formatMessages({
-            input: prompt,
-        });
+        const ragContents = await this.plugin.vss.searchSimilarity(prompt);
+        // 将ragContents前两个元素中的doc用JSON.stringify拼接在一起并且以---分割
+        const ragContent = ragContents
+            .slice(0, 3)
+            .map((doc) => JSON.stringify(doc, null, 0))
+            .join("\n---\n");
 
-        const stream = await llm.stream(formattedPrompt, {
-            signal: signal,
-        });
+        const chain = ragPrompt.pipe(llm);
+        const response = await chain.stream({
+            rag_content: ragContent,
+            input: contextualPrompt,
+        }, { signal: signal });
 
         let fullResponse = '';
-        for await (const chunk of stream) {
-            if (signal?.aborted) {
-                break;
-            }
-            const content = chunk.content;
-            if (typeof content === 'string') {
-                fullResponse += content;
+        for await (const chunk of response) {
+            try {
+                const data = chunk.content.toString();
+                fullResponse += data;
                 onChunk(fullResponse);
+                // trikcy, smooth the streaming display
+                await new Promise(f => setTimeout(f, 150));
+            } catch (e) {
+                console.error('Error parsing chunk:', e);
+                throw e;
             }
+        }
+
+        if (signal?.aborted) {
+            throw new DOMException('Aborted', 'AbortError');
         }
     }
 } 

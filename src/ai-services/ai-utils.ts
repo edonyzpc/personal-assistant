@@ -1,9 +1,8 @@
 /* Copyright 2023 edonyzpc */
-import { App, Notice, getFrontMatterInfo, type FrontMatterInfo, TFile } from 'obsidian'
+import { Notice, getFrontMatterInfo, type FrontMatterInfo, TFile } from 'obsidian'
 import fetch, { Headers, Request, Response } from "node-fetch";
 import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tongyi";
 import { ChatOpenAI, type ChatOpenAICallOptions } from '@langchain/openai';
-import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { Notification } from '@svelteuidev/core';
 
@@ -51,6 +50,36 @@ export class AIUtils {
         notice.noticeEl.parentElement?.setCssStyles({
             "backgroundColor": "white",
         });
+
+        return { notice, notification };
+    }
+
+    /**
+     * 创建AI生成图片的通知
+     */
+    createAIFeaturedImageNotice(): { notice: Notice; notification: Notification } {
+        const noticeEl = document.createDocumentFragment();
+        const div = noticeEl.createEl("div", { attr: { id: "ai-breahting-icon", style: "background: white;" } });
+        const notification = new Notification({
+            target: div,
+            props: {
+                title: "AI is Generating Featured Images...",
+                color: "green",
+                loading: true,
+                withCloseButton: false,
+                override: {
+                    "border-width": "0px",
+                    "color": "white !important",
+                },
+            }
+        });
+        const notice = new Notice(noticeEl, 0);
+        // keep the same theme of notice and notification
+        notice.noticeEl.style.backgroundColor = "white";
+        notice.noticeEl.parentElement?.setCssStyles({
+            "backgroundColor": "white",
+        });
+        notice.noticeEl.createEl("hr", { attr: { id: "ai-featured-image-progress-hr", style: "margin:unset;" } });
 
         return { notice, notification };
     }

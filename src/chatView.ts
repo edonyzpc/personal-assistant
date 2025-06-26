@@ -1,11 +1,7 @@
 import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, TAbstractFile, TFile, Vault, setIcon, debounce } from 'obsidian';
-
-import { ChatOpenAI, type ChatOpenAICallOptions } from '@langchain/openai';
-import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from "@langchain/core/prompts";
-
+import { ChatService } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
-
 
 export const VIEW_TYPE_LLM = "sidellm-view";
 
@@ -21,12 +17,13 @@ export class LLMView extends ItemView {
     abortController: AbortController | null = null;
     chatHistory: ChatMessage[] = [];
     vss: VSS;
-    private llm!: ChatOpenAI<ChatOpenAICallOptions>;
+    private chatService: ChatService;
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
         this.plugin = plugin;
         this.vss = vss;
+        this.chatService = new ChatService(plugin);
     }
 
     getViewType(): string {
@@ -42,15 +39,6 @@ export class LLMView extends ItemView {
     }
 
     async onOpen() {
-        const token = await this.plugin.getAPIToken();
-        this.llm = new ChatOpenAI({
-            model: "qwen-max",
-            apiKey: token,
-            configuration: {
-                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            },
-            temperature: 0.8,
-        });
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
@@ -128,7 +116,6 @@ export class LLMView extends ItemView {
                 };
             }
 
-            //MarkdownRenderer.renderMarkdown(message.content, contentDiv, '', this.plugin);
             MarkdownRenderer.render(this.plugin.app, message.content, contentDiv, '', this.plugin);
             this.responseDiv.scrollTo({
                 top: this.responseDiv.scrollHeight,
@@ -156,7 +143,7 @@ export class LLMView extends ItemView {
                 let streamingMessageEl: HTMLDivElement | null = null;
                 let contentDiv: HTMLElement | null = null;
 
-                await this.streamLLM(
+                await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
                         responseContent = chunk;
@@ -180,7 +167,6 @@ export class LLMView extends ItemView {
 
                         if (contentDiv) {
                             contentDiv.empty();
-                            //MarkdownRenderer.renderMarkdown(responseContent, contentDiv, '', this.plugin);
                             MarkdownRenderer.render(this.plugin.app, responseContent, contentDiv, '', this.plugin);
                             this.responseDiv.scrollTo({
                                 top: this.responseDiv.scrollHeight,
@@ -222,7 +208,8 @@ export class LLMView extends ItemView {
         clearButton.onclick = () => {
             this.chatHistory = [];
             this.responseDiv.empty();
-            new Notice('Chat history cleared');
+            addToEditorButton.disabled = true;
+            new Notice('Chat cleared');
         };
 
         addToEditorButton.onclick = async () => {
@@ -275,66 +262,6 @@ export class LLMView extends ItemView {
             }
         })
     }
-
-    async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
-        // TODO: filter the RAG References from the history string
-        const formattedHistory = (chatHistory || [])
-            .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.role === 'assistant' ? msg.content.split("\n\n---\n> [!personal-assistant-ai]- RAG References")[0] : msg.content}`)
-            .join('\n');
-
-        const contextualPrompt = formattedHistory ?
-            `${formattedHistory}\nHuman: ${prompt}\nAssistant:` :
-            `Human: ${prompt}\nAssistant:`;
-
-        const ragPrompt = ChatPromptTemplate.fromMessages([
-            SystemMessagePromptTemplate.fromTemplate("你是一个严格根据知识库的内容回答问题的助手。\n\n** 知识库内容：**\n{rag_content}\n---\n"),
-            HumanMessagePromptTemplate.fromTemplate(`{input}
-**注意**：1. 最后以列表形式附上你回答问题中引用知识库内容的来源，即知识库内容中metadata中的path字段
-2. 输出格式为：
-<AI 回答>
-
----
-> [!personal-assistant-ai]- RAG Referencs
-> 
-> 1. [[<metadata1.path>]]
-> 2. [[<metadata2.path>]]
-> 3. [[<metadata3.path>]]
-> 4. ...
-`),
-        ]);
-
-        const ragContents = await this.plugin.vss.searchSimilarity(prompt);
-        // 将ragContents前两个元素中的doc用JSON.stringify拼接在一起并且以---分割
-        const ragContent = ragContents
-            .slice(0, 3)
-            .map((doc) => JSON.stringify(doc, null, 0))
-            .join("\n---\n");
-
-        const chain = ragPrompt.pipe(this.llm);
-        const response = await chain.stream({
-            rag_content: ragContent,
-            input: contextualPrompt,
-        }, { signal: signal });
-
-        let fullResponse = '';
-        for await (const chunk of response) {
-            try {
-                const data = chunk.content.toString();
-                fullResponse += data;
-                onChunk(fullResponse);
-                // trikcy, smooth the streaming display
-                await new Promise(f => setTimeout(f, 150));
-            } catch (e) {
-                console.error('Error parsing chunk:', e);
-                throw e;
-            }
-        }
-
-        if (signal?.aborted) {
-            throw new DOMException('Aborted', 'AbortError');
-        }
-    }
-
 
     private updateClickableLink(containerEl: HTMLElement) {
         const isPluginEnabled = (pluginID: string) => {
