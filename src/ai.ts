@@ -71,6 +71,8 @@ export class AssistantRobot {
                 frontmatter["tags"] = oldTags.concat(tags);
             });
         }
+
+        return tags.join(" ");
     }
 }
 
