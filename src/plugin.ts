@@ -4,22 +4,22 @@ import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Pl
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { VIEW_TYPE_LLM, LLMView } from "./chatView";
+import { VIEW_TYPE_LLM, LLMView } from "./chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
-import { BatchPluginControlModal } from './batchModal'
+import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
-import { LocalGraph } from './localGraph';
+import { LocalGraph } from './local-graph';
 import { CryptoHelper, icons, personalAssitant } from './utils';
-import { PluginsUpdater } from './pluginManifest';
-import { ThemeUpdater } from './themeManifest';
+import { PluginsUpdater } from './plugin-manifest';
+import { ThemeUpdater } from './theme-manifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
-import { STAT_PREVIEW_TYPE, Stat } from './statsView'
-import StatsManager from './stats/StatsManager'
-import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/EditorPlugin'
+import { STAT_PREVIEW_TYPE, Stat } from './stats-view'
+import StatsManager from './stats/stats-manager'
+import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
 import AIWindow from './components/AIWindow.svelte'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any

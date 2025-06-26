@@ -1,6 +1,6 @@
 import { debounce, App, Vault, Workspace } from "obsidian";
 import type PluginManager from "../main";
-import type { Day, VaultStatistics } from "./statsTypes";
+import type { Day, VaultStatistics } from "./stats-types";
 import moment from "moment";
 import {
     getCharacterCount,
@@ -9,7 +9,7 @@ import {
     getWordCount,
     getCitationCount,
     getFootnoteCount,
-} from "./statsUtils";
+} from "./stats-utils";
 
 export default class StatsManager {
     private vault: Vault;

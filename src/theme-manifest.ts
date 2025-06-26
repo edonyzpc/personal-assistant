@@ -4,7 +4,7 @@ import { App, Notice, normalizePath, request } from 'obsidian';
 import { gt, prerelease } from "semver";
 import { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from "./types/manifest";
-import { ProgressBar } from "./progressBar";
+import { ProgressBar } from "./progress-bar";
 import { downloadZipFile, extractFile } from "./utils";
 
 export class ThemeUpdater implements ObsidianManifest {
@@ -19,10 +19,10 @@ export class ThemeUpdater implements ObsidianManifest {
     private checkedThemes: number;
     private progressBar: ProgressBar;
 
-    static async init(app: App, plugin:PluginManager): Promise<ThemeUpdater> {
+    static async init(app: App, plugin: PluginManager): Promise<ThemeUpdater> {
         const themeUpdater = new ThemeUpdater(app, plugin);
         themeUpdater.items = await themeUpdater.listThemes(themeUpdater.app);
-        const themeJson  = await themeUpdater.getCommunityThemesJson();
+        const themeJson = await themeUpdater.getCommunityThemesJson();
         if (themeJson) {
             themeUpdater.communityThemes = JSON.parse(themeJson);
         } else {
@@ -33,7 +33,7 @@ export class ThemeUpdater implements ObsidianManifest {
 
     // list obsidian themes
     private async listThemes(app: App): Promise<Manifest[]> {
-        const themes:Manifest[] = [];
+        const themes: Manifest[] = [];
         const themeDirs = await app.vault.adapter.list(app.vault.configDir + '/themes');
         themeDirs.folders.forEach(async (f) => {
             const themeFile = normalizePath(f + '/manifest.json');
@@ -47,7 +47,7 @@ export class ThemeUpdater implements ObsidianManifest {
         return themes;
     }
 
-    private async getCommunityThemesJson(): Promise<string|null> {
+    private async getCommunityThemesJson(): Promise<string | null> {
         try {
             const response = await request({ url: this.URLCDN });
             return (response === "404: Not Found" ? null : response);
@@ -109,7 +109,7 @@ export class ThemeUpdater implements ObsidianManifest {
             const response = await request({ url: URL });
             return (response === "404: Not Found" ? null : await JSON.parse(response));
         } catch (error) {
-            if(error!="Error: Request failed, status 404")  { //normal error, ignore
+            if (error != "Error: Request failed, status 404") { //normal error, ignore
                 this.log(`error in getLatestRelease for ${URL}`, error);
             }
             return null;
@@ -131,33 +131,33 @@ export class ThemeUpdater implements ObsidianManifest {
         return null;
     }
 
-    async isNeedToUpdate(latestRelease: JSON|null, currentVersion:string): Promise<UpdateStatus> {
-            if (latestRelease) {
-                const originTag = this.getLatestTag(latestRelease);
-                let tag = "";
-                if (originTag) {
-                    tag = originTag;
-                    if (originTag.startsWith('v')) tag = originTag.split('v')[1];
-                    this.log("latest tag: " + tag, "current tag: " + currentVersion);
-                    // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
-                    const pre = prerelease(tag);
-                    if (pre) {
-                        if (pre.length > 0) {
-                            // do not update pre-release version
-                            return {
-                                needUpdate: false,
-                                targetVersion: currentVersion,
-                            }
-                        }
-                    }
-                    if (gt(tag, currentVersion)) {
+    async isNeedToUpdate(latestRelease: JSON | null, currentVersion: string): Promise<UpdateStatus> {
+        if (latestRelease) {
+            const originTag = this.getLatestTag(latestRelease);
+            let tag = "";
+            if (originTag) {
+                tag = originTag;
+                if (originTag.startsWith('v')) tag = originTag.split('v')[1];
+                this.log("latest tag: " + tag, "current tag: " + currentVersion);
+                // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
+                const pre = prerelease(tag);
+                if (pre) {
+                    if (pre.length > 0) {
+                        // do not update pre-release version
                         return {
-                            needUpdate: true,
-                            targetVersion: originTag,
+                            needUpdate: false,
+                            targetVersion: currentVersion,
                         }
                     }
                 }
+                if (gt(tag, currentVersion)) {
+                    return {
+                        needUpdate: true,
+                        targetVersion: originTag,
+                    }
+                }
             }
+        }
         return {
             needUpdate: false,
             targetVersion: currentVersion,

@@ -4,7 +4,7 @@ import { App, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import { PluginManager } from "./plugin"
-import { STAT_PREVIEW_TYPE } from './statsView'
+import { STAT_PREVIEW_TYPE } from './stats-view'
 import { CryptoHelper, personalAssitant } from './utils'
 
 export interface ResizeStyle {

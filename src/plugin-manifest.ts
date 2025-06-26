@@ -4,7 +4,7 @@ import { App, type PluginManifest, normalizePath, request } from 'obsidian';
 import { gt, prerelease } from "semver";
 import { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, PluginReleaseFiles } from "./types/manifest";
-import { ProgressBar } from "./progressBar";
+import { ProgressBar } from "./progress-bar";
 
 
 export class PluginsUpdater implements ObsidianManifest {

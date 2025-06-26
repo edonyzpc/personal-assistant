@@ -1,9 +1,9 @@
 import { EditorState, Line, RangeSetBuilder, StateEffect, StateField, Transaction } from "@codemirror/state";
-import {ViewUpdate, EditorView, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
+import { ViewUpdate, EditorView, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet, PluginValue } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type PluginManager from "../main";
-import { getWordCount } from "./statsUtils";
+import { getWordCount } from "./stats-utils";
 import { MATCH_COMMENT, MATCH_HTML_COMMENT } from "../constant";
 
 export const pluginField = StateField.define<PluginManager | null>({
