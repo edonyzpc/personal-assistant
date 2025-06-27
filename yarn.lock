@@ -328,9 +328,9 @@
     "@marijn/find-cluster-break" "^1.0.0"
 
 "@codemirror/view@^6.0.0", "@codemirror/view@^6.23.0", "@codemirror/view@^6.27.0", "@codemirror/view@^6.4.0":
-  version "6.37.1"
-  resolved "https://registry.npmmirror.com/@codemirror/view/-/view-6.37.1.tgz#e769e69c9b3dd3080a65a18a72c07dc3fc8d036c"
-  integrity sha512-Qy4CAUwngy/VQkEz0XzMKVRcckQuqLYWKqVpDDDghBe5FSXSqfVrJn49nw3ePZHxRUz4nRmb05Lgi+9csWo4eg==
+  version "6.38.0"
+  resolved "https://registry.npmmirror.com/@codemirror/view/-/view-6.38.0.tgz#4486062b791a4247793e0953e05ae71a9e172217"
+  integrity sha512-yvSchUwHOdupXkd7xJ0ob36jdsSR/I+/C+VbY0ffBiL5NiSTEBDfB1ZGWbbIlDd5xgdUkody+lukAdOxYrOBeg==
   dependencies:
     "@codemirror/state" "^6.5.0"
     crelt "^1.0.6"
