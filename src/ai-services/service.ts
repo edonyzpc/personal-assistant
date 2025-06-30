@@ -11,6 +11,7 @@ import fetch, { Headers, Request, Response } from "node-fetch";
 
 import { AIUtils } from './ai-utils';
 import type { PluginManager } from '../plugin'
+import { isPluginEnabled } from 'utils';
 
 
 interface ImageGenerationResult {
@@ -160,11 +161,16 @@ export class AIService {
                     }
                     let imagesCallout = "";
                     const featuredImagePath = this.plugin.settings.featuredImagePath;
+                    let calloutImageSuffix = "";
+                    if (isPluginEnabled(this.plugin.app, "image-converter")) {
+                        // 如果image-converter插件启用，则resize图片到480px
+                        calloutImageSuffix = "|480";
+                    }
                     for (let i = 0; i < imageUrls.length; i++) {
                         const imageUrlStr = imageUrls[i].url;
                         const response = await this.downloadImageToVault(this.plugin.app, imageUrlStr, featuredImagePath);
                         if (response) {
-                            imagesCallout += `![[${response}]]\n> `;
+                            imagesCallout += `![[${response}${calloutImageSuffix}]]\n> `;
                         }
                     }
                     progress3Div.setText("    ✅   Downloading Images Success!");

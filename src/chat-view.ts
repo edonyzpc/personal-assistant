@@ -2,6 +2,7 @@ import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, TAbstr
 import { ChatService } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
+import { isPluginEnabled } from './utils';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
 
@@ -264,13 +265,8 @@ export class LLMView extends ItemView {
     }
 
     private updateClickableLink(containerEl: HTMLElement) {
-        const isPluginEnabled = (pluginID: string) => {
-            return (
-                (this.plugin.app as any).plugins.manifests.hasOwnProperty(pluginID) && (this.plugin.app as any).plugins.enabledPlugins.has(pluginID) // eslint-disable-line @typescript-eslint/no-explicit-any
-            );
-        };
         const getNoteUri = (vault: Vault, noteHref: string) => {
-            if (isPluginEnabled("obsidian-advanced-uri")) {
+            if (isPluginEnabled(this.plugin.app, "obsidian-advanced-uri")) {
                 // Use Advanced URI plugin if it is enabled.
                 // obsidian://advanced-uri?vault=<your-vault>&filepath=my-file
                 return [
