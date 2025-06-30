@@ -2,12 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [1.5.1](https://github.com/edonyzpc/personal-assistant/compare/1.5.0...1.5.1) (2025-06-30)
+## [1.5.2](https://github.com/edonyzpc/personal-assistant/compare/1.5.0...1.5.2) (2025-06-30)
 ## Improvements
 - refact ai module for better performance
 - improve ai functions for display and interactivity
 
-## [1.5.0](https://github.com/edonyzpc/personal-assistant/compare/1.4.9...1.5.0) (2025-06-07)
+## [1.5.0,1.5.1](https://github.com/edonyzpc/personal-assistant/compare/1.4.9...1.5.0) (2025-06-07)
 ### Features
 - LLM chat assistant powered by an intelligent RAG knowledge base, designed to improve the efficiency of users in learning and work, providing comprehensive reading, searching and writing.
 
