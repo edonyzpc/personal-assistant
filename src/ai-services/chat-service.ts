@@ -25,7 +25,7 @@ export class ChatService {
      * 流式LLM调用
      */
     async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
-        const llm = await this.aiUtils.createOpenAICompatibleLLM();
+        const llm = await this.aiUtils.createOpenAICompatibleLLM(this.plugin.settings.modelName, 0.8);
         // TODO: filter the RAG References from the history string
         const formattedHistory = (chatHistory || [])
             .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.role === 'assistant' ? msg.content.split("\n\n---\n> [!personal-assistant-ai]- RAG References")[0] : msg.content}`)

@@ -297,7 +297,7 @@ export class AIService {
      * 调用通义千问LLM
      */
     private async callQwenLLM(query: string, systemPrompt: string): Promise<string> {
-        const qwenLLM = await this.aiUtils.createQwenLLM();
+        const qwenLLM = await this.aiUtils.createQwenLLM(this.plugin.settings.modelName, 0.8);
         const systemMessage = new SystemMessage(systemPrompt);
         const generateMessage = new HumanMessage(`**文字内容：**${query}`);
         const messages = [systemMessage, generateMessage];
