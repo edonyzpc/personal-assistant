@@ -69,7 +69,7 @@ export class AIService {
             const markdown = editor.getValue();
             const { content } = this.aiUtils.getDocumentContent(markdown);
 
-            const result = await this.callQwenLLM(content, this.getSummaryPrompt());
+            const result = await this.callLLM(content, this.getSummaryPrompt());
             if (result.length <= 0) {
                 new Notice("AI is not available.");
                 return;
@@ -99,7 +99,7 @@ export class AIService {
         const tags = Object.keys((app.metadataCache as any).getTags()); // eslint-disable-line @typescript-eslint/no-explicit-any
 
         const prompt = this.getTagsPrompt(content, tags);
-        const result = await this.callQwenLLM(content, prompt);
+        const result = await this.callLLM(content, prompt);
         return JSON.parse(result);
     }
 
@@ -107,6 +107,12 @@ export class AIService {
      * 生成特色图片
      */
     async generateFeaturedImage(editor: Editor, view: MarkdownView, fontmatterInfo: FrontMatterInfo): Promise<void> {
+        // 检查是否支持图片生成（目前只支持Qwen）
+        if (this.plugin.settings.aiProvider !== 'qwen') {
+            new Notice("Featured image generation is only supported with Qwen provider.", 3000);
+            return;
+        }
+
         // @ts-expect-error, not typed
         const editorView: EditorView = view.editor.cm;
         const { notice, notification } = this.aiUtils.createAIFeaturedImageNotice();
@@ -118,7 +124,7 @@ export class AIService {
             // 生成图片描述
             const progress1Div = notice.noticeEl.createEl("div", { attr: { id: "ai-featured-image-progress-1", style: "background: white;color: black;margin-top: 4px;" } });
             progress1Div.setText("    🚧   Agent Generating Prompt...");
-            const imageDesc = await this.callQwenLLM(content, this.getImageDescriptionPrompt());
+            const imageDesc = await this.callLLM(content, this.getImageDescriptionPrompt());
             if (imageDesc.length <= 0) {
                 notification.$destroy();
                 notice.hide();
@@ -207,7 +213,7 @@ export class AIService {
      * 向量化文档
      */
     async vectorizeDocument(file: TFile, cacheDir: string): Promise<boolean> {
-        const embeddings = await this.aiUtils.createOpenAIEmbeddings();
+        const embeddings = await this.aiUtils.createEmbeddings();
         const mdSplitter = new MarkdownTextSplitter({ chunkSize: 4000, chunkOverlap: 80 });
 
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
@@ -294,16 +300,16 @@ export class AIService {
     }
 
     /**
-     * 调用通义千问LLM
+     * 调用LLM
      */
-    private async callQwenLLM(query: string, systemPrompt: string): Promise<string> {
-        const qwenLLM = await this.aiUtils.createQwenLLM(this.plugin.settings.modelName, 0.8);
+    private async callLLM(query: string, systemPrompt: string): Promise<string> {
+        const llm = await this.aiUtils.createChatModel(0.8);
         const systemMessage = new SystemMessage(systemPrompt);
         const generateMessage = new HumanMessage(`**文字内容：**${query}`);
         const messages = [systemMessage, generateMessage];
 
         const res = await this.aiUtils.withFetchPolyfill(async () => {
-            return await qwenLLM.invoke(messages);
+            return await llm.invoke(messages);
         });
 
         this.plugin.log(res.content);

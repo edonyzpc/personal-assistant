@@ -2,8 +2,10 @@
 import { Notice, getFrontMatterInfo, type FrontMatterInfo, TFile } from 'obsidian'
 import fetch, { Headers, Request, Response } from "node-fetch";
 import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tongyi";
+import { ChatOllama } from "@langchain/ollama";
 import { ChatOpenAI, type ChatOpenAICallOptions } from '@langchain/openai';
 import { OpenAIEmbeddings } from '@langchain/openai';
+import { OllamaEmbeddings } from "@langchain/ollama";
 import { Notification } from '@svelteuidev/core';
 
 import type { PluginManager } from '../plugin'
@@ -85,19 +87,99 @@ export class AIUtils {
     }
 
     /**
-     * 创建通义千问LLM实例
+     * 创建聊天模型实例
+     */
+    async createChatModel(temperature: number = 0.8): Promise<ChatAlibabaTongyi | ChatOpenAI<ChatOpenAICallOptions> | ChatOllama> {
+        const provider = this.plugin.settings.aiProvider;
+        const modelName = this.plugin.settings.chatModelName;
+        const baseURL = this.plugin.settings.baseURL;
+
+        switch (provider) {
+            case 'qwen': {
+                const token = await this.getAPIToken();
+                return new ChatOpenAI({
+                    model: modelName,
+                    apiKey: token,
+                    configuration: {
+                        baseURL: baseURL,
+                    },
+                    temperature: temperature,
+                });
+            }
+
+            case 'openai': {
+                const openaiToken = await this.getAPIToken();
+                return new ChatOpenAI({
+                    model: modelName,
+                    apiKey: openaiToken,
+                    configuration: {
+                        baseURL: baseURL,
+                    },
+                    temperature: temperature,
+                });
+            }
+
+            case 'ollama':
+                return new ChatOllama({
+                    model: modelName,
+                    baseUrl: baseURL,
+                    temperature: temperature,
+                });
+
+            default:
+                throw new Error(`Unsupported AI provider: ${provider}`);
+        }
+    }
+
+    /**
+     * 创建嵌入模型实例
+     */
+    async createEmbeddings(dimensions?: number): Promise<OpenAIEmbeddings | OllamaEmbeddings> {
+        const provider = this.plugin.settings.aiProvider;
+        const modelName = this.plugin.settings.embeddingModelName;
+        const baseURL = this.plugin.settings.baseURL;
+
+        switch (provider) {
+            case 'qwen':
+            case 'openai': {
+                const token = await this.getAPIToken();
+                return new OpenAIEmbeddings({
+                    model: modelName,
+                    dimensions: dimensions,
+                    apiKey: token,
+                    configuration: {
+                        baseURL: baseURL,
+                    }
+                });
+            }
+
+            case 'ollama':
+                return new OllamaEmbeddings({
+                    model: modelName,
+                    baseUrl: baseURL,
+                });
+
+            default:
+                throw new Error(`Unsupported AI provider: ${provider}`);
+        }
+    }
+
+    /**
+     * 创建通义千问LLM实例（兼容旧版本）
      */
     async createQwenLLM(model: string = "qwen-max", temperature: number = 0.8): Promise<ChatAlibabaTongyi> {
         const token = await this.getAPIToken();
-        return new ChatAlibabaTongyi({
+        const llm = new ChatAlibabaTongyi({
             model: model,
             temperature: temperature,
             alibabaApiKey: token,
         });
+        llm.apiUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+        return llm;
     }
 
     /**
-     * 创建OpenAI兼容的LLM实例
+     * 创建OpenAI兼容的LLM实例（兼容旧版本）
      */
     async createOpenAICompatibleLLM(model: string = "qwen-max", temperature: number = 0.8): Promise<ChatOpenAI<ChatOpenAICallOptions>> {
         const token = await this.getAPIToken();
@@ -112,7 +194,7 @@ export class AIUtils {
     }
 
     /**
-     * 创建OpenAI Embeddings实例
+     * 创建OpenAI Embeddings实例（兼容旧版本）
      */
     async createOpenAIEmbeddings(model: string = "text-embedding-v3", dimensions: number = 512): Promise<OpenAIEmbeddings> {
         const token = await this.getAPIToken();
