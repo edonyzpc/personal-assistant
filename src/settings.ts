@@ -48,8 +48,14 @@ export interface PluginManagerSettings {
     displaySectionCounts: boolean;
     countComments: boolean;
     animation: boolean;
-    modelName: string;
+    // AI模型配置
+    aiProvider: string; // 'qwen' | 'openai' | 'ollama'
     apiToken: string;
+    baseURL: string;
+    chatModelName: string;
+    embeddingModelName: string;
+    // 兼容旧版本
+    modelName: string;
     featuredImagePath: string;
     numFeaturedImages: number;
     vssCacheExcludePath: string[];
@@ -102,8 +108,14 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     displaySectionCounts: false,
     countComments: false,
     animation: false,
-    modelName: "qwen-plus",
+    // AI模型配置
+    aiProvider: "qwen",
     apiToken: "sk-xxx",
+    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    chatModelName: "qwen-plus",
+    embeddingModelName: "text-embedding-v3",
+    // 兼容旧版本
+    modelName: "qwen-plus",
     featuredImagePath: "9.src",
     numFeaturedImages: 2,
     vssCacheExcludePath: [".obsidian", "8.template", "9.src", "a.subjects", "b.notion"],
@@ -568,34 +580,82 @@ export class SettingTab extends PluginSettingTab {
 
         // setting for AI assistant
         containerEl.createEl('h2', { text: 'AI Assistant' });
-        containerEl.createEl("p", { text: 'AI Helper Only Support 通义千问 LLM' }).setAttr("style", "font-size:15px");
-        new Setting(containerEl).setName("Set Model Name")
-            .setDesc("Select the model name for AI Helper, only support qwen-max, qwen-turbo, qwen-plus")
+        containerEl.createEl("p", { text: 'AI Helper supports Qwen, OpenAI, and Ollama models' }).setAttr("style", "font-size:15px");
+
+        // AI Provider Selection
+        new Setting(containerEl).setName("AI Provider")
+            .setDesc("Select the AI service provider")
             .addDropdown(dropDown => {
-                const qwenMax = dropDown.addOption('qwen-max', 'qwen max');
-                const qwenTurbo = dropDown.addOption('qwen-turbo', 'qwen turbo');
-                const qwenPlus = dropDown.addOption('qwen-plus', 'qwen plus');
-                if (this.plugin.settings.modelName === 'qwen-max') {
-                    qwenMax.setDisabled(false);
-                    dropDown.setValue('qwen-max');
-                } else if (this.plugin.settings.modelName === 'qwen-turbo') {
-                    qwenTurbo.setDisabled(false);
-                    dropDown.setValue('qwen-turbo');
-                } else {
-                    qwenPlus.setDisabled(false);
-                    dropDown.setValue('qwen-plus');
-                }
+                dropDown.addOption('qwen', 'Qwen (通义千问)');
+                dropDown.addOption('openai', 'OpenAI');
+                dropDown.addOption('ollama', 'Ollama (Local)');
+
+                dropDown.setValue(this.plugin.settings.aiProvider);
                 dropDown.onChange(async (value) => {
-                    this.plugin.log("changing modle provider", value);
-                    this.plugin.settings.modelName = value;
+                    this.plugin.log("changing AI provider", value);
+                    this.plugin.settings.aiProvider = value;
+                    // 根据提供商设置默认值
+                    if (value === 'qwen') {
+                        this.plugin.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+                        this.plugin.settings.chatModelName = 'qwen-plus';
+                        this.plugin.settings.embeddingModelName = 'text-embedding-v3';
+                    } else if (value === 'openai') {
+                        this.plugin.settings.baseURL = 'https://api.openai.com/v1';
+                        this.plugin.settings.chatModelName = 'gpt-3.5-turbo';
+                        this.plugin.settings.embeddingModelName = 'text-embedding-3-small';
+                    } else if (value === 'ollama') {
+                        this.plugin.settings.baseURL = 'http://localhost:11434';
+                        this.plugin.settings.chatModelName = 'llama3.1';
+                        this.plugin.settings.embeddingModelName = 'mxbai-embed-large';
+                    }
+                    await this.plugin.saveSettings();
+                    this.display(); // 重新渲染设置界面
+                });
+            });
+
+        // Base URL Setting
+        new Setting(containerEl)
+            .setName("Base URL")
+            .setDesc("API base URL for the selected provider")
+            .addText((text) => {
+                text.setPlaceholder("https://api.openai.com/v1");
+                text.setValue(this.plugin.settings.baseURL);
+                text.onChange(async (value: string) => {
+                    this.plugin.settings.baseURL = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        // Chat Model Name
+        new Setting(containerEl)
+            .setName("Chat Model Name")
+            .setDesc("Name of the chat model to use")
+            .addText((text) => {
+                text.setPlaceholder("gpt-3.5-turbo");
+                text.setValue(this.plugin.settings.chatModelName);
+                text.onChange(async (value: string) => {
+                    this.plugin.settings.chatModelName = value;
+                    await this.plugin.saveSettings();
+                });
+            });
+
+        // Embedding Model Name
+        new Setting(containerEl)
+            .setName("Embedding Model Name")
+            .setDesc("Name of the embedding model to use")
+            .addText((text) => {
+                text.setPlaceholder("text-embedding-3-small");
+                text.setValue(this.plugin.settings.embeddingModelName);
+                text.onChange(async (value: string) => {
+                    this.plugin.settings.embeddingModelName = value;
                     await this.plugin.saveSettings();
                 });
             });
         new Setting(containerEl)
             .setName("API Token")
-            .setDesc("LLM Model related API Token. NOTE: your input token is protected by AES-GCM encryption.")
+            .setDesc("API Token for the selected provider. For Ollama, this can be empty. NOTE: your input token is protected by AES-GCM encryption.")
             .addText((text) => {
-                text.setPlaceholder("llm api token");
+                text.setPlaceholder("sk-xxx");
                 text.setValue(this.plugin.settings.apiToken);
                 text.onChange(async (value: string) => {
                     const crypto = new CryptoHelper();
@@ -604,27 +664,30 @@ export class SettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 });
             });
-        new Setting(containerEl)
-            .setName("AI Featured Image Path")
-            .setDesc("AI feautured image helper will download the images and save them to this path.")
-            .addText((text) => {
-                text.setPlaceholder("9.src");
-                text.setValue(this.plugin.settings.featuredImagePath.toString());
-                text.onChange(async (value: string) => {
-                    this.plugin.settings.featuredImagePath = value;
-                    await this.plugin.saveSettings();
-                });
-            });
-        new Setting(containerEl).setName("AI Featured Images Generating Number")
-            .setDesc("The number of images to generate when using AI Featured Image Helper.")
-            .addText(text => {
-                text.setPlaceholder('2')
-                    .setValue(this.plugin.settings.numFeaturedImages.toString())
-                    .onChange(async (value) => {
-                        plugin.settings.numFeaturedImages = parseInt(value);
+        // 图片生成设置（仅Qwen支持）
+        if (this.plugin.settings.aiProvider === 'qwen') {
+            new Setting(containerEl)
+                .setName("AI Featured Image Path")
+                .setDesc("AI feautured image helper will download the images and save them to this path.")
+                .addText((text) => {
+                    text.setPlaceholder("9.src");
+                    text.setValue(this.plugin.settings.featuredImagePath.toString());
+                    text.onChange(async (value: string) => {
+                        this.plugin.settings.featuredImagePath = value;
                         await this.plugin.saveSettings();
-                    })
-            });
+                    });
+                });
+            new Setting(containerEl).setName("AI Featured Images Generating Number")
+                .setDesc("The number of images to generate when using AI Featured Image Helper.")
+                .addText(text => {
+                    text.setPlaceholder('2')
+                        .setValue(this.plugin.settings.numFeaturedImages.toString())
+                        .onChange(async (value) => {
+                            plugin.settings.numFeaturedImages = parseInt(value);
+                            await this.plugin.saveSettings();
+                        })
+                });
+        }
         new Setting(containerEl).setName("VSS Exclude Path")
             .setDesc("Exclude files in the directory to cache vector store")
             .addText(text => {

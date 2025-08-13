@@ -27,7 +27,7 @@ export class VSS {
 
     async loadVectorStore(vssFiles: TFile[], isDelete: boolean = false) {
         if (!this.vectorStore) {
-            const embeddings = await this.aiService['aiUtils'].createOpenAIEmbeddings();
+            const embeddings = await this.aiService['aiUtils'].createEmbeddings();
             this.vectorStore = new MemoryVectorStore(embeddings);
         }
 

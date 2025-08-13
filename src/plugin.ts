@@ -43,6 +43,10 @@ export class PluginManager extends Plugin {
 
     async onload() {
         await this.loadSettings();
+
+        // 迁移旧版本设置
+        this.migrateSettings();
+
         // showup notification of plugin starting when it is in debug mode
         if (this.settings.debug) {
             new Notice("starting obsidian assistant");
@@ -577,7 +581,32 @@ export class PluginManager extends Plugin {
         }
     }
 
+    /**
+     * 迁移旧版本设置到新版本
+     */
+    private migrateSettings() {
+        try {
+            // 如果aiProvider未设置，说明是旧版本，进行迁移
+            if (!this.settings.aiProvider) {
+                this.log("Migrating settings from old version");
+                this.settings.aiProvider = 'qwen';
+                this.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+                this.settings.chatModelName = this.settings.modelName || 'qwen-plus';
+                this.settings.embeddingModelName = 'text-embedding-v3';
+                this.saveSettings();
+                this.log("Settings migration completed");
+            }
+        } catch (error) {
+            this.log("Error during settings migration:", error);
+        }
+    }
+
     async getAPIToken() {
+        // Ollama不需要API Token
+        if (this.settings.aiProvider === 'ollama') {
+            return "";
+        }
+
         if (this.token !== "") {
             return this.token;
         }
