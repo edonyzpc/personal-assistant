@@ -42,8 +42,9 @@
   },
   "dependencies": {
     "@floating-ui/core": "^1.6.8",
-    "@langchain/community": "^0.3.32",
-    "@langchain/core": "^0.3.40",
+    "@langchain/community": "^0.3.50",
+    "@langchain/core": "^0.3.70",
+    "@langchain/ollama": "^0.2.3",
     "@svelteuidev/composables": "^0.15.7",
     "@svelteuidev/core": "^0.15.7",
     "@svelteuidev/motion": "^0.15.7",
