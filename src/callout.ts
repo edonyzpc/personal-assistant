@@ -7,15 +7,27 @@ import type { PluginManager } from './plugin';
 import { type RGB, parseColorRGB } from './color';
 
 
+/**
+ * A modal for suggesting callouts to insert.
+ */
 export class CalloutModal extends SuggestModal<Callout> {
     private plugin: PluginManager;
 
+    /**
+     * Creates an instance of CalloutModal.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(app: App, plugin: PluginManager) {
         super(app);
         this.plugin = plugin;
     }
 
-    // Returns all available suggestions.
+    /**
+     * Returns all available suggestions.
+     * @param query - The user's query.
+     * @returns An array of callouts.
+     */
     getSuggestions(query: string): Callout[] {
         const callouts = this.plugin.calloutManager?.getCallouts();
         if (callouts) {
@@ -38,7 +50,11 @@ export class CalloutModal extends SuggestModal<Callout> {
             }]
     }
 
-    // Renders each suggestion item.
+    /**
+     * Renders each suggestion item.
+     * @param callout - The callout to render.
+     * @param el - The element to render the suggestion in.
+     */
     renderSuggestion(callout: Callout, el: HTMLElement) {
         const calloutContainerEl = el.createEl('div');
         calloutContainerEl.classList.add('calloutmanager-preview-container');
@@ -53,7 +69,11 @@ export class CalloutModal extends SuggestModal<Callout> {
         });
     }
 
-    // Perform action on the selected suggestion.
+    /**
+     * Perform action on the selected suggestion.
+     * @param callout - The selected callout.
+     * @param evt - The mouse or keyboard event.
+     */
     async onChooseSuggestion(callout: Callout, evt: MouseEvent | KeyboardEvent) {
         const title = getTitleFromCallout(callout);
         const calloutMarkdownContent = `
@@ -121,6 +141,11 @@ export class CalloutPreviewComponent extends Component {
     public readonly titleEl: HTMLElement;
     public readonly iconEl: HTMLElement;
 
+    /**
+     * Creates an instance of CalloutPreviewComponent.
+     * @param containerEl - The container element to attach the preview to.
+     * @param options - The options for the preview.
+     */
     public constructor(containerEl: HTMLElement | typeof NO_ATTACH, options: PreviewOptions) {
         super();
         const { color, icon, id, title, content } = options;

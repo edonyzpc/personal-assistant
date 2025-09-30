@@ -4,24 +4,42 @@ import { App, Notice, SuggestModal, addIcon, setIcon } from 'obsidian'
 
 import { icons } from './utils';
 
+/**
+ * Represents an Obsidian plugin.
+ */
 export interface Plugin {
+    /** The name of the plugin. */
     name: string;
+    /** The ID of the plugin. */
     id: string;
+    /** The description of the plugin. */
     desc: string;
+    /** Whether the plugin is enabled. */
     enbaled: boolean;
 }
 
+/**
+ * A modal for controlling plugins.
+ */
 export class PluginControlModal extends SuggestModal<Plugin> {
     private obsidianPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     private enabledColor = "green";
     private disabledColor = "red";
 
+    /**
+     * Creates an instance of PluginControlModal.
+     * @param app - The app instance.
+     */
     constructor(app: App) {
         super(app);
         this.obsidianPlugins = (app as any).plugins; // eslint-disable-line @typescript-eslint/no-explicit-any
     }
 
-    // Returns all available suggestions.
+    /**
+     * Returns all available suggestions.
+     * @param query - The user's query.
+     * @returns An array of plugins.
+     */
     getSuggestions(query: string): Plugin[] {
         'use strict'
         const disabledPlugins: Plugin[] = [];
@@ -48,7 +66,11 @@ export class PluginControlModal extends SuggestModal<Plugin> {
         return plugins.filter((plugin) => plugin.name.toLowerCase().includes(query.toLowerCase()));
     }
 
-    // Renders each suggestion item.
+    /**
+     * Renders each suggestion item.
+     * @param plugin - The plugin to render.
+     * @param el - The element to render the suggestion in.
+     */
     renderSuggestion(plugin: Plugin, el: HTMLElement) {
         const color = plugin.enbaled ? this.enabledColor : this.disabledColor;
 
@@ -65,7 +87,11 @@ export class PluginControlModal extends SuggestModal<Plugin> {
         el.createEl("small", { text: plugin.desc });
     }
 
-    // Perform action on the selected suggestion.
+    /**
+     * Perform action on the selected suggestion.
+     * @param plugin - The selected plugin.
+     * @param evt - The mouse or keyboard event.
+     */
     onChooseSuggestion(plugin: Plugin, evt: MouseEvent | KeyboardEvent) {
         if (!plugin.enbaled) {
             if (this.obsidianPlugins.enablePluginAndSave(plugin.id)) {

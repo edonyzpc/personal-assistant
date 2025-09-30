@@ -1,4 +1,7 @@
-/* Copyright 2023 edonyzpc */
+/**
+ * @file This file contains global type declarations.
+ * @copyright Copyright (c) 2023 edonyzpc
+ */
 
 export { };
 

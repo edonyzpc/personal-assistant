@@ -11,6 +11,9 @@ import {
     getFootnoteCount,
 } from "./stats-utils";
 
+/**
+ * A class for managing statistics.
+ */
 export default class StatsManager {
     private vault: Vault;
     private workspace: Workspace;
@@ -19,6 +22,11 @@ export default class StatsManager {
     private today: string;
     public debounceChange;
 
+    /**
+     * Creates an instance of StatsManager.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(app: App, plugin: PluginManager) {
         this.vault = app.vault;
         this.workspace = app.workspace;
@@ -72,10 +80,16 @@ export default class StatsManager {
         });
     }
 
+    /**
+     * Updates the statistics file.
+     */
     async update(): Promise<void> {
         this.vault.adapter.write(this.plugin.settings.statsPath, JSON.stringify(this.vaultStats, null, 2));
     }
 
+    /**
+     * Updates the statistics for today.
+     */
     async updateToday(): Promise<void> {
         if (this.vaultStats.history.hasOwnProperty(moment().format("YYYY-MM-DD"))) {
             this.today = moment().format("YYYY-MM-DD");
@@ -134,6 +148,10 @@ export default class StatsManager {
         await this.update();
     }
 
+    /**
+     * Handles a change in the editor.
+     * @param text - The new text in the editor.
+     */
     public async change(text: string) {
         /*
         if (this.plugin.settings.countComments) {
@@ -248,6 +266,9 @@ export default class StatsManager {
         }
     }
 
+    /**
+     * Recalculates the total statistics.
+     */
     public async recalcTotals() {
         if (!this.vaultStats) return;
         if (
@@ -267,6 +288,11 @@ export default class StatsManager {
         }
     }
 
+    /**
+     * Calculates the total number of words in the vault.
+     * @returns The total number of words.
+     * @private
+     */
     private async calcTotalWords(): Promise<number> {
         let words = 0;
 
@@ -281,6 +307,11 @@ export default class StatsManager {
         return words;
     }
 
+    /**
+     * Calculates the total number of characters in the vault.
+     * @returns The total number of characters.
+     * @private
+     */
     private async calcTotalCharacters(): Promise<number> {
         let characters = 0;
         const files = this.vault.getFiles();
@@ -293,6 +324,11 @@ export default class StatsManager {
         return characters;
     }
 
+    /**
+     * Calculates the total number of sentences in the vault.
+     * @returns The total number of sentences.
+     * @private
+     */
     private async calcTotalSentences(): Promise<number> {
         let sentence = 0;
         const files = this.vault.getFiles();
@@ -305,6 +341,11 @@ export default class StatsManager {
         return sentence;
     }
 
+    /**
+     * Calculates the total number of pages in the vault.
+     * @returns The total number of pages.
+     * @private
+     */
     private async calcTotalPages(): Promise<number> {
         let pages = 0;
 
@@ -319,6 +360,11 @@ export default class StatsManager {
         return pages;
     }
 
+    /**
+     * Calculates the total number of footnotes in the vault.
+     * @returns The total number of footnotes.
+     * @private
+     */
     private async calcTotalFootnotes(): Promise<number> {
         let footnotes = 0;
         const files = this.vault.getFiles();
@@ -331,6 +377,11 @@ export default class StatsManager {
         return footnotes;
     }
 
+    /**
+     * Calculates the total number of citations in the vault.
+     * @returns The total number of citations.
+     * @private
+     */
     private async calcTotalCitations(): Promise<number> {
         let citations = 0;
         const files = this.vault.getFiles();
@@ -343,58 +394,111 @@ export default class StatsManager {
         return citations;
     }
 
+    /**
+     * Gets the number of words written today.
+     * @returns The number of words written today.
+     */
     public getDailyWords(): number {
         return this.vaultStats.history[this.today].words;
     }
 
+    /**
+     * Gets the number of characters written today.
+     * @returns The number of characters written today.
+     */
     public getDailyCharacters(): number {
         return this.vaultStats.history[this.today].characters;
     }
 
+    /**
+     * Gets the number of sentences written today.
+     * @returns The number of sentences written today.
+     */
     public getDailySentences(): number {
         return this.vaultStats.history[this.today].sentences;
     }
 
+    /**
+     * Gets the number of footnotes written today.
+     * @returns The number of footnotes written today.
+     */
     public getDailyFootnotes(): number {
         return this.vaultStats.history[this.today].footnotes;
     }
 
+    /**
+     * Gets the number of citations written today.
+     * @returns The number of citations written today.
+     */
     public getDailyCitations(): number {
         return this.vaultStats.history[this.today].citations;
     }
+
+    /**
+     * Gets the number of pages written today.
+     * @returns The number of pages written today.
+     */
     public getDailyPages(): number {
         return this.vaultStats.history[this.today].pages;
     }
 
+    /**
+     * Gets the total number of files in the vault.
+     * @returns The total number of files.
+     */
     public getTotalFiles(): number {
         return this.vault.getMarkdownFiles().length;
     }
 
+    /**
+     * Gets the total number of words in the vault.
+     * @returns The total number of words.
+     */
     public async getTotalWords(): Promise<number> {
         if (!this.vaultStats) return await this.calcTotalWords();
         return this.vaultStats.history[this.today].totalWords;
     }
 
+    /**
+     * Gets the total number of characters in the vault.
+     * @returns The total number of characters.
+     */
     public async getTotalCharacters(): Promise<number> {
         if (!this.vaultStats) return await this.calcTotalCharacters();
         return this.vaultStats.history[this.today].totalCharacters;
     }
 
+    /**
+     * Gets the total number of sentences in the vault.
+     * @returns The total number of sentences.
+     */
     public async getTotalSentences(): Promise<number> {
         if (!this.vaultStats) return await this.calcTotalSentences();
         return this.vaultStats.history[this.today].totalSentences;
     }
 
+    /**
+     * Gets the total number of footnotes in the vault.
+     * @returns The total number of footnotes.
+     */
     public async getTotalFootnotes(): Promise<number> {
         if (!this.vaultStats) return await this.calcTotalFootnotes();
         return this.vaultStats.history[this.today].totalFootnotes;
     }
 
+    /**
+     * Gets the total number of citations in the vault.
+     * @returns The total number of citations.
+     */
     public async getTotalCitations(): Promise<number> {
         if (!this.vaultStats) return await this.calcTotalCitations();
         return this.vaultStats.history[this.today].totalCitations;
     }
 
+    /**
+     * Gets the total number of pages in the vault.
+     * @returns The total number of pages.
+     */
     public async getTotalPages(): Promise<number> {
         if (!this.vaultStats) return await this.calcTotalPages();
         return this.vaultStats.history[this.today].totalPages;

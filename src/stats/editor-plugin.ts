@@ -6,6 +6,9 @@ import type PluginManager from "../main";
 import { getWordCount } from "./stats-utils";
 import { MATCH_COMMENT, MATCH_HTML_COMMENT } from "../constant";
 
+/**
+ * A state field that holds the plugin instance.
+ */
 export const pluginField = StateField.define<PluginManager | null>({
     create(state) {
         return null;
@@ -15,13 +18,24 @@ export const pluginField = StateField.define<PluginManager | null>({
     },
 });
 
+/**
+ * A view plugin that updates the status bar.
+ */
 class StatusBarEditorPlugin implements PluginValue {
     view: EditorView;
 
+    /**
+     * Creates an instance of StatusBarEditorPlugin.
+     * @param view - The editor view.
+     */
     constructor(view: EditorView) {
         this.view = view;
     }
 
+    /**
+     * Updates the plugin.
+     * @param update - The view update.
+     */
     update(update: ViewUpdate): void {
         const tr = update.transactions[0];
 
@@ -67,11 +81,17 @@ class StatusBarEditorPlugin implements PluginValue {
         }
     }
 
+    /**
+     * Destroys the plugin.
+     */
     destroy() { }
 }
 
 export const statusBarEditorPlugin = ViewPlugin.fromClass(StatusBarEditorPlugin);
 
+/**
+ * The data for a section count.
+ */
 interface SectionCountData {
     line: number;
     level: number;
@@ -80,9 +100,16 @@ interface SectionCountData {
     pos: number;
 }
 
+/**
+ * A widget for displaying the word count of a section.
+ */
 class SectionWidget extends WidgetType {
     data: SectionCountData;
 
+    /**
+     * Creates an instance of SectionWidget.
+     * @param data - The data for the section count.
+     */
     constructor(data: SectionCountData) {
         super();
         this.data = data;
@@ -106,10 +133,17 @@ class SectionWidget extends WidgetType {
     }
 }
 
+/**
+ * A view plugin for displaying the word count of each section.
+ */
 class SectionWordCountEditorPlugin implements PluginValue {
     decorations: DecorationSet;
     lineCounts: any[] = []; // eslint-disable-line @typescript-eslint/no-explicit-any
 
+    /**
+     * Creates an instance of SectionWordCountEditorPlugin.
+     * @param view - The editor view.
+     */
     constructor(view: EditorView) {
         const plugin = view.state.field(pluginField);
         if (plugin && !plugin.settings.displaySectionCounts) {
@@ -121,6 +155,11 @@ class SectionWordCountEditorPlugin implements PluginValue {
         this.decorations = this.mkDeco(view);
     }
 
+    /**
+     * Calculates the word count for each line in the document.
+     * @param state - The editor state.
+     * @param plugin - The plugin instance.
+     */
     calculateLineCounts(state: EditorState, plugin: PluginManager) {
         const stripComments = plugin.settings.countComments;
         let docStr = state.doc.toString();
@@ -148,6 +187,10 @@ class SectionWordCountEditorPlugin implements PluginValue {
         }
     }
 
+    /**
+     * Updates the plugin.
+     * @param update - The view update.
+     */
     update(update: ViewUpdate) {
         const plugin = update.view.state.field(pluginField);
         if (!plugin) {
@@ -233,6 +276,11 @@ class SectionWordCountEditorPlugin implements PluginValue {
         }
     }
 
+    /**
+     * Creates the decorations for the plugin.
+     * @param view - The editor view.
+     * @returns The decorations.
+     */
     mkDeco(view: EditorView) {
         const plugin = view.state.field(pluginField);
         const b = new RangeSetBuilder<Decoration>();

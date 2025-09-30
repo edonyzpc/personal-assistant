@@ -1,5 +1,7 @@
-<!-- Copyright 2023 edonyzpc -->
-
+<!--
+  @component
+  A component for displaying a list of records.
+-->
 <script lang="ts">
 	import {
 		App,
@@ -12,15 +14,30 @@
 	} from "obsidian";
 	import { tick } from "svelte";
 	import type { PluginManager } from "plugin";
+
+	/** The app instance. */
 	export let app: App;
+	/** The list of file names. */
 	export let fileNames: string[];
+	/** The container element. */
 	export let container: HTMLElement;
+	/** The PluginManager instance. */
 	export let plugin: PluginManager;
 
+	/**
+	 * Reads a markdown file.
+	 * @param file - The path to the file.
+	 * @returns The content of the file.
+	 */
 	async function readMarkdownFile(file: string) {
 		return app.vault.adapter.read(file);
 	}
 
+	/**
+	 * Gets the sub-container element.
+	 * @param id - The ID of the element.
+	 * @returns The element, or the container if the element is not found.
+	 */
 	const subContainer = (id: string) => {
 		const element = document.getElementById(id);
 		if (element) {
@@ -32,11 +49,20 @@
 		}
 	};
 
+	/**
+	 * Checks if the platform is mobile.
+	 * @returns A boolean indicating whether the platform is mobile.
+	 */
 	const isMobile = () => {
 		plugin.log("this is Mobile", Platform.isMobile);
 		return Platform.isMobile;
 	};
 
+	/**
+	 * Checks if a plugin is enabled.
+	 * @param pluginID - The ID of the plugin.
+	 * @returns A boolean indicating whether the plugin is enabled.
+	 */
 	const isPluginEnabled = (pluginID: string) => {
 		return (
 			(app as any).plugins.manifests.hasOwnProperty(pluginID) &&
@@ -207,6 +233,13 @@
 		}
 	};
 
+	/**
+	 * Renders markdown content.
+	 * @param markdown - The markdown content to render.
+	 * @param containerEl - The container element to render the markdown in.
+	 * @param sourcePath - The source path of the markdown file.
+	 * @param lifecycleComponent - The lifecycle component.
+	 */
 	const renderMarkdown = async (
 		markdown: string,
 		containerEl: HTMLElement,
@@ -361,6 +394,11 @@
 		});
 	};
 
+	/**
+	 * Adds a clickable event to a record.
+	 * @param id - The ID of the record.
+	 * @param target - The target of the record.
+	 */
 	const addClickableforRecord = async (id: string, target: string) => {
 		// Waits until Svelte finished updating the DOM
 		await tick();

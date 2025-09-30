@@ -1,3 +1,7 @@
+<!--
+  @component
+  A floating AI window that can be dragged around.
+-->
 <script lang="ts">
 	import { App, Editor, MarkdownView } from "obsidian";
 	import {
@@ -11,10 +15,15 @@
 	import AIButton from "./AIButton.svelte";
 	import type { PluginManager } from "plugin";
 
+	/** The PluginManager instance. */
 	export let plugin: PluginManager;
+	/** The editor instance. */
 	export let editor: Editor;
+	/** The markdown view instance. */
 	export let view: MarkdownView;
+	/** The app instance. */
 	export let app: App;
+	/** The selected query. */
 	export let selectedQuery: string;
 
 	let aiWinRef: any;
@@ -22,6 +31,11 @@
 		? "dark"
 		: "light";
 	let showTooltip: boolean = false;
+
+	/**
+	 * Makes the AI window draggable.
+	 * @param node - The AI window element.
+	 */
 	function dragMe(node: HTMLElement) {
 		let moving = false;
 		let left = window.innerWidth / 6;
@@ -51,6 +65,9 @@
 		});
 	}
 
+	/**
+	 * Pops up the AI button.
+	 */
 	function popupAIButton() {
 		let el: HTMLElement;
 		const aiEl = document.getElementById("floating-ai");

@@ -5,6 +5,9 @@ import { Notice, addIcon, setIcon } from "obsidian";
 import { PluginManager } from "./plugin";
 import { generateRandomString, icons } from './utils';
 
+/**
+ * A class for creating and managing a progress bar.
+ */
 export class ProgressBar {
     private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     private noticeEl: DocumentFragment;
@@ -17,6 +20,12 @@ export class ProgressBar {
     private gridTextID: string;
     private notice!: Notice;
 
+    /**
+     * Creates an instance of ProgressBar.
+     * @param plugin - The PluginManager instance.
+     * @param ID - The ID of the progress bar.
+     * @param total - The total number of steps.
+     */
     constructor(plugin: PluginManager, ID: string, total: number) {
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
         this.idNumber = generateRandomString();
@@ -50,6 +59,11 @@ export class ProgressBar {
         addIcon('SWITCH_OFF_STATUS', icons['SWITCH_OFF_STATUS']);
     }
 
+    /**
+     * Adds a div to the progress bar.
+     * @param itemID - The ID of the item.
+     * @param divText - The text to display in the div.
+     */
     addDiv(itemID: string, divText: string) {
         const noticeEl = document.getElementById(this.gridID);
         if (noticeEl) {
@@ -67,6 +81,9 @@ export class ProgressBar {
         }
     }
 
+    /**
+     * Shows the progress bar.
+     */
     show() {
         if (this.notice) {
             //  the Notice will stay visible until the user manually hide() it.
@@ -78,10 +95,19 @@ export class ProgressBar {
         progressBarGrid?.parentElement?.addClass('progress-bar-notice');
     }
 
+    /**
+     * Hides the progress bar.
+     */
     hide() {
         this.notice.hide();
     }
 
+    /**
+     * Steps in the progress bar.
+     * @param itemID - The ID of the item.
+     * @param divText - The text to display in the div.
+     * @param total - The total number of steps.
+     */
     stepin(itemID: string, divText: string, total?: number) {
         let totalSteps = this.totalSteps;
         if (total) {
@@ -109,6 +135,10 @@ export class ProgressBar {
         }
     }
 
+    /**
+     * Updates the progress bar.
+     * @param percentage - The percentage to update the progress bar to.
+     */
     updateProgress(percentage: number) {
         const spanProgressBar = document.getElementById(this.gridDivSpanID);
         spanProgressBar?.setAttr("style", `width:${percentage}%`);

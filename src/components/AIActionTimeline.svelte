@@ -1,23 +1,29 @@
+<!--
+  @component
+  A component for displaying a timeline of AI actions.
+-->
 <script lang="ts">
 	import { Text, ThemeIcon, Timeline } from "@svelteuidev/core";
 	import { Commit, EyeOpen, LightningBolt } from "svelte-radix";
 
+	/** The content of the AI. */
 	export let aiContent: string;
+	/** The AI robot. */
 	export let aiRobot: string;
 </script>
 
 <Timeline active={2} bulletSize={24} lineWidth={2}>
-	<Timeline.Item bullet={LightningBolt} title="通义千问初始化">
+	<Timeline.Item bullet={LightningBolt} title="Tongyi Qwen Initialization">
 		<Text color="dimmed" size="sm">{aiRobot}</Text>
 		<Text size="xs">1 second ago</Text>
 	</Timeline.Item>
 
-	<Timeline.Item bullet={Commit} title="Qwen-max推理过程">
+	<Timeline.Item bullet={Commit} title="Qwen-max Reasoning Process">
 		<Text color="dimmed" size="sm">{aiContent}</Text>
 		<Text size="xs">7 seconds ago</Text>
 	</Timeline.Item>
 
-	<Timeline.Item title="ReAct任务检查">
+	<Timeline.Item title="ReAct Task Check">
 		<svelte:fragment slot="bullet">
 			<ThemeIcon radius="xl" color="green"
 				><EyeOpen size={16} /></ThemeIcon

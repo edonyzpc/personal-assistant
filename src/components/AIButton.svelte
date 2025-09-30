@@ -1,3 +1,7 @@
+<!--
+  @component
+  A floating AI button with a dropdown menu of actions.
+-->
 <script lang="ts">
 	import {
 		SvelteUIProvider,
@@ -29,18 +33,24 @@
 	import AiActionTimeline from "./AIActionTimeline.svelte";
 	import AiIcon from "./AIIcon.svelte";
 
+	/** The reference to the parent component. */
 	export let parentRef: any;
+	/** The PluginManager instance. */
 	export let plugin: PluginManager;
+	/** The editor instance. */
 	export let editor: Editor;
+	/** The markdown view instance. */
 	export let view: MarkdownView;
+	/** The app instance. */
 	export let app: App;
+	/** The selected query. */
 	export let selectedQuery: string;
 	// dropdown item
 	let prompts: SelectItem[] = [
-		{ label: "自动backlink管理", value: `AssitantRobotBacklink` },
-		{ label: "自动标签管理", value: `AssistantRobot` },
+		{ label: "Auto Backlink Management", value: `AssitantRobotBacklink` },
+		{ label: "Auto Tag Management", value: `AssistantRobot` },
 		{
-			label: "待定...",
+			label: "Coming soon...",
 			value: `What is another personal fact that an attacker could easily find with Google?`,
 			disabled: true,
 		},
@@ -52,6 +62,9 @@
 		: "light";
 	let aiButtonRef: any;
 
+	/**
+	 * Dispatches the selected robot task.
+	 */
 	const dispatchRobotTask = async () => {
 		if (selected === "AssistantRobot") {
 			const robot = new AssistantRobot(
@@ -86,6 +99,9 @@
 		}
 	};
 
+	/**
+	 * Closes the AI button.
+	 */
 	const closeAIButton = () => {
 		aiButtonRef.$destroy();
 		// clear parent ref
@@ -108,7 +124,7 @@
 				data={prompts}
 				bind:value={selected}
 				placeholder="Pick one"
-				label="选择你的助手"
+				label="Select your assistant"
 				icon={AiIcon}
 				size="md"
 			>

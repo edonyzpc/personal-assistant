@@ -1,10 +1,19 @@
-/* Copyright 2023 edonyzpc */
+/**
+ * @file This file contains utility functions and classes.
+ * @copyright Copyright (c) 2023 edonyzpc
+ */
 
 import { App, requestUrl, normalizePath } from 'obsidian';
 import JSZip from 'jszip';
 
+/**
+ * A test token.
+ */
 export const TEST_TOKEN = "personal-assistant";
 
+/**
+ * A record of icons.
+ */
 export const icons: Record<string, string> = {
     PluginAST: `<svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="100" height="100" viewBox="0 0 172 172" style=" fill:#000000;"><g fill="none" fill-rule="nonzero" stroke="none" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="" stroke-dashoffset="0" font-family="none" font-weight="none" font-size="none" text-anchor="none" style="mix-blend-mode: normal"><path d="M0,172v-172h172v172z" fill="none"></path><g fill="currentColor"><path d="M53.75,21.5c-8.27246,0 -14.86523,5.20703 -18.39257,12.09375c-8.39844,1.76368 -15.91504,6.84473 -19.31641,15.03321c-6.50879,15.5371 -16.04102,41.53027 -16.04102,64.24804c0,20.70215 16.92285,37.625 37.625,37.625c14.90723,0 27.75683,-8.86035 33.84571,-21.5h29.05859c6.08886,12.63965 18.93847,21.5 33.8457,21.5c20.70215,0 37.625,-16.92285 37.625,-37.625c0,-8.44043 -2.60351,-19.44239 -5.87891,-30.90625c-3.31739,-11.50585 -7.39062,-23.26367 -10.58203,-32.08203c-3.10742,-8.44043 -10.41406,-13.85742 -18.77051,-15.99902c-3.48534,-7.05469 -10.12011,-12.3877 -18.51855,-12.3877c-7.68457,0 -13.73145,4.61915 -17.51074,10.75h-29.47852c-3.77929,-6.13085 -9.82617,-10.75 -17.51074,-10.75zM53.75,32.25c4.70313,0 8.6084,3.02344 10.07813,7.18067l1.25977,3.56933h41.82422l1.25976,-3.56933c1.46973,-4.15723 5.375,-7.18067 10.07813,-7.18067c4.8291,0 8.77636,3.19141 10.16211,7.5166l1.00781,3.14942l3.27539,0.50391c5.87891,0.92382 10.70801,4.61914 12.76563,10.1621c2.81348,7.72656 6.21484,17.7627 9.19629,27.71484c-5.87891,-3.77929 -12.80761,-6.04687 -20.28223,-6.04687c-14.90723,0 -27.75683,8.86035 -33.8457,21.5h-29.05859c-6.08888,-12.63965 -18.93848,-21.5 -33.84571,-21.5c-8.18848,0 -15.74707,2.72949 -21.91992,7.22266c3.06543,-11.21192 7.01269,-21.87793 10.24609,-29.68848c2.22558,-5.375 7.22266,-8.86034 13.10156,-9.49023l3.44335,-0.37793l1.0918,-3.2754c1.42773,-4.2832 5.375,-7.39062 10.1621,-7.39062zM37.625,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM134.375,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM74.7041,107.5h22.59179c-0.25195,1.76368 -0.5459,3.52734 -0.5459,5.375c0,1.84766 0.29395,3.61133 0.5459,5.375h-22.59179c0.25195,-1.76367 0.5459,-3.52734 0.5459,-5.375c0,-1.84766 -0.29395,-3.61132 -0.5459,-5.375z"></path></g></g></svg>`,
     //PluginAST_STATUSBAR: `<svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" width="100" height="100" viewBox="0 0 172 172"><g fill="currentColor" fill-rule="nonzero" stroke="none" stroke-width="1" stroke-linecap="butt" stroke-linejoin="miter" stroke-miterlimit="10" stroke-dasharray="" stroke-dashoffset="0" font-family="none" font-weight="none" font-size="none" text-anchor="none" style="mix-blend-mode: normal"><path d="M0,172v-172h172v172z" fill="none"></path><g fill="currentColor"><path d="M53.75,21.5c-8.27246,0 -14.86523,5.20703 -18.39257,12.09375c-8.39844,1.76368 -15.91504,6.84473 -19.31641,15.03321c-6.50879,15.5371 -16.04102,41.53027 -16.04102,64.24804c0,20.70215 16.92285,37.625 37.625,37.625c14.90723,0 27.75683,-8.86035 33.84571,-21.5h29.05859c6.08886,12.63965 18.93847,21.5 33.8457,21.5c20.70215,0 37.625,-16.92285 37.625,-37.625c0,-8.44043 -2.60351,-19.44239 -5.87891,-30.90625c-3.31739,-11.50585 -7.39062,-23.26367 -10.58203,-32.08203c-3.10742,-8.44043 -10.41406,-13.85742 -18.77051,-15.99902c-3.48534,-7.05469 -10.12011,-12.3877 -18.51855,-12.3877c-7.68457,0 -13.73145,4.61915 -17.51074,10.75h-29.47852c-3.77929,-6.13085 -9.82617,-10.75 -17.51074,-10.75zM53.75,32.25c4.70313,0 8.6084,3.02344 10.07813,7.18067l1.25977,3.56933h41.82422l1.25976,-3.56933c1.46973,-4.15723 5.375,-7.18067 10.07813,-7.18067c4.8291,0 8.77636,3.19141 10.16211,7.5166l1.00781,3.14942l3.27539,0.50391c5.87891,0.92382 10.70801,4.61914 12.76563,10.1621c2.81348,7.72656 6.21484,17.7627 9.19629,27.71484c-5.87891,-3.77929 -12.80761,-6.04687 -20.28223,-6.04687c-14.90723,0 -27.75683,8.86035 -33.8457,21.5h-29.05859c-6.08888,-12.63965 -18.93848,-21.5 -33.84571,-21.5c-8.18848,0 -15.74707,2.72949 -21.91992,7.22266c3.06543,-11.21192 7.01269,-21.87793 10.24609,-29.68848c2.22558,-5.375 7.22266,-8.86034 13.10156,-9.49023l3.44335,-0.37793l1.0918,-3.2754c1.42773,-4.2832 5.375,-7.39062 10.1621,-7.39062zM37.625,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM134.375,86c14.90723,0 26.875,11.96777 26.875,26.875c0,14.90723 -11.96777,26.875 -26.875,26.875c-14.90723,0 -26.875,-11.96777 -26.875,-26.875c0,-14.90723 11.96777,-26.875 26.875,-26.875zM74.7041,107.5h22.59179c-0.25195,1.76368 -0.5459,3.52734 -0.5459,5.375c0,1.84766 0.29395,3.61133 0.5459,5.375h-22.59179c0.25195,-1.76367 0.5459,-3.52734 0.5459,-5.375c0,-1.84766 -0.29395,-3.61132 -0.5459,-5.375z"></path></g></g></svg>`,
@@ -19,16 +28,31 @@ export const icons: Record<string, string> = {
     PLUGIN_AI_BRAIN: `<svg xmlns="http://www.w3.org/2000/svg" width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-brain-icon lucide-brain"><path d="M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z"/><path d="M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z"/><path d="M15 13a4.5 4.5 0 0 1-3-4 4.5 4.5 0 0 1-3 4"/><path d="M17.599 6.5a3 3 0 0 0 .399-1.375"/><path d="M6.003 5.125A3 3 0 0 0 6.401 6.5"/><path d="M3.477 10.896a4 4 0 0 1 .585-.396"/><path d="M19.938 10.5a4 4 0 0 1 .585.396"/><path d="M6 18a4 4 0 0 1-1.967-.516"/><path d="M19.967 17.484A4 4 0 0 1 18 18"/></svg>`,
 };
 
+/**
+ * Generates a random string.
+ * @returns A random string.
+ */
 export const generateRandomString = () => {
     return Math.floor(Math.random() * Date.now()).toString(6);
 };
 
+/**
+ * Downloads a zip file from a URL.
+ * @param url - The URL of the zip file.
+ * @returns The zip file as an ArrayBuffer.
+ */
 export const downloadZipFile = async (url: string) => {
     const fetched = await requestUrl({ url });
     const bytes = fetched.arrayBuffer;
     return bytes;
 };
 
+/**
+ * Extracts a zip file to a folder.
+ * @param writer - The app instance.
+ * @param zipBytes - The zip file as an ArrayBuffer.
+ * @param targetPath - The path to the target folder.
+ */
 export const extractToFold = async (writer: App, zipBytes: ArrayBuffer, targetPath: string) => {
     const zip = new JSZip();
     zip.loadAsync(zipBytes);
@@ -41,6 +65,12 @@ export const extractToFold = async (writer: App, zipBytes: ArrayBuffer, targetPa
     });
 }
 
+/**
+ * Extracts a file from a zip file.
+ * @param zipBytes - The zip file as an ArrayBuffer.
+ * @param fileName - The name of the file to extract.
+ * @returns The content of the file, or null if it fails.
+ */
 export const extractFile = async (zipBytes: ArrayBuffer, fileName: string) => {
     let zip = new JSZip();
     zip = await zip.loadAsync(zipBytes);
@@ -57,21 +87,31 @@ export const extractFile = async (zipBytes: ArrayBuffer, fileName: string) => {
     }
 }
 
-// code from https://github.com/meld-cp/obsidian-encrypt/blob/main/src/services/CryptoHelper.ts
-const vectorSize = 16;
-const utf8Encoder = new TextEncoder();
-const utf8Decoder = new TextDecoder();
-const iterations = 1000;
+/**
+ * A salt for the crypto helper.
+ */
 const salt = utf8Encoder.encode('XHWnDAT6ehMVY2zD');
+/**
+ * The password for the personal assistant.
+ */
 export const personalAssitant = "personal-assistant-plugin-api-token";
+/**
+ * The query for the AI.
+ */
 export const queryAI = "X-Api-Auth=36fb38ddc202fec";
 
+/**
+ * A helper class for cryptography.
+ * The code is from https://github.com/meld-cp/obsidian-encrypt/blob/main/src/services/CryptoHelper.ts
+ */
 export class CryptoHelper {
 
-    // constructor(){
-    // 	console.debug('new CryptoHelper');
-    // }
-
+    /**
+     * Derives a key from a password.
+     * @param password - The password to derive the key from.
+     * @returns The derived key.
+     * @private
+     */
     private async deriveKey(password: string): Promise<CryptoKey> {
         const buffer = utf8Encoder.encode(password);
         const key = await crypto.subtle.importKey('raw', buffer, { name: 'PBKDF2' }, false, ['deriveKey']);
@@ -94,6 +134,12 @@ export class CryptoHelper {
         return privateKey;
     }
 
+    /**
+     * Encrypts a string to bytes.
+     * @param text - The string to encrypt.
+     * @param password - The password to encrypt the string with.
+     * @returns The encrypted string as a Uint8Array.
+     */
     public async encryptToBytes(text: string, password: string): Promise<Uint8Array> {
 
         const key = await this.deriveKey(password);
@@ -117,6 +163,12 @@ export class CryptoHelper {
         return finalBytes;
     }
 
+    /**
+     * Converts a Uint8Array to a string.
+     * @param bytes - The Uint8Array to convert.
+     * @returns The converted string.
+     * @private
+     */
     private convertToString(bytes: Uint8Array): string {
         let result = '';
         for (let idx = 0; idx < bytes.length; idx++) {
@@ -126,6 +178,12 @@ export class CryptoHelper {
         return result;
     }
 
+    /**
+     * Encrypts a string to a base64 string.
+     * @param text - The string to encrypt.
+     * @param password - The password to encrypt the string with.
+     * @returns The encrypted string as a base64 string.
+     */
     public async encryptToBase64(text: string, password: string): Promise<string> {
 
         const finalBytes = await this.encryptToBytes(text, password);
@@ -136,6 +194,12 @@ export class CryptoHelper {
         return base64Text;
     }
 
+    /**
+     * Converts a string to a Uint8Array.
+     * @param str - The string to convert.
+     * @returns The converted Uint8Array.
+     * @private
+     */
     private stringToArray(str: string): Uint8Array {
         const result = [];
         for (let i = 0; i < str.length; i++) {
@@ -144,6 +208,12 @@ export class CryptoHelper {
         return new Uint8Array(result);
     }
 
+    /**
+     * Decrypts a Uint8Array to a string.
+     * @param encryptedBytes - The Uint8Array to decrypt.
+     * @param password - The password to decrypt the Uint8Array with.
+     * @returns The decrypted string, or null if it fails.
+     */
     public async decryptFromBytes(encryptedBytes: Uint8Array, password: string): Promise<string | null> {
         try {
 
@@ -171,6 +241,12 @@ export class CryptoHelper {
         }
     }
 
+    /**
+     * Decrypts a base64 string to a string.
+     * @param base64Encoded - The base64 string to decrypt.
+     * @param password - The password to decrypt the base64 string with.
+     * @returns The decrypted string, or null if it fails.
+     */
     public async decryptFromBase64(base64Encoded: string, password: string): Promise<string | null> {
         try {
 
@@ -178,24 +254,6 @@ export class CryptoHelper {
 
             return await this.decryptFromBytes(bytesToDecode, password);
 
-            // // extract iv
-            // const vector = bytesToDecode.slice(0,vectorSize);
-
-            // // extract encrypted text
-            // const encryptedTextBytes = bytesToDecode.slice(vectorSize);
-
-            // const key = await this.deriveKey(password);
-
-            // // decrypt into bytes
-            // let decryptedBytes = await crypto.subtle.decrypt(
-            // 	{name: 'AES-GCM', iv: vector},
-            // 	key,
-            // 	encryptedTextBytes
-            // );
-
-            // // convert bytes to text
-            // let decryptedText = utf8Decoder.decode(decryptedBytes);
-            // return decryptedText;
         } catch (e) {
             console.error(e);
             return null;
@@ -204,6 +262,12 @@ export class CryptoHelper {
 
 }
 
+/**
+ * Checks if a plugin is enabled.
+ * @param app - The app instance.
+ * @param pluginID - The ID of the plugin.
+ * @returns A boolean indicating whether the plugin is enabled.
+ */
 export const isPluginEnabled = (app: App, pluginID: string) => {
     return (
         (app as any).plugins.manifests.hasOwnProperty(pluginID) && (app as any).plugins.enabledPlugins.has(pluginID) // eslint-disable-line @typescript-eslint/no-explicit-any

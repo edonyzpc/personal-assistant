@@ -22,10 +22,20 @@ import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
 import AIWindow from './components/AIWindow.svelte'
 
+/**
+ * Prints debug messages to the console if the debug flag is enabled.
+ *
+ * @param debug - A boolean indicating whether to print the debug message.
+ * @param msg - The message(s) to be printed.
+ */
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
 };
 
+/**
+ * The main class for the Personal Assistant plugin.
+ * This class manages the plugin's lifecycle, settings, commands, and views.
+ */
 export class PluginManager extends Plugin {
     settings!: PluginManagerSettings
     private localGraph = new LocalGraph(this.app, this);
@@ -41,6 +51,10 @@ export class PluginManager extends Plugin {
     private token: string = "";
 
 
+    /**
+     * This method is called when the plugin is loaded.
+     * It initializes the plugin's settings, commands, and views.
+     */
     async onload() {
         await this.loadSettings();
 
@@ -348,24 +362,45 @@ export class PluginManager extends Plugin {
         this.addSettingTab(this.settingTab);
     }
 
+    /**
+     * This method is called when the plugin is unloaded.
+     * It can be used to clean up any resources used by the plugin.
+     */
     onunload() {
 
     }
 
+    /**
+     * Loads the plugin's settings from the data file.
+     * If no settings are found, it uses the default settings.
+     */
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
         this.log("logging settings...", this.settings);
     }
 
+    /**
+     * Saves the plugin's settings to the data file.
+     */
     async saveSettings() {
         await this.saveData(this.settings);
     }
 
+    /**
+     * Prints a message to the console if debug mode is enabled.
+     *
+     * @param msg - The message(s) to be logged.
+     */
     log(...msg: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
         debug(this.settings.debug, ...msg);
     }
 
-    // the following is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102
+    /**
+     * Creates a directory if it does not already exist.
+     * This method is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102
+     * @param dir The path to the directory to be created.
+     * @private
+     */
     private async createDirectory(dir: string): Promise<void> {
         const { vault } = this.app;
         const root = vault.getRoot().path;
@@ -381,10 +416,13 @@ export class PluginManager extends Plugin {
     }
 
     /**
-     * Handles creating the new note
-     * A new markdown file will be created at the given file path (`input`)
-     * in the specified parent folder (`this.folder`)
-     **/
+     * Creates a new note in the specified path with the given file name.
+     * If the file already exists, it opens the existing file.
+     * If the directory does not exist, it creates the directory.
+     *
+     * @param targetPath - The path to the target directory.
+     * @param fileName - The name of the new file.
+     */
     async createNewNote(targetPath: string, fileName: string): Promise<void> {
         const { vault } = this.app;
         const root = vault.getRoot().path;
@@ -425,12 +463,22 @@ export class PluginManager extends Plugin {
      * - Converts path separators to '/' on all platforms
      * - Removes duplicate separators
      * - Removes trailing slash
-     **/
+     *
+     * @param strings - The strings to be joined into a path.
+     * @returns The normalized path.
+     */
     join(...strings: string[]): string {
         const parts = strings.map((s) => String(s).trim()).filter((s) => s != null);
         return normalizePath(parts.join('/'));
     }
 
+    /**
+     * Updates the metadata of a file based on the plugin's settings.
+     * This method is debounced to avoid excessive updates.
+     *
+     * @param file - The file to be updated.
+     * @private
+     */
     private updateMetadata = (file: TFile | null) => {
         if (file instanceof TFile) {
             if ((file as TFile).extension === 'md') {
@@ -476,6 +524,10 @@ export class PluginManager extends Plugin {
         }
     };
 
+    /**
+     * Activates the record preview view.
+     * It detaches any existing record preview views and creates a new one.
+     */
     async activateView() {
         this.app.workspace.detachLeavesOfType(RECORD_PREVIEW_TYPE);
 
@@ -488,6 +540,10 @@ export class PluginManager extends Plugin {
         await this.app.workspace.revealLeaf(viewLeaf);
     }
 
+    /**
+     * Activates the statistics view.
+     * It detaches any existing statistics views and creates a new one.
+     */
     async activeStatView() {
         this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
 
@@ -500,6 +556,10 @@ export class PluginManager extends Plugin {
         await this.app.workspace.revealLeaf(viewLeaf);
     }
 
+    /**
+     * Activates the chat view in the sidebar.
+     * If a chat view already exists, it reveals it. Otherwise, it creates a new one.
+     */
     async activeChatView() {
         const { workspace } = this.app;
 
@@ -522,6 +582,11 @@ export class PluginManager extends Plugin {
 
     }
 
+    /**
+     * Gets all markdown files in the vault, excluding files in specified paths.
+     *
+     * @returns An array of TFile objects representing the markdown files for VSS.
+     */
     getVSSFiles() {
         const files = this.app.vault.getMarkdownFiles();
         // TODO: config exclude paths
@@ -540,6 +605,13 @@ export class PluginManager extends Plugin {
         return vssFiles;
     }
 
+    /**
+     * Initializes the Vector Store Similarity (VSS) service.
+     * If the VSS service is already initialized, it returns the existing instance.
+     *
+     * @returns The initialized VSS instance.
+     * @private
+     */
     private initVss() {
         if (this.vss) {
             return this.vss;
@@ -548,6 +620,12 @@ export class PluginManager extends Plugin {
         return new VSS(this, this.vssCacheDir);
     }
 
+    /**
+     * Caches the vector stores for all markdown files in the vault.
+     * This method iterates through all markdown files, generates vector embeddings for each file,
+     * and caches them for later use.
+     * @private
+     */
     private async cacheVectors() {
         if (this.vss) {
             const statusBar = document.getElementById("personal-assistant-ai-statusbar");
@@ -582,7 +660,10 @@ export class PluginManager extends Plugin {
     }
 
     /**
-     * 迁移旧版本设置到新版本
+     * Migrates settings from an old version of the plugin to the new version.
+     * This method checks if the `aiProvider` setting is missing, which indicates an old version,
+     * and then populates the new AI-related settings.
+     * @private
      */
     private migrateSettings() {
         try {
@@ -601,6 +682,13 @@ export class PluginManager extends Plugin {
         }
     }
 
+    /**
+     * Gets the API token for the AI service.
+     * If the AI provider is 'ollama', it returns an empty string.
+     * Otherwise, it decrypts the stored API token and returns it.
+     *
+     * @returns The API token, or an empty string if not applicable.
+     */
     async getAPIToken() {
         // Ollama不需要API Token
         if (this.settings.aiProvider === 'ollama') {

@@ -7,6 +7,9 @@ import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from
 import { ProgressBar } from "./progress-bar";
 import { downloadZipFile, extractFile } from "./utils";
 
+/**
+ * A class for updating themes.
+ */
 export class ThemeUpdater implements ObsidianManifest {
     items: Manifest[];
     URLCDN: string;
@@ -19,6 +22,12 @@ export class ThemeUpdater implements ObsidianManifest {
     private checkedThemes: number;
     private progressBar: ProgressBar;
 
+    /**
+     * Initializes the ThemeUpdater.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     * @returns A new instance of ThemeUpdater.
+     */
     static async init(app: App, plugin: PluginManager): Promise<ThemeUpdater> {
         const themeUpdater = new ThemeUpdater(app, plugin);
         themeUpdater.items = await themeUpdater.listThemes(themeUpdater.app);
@@ -31,7 +40,12 @@ export class ThemeUpdater implements ObsidianManifest {
         return themeUpdater;
     }
 
-    // list obsidian themes
+    /**
+     * Lists all installed themes.
+     * @param app - The app instance.
+     * @returns A list of installed themes.
+     * @private
+     */
     private async listThemes(app: App): Promise<Manifest[]> {
         const themes: Manifest[] = [];
         const themeDirs = await app.vault.adapter.list(app.vault.configDir + '/themes');
@@ -47,6 +61,11 @@ export class ThemeUpdater implements ObsidianManifest {
         return themes;
     }
 
+    /**
+     * Gets the community themes JSON from the CDN.
+     * @returns The community themes JSON, or null if it fails.
+     * @private
+     */
     private async getCommunityThemesJson(): Promise<string | null> {
         try {
             const response = await request({ url: this.URLCDN });
@@ -69,6 +88,11 @@ export class ThemeUpdater implements ObsidianManifest {
         this.progressBar = new ProgressBar(plugin, "theme-updating", this.totalThemes);
     }
 
+    /**
+     * Gets the repository for a given theme ID.
+     * @param themeID - The ID of the theme.
+     * @returns The repository of the theme, or null if it fails.
+     */
     async getRepo(themeID: string): Promise<string | null> {
         if (this.commandPlugin.settings.cacheThemeRepo[themeID]) {
             this.log(`found ${themeID} which cached in data.json`);
@@ -99,6 +123,12 @@ export class ThemeUpdater implements ObsidianManifest {
         return null;
     }
 
+    /**
+     * Gets the latest release for a given repository.
+     * @param repo - The repository.
+     * @returns The latest release, or null if it fails.
+     * @private
+     */
     private async getLatestRelease(repo: string | null): Promise<JSON | null> {
         if (!repo) {
             this.log("repo is null");
@@ -116,6 +146,12 @@ export class ThemeUpdater implements ObsidianManifest {
         }
     }
 
+    /**
+     * Gets the latest tag from a release.
+     * @param latest - The latest release.
+     * @returns The latest tag, or null if it fails.
+     * @private
+     */
     private getLatestTag(latest: JSON | null): string | null {
         if (!latest) {
             this.log("the input JSON for getLatestTag is null");
@@ -131,6 +167,12 @@ export class ThemeUpdater implements ObsidianManifest {
         return null;
     }
 
+    /**
+     * Checks if a theme needs to be updated.
+     * @param latestRelease - The latest release of the theme.
+     * @param currentVersion - The current version of the theme.
+     * @returns The update status of the theme.
+     */
     async isNeedToUpdate(latestRelease: JSON | null, currentVersion: string): Promise<UpdateStatus> {
         if (latestRelease) {
             const originTag = this.getLatestTag(latestRelease);
@@ -164,6 +206,11 @@ export class ThemeUpdater implements ObsidianManifest {
         };
     }
 
+    /**
+     * Checks if a theme only has a zip file in its release.
+     * @param m - The manifest of the theme.
+     * @returns A boolean indicating whether the theme only has a zip file.
+     */
     async onlyHaveZipFile(m: Manifest): Promise<boolean> {
         const repo = await this.getRepo(m.id);
         if (repo) {
@@ -185,6 +232,9 @@ export class ThemeUpdater implements ObsidianManifest {
         return false;
     }
 
+    /**
+     * Updates all themes that need to be updated.
+     */
     async update(): Promise<void> {
         const getReleaseFile = async (repo: string | null, version: string | null, fileName: string) => {
             const URL = `https://github.com/${repo}/releases/download/${version}/${fileName}`;

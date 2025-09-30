@@ -7,11 +7,17 @@ import { PluginManager } from "./plugin"
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { CryptoHelper, personalAssitant } from './utils'
 
+/**
+ * Represents the style for resizing.
+ */
 export interface ResizeStyle {
     width: number,
     height: number,
 }
 
+/**
+ * Represents the settings for the plugin manager.
+ */
 export interface PluginManagerSettings {
     debug: boolean;
     targetPath: string;
@@ -61,6 +67,9 @@ export interface PluginManagerSettings {
     vssCacheExcludePath: string[];
 }
 
+/**
+ * The default settings for the plugin manager.
+ */
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
     debug: false,
     targetPath: ".",
@@ -121,6 +130,9 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     vssCacheExcludePath: [".obsidian", "8.template", "9.src", "a.subjects", "b.notion"],
 }
 
+/**
+ * Represents a color group for the graph.
+ */
 interface GraphColor {
     query: string;
     color: {
@@ -129,6 +141,9 @@ interface GraphColor {
     }
 }
 
+/**
+ * The default graph color.
+ */
 const DEFAULT_GRAPH_COLOR: GraphColor = {
     query: "path:/",
     color: {
@@ -138,16 +153,27 @@ const DEFAULT_GRAPH_COLOR: GraphColor = {
 }
 
 
+/**
+ * The setting tab for the plugin.
+ */
 export class SettingTab extends PluginSettingTab {
     plugin: PluginManager;
     private log;
 
+    /**
+     * Creates an instance of SettingTab.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
         this.plugin = plugin;
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
     }
 
+    /**
+     * Displays the setting tab.
+     */
     display(): void {
         const plugin: PluginManager = this.plugin;
         const { containerEl } = this;
@@ -700,6 +726,12 @@ export class SettingTab extends PluginSettingTab {
             });
     }
 
+    /**
+     * Finds the index of a graph color in the settings.
+     * @param graphColor - The graph color to find.
+     * @returns The index of the graph color, or -1 if not found.
+     * @private
+     */
     private findGraphColor(graphColor: GraphColor): number {
         return this.plugin.settings.colorGroups.findIndex((color) => {
             return graphColor.query === color.query &&
@@ -708,6 +740,12 @@ export class SettingTab extends PluginSettingTab {
         });
     }
 
+    /**
+     * Finds the index of a metadata key in the settings.
+     * @param metaKey - The metadata key to find.
+     * @returns The index of the metadata key, or -1 if not found.
+     * @private
+     */
     private findMetadata(metaKey: string) {
         return this.plugin.settings.metadatas.findIndex((m) => {
             return m.key === metaKey;
