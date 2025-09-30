@@ -70,80 +70,88 @@ https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 <img src="./docs/personal-assistant-v1.1.1.gif" alt="usage video"/>
 </div>
 
+## Purpose
+
+The Obsidian Personal Assistant is a plugin designed to automate various tasks within Obsidian, making your note-taking and knowledge management workflow more efficient. It provides a range of features, from creating and managing notes to interacting with AI services for content generation and analysis.
+
 ## Features
-> ***NOTE***: The currently supported features are all from my personal needs, feature request is welcome by submitting issues.
 
-1. automatically create note in the specified directory with the configured file name
-2. automatically open current note related graph view
-3. automatically open Memos like quick note in macOS
-4. switch on/off plugin in command palette
-5. automatically update plugins with one command
-6. automatically update themes with one command
-7. automatically set color of graph view
-8. list all callouts css configuration for quickly inserting
-
-## Develop
-
-Please reference [HERE](./DEVELOPEMENT.md).
+-   **AI Assistant**:
+    -   Chat with an AI assistant powered by a RAG knowledge base.
+    -   Generate featured images for your notes based on their content.
+    -   Automatically manage backlinks and tags.
+-   **Note Management**:
+    -   Create notes in a specified directory with a configured file name format.
+    -   Preview your records.
+-   **Graph View**:
+    -   Open the local graph view for the current note.
+    -   Customize the colors of the graph view.
+-   **Plugin and Theme Management**:
+    -   Update plugins and themes with a single command.
+    -   Enable or disable plugins from the command palette.
+-   **Metadata Management**:
+    -   Automatically update metadata in the frontmatter when a file is modified.
+-   **Statistics**:
+    -   View statistics about your vault, including word count, character count, and more.
+-   **Callouts**:
+    -   List all available callouts and quickly insert them into your notes.
 
 ## Install
-Now Personal Assistant plugin is available in [plugin market](https://obsidian.md/plugins?search=personal%20assistant#), you can install this plugin directly within Obsidian App, please check this [mannual](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin) to get more details.
-![install with plugin market](./docs/install-within-plugin-market.png)
 
-### Install
-- Download from the release
+The Personal Assistant plugin is available in the [plugin market](https://obsidian.md/plugins?search=personal%20assistant#). You can install it directly within the Obsidian App. Please refer to the [official manual](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin) for more details.
+
+![install with plugin market](./docs/install-within-plugin-market.png)
 
 ### Install with BRAT
 
-- Install BRAT from the Community Plugins in Obsidian
-- Open the command palette and run the command BRAT: Add a beta plugin for testing
-- Copy `https://github.com/edonyzpc/personal-assistant` into the modal that opens up
-- Click on Add Plugin -- wait a few seconds and BRAT will tell you what is going on
-- After BRAT confirms the installation, in Settings go to the **Community plugins ** tab.
-- Refresh the list of plugins
-- Find the beta plugin you just installed and Enable it.
+1.  Install BRAT from the Community Plugins in Obsidian.
+2.  Open the command palette and run the command `BRAT: Add a beta plugin for testing`.
+3.  Copy `https://github.com/edonyzpc/personal-assistant` into the modal that opens up.
+4.  Click on "Add Plugin" and wait for BRAT to confirm the installation.
+5.  In "Settings", go to the "Community plugins" tab.
+6.  Refresh the list of plugins.
+7.  Find the "Personal Assistant" plugin and enable it.
 
 ### Manually Install
 
-- Build with commandline: `yarn install && yarn build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
+1.  Build the plugin with `yarn install && yarn build` or download it from the [release page](https://github.com/edonyzpc/personal-assistant/releases).
+2.  Copy `main.js`, `styles.css`, and `manifest.json` to your vault's plugin folder: `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
 
-## Use
+## Setup
 
-### 1. Create note in specificed directory
-- Open the command palette and find the command
-![command 1](./docs/command-1.png)
-- New note is created and start your recording
-- [***Recommendation***] Use `Folder Templates` of plugin [Templater](https://github.com/SilentVoid13/Templater) to format the created notes by the command above, the example is as following
-![folder templates](./docs/folder-templates.png)
-### 2. Open memos in hover editor
-- Open the command palette and find the command
-![command 2](./docs/command-2.png)
-- Do anything you like in memos
-### 3. Open graph view of current note
-- Open the command palette and find the command
-![command 3](./docs/command-3.png)
-- Open setting tab for more customize
-- Navigate your current note graph view with backlink and outgoing link
-- configure color of graph view
+After installing the plugin, you can configure its settings in the "Personal Assistant" section of the Obsidian settings. Here are some of the key settings you can configure:
 
-### 4. Enable/Disable plugins for obsidian with one command
-- Open the command palette and find the command
-![command 5](./docs/command-5.png)
-- Select the suggestion to enable/disable plugin(or you can search the plugin by its name)
-- [***Note***] In suggestion tab, the green checkbox means plugin is already enabled and the red uncheckbox means plugin is already disabled
+-   **AI Provider**: Choose between Qwen, OpenAI, and Ollama for the AI assistant.
+-   **API Token**: Enter your API token for the selected AI provider.
+-   **Target Path**: Specify the directory where new notes will be created.
+-   **File Format**: Define the format for the names of new notes.
+-   **Local Graph**: Customize the appearance and behavior of the local graph view.
+-   **Graph Colors**: Configure the colors for the graph view.
+-   **Metadata Management**: Enable or disable automatic metadata updates and configure the metadata to be updated.
+-   **Statistics**: Configure the statistics to be displayed in the status bar.
 
-### 5. Update plugins for obsidian with one command
-- Open the command palette and find the command
-![command 6](./docs/command-6.png)
-- Trigger the command to update plugins
-- See the updating result which is displayed in the right corner
+## Usage
+
+The Personal Assistant plugin provides several commands that you can access from the command palette:
+
+-   **Create note in specificed directory**: Creates a new note in the directory specified in the settings.
+-   **Open memos in hover editor**: Opens a quick note in a hover editor.
+-   **Open graph view of current note**: Opens the local graph view for the current note.
+-   **Enable/Disable plugins for obsidian with one command**: Enables or disables a plugin.
+-   **Update plugins for obsidian with one command**: Updates all installed plugins.
+-   **Update themes for obsidian with one command**: Updates all installed themes.
+-   **List callouts**: Lists all available callouts and allows you to quickly insert them into your notes.
+
+## Contributing
+
+Contributions are welcome! If you have any ideas, suggestions, or bug reports, please open an issue on the [GitHub repository](https://github.com/edonyzpc/personal-assistant/issues).
 
 ## Attribution
-- Best thanks for project [obsidian-advanced-new-file](https://github.com/vanadium23/obsidian-advanced-new-file) for the code of `createNote`, `createDirectory`
-- Best thanks for project [obsidian-callout-manager](https://github.com/eth-p/obsidian-callout-manager) for the `class CalloutPreviewComponent` and `color.ts`
-- Best thanks for project [better-word-count](https://github.com/lukeleppan/better-word-count) for the `package stats`
+
+-   [obsidian-advanced-new-file](https://github.com/vanadium23/obsidian-advanced-new-file)
+-   [obsidian-callout-manager](https://github.com/eth-p/obsidian-callout-manager)
+-   [better-word-count](https://github.com/lukeleppan/better-word-count)
 
 ## Contact
 
-If you've got any kind of feedback or questions, feel free to reach out via [GitHub issues](https://github.com/edonyzpc/personal-assistant/issues).
+If you have any feedback or questions, feel free to reach out via [GitHub issues](https://github.com/edonyzpc/personal-assistant/issues).

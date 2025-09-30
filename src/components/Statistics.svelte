@@ -1,5 +1,7 @@
-<!-- Copyright 2024 edonyzpc -->
-
+<!--
+  @component
+  A component for displaying a statistics chart.
+-->
 <script lang="ts">
   import { Line } from 'svelte-chartjs';
   import {
@@ -18,8 +20,11 @@
 	import type { App } from 'obsidian';
 	import type { PluginManager } from 'plugin';
 
+  /** The app instance. */
   export let app: App;
+  /** The PluginManager instance. */
   export let plugin: PluginManager;
+  /** The statistics file data. */
   export let staticsFileData: string;
 
   type CustomChartData = {
@@ -355,6 +360,10 @@
         },
   }
 
+  /**
+   * Checks if the statistics type is total.
+   * @returns A boolean indicating whether the statistics type is total.
+   */
   const isTotal = () => {
     return plugin.settings.statisticsType === 'total';
   }

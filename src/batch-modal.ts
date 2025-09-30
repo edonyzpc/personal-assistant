@@ -2,8 +2,16 @@ import { App, Modal, Setting } from 'obsidian'
 
 import { type Plugin } from './modal'
 
+/**
+ * A modal for batch enabling/disabling of plugins.
+ */
 export class BatchPluginControlModal extends Modal {
     private obsidianPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    /**
+     * Creates an instance of BatchPluginControlModal.
+     * @param app - The app instance.
+     */
     constructor(app: App) {
         super(app);
         this.obsidianPlugins = (app as any).plugins; // eslint-disable-line @typescript-eslint/no-explicit-any

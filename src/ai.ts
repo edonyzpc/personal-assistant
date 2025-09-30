@@ -4,6 +4,9 @@ import { EditorView } from '@codemirror/view';
 import { AIService } from './ai-services/service';
 import { PluginManager } from './plugin'
 
+/**
+ * A helper class for the AI assistant.
+ */
 export class AssistantHelper {
     private editor: Editor
     private view: EditorView
@@ -13,6 +16,12 @@ export class AssistantHelper {
     private readonly markdownView: MarkdownView;
     private aiService: AIService;
 
+    /**
+     * Creates an instance of AssistantHelper.
+     * @param plugin - The PluginManager instance.
+     * @param editor - The editor instance.
+     * @param view - The markdown view instance.
+     */
     constructor(
         plugin: PluginManager,
         editor: Editor,
@@ -29,11 +38,17 @@ export class AssistantHelper {
         this.aiService = new AIService(plugin);
     }
 
+    /**
+     * Generates a summary for the current document.
+     */
     async generate() {
         await this.aiService.generateSummary(this.editor, this.markdownView);
     }
 }
 
+/**
+ * A class representing the AI assistant robot.
+ */
 export class AssistantRobot {
     private editor: Editor;
     private view: MarkdownView;
@@ -44,6 +59,14 @@ export class AssistantRobot {
     private tags: string[]
     private aiService: AIService;
 
+    /**
+     * Creates an instance of AssistantRobot.
+     * @param plugin - The PluginManager instance.
+     * @param editor - The editor instance.
+     * @param view - The markdown view instance.
+     * @param app - The app instance.
+     * @param selected - The selected text.
+     */
     constructor(
         plugin: PluginManager,
         editor: Editor,
@@ -62,6 +85,10 @@ export class AssistantRobot {
         this.aiService = new AIService(plugin);
     }
 
+    /**
+     * Generates tag suggestions for the current document.
+     * @returns The suggested tags as a string.
+     */
     async assitantTags() {
         const tags = await this.aiService.generateTags(this.editor, this.view, this.plugin.app);
 
@@ -76,6 +103,9 @@ export class AssistantRobot {
     }
 }
 
+/**
+ * A helper class for generating featured images.
+ */
 export class AssistantFeaturedImageHelper {
     private app: App;
     private editor: Editor
@@ -86,6 +116,13 @@ export class AssistantFeaturedImageHelper {
     private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     private aiService: AIService;
 
+    /**
+     * Creates an instance of AssistantFeaturedImageHelper.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     * @param editor - The editor instance.
+     * @param view - The markdown view instance.
+     */
     constructor(
         app: App,
         plugin: PluginManager,
@@ -103,6 +140,9 @@ export class AssistantFeaturedImageHelper {
         this.aiService = new AIService(plugin);
     }
 
+    /**
+     * Generates a featured image for the current document.
+     */
     async generate() {
         await this.aiService.generateFeaturedImage(this.editor, this.view, this.fontmatterInfo);
     }

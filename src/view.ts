@@ -2,10 +2,16 @@
 
 import { PluginManager } from "./plugin"
 
+/**
+ * An enum for the different view types.
+ */
 export enum ViewType {
     LocalGraphView,
 }
 
+/**
+ * A class for resizing views.
+ */
 export class ViewResize {
     resized: boolean;
     log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -15,6 +21,11 @@ export class ViewResize {
         localGraph: "localgraph",
     }
 
+    /**
+     * Creates an instance of ViewResize.
+     * @param plugin - The PluginManager instance.
+     * @param type - The type of the view.
+     */
     constructor(plugin: PluginManager, type: ViewType) {
         this.resized = false;
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -22,6 +33,9 @@ export class ViewResize {
         this.viewType = type;
     }
 
+    /**
+     * Resizes the view.
+     */
     async resize(): Promise<void> {
         if (this.resized) return;
         const { localGraph } = this.plugin.settings;

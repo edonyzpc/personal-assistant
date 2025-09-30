@@ -7,6 +7,9 @@ import type { ObsidianManifest, Manifest, UpdateStatus, PluginReleaseFiles } fro
 import { ProgressBar } from "./progress-bar";
 
 
+/**
+ * A class for updating plugins.
+ */
 export class PluginsUpdater implements ObsidianManifest {
     items: Manifest[];
     URLCDN: string;
@@ -21,6 +24,11 @@ export class PluginsUpdater implements ObsidianManifest {
     private communityPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     private progressBar: ProgressBar;
 
+    /**
+     * Creates an instance of PluginsUpdater.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(app: App, plugin: PluginManager) {
         this.app = app;
         this.commandPlugin = plugin;
@@ -40,6 +48,11 @@ export class PluginsUpdater implements ObsidianManifest {
         this.progressBar = new ProgressBar(plugin, "plugin-updating", this.totalPlugins);
     }
 
+    /**
+     * Gets the community plugins JSON from the CDN.
+     * @returns The community plugins JSON, or null if it fails.
+     * @private
+     */
     private async getCommunityPluginsJson(): Promise<string | null> {
         try {
             const response = await request({ url: this.URLCDN });
@@ -50,6 +63,11 @@ export class PluginsUpdater implements ObsidianManifest {
         }
     }
 
+    /**
+     * Gets the repository for a given plugin ID.
+     * @param pluginID - The ID of the plugin.
+     * @returns The repository of the plugin, or null if it fails.
+     */
     async getRepo(pluginID: string): Promise<string | null> {
         if (this.commandPlugin.settings.cachePluginRepo[pluginID]) {
             this.log(`found ${pluginID} which cached in data.json`);
@@ -80,6 +98,12 @@ export class PluginsUpdater implements ObsidianManifest {
         return null;
     }
 
+    /**
+     * Gets the latest release for a given repository.
+     * @param repo - The repository.
+     * @returns The latest release, or null if it fails.
+     * @private
+     */
     private async getLatestRelease(repo: string | null): Promise<JSON | null> {
         if (!repo) {
             this.log("repo is null");
@@ -97,6 +121,12 @@ export class PluginsUpdater implements ObsidianManifest {
         }
     }
 
+    /**
+     * Gets the latest tag from a release.
+     * @param latest - The latest release.
+     * @returns The latest tag, or null if it fails.
+     * @private
+     */
     private getLatestTag(latest: JSON | null): string | null {
         if (!latest) {
             this.log("the input JSON for getLatestTag is null");
@@ -112,6 +142,12 @@ export class PluginsUpdater implements ObsidianManifest {
         return null;
     }
 
+    /**
+     * Checks if a plugin needs to be updated.
+     * @param latestRelease - The latest release of the plugin.
+     * @param currentVersion - The current version of the plugin.
+     * @returns The update status of the plugin.
+     */
     async isNeedToUpdate(latestRelease: JSON | null, currentVersion: string): Promise<UpdateStatus> {
         if (latestRelease) {
             let tag = this.getLatestTag(latestRelease);
@@ -143,6 +179,9 @@ export class PluginsUpdater implements ObsidianManifest {
         }
     }
 
+    /**
+     * Updates all plugins that need to be updated.
+     */
     async update(): Promise<void> {
         const getReleaseFile = async (repo: string | null, version: string | null, fileName: string) => {
             const URL = `https://github.com/${repo}/releases/download/${version}/${fileName}`;

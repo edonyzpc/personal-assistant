@@ -4,13 +4,24 @@ import type PluginManager from "./main";
 import { VSS } from './vss'
 import { isPluginEnabled } from './utils';
 
+/**
+ * The view type for the LLM view.
+ */
 export const VIEW_TYPE_LLM = "sidellm-view";
 
+/**
+ * Represents a message in the chat.
+ */
 export interface ChatMessage {
+    /** The role of the message sender. */
     role: 'user' | 'assistant';
+    /** The content of the message. */
     content: string;
 }
 
+/**
+ * A view for interacting with the LLM.
+ */
 export class LLMView extends ItemView {
     plugin: PluginManager;
     result: string = '';
@@ -20,6 +31,12 @@ export class LLMView extends ItemView {
     vss: VSS;
     private chatService: ChatService;
 
+    /**
+     * Creates an instance of LLMView.
+     * @param leaf - The workspace leaf.
+     * @param plugin - The PluginManager instance.
+     * @param vss - The VSS instance.
+     */
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
         this.plugin = plugin;
@@ -27,18 +44,33 @@ export class LLMView extends ItemView {
         this.chatService = new ChatService(plugin);
     }
 
+    /**
+     * Gets the view type.
+     * @returns The view type.
+     */
     getViewType(): string {
         return VIEW_TYPE_LLM;
     }
 
+    /**
+     * Gets the display text.
+     * @returns The display text.
+     */
     getDisplayText(): string {
         return "Personal Assistant Chat";
     }
 
+    /**
+     * Gets the icon.
+     * @returns The icon.
+     */
     getIcon(): string {
         return "bot-message-square";
     }
 
+    /**
+     * Called when the view is opened.
+     */
     async onOpen() {
         const { containerEl } = this;
         containerEl.empty();
@@ -264,6 +296,11 @@ export class LLMView extends ItemView {
         })
     }
 
+    /**
+     * Updates the clickable links in the view to use Obsidian's URI scheme.
+     * @param containerEl - The container element to update.
+     * @private
+     */
     private updateClickableLink(containerEl: HTMLElement) {
         const getNoteUri = (vault: Vault, noteHref: string) => {
             if (isPluginEnabled(this.plugin.app, "obsidian-advanced-uri")) {

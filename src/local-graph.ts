@@ -6,14 +6,25 @@ import { PluginManager } from "./plugin"
 import { ViewType, ViewResize } from "./view";
 
 
+/**
+ * A class for managing the local graph view.
+ */
 export class LocalGraph extends ViewResize {
     private app: App;
 
+    /**
+     * Creates an instance of LocalGraph.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(app: App, plugin: PluginManager) {
         super(plugin, ViewType.LocalGraphView);
         this.app = app;
     }
 
+    /**
+     * Startups the local graph view.
+     */
     async startup() {
         // reset the status
         this.resized = false;
@@ -48,6 +59,10 @@ export class LocalGraph extends ViewResize {
         }
     }
 
+    /**
+     * Syncs the global graph settings to the local graph.
+     * @private
+     */
     private async syncGlobalToLocal() {
         const configDir = this.app.vault.configDir;
         this.log(configDir);
@@ -65,10 +80,21 @@ export class LocalGraph extends ViewResize {
 
     }
 
+    /**
+     * Gets all local graph leaves.
+     * @returns An array of local graph leaves.
+     * @private
+     */
     private getLocalGraphLeaves() {
         return this.app.workspace.getLeavesOfType('localgraph');
     }
 
+    /**
+     * Sets the color groups for a local graph leaf.
+     * @param localGraphLeaf - The local graph leaf.
+     * @param colorGroups - The color groups to set.
+     * @private
+     */
     private async setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
         const viewState = localGraphLeaf.getViewState();
         this.log("view state", viewState.state);
@@ -84,6 +110,9 @@ export class LocalGraph extends ViewResize {
         await localGraphLeaf.setViewState(viewState);
     }
 
+    /**
+     * Updates the graph colors.
+     */
     async updateGraphColors() {
         const configDir = this.app.vault.configDir;
         const graphConfigPath = normalizePath(configDir + '/graph.json');

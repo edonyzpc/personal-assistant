@@ -4,6 +4,9 @@ import { AIService } from './ai-services/service';
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
 import { PluginManager } from './plugin'
 
+/**
+ * A class for managing the vector store.
+ */
 export class VSS {
     private plugin: PluginManager;
     private encryptedToken: string;
@@ -11,6 +14,11 @@ export class VSS {
     private vectorStore!: MemoryVectorStore;
     private aiService: AIService;
 
+    /**
+     * Creates an instance of VSS.
+     * @param plugin - The PluginManager instance.
+     * @param vssCacheDir - The directory for the VSS cache.
+     */
     constructor(
         plugin: PluginManager,
         vssCacheDir: string,
@@ -21,10 +29,20 @@ export class VSS {
         this.aiService = new AIService(plugin);
     }
 
+    /**
+     * Caches the vector store for a file.
+     * @param cacheFile - The file to cache.
+     * @returns A boolean indicating whether the file was cached.
+     */
     async cacheFileVectorStore(cacheFile: TFile): Promise<boolean> {
         return await this.aiService.vectorizeDocument(cacheFile, this.vssCacheDir);
     }
 
+    /**
+     * Loads the vector store.
+     * @param vssFiles - The files to load.
+     * @param isDelete - Whether to delete the files from the vector store.
+     */
     async loadVectorStore(vssFiles: TFile[], isDelete: boolean = false) {
         if (!this.vectorStore) {
             const embeddings = await this.aiService['aiUtils'].createEmbeddings();
@@ -56,6 +74,11 @@ export class VSS {
         }
     }
 
+    /**
+     * Searches for similar documents.
+     * @param prompt - The prompt to search for.
+     * @returns An array of similar documents.
+     */
     async searchSimilarity(prompt: string) {
         return await this.aiService.searchSimilarDocuments(prompt, this.vectorStore);
     }

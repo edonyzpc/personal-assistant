@@ -14,6 +14,9 @@ import type { PluginManager } from '../plugin'
 import { isPluginEnabled } from 'utils';
 
 
+/**
+ * Represents the result of an image generation request.
+ */
 interface ImageGenerationResult {
     output: {
         task_status: string;
@@ -24,6 +27,9 @@ interface ImageGenerationResult {
     message: string;
 }
 
+/**
+ * Represents the data of a task.
+ */
 interface TaskData {
     request_id: string;
     output: {
@@ -48,19 +54,25 @@ interface TaskData {
 }
 
 /**
- * AI服务类，提供统一的AI功能接口
+ * A service class that provides a unified interface for AI functionalities.
  */
 export class AIService {
     private aiUtils: AIUtils;
     private plugin: PluginManager;
 
+    /**
+     * Creates an instance of AIService.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(plugin: PluginManager) {
         this.plugin = plugin;
         this.aiUtils = new AIUtils(plugin);
     }
 
     /**
-     * 生成文档摘要和关键词
+     * Generates a summary and keywords for the current document.
+     * @param editor - The editor instance.
+     * @param view - The markdown view instance.
      */
     async generateSummary(editor: Editor, view: MarkdownView): Promise<void> {
         const { notice, notification } = this.aiUtils.createAIThinkingNotice(); // eslint-disable-line @typescript-eslint/no-unused-vars
@@ -91,7 +103,11 @@ export class AIService {
     }
 
     /**
-     * 生成标签建议
+     * Generates tag suggestions for the current document.
+     * @param editor - The editor instance.
+     * @param view - The markdown view instance.
+     * @param app - The app instance.
+     * @returns An array of suggested tags.
      */
     async generateTags(editor: Editor, view: MarkdownView, app: App): Promise<string[]> {
         const markdown = editor.getValue();
@@ -104,7 +120,10 @@ export class AIService {
     }
 
     /**
-     * 生成特色图片
+     * Generates a featured image for the current document.
+     * @param editor - The editor instance.
+     * @param view - The markdown view instance.
+     * @param fontmatterInfo - The frontmatter information of the document.
      */
     async generateFeaturedImage(editor: Editor, view: MarkdownView, fontmatterInfo: FrontMatterInfo): Promise<void> {
         // 检查是否支持图片生成（目前只支持Qwen）
@@ -210,7 +229,10 @@ export class AIService {
     }
 
     /**
-     * 向量化文档
+     * Vectorizes a document and caches the result.
+     * @param file - The file to be vectorized.
+     * @param cacheDir - The directory to cache the vectorized document.
+     * @returns A boolean indicating whether the document was vectorized.
      */
     async vectorizeDocument(file: TFile, cacheDir: string): Promise<boolean> {
         const embeddings = await this.aiUtils.createEmbeddings();
@@ -268,7 +290,10 @@ export class AIService {
     }
 
     /**
-     * 搜索相似文档
+     * Searches for similar documents in the vector store.
+     * @param prompt - The prompt to search for.
+     * @param vectorStore - The vector store to search in.
+     * @returns An array of similar documents with their scores.
      */
     async searchSimilarDocuments(prompt: string, vectorStore: MemoryVectorStore): Promise<Array<{ score: number; doc: Document }>> {
         if (!vectorStore) {
@@ -300,7 +325,11 @@ export class AIService {
     }
 
     /**
-     * 调用LLM
+     * Calls the LLM with a given query and system prompt.
+     * @param query - The user's query.
+     * @param systemPrompt - The system prompt to use.
+     * @returns The response from the LLM.
+     * @private
      */
     private async callLLM(query: string, systemPrompt: string): Promise<string> {
         const llm = await this.aiUtils.createChatModel(0.8);
@@ -319,7 +348,9 @@ export class AIService {
 
 
     /**
-     * 获取摘要生成的提示词
+     * Gets the prompt for generating a summary.
+     * @returns The summary prompt.
+     * @private
      */
     private getSummaryPrompt(): string {
         return `你是一个专业编辑，擅长文字总结、概括等工作。
@@ -340,7 +371,11 @@ export class AIService {
     }
 
     /**
-     * 获取标签生成的提示词
+     * Gets the prompt for generating tags.
+     * @param content - The content of the document.
+     * @param tags - The existing tags in the vault.
+     * @returns The tags prompt.
+     * @private
      */
     private getTagsPrompt(content: string, tags: string[]): string {
         return `你是一个专业编辑，擅长文字总结、概括等工作。
@@ -355,7 +390,9 @@ export class AIService {
     }
 
     /**
-     * 获取图片描述的提示词
+     * Gets the prompt for generating an image description.
+     * @returns The image description prompt.
+     * @private
      */
     private getImageDescriptionPrompt(): string {
         return `你是一个精通文字编辑和图片处理的专家，你会根据我给出的文字内容生成一段图片描述，该图片会作为给出的文字内容的特色图片（特色图片featured image代表博客或页面的文字内容，情绪或主题，并在整个网站中使用）。
@@ -435,7 +472,10 @@ export class AIService {
     }
 
     /**
-     * 生成图片
+     * Generates an image based on a given prompt.
+     * @param genMsg - The prompt for generating the image.
+     * @returns The result of the image generation request.
+     * @private
      */
     private async generateImage(genMsg: string) {
         const token = await this.plugin.getAPIToken();
@@ -490,7 +530,10 @@ export class AIService {
     }
 
     /** 
-     * 获取图片
+     * Gets the generated image from the task.
+     * @param generateResult - The result of the image generation request.
+     * @returns The results of the task, or null if the task did not succeed.
+     * @private
      */
     private async getImage(generateResult: ImageGenerationResult) {
         const token = await this.plugin.getAPIToken();
@@ -556,7 +599,12 @@ export class AIService {
     }
 
     /**
-     * 下载图片到本地
+     * Downloads an image to the vault.
+     * @param app - The app instance.
+     * @param imageUrl - The URL of the image to download.
+     * @param folderPath - The path to the folder to save the image in.
+     * @returns The path to the saved image.
+     * @private
      */
     private async downloadImageToVault(app: App, imageUrl: string, folderPath: string) {
         try {

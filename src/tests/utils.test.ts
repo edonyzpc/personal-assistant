@@ -1,4 +1,7 @@
-/* Copyright 2023 edonyzpc */
+/**
+ * @file This file contains tests for the utils module.
+ * @copyright Copyright (c) 2023 edonyzpc
+ */
 
 import { describe,expect, test } from '@jest/globals';
 import { TEST_TOKEN } from '../utils';
@@ -13,7 +16,9 @@ jest.mocked(PluginManager).mockImplementation(() => {
 });
 */
 
-
+/**
+ * A test suite for the utils module.
+ */
 describe('utils module', () => {
     test('utils init', () => {
         expect(TEST_TOKEN).toBe("personal-assistant");

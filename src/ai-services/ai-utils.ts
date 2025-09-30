@@ -11,24 +11,31 @@ import { Notification } from '@svelteuidev/core';
 import type { PluginManager } from '../plugin'
 
 /**
- * AI工具类，提供通用的AI功能
+ * A utility class for AI-related functionalities.
+ * Provides common AI features for the plugin.
  */
 export class AIUtils {
     private plugin: PluginManager;
 
+    /**
+     * Creates an instance of AIUtils.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(plugin: PluginManager) {
         this.plugin = plugin;
     }
 
     /**
-     * 获取API token
+     * Gets the API token for the AI service.
+     * @returns The API token.
      */
     async getAPIToken(): Promise<string> {
         return await this.plugin.getAPIToken();
     }
 
     /**
-     * 创建AI思考中的通知
+     * Creates a notification to indicate that the AI is thinking.
+     * @returns An object containing the notice and notification elements.
      */
     createAIThinkingNotice(): { notice: Notice; notification: Notification } {
         const noticeEl = document.createDocumentFragment();
@@ -57,7 +64,8 @@ export class AIUtils {
     }
 
     /**
-     * 创建AI生成图片的通知
+     * Creates a notification to indicate that the AI is generating featured images.
+     * @returns An object containing the notice and notification elements.
      */
     createAIFeaturedImageNotice(): { notice: Notice; notification: Notification } {
         const noticeEl = document.createDocumentFragment();
@@ -87,7 +95,9 @@ export class AIUtils {
     }
 
     /**
-     * 创建聊天模型实例
+     * Creates a chat model instance based on the configured AI provider.
+     * @param temperature - The temperature for the chat model.
+     * @returns A chat model instance.
      */
     async createChatModel(temperature: number = 0.8): Promise<ChatAlibabaTongyi | ChatOpenAI<ChatOpenAICallOptions> | ChatOllama> {
         const provider = this.plugin.settings.aiProvider;
@@ -132,7 +142,9 @@ export class AIUtils {
     }
 
     /**
-     * 创建嵌入模型实例
+     * Creates an embeddings model instance based on the configured AI provider.
+     * @param dimensions - The dimensions for the embeddings.
+     * @returns An embeddings model instance.
      */
     async createEmbeddings(dimensions?: number): Promise<OpenAIEmbeddings | OllamaEmbeddings> {
         const provider = this.plugin.settings.aiProvider;
@@ -165,7 +177,11 @@ export class AIUtils {
     }
 
     /**
-     * 创建通义千问LLM实例（兼容旧版本）
+     * Creates a Qwen LLM instance (legacy method).
+     * @param model - The model name.
+     * @param temperature - The temperature for the chat model.
+     * @returns A ChatAlibabaTongyi instance.
+     * @deprecated Use `createChatModel` instead.
      */
     async createQwenLLM(model: string = "qwen-max", temperature: number = 0.8): Promise<ChatAlibabaTongyi> {
         const token = await this.getAPIToken();
@@ -179,7 +195,11 @@ export class AIUtils {
     }
 
     /**
-     * 创建OpenAI兼容的LLM实例（兼容旧版本）
+     * Creates an OpenAI compatible LLM instance (legacy method).
+     * @param model - The model name.
+     * @param temperature - The temperature for the chat model.
+     * @returns A ChatOpenAI instance.
+     * @deprecated Use `createChatModel` instead.
      */
     async createOpenAICompatibleLLM(model: string = "qwen-max", temperature: number = 0.8): Promise<ChatOpenAI<ChatOpenAICallOptions>> {
         const token = await this.getAPIToken();
@@ -194,7 +214,11 @@ export class AIUtils {
     }
 
     /**
-     * 创建OpenAI Embeddings实例（兼容旧版本）
+     * Creates an OpenAI Embeddings instance (legacy method).
+     * @param model - The model name.
+     * @param dimensions - The dimensions for the embeddings.
+     * @returns An OpenAIEmbeddings instance.
+     * @deprecated Use `createEmbeddings` instead.
      */
     async createOpenAIEmbeddings(model: string = "text-embedding-v3", dimensions: number = 512): Promise<OpenAIEmbeddings> {
         const token = await this.getAPIToken();
@@ -209,7 +233,10 @@ export class AIUtils {
     }
 
     /**
-     * 执行fetch polyfill包装
+     * Wraps a function with a fetch polyfill.
+     * This is necessary because the default `fetch` implementation in Obsidian is not compatible with some libraries.
+     * @param fn - The function to be wrapped.
+     * @returns The result of the wrapped function.
      */
     async withFetchPolyfill<T>(fn: () => Promise<T>): Promise<T> {
         const originFetch = globalThis.fetch;
@@ -237,7 +264,9 @@ export class AIUtils {
     }
 
     /**
-     * 清理markdown内容
+     * Cleans the markdown content by removing code blocks, comments, and file references.
+     * @param markdown - The markdown content to be cleaned.
+     * @returns The cleaned markdown content.
      */
     cleanMarkdownContent(markdown: string): string {
         // 过滤代码块
@@ -250,7 +279,9 @@ export class AIUtils {
     }
 
     /**
-     * 获取文档内容（去除frontmatter）
+     * Gets the content of a document, excluding the frontmatter.
+     * @param markdown - The markdown content of the document.
+     * @returns An object containing the content and frontmatter information.
      */
     getDocumentContent(markdown: string): { content: string; frontmatterInfo: FrontMatterInfo } {
         const frontmatterInfo = getFrontMatterInfo(markdown);
@@ -259,7 +290,11 @@ export class AIUtils {
     }
 
     /**
-     * 检查文件是否需要更新（基于修改时间）
+     * Checks if a file should be updated based on its modification time.
+     * @param filePath - The path to the file.
+     * @param cacheFilePath - The path to the cache file.
+     * @param thresholdMs - The threshold in milliseconds.
+     * @returns A boolean indicating whether the file should be updated.
      */
     async shouldUpdateFile(filePath: string, cacheFilePath: string, thresholdMs: number = 1000): Promise<boolean> {
         try {

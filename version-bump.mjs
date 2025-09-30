@@ -1,3 +1,8 @@
+/**
+ * @file This file updates the version in manifest.json, manifest-beta.json, and versions.json.
+ * @copyright Copyright (c) 2023 edonyzpc
+ */
+
 import { readFileSync, writeFileSync } from "fs";
 
 const targetVersion = process.env.npm_package_version;

@@ -1,3 +1,7 @@
+<!--
+  @component
+  A component for displaying an AI icon.
+-->
 <script>
 	import { ThemeIcon } from "@svelteuidev/core";
 	import { ModulzLogo } from "svelte-radix";

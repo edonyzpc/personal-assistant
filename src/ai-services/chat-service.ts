@@ -4,25 +4,39 @@ import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemp
 import { AIUtils } from './ai-utils';
 import type { PluginManager } from '../plugin'
 
+/**
+ * Represents a message in the chat history.
+ */
 export interface ChatMessage {
+    /** The role of the message sender. */
     role: 'user' | 'assistant';
+    /** The content of the message. */
     content: string;
 }
 
 /**
- * 聊天服务类，提供聊天相关的功能
+ * A service class for chat-related functionalities.
  */
 export class ChatService {
     private aiUtils: AIUtils;
     private plugin: PluginManager;
 
+    /**
+     * Creates an instance of ChatService.
+     * @param plugin - The PluginManager instance.
+     */
     constructor(plugin: PluginManager) {
         this.plugin = plugin;
         this.aiUtils = new AIUtils(plugin);
     }
 
     /**
-     * 流式LLM调用
+     * Streams a response from the LLM.
+     *
+     * @param prompt - The user's prompt.
+     * @param onChunk - A callback function to handle each chunk of the response.
+     * @param signal - An optional AbortSignal to cancel the request.
+     * @param chatHistory - An optional array of previous chat messages.
      */
     async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
         const llm = await this.aiUtils.createChatModel(0.8);

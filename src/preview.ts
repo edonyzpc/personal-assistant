@@ -6,14 +6,26 @@ import { PluginManager } from './plugin';
 import RecordList from './components/RecordList.svelte'
 import { icons } from './utils';
 
+/**
+ * The view type for the record preview.
+ */
 export const RECORD_PREVIEW_TYPE = "record-preview";
 
+/**
+ * A view for previewing records.
+ */
 export class RecordPreview extends ItemView {
     component!: RecordList;
     app: App;
     plugin: PluginManager;
     files: string[];
 
+    /**
+     * Creates an instance of RecordPreview.
+     * @param app - The app instance.
+     * @param plugin - The PluginManager instance.
+     * @param leaf - The workspace leaf.
+     */
     constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
         plugin.log("startup new RecordList");
         super(leaf);
@@ -23,18 +35,33 @@ export class RecordPreview extends ItemView {
         this.files = [];
     }
 
+    /**
+     * Gets the view type.
+     * @returns The view type.
+     */
     getViewType() {
         return RECORD_PREVIEW_TYPE;
     }
 
+    /**
+     * Gets the display text.
+     * @returns The display text.
+     */
     getDisplayText() {
         return "Records Preview";
     }
 
+    /**
+     * Gets the icon.
+     * @returns The icon.
+     */
     getIcon(): string {
         return "PluginAST_PREVIEW";
     }
 
+    /**
+     * Called when the view is opened.
+     */
     async onOpen() {
         const dir = await this.app.vault.adapter.list(this.plugin.settings.targetPath);
         const files = dir.files.sort((file1, file2) => {
@@ -90,6 +117,9 @@ export class RecordPreview extends ItemView {
         });
     }
 
+    /**
+     * Called when the view is closed.
+     */
     async onClose() {
         this.component.$destroy();
     }

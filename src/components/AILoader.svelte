@@ -1,3 +1,7 @@
+<!--
+  @component
+  A component for displaying a loading animation for the AI.
+-->
 <script lang="ts">
 	import { Center, Loader, Skeleton } from "@svelteuidev/core";
 </script>
