@@ -1,10 +1,7 @@
-import { context, transform } from 'esbuild';
+import { context } from 'esbuild';
 import process from 'process';
 import builtins from 'builtin-modules';
 import { copy } from 'esbuild-plugin-copy';
-import esbuildSvelte from 'esbuild-svelte';
-import { sveltePreprocess } from 'svelte-preprocess';
-import { readFile } from 'fs/promises';
 
 const banner =
 	`/*
@@ -14,30 +11,15 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
-const cssMinifyPlugin = {
-	name: 'cssPlugin',
-	setup(build) {
-		console.debug("starting....");
-		build.onLoad(
-			{ filter: /\.css$/, namespace: "css-plugin-ns" },
-			async (args) => {
-				let css = await readFile("styles.css")
-				css = await transform(css, { loader: 'css', minify: true })
-				return { loader: 'text', contents: css.code }
-			}
-		);
-		console.debug("ending....");
-	},
-};
 
 const buildContext = await context({
 	platform: "node",
-	mainFields: ["svelte", "browser", "module", "main"],
-	conditions: ["svelte", "browser"],
+	mainFields: ["browser", "module", "main"],
+	conditions: ["browser"],
 	banner: {
 		js: banner,
 	},
-	entryPoints: ["main.ts"],
+	entryPoints: ["src/main.ts"],
 	bundle: true,
 	external: [
 		"obsidian",
@@ -61,12 +43,17 @@ const buildContext = await context({
 	treeShaking: true,
 	outfile: "dist/main.js",
 	minify: prod ? true : false,
+	loader: {
+		'.ts': 'ts',
+		'.tsx': 'tsx',
+		'.js': 'js',
+		'.jsx': 'jsx',
+	},
+	define: {
+		"process.env.NODE_ENV": prod ? '"production"' : '"development"',
+	},
+	splitting: false,
 	plugins: [
-		cssMinifyPlugin,
-		esbuildSvelte({
-			compilerOptions: { css: "injected" },
-			preprocess: sveltePreprocess(),
-		}),
 		copy({
 			assets: [
 				{
