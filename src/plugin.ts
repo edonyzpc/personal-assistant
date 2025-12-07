@@ -20,7 +20,6 @@ import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { STAT_PREVIEW_TYPE, Stat } from './stats-view'
 import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
-import AIWindow from './components/AIWindow.svelte'
 
 const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (debug) console.log(...msg);
@@ -33,7 +32,6 @@ export class PluginManager extends Plugin {
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
-    private aiFloatingHelper: AIWindow | undefined;
     vss!: VSS;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
@@ -280,32 +278,6 @@ export class PluginManager extends Plugin {
                     this.log("invoking LLM");
                     const helper = new AssistantFeaturedImageHelper(this.app, this, editor, view);
                     await helper.generate();
-                }
-            }
-        });
-
-        this.addCommand({
-            id: "ai-assistant-floating",
-            name: "AI Auto Robot",
-            editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-                const aiEl = document.getElementById("floating-ai");
-                if (aiEl && this.aiFloatingHelper) {
-                    this.aiFloatingHelper.$destroy();
-                    this.aiFloatingHelper = undefined;
-                } else {
-                    const sel = editor.getSelection();
-                    if (view instanceof MarkdownView) {
-                        this.aiFloatingHelper = new AIWindow({
-                            target: globalThis.document.getElementsByClassName('app-container')[0],
-                            props: {
-                                plugin: this,
-                                editor: editor,
-                                view: view,
-                                app: this.app,
-                                selectedQuery: sel
-                            }
-                        });
-                    }
                 }
             }
         });
@@ -621,4 +593,3 @@ export class PluginManager extends Plugin {
         return token;
     }
 }
-
