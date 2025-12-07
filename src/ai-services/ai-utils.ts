@@ -6,7 +6,6 @@ import { ChatOllama } from "@langchain/ollama";
 import { ChatOpenAI, type ChatOpenAICallOptions } from '@langchain/openai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { OllamaEmbeddings } from "@langchain/ollama";
-import { Notification } from '@svelteuidev/core';
 
 import type { PluginManager } from '../plugin'
 
@@ -27,63 +26,47 @@ export class AIUtils {
         return await this.plugin.getAPIToken();
     }
 
+    private buildNoticeContent(title: string) {
+        const fragment = document.createDocumentFragment();
+        const wrapper = fragment.createEl("div", { attr: { class: "pa-notice" } });
+        const header = wrapper.createDiv({ cls: "pa-notice__header" });
+        const spinner = header.createDiv({ cls: "pa-notice__spinner" });
+        spinner.createSpan({ text: "" });
+        header.createSpan({ text: title, attr: { class: "pa-notice__text" } });
+        wrapper.createDiv({ cls: "pa-notice__body" });
+        return fragment;
+    }
+
     /**
      * 创建AI思考中的通知
      */
-    createAIThinkingNotice(): { notice: Notice; notification: Notification } {
-        const noticeEl = document.createDocumentFragment();
-        const div = noticeEl.createEl("div", { attr: { id: "ai-breathing-icon", style: "background: white;" } });
-        const notification = new Notification({
-            target: div,
-            props: {
-                title: "AI is Thinking...",
-                color: "green",
-                loading: true,
-                withCloseButton: false,
-                override: {
-                    "border-width": "0px",
-                    "color": "white !important",
-                },
-            }
-        });
+    createAIThinkingNotice(): { notice: Notice } {
+        const noticeEl = this.buildNoticeContent("AI is Thinking...");
         const notice = new Notice(noticeEl, 0);
-        // keep the same theme of notice and notification
-        notice.noticeEl.style.backgroundColor = "white";
-        notice.noticeEl.parentElement?.setCssStyles({
-            "backgroundColor": "white",
-        });
-
-        return { notice, notification };
+        this.tuneNoticeShell(notice);
+        return { notice };
     }
 
     /**
      * 创建AI生成图片的通知
      */
-    createAIFeaturedImageNotice(): { notice: Notice; notification: Notification } {
-        const noticeEl = document.createDocumentFragment();
-        const div = noticeEl.createEl("div", { attr: { id: "ai-breahting-icon", style: "background: white;" } });
-        const notification = new Notification({
-            target: div,
-            props: {
-                title: "AI is Generating Featured Images...",
-                color: "green",
-                loading: true,
-                withCloseButton: false,
-                override: {
-                    "border-width": "0px",
-                    "color": "white !important",
-                },
-            }
-        });
+    createAIFeaturedImageNotice(): { notice: Notice } {
+        const noticeEl = this.buildNoticeContent("AI is Generating Featured Images...");
         const notice = new Notice(noticeEl, 0);
-        // keep the same theme of notice and notification
-        notice.noticeEl.style.backgroundColor = "white";
-        notice.noticeEl.parentElement?.setCssStyles({
-            "backgroundColor": "white",
-        });
+        this.tuneNoticeShell(notice);
         notice.noticeEl.createEl("hr", { attr: { id: "ai-featured-image-progress-hr", style: "margin:unset;" } });
+        return { notice };
+    }
 
-        return { notice, notification };
+    private tuneNoticeShell(notice: Notice) {
+        notice.noticeEl.addClass("pa-notice-shell");
+        notice.noticeEl.parentElement?.addClass("pa-notice-shell");
+        notice.noticeEl.setCssStyles({
+            background: "transparent",
+            boxShadow: "none",
+            border: "none",
+            padding: "0",
+        });
     }
 
     /**
