@@ -1,14 +1,16 @@
 import { App, ItemView, WorkspaceLeaf, addIcon } from "obsidian";
+import { createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
 import { PluginManager } from "./plugin";
-import Statistics from './components/Statistics.svelte'
+import Statistics from './components/Statistics'
 import { icons } from './utils'
 import { PluginAST_STAT_ICON, STATS_FILE_NAME } from './constant'
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
 
 export class Stat extends ItemView {
-    component!: Statistics;
+    componentRoot: Root | null = null;
     app: App;
     plugin: PluginManager;
     staticsFileData: string;
@@ -36,37 +38,33 @@ export class Stat extends ItemView {
     async onOpen() {
         const staticsDataDir = this.app.vault.configDir + "/" + STATS_FILE_NAME;
         this.staticsFileData = await this.app.vault.adapter.read(staticsDataDir);
-        const el = this.containerEl.getElementsByClassName("view-content");
-        this.component = new Statistics({
-            target: el[0],
-            props: {
+        const el = this.containerEl.getElementsByClassName("view-content")[0] as HTMLElement;
+        this.componentRoot = createRoot(el);
+        this.componentRoot.render(
+            createElement(Statistics, {
                 app: this.app,
                 plugin: this.plugin,
                 staticsFileData: this.staticsFileData
-            },
-        })
-
-        const charts = this.containerEl.getElementsByTagName("canvas");
-        charts[0].setAttribute("style", "position: absolute;top: 50%;left: 50%;transform: translate(-50%, -50%);")
+            })
+        );
     }
 
     async onClose() {
-        this.component.$destroy();
+        this.componentRoot?.unmount();
+        this.componentRoot = null;
     }
 
     onResize(): void {
-        this.component.$destroy();
-        const el = this.containerEl.getElementsByClassName("view-content");
-        this.component = new Statistics({
-            target: el[0],
-            props: {
+        const el = this.containerEl.getElementsByClassName("view-content")[0] as HTMLElement;
+        if (!this.componentRoot) {
+            this.componentRoot = createRoot(el);
+        }
+        this.componentRoot.render(
+            createElement(Statistics, {
                 app: this.app,
                 plugin: this.plugin,
                 staticsFileData: this.staticsFileData
-            },
-        })
-
-        const charts = this.containerEl.getElementsByTagName("canvas");
-        charts[0].setAttribute("style", "position: absolute;top: 50%;left: 50%;transform: translate(-50%, -50%);")
+            })
+        );
     }
 }

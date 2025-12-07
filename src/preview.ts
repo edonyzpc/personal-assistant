@@ -1,15 +1,17 @@
 /* Copyright 2023 edonyzpc */
 
 import { App, ItemView, TFile, WorkspaceLeaf, addIcon } from "obsidian";
+import { createElement } from "react";
+import { createRoot, type Root } from "react-dom/client";
 
 import { PluginManager } from './plugin';
-import RecordList from './components/RecordList.svelte'
+import RecordList from './components/RecordList'
 import { icons } from './utils';
 
 export const RECORD_PREVIEW_TYPE = "record-preview";
 
 export class RecordPreview extends ItemView {
-    component!: RecordList;
+    componentRoot: Root | null = null;
     app: App;
     plugin: PluginManager;
     files: string[];
@@ -63,34 +65,32 @@ export class RecordPreview extends ItemView {
         this.files = formattedFiles.reverse().concat(...nonformattedFiles.reverse());
         let limits = this.plugin.settings.previewLimits;
         if (limits > this.files.length) limits = this.files.length;
-        this.component = new RecordList({
-            target: this.contentEl,
-            props: {
-                app: this.app,
-                plugin: this.plugin,
-                fileNames: this.files.slice(0, limits),
-                container: this.containerEl,
-            }
-        });
+        this.mountComponent(limits);
+
         this.app.vault.on("modify", (file) => {
             this.plugin.log(`update preview record for file[${file.path}] changed`);
             if (this.files.slice(0, limits).contains(file.path)) {
-                // refresh the view after file content changed
-                this.component.$destroy();
-                this.component = new RecordList({
-                    target: this.contentEl,
-                    props: {
-                        app: this.app,
-                        plugin: this.plugin,
-                        fileNames: this.files.slice(0, limits),
-                        container: this.containerEl,
-                    }
-                });
+                this.mountComponent(limits);
             }
         });
     }
 
     async onClose() {
-        this.component.$destroy();
+        this.componentRoot?.unmount();
+        this.componentRoot = null;
+    }
+
+    private mountComponent(limits: number) {
+        if (!this.componentRoot) {
+            this.componentRoot = createRoot(this.contentEl);
+        }
+        this.componentRoot.render(
+            createElement(RecordList, {
+                app: this.app,
+                plugin: this.plugin,
+                fileNames: this.files.slice(0, limits),
+                container: this.containerEl,
+            })
+        );
     }
 }
