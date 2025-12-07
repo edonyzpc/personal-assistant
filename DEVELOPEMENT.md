@@ -32,6 +32,8 @@ yarn add {package-name}@{version}
 yarn build
 # use watching mode which will auto build when code files are changed
 yarn dev
+# tailwind watch (run in another terminal during dev)
+yarn dev:tailwind
 ```
 
 #### 4. lint
