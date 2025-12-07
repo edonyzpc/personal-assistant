@@ -1,34 +1,28 @@
 {
-  "extends": "@tsconfig/svelte/tsconfig.json",
   "compilerOptions": {
-    "types": ["node", "svelte"],
     "outDir": "dist",
     "baseUrl": "./src",
-    "inlineSources": true,
     "module": "ESNext",
-    "target": "ES6",
+    "target": "ES2020",
+    "moduleResolution": "node",
+    "jsx": "react-jsx",
     "allowJs": true,
     "noImplicitAny": true,
-    "moduleResolution": "node",
     "importHelpers": true,
     "isolatedModules": true,
     "strictNullChecks": true,
     "esModuleInterop": true,
     "strictPropertyInitialization": true,
-    "lib": [
-      "DOM",
-      "ES5",
-      "ES6",
-      "ES7"
-    ],
+    "lib": ["DOM", "ES2020"],
     "typeRoots": [
       "./node_modules/@types",
       "./node_modules",
       "./src/types"
-    ]
+    ],
+    "types": ["node"]
   },
   "include": [
     "**/*.ts",
-    "**/*.svelte"
+    "**/*.tsx"
   ]
 }
