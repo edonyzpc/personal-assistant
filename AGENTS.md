@@ -13,7 +13,7 @@
 - Entry: `src/main.ts` → `src/plugin.ts`
 - Views: `src/preview.ts` (RecordList), `src/stats-view.ts` (Statistics), chat sidebar `src/chat-view.ts` (DOM), AI floating command in `src/plugin.ts`.
 - Components (React): `src/components/*` (RecordList, Statistics, AIWindow suite).
-- Styling: `styles.css` (global + Tailwind import), `src/tailwind.css` (input), `generated/tailwind.css` (build output).
+- Styling: `styles.css` (global + Tailwind import), `src/custom.css` (input), `./styles.css` (build output).
 
 ## React Mounting Convention
 - For `ItemView`/commands, create an element, then `createRoot(container).render(<Component />)`.
@@ -21,7 +21,7 @@
 - Pass `app`/`plugin` through props or context; avoid globals.
 
 ## Tailwind
-- Build with CLI: `yarn tailwind:build` (input `src/tailwind.css` → output `generated/tailwind.css`).
+- Build with CLI: `yarn tailwind:build` (input `src/custom.css` → output `./styles.css`).
 - `styles.css` imports the generated file; ensure Tailwind build runs before packaging.
 - Prefer `pa-`/utility classes to limit theme collisions.
 
