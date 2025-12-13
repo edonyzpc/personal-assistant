@@ -59,6 +59,27 @@ export class AIService {
         this.aiUtils = new AIUtils(plugin);
     }
 
+    private createProgressStep(
+        container: HTMLElement | null,
+        fallbackContainer: HTMLElement,
+        id: string,
+        text: string,
+        state: 'active' | 'done' = 'active',
+    ): HTMLElement {
+        const target = container ?? fallbackContainer;
+        const progressDiv = target.createDiv({ attr: { id, class: "pa-notice__item" } });
+        const dotClass = state === 'active' ? 'pa-notice__item-dot pa-notice__item--active' : 'pa-notice__item-dot pa-notice__item--done';
+        progressDiv.createSpan({ attr: { class: dotClass } });
+        progressDiv.createSpan({ text });
+        return progressDiv;
+    }
+
+    private completeProgressStep(stepElement: HTMLElement, text: string): void {
+        stepElement.empty();
+        stepElement.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--done" } });
+        stepElement.createSpan({ text });
+    }
+
     /**
      * 生成文档摘要和关键词
      */
@@ -123,35 +144,37 @@ export class AIService {
 
             // 生成图片描述
             const body = notice.noticeEl.querySelector(".pa-notice__body") as HTMLElement | null;
-            const progress1Div = body?.createDiv({ attr: { id: "ai-featured-image-progress-1", class: "pa-notice__item" } })
-                ?? notice.noticeEl.createDiv({ attr: { id: "ai-featured-image-progress-1", class: "pa-notice__item" } });
-            progress1Div.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--active" } });
-            progress1Div.createSpan({ text: "Agent Generating Prompt..." });
+            const progress1Div = this.createProgressStep(
+                body,
+                notice.noticeEl,
+                "ai-featured-image-progress-1",
+                "Agent Generating Prompt...",
+            );
             const imageDesc = await this.callLLM(content, this.getImageDescriptionPrompt());
             if (imageDesc.length <= 0) {
                 notice.hide();
                 new Notice("AI is not available.");
                 return;
             }
-            progress1Div.empty();
-            progress1Div.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--done" } });
-            progress1Div.createSpan({ text: "Generating Prompt Success!" });
+            this.completeProgressStep(progress1Div, "Generating Prompt Success!");
 
             // 生成图片
-            const progress2Div = body?.createDiv({ attr: { id: "ai-featured-image-progress-2", class: "pa-notice__item" } })
-                ?? notice.noticeEl.createDiv({ attr: { id: "ai-featured-image-progress-2", class: "pa-notice__item" } });
-            progress2Div.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--active" } });
-            progress2Div.createSpan({ text: "Agent Generating Images..." });
+            const progress2Div = this.createProgressStep(
+                body,
+                notice.noticeEl,
+                "ai-featured-image-progress-2",
+                "Agent Generating Images...",
+            );
             const imagesGen = await this.generateImage(imageDesc);
-            progress2Div.empty();
-            progress2Div.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--done" } });
-            progress2Div.createSpan({ text: "Generating Images Success!" });
+            this.completeProgressStep(progress2Div, "Generating Images Success!");
 
             // 下载图片
-            const progress3Div = body?.createDiv({ attr: { id: "ai-featured-image-progress-3", class: "pa-notice__item" } })
-                ?? notice.noticeEl.createDiv({ attr: { id: "ai-featured-image-progress-3", class: "pa-notice__item" } });
-            progress3Div.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--active" } });
-            progress3Div.createSpan({ text: "Agent Downloading Images..." });
+            const progress3Div = this.createProgressStep(
+                body,
+                notice.noticeEl,
+                "ai-featured-image-progress-3",
+                "Agent Downloading Images...",
+            );
             if (imagesGen) {
                 const imageUrls = await this.getImage(imagesGen);
                 if (imageUrls) {
@@ -189,9 +212,7 @@ export class AIService {
                             imagesCallout += `![[${response}${calloutImageSuffix}]]\n> `;
                         }
                     }
-                    progress3Div.empty();
-                    progress3Div.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--done" } });
-                    progress3Div.createSpan({ text: "Downloading Images Success!" });
+                    this.completeProgressStep(progress3Div, "Downloading Images Success!");
                     // append line breaks
                     imagesCallout += "\n\n";
                     editorView.dispatch({
@@ -204,10 +225,13 @@ export class AIService {
                         ],
                         effects: [addAI.of({ from: line.to, to: line.to, id })],
                     })
-                    const progress4Div = body?.createDiv({ attr: { id: "ai-featured-image-progress-4", class: "pa-notice__item" } })
-                        ?? notice.noticeEl.createDiv({ attr: { id: "ai-featured-image-progress-4", class: "pa-notice__item" } });
-                    progress4Div.createSpan({ attr: { class: "pa-notice__item-dot pa-notice__item--done" } });
-                    progress4Div.createSpan({ text: "Generating Featured Images Success!" });
+                    this.createProgressStep(
+                        body,
+                        notice.noticeEl,
+                        "ai-featured-image-progress-4",
+                        "Generating Featured Images Success!",
+                        "done",
+                    );
                     notice.hide();
                 }
             } else {
