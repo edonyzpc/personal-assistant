@@ -11,7 +11,7 @@
 
 ## Layout
 - Entry: `src/main.ts` → `src/plugin.ts`
-- Views: `src/preview.ts` (RecordList), `src/stats-view.ts` (Statistics), chat sidebar `src/chat-view.ts` (DOM), AI floating command in `src/plugin.ts`.
+- Views: `src/preview.ts` (RecordList), `src/stats-view.ts` (Statistics), chat sidebar `src/chat-view.ts` (DOM).
 - Components (React): `src/components/*` (RecordList, Statistics, AIWindow suite).
 - Styling: `styles.css` (global + Tailwind import), `src/custom.css` (input), `./styles.css` (build output).
 
