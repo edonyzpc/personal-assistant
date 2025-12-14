@@ -22,7 +22,7 @@
 | flushInterval | 2min | 定时刷新的周期 |
 | rateGap | 3s | 单个文件刷新间隔 |
 | maxPerMinute | 5 | 每分钟处理上限 |
-| startupMaxFiles | 120 | 启动期最多处理文件数 |
+| startupMaxFiles | 1000 | 启动期最多处理文件数 |
 | largeFileThreshold | 1MB | 启动期哈希跳过阈值 |
 
 ## 触发流程
