@@ -118,10 +118,9 @@ export class VSS {
                 }
                 this.lastProcessedAt = loopNow;
 
-                if (updated || options.force) {
-                    this.dirty.delete(path);
-                    dirtyChanged = true;
-                }
+                // remove from dirty queue after inspection to avoid repeated work
+                this.dirty.delete(path);
+                dirtyChanged = true;
             }
             if (dirtyChanged) {
                 await this.persistDirtyJournal();
