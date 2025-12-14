@@ -1,4 +1,4 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, TAbstractFile, TFile, Vault, setIcon, debounce } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, Vault, setIcon } from 'obsidian';
 import { ChatService } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
@@ -234,34 +234,7 @@ export class LLMView extends ItemView {
             }
         };
 
-        // update vss cache when file is modified(create, modified, delete)
-        const vssFiles = this.plugin.getVSSFiles();
-        const debounceChange = debounce(
-            async (file: TAbstractFile) => {
-                // debounce calling
-                if (file instanceof TFile) {
-                    for (const vssFile of vssFiles) {
-                        if (vssFile.path === file.path) {
-                            await this.vss.cacheFileVectorStore(file);
-                            await this.vss.loadVectorStore([file]);
-                        }
-                    }
-                }
-            },
-            1200,
-            true
-        );
-        this.app.vault.on("modify", async (file) => {
-            debounceChange(file);
-        });
-        this.app.vault.on("delete", async (file) => {
-            const vssFile = this.plugin.join(this.plugin.vssCacheDir, file.path + ".json");
-            await this.plugin.app.vault.adapter.remove(vssFile);
-            this.plugin.log("delete", vssFile);
-            if (file instanceof TFile) {
-                await this.vss.loadVectorStore([file], true);
-            }
-        })
+        // vss cache updates are now handled globally in the plugin
     }
 
     private updateClickableLink(containerEl: HTMLElement) {
