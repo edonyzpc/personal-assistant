@@ -8,6 +8,7 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import { OllamaEmbeddings } from "@langchain/ollama";
 
 import type { PluginManager } from '../plugin'
+import { computeContentHash } from '../vss-helpers';
 
 /**
  * AI工具类，提供通用的AI功能
@@ -230,6 +231,41 @@ export class AIUtils {
         // 过滤文件引用
         cleaned = cleaned.replace(/\[\[[\w-]+\.[a-z]{1,}\]\]/g, '');
         return cleaned;
+    }
+
+    hashContent(content: string): string {
+        return computeContentHash(content);
+    }
+
+    /**
+     * 基于内容hash判断是否需要更新
+     */
+    async shouldUpdateFileByHash(filePath: string, cacheFilePath: string, contentHash: string, thresholdMs: number = 1000): Promise<boolean> {
+        try {
+            const cachedVSSFile = await this.plugin.app.vault.adapter.read(cacheFilePath);
+            const cachedVectors = JSON.parse(cachedVSSFile);
+            const cachedMeta = cachedVectors?.[0]?.metadata ?? {};
+            const cachedHash = cachedMeta["contentHash"];
+
+            // hash 相同直接跳过
+            if (cachedHash && cachedHash === contentHash) {
+                return false;
+            }
+
+            // hash 不同需要更新
+            if (cachedHash && cachedHash !== contentHash) {
+                return true;
+            }
+
+            // 没有hash时回退到mtime判断
+            const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
+            if (file && file instanceof TFile) {
+                return file.stat.mtime - (cachedMeta["lastModified"] ?? 0) > thresholdMs;
+            }
+        } catch (e) {
+            console.error(e, cacheFilePath);
+        }
+        return true;
     }
 
     /**
