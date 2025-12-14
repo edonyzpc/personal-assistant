@@ -96,9 +96,12 @@ export class VSS {
             for (const path of candidates) {
                 if (!options.force && this.processedWindow.count >= VSS_PARAMS.maxPerMinute) break;
 
-                if (!shouldRespectRateGap(this.lastProcessedAt, Date.now(), VSS_PARAMS.rateGap)) {
-                    const waitMs = VSS_PARAMS.rateGap - (Date.now() - (this.lastProcessedAt as number));
+                let loopNow = Date.now();
+                const last = this.lastProcessedAt;
+                if (!shouldRespectRateGap(last, loopNow, VSS_PARAMS.rateGap) && last !== null) {
+                    const waitMs = VSS_PARAMS.rateGap - (loopNow - last);
                     await new Promise(res => setTimeout(res, waitMs));
+                    loopNow = Date.now();
                 }
 
                 const file = this.plugin.app.vault.getAbstractFileByPath(path);
@@ -112,7 +115,7 @@ export class VSS {
                 if (updated) {
                     this.processedWindow.count++;
                 }
-                this.lastProcessedAt = Date.now();
+                this.lastProcessedAt = loopNow;
 
                 if (updated || options.force) {
                     this.dirty.delete(path);
