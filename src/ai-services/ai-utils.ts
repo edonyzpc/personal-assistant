@@ -270,21 +270,4 @@ export class AIUtils {
         const content = markdown.slice(frontmatterInfo.contentStart);
         return { content, frontmatterInfo };
     }
-
-    /**
-     * 检查文件是否需要更新（基于修改时间）
-     */
-    async shouldUpdateFile(filePath: string, cacheFilePath: string, thresholdMs: number = 1000): Promise<boolean> {
-        try {
-            const cachedVSSFile = await this.plugin.app.vault.adapter.read(cacheFilePath);
-            const cachedVectors = JSON.parse(cachedVSSFile);
-            const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-            if (file && file instanceof TFile) {
-                return file.stat.mtime - cachedVectors[0]["metadata"]["lastModified"] > thresholdMs;
-            }
-        } catch (e) {
-            console.error(e, cacheFilePath);
-        }
-        return true;
-    }
 } 
