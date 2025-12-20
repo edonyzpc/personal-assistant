@@ -531,11 +531,11 @@ export class PluginManager extends Plugin {
 
     getVSSFiles() {
         const files = this.app.vault.getMarkdownFiles();
-        const excluePaths = this.settings.vssCacheExcludePath || [];
+        const excludePaths = this.settings.vssCacheExcludePath || [];
         const excludeFiles: TFile[] = [];
         // filter all markdown files which are in exclude-paths
         for (const file of files) {
-            for (const exclude of excluePaths) {
+            for (const exclude of excludePaths) {
                 if (file.path.startsWith(exclude)) {
                     excludeFiles.push(file);
                 }
