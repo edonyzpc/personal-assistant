@@ -99,7 +99,7 @@ export class VSS {
 
                 let loopNow = Date.now();
                 const last = this.lastProcessedAt;
-                if (!shouldRespectRateGap(last, loopNow, VSS_PARAMS.rateGap)) {
+                if (!shouldRespectRateGap(last, loopNow, VSS_PARAMS.rateGap) && last !== null) {
                     const waitMs = VSS_PARAMS.rateGap - (loopNow - last);
                     await new Promise(res => setTimeout(res, waitMs));
                     loopNow = Date.now();
