@@ -238,31 +238,6 @@ export class AIUtils {
     }
 
     /**
-     * 基于内容hash判断是否需要更新
-     */
-    async shouldUpdateFileByHash(filePath: string, cacheFilePath: string, contentHash: string, thresholdMs: number = 1000): Promise<boolean> {
-        try {
-            const cachedVSSFile = await this.plugin.app.vault.adapter.read(cacheFilePath);
-            const cachedVectors = JSON.parse(cachedVSSFile);
-            const cachedMeta = cachedVectors?.[0]?.metadata ?? {};
-            const cachedHash = cachedMeta["contentHash"];
-
-            if (cachedHash) {
-                return cachedHash !== contentHash;
-            }
-
-            // Fallback to mtime comparison if no hash is present
-            const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
-            if (file && file instanceof TFile) {
-                return file.stat.mtime - (cachedMeta["lastModified"] ?? 0) > thresholdMs;
-            }
-        } catch (e) {
-            console.error(e, cacheFilePath);
-        }
-        return true;
-    }
-
-    /**
      * 获取文档内容（去除frontmatter）
      */
     getDocumentContent(markdown: string): { content: string; frontmatterInfo: FrontMatterInfo } {

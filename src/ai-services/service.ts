@@ -277,11 +277,6 @@ export class AIService {
             await this.plugin.app.vault.adapter.mkdir(childDir);
         }
         const vssFile = this.plugin.join(cacheDir, file.path + ".json");
-        const shouldUpdate = await this.aiUtils.shouldUpdateFileByHash(file.path, vssFile, contentHash);
-        if (!shouldUpdate) {
-            this.plugin.log(`skip ${vssFile}`);
-            return false;
-        }
 
         const vectorStore = new MemoryVectorStore(embeddings);
 
