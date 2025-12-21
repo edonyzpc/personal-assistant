@@ -1,5 +1,5 @@
 /* Copyright 2023 edonyzpc */
-import { Notice, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
+import { Notice, getFrontMatterInfo, type FrontMatterInfo, TFile } from 'obsidian'
 import fetch, { Headers, Request, Response } from "node-fetch";
 import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tongyi";
 import { ChatOllama } from "@langchain/ollama";
