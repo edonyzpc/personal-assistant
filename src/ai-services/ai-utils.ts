@@ -8,6 +8,7 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import { OllamaEmbeddings } from "@langchain/ollama";
 
 import type { PluginManager } from '../plugin'
+import { applyPaNoticeShell, buildPaNoticeContent } from '../ui/pa-dom';
 import { computeContentHash } from '../vss-helpers';
 
 /**
@@ -28,14 +29,12 @@ export class AIUtils {
     }
 
     private buildNoticeContent(title: string) {
-        const fragment = document.createDocumentFragment();
-        const wrapper = fragment.createEl("div", { attr: { class: "pa-notice" } });
-        const header = wrapper.createDiv({ cls: "pa-notice__header" });
-        const spinner = header.createDiv({ cls: "pa-notice__spinner" });
-        spinner.createSpan({ text: "" });
-        header.createSpan({ text: title, attr: { class: "pa-notice__text" } });
-        wrapper.createDiv({ cls: "pa-notice__body" });
-        return fragment;
+        return buildPaNoticeContent(title, {
+            showSpinner: true,
+            spinnerVariant: "dots",
+            spinnerTone: "blue",
+            withBody: true,
+        });
     }
 
     /**
@@ -60,8 +59,7 @@ export class AIUtils {
     }
 
     private tuneNoticeShell(notice: Notice) {
-        notice.noticeEl.addClass("pa-notice-shell");
-        notice.noticeEl.parentElement?.addClass("pa-notice-shell");
+        applyPaNoticeShell(notice.noticeEl);
         notice.noticeEl.setCssStyles({
             background: "transparent",
             boxShadow: "none",
