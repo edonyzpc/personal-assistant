@@ -4,7 +4,7 @@ import { AIService } from './ai-services/service';
 import { AIUtils } from './ai-services/ai-utils';
 import { MemoryVectorStore } from "langchain/vectorstores/memory";
 import { PluginManager } from './plugin';
-import { computeContentHash, selectFlushCandidates, shouldRespectRateGap } from './vss-helpers';
+import { computeContentHash, selectFlushCandidates, shouldRespectRateGap, DirtyTimestamps } from './vss-helpers';
 
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
@@ -24,7 +24,7 @@ export class VSS {
     private vectorStore!: MemoryVectorStore;
     private aiService: AIService;
     private aiUtils: AIUtils;
-    private dirty = new Map<string, number>();
+    private dirty = new Map<string, DirtyTimestamps>();
     private flushIntervalId: ReturnType<typeof setInterval> | null = null;
     private isFlushing = false;
     private lastProcessedAt: number | null = null;
@@ -54,7 +54,12 @@ export class VSS {
     async markDirtyIfEligible(file: TAbstractFile) {
         if (!(file instanceof TFile)) return;
         if (!this.isEligible(file)) return;
-        this.dirty.set(file.path, Date.now());
+        const now = Date.now();
+        const existing = this.dirty.get(file.path);
+        const updated: DirtyTimestamps = existing
+            ? { first: existing.first, last: now }
+            : { first: now, last: now };
+        this.dirty.set(file.path, updated);
         await this.persistDirtyJournal();
     }
 
@@ -224,7 +229,20 @@ export class VSS {
             const parsed = JSON.parse(raw);
             Object.entries(parsed || {}).forEach(([p, ts]) => {
                 if (typeof ts === 'number') {
-                    this.dirty.set(p, ts);
+                    this.dirty.set(p, { first: ts, last: ts });
+                    return;
+                }
+                if (ts && typeof ts === 'object') {
+                    const record = ts as Partial<DirtyTimestamps>;
+                    const first = typeof record.first === 'number' ? record.first : undefined;
+                    const last = typeof record.last === 'number' ? record.last : undefined;
+                    if (first !== undefined && last !== undefined) {
+                        this.dirty.set(p, { first, last });
+                    } else if (first !== undefined) {
+                        this.dirty.set(p, { first, last: first });
+                    } else if (last !== undefined) {
+                        this.dirty.set(p, { first: last, last });
+                    }
                 }
             });
         } catch (e) {
@@ -263,7 +281,8 @@ export class VSS {
             const cachePath = this.plugin.join(this.vssCacheDir, file.path + ".json");
             const cacheExist = await this.plugin.app.vault.adapter.exists(cachePath);
             if (!cacheExist) {
-                this.dirty.set(file.path, Date.now() - VSS_PARAMS.maxDelay);
+                const ts = Date.now() - VSS_PARAMS.maxDelay;
+                this.dirty.set(file.path, { first: ts, last: ts });
                 checked++;
                 continue;
             }
@@ -271,7 +290,8 @@ export class VSS {
             if (!hash) continue;
             const cachedHash = await this.readCachedHash(cachePath);
             if (!cachedHash || cachedHash !== hash) {
-                this.dirty.set(file.path, Date.now() - VSS_PARAMS.maxDelay);
+                const ts = Date.now() - VSS_PARAMS.maxDelay;
+                this.dirty.set(file.path, { first: ts, last: ts });
                 checked++;
             }
         }
