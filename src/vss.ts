@@ -136,17 +136,22 @@ export class VSS {
 
         for (const f of vssFiles) {
             if (isDelete) {
-                this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.filter(
-                    (v) => v.metadata.path !== f.path
-                );
+                for (const v of this.vectorStore.memoryVectors) {
+                    if (v.metadata.path === f.path) {
+                        this.vectorStore.memoryVectors.remove(v);
+                    }
+                }
             } else {
                 try {
                     const fpath = this.plugin.join(this.vssCacheDir, f.path + ".json")
                     const readStr = await this.plugin.app.vault.adapter.read(fpath);
                     const memoryVectors2 = JSON.parse(readStr);
-                    this.vectorStore.memoryVectors = this.vectorStore.memoryVectors
-                        .filter((v) => v.metadata.path !== f.path)
-                        .concat(memoryVectors2);
+                    for (const v of this.vectorStore.memoryVectors) {
+                        if (v.metadata.path === f.path) {
+                            this.vectorStore.memoryVectors.remove(v);
+                        }
+                    }
+                    this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.concat(memoryVectors2);
                 } catch (e) {
                     console.error(e);
                 }
