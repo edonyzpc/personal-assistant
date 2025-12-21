@@ -372,13 +372,17 @@ export class PluginManager extends Plugin {
         debug(this.settings.debug, ...msg);
     }
 
-    setVssCacheStatus(state: "idle" | "loading" | "done") {
+    setVssCacheStatus(state: "idle" | "loading" | "rebuilding" | "done") {
         const statusBar = document.getElementById("personal-assistant-ai-statusbar");
         if (!statusBar) return;
         statusBar.removeClass("personal-assistant-ai-breathing");
+        statusBar.removeClass("personal-assistant-ai-rebuilding");
         statusBar.removeClass("personal-assistant-ai-statusbar-done");
         if (state === "loading") {
             statusBar.addClass("personal-assistant-ai-breathing");
+        }
+        if (state === "rebuilding") {
+            statusBar.addClass("personal-assistant-ai-rebuilding");
         }
         if (state === "done") {
             statusBar.addClass("personal-assistant-ai-statusbar-done");
@@ -569,6 +573,7 @@ export class PluginManager extends Plugin {
 
     private async cacheVectors() {
         if (this.vss) {
+            this.setVssCacheStatus("rebuilding");
             const vssFiles = this.getVSSFiles();
             let count = 0;
             try {
@@ -591,6 +596,7 @@ export class PluginManager extends Plugin {
 
             // finish init
             this.isVssCached = true;
+            this.setVssCacheStatus("done");
         }
     }
 

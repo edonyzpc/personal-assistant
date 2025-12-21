@@ -9,6 +9,7 @@ body {
 	--status-bar-hover: #9e2ff9;
 	--status-bar-ai: #0544ff;
 	--status-bar-ai-breathing: #ac05ff;
+	--status-bar-ai-rebuilding: #ff9b05;
 	--status-bar-ai-hover: #ff0101;
 }
 
@@ -62,6 +63,16 @@ body {
 .personal-assistant-ai-breathing svg {
 	order: 1;
 	color: var(--status-bar-ai);
+}
+
+.personal-assistant-ai-rebuilding {
+	animation: svg-blink-ai 1.4s infinite;
+	opacity: 1;
+}
+
+.personal-assistant-ai-rebuilding svg {
+	order: 1;
+	color: var(--status-bar-ai-rebuilding);
 }
 
 @keyframes svg-blink {
