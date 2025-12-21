@@ -107,7 +107,6 @@ export class PluginManager extends Plugin {
             await this.app.vault.adapter.mkdir(this.vssCacheDir);
         }
         this.vss = this.initVss();
-        await this.vss.initialize();
 
         // get callout manager api
         this.app.workspace.onLayoutReady(async () => {
@@ -295,46 +294,12 @@ export class PluginManager extends Plugin {
         })
 
         this.addCommand({
-            id: "flush-vss-cache",
-            name: "Flush VSS Embeddings",
-            callback: async () => {
-                await this.vss.flush({ force: true, reason: "manual-command" });
-            }
-        })
-
-        this.addCommand({
             id: 'open-chat',
             name: 'Open Chat in Sidebar',
             callback: async () => {
                 this.activeChatView();
             }
         });
-
-        // VSS cache lifecycle events
-        this.registerEvent(
-            this.app.vault.on("modify", async (file) => {
-                if (file instanceof TFile) {
-                    await this.vss.markDirtyIfEligible(file);
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.vault.on("delete", async (file) => {
-                if (file instanceof TFile) {
-                    await this.vss.handleDelete(file);
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.workspace.on("active-leaf-change", async () => {
-                await this.vss.handleActiveLeafChange();
-            })
-        );
-        this.registerEvent(
-            this.app.workspace.on("file-open", async (file) => {
-                await this.vss.handleFileOpen(file);
-            })
-        );
         // Handle the Editor Plugins
         this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
 
@@ -531,7 +496,8 @@ export class PluginManager extends Plugin {
 
     getVSSFiles() {
         const files = this.app.vault.getMarkdownFiles();
-        const excluePaths = this.settings.vssCacheExcludePath || [];
+        // TODO: config exclude paths
+        const excluePaths = [".obsidian", "8.template", "9.src", "a.subjects", "b.notion"]
         const excludeFiles: TFile[] = [];
         // filter all markdown files which are in exclude-paths
         for (const file of files) {

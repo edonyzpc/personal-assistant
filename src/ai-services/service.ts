@@ -255,7 +255,6 @@ export class AIService {
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
-        const contentHash = this.aiUtils.hashContent(cleanedContent);
 
         if (cleanedContent.length === 0) {
             return false;
@@ -268,7 +267,6 @@ export class AIService {
                 path: file.path,
                 created: file.stat.ctime,
                 lastModified: file.stat.mtime,
-                contentHash: contentHash,
             },
         }));
 
@@ -277,7 +275,7 @@ export class AIService {
             await this.plugin.app.vault.adapter.mkdir(childDir);
         }
         const vssFile = this.plugin.join(cacheDir, file.path + ".json");
-        const shouldUpdate = await this.aiUtils.shouldUpdateFileByHash(file.path, vssFile, contentHash);
+        const shouldUpdate = await this.aiUtils.shouldUpdateFile(file.path, vssFile);
         if (!shouldUpdate) {
             this.plugin.log(`skip ${vssFile}`);
             return false;

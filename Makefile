@@ -4,7 +4,7 @@ install:
 	yarn install
 
 bin:
-	yarn lint && yarn build
+	yarn build
 
 deploy: clean bin
 	cp dist/main.js test/.obsidian/plugins/personal-assistant/

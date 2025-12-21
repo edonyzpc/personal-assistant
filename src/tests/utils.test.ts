@@ -1,9 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
-import { describe, expect, test, jest } from '@jest/globals';
+import { describe,expect, test } from '@jest/globals';
 import { TEST_TOKEN } from '../utils';
-
-jest.mock('obsidian');
 
 /*
 jest.mock('../plugin');
