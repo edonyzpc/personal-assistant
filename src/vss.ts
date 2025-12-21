@@ -92,7 +92,6 @@ export class VSS {
             const quiet = options.force ? 0 : VSS_PARAMS.quietWindow;
             const limit = options.limit ?? VSS_PARAMS.maxPerMinute;
             const candidates = selectFlushCandidates(this.dirty, now, quiet, VSS_PARAMS.maxDelay, limit);
-            let dirtyChanged = false;
 
             for (const path of candidates) {
                 if (!options.force && this.processedWindow.count >= VSS_PARAMS.maxPerMinute) break;
@@ -108,7 +107,7 @@ export class VSS {
                 const file = this.plugin.app.vault.getAbstractFileByPath(path);
                 if (!file || !(file instanceof TFile)) {
                     this.dirty.delete(path);
-                    dirtyChanged = true;
+                    await this.persistDirtyJournal();
                     continue;
                 }
 
@@ -120,10 +119,7 @@ export class VSS {
 
                 if (updated || options.force) {
                     this.dirty.delete(path);
-                    dirtyChanged = true;
                 }
-            }
-            if (dirtyChanged) {
                 await this.persistDirtyJournal();
             }
         } finally {
