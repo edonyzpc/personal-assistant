@@ -7,7 +7,7 @@
 - **事件改造**：`vault.modify` 仅标记脏文件，不再立即计算。`active-leaf-change` / `file-open` / 定时器触发延后刷新。
 - **静默窗口 + 最长延迟**：`quietWindow=30s` 后才刷新；超过 `maxDelay=10min` 强制刷新。
 - **速率限制**：处理间隔 `rateGap=3s`，每分钟最多 `maxPerMinute=5`。
-- **启动期安全阈值**：冷启动最多处理 `startupMaxFiles=1000` 个文件，超出留给后续定时器。
+- **启动期安全阈值**：冷启动最多处理 `startupMaxFiles=120` 个文件，超出留给后续定时器。
 - **内容哈希去重**：缓存写入 `contentHash`（cleaned markdown 的 SHA1），hash 相同直接跳过重算，mtime 仅兜底。
 - **脏队列持久化**：`vss-cache/dirty.json` 实时落盘；异常退出后可恢复。
 - **兜底扫描**：启动后延迟扫描缓存缺失或 hash 不匹配的文件并加入脏队列（受限于 `startupMaxFiles`）。>1MB 文件启动期不算 hash，延后处理。
