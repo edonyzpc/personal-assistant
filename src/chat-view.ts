@@ -234,7 +234,9 @@ export class LLMView extends ItemView {
             }
         };
 
-        // vss cache updates are now handled globally in the plugin
+        void this.vss.loadCachedVectorStore().catch((e) => {
+            this.plugin.log("Error loading VSS cache on chat open:", e);
+        });
     }
 
     private updateClickableLink(containerEl: HTMLElement) {
