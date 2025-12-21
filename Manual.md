@@ -9,6 +9,10 @@ Obsidian users who want to take good notes would prefer to spend their time reco
 
 This is the reason I developed the Personal Assistant plugin. The Personal Assistant plugin is an Obsidian platform plugin focused on helping you record more ideas and inspirations and better review your past notes, primarily through automation (reducing interactions, one-click management tasks), while also supporting plenty of personalized configurations and multi-plugin interactions.
 
+## Developer Docs
+
+- VSS Embedding Flow (embedding API triggers and cache lifecycle): [docs/vss-embedding-flow.md](docs/vss-embedding-flow.md)
+
 ## Update Plugins
 
 ### 1. Description
