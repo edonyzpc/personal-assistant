@@ -119,7 +119,19 @@ export class VSS {
                     continue;
                 }
 
-                const updated = await this.rebuildCacheIfNeeded(file);
+                const { updated, skipped } = await this.rebuildCacheIfNeeded(file);
+                if (skipped) {
+                    // keep large files in the dirty queue but push the timestamp forward
+                    const existing = this.dirty.get(path);
+                    const nowTs = Date.now();
+                    const refreshed: DirtyTimestamps = existing
+                        ? { first: existing.first, last: nowTs }
+                        : { first: nowTs, last: nowTs };
+                    this.dirty.set(path, refreshed);
+                    dirtyChanged = true;
+                    continue;
+                }
+
                 if (updated) {
                     this.processedWindow.count++;
                 }
@@ -171,23 +183,24 @@ export class VSS {
         return await this.aiService.searchSimilarDocuments(prompt, this.vectorStore);
     }
 
-    private async rebuildCacheIfNeeded(file: TFile): Promise<boolean> {
+    private async rebuildCacheIfNeeded(file: TFile): Promise<{ updated: boolean; skipped: boolean }> {
         const cachePath = this.plugin.join(this.vssCacheDir, file.path + ".json");
         const currentHash = await this.computeFileHash(file);
         if (!currentHash) {
-            return false;
+            const skipped = file.stat.size > VSS_PARAMS.largeFileThreshold;
+            return { updated: false, skipped };
         }
         const cachedHash = await this.readCachedHash(cachePath);
 
         if (cachedHash && cachedHash === currentHash) {
-            return false;
+            return { updated: false, skipped: false };
         }
 
         const updated = await this.cacheFileVectorStore(file);
         if (updated) {
             await this.loadVectorStore([file]);
         }
-        return updated;
+        return { updated, skipped: false };
     }
 
     private async computeFileHash(file: TFile): Promise<string | null> {
