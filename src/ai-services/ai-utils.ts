@@ -251,7 +251,7 @@ export class AIUtils {
                 return cachedHash !== contentHash;
             }
 
-            // Fallback to mtime comparison if no hash is present
+            // 没有hash时回退到mtime判断
             const file = this.plugin.app.vault.getAbstractFileByPath(filePath);
             if (file && file instanceof TFile) {
                 return file.stat.mtime - (cachedMeta["lastModified"] ?? 0) > thresholdMs;
