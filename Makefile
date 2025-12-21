@@ -1,9 +1,9 @@
-.PHONY: deploy clean bin install release tag
+.PHONY: deploy clean bin install release tag test
 
 install:
 	yarn install
 
-bin:
+bin: test
 	yarn lint && yarn build
 
 deploy: clean bin
@@ -17,6 +17,9 @@ clean:
 	rm -rf test/.obsidian/plugins/personal-assistant/manifest.json
 	rm -rf test/.obsidian/plugins/personal-assistant/manifest-beta.json
 	rm -rf test/.obsidian/plugins/personal-assistant/styles.css
+
+test:
+	yarn test
 
 release:
 	yarn version
