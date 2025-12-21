@@ -3,6 +3,7 @@ import { ChatService } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
 import { isPluginEnabled } from './utils';
+import { applyPaNoticeShell, buildChatShell, buildPaNoticeContent, createChatMessage } from './ui/pa-dom';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
 
@@ -41,15 +42,9 @@ export class LLMView extends ItemView {
 
     async onOpen() {
         const { containerEl } = this;
-        containerEl.empty();
-        containerEl.classList.add('llm-view');
-
-        const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container' });
-
-        const inputDiv = containerEl.createDiv({ cls: 'llm-input' });
-        const textArea = inputDiv.createEl('textarea', {
-            attr: { rows: '4', placeholder: 'Type your message here...' }
-        });
+        const chatShell = buildChatShell(containerEl);
+        const chatContainer = chatShell.scroll;
+        const textArea = chatShell.textarea;
 
         textArea.addEventListener('keydown', (e: KeyboardEvent) => {
             if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -62,11 +57,10 @@ export class LLMView extends ItemView {
             }
         });
 
-        const buttonDiv = inputDiv.createDiv({ cls: 'llm-buttons' });
-        const sendButton = buttonDiv.createEl('button', { text: 'Ask' });
-        const clearButton = buttonDiv.createEl('button', { text: 'Clear Chat' });
-        const addToEditorButton = buttonDiv.createEl('button', { text: 'Add to Editor' });
-        const cancelButton = buttonDiv.createEl('button', { text: '✕', cls: 'cancel-button cancel-button-hidden' });
+        const sendButton = chatShell.sendButton;
+        const clearButton = chatShell.clearButton;
+        const addToEditorButton = chatShell.addButton;
+        const cancelButton = chatShell.cancelButton;
 
         addToEditorButton.disabled = true;
 
@@ -76,21 +70,24 @@ export class LLMView extends ItemView {
             if (this.abortController) {
                 this.abortController.abort();
                 this.abortController = null;
-                cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
-                sendButton.classList.replace('send-button-hidden', 'send-button-visible');
-                new Notice('Generation cancelled');
+                cancelButton.classList.add('pa-is-hidden');
+                sendButton.classList.remove('pa-is-hidden');
+                const notice = new Notice(
+                    buildPaNoticeContent('Generation cancelled', {
+                        showSpinner: true,
+                        spinnerVariant: "bar",
+                        spinnerTone: "red",
+                    }),
+                    2200
+                );
+                applyPaNoticeShell(notice.noticeEl);
             }
         };
 
         const renderMessage = (message: ChatMessage, index?: number) => {
-            const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
-            const roleLabel = messageDiv.createDiv({ cls: 'message-role', text: message.role === 'user' ? 'You' : 'Assistant' }); // eslint-disable-line @typescript-eslint/no-unused-vars
-            const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
-            const actionDiv = messageDiv.createDiv({ cls: 'message-actions' });
-            const copyButton = actionDiv.createEl('button', {
-                cls: 'message-action-button',
-                attr: { 'aria-label': 'Copy message' }
-            });
+            const messageEl = createChatMessage(this.responseDiv, message.role, { showDelete: index !== undefined });
+            const contentDiv = messageEl.content as HTMLElement;
+            const copyButton = messageEl.copyButton;
             setIcon(copyButton, 'copy');
             copyButton.onclick = () => {
                 navigator.clipboard.writeText(message.content).then(() => {
@@ -100,11 +97,8 @@ export class LLMView extends ItemView {
                 });
             };
 
-            if (index !== undefined) {
-                const deleteButton = actionDiv.createEl('button', {
-                    cls: 'message-action-button',
-                    attr: { 'aria-label': 'Delete message' }
-                });
+            if (index !== undefined && messageEl.deleteButton) {
+                const deleteButton = messageEl.deleteButton;
                 setIcon(deleteButton, 'trash');
                 deleteButton.onclick = () => {
                     this.chatHistory.splice(index, 1);
@@ -135,29 +129,25 @@ export class LLMView extends ItemView {
             textArea.value = '';
             addToEditorButton.disabled = true;
 
-            cancelButton.classList.replace('cancel-button-hidden', 'cancel-button-visible');
-            sendButton.classList.replace('send-button-visible', 'send-button-hidden');
+            cancelButton.classList.remove('pa-is-hidden');
+            sendButton.classList.add('pa-is-hidden');
 
             try {
                 this.abortController = new AbortController();
                 let responseContent = '';
                 let streamingMessageEl: HTMLDivElement | null = null;
                 let contentDiv: HTMLElement | null = null;
+                let copyButton: HTMLButtonElement | null = null;
 
                 await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
                         responseContent = chunk;
                         if (!streamingMessageEl) {
-                            streamingMessageEl = this.responseDiv.createDiv({ cls: 'llm-message assistant' });
-                            const roleLabel = streamingMessageEl.createDiv({ cls: 'message-role', text: 'Assistant' }); // eslint-disable-line @typescript-eslint/no-unused-vars
-                            contentDiv = streamingMessageEl.createDiv({ cls: 'message-content' });
-
-                            const actionDiv = streamingMessageEl.createDiv({ cls: 'message-actions' });
-                            const copyButton = actionDiv.createEl('button', {
-                                cls: 'message-action-button',
-                                attr: { 'aria-label': 'Copy message' }
-                            });
+                            const messageEl = createChatMessage(this.responseDiv, 'assistant', { showDelete: false });
+                            streamingMessageEl = messageEl.root;
+                            contentDiv = messageEl.content;
+                            copyButton = messageEl.copyButton;
                             setIcon(copyButton, 'copy');
                             copyButton.onclick = () => {
                                 navigator.clipboard.writeText(responseContent)
@@ -200,8 +190,8 @@ export class LLMView extends ItemView {
                     new Notice('Error: ' + error);
                 }
             } finally {
-                cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
-                sendButton.classList.replace('send-button-hidden', 'send-button-visible');
+                cancelButton.classList.add('pa-is-hidden');
+                sendButton.classList.remove('pa-is-hidden');
                 this.abortController = null;
             }
         };
