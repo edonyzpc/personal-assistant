@@ -247,8 +247,14 @@ export class AIUtils {
             const cachedMeta = cachedVectors?.[0]?.metadata ?? {};
             const cachedHash = cachedMeta["contentHash"];
 
-            if (cachedHash) {
-                return cachedHash !== contentHash;
+            // hash 相同直接跳过
+            if (cachedHash && cachedHash === contentHash) {
+                return false;
+            }
+
+            // hash 不同需要更新
+            if (cachedHash && cachedHash !== contentHash) {
+                return true;
             }
 
             // 没有hash时回退到mtime判断
