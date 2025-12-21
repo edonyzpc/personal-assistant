@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import { computeContentHash, selectFlushCandidates, shouldRespectRateGap } from '../src/vss-helpers';
+import { computeContentHash, selectFlushCandidates, shouldRespectRateGap, DirtyTimestamps } from '../src/vss-helpers';
 
 describe('computeContentHash', () => {
     it('returns stable hash for identical input', () => {
@@ -18,11 +18,11 @@ describe('computeContentHash', () => {
 describe('selectFlushCandidates', () => {
     it('respects quiet window and max delay with limit', () => {
         const now = Date.now();
-        const dirty = new Map<string, number>([
-            ['recent.md', now - 5_000],          // should be skipped by quiet window
-            ['old.md', now - 40_000],            // should pass quiet window
-            ['stale.md', now - 700_000],         // should pass maxDelay
-            ['another.md', now - 35_000],        // should pass but may be limited
+        const dirty = new Map<string, DirtyTimestamps>([
+            ['recent.md', { first: now - 5_000, last: now - 5_000 }],           // should be skipped by quiet window
+            ['old.md', { first: now - 40_000, last: now - 40_000 }],           // should pass quiet window
+            ['stale.md', { first: now - 700_000, last: now - 700_000 }],       // should pass maxDelay
+            ['another.md', { first: now - 35_000, last: now - 35_000 }],       // should pass but may be limited
         ]);
 
         const candidates = selectFlushCandidates(dirty, now, 30_000, 600_000, 2);
@@ -30,6 +30,16 @@ describe('selectFlushCandidates', () => {
         expect(candidates).toContain('stale.md');
         expect(candidates).not.toContain('recent.md');
         expect(candidates.length).toBe(2); // limited to 2
+    });
+
+    it('flushes frequently edited files once maxDelay is reached', () => {
+        const now = Date.now();
+        const dirty = new Map<string, DirtyTimestamps>([
+            ['busy.md', { first: now - 700_000, last: now - 1_000 }], // quiet window not met, but maxDelay exceeded
+        ]);
+
+        const candidates = selectFlushCandidates(dirty, now, 30_000, 600_000, 5);
+        expect(candidates).toContain('busy.md');
     });
 });
 
