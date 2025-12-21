@@ -62,9 +62,7 @@ export class VSS {
         this.dirty.delete(file.path);
         await this.persistDirtyJournal();
         const vssFile = this.plugin.join(this.vssCacheDir, file.path + ".json");
-        if (await this.plugin.app.vault.adapter.exists(vssFile)) {
-            await this.plugin.app.vault.adapter.remove(vssFile);
-        }
+        await this.plugin.app.vault.adapter.remove(vssFile);
         this.plugin.log("delete", vssFile);
         await this.loadVectorStore([file], true);
     }
@@ -202,10 +200,7 @@ export class VSS {
             const cached = await this.plugin.app.vault.adapter.read(cachePath);
             const vectors = JSON.parse(cached);
             return vectors?.[0]?.metadata?.contentHash ?? null;
-        } catch (e) {
-            if (e.code !== 'ENOENT') {
-                this.plugin.log(`Could not read VSS cache hash for ${cachePath}:`, e);
-            }
+        } catch {
             return null;
         }
     }
@@ -227,12 +222,8 @@ export class VSS {
                     this.dirty.set(p, ts);
                 }
             });
-        } catch (e) {
-            // It's okay if the file doesn't exist on first run.
-            // We should log other errors.
-            if (e.code !== 'ENOENT') {
-                this.plugin.log("Error loading VSS dirty journal:", e);
-            }
+        } catch {
+            // ignore if file not exist
         }
     }
 
