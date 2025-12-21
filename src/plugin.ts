@@ -372,6 +372,19 @@ export class PluginManager extends Plugin {
         debug(this.settings.debug, ...msg);
     }
 
+    setVssCacheStatus(state: "idle" | "loading" | "done") {
+        const statusBar = document.getElementById("personal-assistant-ai-statusbar");
+        if (!statusBar) return;
+        statusBar.removeClass("personal-assistant-ai-breathing");
+        statusBar.removeClass("personal-assistant-ai-statusbar-done");
+        if (state === "loading") {
+            statusBar.addClass("personal-assistant-ai-breathing");
+        }
+        if (state === "done") {
+            statusBar.addClass("personal-assistant-ai-statusbar-done");
+        }
+    }
+
     // the following is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102
     private async createDirectory(dir: string): Promise<void> {
         const { vault } = this.app;
@@ -556,10 +569,6 @@ export class PluginManager extends Plugin {
 
     private async cacheVectors() {
         if (this.vss) {
-            const statusBar = document.getElementById("personal-assistant-ai-statusbar");
-            // status bar style setting
-            statusBar?.addClass("personal-assistant-ai-breathing");
-
             const vssFiles = this.getVSSFiles();
             let count = 0;
             try {
@@ -582,8 +591,6 @@ export class PluginManager extends Plugin {
 
             // finish init
             this.isVssCached = true;
-            statusBar?.removeClass("personal-assistant-ai-breathing");
-            statusBar?.addClass("personal-assistant-ai-statusbar-done");
         }
     }
 

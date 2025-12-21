@@ -31,6 +31,8 @@ export class VSS {
     private processedWindow = { count: 0, windowStart: 0 };
     private initialized = false;
     private lastActiveFile: TFile | null = null;
+    private cacheLoadPromise: Promise<void> | null = null;
+    private cacheLoaded = false;
 
     constructor(
         plugin: PluginManager,
@@ -49,6 +51,13 @@ export class VSS {
         this.startFlushTimer();
         this.scheduleStartupScan();
         this.initialized = true;
+    }
+
+    async loadCachedVectorStore(): Promise<void> {
+        if (this.cacheLoaded) return;
+        if (this.cacheLoadPromise) return this.cacheLoadPromise;
+        this.cacheLoadPromise = this.loadCachedVectorStoreInternal();
+        return this.cacheLoadPromise;
     }
 
     async markDirtyIfEligible(file: TAbstractFile) {
@@ -181,6 +190,35 @@ export class VSS {
 
     async searchSimilarity(prompt: string) {
         return await this.aiService.searchSimilarDocuments(prompt, this.vectorStore);
+    }
+
+    private async loadCachedVectorStoreInternal(): Promise<void> {
+        let success = false;
+        this.plugin.setVssCacheStatus("loading");
+        try {
+            const vssFiles = this.plugin.getVSSFiles();
+            const existing: TFile[] = [];
+            for (const file of vssFiles) {
+                const cachePath = this.plugin.join(this.vssCacheDir, file.path + ".json");
+                if (await this.plugin.app.vault.adapter.exists(cachePath)) {
+                    existing.push(file);
+                }
+            }
+            if (!this.vectorStore) {
+                const embeddings = await this.aiService['aiUtils'].createEmbeddings();
+                this.vectorStore = new MemoryVectorStore(embeddings);
+            }
+            if (existing.length > 0) {
+                await this.loadVectorStore(existing);
+            }
+            success = true;
+        } catch (e) {
+            this.plugin.log("Error loading cached VSS:", e);
+        } finally {
+            this.cacheLoadPromise = null;
+            this.cacheLoaded = success;
+            this.plugin.setVssCacheStatus(success ? "done" : "idle");
+        }
     }
 
     private async rebuildCacheIfNeeded(file: TFile): Promise<{ updated: boolean; skipped: boolean }> {
