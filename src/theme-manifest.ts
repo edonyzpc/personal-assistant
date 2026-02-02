@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 import { App, Notice, normalizePath, request } from 'obsidian';
-import { gt, prerelease } from "semver";
+import { gt, prerelease, valid } from "semver";
 import { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from "./types/manifest";
 import { ProgressBar } from "./progress-bar";
@@ -18,6 +18,7 @@ export class ThemeUpdater implements ObsidianManifest {
     private totalThemes: number;
     private checkedThemes: number;
     private progressBar: ProgressBar;
+    private versionRegex = /^\d+(\.\d+)*$/;
 
     static async init(app: App, plugin: PluginManager): Promise<ThemeUpdater> {
         const themeUpdater = new ThemeUpdater(app, plugin);
@@ -131,30 +132,80 @@ export class ThemeUpdater implements ObsidianManifest {
         return null;
     }
 
+    private getVersionInfo(raw: string): {
+        cleaned: string;
+        semver: string | null;
+        numericParts: number[] | null;
+        isPrerelease: boolean;
+    } {
+        const trimmed = raw.trim();
+        const cleaned = trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
+        const semverVersion = valid(cleaned);
+        const isPrerelease = semverVersion
+            ? Boolean(prerelease(semverVersion)?.length)
+            : cleaned.includes("-") || /[a-zA-Z]/.test(cleaned);
+        const base = cleaned.split(/[+-]/)[0];
+        let numericParts: number[] | null = null;
+        if (this.versionRegex.test(base)) {
+            numericParts = base.split(".").map((part) => Number(part));
+            if (numericParts.some((part) => Number.isNaN(part))) {
+                numericParts = null;
+            }
+        }
+
+        return {
+            cleaned,
+            semver: semverVersion,
+            numericParts,
+            isPrerelease,
+        };
+    }
+
+    private compareNumericParts(a: number[], b: number[]): number {
+        const maxLen = Math.max(a.length, b.length);
+        for (let i = 0; i < maxLen; i++) {
+            const left = a[i] ?? 0;
+            const right = b[i] ?? 0;
+            if (left > right) return 1;
+            if (left < right) return -1;
+        }
+
+        return 0;
+    }
+
     async isNeedToUpdate(latestRelease: JSON | null, currentVersion: string): Promise<UpdateStatus> {
         if (latestRelease) {
             const originTag = this.getLatestTag(latestRelease);
-            let tag = "";
             if (originTag) {
-                tag = originTag;
-                if (originTag.startsWith('v')) tag = originTag.split('v')[1];
-                this.log("latest tag: " + tag, "current tag: " + currentVersion);
-                // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
-                const pre = prerelease(tag);
-                if (pre) {
-                    if (pre.length > 0) {
-                        // do not update pre-release version
-                        return {
-                            needUpdate: false,
-                            targetVersion: currentVersion,
-                        }
-                    }
-                }
-                if (gt(tag, currentVersion)) {
+                const tagInfo = this.getVersionInfo(originTag);
+                const currentInfo = this.getVersionInfo(currentVersion);
+                this.log("latest tag: " + tagInfo.cleaned, "current tag: " + currentInfo.cleaned);
+                // do not update pre-release version
+                if (tagInfo.isPrerelease) {
                     return {
-                        needUpdate: true,
-                        targetVersion: originTag,
+                        needUpdate: false,
+                        targetVersion: currentVersion,
+                    };
+                }
+                if (tagInfo.semver && currentInfo.semver) {
+                    if (gt(tagInfo.semver, currentInfo.semver)) {
+                        return {
+                            needUpdate: true,
+                            targetVersion: originTag,
+                        };
                     }
+                } else if (tagInfo.numericParts && currentInfo.numericParts) {
+                    const compare = this.compareNumericParts(tagInfo.numericParts, currentInfo.numericParts);
+                    if (compare > 0 || (compare === 0 && currentInfo.isPrerelease && !tagInfo.isPrerelease)) {
+                        return {
+                            needUpdate: true,
+                            targetVersion: originTag,
+                        };
+                    }
+                } else {
+                    this.log(
+                        `skip update: unsupported version format (latest: ${originTag}, current: ${currentVersion})`
+                    );
                 }
             }
         }
