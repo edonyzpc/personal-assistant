@@ -2,6 +2,42 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.5.6](https://github.com/edonyzpc/personal-assistant/compare/1.5.6-beta...1.5.6) (2026-02-05)
+### Features
+- vss: redesign embedding refresh with hashed cache
+- migrate record/stat views from Svelte to React
+
+### Fix
+- vss: retain large files in dirty queue
+- vss: honor maxDelay during continuous edits
+- vss: guard cache removal and improve error logging
+- vss: honor exclude paths and rate gap guard
+- vss: clear dirty entry after inspection
+- vss: harden rate limiting guard
+- vss: handle delete by filtering memory vectors
+- theme: handle non-semver theme versions
+
+### Improvements
+- vss: reduce dirty journal writes during flush
+- vss: drop unused cache helpers
+- ai: restyle notices and featured image progress
+- ai-service: extract notice progress helpers
+- ai-services: remove redundant hash check
+- ai-utils: simplify hash update check
+- statistics: type chart data and options
+- tailwind: narrow content paths and regenerate css
+- build: align tailwind entry with obsidian css workflow
+- remove AI auto robot command and UI
+- add test cmdline and remove useless import
+
+### Docs
+- add agents guide and update dev workflow
+- update tailwind build instructions
+- update vss embedding refresh doc
+- clarify ai-utils hash fallback comment
+- raise vss startup limit to 1000 files in docs
+- update AGENTS.md for removed floating function
+
 ## [1.5.4](https://github.com/edonyzpc/personal-assistant/compare/1.5.3...1.5.4) (2025-07-07)
 ### Fix
 - LLM model setting not work issue
