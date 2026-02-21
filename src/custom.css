@@ -122,7 +122,7 @@ body {
 	align-self: center;
 }
 
-.meter {
+.progress-bar-notice .meter {
 	box-sizing: content-box;
 	height: 14px;
 	position: relative;
@@ -138,7 +138,7 @@ body {
 	width: auto;
 }
 
-.meter > span {
+.progress-bar-notice .meter > span {
 	display: block;
 	height: 100%;
 	border-top-right-radius: 20px;
@@ -158,8 +158,8 @@ body {
 	width: auto;
 }
 
-.meter > span:after,
-.animate > span > span {
+.progress-bar-notice .meter > span:after,
+.progress-bar-notice .animate > span > span {
 	content: "";
 	position: absolute;
 	top: 0;
@@ -187,7 +187,7 @@ body {
 	width: auto;
 }
 
-.animate > span:after {
+.progress-bar-notice .animate > span:after {
 	display: none;
 }
 
@@ -201,16 +201,16 @@ body {
 	}
 }
 
-.orange > span {
+.progress-bar-notice .orange > span {
 	background-image: linear-gradient(#f1a165, #f36d0a);
 }
 
-.red > span {
+.progress-bar-notice .red > span {
 	background-image: linear-gradient(#f0a3a3, #f42323);
 }
 
-.nostripes > span > span,
-.nostripes > span::after {
+.progress-bar-notice .nostripes > span > span,
+.progress-bar-notice .nostripes > span::after {
 	background-image: none;
 }
 
@@ -250,7 +250,7 @@ body {
 	background-color: var(--pa-background-primary);
 }
 
-div.callout[data-callout="abstract"] {
+.recordlist-wrapper div.callout[data-callout="abstract"] {
 	--callout-icon: loader;
 	--callout-color: rgb(34, 152, 225);
 }
@@ -357,7 +357,7 @@ div.callout[data-callout="abstract"] {
 	border-bottom-left-radius: 4px;
 }
 
-.message-actions {
+.llm-view .message-actions {
 	position: absolute;
 	top: 8px;
 	right: 8px;
@@ -367,11 +367,11 @@ div.callout[data-callout="abstract"] {
 	transition: opacity 0.2s ease;
 }
 
-.llm-message:hover .message-actions {
+.llm-view .llm-message:hover .message-actions {
 	opacity: 1;
 }
 
-.message-action-button {
+.llm-view .message-action-button {
 	background: var(--background-modifier-hover);
 	color: var(--text-muted);
 	border: none;
@@ -386,17 +386,17 @@ div.callout[data-callout="abstract"] {
 	transition: all 0.2s ease;
 }
 
-.message-action-button:hover {
+.llm-view .message-action-button:hover {
 	background: var(--background-modifier-active);
 	color: var(--text-normal);
 }
 
-.message-action-button svg {
+.llm-view .message-action-button svg {
 	width: 14px;
 	height: 14px;
 }
 
-.message-role {
+.llm-view .message-role {
 	color: var(--text-muted);
 	font-size: 0.85em;
 	font-weight: 600;
@@ -406,33 +406,33 @@ div.callout[data-callout="abstract"] {
 	margin-right: 30px;
 }
 
-.message-content {
+.llm-view .message-content {
 	margin-top: 6px;
 	line-height: 1.5;
 	color: var(--text-normal);
 }
 
-.message-content p:first-child {
+.llm-view .message-content p:first-child {
 	margin-top: 0;
 }
 
-.message-content p:last-child {
+.llm-view .message-content p:last-child {
 	margin-bottom: 0;
 }
 
-.message-content pre {
+.llm-view .message-content pre {
 	background: var(--background-primary);
 	border-radius: 6px;
 	padding: 12px;
 	margin: 8px 0;
 }
 
-.message-content code {
+.llm-view .message-content code {
 	font-family: var(--font-monospace);
 	font-size: 0.9em;
 }
 
-.message-content pre code {
+.llm-view .message-content pre code {
 	display: block;
 	overflow-x: auto;
 	padding: 0.5em;
@@ -531,19 +531,19 @@ div.callout[data-callout="abstract"] {
 	border-color: var(--background-modifier-border);
 }
 
-.cancel-button-hidden {
+.llm-view .cancel-button-hidden {
 	display: none;
 }
 
-.cancel-button-visible {
+.llm-view .cancel-button-visible {
 	display: inline-block;
 }
 
-.send-button-hidden {
+.llm-view .send-button-hidden {
 	display: none;
 }
 
-.send-button-visible {
+.llm-view .send-button-visible {
 	display: inline-block;
 }
 

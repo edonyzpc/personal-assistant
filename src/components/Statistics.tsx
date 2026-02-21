@@ -359,18 +359,18 @@ const Statistics = ({ app, plugin, staticsFileData }: Props) => {
 
 	const isTotal = plugin.settings.statisticsType === "total";
 
-	return (
-		<div
-			id="statistics-line-chart"
-			className="relative h-full w-full bg-white/90"
-		>
-			<Suspense
-				fallback={
-					<div className="p-4 text-sm text-slate-500">
-						Loading chart…
-					</div>
-				}
+		return (
+			<div
+				id="statistics-line-chart"
+				className="pa-relative pa-h-full pa-w-full pa-bg-white/90"
 			>
+				<Suspense
+					fallback={
+						<div className="pa-p-4 pa-text-sm pa-text-slate-500">
+							Loading chart…
+						</div>
+					}
+				>
 				{isTotal ? (
 					<LineChart data={dataTotal} options={optionsTotal} />
 				) : (
