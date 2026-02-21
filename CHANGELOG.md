@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.5.7](https://github.com/edonyzpc/personal-assistant/compare/1.5.6...1.5.7) 
+### Improvements
+- tailwind: namespace utility classes with `pa-` prefix and disable preflight reset
+- css: scope progress/chat/callout selectors to plugin containers to reduce style leakage
+
 ## [1.5.6](https://github.com/edonyzpc/personal-assistant/compare/1.5.6-beta...1.5.6) (2026-02-05)
 ### Features
 - vss: redesign embedding refresh with hashed cache
