@@ -44,11 +44,11 @@
   },
   "dependencies": {
     "@floating-ui/core": "^1.6.8",
-    "@langchain/classic": "1.0.27",
+    "@langchain/classic": "1.0.31",
     "@langchain/community": "^1.1.27",
     "@langchain/core": "^1.1.40",
     "@langchain/ollama": "^1.2.6",
-    "@langchain/openai": "1.4.1",
+    "@langchain/openai": "1.4.4",
     "@langchain/textsplitters": "1.0.1",
     "@radix-ui/react-dialog": "^1.1.2",
     "@radix-ui/react-dropdown-menu": "^2.1.2",
