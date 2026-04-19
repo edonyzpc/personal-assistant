@@ -1,10 +1,13 @@
 {
   "compilerOptions": {
     "outDir": "dist",
-    "baseUrl": "./src",
+    "paths": {
+      "plugin": ["./src/plugin"],
+      "utils": ["./src/utils"]
+    },
     "module": "ESNext",
     "target": "ES2020",
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "jsx": "react-jsx",
     "allowJs": true,
     "noImplicitAny": true,
@@ -16,7 +19,6 @@
     "lib": ["DOM", "ES2020"],
     "typeRoots": [
       "./node_modules/@types",
-      "./node_modules",
       "./src/types"
     ],
     "types": ["node", "jest"]
