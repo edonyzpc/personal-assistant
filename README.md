@@ -105,7 +105,7 @@ Now Personal Assistant plugin is available in [plugin market](https://obsidian.m
 
 ### Manually Install
 
-- Build with commandline: `yarn install && yarn build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
+- Build with commandline: `npm install && npm run build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
 - Copy over `main.js`, `styles.css`, `manifest.json` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
 
 ## Use

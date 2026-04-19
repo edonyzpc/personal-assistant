@@ -18,12 +18,14 @@ jobs:
       - name: Use Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: "20.18.x" # You might need to adjust this value to your own version
+          node-version: "22.x"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
       - name: Build
         id: build
         run: |
-          yarn
-          yarn run build --if-present
+          npm run build --if-present
           echo "tag_name=$(git tag --sort version:refname | tail -n 1)" >> $GITHUB_OUTPUT
       - name: Create Release
         id: create_release

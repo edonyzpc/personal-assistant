@@ -8,6 +8,7 @@
 - UI: React 19 + Radix UI + Tailwind (CLI precompile).
 - Charts: react-chartjs-2 (Chart.js) **lazy-loaded**.
 - Bundler: esbuild (CJS output, Obsidian externals), CSS loaded via `styles.css` (imports `generated/tailwind.css`).
+- Package manager: npm on Node 22 LTS with npm 10.x or 11.x.
 
 ## Layout
 - Entry: `src/main.ts` → `src/plugin.ts`
@@ -21,7 +22,7 @@
 - Pass `app`/`plugin` through props or context; avoid globals.
 
 ## Tailwind
-- Build with CLI: `yarn tailwind:build` (input `src/custom.css` → output `./styles.css`).
+- Build with CLI: `npm run tailwind:build` (input `src/custom.css` → output `./styles.css`).
 - `styles.css` imports the generated file; ensure Tailwind build runs before packaging.
 - Prefer `pa-`/utility classes to limit theme collisions.
 
@@ -31,7 +32,8 @@
 - Define `process.env.NODE_ENV` in esbuild for dead-code elimination.
 
 ## Build/Test Commands
-- `yarn dev` (esbuild watch), `yarn dev:tailwind` (Tailwind watch), `yarn build` (type-check + Tailwind build + esbuild).
+- `npm run dev` (esbuild watch), `npm run dev:tailwind` (Tailwind watch), `npm run build` (type-check + Tailwind build + esbuild).
+- `npm run lint`, `npm test`, `make release` (interactive exact semver) or `make release VERSION=1.6.0`.
 - Tests currently minimal; add Jest/RTL only if needed.
 
 ## Agent Checklist
