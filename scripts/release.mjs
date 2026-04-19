@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
+import console from "node:console";
 import { readFile } from "node:fs/promises";
-import { stdin as input, stdout as output } from "node:process";
+import process, { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
 import semver from "semver";
 
