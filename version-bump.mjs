@@ -1,4 +1,5 @@
 import { readFileSync, writeFileSync } from "fs";
+import process from "node:process";
 
 const targetVersion = process.env.npm_package_version;
 
