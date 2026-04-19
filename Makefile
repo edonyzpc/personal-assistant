@@ -1,10 +1,10 @@
 .PHONY: deploy clean bin install release tag test
 
 install:
-	yarn install
+	npm install
 
 bin: test
-	yarn lint && yarn build
+	npm run lint && npm run build
 
 deploy: clean bin
 	cp dist/main.js test/.obsidian/plugins/personal-assistant/
@@ -19,11 +19,10 @@ clean:
 	rm -rf test/.obsidian/plugins/personal-assistant/styles.css
 
 test:
-	yarn test
+	npm test
 
 release:
-	yarn version
-	@echo "\033[92m\033[1mCHANGELOG.md needs to be updated \033[0m"
+	node scripts/release.mjs "$(VERSION)"
 
 tag:
 	git tag -a `node tag.mjs` -m "[release] v`node tag.mjs`, check the CHANGELOG.md for details"

@@ -1,8 +1,8 @@
 # Developement
 
 ## 1. Env Preparation
-- Node: >= 22
-- yarn: >= 1.22
+- Node: 22 LTS
+- npm: 10.x or 11.x
 - Obsidian API: latest
 
 ## 2. Develop
@@ -19,32 +19,32 @@ The details about how to do in the above steps, you can check the developing com
 ### 2.2 developing commands
 #### 1. update dependency
 ```sh
-yarn install
+npm install
 ```
 
 #### 2. add dependency
 ```sh
-yarn add {package-name}@{version}
+npm install {package-name}@{version}
 ```
 
 #### 3. build
 ```sh
-yarn build
+npm run build
 # use watching mode which will auto build when code files are changed
-yarn dev
+npm run dev
 # tailwind watch (run in another terminal during dev)
-yarn dev:tailwind
+npm run dev:tailwind
 ```
 
 #### 4. lint
 ```sh
-yarn lint
+npm run lint
 ```
 
 #### 5. test
 ```sh
 mkdir -p test/.obsidian/plugins/personal-assistant/
-yarn build
+npm run build
 make deploy
 # open obsidian vault whose path is `test` and do the testing
 ```
@@ -52,5 +52,7 @@ make deploy
 #### 6. release
 ```sh
 # update version with interaction and add new commit and version tag
-yarn version
+make release
+# or run a non-interactive release with an exact version
+make release VERSION=1.6.0
 ```

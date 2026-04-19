@@ -7,7 +7,6 @@ interface MockNoticeEl {
 }
 
 export class Notice {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     constructor(_msg?: unknown, _timeout?: number) { }
     hide() { }
     noticeEl: MockNoticeEl = {
