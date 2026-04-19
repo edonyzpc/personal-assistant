@@ -61,5 +61,5 @@ run("npm", ["version", targetVersion, "--no-git-tag-version"]);
 run("git", ["add", ...releaseFiles]);
 
 const releaseMessage = `[release] v${targetVersion}, check the CHANGELOG.md for details`;
-run("git", ["commit", "--no-verify", "-m", releaseMessage]);
+run("git", ["commit", "-m", releaseMessage]);
 run("git", ["tag", "-a", targetVersion, "-m", releaseMessage]);
