@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.5.8](https://github.com/edonyzpc/personal-assistant/compare/1.5.7...1.5.8) (2026-04-19)
+### Fix
+- release: use explicit Node globals in release scripts
+- typescript: modernize module resolution and patch `obsidian-callout-manager` typings
+- dependencies: resolve Dependabot security alerts
+
+### Improvements
+- build: migrate package management from Yarn to npm
+- lint: adopt the flat recommended ESLint config
+- deps: upgrade LangChain dependencies
+- release: restore release commit hooks
+- automation: add workflow to close inactive issues
+
+### Docs
+- development: require Node 22+ for local development
+
 ## [1.5.7](https://github.com/edonyzpc/personal-assistant/compare/1.5.6...1.5.7) 
 ### Improvements
 - tailwind: namespace utility classes with `pa-` prefix and disable preflight reset
