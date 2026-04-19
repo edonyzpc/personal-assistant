@@ -5,7 +5,7 @@ import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { Document } from "@langchain/core/documents";
-import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";
 import { MarkdownTextSplitter } from '@langchain/textsplitters';
 import fetch, { Headers, Request, Response } from "node-fetch";
 

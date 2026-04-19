@@ -2,7 +2,7 @@
 import { TAbstractFile, TFile } from 'obsidian';
 import { AIService } from './ai-services/service';
 import { AIUtils } from './ai-services/ai-utils';
-import { MemoryVectorStore } from "langchain/vectorstores/memory";
+import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";
 import { PluginManager } from './plugin';
 import { computeContentHash, selectFlushCandidates, shouldRespectRateGap, DirtyTimestamps } from './vss-helpers';
 
