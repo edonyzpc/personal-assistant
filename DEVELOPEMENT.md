@@ -1,7 +1,7 @@
 # Developement
 
 ## 1. Env Preparation
-- Node: 18.x
+- Node: >= 22
 - yarn: >= 1.22
 - Obsidian API: latest
 
