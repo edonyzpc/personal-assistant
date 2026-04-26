@@ -1,5 +1,5 @@
 /* Copyright 2023 edonyzpc */
-import { App, Editor, MarkdownView, Notice, TFile, type FrontMatterInfo } from 'obsidian'
+import { App, Editor, MarkdownView, Notice, TFile, requestUrl, type FrontMatterInfo } from 'obsidian'
 import { StateEffect } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
@@ -7,12 +7,12 @@ import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 import { Document } from "@langchain/core/documents";
 import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";
 import { MarkdownTextSplitter } from '@langchain/textsplitters';
-import fetch, { Headers, Request, Response } from "node-fetch";
 
 import { AIUtils } from './ai-utils';
 import type { PluginManager } from '../plugin'
 import { isPluginEnabled } from 'utils';
 
+const isOkStatus = (status: number): boolean => status >= 200 && status < 300;
 
 interface ImageGenerationResult {
     output: {
@@ -255,7 +255,7 @@ export class AIService {
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
-        const contentHash = this.aiUtils.hashContent(cleanedContent);
+        const contentHash = await this.aiUtils.hashContent(cleanedContent);
 
         if (cleanedContent.length === 0) {
             return false;
@@ -280,19 +280,17 @@ export class AIService {
 
         const vectorStore = new MemoryVectorStore(embeddings);
 
-        await this.aiUtils.withFetchPolyfill(async () => {
-            if (documents.length > 3) {
-                // 每3个document做一次addDocument
-                for (let i = 0; i < documents.length; i += 3) {
-                    const chunk = documents.slice(i, i + 3);
-                    await vectorStore.addDocuments(chunk);
-                    // stop 3s for rate limit
-                    await new Promise(f => setTimeout(f, 3000));
-                }
-            } else {
-                await vectorStore.addDocuments(documents);
+        if (documents.length > 3) {
+            // 每3个document做一次addDocument
+            for (let i = 0; i < documents.length; i += 3) {
+                const chunk = documents.slice(i, i + 3);
+                await vectorStore.addDocuments(chunk);
+                // stop 3s for rate limit
+                await new Promise(f => setTimeout(f, 3000));
             }
-        });
+        } else {
+            await vectorStore.addDocuments(documents);
+        }
 
         const objStr = JSON.stringify(vectorStore.memoryVectors, null, 0);
         await this.plugin.app.vault.adapter.write(vssFile, objStr);
@@ -341,11 +339,9 @@ export class AIService {
         const generateMessage = new HumanMessage(`**文字内容：**${query}`);
         const messages = [systemMessage, generateMessage];
 
-        const res = await this.aiUtils.withFetchPolyfill(async () => {
-            return await llm.invoke(messages);
-        });
+        const res = await llm.invoke(messages);
 
-        this.plugin.log(res.content);
+        this.plugin.log("LLM response received", { contentLength: res.content.toString().length });
         return res.content.toString();
     }
 
@@ -472,52 +468,39 @@ export class AIService {
      */
     private async generateImage(genMsg: string) {
         const token = await this.plugin.getAPIToken();
-        const originFetch = globalThis.fetch;
-        const originHeaders = globalThis.Headers;
-        const originRequest = globalThis.Request;
-        const originResponse = globalThis.Response;
-        // @ts-ignore
-        globalThis.fetch = fetch;
-        // @ts-ignore
-        globalThis.Headers = Headers;
-        // @ts-ignore
-        globalThis.Request = Request;
-        // @ts-ignore
-        globalThis.Response = Response;
-        const resp = await globalThis.fetch(
-            "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
-            {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                    "X-DashScope-Async": "enable",
-                    "Authorization": "Bearer " + token,
-                },
-                body: JSON.stringify({
-                    "model": "wanx2.1-t2i-plus",
-                    "input": {
-                        "prompt": genMsg,
-                    },
-                    "parameters": {
-                        "size": "1024*1024",
-                        "n": this.plugin.settings.numFeaturedImages,
-                        "seed": 42,
-                        "prompt_extend": true,
-                        "watermark": false,
-                    }
-                })
+        const resp = await requestUrl({
+            url: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+            method: "POST",
+            contentType: "application/json",
+            headers: {
+                "X-DashScope-Async": "enable",
+                "Authorization": "Bearer " + token,
             },
-        );
-        globalThis.fetch = originFetch;
-        globalThis.Headers = originHeaders;
-        globalThis.Request = originRequest;
-        globalThis.Response = originResponse;
+            body: JSON.stringify({
+                "model": "wanx2.1-t2i-plus",
+                "input": {
+                    "prompt": genMsg,
+                },
+                "parameters": {
+                    "size": "1024*1024",
+                    "n": this.plugin.settings.numFeaturedImages,
+                    "seed": 42,
+                    "prompt_extend": true,
+                    "watermark": false,
+                }
+            }),
+            throw: false,
+        });
 
-        if (resp.ok) {
-            const result: ImageGenerationResult = await resp.json();
-            this.plugin.log(result);
+        if (isOkStatus(resp.status)) {
+            const result = resp.json as ImageGenerationResult;
+            this.plugin.log("Image generation task submitted", {
+                taskId: result.output?.task_id,
+                status: result.output?.task_status,
+            });
             return result;
         } else {
+            this.plugin.log("Image generation request failed", { status: resp.status });
             return null;
         }
     }
@@ -536,25 +519,14 @@ export class AIService {
             while (Date.now() - startTime <= timeoutMs) {
                 // 检查是否超时
                 try {
-                    const originFetch = globalThis.fetch;
-                    const originHeaders = globalThis.Headers;
-                    const originRequest = globalThis.Request;
-                    const originResponse = globalThis.Response;
-                    // @ts-ignore
-                    globalThis.fetch = fetch;
-                    // @ts-ignore
-                    globalThis.Headers = Headers;
-                    // @ts-ignore
-                    globalThis.Request = Request;
-                    // @ts-ignore
-                    globalThis.Response = Response;
-                    const response = await fetch(`${baseUrl}/${taskId}`, { method: "GET", headers: { "Authorization": "Bearer " + token } });
-                    globalThis.fetch = originFetch;
-                    globalThis.Headers = originHeaders;
-                    globalThis.Request = originRequest;
-                    globalThis.Response = originResponse;
-                    if (response.ok) {
-                        const data = await response.json() as TaskData;
+                    const response = await requestUrl({
+                        url: `${baseUrl}/${taskId}`,
+                        method: "GET",
+                        headers: { "Authorization": "Bearer " + token },
+                        throw: false,
+                    });
+                    if (isOkStatus(response.status)) {
+                        const data = response.json as TaskData;
                         if (data.output.task_status === 'SUCCEEDED') {
                             return data;
                         }
@@ -580,7 +552,10 @@ export class AIService {
 
         if (imagesTaskData && imagesTaskData.output.task_status === 'SUCCEEDED') {
             // 处理成功的情况
-            this.plugin.log(imagesTaskData);
+            this.plugin.log("Image generation task succeeded", {
+                taskId: imagesTaskData.output.task_id,
+                imageCount: imagesTaskData.usage?.image_count,
+            });
             return imagesTaskData.output.results; // 假设返回的结果在 output.result 中
         } else {
             new Notice("Failed to get image: Task did not succeed or timed out.", 3000);
@@ -606,13 +581,17 @@ export class AIService {
             }
 
             // 下载图片
-            const response = await fetch(imageUrl);
-            if (!response.ok) {
-                throw new Error(`Failed to download image: ${response.statusText}`);
+            const response = await requestUrl({
+                url: imageUrl,
+                method: "GET",
+                throw: false,
+            });
+            if (!isOkStatus(response.status)) {
+                throw new Error(`Failed to download image: HTTP ${response.status}`);
             }
 
             // 将响应转换为 ArrayBuffer
-            const buffer = await response.arrayBuffer();
+            const buffer = response.arrayBuffer;
 
             // 保存文件到 Obsidian vault
             await app.vault.createBinary(savePath, buffer);

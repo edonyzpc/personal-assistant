@@ -9,6 +9,22 @@ export interface ChatMessage {
     content: string;
 }
 
+const isAbortError = (error: unknown, signal?: AbortSignal): boolean => {
+    if (signal?.aborted) return true;
+    if (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError') {
+        return true;
+    }
+    return error instanceof Error && error.name === 'AbortError';
+};
+
+export const canFallbackToNonStreaming = (
+    error: unknown,
+    receivedAnyChunk: boolean,
+    signal?: AbortSignal,
+): boolean => {
+    return !receivedAnyChunk && !isAbortError(error, signal);
+};
+
 /**
  * 聊天服务类，提供聊天相关的功能
  */
@@ -25,7 +41,6 @@ export class ChatService {
      * 流式LLM调用
      */
     async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
-        const llm = await this.aiUtils.createChatModel(0.8);
         // TODO: filter the RAG References from the history string
         const formattedHistory = (chatHistory || [])
             .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.role === 'assistant' ? msg.content.split("\n\n---\n> [!personal-assistant-ai]- RAG References")[0] : msg.content}`)
@@ -58,28 +73,46 @@ export class ChatService {
             .map((doc) => JSON.stringify(doc, null, 0))
             .join("\n---\n");
 
-        const chain = ragPrompt.pipe(llm);
-        const response = await chain.stream({
+        const chainInput = {
             rag_content: ragContent,
             input: contextualPrompt,
-        }, { signal: signal });
+        };
 
         let fullResponse = '';
-        for await (const chunk of response) {
-            try {
-                const data = chunk.content.toString();
-                fullResponse += data;
-                onChunk(fullResponse);
-                // trikcy, smooth the streaming display
-                await new Promise(f => setTimeout(f, 150));
-            } catch (e) {
-                console.error('Error parsing chunk:', e);
-                throw e;
+        let receivedAnyChunk = false;
+        try {
+            const llm = await this.aiUtils.createChatModel(0.8, { transport: 'native' });
+            const chain = ragPrompt.pipe(llm);
+            const response = await chain.stream(chainInput, { signal: signal });
+
+            for await (const chunk of response) {
+                receivedAnyChunk = true;
+                try {
+                    const data = chunk.content.toString();
+                    fullResponse += data;
+                    onChunk(fullResponse);
+                    // trikcy, smooth the streaming display
+                    await new Promise(f => setTimeout(f, 150));
+                } catch (e) {
+                    console.error('Error parsing chunk:', e);
+                    throw e;
+                }
             }
+        } catch (error) {
+            if (!canFallbackToNonStreaming(error, receivedAnyChunk, signal)) {
+                throw error;
+            }
+
+            this.plugin.log("Streaming LLM failed before chunks; retrying without streaming.");
+            const fallbackLlm = await this.aiUtils.createChatModel(0.8, { transport: 'obsidian' });
+            const fallbackChain = ragPrompt.pipe(fallbackLlm);
+            const response = await fallbackChain.invoke(chainInput, { signal: signal });
+            onChunk(response.content.toString());
+            return;
         }
 
         if (signal?.aborted) {
             throw new DOMException('Aborted', 'AbortError');
         }
     }
-} 
+}

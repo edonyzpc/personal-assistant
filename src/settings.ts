@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, PluginSettingTab, Setting } from "obsidian";
+import { App, Platform, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import { PluginManager } from "./plugin"
@@ -580,7 +580,14 @@ export class SettingTab extends PluginSettingTab {
 
         // setting for AI assistant
         containerEl.createEl('h2', { text: 'AI Assistant' });
-        containerEl.createEl("p", { text: 'AI Helper supports Qwen, OpenAI, and Ollama models' }).setAttr("style", "font-size:15px");
+        containerEl.createEl("p", {
+            text: Platform.isDesktop
+                ? 'AI Helper supports Qwen, OpenAI, and Ollama models'
+                : 'AI Helper supports Qwen and OpenAI models on mobile',
+        }).setAttr("style", "font-size:15px");
+        if (!Platform.isDesktop && this.plugin.settings.aiProvider === 'ollama') {
+            containerEl.createEl("p", { text: 'Ollama is desktop-only. Select Qwen or OpenAI before using AI features on mobile.' }).setAttr("style", "font-size:14px");
+        }
 
         // AI Provider Selection
         new Setting(containerEl).setName("AI Provider")
@@ -588,9 +595,16 @@ export class SettingTab extends PluginSettingTab {
             .addDropdown(dropDown => {
                 dropDown.addOption('qwen', 'Qwen (通义千问)');
                 dropDown.addOption('openai', 'OpenAI');
-                dropDown.addOption('ollama', 'Ollama (Local)');
+                if (Platform.isDesktop) {
+                    dropDown.addOption('ollama', 'Ollama (Local)');
+                } else if (this.plugin.settings.aiProvider === 'ollama') {
+                    dropDown.addOption('ollama', 'Ollama (Desktop only)');
+                }
 
                 dropDown.setValue(this.plugin.settings.aiProvider);
+                if (!Platform.isDesktop) {
+                    dropDown.selectEl.querySelector('option[value="ollama"]')?.setAttribute('disabled', 'true');
+                }
                 dropDown.onChange(async (value) => {
                     this.plugin.log("changing AI provider", value);
                     this.plugin.settings.aiProvider = value;

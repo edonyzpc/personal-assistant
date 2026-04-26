@@ -180,6 +180,9 @@ export class VSS {
     }
 
     async searchSimilarity(prompt: string) {
+        if (!this.vectorStore) {
+            return [];
+        }
         return await this.aiService.searchSimilarDocuments(prompt, this.vectorStore);
     }
 
@@ -212,7 +215,7 @@ export class VSS {
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
         if (!cleanedContent) return null;
-        return computeContentHash(cleanedContent);
+        return await computeContentHash(cleanedContent);
     }
 
     private async readCachedHash(cachePath: string): Promise<string | null> {

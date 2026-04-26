@@ -1,5 +1,3 @@
-import { createHash } from 'crypto';
-
 export type DirtyTimestamps = {
     first: number; // first time the file was marked dirty after last flush
     last: number;  // most recent time the file was marked dirty
@@ -7,8 +5,17 @@ export type DirtyTimestamps = {
 
 export type DirtyRecord = Record<string, DirtyTimestamps>;
 
-export const computeContentHash = (input: string): string => {
-    return createHash('sha1').update(input).digest('hex');
+export const computeContentHash = async (input: string): Promise<string> => {
+    const subtle = globalThis.crypto?.subtle;
+    if (!subtle) {
+        throw new Error('Web Crypto is required to compute VSS content hashes.');
+    }
+
+    const bytes = new TextEncoder().encode(input);
+    const digest = await subtle.digest('SHA-1', bytes);
+    return Array.from(new Uint8Array(digest))
+        .map((byte) => byte.toString(16).padStart(2, '0'))
+        .join('');
 };
 
 export const selectFlushCandidates = (

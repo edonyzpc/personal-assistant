@@ -1,6 +1,5 @@
 import { context } from 'esbuild';
 import process from 'process';
-import builtins from 'builtin-modules';
 import { copy } from 'esbuild-plugin-copy';
 
 const banner =
@@ -13,7 +12,7 @@ if you want to view the source, please visit the github repository of this plugi
 const prod = (process.argv[2] === "production");
 
 const buildContext = await context({
-	platform: "node",
+	platform: "browser",
 	mainFields: ["browser", "module", "main"],
 	conditions: ["browser"],
 	banner: {
@@ -34,8 +33,7 @@ const buildContext = await context({
 		"@codemirror/view",
 		"@lezer/common",
 		"@lezer/highlight",
-		"@lezer/lr",
-		...builtins],
+		"@lezer/lr"],
 	format: "cjs",
 	target: "es2018",
 	logLevel: "info",
