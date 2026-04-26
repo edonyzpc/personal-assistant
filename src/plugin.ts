@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Platform, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
 import moment from 'moment';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
@@ -21,8 +21,35 @@ import { STAT_PREVIEW_TYPE, Stat } from './stats-view'
 import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
 
-const debug = (debug: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
-    if (debug) console.log(...msg);
+const redactForLog = (value: unknown, seen = new WeakSet<object>()): unknown => {
+    if (typeof value === 'string') {
+        return value.replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-[redacted]');
+    }
+    if (!value || typeof value !== 'object') {
+        return value;
+    }
+    if (seen.has(value)) {
+        return '[Circular]';
+    }
+    seen.add(value);
+    if (value instanceof Error) {
+        return { name: value.name, message: redactForLog(value.message, seen) };
+    }
+    if (Array.isArray(value)) {
+        return value.map((item) => redactForLog(item, seen));
+    }
+    return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).map(([key, entry]) => {
+            if (/token|api[-_]?key|authorization|headers/i.test(key)) {
+                return [key, '[redacted]'];
+            }
+            return [key, redactForLog(entry, seen)];
+        }),
+    );
+};
+
+const debug = (enabled: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    if (enabled) console.log(...msg.map((item: unknown) => redactForLog(item)));
 };
 
 export class PluginManager extends Plugin {
@@ -77,37 +104,38 @@ export class PluginManager extends Plugin {
         });
         ribbonIconEl.addClass('plugin-manager-ribbon-class');
 
-        // This adds a status bar item to the bottom of the app. Does not work on mobile apps.
-        const statusBarItemEl = this.addStatusBarItem();
-        // status bar style setting
-        statusBarItemEl.addClass('personal-assistant-statusbar');
-        statusBarItemEl.setAttribute("id", `personal-assistant-statusbar`);
-        addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
-        setIcon(statusBarItemEl, 'PluginAST_STATUSBAR');
-        // status bar event handling
-        statusBarItemEl.onClickEvent((e) => {
-            // showup setting tab of this plugin
-            (this.app as any).setting.open(); // eslint-disable-line @typescript-eslint/no-explicit-any
-            (this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
-        });
-        // status bar for ai
-        const aiStatusBarItemEl = this.addStatusBarItem();
-        aiStatusBarItemEl.addClass('personal-assistant-ai-statusbar');
-        aiStatusBarItemEl.setAttribute("id", `personal-assistant-ai-statusbar`);
-        addIcon('PLUGIN_AI_BRAIN', icons['PLUGIN_AI_BRAIN']);
-        setIcon(aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
-        // ai status bar event handling
-        aiStatusBarItemEl.onClickEvent((e) => {
-            // init vss in status bar
-            (this.app as any).commands.executeCommandById("personal-assistant:init-vss");// eslint-disable-line @typescript-eslint/no-explicit-any
-        });
-
-        // prepare vss cache directory
-        if (!await this.app.vault.adapter.exists(this.vssCacheDir)) {
-            await this.app.vault.adapter.mkdir(this.vssCacheDir);
+        if (Platform.isDesktop) {
+            // This adds a status bar item to the bottom of the app.
+            const statusBarItemEl = this.addStatusBarItem();
+            // status bar style setting
+            statusBarItemEl.addClass('personal-assistant-statusbar');
+            statusBarItemEl.setAttribute("id", `personal-assistant-statusbar`);
+            addIcon('PluginAST_STATUSBAR', icons['PluginAST_STATUSBAR']);
+            setIcon(statusBarItemEl, 'PluginAST_STATUSBAR');
+            // status bar event handling
+            statusBarItemEl.onClickEvent((e) => {
+                // showup setting tab of this plugin
+                (this.app as any).setting.open(); // eslint-disable-line @typescript-eslint/no-explicit-any
+                (this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
+            });
+            // status bar for ai
+            const aiStatusBarItemEl = this.addStatusBarItem();
+            aiStatusBarItemEl.addClass('personal-assistant-ai-statusbar');
+            aiStatusBarItemEl.setAttribute("id", `personal-assistant-ai-statusbar`);
+            addIcon('PLUGIN_AI_BRAIN', icons['PLUGIN_AI_BRAIN']);
+            setIcon(aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
+            // ai status bar event handling
+            aiStatusBarItemEl.onClickEvent((e) => {
+                // init vss in status bar
+                (this.app as any).commands.executeCommandById("personal-assistant:init-vss");// eslint-disable-line @typescript-eslint/no-explicit-any
+            });
         }
+
         this.vss = this.initVss();
-        await this.vss.initialize();
+        if (Platform.isDesktop) {
+            await this.ensureVssCacheDir();
+            await this.vss.initialize();
+        }
 
         // get callout manager api
         this.app.workspace.onLayoutReady(async () => {
@@ -256,8 +284,7 @@ export class PluginManager extends Plugin {
                 const sel = editor.getSelection();
                 const v = editor.getValue();
 
-                this.log(`You have selected: ${sel}`);
-                this.log(`You have value: ${v}`);
+                this.log("AI Summary invoked", { selectionLength: sel.length, documentLength: v.length });
                 if (view instanceof MarkdownView) {
                     this.log("invoking LLM");
                     const helper = new AssistantHelper(this, editor, view);
@@ -273,8 +300,7 @@ export class PluginManager extends Plugin {
                 const sel = editor.getSelection();
                 const v = editor.getValue();
 
-                this.log(`You have selected: ${sel}`);
-                this.log(`You have value: ${v}`);
+                this.log("AI Featured Images invoked", { selectionLength: sel.length, documentLength: v.length });
                 if (view instanceof MarkdownView) {
                     this.log("invoking LLM");
                     const helper = new AssistantFeaturedImageHelper(this.app, this, editor, view);
@@ -287,6 +313,10 @@ export class PluginManager extends Plugin {
             id: "init-vss",
             name: "Init Vector Store Cache of Current Obisidna Vault",
             callback: async () => {
+                await this.ensureVssCacheDir();
+                if (Platform.isDesktop) {
+                    await this.vss.initialize();
+                }
                 // cache vectors into vss
                 await this.cacheVectors();
                 const vssFiles = this.getVSSFiles();
@@ -310,31 +340,33 @@ export class PluginManager extends Plugin {
             }
         });
 
-        // VSS cache lifecycle events
-        this.registerEvent(
-            this.app.vault.on("modify", async (file) => {
-                if (file instanceof TFile) {
-                    await this.vss.markDirtyIfEligible(file);
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.vault.on("delete", async (file) => {
-                if (file instanceof TFile) {
-                    await this.vss.handleDelete(file);
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.workspace.on("active-leaf-change", async () => {
-                await this.vss.handleActiveLeafChange();
-            })
-        );
-        this.registerEvent(
-            this.app.workspace.on("file-open", async (file) => {
-                await this.vss.handleFileOpen(file);
-            })
-        );
+        if (Platform.isDesktop) {
+            // VSS cache lifecycle events
+            this.registerEvent(
+                this.app.vault.on("modify", async (file) => {
+                    if (file instanceof TFile) {
+                        await this.vss.markDirtyIfEligible(file);
+                    }
+                })
+            );
+            this.registerEvent(
+                this.app.vault.on("delete", async (file) => {
+                    if (file instanceof TFile) {
+                        await this.vss.handleDelete(file);
+                    }
+                })
+            );
+            this.registerEvent(
+                this.app.workspace.on("active-leaf-change", async () => {
+                    await this.vss.handleActiveLeafChange();
+                })
+            );
+            this.registerEvent(
+                this.app.workspace.on("file-open", async (file) => {
+                    await this.vss.handleFileOpen(file);
+                })
+            );
+        }
         // Handle the Editor Plugins
         this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
 
@@ -361,7 +393,7 @@ export class PluginManager extends Plugin {
 
     async loadSettings() {
         this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
-        this.log("logging settings...", this.settings);
+        this.log("Settings loaded", this.settings);
     }
 
     async saveSettings() {
@@ -554,8 +586,15 @@ export class PluginManager extends Plugin {
         return new VSS(this, this.vssCacheDir);
     }
 
+    private async ensureVssCacheDir() {
+        if (!await this.app.vault.adapter.exists(this.vssCacheDir)) {
+            await this.app.vault.adapter.mkdir(this.vssCacheDir);
+        }
+    }
+
     private async cacheVectors() {
         if (this.vss) {
+            await this.ensureVssCacheDir();
             const statusBar = document.getElementById("personal-assistant-ai-statusbar");
             // status bar style setting
             statusBar?.addClass("personal-assistant-ai-breathing");

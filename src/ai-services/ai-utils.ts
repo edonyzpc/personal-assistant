@@ -1,14 +1,19 @@
 /* Copyright 2023 edonyzpc */
-import { Notice, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
-import fetch, { Headers, Request, Response } from "node-fetch";
-import { ChatAlibabaTongyi } from "@langchain/community/chat_models/alibaba_tongyi";
+import { Notice, Platform, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
 import { ChatOllama } from "@langchain/ollama";
-import { ChatOpenAI, type ChatOpenAICallOptions } from '@langchain/openai';
+import { ChatOpenAI, type ChatOpenAICallOptions, type ClientOptions } from '@langchain/openai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 import { OllamaEmbeddings } from "@langchain/ollama";
 
 import type { PluginManager } from '../plugin'
 import { computeContentHash } from '../vss-helpers';
+import { obsidianFetch } from './obsidian-fetch';
+
+type ChatTransport = 'obsidian' | 'native';
+
+interface CreateChatModelOptions {
+    transport?: ChatTransport;
+}
 
 /**
  * AI工具类，提供通用的AI功能
@@ -70,13 +75,30 @@ export class AIUtils {
         });
     }
 
+    private createOpenAIClientOptions(baseURL: string, transport: ChatTransport = 'obsidian'): ClientOptions {
+        const options: ClientOptions = {
+            baseURL: baseURL,
+            dangerouslyAllowBrowser: true,
+        };
+
+        if (transport === 'obsidian') {
+            options.fetch = obsidianFetch;
+        }
+
+        return options;
+    }
+
     /**
      * 创建聊天模型实例
      */
-    async createChatModel(temperature: number = 0.8): Promise<ChatAlibabaTongyi | ChatOpenAI<ChatOpenAICallOptions> | ChatOllama> {
+    async createChatModel(
+        temperature: number = 0.8,
+        options: CreateChatModelOptions = {},
+    ): Promise<ChatOpenAI<ChatOpenAICallOptions> | ChatOllama> {
         const provider = this.plugin.settings.aiProvider;
         const modelName = this.plugin.settings.chatModelName;
         const baseURL = this.plugin.settings.baseURL;
+        const transport = options.transport ?? 'obsidian';
 
         switch (provider) {
             case 'qwen': {
@@ -84,9 +106,7 @@ export class AIUtils {
                 return new ChatOpenAI({
                     model: modelName,
                     apiKey: token,
-                    configuration: {
-                        baseURL: baseURL,
-                    },
+                    configuration: this.createOpenAIClientOptions(baseURL, transport),
                     temperature: temperature,
                 });
             }
@@ -96,19 +116,21 @@ export class AIUtils {
                 return new ChatOpenAI({
                     model: modelName,
                     apiKey: openaiToken,
-                    configuration: {
-                        baseURL: baseURL,
-                    },
+                    configuration: this.createOpenAIClientOptions(baseURL, transport),
                     temperature: temperature,
                 });
             }
 
-            case 'ollama':
+            case 'ollama': {
+                if (!Platform.isDesktop) {
+                    throw new Error('Ollama provider is only available on Obsidian Desktop.');
+                }
                 return new ChatOllama({
                     model: modelName,
                     baseUrl: baseURL,
                     temperature: temperature,
                 });
+            }
 
             default:
                 throw new Error(`Unsupported AI provider: ${provider}`);
@@ -131,35 +153,23 @@ export class AIUtils {
                     model: modelName,
                     dimensions: dimensions,
                     apiKey: token,
-                    configuration: {
-                        baseURL: baseURL,
-                    }
+                    configuration: this.createOpenAIClientOptions(baseURL, 'obsidian'),
                 });
             }
 
-            case 'ollama':
+            case 'ollama': {
+                if (!Platform.isDesktop) {
+                    throw new Error('Ollama embeddings are only available on Obsidian Desktop.');
+                }
                 return new OllamaEmbeddings({
                     model: modelName,
                     baseUrl: baseURL,
                 });
+            }
 
             default:
                 throw new Error(`Unsupported AI provider: ${provider}`);
         }
-    }
-
-    /**
-     * 创建通义千问LLM实例（兼容旧版本）
-     */
-    async createQwenLLM(model: string = "qwen-max", temperature: number = 0.8): Promise<ChatAlibabaTongyi> {
-        const token = await this.getAPIToken();
-        const llm = new ChatAlibabaTongyi({
-            model: model,
-            temperature: temperature,
-            alibabaApiKey: token,
-        });
-        llm.apiUrl = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-        return llm;
     }
 
     /**
@@ -170,9 +180,7 @@ export class AIUtils {
         return new ChatOpenAI({
             model: model,
             apiKey: token,
-            configuration: {
-                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            },
+            configuration: this.createOpenAIClientOptions('https://dashscope.aliyuncs.com/compatible-mode/v1'),
             temperature: temperature,
         });
     }
@@ -186,38 +194,8 @@ export class AIUtils {
             model: model,
             dimensions: dimensions,
             apiKey: token,
-            configuration: {
-                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            }
+            configuration: this.createOpenAIClientOptions('https://dashscope.aliyuncs.com/compatible-mode/v1'),
         });
-    }
-
-    /**
-     * 执行fetch polyfill包装
-     */
-    async withFetchPolyfill<T>(fn: () => Promise<T>): Promise<T> {
-        const originFetch = globalThis.fetch;
-        const originHeaders = globalThis.Headers;
-        const originRequest = globalThis.Request;
-        const originResponse = globalThis.Response;
-
-        // @ts-ignore
-        globalThis.fetch = fetch;
-        // @ts-ignore
-        globalThis.Headers = Headers;
-        // @ts-ignore
-        globalThis.Request = Request;
-        // @ts-ignore
-        globalThis.Response = Response;
-
-        try {
-            return await fn();
-        } finally {
-            globalThis.fetch = originFetch;
-            globalThis.Headers = originHeaders;
-            globalThis.Request = originRequest;
-            globalThis.Response = originResponse;
-        }
     }
 
     /**
@@ -233,8 +211,8 @@ export class AIUtils {
         return cleaned;
     }
 
-    hashContent(content: string): string {
-        return computeContentHash(content);
+    async hashContent(content: string): Promise<string> {
+        return await computeContentHash(content);
     }
 
     /**
