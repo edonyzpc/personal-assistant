@@ -54,6 +54,8 @@ export class App {
 
 export const requestUrl: jest.Mock = jest.fn(async () => ({ arrayBuffer: new ArrayBuffer(0) }));
 export const normalizePath = (p: string) => p;
+export const getFrontMatterInfo = () => ({ exists: false, contentStart: 0, frontmatter: '', from: 0, to: 0 });
+export const Platform = { isDesktop: true, isMobile: false };
 
 export type TFile = { path: string; stat?: { mtime: number; ctime: number; size?: number }; extension?: string; name?: string };
 export type TAbstractFile = TFile;

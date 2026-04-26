@@ -2,15 +2,16 @@ import { describe, it, expect } from '@jest/globals';
 import { computeContentHash, selectFlushCandidates, shouldRespectRateGap, DirtyTimestamps } from '../src/vss-helpers';
 
 describe('computeContentHash', () => {
-    it('returns stable hash for identical input', () => {
-        const a = computeContentHash('hello');
-        const b = computeContentHash('hello');
+    it('returns stable hash for identical input', async () => {
+        const a = await computeContentHash('hello');
+        const b = await computeContentHash('hello');
         expect(a).toBe(b);
+        expect(a).toBe('aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d');
     });
 
-    it('returns different hash for different input', () => {
-        const a = computeContentHash('hello');
-        const b = computeContentHash('world');
+    it('returns different hash for different input', async () => {
+        const a = await computeContentHash('hello');
+        const b = await computeContentHash('world');
         expect(a).not.toBe(b);
     });
 });
