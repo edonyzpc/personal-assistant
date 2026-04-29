@@ -1,8 +1,8 @@
 /* Copyright 2023 edonyzpc */
 
 import { App, type PluginManifest, normalizePath, request } from 'obsidian';
-import { gt, prerelease } from "semver";
-import { PluginManager } from "./plugin";
+import { gt, prerelease, valid } from "semver";
+import type { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, PluginReleaseFiles } from "./types/manifest";
 import { ProgressBar } from "./progress-bar";
 
@@ -28,8 +28,9 @@ export class PluginsUpdater implements ObsidianManifest {
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases@master/community-plugins.json`;
         this.items = [];
         for (const m of Object.values((app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
+            const id = (m as PluginManifest).id;
             const i: Manifest = {
-                id: (m as PluginManifest).id,
+                id,
                 version: (m as PluginManifest).version,
             };
             this.items.push(i);
@@ -112,27 +113,57 @@ export class PluginsUpdater implements ObsidianManifest {
         return null;
     }
 
+    private getVersionInfo(raw: string): {
+        raw: string;
+        semver: string | null;
+        isPrerelease: boolean;
+    } {
+        const rawTag = raw.trim();
+        const semverVersion = valid(rawTag);
+
+        return {
+            raw: rawTag,
+            semver: semverVersion,
+            isPrerelease: semverVersion ? Boolean(prerelease(semverVersion)?.length) : false,
+        };
+    }
+
+    private isPluginEnabled(pluginID: string): boolean {
+        return Boolean((this.app as any).plugins.enabledPlugins?.has(pluginID)); // eslint-disable-line @typescript-eslint/no-explicit-any
+    }
+
     async isNeedToUpdate(latestRelease: JSON | null, currentVersion: string): Promise<UpdateStatus> {
         if (latestRelease) {
-            let tag = this.getLatestTag(latestRelease);
-            if (tag) {
-                if (tag.startsWith('v')) tag = tag.split('v')[1];
-                this.log("latest tag: " + tag, "current tag: " + currentVersion);
-                // /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)((-)(alpha|beta|rc)(\d+))?((\+)(\d+))?$/gm
-                const pre = prerelease(tag);
-                if (pre) {
-                    if (pre.length > 0) {
-                        // do not update pre-release version
-                        return {
-                            needUpdate: false,
-                            targetVersion: currentVersion,
-                        }
+            const originTag = this.getLatestTag(latestRelease);
+            if (originTag) {
+                const tagInfo = this.getVersionInfo(originTag);
+                const currentInfo = this.getVersionInfo(currentVersion);
+                this.log("latest tag: " + tagInfo.raw, "current tag: " + currentInfo.raw);
+                if (!tagInfo.semver) {
+                    this.log(`skip update: unsupported version format (latest: ${tagInfo.raw})`);
+                    return {
+                        needUpdate: false,
+                        targetVersion: currentVersion,
+                    };
+                }
+                if (tagInfo.isPrerelease) {
+                    // do not update pre-release version
+                    return {
+                        needUpdate: false,
+                        targetVersion: currentVersion,
                     }
                 }
-                if (gt(tag, currentVersion)) {
+                if (!currentInfo.semver) {
+                    this.log(`force update: unsupported current version format (${currentInfo.raw})`);
                     return {
                         needUpdate: true,
-                        targetVersion: tag,
+                        targetVersion: tagInfo.raw,
+                    };
+                }
+                if (gt(tagInfo.semver, currentInfo.semver)) {
+                    return {
+                        needUpdate: true,
+                        targetVersion: tagInfo.raw,
                     };
                 }
             }
@@ -154,12 +185,12 @@ export class PluginsUpdater implements ObsidianManifest {
                 return null;
             }
         };
-        const writeToPluginFolder = async (pluginID: string, files: PluginReleaseFiles): Promise<void> => {
+        const writeToPluginFolder = async (pluginID: string, files: PluginReleaseFiles): Promise<boolean> => {
             const pluginTargetFolderPath = normalizePath(this.app.vault.configDir + "/plugins/" + pluginID) + "/";
             const adapter = this.app.vault.adapter;
             if (!files.mainJs || !files.manifest) {
                 this.log("downloaded files are empty");
-                return;
+                return false;
             }
             if (await adapter.exists(pluginTargetFolderPath) === false ||
                 !(await adapter.exists(pluginTargetFolderPath + "manifest.json"))) {
@@ -170,8 +201,10 @@ export class PluginsUpdater implements ObsidianManifest {
             await adapter.write(pluginTargetFolderPath + "manifest.json", files.manifest);
             if (files.styles) await adapter.write(pluginTargetFolderPath + "styles.css", files.styles);
             this.log(`updated plugin[${pluginID}]`);
+            return true;
         };
 
+        const updatedPlugins: string[] = [];
         this.progressBar.show();
         for (let i = 0; i < this.items.length; i++) {
             const plugin = this.items[i];
@@ -205,19 +238,27 @@ export class PluginsUpdater implements ObsidianManifest {
                 releases.mainJs = await getReleaseFile(repo, tag, 'main.js');
                 releases.manifest = await getReleaseFile(repo, tag, 'manifest.json');
                 releases.styles = await getReleaseFile(repo, tag, 'styles.css');
-                await writeToPluginFolder(plugin.id, releases);
-                // reload plugins after updated
-                (this.app as any).plugins.enablePluginAndSave(plugin.id); // eslint-disable-line @typescript-eslint/no-explicit-any
-                // update notice display
-                this.progressBar.stepin(plugin.id, `update ${plugin.id} to ${tag}`, this.totalPlugins);
-                this.checkedPlugins++;
+                const updated = await writeToPluginFolder(plugin.id, releases);
+                if (updated) {
+                    updatedPlugins.push(plugin.id);
+                    // update notice display
+                    this.progressBar.stepin(plugin.id, `update ${plugin.id} to ${tag}`, this.totalPlugins);
+                    this.checkedPlugins++;
+                } else {
+                    this.log(`skip reloading plugin[${plugin.id}] because update did not write required files`);
+                }
             }
         });
         await Promise.all(promisePluginsUpdating);
+        for (const pluginID of updatedPlugins) {
+            if (this.isPluginEnabled(pluginID)) {
+                await (this.app as any).plugins.enablePluginAndSave(pluginID); // eslint-disable-line @typescript-eslint/no-explicit-any
+            }
+        }
         this.log('All async plugin updating completed')
         // finally plugin updating has been done, whether there are plugins that need to be updated
         this.progressBar.updateProgress(100);
         // hide notice
-        setInterval(() => { this.progressBar.hide(); }, 2000);
+        setTimeout(() => { this.progressBar.hide(); }, 2000);
     }
 }
