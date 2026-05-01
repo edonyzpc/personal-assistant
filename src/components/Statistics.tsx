@@ -356,7 +356,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const showRangePicker = activeView === "daily" || activeView === "growth";
 
 	return (
-		<div ref={containerRef} className="pa-flex pa-h-full pa-w-full pa-flex-col pa-overflow-auto pa-bg-slate-50 pa-text-slate-900">
+		<div ref={containerRef} className="pa-statistics-view pa-flex pa-h-full pa-w-full pa-flex-col pa-overflow-auto pa-bg-slate-50 pa-text-slate-900">
 			<div className={`pa-border-b pa-border-slate-200 pa-bg-white ${compact ? "pa-px-3 pa-py-2" : "pa-px-4 pa-py-3"}`}>
 				<div className="pa-flex pa-flex-wrap pa-items-center pa-justify-between pa-gap-3">
 					<div className="pa-min-w-0">
@@ -369,8 +369,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 					</div>
 					<div
 						className={compact
-							? "pa-grid pa-w-full pa-grid-cols-2 pa-gap-1 pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"
-							: "pa-inline-flex pa-max-w-full pa-overflow-x-auto pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"}
+							? "pa-statistics-segment pa-statistics-segment--views pa-grid pa-w-full pa-grid-cols-2 pa-gap-1 pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"
+							: "pa-statistics-segment pa-statistics-segment--views pa-inline-flex pa-max-w-full pa-overflow-x-auto pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"}
 						role="tablist"
 						aria-label="Statistics views"
 					>
@@ -380,11 +380,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 								type="button"
 								role="tab"
 								aria-selected={activeView === tab.id}
-								className={`pa-min-h-11 pa-shrink-0 pa-rounded pa-px-3 pa-py-1.5 pa-text-sm pa-font-medium ${
-									activeView === tab.id
-										? "pa-bg-white pa-text-slate-950 pa-shadow-sm"
-										: "pa-text-slate-600 hover:pa-text-slate-950"
-								}`}
+								data-active={activeView === tab.id ? "true" : "false"}
+								className="pa-statistics-tab"
 								onClick={() => handleViewChange(tab.id)}
 							>
 								{tab.label}
@@ -408,16 +405,13 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				<div className={`pa-flex pa-flex-1 pa-flex-col pa-gap-4 ${compact ? "pa-p-3" : "pa-p-4"}`}>
 					{showRangePicker ? (
 						<div className="pa-flex pa-justify-end">
-							<div className="pa-inline-flex pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-1" aria-label="Chart date range">
+							<div className="pa-statistics-segment pa-statistics-segment--range pa-inline-flex pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-1" aria-label="Chart date range">
 								{rangeOptions.map((option) => (
 									<button
 										key={option.id}
 										type="button"
-										className={`pa-min-h-11 pa-rounded pa-px-3 pa-py-1.5 pa-text-sm pa-font-medium ${
-											chartRange === option.id
-												? "pa-bg-slate-900 pa-text-white"
-												: "pa-text-slate-600 hover:pa-text-slate-950"
-										}`}
+										data-active={chartRange === option.id ? "true" : "false"}
+										className="pa-statistics-tab"
 										onClick={() => handleRangeChange(option.id)}
 									>
 										{option.label}

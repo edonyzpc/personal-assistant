@@ -26,6 +26,70 @@ body {
 	--pa-record-background-color: #1e1e2e;
 }
 
+.pa-statistics-view {
+	--pa-stat-tab-text: rgb(71, 85, 105);
+	--pa-stat-tab-hover-bg: rgb(226, 232, 240);
+	--pa-stat-tab-hover-text: rgb(2, 6, 23);
+	--pa-stat-tab-active-bg: rgb(255, 255, 255);
+	--pa-stat-tab-active-text: rgb(2, 6, 23);
+	--pa-stat-tab-active-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.08);
+}
+
+.pa-statistics-segment {
+	background-clip: padding-box;
+}
+
+.pa-statistics-segment--views {
+	--pa-stat-tab-active-bg: rgb(255, 255, 255);
+	--pa-stat-tab-active-text: rgb(2, 6, 23);
+	--pa-stat-tab-active-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.08);
+}
+
+.pa-statistics-segment--range {
+	--pa-stat-tab-active-bg: rgb(15, 23, 42);
+	--pa-stat-tab-active-text: rgb(255, 255, 255);
+	--pa-stat-tab-active-shadow: none;
+}
+
+.pa-statistics-view .pa-statistics-segment > .pa-statistics-tab {
+	appearance: none;
+	background-clip: padding-box;
+	background-color: transparent;
+	background-image: none;
+	border: 0;
+	border-radius: 4px;
+	box-shadow: none;
+	color: var(--pa-stat-tab-text);
+	cursor: pointer;
+	flex: 0 0 auto;
+	font-size: 0.875rem;
+	font-weight: 500;
+	line-height: 1.25rem;
+	margin: 0;
+	min-height: 2.75rem;
+	padding: 0.375rem 0.75rem;
+	text-align: center;
+	white-space: nowrap;
+}
+
+.pa-statistics-view .pa-statistics-segment > .pa-statistics-tab:hover {
+	background-color: var(--pa-stat-tab-hover-bg);
+	color: var(--pa-stat-tab-hover-text);
+}
+
+.pa-statistics-view .pa-statistics-segment > .pa-statistics-tab[data-active="true"] {
+	background-color: var(--pa-stat-tab-active-bg);
+	box-shadow: var(--pa-stat-tab-active-shadow);
+	color: var(--pa-stat-tab-active-text);
+}
+
+.pa-statistics-view .pa-statistics-segment > .pa-statistics-tab:focus-visible {
+	box-shadow:
+		0 0 0 2px var(--background-primary),
+		0 0 0 4px var(--interactive-accent);
+	outline: none;
+}
+
 .personal-assistant-statusbar:hover {
 	color: var(--status-bar-hover);
 }
