@@ -161,7 +161,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'startup-recording',
-            name: 'Open specific note to record',
+            name: 'Create or open record note in configured folder',
             callback: async () => {
                 const fileFormat = moment().format(this.settings.fileFormat);
                 const targetDir = this.settings.targetPath;
@@ -264,7 +264,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "preview-records",
-            name: "Preview records that are created by `startup-recording` command",
+            name: "Preview records from configured folder",
             callback: async () => {
                 this.activateView();
             }
