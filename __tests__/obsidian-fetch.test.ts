@@ -95,6 +95,21 @@ describe('obsidianFetch', () => {
         expect(Array.from(result)).toEqual([1, 2, 3]);
     });
 
+    it('maps invalid status values to a non-success status', async () => {
+        mockedRequestUrl.mockResolvedValue({
+            status: 0,
+            headers: {},
+            arrayBuffer: encode('proxy failure'),
+            text: 'proxy failure',
+            json: null,
+        });
+
+        const response = await obsidianFetch('https://example.test/failed');
+
+        expect(response.status).toBe(500);
+        expect(response.ok).toBe(false);
+    });
+
     it('rejects before requestUrl when already aborted', async () => {
         const controller = new AbortController();
         controller.abort();

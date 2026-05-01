@@ -90,7 +90,7 @@ const normalizeStatus = (status: number | undefined): number => {
     if (typeof status === 'number' && status >= 200 && status <= 599) {
         return status;
     }
-    return 200;
+    return 500;
 };
 
 export const obsidianFetch = async (
