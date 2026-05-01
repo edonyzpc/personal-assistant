@@ -46,10 +46,11 @@ export const extractFile = async (zipBytes: ArrayBuffer, fileName: string) => {
     zip = await zip.loadAsync(zipBytes);
     // the downloaded zip file might have root directory which is defined by github actions,
     // filter the file path with the given file name which is unique in release.
-    const fileReg = new RegExp(`.*${fileName}$`);
+    const escapedFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const fileReg = new RegExp(`.*${escapedFileName}$`);
     const file = zip.file(fileReg);
 
-    if (file) {
+    if (file.length > 0) {
         // the result of RegExp matching must be one item
         return await file[0].async("string");
     } else {
