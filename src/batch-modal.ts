@@ -1,4 +1,4 @@
-import { App, Modal, Setting } from 'obsidian'
+import { App, Modal, Notice, Setting, ToggleComponent } from 'obsidian'
 
 import { type Plugin } from './modal'
 
@@ -12,8 +12,8 @@ export class BatchPluginControlModal extends Modal {
         const disabledPlugins: Plugin[] = [];
         const enabledPlugins: Plugin[] = [];
         const plugins: Plugin[] = [];
-        const toToggledPlugins: Plugin[] = [];
-        const toDisablePlugins: Plugin[] = [];
+        const desiredPluginStates = new Map<string, { plugin: Plugin, enabled: boolean }>();
+        const toggles: ToggleComponent[] = [];
         for (const key of Object.keys((this.app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
             const pluginObject: Plugin = {
                 name: this.obsidianPlugins.manifests[key].name,
@@ -37,14 +37,13 @@ export class BatchPluginControlModal extends Modal {
                 .setName(plugin.name)
                 .setDesc(plugin.desc)
                 .addToggle(toggle => {
+                    toggles.push(toggle);
                     toggle.setValue(plugin.enbaled)
-                        .onChange(async (value) => {
-                            if (value) {
-                                // change to enable plugin
-                                toToggledPlugins.push(plugin);
+                        .onChange((value) => {
+                            if (value === plugin.enbaled) {
+                                desiredPluginStates.delete(plugin.id);
                             } else {
-                                // change to disable plugin
-                                toDisablePlugins.push(plugin);
+                                desiredPluginStates.set(plugin.id, { plugin, enabled: value });
                             }
                         });
                 });
@@ -54,16 +53,46 @@ export class BatchPluginControlModal extends Modal {
             .addButton((btn) =>
                 btn.setButtonText('OK')
                     .setCta()
-                    .onClick(() => {
-                        for (const plugin of toToggledPlugins) {
-                            console.log(`enable ${plugin.name}`);
-                            this.obsidianPlugins.enablePlugin(plugin.id);
+                    .onClick(async () => {
+                        const pluginStates = Array.from(desiredPluginStates.values());
+
+                        if (pluginStates.length === 0) {
+                            new Notice("No plugin changes to apply");
+                            this.close();
+                            return;
                         }
 
-                        for (const plugin of toDisablePlugins) {
-                            console.log(`disable ${plugin.name}`);
-                            this.obsidianPlugins.disablePlugin(plugin.id);
+                        btn.setDisabled(true);
+                        toggles.forEach((toggle) => toggle.setDisabled(true));
+                        let failedCount = 0;
+
+                        for (const { plugin, enabled } of pluginStates) {
+                            const action = enabled ? "enable" : "disable";
+                            try {
+                                console.log(`${action} ${plugin.name}`);
+                                const result = enabled
+                                    ? await this.obsidianPlugins.enablePluginAndSave(plugin.id)
+                                    : await this.obsidianPlugins.disablePluginAndSave(plugin.id);
+
+                                if (result === false) {
+                                    failedCount += 1;
+                                } else {
+                                    desiredPluginStates.delete(plugin.id);
+                                }
+                            } catch (error) {
+                                failedCount += 1;
+                                console.error(`${action} plugin[${plugin.name}] failed`, error);
+                            }
                         }
+
+                        if (failedCount > 0) {
+                            btn.setDisabled(false);
+                            toggles.forEach((toggle) => toggle.setDisabled(false));
+                            new Notice(`Failed to update ${failedCount} plugin${failedCount > 1 ? "s" : ""}, try it again`);
+                            return;
+                        }
+
+                        new Notice(`Updated ${pluginStates.length} plugin${pluginStates.length > 1 ? "s" : ""} successfully`);
                         this.close();
                     }));
     }

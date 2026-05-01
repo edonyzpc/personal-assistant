@@ -66,19 +66,23 @@ export class PluginControlModal extends SuggestModal<Plugin> {
     }
 
     // Perform action on the selected suggestion.
-    onChooseSuggestion(plugin: Plugin, evt: MouseEvent | KeyboardEvent) {
-        if (!plugin.enbaled) {
-            if (this.obsidianPlugins.enablePluginAndSave(plugin.id)) {
-                new Notice(`enable plugin[${plugin.name}] successfully`);
-            } else {
-                new Notice(`enable plugin[${plugin.name}] failed, try it again`);
+    async onChooseSuggestion(plugin: Plugin, evt: MouseEvent | KeyboardEvent) {
+        const action = plugin.enbaled ? "disable" : "enable";
+
+        try {
+            const result = plugin.enbaled
+                ? await this.obsidianPlugins.disablePluginAndSave(plugin.id)
+                : await this.obsidianPlugins.enablePluginAndSave(plugin.id);
+
+            if (result === false) {
+                new Notice(`${action} plugin[${plugin.name}] failed, try it again`);
+                return;
             }
-        } else {
-            if (this.obsidianPlugins.disablePluginAndSave(plugin.id)) {
-                new Notice(`disable plugin[${plugin.name}] successfully`);
-            } else {
-                new Notice(`disable plugin[${plugin.name}] failed, try it again`);
-            }
+
+            new Notice(`${action} plugin[${plugin.name}] successfully`);
+        } catch (error) {
+            console.error(`${action} plugin[${plugin.name}] failed`, error);
+            new Notice(`${action} plugin[${plugin.name}] failed, try it again`);
         }
     }
 }
