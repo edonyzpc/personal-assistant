@@ -14,6 +14,8 @@ class MemoryAdapter {
     files = new Map<string, string>();
     folders = new Set<string>([".obsidian"]);
     existsCalls = new Map<string, number>();
+    readCalls = 0;
+    listCalls = 0;
 
     constructor(initialFiles: Record<string, string> = {}) {
         for (const [path, content] of Object.entries(initialFiles)) {
@@ -34,6 +36,7 @@ class MemoryAdapter {
     }
 
     async read(path: string): Promise<string> {
+        this.readCalls += 1;
         const content = this.files.get(this.normalize(path));
         if (content === undefined) throw new Error(`Missing file: ${path}`);
         return content;
@@ -46,6 +49,7 @@ class MemoryAdapter {
     }
 
     async list(path: string): Promise<{ files: string[]; folders: string[] }> {
+        this.listCalls += 1;
         const normalized = this.normalize(path);
         return {
             files: Array.from(this.files.keys()).filter((file) => this.parent(file) === normalized).sort(),
@@ -139,6 +143,7 @@ describe("StatsStore", () => {
                 "2025-06-02T23:59:59.000Z",
             )),
         );
+        store.invalidateDashboardCache();
 
         const data = await store.readDashboardData();
         const day = data.days.find((entry) => entry.date === "2025-06-02");
@@ -178,6 +183,33 @@ describe("StatsStore", () => {
         await store.writeOwnShard({ ...shard, activity: { ...shard.activity, words: 2 } });
 
         expect(adapter.existsCalls.get(`${STATS_DAILY_ROOT}/2026-05-01`)).toBe(1);
+    });
+
+    it("caches dashboard reads until a shard write changes the data", async () => {
+        const legacy = readLegacyFixture();
+        const adapter = new MemoryAdapter({
+            ".obsidian/stats.json": JSON.stringify(legacy),
+        });
+        const store = new StatsStore(createVault(adapter), ".obsidian/stats.json");
+
+        await store.readDashboardData();
+        const readCalls = adapter.readCalls;
+        const listCalls = adapter.listCalls;
+        await store.readDashboardData();
+
+        expect(adapter.readCalls).toBe(readCalls);
+        expect(adapter.listCalls).toBe(listCalls);
+
+        await store.writeOwnShard(createStatsShard(
+            "2026-05-01",
+            store.getDeviceId(),
+            { words: 1, characters: 1, sentences: 1, pages: 0, footnotes: 0, citations: 0 },
+            { totalWords: 1, totalCharacters: 1, totalSentences: 1, totalFootnotes: 0, totalCitations: 0, totalPages: 0, files: 1 },
+        ));
+        await store.readDashboardData();
+
+        expect(adapter.readCalls).toBeGreaterThan(readCalls);
+        expect(adapter.listCalls).toBeGreaterThan(listCalls);
     });
 
     it("maps legacy statistics view names to dashboard views", () => {

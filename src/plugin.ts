@@ -374,7 +374,7 @@ export class PluginManager extends Plugin {
         this.registerEvent(
             this.app.workspace.on("active-leaf-change", async (leaf) => {
                 if (this.statsManager)
-                    await this.statsManager.recalcTotals();
+                    await this.statsManager.flush();
             })
         );
         this.registerEvent(
@@ -389,7 +389,12 @@ export class PluginManager extends Plugin {
     }
 
     onunload() {
-
+        const statsManager = this.statsManager;
+        if (statsManager) {
+            const flush = statsManager.flush();
+            statsManager.dispose();
+            void flush.catch((error) => this.log("Failed to flush statistics during unload", error));
+        }
     }
 
     async loadSettings() {
@@ -529,6 +534,9 @@ export class PluginManager extends Plugin {
     }
 
     async activeStatView() {
+        if (this.statsManager) {
+            await this.statsManager.flush();
+        }
         this.app.workspace.detachLeavesOfType(STAT_PREVIEW_TYPE);
 
         const viewLeaf = this.app.workspace.getLeaf('tab');

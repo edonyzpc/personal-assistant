@@ -50,17 +50,14 @@ export class Stat extends ItemView {
     }
 
     onResize(): void {
-        const el = this.containerEl.getElementsByClassName("view-content")[0] as HTMLElement;
-        if (!this.componentRoot) {
-            this.componentRoot = createRoot(el);
-        }
-        this.renderStatistics();
+        // Chart.js and the Statistics component's ResizeObserver handle layout updates.
     }
 
     private async loadDashboardData(): Promise<StatsDashboardData> {
         if (!this.plugin.statsManager) {
             return createEmptyDashboardData();
         }
+        await this.plugin.statsManager.flush();
         return this.plugin.statsManager.getDashboardData();
     }
 

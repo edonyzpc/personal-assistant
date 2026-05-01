@@ -1,4 +1,4 @@
-import { debounce, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
+import { Platform, debounce, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
 import moment from "moment";
 import type PluginManager from "../main";
 import type {
@@ -14,6 +14,7 @@ import {
     createStatsShard,
     emptyActivityCounts,
     emptySnapshotCounts,
+    STATS_STORE_ROOT,
     StatsStore,
 } from "./stats-store";
 import {
@@ -32,6 +33,12 @@ type PendingTextChange = {
     currentText: string;
     previousText?: string;
 };
+
+type CancelCheck = () => boolean;
+
+export function getStatsWriteDelayMs(isMobile: boolean): number {
+    return isMobile ? 3000 : 1500;
+}
 
 export function combineActivityCounts(base: ActivityCounts, session: ActivityCounts): ActivityCounts {
     return {
@@ -55,8 +62,13 @@ export default class StatsManager {
     private currentShard: StatsDeviceShard | null = null;
     private initialized = false;
     private pendingChanges: PendingTextChange[] = [];
+    private pendingWrite: Promise<void> | null = null;
+    private hasPendingWrite = false;
+    private snapshotRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    private isDisposed = false;
     private ready: Promise<void>;
     public debounceChange: Debouncer<[filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider], Promise<void>>;
+    private debounceWrite: Debouncer<[], Promise<void>>;
 
     constructor(app: App, plugin: PluginManager) {
         this.vault = app.vault;
@@ -70,9 +82,16 @@ export default class StatsManager {
             50,
             false
         );
+        this.debounceWrite = debounce(
+            () => this.writeCurrentShard(),
+            getStatsWriteDelayMs(Platform.isMobile),
+            true
+        );
 
         this.plugin.registerEvent(
             this.vault.on("rename", (newFile, oldPath) => {
+                this.invalidateDashboardCacheForPath(newFile.path);
+                this.invalidateDashboardCacheForPath(oldPath);
                 if (this.modifiedFiles.hasOwnProperty(oldPath)) {
                     const content = this.modifiedFiles[oldPath];
                     delete this.modifiedFiles[oldPath];
@@ -83,9 +102,22 @@ export default class StatsManager {
 
         this.plugin.registerEvent(
             this.vault.on("delete", (deletedFile) => {
+                this.invalidateDashboardCacheForPath(deletedFile.path);
                 if (this.modifiedFiles.hasOwnProperty(deletedFile.path)) {
                     delete this.modifiedFiles[deletedFile.path];
                 }
+            })
+        );
+
+        this.plugin.registerEvent(
+            this.vault.on("create", (createdFile) => {
+                this.invalidateDashboardCacheForPath(createdFile.path);
+            })
+        );
+
+        this.plugin.registerEvent(
+            this.vault.on("modify", (modifiedFile) => {
+                this.invalidateDashboardCacheForPath(modifiedFile.path);
             })
         );
 
@@ -108,10 +140,7 @@ export default class StatsManager {
     }
 
     async update(): Promise<void> {
-        await this.ready;
-        if (this.currentShard) {
-            await this.store.writeOwnShard(this.currentShard);
-        }
+        await this.flush();
     }
 
     async updateToday(): Promise<void> {
@@ -119,7 +148,7 @@ export default class StatsManager {
         if (!this.currentShard) return;
         this.currentShard.snapshot = await this.calcSnapshot();
         this.currentShard.updatedAt = new Date().toISOString();
-        await this.store.writeOwnShard(this.currentShard);
+        await this.writeCurrentShardNow();
     }
 
     public async change(filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider): Promise<void> {
@@ -175,7 +204,7 @@ export default class StatsManager {
             currentCounts
         );
         this.currentShard.updatedAt = new Date().toISOString();
-        await this.store.writeOwnShard(this.currentShard);
+        this.scheduleWrite();
     }
 
     public async recalcTotals(): Promise<void> {
@@ -184,7 +213,29 @@ export default class StatsManager {
         if (!this.currentShard) return;
         this.currentShard.snapshot = await this.calcSnapshot();
         this.currentShard.updatedAt = new Date().toISOString();
-        await this.store.writeOwnShard(this.currentShard);
+        await this.writeCurrentShardNow();
+    }
+
+    public async flush(): Promise<void> {
+        const pendingChange = this.debounceChange.run();
+        if (pendingChange) await pendingChange;
+
+        await this.ready;
+
+        const pendingWrite = this.debounceWrite.run();
+        if (pendingWrite) await pendingWrite;
+        if (this.pendingWrite) await this.pendingWrite;
+        if (this.hasPendingWrite) await this.writeCurrentShard();
+    }
+
+    public dispose(): void {
+        this.isDisposed = true;
+        if (this.snapshotRefreshTimer) {
+            clearTimeout(this.snapshotRefreshTimer);
+            this.snapshotRefreshTimer = null;
+        }
+        this.debounceChange.cancel();
+        this.debounceWrite.cancel();
     }
 
     public getDailyWords(): number {
@@ -244,6 +295,7 @@ export default class StatsManager {
         await this.ensureToday();
         this.initialized = true;
         await this.flushPendingChanges();
+        this.scheduleSnapshotRefresh();
     }
 
     private async ensureToday(): Promise<void> {
@@ -270,12 +322,28 @@ export default class StatsManager {
             this.today,
             this.store.getDeviceId(),
             emptyActivityCounts(),
-            await this.calcSnapshot(),
+            await this.getInitialSnapshot(),
         );
         this.baseActivity = { ...this.currentShard.activity };
 
         if (!existing) {
-            await this.store.writeOwnShard(this.currentShard);
+            this.scheduleWrite();
+            this.scheduleSnapshotRefresh();
+        }
+    }
+
+    private async getInitialSnapshot(): Promise<SnapshotCounts> {
+        const latestSnapshot = await this.store.readLatestSnapshot();
+        if (!latestSnapshot) return emptySnapshotCounts();
+        return {
+            ...latestSnapshot,
+            files: this.getTotalFiles(),
+        };
+    }
+
+    private invalidateDashboardCacheForPath(path: string): void {
+        if (path.startsWith(STATS_STORE_ROOT)) {
+            this.store.invalidateDashboardCache();
         }
     }
 
@@ -315,6 +383,58 @@ export default class StatsManager {
         this.pendingChanges = [];
         for (const change of changes) {
             await this.applyChange(change);
+        }
+    }
+
+    private scheduleWrite(): void {
+        this.hasPendingWrite = true;
+        if (this.isDisposed) return;
+        this.debounceWrite();
+    }
+
+    private async writeCurrentShardNow(): Promise<void> {
+        this.debounceWrite.cancel();
+        await this.writeCurrentShard();
+    }
+
+    private async writeCurrentShard(): Promise<void> {
+        if (!this.currentShard) return;
+        const write = this.store.writeOwnShard(this.currentShard);
+        this.pendingWrite = write;
+        try {
+            await write;
+            this.hasPendingWrite = false;
+        } finally {
+            if (this.pendingWrite === write) {
+                this.pendingWrite = null;
+            }
+        }
+    }
+
+    private scheduleSnapshotRefresh(): void {
+        if (this.isDisposed) return;
+        if (this.snapshotRefreshTimer) return;
+        this.snapshotRefreshTimer = setTimeout(() => {
+            this.snapshotRefreshTimer = null;
+            void this.refreshSnapshotInBackground();
+        }, 3000);
+    }
+
+    private async refreshSnapshotInBackground(): Promise<void> {
+        try {
+            if (this.isDisposed) return;
+            await this.ensureToday();
+            if (!this.currentShard) return;
+            const snapshot = await this.calcSnapshot(() => this.isDisposed);
+            if (!snapshot) return;
+            this.currentShard.snapshot = snapshot;
+            if (this.isDisposed) return;
+            this.currentShard.updatedAt = new Date().toISOString();
+            this.scheduleWrite();
+        } catch (error) {
+            if (!this.isDisposed) {
+                this.plugin.log("Failed to refresh statistics snapshot", error);
+            }
         }
     }
 
@@ -362,12 +482,16 @@ export default class StatsManager {
         };
     }
 
-    private async calcSnapshot(): Promise<SnapshotCounts> {
+    private async calcSnapshot(): Promise<SnapshotCounts>;
+    private async calcSnapshot(shouldCancel: CancelCheck): Promise<SnapshotCounts | null>;
+    private async calcSnapshot(shouldCancel: CancelCheck = () => false): Promise<SnapshotCounts | null> {
         const totals = emptySnapshotCounts();
 
         for (const file of this.vault.getFiles()) {
+            if (shouldCancel()) return null;
             if (file.extension !== "md") continue;
             const text = await this.vault.cachedRead(file);
+            if (shouldCancel()) return null;
             const counts = this.countText(text);
             totals.totalWords += counts.words;
             totals.totalCharacters += counts.characters;

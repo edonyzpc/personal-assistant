@@ -188,6 +188,8 @@ export class StatsStore {
     private writeChain: Promise<void> = Promise.resolve();
     private ensuredFolders = new Set<string>();
     private migrationErrors: StatsStoreError[] = [];
+    private dashboardCache: StatsDashboardData | null = null;
+    private dashboardDirty = true;
 
     constructor(vault: Vault, legacyStatsPath: string) {
         this.vault = vault;
@@ -197,6 +199,10 @@ export class StatsStore {
 
     getDeviceId(): string {
         return this.deviceId;
+    }
+
+    invalidateDashboardCache(): void {
+        this.dashboardDirty = true;
     }
 
     async initialize(): Promise<void> {
@@ -216,6 +222,10 @@ export class StatsStore {
     async readDashboardData(): Promise<StatsDashboardData> {
         await this.initialize();
 
+        if (!this.dashboardDirty && this.dashboardCache) {
+            return this.cloneDashboardData(this.dashboardCache);
+        }
+
         const errors = [...this.migrationErrors];
         const byDate = new Map<string, {
             activity: ActivityCounts;
@@ -226,10 +236,10 @@ export class StatsStore {
 
         const dailyExists = await this.safeExists(STATS_DAILY_ROOT);
         if (!dailyExists) {
-            return {
+            return this.cacheDashboardData({
                 ...createEmptyDashboardData(this.deviceId),
                 errors,
-            };
+            });
         }
 
         const dailyList = await this.safeList(STATS_DAILY_ROOT, errors);
@@ -271,13 +281,41 @@ export class StatsStore {
             }))
             .sort((a, b) => a.date.localeCompare(b.date));
 
-        return {
+        return this.cacheDashboardData({
             version: STATS_STORE_VERSION,
             generatedAt: new Date().toISOString(),
             deviceId: this.deviceId,
             days,
             errors,
-        };
+        });
+    }
+
+    async readLatestSnapshot(): Promise<SnapshotCounts | null> {
+        await this.initialize();
+
+        if (!this.dashboardDirty && this.dashboardCache && this.dashboardCache.days.length > 0) {
+            return this.snapshotFromDashboardDay(this.dashboardCache.days[this.dashboardCache.days.length - 1]);
+        }
+
+        if (!(await this.safeExists(STATS_DAILY_ROOT))) return null;
+
+        const errors: StatsStoreError[] = [];
+        const dailyList = await this.safeList(STATS_DAILY_ROOT, errors);
+        const folders = [...dailyList.folders].sort().reverse();
+
+        for (const folder of folders) {
+            const fileList = await this.safeList(folder, errors);
+            let latest: StatsDeviceShard | null = null;
+            for (const file of fileList.files.filter((path) => path.endsWith(".json"))) {
+                const shard = await this.readShard(file, errors);
+                if (shard && (!latest || shard.updatedAt >= latest.updatedAt)) {
+                    latest = shard;
+                }
+            }
+            if (latest) return latest.snapshot;
+        }
+
+        return null;
     }
 
     async readOwnShard(date: string): Promise<StatsDeviceShard | null> {
@@ -303,6 +341,7 @@ export class StatsStore {
         this.writeChain = currentWrite;
         try {
             await currentWrite;
+            this.dashboardDirty = true;
         } finally {
             if (this.writeChain === currentWrite) {
                 this.writeChain = Promise.resolve();
@@ -316,6 +355,35 @@ export class StatsStore {
 
     private getShardPath(date: string, deviceId: string): string {
         return normalizePath(`${this.getDateFolder(date)}/${deviceId}.json`);
+    }
+
+    private cacheDashboardData(data: StatsDashboardData): StatsDashboardData {
+        this.dashboardCache = this.cloneDashboardData(data);
+        this.dashboardDirty = false;
+        return this.cloneDashboardData(data);
+    }
+
+    private cloneDashboardData(data: StatsDashboardData): StatsDashboardData {
+        return {
+            ...data,
+            errors: data.errors.map((error) => ({ ...error })),
+            days: data.days.map((day) => ({
+                ...day,
+                deviceIds: [...day.deviceIds],
+            })),
+        };
+    }
+
+    private snapshotFromDashboardDay(day: StatsDashboardDay): SnapshotCounts {
+        return {
+            totalWords: day.totalWords,
+            totalCharacters: day.totalCharacters,
+            totalSentences: day.totalSentences,
+            totalFootnotes: day.totalFootnotes,
+            totalCitations: day.totalCitations,
+            totalPages: day.totalPages,
+            files: day.files,
+        };
     }
 
     private async migrateLegacyStats(): Promise<void> {
