@@ -22,6 +22,15 @@ import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
 import { normalizeStatisticsView } from './stats/stats-store';
 
+const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
+const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
+const CALLOUT_MANAGER_READY_POLL_MS = 50;
+
+interface ObsidianPluginRegistry {
+    enabledPlugins?: Set<string>;
+    plugins?: Record<string, unknown>;
+}
+
 const redactForLog = (value: unknown, seen = new WeakSet<object>()): unknown => {
     if (typeof value === 'string') {
         return value.replace(/sk-[A-Za-z0-9_-]{8,}/g, 'sk-[redacted]');
@@ -138,10 +147,7 @@ export class PluginManager extends Plugin {
             await this.vss.initialize();
         }
 
-        // get callout manager api
-        this.app.workspace.onLayoutReady(async () => {
-            this.calloutManager = await getApi(this);
-            // register preview view type after the layout is ready
+        this.app.workspace.onLayoutReady(() => {
             this.registerView(
                 RECORD_PREVIEW_TYPE,
                 (leaf) => { return new RecordPreview(this.app, this, leaf); }
@@ -156,6 +162,7 @@ export class PluginManager extends Plugin {
                     return new LLMView(leaf, this, this.vss);
                 }
             );
+            void this.initializeCalloutManager();
         });
         this.statsManager = new StatsManager(this.app, this);
 
@@ -409,6 +416,51 @@ export class PluginManager extends Plugin {
 
     log(...msg: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
         debug(this.settings.debug, ...msg);
+    }
+
+    private async initializeCalloutManager() {
+        try {
+            const pluginInstance = await this.waitForEnabledPluginInstance(
+                CALLOUT_MANAGER_PLUGIN_ID,
+                CALLOUT_MANAGER_READY_TIMEOUT_MS,
+            );
+            if (pluginInstance === undefined) {
+                this.calloutManager = undefined;
+                this.log('Callout Manager is unavailable; using default callouts.');
+                return;
+            }
+            this.calloutManager = await getApi(this);
+        } catch (error) {
+            this.calloutManager = undefined;
+            this.log('Failed to initialize Callout Manager API', error);
+        }
+    }
+
+    private async waitForEnabledPluginInstance(pluginId: string, timeoutMs: number): Promise<unknown | undefined> {
+        const pluginRegistry = (this.app as unknown as { plugins?: ObsidianPluginRegistry }).plugins;
+        if (!pluginRegistry?.enabledPlugins?.has(pluginId)) {
+            return undefined;
+        }
+
+        const loadedPlugin = pluginRegistry.plugins?.[pluginId];
+        if (loadedPlugin !== undefined) {
+            return loadedPlugin;
+        }
+
+        return new Promise((resolve) => {
+            const interval = setInterval(() => {
+                const pluginInstance = pluginRegistry.plugins?.[pluginId];
+                if (pluginInstance !== undefined) {
+                    clearTimeout(timeout);
+                    clearInterval(interval);
+                    resolve(pluginInstance);
+                }
+            }, CALLOUT_MANAGER_READY_POLL_MS);
+            const timeout = setTimeout(() => {
+                clearInterval(interval);
+                resolve(undefined);
+            }, timeoutMs);
+        });
     }
 
     // the following is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102

@@ -6,9 +6,40 @@ import type {  Callout, CalloutID } from 'obsidian-callout-manager';
 import type { PluginManager } from './plugin';
 import { type RGB, parseColorRGB } from './color';
 
+export const DEFAULT_CALLOUTS: Callout[] = [
+    { id: "note", icon: "pencil", color: "8, 109, 221", sources: [{ type: "builtin" }] },
+    { id: "abstract", icon: "clipboard-list", color: "0, 191, 188", sources: [{ type: "builtin" }] },
+    { id: "summary", icon: "clipboard-list", color: "0, 191, 188", sources: [{ type: "builtin" }] },
+    { id: "tldr", icon: "clipboard-list", color: "0, 191, 188", sources: [{ type: "builtin" }] },
+    { id: "info", icon: "info", color: "8, 109, 221", sources: [{ type: "builtin" }] },
+    { id: "todo", icon: "check-circle", color: "8, 109, 221", sources: [{ type: "builtin" }] },
+    { id: "tip", icon: "flame", color: "0, 191, 188", sources: [{ type: "builtin" }] },
+    { id: "hint", icon: "flame", color: "0, 191, 188", sources: [{ type: "builtin" }] },
+    { id: "important", icon: "flame", color: "0, 191, 188", sources: [{ type: "builtin" }] },
+    { id: "success", icon: "check", color: "8, 185, 78", sources: [{ type: "builtin" }] },
+    { id: "check", icon: "check", color: "8, 185, 78", sources: [{ type: "builtin" }] },
+    { id: "done", icon: "check", color: "8, 185, 78", sources: [{ type: "builtin" }] },
+    { id: "question", icon: "circle-help", color: "236, 117, 0", sources: [{ type: "builtin" }] },
+    { id: "help", icon: "circle-help", color: "236, 117, 0", sources: [{ type: "builtin" }] },
+    { id: "faq", icon: "circle-help", color: "236, 117, 0", sources: [{ type: "builtin" }] },
+    { id: "warning", icon: "triangle-alert", color: "236, 117, 0", sources: [{ type: "builtin" }] },
+    { id: "caution", icon: "triangle-alert", color: "236, 117, 0", sources: [{ type: "builtin" }] },
+    { id: "attention", icon: "triangle-alert", color: "236, 117, 0", sources: [{ type: "builtin" }] },
+    { id: "failure", icon: "x", color: "233, 49, 71", sources: [{ type: "builtin" }] },
+    { id: "fail", icon: "x", color: "233, 49, 71", sources: [{ type: "builtin" }] },
+    { id: "missing", icon: "x", color: "233, 49, 71", sources: [{ type: "builtin" }] },
+    { id: "danger", icon: "zap", color: "233, 49, 71", sources: [{ type: "builtin" }] },
+    { id: "error", icon: "zap", color: "233, 49, 71", sources: [{ type: "builtin" }] },
+    { id: "bug", icon: "bug", color: "233, 49, 71", sources: [{ type: "builtin" }] },
+    { id: "example", icon: "list", color: "120, 82, 238", sources: [{ type: "builtin" }] },
+    { id: "quote", icon: "quote-glyph", color: "158, 158, 158", sources: [{ type: "builtin" }] },
+    { id: "cite", icon: "quote-glyph", color: "158, 158, 158", sources: [{ type: "builtin" }] },
+];
+
 
 export class CalloutModal extends SuggestModal<Callout> {
     private plugin: PluginManager;
+    private fallbackNoticeShown = false;
 
     constructor(app: App, plugin: PluginManager) {
         super(app);
@@ -17,25 +48,19 @@ export class CalloutModal extends SuggestModal<Callout> {
 
     // Returns all available suggestions.
     getSuggestions(query: string): Callout[] {
-        const callouts = this.plugin.calloutManager?.getCallouts();
-        if (callouts) {
-            return callouts.concat().filter((callout) => callout.id.toLowerCase().includes(query.toLowerCase()));
+        let callouts: ReadonlyArray<Callout> | undefined;
+        try {
+            callouts = this.plugin.calloutManager?.getCallouts();
+        } catch (error) {
+            this.plugin.log('Failed to read callouts from Callout Manager', error);
         }
-        // default callout
-        return [{
-                "id": "quote",
-                "icon": "quote-glyph",
-                "color": "158, 158, 158",
-                "sources": [
-                    {
-                    "type": "builtin"
-                    },
-                    {
-                    "type": "snippet",
-                    "snippet": "callout"
-                    }
-                ]
-            }]
+
+        if (!callouts?.length) {
+            this.showFallbackNotice();
+            return this.filterCallouts(DEFAULT_CALLOUTS, query);
+        }
+
+        return this.filterCallouts(callouts, query);
     }
 
     // Renders each suggestion item.
@@ -61,22 +86,59 @@ export class CalloutModal extends SuggestModal<Callout> {
 > Contents
 
 `;
-        await navigator.clipboard.writeText(calloutMarkdownContent);
-
         const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+        let inserted = false;
+        let activeViewMissing = false;
         if (view) {
             const mode = view.getMode();
             if (mode === "preview") {
                 new Notice("Tips: please switch to edit mode to insert", 5000);
-                return;
+            } else {
+                const cursor = view.editor.getCursor();
+                view.editor.replaceRange(calloutMarkdownContent, cursor);
+                // move the cursor down with 4 lines to preview the callout display
+                view.editor.setCursor({
+                    ...cursor,
+                    line: cursor.line + 4,
+                });
+                inserted = true;
             }
-            const cursor = view.editor.getCursor();
-            view.editor.replaceRange(calloutMarkdownContent, cursor);
-            // move the cursor down with 4 lines to preview the callout display
-            cursor.line = cursor.line + 4;
-            view.editor.setCursor(cursor);
         } else {
-            new Notice("Error: not a editable markdown file", 5000);
+            activeViewMissing = true;
+        }
+
+        await this.copyCalloutToClipboard(calloutMarkdownContent, inserted, activeViewMissing);
+    }
+
+    private filterCallouts(callouts: ReadonlyArray<Callout>, query: string): Callout[] {
+        const normalizedQuery = query.toLowerCase();
+        return callouts.concat().filter((callout) => callout.id.toLowerCase().includes(normalizedQuery));
+    }
+
+    private showFallbackNotice() {
+        if (this.fallbackNoticeShown) return;
+        this.fallbackNoticeShown = true;
+        new Notice("Callout Manager unavailable; showing default callouts only.", 5000);
+    }
+
+    private async copyCalloutToClipboard(content: string, inserted: boolean, activeViewMissing: boolean) {
+        try {
+            if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
+                throw new Error("Clipboard API is unavailable");
+            }
+            await navigator.clipboard.writeText(content);
+            if (activeViewMissing) {
+                new Notice("No editable markdown file; callout copied to clipboard", 5000);
+            }
+        } catch (error) {
+            this.plugin.log("Failed to copy callout markdown to clipboard", error);
+            if (!inserted) {
+                if (activeViewMissing) {
+                    new Notice("No editable markdown file and clipboard is unavailable", 5000);
+                } else {
+                    new Notice("Unable to copy callout to clipboard", 5000);
+                }
+            }
         }
     }
 }
