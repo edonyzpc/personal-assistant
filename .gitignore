@@ -28,3 +28,6 @@ dist
 # obsidian configuration file
 test/.obsidian/workspace.json
 test/
+
+# codex
+.codex/

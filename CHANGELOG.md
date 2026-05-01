@@ -2,6 +2,36 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [1.6.0](https://github.com/edonyzpc/personal-assistant/compare/1.5.9...1.6.0) (2026-05-01)
+### Features
+- statistics: store statistics as daily device shards with legacy migration to reduce multi-device sync conflicts
+- statistics: redesign `Show statistics` into Overview, Daily, Growth, and Composition dashboard views
+- statistics: add mobile-friendly chart layouts and `30d`/`90d`/`All` chart ranges
+
+### Fix
+- preview: refresh record previews safely when related files change
+- theme: harden theme update command handling
+
+### Improvements
+- statistics: cache dashboard aggregation to avoid repeated shard reads
+- statistics: debounce shard writes and flush pending statistics at view/lifecycle boundaries
+- statistics: reuse the latest snapshot on startup and cancel background snapshot scans during unload
+
+## [1.5.9](https://github.com/edonyzpc/personal-assistant/compare/1.5.8...1.5.9) (2026-05-01)
+### Fix
+- plugin-updater: harden plugin update reloads
+- ai networking: support mobile-safe transport and preserve network failures as non-OK responses
+- deps: sync LangChain community lockfile after dependency upgrades
+
+### Improvements
+- deps: upgrade Obsidian and LangChain dependencies
+
+### Docs
+- add mobile network optimization plan
+
+### Tests
+- cover mobile network transport behavior
+
 ## [1.5.8](https://github.com/edonyzpc/personal-assistant/compare/1.5.7...1.5.8) (2026-04-19)
 ### Fix
 - release: use explicit Node globals in release scripts
