@@ -20,6 +20,7 @@ type MockAdapter = {
     write: jest.Mock;
     read: jest.Mock;
     exists: jest.Mock;
+    list: jest.Mock;
     mkdir: jest.Mock;
     remove: jest.Mock;
 };
@@ -42,6 +43,7 @@ export class App {
             write: jest.fn(),
             read: jest.fn(),
             exists: jest.fn(),
+            list: jest.fn(async () => ({ files: [], folders: [] })),
             mkdir: jest.fn(),
             remove: jest.fn(),
         },

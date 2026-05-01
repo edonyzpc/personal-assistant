@@ -390,6 +390,7 @@ export class PluginManager extends Plugin {
 
     onunload() {
         const statsManager = this.statsManager;
+        this.vss?.dispose();
         if (statsManager) {
             const flush = statsManager.flush();
             statsManager.dispose();
@@ -573,10 +574,11 @@ export class PluginManager extends Plugin {
     getVSSFiles() {
         const files = this.app.vault.getMarkdownFiles();
         const excludePaths = this.settings.vssCacheExcludePath || [];
+        const normalizedExcludePaths = excludePaths.map((path) => path.trim()).filter(Boolean);
         const excludeFiles: TFile[] = [];
         // filter all markdown files which are in exclude-paths
         for (const file of files) {
-            for (const exclude of excludePaths) {
+            for (const exclude of normalizedExcludePaths) {
                 if (file.path.startsWith(exclude)) {
                     excludeFiles.push(file);
                 }
@@ -610,28 +612,52 @@ export class PluginManager extends Plugin {
 
             const vssFiles = this.getVSSFiles();
             let count = 0;
-            try {
-                for (const file of vssFiles) {
-                    if (count === 15) {
-                        // bypass ratelimit, stop for 10s per 15 file-pasrsing
-                        await new Promise(f => setTimeout(f, 10000));
-                        count = 0;
-                    }
+            let updated = 0;
+            let unchanged = 0;
+            let removed = 0;
+            let skipped = 0;
+            let failed = 0;
 
-                    // cache file vector store by calling llm service
-                    if (await this.vss.cacheFileVectorStore(file)) {
-                        count++;
-                    }
-
+            for (const file of vssFiles) {
+                if (count === 15) {
+                    // bypass ratelimit, stop for 10s per 15 file-pasrsing
+                    await new Promise(f => setTimeout(f, 10000));
+                    count = 0;
                 }
-            } catch (e) {
-                this.log(e);
+
+                try {
+                    const status = await this.vss.refreshFileCache(file);
+                    switch (status) {
+                        case 'updated':
+                            updated++;
+                            count++;
+                            break;
+                        case 'unchanged':
+                            unchanged++;
+                            break;
+                        case 'removed':
+                            removed++;
+                            break;
+                        case 'skipped':
+                            skipped++;
+                            break;
+                    }
+                } catch (e) {
+                    failed++;
+                    this.log("Failed to cache VSS file", { path: file.path, error: e });
+                }
             }
 
             // finish init
-            this.isVssCached = true;
+            this.isVssCached = failed === 0;
             statusBar?.removeClass("personal-assistant-ai-breathing");
-            statusBar?.addClass("personal-assistant-ai-statusbar-done");
+            if (failed === 0) {
+                statusBar?.addClass("personal-assistant-ai-statusbar-done");
+            }
+            new Notice(
+                `VSS cache: ${updated} updated, ${unchanged} unchanged, ${removed} removed, ${skipped} skipped${failed > 0 ? `, ${failed} failed` : ""}.`,
+                5000,
+            );
         }
     }
 

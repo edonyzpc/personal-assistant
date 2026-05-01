@@ -703,7 +703,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
                     .setValue(this.plugin.settings.vssCacheExcludePath.join(','))
                     .onChange(async (value) => {
-                        plugin.settings.vssCacheExcludePath = value.split(",");
+                        plugin.settings.vssCacheExcludePath = value.split(",").map((path) => path.trim()).filter(Boolean);
                         await this.plugin.saveSettings();
                     })
             });

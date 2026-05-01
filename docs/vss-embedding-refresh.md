@@ -10,7 +10,7 @@
 - **启动期安全阈值**：冷启动最多处理 `startupMaxFiles=1000` 个文件，超出留给后续定时器。
 - **内容哈希去重**：缓存写入 `contentHash`（cleaned markdown 的 SHA1），hash 相同直接跳过重算，mtime 仅兜底。
 - **脏队列持久化**：`vss-cache/dirty.json` 实时落盘；异常退出后可恢复。
-- **兜底扫描**：启动后延迟扫描缓存缺失或 hash 不匹配的文件并加入脏队列（受限于 `startupMaxFiles`）。>1MB 文件启动期不算 hash，延后处理。
+- **兜底扫描**：启动后延迟扫描缓存缺失或 hash 不匹配的文件并加入脏队列（受限于 `startupMaxFiles`）。>1MB 文件跳过 VSS 缓存，并清理旧缓存，避免反复重试。
 - **删除与内存同步**：删除文件时清理缓存文件并从内存 vector store 移除。
 - **手动控制**：新增命令 `Flush VSS Embeddings` 立即处理当前脏队列（仍遵守速率限制）。
 
@@ -23,7 +23,7 @@
 | rateGap | 3s | 单个文件刷新间隔 |
 | maxPerMinute | 5 | 每分钟处理上限 |
 | startupMaxFiles | 1000 | 启动期最多处理文件数 |
-| largeFileThreshold | 1MB | 启动期哈希跳过阈值 |
+| largeFileThreshold | 1MB | VSS 缓存跳过阈值 |
 
 ## 触发流程
 1. **标记脏**：`vault.modify` → 写入 `dirty.json`。
@@ -34,7 +34,7 @@
 
 ## 启动阶段的性能权衡
 - 先恢复 `dirty.json`，小批次处理；全量兜底扫描延后执行。
-- 启动前 1 分钟处理文件数上限 120；大文件跳过哈希，延后再算。
+- 启动前 1 分钟处理文件数上限 120；大文件跳过哈希并清理旧缓存。
 - 批处理间隙让出事件循环，并受速率限制。
 
 ## 开发任务列表

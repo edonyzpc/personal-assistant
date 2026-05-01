@@ -12,10 +12,13 @@ const VSS_PARAMS = {
     flushInterval: 2 * 60 * 1000,
     rateGap: 3000,
     maxPerMinute: 5,
+    cacheExistsConcurrency: 50,
     startupMaxFiles: 1000,
     largeFileThreshold: 1_000_000,
     dirtyJournal: "dirty.json",
 };
+
+export type VSSRefreshStatus = 'updated' | 'unchanged' | 'removed' | 'skipped';
 
 export class VSS {
     private plugin: PluginManager;
@@ -31,6 +34,8 @@ export class VSS {
     private processedWindow = { count: 0, windowStart: 0 };
     private initialized = false;
     private lastActiveFile: TFile | null = null;
+    private startupTimeoutIds: ReturnType<typeof setTimeout>[] = [];
+    private disposed = false;
 
     constructor(
         plugin: PluginManager,
@@ -45,10 +50,25 @@ export class VSS {
 
     async initialize() {
         if (this.initialized) return;
+        this.disposed = false;
         await this.loadDirtyJournal();
+        await this.loadExistingVectorStore();
         this.startFlushTimer();
         this.scheduleStartupScan();
         this.initialized = true;
+    }
+
+    dispose() {
+        this.disposed = true;
+        if (this.flushIntervalId) {
+            clearInterval(this.flushIntervalId);
+            this.flushIntervalId = null;
+        }
+        for (const timeoutId of this.startupTimeoutIds) {
+            clearTimeout(timeoutId);
+        }
+        this.startupTimeoutIds = [];
+        this.initialized = false;
     }
 
     async markDirtyIfEligible(file: TAbstractFile) {
@@ -66,12 +86,8 @@ export class VSS {
     async handleDelete(file: TFile) {
         this.dirty.delete(file.path);
         await this.persistDirtyJournal();
-        const vssFile = this.plugin.join(this.vssCacheDir, file.path + ".json");
-        if (await this.plugin.app.vault.adapter.exists(vssFile)) {
-            await this.plugin.app.vault.adapter.remove(vssFile);
-        }
-        this.plugin.log("delete", vssFile);
-        await this.loadVectorStore([file], true);
+        await this.removeCacheForFile(file);
+        this.plugin.log("delete", this.plugin.join(this.vssCacheDir, file.path + ".json"));
     }
 
     async handleActiveLeafChange() {
@@ -119,20 +135,15 @@ export class VSS {
                     continue;
                 }
 
-                const { updated, skipped } = await this.rebuildCacheIfNeeded(file);
-                if (skipped) {
-                    // keep large files in the dirty queue but push the timestamp forward
-                    const existing = this.dirty.get(path);
-                    const nowTs = Date.now();
-                    const refreshed: DirtyTimestamps = existing
-                        ? { first: existing.first, last: nowTs }
-                        : { first: nowTs, last: nowTs };
-                    this.dirty.set(path, refreshed);
-                    dirtyChanged = true;
+                let status: VSSRefreshStatus;
+                try {
+                    status = await this.refreshFileCache(file);
+                } catch (e) {
+                    this.plugin.log("Failed to refresh VSS cache", { path, error: e });
                     continue;
                 }
 
-                if (updated) {
+                if (status === 'updated') {
                     this.processedWindow.count++;
                 }
                 this.lastProcessedAt = loopNow;
@@ -151,6 +162,35 @@ export class VSS {
 
     async cacheFileVectorStore(cacheFile: TFile): Promise<boolean> {
         return await this.aiService.vectorizeDocument(cacheFile, this.vssCacheDir);
+    }
+
+    async refreshFileCache(file: TFile): Promise<VSSRefreshStatus> {
+        const cachePath = this.plugin.join(this.vssCacheDir, file.path + ".json");
+        const fileState = await this.computeFileHash(file);
+
+        if (fileState.tooLarge) {
+            await this.removeCacheForFile(file);
+            this.plugin.log(`Skipped VSS cache for large file ${file.path}`);
+            return 'skipped';
+        }
+
+        if (!fileState.hash) {
+            const removed = await this.removeCacheForFile(file);
+            return removed ? 'removed' : 'unchanged';
+        }
+
+        const cachedHash = await this.readCachedHash(cachePath);
+        if (cachedHash && cachedHash === fileState.hash) {
+            return 'unchanged';
+        }
+
+        const updated = await this.cacheFileVectorStore(file);
+        if (updated) {
+            await this.loadVectorStore([file]);
+            return 'updated';
+        }
+
+        return 'skipped';
     }
 
     async loadVectorStore(vssFiles: TFile[], isDelete: boolean = false) {
@@ -186,36 +226,15 @@ export class VSS {
         return await this.aiService.searchSimilarDocuments(prompt, this.vectorStore);
     }
 
-    private async rebuildCacheIfNeeded(file: TFile): Promise<{ updated: boolean; skipped: boolean }> {
-        const cachePath = this.plugin.join(this.vssCacheDir, file.path + ".json");
-        const currentHash = await this.computeFileHash(file);
-        if (!currentHash) {
-            const skipped = file.stat.size > VSS_PARAMS.largeFileThreshold;
-            return { updated: false, skipped };
-        }
-        const cachedHash = await this.readCachedHash(cachePath);
-
-        if (cachedHash && cachedHash === currentHash) {
-            return { updated: false, skipped: false };
-        }
-
-        const updated = await this.cacheFileVectorStore(file);
-        if (updated) {
-            await this.loadVectorStore([file]);
-        }
-        return { updated, skipped: false };
-    }
-
-    private async computeFileHash(file: TFile): Promise<string | null> {
+    private async computeFileHash(file: TFile): Promise<{ hash: string | null; tooLarge: boolean }> {
         if (file.stat.size > VSS_PARAMS.largeFileThreshold) {
-            // 延后处理大文件
-            return null;
+            return { hash: null, tooLarge: true };
         }
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
-        if (!cleanedContent) return null;
-        return await computeContentHash(cleanedContent);
+        if (!cleanedContent) return { hash: null, tooLarge: false };
+        return { hash: await computeContentHash(cleanedContent), tooLarge: false };
     }
 
     private async readCachedHash(cachePath: string): Promise<string | null> {
@@ -234,7 +253,9 @@ export class VSS {
     private startFlushTimer() {
         if (this.flushIntervalId) return;
         this.flushIntervalId = setInterval(() => {
-            this.flush({ reason: "interval" });
+            void this.flush({ reason: "interval" }).catch((e) => {
+                this.plugin.log("Error flushing VSS cache:", e);
+            });
         }, VSS_PARAMS.flushInterval);
     }
 
@@ -278,17 +299,26 @@ export class VSS {
 
     private scheduleStartupScan() {
         // 处理上次残留的 dirty
-        setTimeout(() => {
-            this.flush({ limit: VSS_PARAMS.startupMaxFiles, reason: "startup-dirty" });
+        const dirtyTimeoutId = setTimeout(() => {
+            if (this.disposed) return;
+            void this.flush({ limit: VSS_PARAMS.startupMaxFiles, reason: "startup-dirty" }).catch((e) => {
+                this.plugin.log("Error flushing startup VSS dirty queue:", e);
+            });
         }, 0);
+        this.startupTimeoutIds.push(dirtyTimeoutId);
 
         // 延迟兜底扫描
-        setTimeout(() => {
-            this.scanAndQueueOutdated(VSS_PARAMS.startupMaxFiles);
+        const scanTimeoutId = setTimeout(() => {
+            if (this.disposed) return;
+            void this.scanAndQueueOutdated(VSS_PARAMS.startupMaxFiles).catch((e) => {
+                this.plugin.log("Error scanning VSS cache on startup:", e);
+            });
         }, 5000);
+        this.startupTimeoutIds.push(scanTimeoutId);
     }
 
     private async scanAndQueueOutdated(limit: number) {
+        if (this.disposed) return;
         const files = this.plugin.getVSSFiles();
         let checked = 0;
         for (const file of files) {
@@ -302,8 +332,15 @@ export class VSS {
                 checked++;
                 continue;
             }
-            const hash = await this.computeFileHash(file);
-            if (!hash) continue;
+            const { hash, tooLarge } = await this.computeFileHash(file);
+            if (tooLarge) {
+                await this.removeCacheForFile(file);
+                continue;
+            }
+            if (!hash) {
+                await this.removeCacheForFile(file);
+                continue;
+            }
             const cachedHash = await this.readCachedHash(cachePath);
             if (!cachedHash || cachedHash !== hash) {
                 const ts = Date.now() - VSS_PARAMS.maxDelay;
@@ -315,11 +352,81 @@ export class VSS {
         await this.flush({ limit, reason: "startup-scan" });
     }
 
+    private async loadExistingVectorStore() {
+        const vssFiles = this.plugin.getVSSFiles();
+        const filesByCachePath = new Map<string, TFile>();
+        for (const file of vssFiles) {
+            const cachePath = this.plugin.join(this.vssCacheDir, file.path + ".json");
+            filesByCachePath.set(cachePath, file);
+        }
+
+        const cachedPaths = await this.listCacheFilePaths();
+        const filesWithCache = cachedPaths
+            ? Array.from(cachedPaths, (cachePath) => filesByCachePath.get(cachePath)).filter((file): file is TFile => file instanceof TFile)
+            : await this.findFilesWithCacheByExists(vssFiles);
+
+        if (filesWithCache.length > 0) {
+            await this.loadVectorStore(filesWithCache);
+        }
+    }
+
+    private async listCacheFilePaths(): Promise<Set<string> | null> {
+        const cacheFiles = new Set<string>();
+        const pendingFolders = [this.vssCacheDir];
+
+        try {
+            while (pendingFolders.length > 0) {
+                const folder = pendingFolders.shift() as string;
+                const listed = await this.plugin.app.vault.adapter.list(folder);
+                for (const file of listed.files) {
+                    if (file.endsWith(".json")) {
+                        cacheFiles.add(file);
+                    }
+                }
+                pendingFolders.push(...listed.folders);
+            }
+            return cacheFiles;
+        } catch (e) {
+            this.plugin.log("Could not list VSS cache directory; falling back to cache path checks:", e);
+            return null;
+        }
+    }
+
+    private async findFilesWithCacheByExists(vssFiles: TFile[]): Promise<TFile[]> {
+        const filesWithCache: TFile[] = [];
+        for (let i = 0; i < vssFiles.length; i += VSS_PARAMS.cacheExistsConcurrency) {
+            const chunk = vssFiles.slice(i, i + VSS_PARAMS.cacheExistsConcurrency);
+            const hits = await Promise.all(chunk.map(async (file) => {
+                const cachePath = this.plugin.join(this.vssCacheDir, file.path + ".json");
+                return await this.plugin.app.vault.adapter.exists(cachePath) ? file : null;
+            }));
+            filesWithCache.push(...hits.filter((file): file is TFile => file instanceof TFile));
+        }
+        return filesWithCache;
+    }
+
+    private async removeCacheForFile(file: TFile): Promise<boolean> {
+        let removed = false;
+        const vssFile = this.plugin.join(this.vssCacheDir, file.path + ".json");
+        if (await this.plugin.app.vault.adapter.exists(vssFile)) {
+            await this.plugin.app.vault.adapter.remove(vssFile);
+            removed = true;
+        }
+        if (this.vectorStore) {
+            const before = this.vectorStore.memoryVectors.length;
+            this.vectorStore.memoryVectors = this.vectorStore.memoryVectors.filter(
+                (v) => v.metadata.path !== file.path
+            );
+            removed = removed || before !== this.vectorStore.memoryVectors.length;
+        }
+        return removed;
+    }
+
     private isEligible(file: TFile) {
         if (file.extension !== 'md') return false;
-        const exclude = this.plugin.settings.vssCacheExcludePath || [];
+        const exclude = (this.plugin.settings.vssCacheExcludePath || []).map(path => path.trim()).filter(Boolean);
         for (const path of exclude) {
-            if (path && file.path.startsWith(path)) {
+            if (file.path.startsWith(path)) {
                 return false;
             }
         }
