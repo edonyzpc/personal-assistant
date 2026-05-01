@@ -1,7 +1,21 @@
-import { debounce, App, Vault, Workspace } from "obsidian";
-import type PluginManager from "../main";
-import type { Day, VaultStatistics } from "./stats-types";
+import { debounce, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
 import moment from "moment";
+import type PluginManager from "../main";
+import type {
+    ActivityCounts,
+    FileStat,
+    ModifiedFiles,
+    SnapshotCounts,
+    StatsDashboardData,
+    StatsDeviceShard,
+} from "./stats-types";
+import {
+    createEmptyDashboardData,
+    createStatsShard,
+    emptyActivityCounts,
+    emptySnapshotCounts,
+    StatsStore,
+} from "./stats-store";
 import {
     getCharacterCount,
     getSentenceCount,
@@ -11,359 +25,190 @@ import {
     getFootnoteCount,
 } from "./stats-utils";
 
+type TextProvider = () => string;
+
+type PendingTextChange = {
+    filePath: string;
+    currentText: string;
+    previousText?: string;
+};
+
+export function combineActivityCounts(base: ActivityCounts, session: ActivityCounts): ActivityCounts {
+    return {
+        words: base.words + session.words,
+        characters: base.characters + session.characters,
+        sentences: base.sentences + session.sentences,
+        pages: Number((base.pages + session.pages).toFixed(1)),
+        footnotes: base.footnotes + session.footnotes,
+        citations: base.citations + session.citations,
+    };
+}
+
 export default class StatsManager {
     private vault: Vault;
     private workspace: Workspace;
     private plugin: PluginManager;
-    private vaultStats: VaultStatistics;
+    private store: StatsStore;
+    private modifiedFiles: ModifiedFiles = {};
+    private baseActivity: ActivityCounts = emptyActivityCounts();
     private today: string;
-    public debounceChange;
+    private currentShard: StatsDeviceShard | null = null;
+    private initialized = false;
+    private pendingChanges: PendingTextChange[] = [];
+    private ready: Promise<void>;
+    public debounceChange: Debouncer<[filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider], Promise<void>>;
 
     constructor(app: App, plugin: PluginManager) {
         this.vault = app.vault;
         this.workspace = app.workspace;
         this.plugin = plugin;
         this.today = moment().format("YYYY-MM-DD");
-        this.vaultStats = {
-            history: {},
-            modifiedFiles: {},
-        };
+        this.store = new StatsStore(this.vault, this.plugin.settings.statsPath);
         this.debounceChange = debounce(
-            (text: string) => this.change(text),
+            (filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider) =>
+                this.change(filePath, currentText, previousText),
             50,
             false
         );
 
-        this.vault.on("rename", (new_name, old_path) => {
-            if (this.vaultStats.modifiedFiles.hasOwnProperty(old_path)) {
-                const content = this.vaultStats.modifiedFiles[old_path];
-                delete this.vaultStats.modifiedFiles[old_path];
-                this.vaultStats.modifiedFiles[new_name.path] = content;
-            }
-        });
-
-        this.vault.on("delete", (deleted_file) => {
-            if (this.vaultStats.modifiedFiles.hasOwnProperty(deleted_file.path)) {
-                delete this.vaultStats.modifiedFiles[deleted_file.path];
-            }
-        });
-
-        this.vault.adapter.exists(this.plugin.settings.statsPath).then(async (exists) => {
-            if (!exists) {
-                const vaultSt: VaultStatistics = {
-                    history: {},
-                    modifiedFiles: {},
-                };
-                await this.vault.adapter.write(this.plugin.settings.statsPath, JSON.stringify(vaultSt, null, 2));
-                this.vaultStats = JSON.parse(await this.vault.adapter.read(this.plugin.settings.statsPath));
-            } else {
-                this.vaultStats = JSON.parse(await this.vault.adapter.read(this.plugin.settings.statsPath));
-                if (!this.vaultStats.hasOwnProperty("history")) {
-                    const vaultSt: VaultStatistics = {
-                        history: {},
-                        modifiedFiles: {},
-                    };
-                    await this.vault.adapter.write(this.plugin.settings.statsPath, JSON.stringify(vaultSt, null, 2));
+        this.plugin.registerEvent(
+            this.vault.on("rename", (newFile, oldPath) => {
+                if (this.modifiedFiles.hasOwnProperty(oldPath)) {
+                    const content = this.modifiedFiles[oldPath];
+                    delete this.modifiedFiles[oldPath];
+                    this.modifiedFiles[newFile.path] = content;
                 }
-                this.vaultStats = JSON.parse(await this.vault.adapter.read(this.plugin.settings.statsPath));
-            }
+            })
+        );
 
-            await this.updateToday();
-        });
+        this.plugin.registerEvent(
+            this.vault.on("delete", (deletedFile) => {
+                if (this.modifiedFiles.hasOwnProperty(deletedFile.path)) {
+                    delete this.modifiedFiles[deletedFile.path];
+                }
+            })
+        );
+
+        this.ready = this.initialize();
+    }
+
+    async getDashboardData(): Promise<StatsDashboardData> {
+        try {
+            await this.ready;
+            return await this.store.readDashboardData();
+        } catch (error) {
+            return {
+                ...createEmptyDashboardData(this.store.getDeviceId()),
+                errors: [{
+                    path: this.plugin.settings.statsPath,
+                    message: error instanceof Error ? error.message : String(error),
+                }],
+            };
+        }
     }
 
     async update(): Promise<void> {
-        this.vault.adapter.write(this.plugin.settings.statsPath, JSON.stringify(this.vaultStats, null, 2));
+        await this.ready;
+        if (this.currentShard) {
+            await this.store.writeOwnShard(this.currentShard);
+        }
     }
 
     async updateToday(): Promise<void> {
-        if (this.vaultStats.history.hasOwnProperty(moment().format("YYYY-MM-DD"))) {
-            this.today = moment().format("YYYY-MM-DD");
+        await this.ensureToday();
+        if (!this.currentShard) return;
+        this.currentShard.snapshot = await this.calcSnapshot();
+        this.currentShard.updatedAt = new Date().toISOString();
+        await this.store.writeOwnShard(this.currentShard);
+    }
+
+    public async change(filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider): Promise<void> {
+        if (!filePath) {
             return;
         }
 
-        this.today = moment().format("YYYY-MM-DD");
-        let files = 0;
-        const recordDays = Object.keys(this.vaultStats.history).length;
-        if (recordDays > 0) {
-            const recordsDays = Object.keys(this.vaultStats.history);
-            recordsDays.sort((a, b) => {
-                // 将字符串日期转换为 Date 对象
-                const dateA = new Date(a);
-                const dateB = new Date(b);
-
-                // 比较两个日期对象
-                if (dateA < dateB) {
-                    return 1; // a 应该排在 b 后面
-                }
-                if (dateA > dateB) {
-                    return -1; // a 应该排在 b 前面
-                }
-                return 0; // 两者相等
-            });
-            files = this.vaultStats.history[recordsDays[0]].files;
-        } else {
-            files = 0;
-        }
-
-        const totalWords = await this.calcTotalWords();
-        const totalCharacters = await this.calcTotalCharacters();
-        const totalSentences = await this.calcTotalSentences();
-        const totalFootnotes = await this.calcTotalFootnotes();
-        const totalCitations = await this.calcTotalCitations();
-        const totalPages = await this.calcTotalPages();
-
-        const newDay: Day = {
-            words: 0,
-            characters: 0,
-            sentences: 0,
-            pages: 0,
-            files: files,
-            footnotes: 0,
-            citations: 0,
-            totalWords: totalWords,
-            totalCharacters: totalCharacters,
-            totalSentences: totalSentences,
-            totalFootnotes: totalFootnotes,
-            totalCitations: totalCitations,
-            totalPages: totalPages,
+        const change = {
+            filePath,
+            currentText: currentText(),
+            previousText: previousText?.(),
         };
 
-        this.vaultStats.modifiedFiles = {};
-        this.vaultStats.history[this.today] = newDay;
-        await this.update();
+        if (!this.initialized) {
+            this.queuePendingChange(change);
+            return;
+        }
+
+        await this.applyChange(change);
     }
 
-    public async change(text: string) {
-        /*
-        if (this.plugin.settings.countComments) {
-        text = cleanComments(text);
+    private async applyChange(change: PendingTextChange): Promise<void> {
+        await this.ensureToday();
+
+        if (!this.currentShard) {
+            return;
         }
-        */
-        const fileName = this.workspace.getActiveFile()?.path;
-        const currentWords = getWordCount(text);
-        const currentCharacters = getCharacterCount(text);
-        const currentSentences = getSentenceCount(text);
-        const currentCitations = getCitationCount(text);
-        const currentFootnotes = getFootnoteCount(text);
-        const currentPages = getPageCount(text, 300);
 
-        if (this.vaultStats.history.hasOwnProperty(this.today) && this.today === moment().format("YYYY-MM-DD")) {
-            const modFiles = this.vaultStats.modifiedFiles;
+        const currentCounts = this.countText(change.currentText);
+        const previousCounts = change.previousText === undefined ? currentCounts : this.countText(change.previousText);
+        const modFiles = this.modifiedFiles;
+        let previousSnapshotCounts = previousCounts;
 
-            if (fileName === undefined) {
-                return;
-            }
-            if (modFiles.hasOwnProperty(fileName)) {
-                this.vaultStats.history[this.today].totalWords +=
-                    currentWords - modFiles[fileName].words.current;
-                this.vaultStats.history[this.today].totalCharacters +=
-                    currentCharacters - modFiles[fileName].characters.current;
-                this.vaultStats.history[this.today].totalSentences +=
-                    currentSentences - modFiles[fileName].sentences.current;
-                this.vaultStats.history[this.today].totalFootnotes +=
-                    currentSentences - modFiles[fileName].footnotes.current;
-                this.vaultStats.history[this.today].totalCitations +=
-                    currentSentences - modFiles[fileName].citations.current;
-                this.vaultStats.history[this.today].totalPages +=
-                    currentPages - modFiles[fileName].pages.current;
-
-                modFiles[fileName].words.current = currentWords;
-                modFiles[fileName].characters.current = currentCharacters;
-                modFiles[fileName].sentences.current = currentSentences;
-                modFiles[fileName].footnotes.current = currentFootnotes;
-                modFiles[fileName].citations.current = currentCitations;
-                modFiles[fileName].pages.current = currentPages;
-            } else {
-                modFiles[fileName] = {
-                    words: {
-                        initial: currentWords,
-                        current: currentWords,
-                    },
-                    characters: {
-                        initial: currentCharacters,
-                        current: currentCharacters,
-                    },
-                    sentences: {
-                        initial: currentSentences,
-                        current: currentSentences,
-                    },
-                    footnotes: {
-                        initial: currentFootnotes,
-                        current: currentFootnotes,
-                    },
-                    citations: {
-                        initial: currentCitations,
-                        current: currentCitations,
-                    },
-                    pages: {
-                        initial: currentPages,
-                        current: currentPages,
-                    },
-                };
-            }
-
-            const words = Object.values(modFiles)
-                .map((counts) =>
-                    Math.max(0, counts.words.current - counts.words.initial)
-                )
-                .reduce((a, b) => a + b, 0);
-            const characters = Object.values(modFiles)
-                .map((counts) =>
-                    Math.max(0, counts.characters.current - counts.characters.initial)
-                )
-                .reduce((a, b) => a + b, 0);
-            const sentences = Object.values(modFiles)
-                .map((counts) =>
-                    Math.max(0, counts.sentences.current - counts.sentences.initial)
-                )
-                .reduce((a, b) => a + b, 0);
-
-            const footnotes = Object.values(modFiles)
-                .map((counts) =>
-                    Math.max(0, counts.footnotes.current - counts.footnotes.initial)
-                )
-                .reduce((a, b) => a + b, 0);
-            const citations = Object.values(modFiles)
-                .map((counts) =>
-                    Math.max(0, counts.citations.current - counts.citations.initial)
-                ).reduce((a, b) => a + b, 0);
-            const pages = Object.values(modFiles)
-                .map((counts) =>
-                    Math.max(0, counts.pages.current - counts.pages.initial)
-                )
-                .reduce((a, b) => a + b, 0);
-
-            this.vaultStats.history[this.today].words = words;
-            this.vaultStats.history[this.today].characters = characters;
-            this.vaultStats.history[this.today].sentences = sentences;
-            this.vaultStats.history[this.today].footnotes = footnotes;
-            this.vaultStats.history[this.today].citations = citations;
-            this.vaultStats.history[this.today].pages = pages;
-            this.vaultStats.history[this.today].files = this.getTotalFiles();
-
-            await this.update();
+        if (modFiles.hasOwnProperty(change.filePath)) {
+            previousSnapshotCounts = this.getCurrentCounts(modFiles[change.filePath]);
+            modFiles[change.filePath].words.current = currentCounts.words;
+            modFiles[change.filePath].characters.current = currentCounts.characters;
+            modFiles[change.filePath].sentences.current = currentCounts.sentences;
+            modFiles[change.filePath].footnotes.current = currentCounts.footnotes;
+            modFiles[change.filePath].citations.current = currentCounts.citations;
+            modFiles[change.filePath].pages.current = currentCounts.pages;
         } else {
-            this.updateToday();
+            modFiles[change.filePath] = this.createFileStat(previousCounts, currentCounts);
         }
+
+        this.currentShard.activity = combineActivityCounts(
+            this.baseActivity,
+            this.calculateActivity(modFiles)
+        );
+        this.currentShard.snapshot = this.applySnapshotDelta(
+            this.currentShard.snapshot,
+            previousSnapshotCounts,
+            currentCounts
+        );
+        this.currentShard.updatedAt = new Date().toISOString();
+        await this.store.writeOwnShard(this.currentShard);
     }
 
-    public async recalcTotals() {
-        if (!this.vaultStats) return;
-        if (
-            this.vaultStats.history.hasOwnProperty(this.today) &&
-            this.today === moment().format("YYYY-MM-DD")
-        ) {
-            const todayHist: Day = this.vaultStats.history[this.today];
-            todayHist.totalWords = await this.calcTotalWords();
-            todayHist.totalCharacters = await this.calcTotalCharacters();
-            todayHist.totalSentences = await this.calcTotalSentences();
-            todayHist.totalFootnotes = await this.calcTotalFootnotes();
-            todayHist.totalCitations = await this.calcTotalCitations();
-            todayHist.totalPages = await this.calcTotalPages();
-            this.update();
-        } else {
-            this.updateToday();
-        }
-    }
-
-    private async calcTotalWords(): Promise<number> {
-        let words = 0;
-
-        const files = this.vault.getFiles();
-        for (const i in files) {
-            const file = files[i];
-            if (file.extension === "md") {
-                words += getWordCount(await this.vault.cachedRead(file));
-            }
-        }
-
-        return words;
-    }
-
-    private async calcTotalCharacters(): Promise<number> {
-        let characters = 0;
-        const files = this.vault.getFiles();
-        for (const i in files) {
-            const file = files[i];
-            if (file.extension === "md") {
-                characters += getCharacterCount(await this.vault.cachedRead(file));
-            }
-        }
-        return characters;
-    }
-
-    private async calcTotalSentences(): Promise<number> {
-        let sentence = 0;
-        const files = this.vault.getFiles();
-        for (const i in files) {
-            const file = files[i];
-            if (file.extension === "md") {
-                sentence += getSentenceCount(await this.vault.cachedRead(file));
-            }
-        }
-        return sentence;
-    }
-
-    private async calcTotalPages(): Promise<number> {
-        let pages = 0;
-
-        const files = this.vault.getFiles();
-        for (const i in files) {
-            const file = files[i];
-            if (file.extension === "md") {
-                pages += getPageCount(await this.vault.cachedRead(file), 300);
-            }
-        }
-
-        return pages;
-    }
-
-    private async calcTotalFootnotes(): Promise<number> {
-        let footnotes = 0;
-        const files = this.vault.getFiles();
-        for (const i in files) {
-            const file = files[i];
-            if (file.extension === "md") {
-                footnotes += getFootnoteCount(await this.vault.cachedRead(file));
-            }
-        }
-        return footnotes;
-    }
-
-    private async calcTotalCitations(): Promise<number> {
-        let citations = 0;
-        const files = this.vault.getFiles();
-        for (const i in files) {
-            const file = files[i];
-            if (file.extension === "md") {
-                citations += getCitationCount(await this.vault.cachedRead(file));
-            }
-        }
-        return citations;
+    public async recalcTotals(): Promise<void> {
+        await this.ready;
+        await this.ensureToday();
+        if (!this.currentShard) return;
+        this.currentShard.snapshot = await this.calcSnapshot();
+        this.currentShard.updatedAt = new Date().toISOString();
+        await this.store.writeOwnShard(this.currentShard);
     }
 
     public getDailyWords(): number {
-        return this.vaultStats.history[this.today].words;
+        return this.currentShard?.activity.words ?? 0;
     }
 
     public getDailyCharacters(): number {
-        return this.vaultStats.history[this.today].characters;
+        return this.currentShard?.activity.characters ?? 0;
     }
 
     public getDailySentences(): number {
-        return this.vaultStats.history[this.today].sentences;
+        return this.currentShard?.activity.sentences ?? 0;
     }
 
     public getDailyFootnotes(): number {
-        return this.vaultStats.history[this.today].footnotes;
+        return this.currentShard?.activity.footnotes ?? 0;
     }
 
     public getDailyCitations(): number {
-        return this.vaultStats.history[this.today].citations;
+        return this.currentShard?.activity.citations ?? 0;
     }
+
     public getDailyPages(): number {
-        return this.vaultStats.history[this.today].pages;
+        return this.currentShard?.activity.pages ?? 0;
     }
 
     public getTotalFiles(): number {
@@ -371,32 +216,169 @@ export default class StatsManager {
     }
 
     public async getTotalWords(): Promise<number> {
-        if (!this.vaultStats) return await this.calcTotalWords();
-        return this.vaultStats.history[this.today].totalWords;
+        return (await this.getSnapshot()).totalWords;
     }
 
     public async getTotalCharacters(): Promise<number> {
-        if (!this.vaultStats) return await this.calcTotalCharacters();
-        return this.vaultStats.history[this.today].totalCharacters;
+        return (await this.getSnapshot()).totalCharacters;
     }
 
     public async getTotalSentences(): Promise<number> {
-        if (!this.vaultStats) return await this.calcTotalSentences();
-        return this.vaultStats.history[this.today].totalSentences;
+        return (await this.getSnapshot()).totalSentences;
     }
 
     public async getTotalFootnotes(): Promise<number> {
-        if (!this.vaultStats) return await this.calcTotalFootnotes();
-        return this.vaultStats.history[this.today].totalFootnotes;
+        return (await this.getSnapshot()).totalFootnotes;
     }
 
     public async getTotalCitations(): Promise<number> {
-        if (!this.vaultStats) return await this.calcTotalCitations();
-        return this.vaultStats.history[this.today].totalCitations;
+        return (await this.getSnapshot()).totalCitations;
     }
 
     public async getTotalPages(): Promise<number> {
-        if (!this.vaultStats) return await this.calcTotalPages();
-        return this.vaultStats.history[this.today].totalPages;
+        return (await this.getSnapshot()).totalPages;
+    }
+
+    private async initialize(): Promise<void> {
+        await this.store.initialize();
+        await this.ensureToday();
+        this.initialized = true;
+        await this.flushPendingChanges();
+    }
+
+    private async ensureToday(): Promise<void> {
+        const currentDate = moment().format("YYYY-MM-DD");
+        if (this.today !== currentDate) {
+            this.today = currentDate;
+            this.modifiedFiles = {};
+            this.baseActivity = emptyActivityCounts();
+            this.currentShard = null;
+        }
+
+        if (this.currentShard) return;
+
+        let existing: StatsDeviceShard | null = null;
+        try {
+            existing = await this.store.readOwnShard(this.today);
+        } catch (error) {
+            this.plugin.log("Skipping statistics writes for a damaged shard", error);
+            this.currentShard = null;
+            return;
+        }
+
+        this.currentShard = existing ?? createStatsShard(
+            this.today,
+            this.store.getDeviceId(),
+            emptyActivityCounts(),
+            await this.calcSnapshot(),
+        );
+        this.baseActivity = { ...this.currentShard.activity };
+
+        if (!existing) {
+            await this.store.writeOwnShard(this.currentShard);
+        }
+    }
+
+    private countText(text: string): ActivityCounts {
+        return {
+            words: getWordCount(text),
+            characters: getCharacterCount(text),
+            sentences: getSentenceCount(text),
+            pages: getPageCount(text, 300),
+            footnotes: getFootnoteCount(text),
+            citations: getCitationCount(text),
+        };
+    }
+
+    private createFileStat(initial: ActivityCounts, current: ActivityCounts): FileStat {
+        return {
+            words: { initial: initial.words, current: current.words },
+            characters: { initial: initial.characters, current: current.characters },
+            sentences: { initial: initial.sentences, current: current.sentences },
+            footnotes: { initial: initial.footnotes, current: current.footnotes },
+            citations: { initial: initial.citations, current: current.citations },
+            pages: { initial: initial.pages, current: current.pages },
+        };
+    }
+
+    private queuePendingChange(change: PendingTextChange): void {
+        const existing = this.pendingChanges.find((pending) => pending.filePath === change.filePath);
+        if (existing) {
+            existing.currentText = change.currentText;
+            return;
+        }
+        this.pendingChanges.push(change);
+    }
+
+    private async flushPendingChanges(): Promise<void> {
+        const changes = this.pendingChanges;
+        this.pendingChanges = [];
+        for (const change of changes) {
+            await this.applyChange(change);
+        }
+    }
+
+    private getCurrentCounts(fileStat: FileStat): ActivityCounts {
+        return {
+            words: fileStat.words.current,
+            characters: fileStat.characters.current,
+            sentences: fileStat.sentences.current,
+            pages: fileStat.pages.current,
+            footnotes: fileStat.footnotes.current,
+            citations: fileStat.citations.current,
+        };
+    }
+
+    private calculateActivity(modFiles: ModifiedFiles): ActivityCounts {
+        const activity = Object.values(modFiles).reduce((counts, file) => {
+            counts.words += Math.max(0, file.words.current - file.words.initial);
+            counts.characters += Math.max(0, file.characters.current - file.characters.initial);
+            counts.sentences += Math.max(0, file.sentences.current - file.sentences.initial);
+            counts.pages += Math.max(0, file.pages.current - file.pages.initial);
+            counts.footnotes += Math.max(0, file.footnotes.current - file.footnotes.initial);
+            counts.citations += Math.max(0, file.citations.current - file.citations.initial);
+            return counts;
+        }, emptyActivityCounts());
+
+        activity.pages = Number(activity.pages.toFixed(1));
+        return activity;
+    }
+
+    private async getSnapshot(): Promise<SnapshotCounts> {
+        await this.ready;
+        await this.ensureToday();
+        return this.currentShard?.snapshot ?? emptySnapshotCounts();
+    }
+
+    private applySnapshotDelta(snapshot: SnapshotCounts, previous: ActivityCounts, current: ActivityCounts): SnapshotCounts {
+        return {
+            totalWords: Math.max(0, snapshot.totalWords + current.words - previous.words),
+            totalCharacters: Math.max(0, snapshot.totalCharacters + current.characters - previous.characters),
+            totalSentences: Math.max(0, snapshot.totalSentences + current.sentences - previous.sentences),
+            totalFootnotes: Math.max(0, snapshot.totalFootnotes + current.footnotes - previous.footnotes),
+            totalCitations: Math.max(0, snapshot.totalCitations + current.citations - previous.citations),
+            totalPages: Number(Math.max(0, snapshot.totalPages + current.pages - previous.pages).toFixed(1)),
+            files: this.getTotalFiles(),
+        };
+    }
+
+    private async calcSnapshot(): Promise<SnapshotCounts> {
+        const totals = emptySnapshotCounts();
+
+        for (const file of this.vault.getFiles()) {
+            if (file.extension !== "md") continue;
+            const text = await this.vault.cachedRead(file);
+            const counts = this.countText(text);
+            totals.totalWords += counts.words;
+            totals.totalCharacters += counts.characters;
+            totals.totalSentences += counts.sentences;
+            totals.totalFootnotes += counts.footnotes;
+            totals.totalCitations += counts.citations;
+            totals.totalPages += counts.pages;
+        }
+
+        totals.files = this.getTotalFiles();
+        totals.totalPages = Number(totals.totalPages.toFixed(1));
+        return totals;
     }
 }

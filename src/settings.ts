@@ -5,6 +5,7 @@ import Picker from "vanilla-picker";
 
 import { PluginManager } from "./plugin"
 import { STAT_PREVIEW_TYPE } from './stats-view'
+import { normalizeStatisticsView } from './stats/stats-store'
 import { CryptoHelper, personalAssitant } from './utils'
 
 export interface ResizeStyle {
@@ -103,7 +104,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     cacheThemeRepo: {
         "Minimal": "kepano/obsidian-minimal",
     },
-    statisticsType: "none",
+    statisticsType: "overview",
     statsPath: ".obsidian/stats.json",
     displaySectionCounts: false,
     countComments: false,
@@ -532,19 +533,13 @@ export class SettingTab extends PluginSettingTab {
         // setting for show statistics
         containerEl.createEl('h2', { text: 'Vault Statistics' })
         new Setting(containerEl).setName("Show Statistics")
-            .setDesc("Show statistics in the status bar")
+            .setDesc("Choose the default statistics dashboard view")
             .addDropdown(dropDown => {
-                // reset to default
-                this.log(this.plugin.settings.statisticsType);
-                const daily = dropDown.addOption('daily', 'Daily Statistcs');
-                const total = dropDown.addOption('total', 'Total Statistics');
-                if (this.plugin.settings.statisticsType === 'daily') {
-                    daily.setDisabled(false);
-                    dropDown.setValue('daily');
-                } else {
-                    total.setDisabled(false);
-                    dropDown.setValue('total');
-                }
+                dropDown.addOption('overview', 'Overview');
+                dropDown.addOption('daily', 'Daily Writing');
+                dropDown.addOption('growth', 'Growth');
+                dropDown.addOption('composition', 'Composition');
+                dropDown.setValue(normalizeStatisticsView(this.plugin.settings.statisticsType));
                 dropDown.onChange(async (value) => {
                     this.plugin.log("changing statistics type", value);
                     this.plugin.settings.statisticsType = value;
@@ -560,8 +555,8 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
         new Setting(containerEl)
-            .setName("Vault Stats File Path")
-            .setDesc("Reload required for change to take effect. The location of the vault statistics file, relative to the vault root.")
+            .setName("Legacy Vault Stats File Path")
+            .setDesc("Used to migrate existing statistics. New statistics are stored as daily device shards under .obsidian/personal-assistant-stats/v2/.")
             .addText((text) => {
                 text.setPlaceholder(".obsidian/stats.json");
                 text.setValue(this.plugin.settings.statsPath.toString());

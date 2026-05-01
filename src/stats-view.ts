@@ -5,7 +5,9 @@ import { createRoot, type Root } from "react-dom/client";
 import { PluginManager } from "./plugin";
 import Statistics from './components/Statistics'
 import { icons } from './utils'
-import { PluginAST_STAT_ICON, STATS_FILE_NAME } from './constant'
+import { PluginAST_STAT_ICON } from './constant'
+import { createEmptyDashboardData } from "./stats/stats-store";
+import type { StatsDashboardData } from "./stats/stats-types";
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
 
@@ -13,13 +15,13 @@ export class Stat extends ItemView {
     componentRoot: Root | null = null;
     app: App;
     plugin: PluginManager;
-    staticsFileData: string;
+    dashboardData: StatsDashboardData;
 
     constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
         super(leaf);
         this.app = app;
         this.plugin = plugin;
-        this.staticsFileData = "";
+        this.dashboardData = createEmptyDashboardData();
         addIcon(PluginAST_STAT_ICON, icons[PluginAST_STAT_ICON]);
     }
 
@@ -36,17 +38,10 @@ export class Stat extends ItemView {
     }
 
     async onOpen() {
-        const staticsDataDir = this.app.vault.configDir + "/" + STATS_FILE_NAME;
-        this.staticsFileData = await this.app.vault.adapter.read(staticsDataDir);
+        this.dashboardData = await this.loadDashboardData();
         const el = this.containerEl.getElementsByClassName("view-content")[0] as HTMLElement;
         this.componentRoot = createRoot(el);
-        this.componentRoot.render(
-            createElement(Statistics, {
-                app: this.app,
-                plugin: this.plugin,
-                staticsFileData: this.staticsFileData
-            })
-        );
+        this.renderStatistics();
     }
 
     async onClose() {
@@ -59,11 +54,23 @@ export class Stat extends ItemView {
         if (!this.componentRoot) {
             this.componentRoot = createRoot(el);
         }
+        this.renderStatistics();
+    }
+
+    private async loadDashboardData(): Promise<StatsDashboardData> {
+        if (!this.plugin.statsManager) {
+            return createEmptyDashboardData();
+        }
+        return this.plugin.statsManager.getDashboardData();
+    }
+
+    private renderStatistics(): void {
+        if (!this.componentRoot) return;
         this.componentRoot.render(
             createElement(Statistics, {
                 app: this.app,
                 plugin: this.plugin,
-                staticsFileData: this.staticsFileData
+                dashboardData: this.dashboardData
             })
         );
     }

@@ -17,6 +17,8 @@ export const pluginField = StateField.define<PluginManager | null>({
 
 class StatusBarEditorPlugin implements PluginValue {
     view: EditorView;
+    private pendingCurrentText: (() => string) | null = null;
+    private pendingPreviousText: (() => string) | null = null;
 
     constructor(view: EditorView) {
         this.view = view;
@@ -40,12 +42,6 @@ class StatusBarEditorPlugin implements PluginValue {
             (tr.isUserEvent("select") || userEventTypeUndefined) &&
             tr.newSelection.ranges[0].from !== tr.newSelection.ranges[0].to
         ) {
-            let text = "";
-            const selection = tr.newSelection.main;
-            const textIter = tr.newDoc.iterRange(selection.from, selection.to);
-            while (!textIter.done) {
-                text = text + textIter.next().value;
-            }
             //plugin.statusBar.debounceStatusBarUpdate(text);
         } else if (
             tr.isUserEvent("input") ||
@@ -55,19 +51,37 @@ class StatusBarEditorPlugin implements PluginValue {
             tr.isUserEvent("redo") ||
             tr.isUserEvent("select")
         ) {
-            const textIter = tr.newDoc.iter();
-            let text = "";
-            while (!textIter.done) {
-                text = text + textIter.next().value;
-            }
             if (tr.docChanged && plugin && plugin.statsManager) {
-                plugin.statsManager.debounceChange(text);
+                const filePath = plugin.app.workspace.getActiveFile()?.path;
+                const currentDoc = tr.newDoc;
+                const previousDoc = tr.startState.doc;
+                if (!this.pendingPreviousText) {
+                    this.pendingPreviousText = () => previousDoc.toString();
+                }
+                this.pendingCurrentText = () => currentDoc.toString();
+                plugin.statsManager.debounceChange(
+                    filePath,
+                    () => this.consumeCurrentText(),
+                    () => this.consumePreviousText()
+                );
             }
             //plugin.statusBar.debounceStatusBarUpdate(text);
         }
     }
 
     destroy() { }
+
+    private consumeCurrentText(): string {
+        const provider = this.pendingCurrentText;
+        this.pendingCurrentText = null;
+        return provider ? provider() : "";
+    }
+
+    private consumePreviousText(): string {
+        const provider = this.pendingPreviousText;
+        this.pendingPreviousText = null;
+        return provider ? provider() : "";
+    }
 }
 
 export const statusBarEditorPlugin = ViewPlugin.fromClass(StatusBarEditorPlugin);

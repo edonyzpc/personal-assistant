@@ -20,6 +20,7 @@ import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { STAT_PREVIEW_TYPE, Stat } from './stats-view'
 import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
+import { normalizeStatisticsView } from './stats/stats-store';
 
 const redactForLog = (value: unknown, seen = new WeakSet<object>()): unknown => {
     if (typeof value === 'string') {
@@ -631,6 +632,7 @@ export class PluginManager extends Plugin {
      */
     private migrateSettings() {
         try {
+            let changed = false;
             // 如果aiProvider未设置，说明是旧版本，进行迁移
             if (!this.settings.aiProvider) {
                 this.log("Migrating settings from old version");
@@ -638,6 +640,14 @@ export class PluginManager extends Plugin {
                 this.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
                 this.settings.chatModelName = this.settings.modelName || 'qwen-plus';
                 this.settings.embeddingModelName = 'text-embedding-v3';
+                changed = true;
+            }
+            const normalizedStatisticsType = normalizeStatisticsView(this.settings.statisticsType);
+            if (this.settings.statisticsType !== normalizedStatisticsType) {
+                this.settings.statisticsType = normalizedStatisticsType;
+                changed = true;
+            }
+            if (changed) {
                 this.saveSettings();
                 this.log("Settings migration completed");
             }
