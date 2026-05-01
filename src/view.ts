@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { PluginManager } from "./plugin"
+import type { PluginManager } from "./plugin"
 
 export enum ViewType {
     LocalGraphView,

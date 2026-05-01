@@ -1,10 +1,21 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Platform, Notice, WorkspaceLeaf, normalizePath } from "obsidian";
+import { Notice, Platform, normalizePath, type App, type WorkspaceLeaf } from "obsidian";
 
-import { PluginManager } from "./plugin"
+import type { PluginManager } from "./plugin"
 import { ViewType, ViewResize } from "./view";
 
+type GraphColorGroup = {
+    query: string;
+    color: {
+        a: number,
+        rgb: number,
+    }
+}
+
+type GraphConfig = {
+    colorGroups?: GraphColorGroup[];
+}
 
 export class LocalGraph extends ViewResize {
     private app: App;
@@ -49,19 +60,10 @@ export class LocalGraph extends ViewResize {
     }
 
     private async syncGlobalToLocal() {
-        const configDir = this.app.vault.configDir;
-        this.log(configDir);
-        const graphConfigPath = normalizePath(configDir + '/graph.json');
-
-        // **NOTE**:
-        // this.app.vault.getAbstractFileByPath('.obsidian/graph.json') would return null
-        // So we're doing it the less safe way
-        const graphConfigJson = await this.app.vault.adapter.read(graphConfigPath);
-        const graphConfig = JSON.parse(graphConfigJson);
-        const graphColorGroups = graphConfig.colorGroups;
-        this.getLocalGraphLeaves().forEach((leaf: WorkspaceLeaf) => {
-            this.setColorGroups(leaf, graphColorGroups);
-        })
+        const graphColorGroups = await this.readGlobalGraphColorGroups();
+        await Promise.all(this.getLocalGraphLeaves().map((leaf: WorkspaceLeaf) => {
+            return this.setColorGroups(leaf, graphColorGroups);
+        }));
 
     }
 
@@ -69,35 +71,63 @@ export class LocalGraph extends ViewResize {
         return this.app.workspace.getLeavesOfType('localgraph');
     }
 
-    private async setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
+    private async setColorGroups(localGraphLeaf: WorkspaceLeaf, colorGroups: GraphColorGroup[]) {
         const viewState = localGraphLeaf.getViewState();
         this.log("view state", viewState.state);
-        /* eslint-disable @typescript-eslint/no-explicit-any */
-        (viewState.state?.options as any).colorGroups = colorGroups;
-        (viewState.state?.options as any).localJumps = this.plugin.settings.localGraph.depth;
-        (viewState.state?.options as any).showTags = this.plugin.settings.localGraph.showTags;
-        (viewState.state?.options as any).showAttachments = this.plugin.settings.localGraph.showAttach;
-        (viewState.state?.options as any).localInterlinks = this.plugin.settings.localGraph.showNeighbor;
-        (viewState.state?.options as any).showArrow = true;
-        (viewState.state?.options as any).close = this.plugin.settings.localGraph.collapse;
-        (viewState.state?.options as any).scale = 1.0;
+        const state = viewState.state ?? {};
+        const options = (state.options && typeof state.options === 'object') ? state.options as Record<string, unknown> : {};
+        state.options = options;
+        viewState.state = state;
+        options.colorGroups = colorGroups;
+        options.localJumps = this.plugin.settings.localGraph.depth;
+        options.showTags = this.plugin.settings.localGraph.showTags;
+        options.showAttachments = this.plugin.settings.localGraph.showAttach;
+        options.localInterlinks = this.plugin.settings.localGraph.showNeighbor;
+        options.showArrow = true;
+        options.close = this.plugin.settings.localGraph.collapse;
+        options.scale = 1.0;
         await localGraphLeaf.setViewState(viewState);
     }
 
     async updateGraphColors() {
-        const configDir = this.app.vault.configDir;
-        const graphConfigPath = normalizePath(configDir + '/graph.json');
-        const graphConfigJson = await this.app.vault.adapter.read(graphConfigPath);
-        const graphConfig = JSON.parse(graphConfigJson);
         const graphColorsToSet = this.plugin.settings.colorGroups;
-        graphColorsToSet.forEach(color => graphConfig.colorGroups.push(color));
 
-        this.app.workspace.getLeavesOfType('localgraph').forEach(async (leaf: WorkspaceLeaf) => {
+        await Promise.all(this.getLocalGraphLeaves().map((leaf: WorkspaceLeaf) => {
             this.plugin.log("setting colors");
-            const viewState = leaf.getViewState();
-            this.plugin.log(viewState.state?.options);
-            (viewState.state?.options as any).colorGroups = graphColorsToSet;
-            await leaf.setViewState(viewState);
-        })
+            return this.setColorGroups(leaf, graphColorsToSet);
+        }));
+    }
+
+    private async readGlobalGraphColorGroups(): Promise<GraphColorGroup[]> {
+        const graphConfigPath = this.getGraphConfigPath();
+
+        if (!await this.app.vault.adapter.exists(graphConfigPath)) {
+            this.log("graph config not found", graphConfigPath);
+            return [];
+        }
+
+        try {
+            const graphConfigJson = await this.app.vault.adapter.read(graphConfigPath);
+            const graphConfig = JSON.parse(graphConfigJson) as GraphConfig;
+            return Array.isArray(graphConfig.colorGroups) ? graphConfig.colorGroups : [];
+        } catch (error) {
+            const fileError = error as NodeJS.ErrnoException;
+            if (fileError.code === "ENOENT") {
+                this.log("graph config not found", graphConfigPath);
+                return [];
+            }
+            if (error instanceof SyntaxError) {
+                this.log("graph config is invalid JSON", graphConfigPath);
+                return [];
+            }
+
+            throw error;
+        }
+    }
+
+    private getGraphConfigPath(): string {
+        const configDir = this.app.vault.configDir;
+        this.log(configDir);
+        return normalizePath(configDir + '/graph.json');
     }
 }
