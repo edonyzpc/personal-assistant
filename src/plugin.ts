@@ -412,16 +412,23 @@ export class PluginManager extends Plugin {
     }
 
     // the following is referenced from https://github.com/vanadium23/obsidian-advanced-new-file/blob/master/src/CreateNoteModal.ts#L102
+    private isVaultRootPath(path: string): boolean {
+        const normalizedPath = this.join(path);
+        return normalizedPath === "" || normalizedPath === "." || normalizedPath === "/";
+    }
+
     private async createDirectory(dir: string): Promise<void> {
         const { vault } = this.app;
-        const root = vault.getRoot().path;
-        const directoryPath = this.join(root, dir);
+        const directoryPath = this.join(dir);
+        if (this.isVaultRootPath(directoryPath)) {
+            return;
+        }
         /**
          * NOTE: `getAbstractFileByPath` will return TAbstractFile or null,
          * so, to check if the directory is exists, compare the return
          * value by using `==`.
          **/
-        if (vault.getAbstractFileByPath(directoryPath) == undefined) {
+        if (vault.getAbstractFileByPath(directoryPath) == undefined && !(await vault.adapter.exists(directoryPath))) {
             await vault.createFolder(directoryPath);
         }
     }
@@ -433,9 +440,9 @@ export class PluginManager extends Plugin {
      **/
     async createNewNote(targetPath: string, fileName: string): Promise<void> {
         const { vault } = this.app;
-        const root = vault.getRoot().path;
-        const directoryPath = this.join(root, targetPath);
-        const filePath = this.join(directoryPath, `${fileName}.md`);
+        const normalizedTargetPath = this.join(targetPath);
+        const directoryPath = this.isVaultRootPath(normalizedTargetPath) ? "" : normalizedTargetPath;
+        const filePath = directoryPath === "" ? this.join(`${fileName}.md`) : this.join(directoryPath, `${fileName}.md`);
 
         try {
             if (this.app.vault.getAbstractFileByPath(filePath) instanceof TFile) {
