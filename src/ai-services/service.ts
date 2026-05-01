@@ -1,5 +1,5 @@
 /* Copyright 2023 edonyzpc */
-import { App, Editor, MarkdownView, Notice, TFile, requestUrl, type FrontMatterInfo } from 'obsidian'
+import { App, Editor, MarkdownView, Notice, TFile, requestUrl } from 'obsidian'
 import { StateEffect } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
@@ -13,6 +13,141 @@ import type { PluginManager } from '../plugin'
 import { isPluginEnabled } from 'utils';
 
 const isOkStatus = (status: number): boolean => status >= 200 && status < 300;
+const failedImageTaskStatuses = new Set(['FAILED', 'CANCELED']);
+
+interface SummaryResponse {
+    summary: string;
+    keywords: string[];
+}
+
+const isRecord = (value: unknown): value is Record<string, unknown> => {
+    return typeof value === 'object' && value !== null && !Array.isArray(value);
+};
+
+const normalizeTag = (tag: string): string => tag.trim();
+
+const normalizeFrontmatterTags = (tags: unknown): string[] => {
+    if (Array.isArray(tags)) {
+        return tags
+            .filter((tag): tag is string => typeof tag === 'string')
+            .map(normalizeTag)
+            .filter(Boolean);
+    }
+
+    if (typeof tags === 'string') {
+        return tags
+            .split(/[\s,]+/)
+            .map(normalizeTag)
+            .filter(Boolean);
+    }
+
+    return [];
+};
+
+export const mergeFrontmatterTags = (currentTags: unknown, keywords: string[]): string[] => {
+    const mergedTags: string[] = [];
+    const seen = new Set<string>();
+
+    for (const tag of [...normalizeFrontmatterTags(currentTags), ...keywords]) {
+        const normalizedTag = normalizeTag(tag);
+        if (!normalizedTag) {
+            continue;
+        }
+
+        const dedupeKey = normalizedTag.replace(/^#/, '').toLowerCase();
+        if (seen.has(dedupeKey)) {
+            continue;
+        }
+
+        seen.add(dedupeKey);
+        mergedTags.push(normalizedTag);
+    }
+
+    return mergedTags;
+};
+
+const findBalancedJsonObject = (text: string): string | null => {
+    const start = text.indexOf('{');
+    if (start === -1) {
+        return null;
+    }
+
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < text.length; i++) {
+        const char = text[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+        } else if (char === '{') {
+            depth += 1;
+        } else if (char === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return text.slice(start, i + 1);
+            }
+        }
+    }
+
+    return null;
+};
+
+const extractJsonPayload = (raw: string): string | null => {
+    const trimmed = raw.trim();
+    const fencedJson = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+    if (fencedJson) {
+        return fencedJson[1].trim();
+    }
+
+    if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
+        return trimmed;
+    }
+
+    return findBalancedJsonObject(trimmed);
+};
+
+export const parseSummaryResponse = (raw: string): SummaryResponse | null => {
+    const jsonPayload = extractJsonPayload(raw);
+    if (!jsonPayload) {
+        return null;
+    }
+
+    let parsed: unknown;
+    try {
+        parsed = JSON.parse(jsonPayload);
+    } catch {
+        return null;
+    }
+
+    if (!isRecord(parsed) || typeof parsed.summary !== 'string' || !Array.isArray(parsed.keywords)) {
+        return null;
+    }
+
+    const summary = parsed.summary.trim();
+    const keywords = parsed.keywords
+        .filter((keyword): keyword is string => typeof keyword === 'string')
+        .map(normalizeTag)
+        .filter(Boolean);
+
+    if (!summary) {
+        return null;
+    }
+
+    return { summary, keywords };
+};
 
 interface ImageGenerationResult {
     output: {
@@ -80,6 +215,16 @@ export class AIService {
         stepElement.createSpan({ text });
     }
 
+    private formatErrorMessage(error: unknown): string {
+        if (error instanceof Error) {
+            return error.message;
+        }
+        if (typeof error === 'string') {
+            return error;
+        }
+        return 'Unknown error';
+    }
+
     /**
      * 生成文档摘要和关键词
      */
@@ -96,16 +241,24 @@ export class AIService {
                 return;
             }
 
-            const { summary, keywords } = JSON.parse(result);
+            const summaryResponse = parseSummaryResponse(result);
+            if (!summaryResponse) {
+                new Notice("AI returned an invalid summary response.", 5000);
+                return;
+            }
+
+            const { summary, keywords } = summaryResponse;
 
             // 更新frontmatter
             if (view.file) {
-                this.plugin.app.fileManager.processFrontMatter(view.file, (frontmatter) => {
+                await this.plugin.app.fileManager.processFrontMatter(view.file, (frontmatter) => {
                     frontmatter["AI Summary"] = summary;
-                    const oldTags = frontmatter["tags"] || [];
-                    frontmatter["tags"] = oldTags.concat(keywords);
+                    frontmatter["tags"] = mergeFrontmatterTags(frontmatter["tags"], keywords);
                 });
             }
+        } catch (error) {
+            this.plugin.log("AI Summary failed", error);
+            new Notice(`AI Summary failed: ${this.formatErrorMessage(error)}`, 5000);
         } finally {
             notice.hide();
         }
@@ -127,7 +280,7 @@ export class AIService {
     /**
      * 生成特色图片
      */
-    async generateFeaturedImage(editor: Editor, view: MarkdownView, fontmatterInfo: FrontMatterInfo): Promise<void> {
+    async generateFeaturedImage(editor: Editor, view: MarkdownView): Promise<void> {
         // 检查是否支持图片生成（目前只支持Qwen）
         if (this.plugin.settings.aiProvider !== 'qwen') {
             new Notice("Featured image generation is only supported with Qwen provider.", 3000);
@@ -166,6 +319,10 @@ export class AIService {
                 "Agent Generating Images...",
             );
             const imagesGen = await this.generateImage(imageDesc);
+            if (!imagesGen) {
+                new Notice("AI featured image generation failed.");
+                return;
+            }
             this.completeProgressStep(progress2Div, "Generating Images Success!");
 
             // 下载图片
@@ -175,71 +332,67 @@ export class AIService {
                 "ai-featured-image-progress-3",
                 "Agent Downloading Images...",
             );
-            if (imagesGen) {
-                const imageUrls = await this.getImage(imagesGen);
-                if (imageUrls) {
-                    const addAI = StateEffect.define<{
-                        id: string
-                        from: number
-                        to: number
-                    }>({
-                        map: (value, change) => {
-                            return {
-                                from: change.mapPos(value.from),
-                                to: change.mapPos(value.to, 1),
-                                id: value.id,
-                            }
-                        },
-                    });
-                    const id = nanoid();
-                    let line;
-                    if (fontmatterInfo.exists) {
-                        line = editorView.state.doc.lineAt(fontmatterInfo.contentStart);
-                    } else {
-                        line = editorView.state.doc.lineAt(0);
-                    }
-                    let imagesCallout = "";
-                    const featuredImagePath = this.plugin.settings.featuredImagePath;
-                    let calloutImageSuffix = "";
-                    if (isPluginEnabled(this.plugin.app, "image-converter")) {
-                        // 如果image-converter插件启用，则resize图片到480px
-                        calloutImageSuffix = "|480";
-                    }
-                    for (let i = 0; i < imageUrls.length; i++) {
-                        const imageUrlStr = imageUrls[i].url;
-                        const response = await this.downloadImageToVault(this.plugin.app, imageUrlStr, featuredImagePath);
-                        if (response) {
-                            imagesCallout += `![[${response}${calloutImageSuffix}]]\n> `;
-                        }
-                    }
-                    this.completeProgressStep(progress3Div, "Downloading Images Success!");
-                    // append line breaks
-                    imagesCallout += "\n\n";
-                    editorView.dispatch({
-                        changes: [
-                            {
-                                from: line.from,
-                                // insert a callout block
-                                insert: `\n>[!personal-assistant]+ Featured Images\n> ${imagesCallout}`,
-                            },
-                        ],
-                        effects: [addAI.of({ from: line.to, to: line.to, id })],
-                    })
-                    this.createProgressStep(
-                        body,
-                        notice.noticeEl,
-                        "ai-featured-image-progress-4",
-                        "Generating Featured Images Success!",
-                        "done",
-                    );
-                    notice.hide();
-                }
-            } else {
-                notice.hide();
-                new Notice("AI feautured image generation failed.");
+            const imageUrls = await this.getImage(imagesGen);
+            if (!imageUrls || imageUrls.length === 0) {
                 return;
             }
 
+            const addAI = StateEffect.define<{
+                id: string
+                from: number
+                to: number
+            }>({
+                map: (value, change) => {
+                    return {
+                        from: change.mapPos(value.from),
+                        to: change.mapPos(value.to, 1),
+                        id: value.id,
+                    }
+                },
+            });
+            const id = nanoid();
+            const latestMarkdown = editor.getValue();
+            const { frontmatterInfo: latestFrontmatterInfo } = this.aiUtils.getDocumentContent(latestMarkdown);
+            const insertionOffset = latestFrontmatterInfo.exists ? latestFrontmatterInfo.contentStart : 0;
+            const line = editorView.state.doc.lineAt(Math.min(insertionOffset, editorView.state.doc.length));
+            let imagesCallout = "";
+            const featuredImagePath = this.plugin.settings.featuredImagePath;
+            let calloutImageSuffix = "";
+            if (isPluginEnabled(this.plugin.app, "image-converter")) {
+                // 如果image-converter插件启用，则resize图片到480px
+                calloutImageSuffix = "|480";
+            }
+            for (let i = 0; i < imageUrls.length; i++) {
+                const imageUrlStr = imageUrls[i].url;
+                const response = await this.downloadImageToVault(this.plugin.app, imageUrlStr, featuredImagePath);
+                if (response) {
+                    imagesCallout += `![[${response}${calloutImageSuffix}]]\n> `;
+                }
+            }
+            this.completeProgressStep(progress3Div, "Downloading Images Success!");
+            // append line breaks
+            imagesCallout += "\n\n";
+            editorView.dispatch({
+                changes: [
+                    {
+                        from: line.from,
+                        // insert a callout block
+                        insert: `\n>[!personal-assistant]+ Featured Images\n> ${imagesCallout}`,
+                    },
+                ],
+                effects: [addAI.of({ from: line.to, to: line.to, id })],
+            })
+            this.createProgressStep(
+                body,
+                notice.noticeEl,
+                "ai-featured-image-progress-4",
+                "Generating Featured Images Success!",
+                "done",
+            );
+
+        } catch (error) {
+            this.plugin.log("AI Featured Images failed", error);
+            new Notice(`AI Featured Images failed: ${this.formatErrorMessage(error)}`, 5000);
         } finally {
             notice.hide();
         }
@@ -525,11 +678,18 @@ export class AIService {
                         headers: { "Authorization": "Bearer " + token },
                         throw: false,
                     });
-                    if (isOkStatus(response.status)) {
-                        const data = response.json as TaskData;
-                        if (data.output.task_status === 'SUCCEEDED') {
-                            return data;
-                        }
+                    if (!isOkStatus(response.status)) {
+                        throw new Error(`Image task polling failed: HTTP ${response.status}`);
+                    }
+
+                    const data = response.json as TaskData;
+                    const taskStatus = data.output.task_status;
+                    if (taskStatus === 'SUCCEEDED') {
+                        return data;
+                    }
+                    if (failedImageTaskStatuses.has(taskStatus)) {
+                        const resultMessage = data.output.results?.find((result) => result.message)?.message;
+                        throw new Error(resultMessage || data.message || `Image generation task ${taskStatus}`);
                     }
 
                     // 等待10秒

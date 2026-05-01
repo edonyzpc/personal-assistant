@@ -80,9 +80,7 @@ export class AssistantFeaturedImageHelper {
     private app: App;
     private editor: Editor
     private view: MarkdownView
-    private query: string = ''
     private plugin: PluginManager
-    private fontmatterInfo: FrontMatterInfo
     private log: any; // eslint-disable-line @typescript-eslint/no-explicit-any
     private aiService: AIService;
 
@@ -95,15 +93,12 @@ export class AssistantFeaturedImageHelper {
         this.app = app;
         this.plugin = plugin
         this.editor = editor
-        const markdown = this.editor.getValue()
-        this.fontmatterInfo = getFrontMatterInfo(markdown);
-        this.query = markdown.slice(this.fontmatterInfo.contentStart);
         this.view = view;
         this.log = plugin.log;
         this.aiService = new AIService(plugin);
     }
 
     async generate() {
-        await this.aiService.generateFeaturedImage(this.editor, this.view, this.fontmatterInfo);
+        await this.aiService.generateFeaturedImage(this.editor, this.view);
     }
 }
