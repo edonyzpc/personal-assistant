@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, ItemView, TFile, WorkspaceLeaf, addIcon } from "obsidian";
+import { App, ItemView, TFile, WorkspaceLeaf, addIcon, debounce, type Debouncer, type EventRef, type TAbstractFile } from "obsidian";
 import { createElement } from "react";
 import { createRoot, type Root } from "react-dom/client";
 
@@ -15,6 +15,10 @@ export class RecordPreview extends ItemView {
     app: App;
     plugin: PluginManager;
     files: string[];
+    private vaultEventRefs: EventRef[] = [];
+    private isOpen = false;
+    private refreshRunId = 0;
+    private debouncedRefresh: Debouncer<[], void>;
 
     constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
         plugin.log("startup new RecordList");
@@ -23,6 +27,11 @@ export class RecordPreview extends ItemView {
         this.app = app;
         this.plugin = plugin;
         this.files = [];
+        this.debouncedRefresh = debounce(() => {
+            void this.refreshFiles().catch((error: unknown) => {
+                this.plugin.log("failed to refresh preview records", error);
+            });
+        }, 150, true);
     }
 
     getViewType() {
@@ -38,6 +47,55 @@ export class RecordPreview extends ItemView {
     }
 
     async onOpen() {
+        this.isOpen = true;
+        await this.refreshFiles();
+        this.registerVaultEvents();
+    }
+
+    async onClose() {
+        this.isOpen = false;
+        this.refreshRunId++;
+        this.debouncedRefresh.cancel();
+        this.unregisterVaultEvents();
+        this.componentRoot?.unmount();
+        this.componentRoot = null;
+    }
+
+    private registerVaultEvents() {
+        this.unregisterVaultEvents();
+        this.vaultEventRefs = [
+            this.app.vault.on("create", (file) => this.refreshOnVaultEvent("created", file)),
+            this.app.vault.on("modify", (file) => this.refreshOnVaultEvent("changed", file)),
+            this.app.vault.on("delete", (file) => this.refreshOnVaultEvent("deleted", file)),
+            this.app.vault.on("rename", (file, oldPath) => this.refreshOnVaultEvent("renamed", file, oldPath)),
+        ];
+    }
+
+    private unregisterVaultEvents() {
+        for (const ref of this.vaultEventRefs) {
+            this.app.vault.offref(ref);
+        }
+        this.vaultEventRefs = [];
+    }
+
+    private refreshOnVaultEvent(reason: string, file: TAbstractFile, oldPath?: string) {
+        if (!this.shouldRefreshForPath(file.path) && (!oldPath || !this.shouldRefreshForPath(oldPath))) {
+            return;
+        }
+        this.plugin.log(`update preview record for file[${file.path}] ${reason}`);
+        this.debouncedRefresh();
+    }
+
+    private shouldRefreshForPath(path: string) {
+        const targetPath = this.plugin.join(this.plugin.settings.targetPath);
+        if (targetPath === "." || targetPath === "/" || targetPath === "") {
+            return true;
+        }
+        return path === targetPath || path.startsWith(`${targetPath}/`);
+    }
+
+    private async refreshFiles() {
+        const refreshRunId = ++this.refreshRunId;
         const dir = await this.app.vault.adapter.list(this.plugin.settings.targetPath);
         const files = dir.files.sort((file1, file2) => {
             const tFile1 = this.app.vault.getAbstractFileByPath(file1);
@@ -59,28 +117,17 @@ export class RecordPreview extends ItemView {
                 return false;
             }
         });
+        const formattedFileSet = new Set(formattedFiles);
         const nonformattedFiles = files.filter((fileName, idx, _) => {
-            return fileName.endsWith(".md") && !formattedFiles.contains(fileName);
+            return fileName.endsWith(".md") && !formattedFileSet.has(fileName);
         });
-        this.files = formattedFiles.reverse().concat(...nonformattedFiles.reverse());
-        let limits = this.plugin.settings.previewLimits;
-        if (limits > this.files.length) limits = this.files.length;
-        this.mountComponent(limits);
-
-        this.app.vault.on("modify", (file) => {
-            this.plugin.log(`update preview record for file[${file.path}] changed`);
-            if (this.files.slice(0, limits).contains(file.path)) {
-                this.mountComponent(limits);
-            }
-        });
-    }
-
-    async onClose() {
-        this.componentRoot?.unmount();
-        this.componentRoot = null;
+        if (!this.isOpen || refreshRunId !== this.refreshRunId) return;
+        this.files = formattedFiles.reverse().concat(nonformattedFiles.reverse());
+        this.mountComponent(this.getPreviewLimit());
     }
 
     private mountComponent(limits: number) {
+        if (!this.isOpen) return;
         if (!this.componentRoot) {
             this.componentRoot = createRoot(this.contentEl);
         }
@@ -92,5 +139,11 @@ export class RecordPreview extends ItemView {
                 container: this.containerEl,
             })
         );
+    }
+
+    private getPreviewLimit() {
+        const limit = this.plugin.settings.previewLimits;
+        if (!Number.isFinite(limit) || limit < 0) return 0;
+        return Math.min(Math.floor(limit), this.files.length);
     }
 }

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useRef } from "react";
 import {
   App,
   Component,
@@ -211,9 +211,8 @@ async function renderMarkdown(
   });
 }
 
-const RecordList = ({ app, plugin, fileNames, container }: Props) => {
+const RecordList = ({ app, fileNames }: Props) => {
   const refs = useRef<(HTMLDivElement | null)[]>([]);
-  const lifecycle = useMemo(() => new Component(), []);
 
   useEffect(() => {
     refs.current = refs.current.slice(0, fileNames.length);
@@ -221,6 +220,7 @@ const RecordList = ({ app, plugin, fileNames, container }: Props) => {
 
   useEffect(() => {
     let cancelled = false;
+    const lifecycle = new Component();
     async function run() {
       for (let idx = 0; idx < fileNames.length; idx++) {
         const fileName = fileNames[idx];
@@ -231,12 +231,12 @@ const RecordList = ({ app, plugin, fileNames, container }: Props) => {
         el.empty();
         await renderMarkdown(app, fileString, el, fileName, lifecycle);
 
-        const noteName = fileName.split("\\").pop()?.split("/").pop();
-        if (noteName) {
-          const uri = getNoteUri(app, noteName);
-          el.setAttribute("onclick", `location.href='${uri}'`);
-          el.setAttribute("style", "cursor:pointer");
-        }
+        const uri = getNoteUri(app, fileName);
+        el.onclick = (evt) => {
+          if (evt.target instanceof Element && evt.target.closest("a")) return;
+          location.href = uri;
+        };
+        el.style.cursor = "pointer";
       }
     }
     run();
@@ -244,7 +244,7 @@ const RecordList = ({ app, plugin, fileNames, container }: Props) => {
       cancelled = true;
       lifecycle.unload();
     };
-  }, [app, fileNames, lifecycle, plugin]);
+  }, [app, fileNames]);
 
   const isMobile = Platform.isMobile;
 
