@@ -42,6 +42,7 @@ jest.mock('obsidian-callout-manager', () => ({ getApi: jest.fn() }));
 jest.mock('../src/chat-view', () => ({ VIEW_TYPE_LLM: 'llm-view', LLMView: class { } }));
 jest.mock('../src/ai', () => ({ AssistantFeaturedImageHelper: class { }, AssistantHelper: class { } }));
 jest.mock('../src/vss', () => ({ VSS: class { } }));
+jest.mock('../src/memory-manager', () => ({ MemoryManager: class { } }));
 jest.mock('../src/modal', () => ({ PluginControlModal: class { } }));
 jest.mock('../src/batch-modal', () => ({ BatchPluginControlModal: class { } }));
 jest.mock('../src/settings', () => ({ SettingTab: class { }, DEFAULT_SETTINGS: {} }));
@@ -66,6 +67,13 @@ import { PluginManager } from '../src/plugin';
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
     return new FileCtor(path);
+};
+
+const memorySettings = {
+    memoryEnabled: true,
+    memoryAutoCheckBeforeChat: true,
+    memoryApprovalPolicy: 'always',
+    showAdvancedMemoryControls: false,
 };
 
 const createPluginHarness = ({
@@ -144,6 +152,7 @@ describe('settings migration', () => {
             embeddingModelName: 'text-embedding-v3',
             embeddingV4MigrationNoticeDismissed: false,
             statisticsType: 'overview',
+            ...memorySettings,
         };
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
@@ -154,7 +163,7 @@ describe('settings migration', () => {
         expect(plugin.settings.embeddingV4MigrationNoticeDismissed).toBe(true);
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages).toEqual([
-            expect.stringContaining('text-embedding-v4 is recommended'),
+            expect.stringContaining('newer memory model is recommended'),
         ]);
         expect(plugin.vss).toBeUndefined();
     });
@@ -167,6 +176,7 @@ describe('settings migration', () => {
             embeddingModelName: 'custom-embedding-model',
             embeddingV4MigrationNoticeDismissed: false,
             statisticsType: 'overview',
+            ...memorySettings,
         };
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
@@ -176,6 +186,29 @@ describe('settings migration', () => {
         expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');
         expect(plugin.settings.embeddingV4MigrationNoticeDismissed).toBe(false);
         expect(plugin.saveSettings).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+    });
+
+    it('enables memory defaults for older settings without changing AI model settings', () => {
+        mockNoticeMessages.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'openai',
+            embeddingModelName: 'custom-embedding-model',
+            embeddingV4MigrationNoticeDismissed: true,
+            statisticsType: 'overview',
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        plugin.migrateSettings();
+
+        expect(plugin.settings.memoryEnabled).toBe(true);
+        expect(plugin.settings.memoryAutoCheckBeforeChat).toBe(true);
+        expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+        expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
+        expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages).toEqual([]);
     });
 });

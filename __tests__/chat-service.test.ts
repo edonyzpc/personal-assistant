@@ -46,12 +46,12 @@ describe('streaming fallback policy', () => {
     });
 });
 
-describe('ChatService RAG behavior', () => {
-    it('uses the normal chat path when VSS returns no RAG results', async () => {
+describe('ChatService memory behavior', () => {
+    it('uses the normal chat path when memory returns no references', async () => {
         let chainInput: Record<string, string> | undefined;
         const stream = jest.fn(async function* (input: Record<string, string>) {
             chainInput = input;
-            yield { content: 'answer without rag' };
+            yield { content: 'answer without memory' };
         });
         mockCreateChatModel.mockResolvedValueOnce({ stream });
 
@@ -70,8 +70,68 @@ describe('ChatService RAG behavior', () => {
         expect(chainInput).toMatchObject({
             input: 'Human: hello\nAssistant:',
         });
-        expect(chainInput).not.toHaveProperty('rag_content');
+        expect(chainInput).not.toHaveProperty('memory_content');
         expect(stream).toHaveBeenCalledTimes(1);
-        expect(chunks).toEqual(['answer without rag']);
+        expect(chunks).toEqual(['answer without memory']);
+    });
+
+    it('skips memory lookup when asked to answer now', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const stream = jest.fn(async function* (input: Record<string, string>) {
+            chainInput = input;
+            yield { content: 'plain answer' };
+        });
+        mockCreateChatModel.mockResolvedValueOnce({ stream });
+
+        const plugin = {
+            vss: {
+                searchSimilarity: jest.fn<(query: string) => Promise<unknown[]>>(async () => {
+                    throw new Error('memory should not be searched');
+                }),
+            },
+            log: jest.fn(),
+        };
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const chunks: string[] = [];
+
+        await service.streamLLM('hello', (chunk) => chunks.push(chunk), undefined, undefined, {
+            memoryMode: 'skip-memory',
+        });
+
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        expect(chainInput).toMatchObject({
+            input: 'Human: hello\nAssistant:',
+        });
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(chunks).toEqual(['plain answer']);
+    });
+
+    it('strips trailing memory reference callouts from chat history with flexible whitespace', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const stream = jest.fn(async function* (input: Record<string, string>) {
+            chainInput = input;
+            yield { content: 'next answer' };
+        });
+        mockCreateChatModel.mockResolvedValueOnce({ stream });
+
+        const plugin = {
+            vss: {
+                searchSimilarity: jest.fn<(query: string) => Promise<unknown[]>>(async () => []),
+            },
+            log: jest.fn(),
+        };
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM(
+            'next question',
+            jest.fn(),
+            undefined,
+            [{
+                role: 'assistant',
+                content: 'previous answer\n\n---   \n> [!personal-assistant-ai]-   Memory references\n> 1. [[note.md]]',
+            }],
+        );
+
+        expect(chainInput?.input).toBe('Assistant: previous answer\nHuman: next question\nAssistant:');
     });
 });

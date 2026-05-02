@@ -4,6 +4,8 @@ import { DirtyTimestamps } from '../src/vss-helpers';
 import { TFile } from 'obsidian';
 import type { EmbeddingProfile, VectorIndex, VectorIndexStatus, VectorSearchResult, VSSChunk, VSSFileRecord, VSSFileState, VSSIndexStats } from '../src/vss/types';
 
+const mockNoticeMessages: string[] = [];
+
 jest.mock('obsidian', () => {
     class MockTFile {
         path: string;
@@ -20,7 +22,11 @@ jest.mock('obsidian', () => {
     return {
         TFile: MockTFile,
         TAbstractFile: MockTFile,
-        Notice: class { },
+        Notice: class {
+            constructor(message?: unknown) {
+                mockNoticeMessages.push(String(message));
+            }
+        },
         normalizePath: (p: string) => p,
     };
 });
@@ -171,6 +177,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
     beforeEach(() => {
         jest.useFakeTimers();
+        mockNoticeMessages.length = 0;
         clearMockSqliteIndex();
         Object.defineProperty(globalThis, 'confirm', {
             configurable: true,
@@ -293,6 +300,94 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(results).toEqual([]);
     });
 
+    it('maps first use to a rebuild memory plan', async () => {
+        const note = createTFile('note.md', { size: 5, mtime: Date.now(), ctime: Date.now() }, 'md', 'note.md');
+        const { plugin } = createPlugin({
+            getVSSFiles: jest.fn(() => [note]),
+        });
+        const vss = new VSS(plugin, 'cache');
+
+        const plan = await vss.getMemoryReadiness();
+
+        expect(plan).toMatchObject({
+            reason: 'first-use',
+            action: 'rebuild',
+            notesToCheck: 1,
+            notesLikelyToUpdate: 1,
+            requiresApproval: true,
+            canAnswerNow: true,
+        });
+    });
+
+    it('maps dirty ready memory to a refresh memory plan', async () => {
+        const note = createTFile('note.md', { size: 5, mtime: Date.now(), ctime: Date.now() }, 'md', 'note.md');
+        const { plugin } = createPlugin({
+            getVSSFiles: jest.fn(() => [note]),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        dirtyMap.set('note.md', { first: 1, last: 1 });
+
+        const plan = await vss.getMemoryReadiness();
+
+        expect(plan).toMatchObject({
+            reason: 'changed-notes',
+            action: 'refresh',
+            notesToCheck: 1,
+            notesLikelyToUpdate: 1,
+            requiresApproval: true,
+            canAnswerNow: true,
+        });
+    });
+
+    it('maps ready memory to a no-op memory plan', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+
+        const plan = await vss.getMemoryReadiness();
+
+        expect(plan).toMatchObject({
+            reason: 'ready',
+            action: 'none',
+            requiresApproval: false,
+            canAnswerNow: true,
+        });
+    });
+
+    it('maps local missing and settings changed states to rebuild memory plans', async () => {
+        const { plugin } = createPlugin({
+            getVSSFiles: jest.fn(() => [
+                createTFile('one.md', { size: 5, mtime: Date.now(), ctime: Date.now() }, 'md', 'one.md'),
+                createTFile('two.md', { size: 5, mtime: Date.now(), ctime: Date.now() }, 'md', 'two.md'),
+            ]),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+
+        (vss as any).status = 'missing-local-index'; // eslint-disable-line @typescript-eslint/no-explicit-any
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'local-memory-missing',
+            action: 'rebuild',
+            notesToCheck: 2,
+            notesLikelyToUpdate: 2,
+            requiresApproval: true,
+        });
+
+        (vss as any).status = 'stale'; // eslint-disable-line @typescript-eslint/no-explicit-any
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'settings-changed',
+            action: 'rebuild',
+            notesToCheck: 2,
+            notesLikelyToUpdate: 2,
+            requiresApproval: true,
+        });
+    });
+
     it('marks profile mismatch as stale without rebuilding automatically', async () => {
         const { plugin, mockAdapter } = createPlugin();
         const staleIndex = new FakeVectorIndex();
@@ -346,6 +441,22 @@ describe('VSS SQLite/WASM lifecycle', () => {
             model: 'new-embedding-model',
         }));
         expect(stats.status).toBe('stale');
+    });
+
+    it('does not show a success notice when manual refresh aborts because memory is not ready', async () => {
+        const { plugin } = createPlugin();
+        const index = new FakeVectorIndex();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, index);
+        (vss as any).status = 'stale'; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const summary = await vss.refreshLocalIndex();
+
+        expect(summary.aborted).toBe(true);
+        expect(index.listFilePaths).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([
+            'Memory is not ready. Prepare memory first.',
+        ]);
     });
 
     it('reports missing-local-index when marker exists but local SQLite chunks are gone', async () => {
@@ -594,7 +705,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
         await vss.cleanLegacyJsonCache();
 
-        expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Delete 2 legacy VSS JSON cache files'));
+        expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Delete 2 old memory cache files'));
         expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Notes will not be deleted'));
         expect(mockAdapter.remove).toHaveBeenCalledWith('cache/note.md.json');
         expect(mockAdapter.remove).toHaveBeenCalledWith('cache/other.md.json');

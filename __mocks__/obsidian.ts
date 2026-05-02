@@ -16,6 +16,32 @@ export class Notice {
     };
 }
 
+export class Modal {
+    app: App;
+    contentEl: HTMLElement;
+
+    constructor(app: App) {
+        this.app = app;
+        this.contentEl = {} as HTMLElement;
+    }
+
+    open() { }
+    close() { }
+    onOpen() { }
+    onClose() { }
+}
+
+export class Setting {
+    constructor(_containerEl: unknown) { }
+    setName(_name: string) { return this; }
+    setDesc(_desc: string | DocumentFragment) { return this; }
+    addButton(_callback: (button: {
+        setCta: () => unknown;
+        setButtonText: (text: string) => unknown;
+        onClick: (callback: () => void) => unknown;
+    }) => void) { return this; }
+}
+
 type MockAdapter = {
     write: jest.Mock;
     read: jest.Mock;
