@@ -11,7 +11,7 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 
-const buildContext = await context({
+const mainContext = await context({
 	platform: "browser",
 	mainFields: ["browser", "module", "main"],
 	conditions: ["browser"],
@@ -66,14 +66,46 @@ const buildContext = await context({
 					from: ['./styles.css'],
 					to: ['styles.css'],
 				},
+				{
+					from: ['./node_modules/@sqliteai/sqlite-wasm/sqlite-wasm/jswasm/sqlite3.wasm'],
+					to: ['sqlite3.wasm'],
+				},
 			],
 		}),
 	],
 });
 
+const workerContext = await context({
+	platform: "browser",
+	mainFields: ["browser", "module", "main"],
+	conditions: ["browser"],
+	entryPoints: ["src/vss/sqlite-worker.ts"],
+	bundle: true,
+	format: "esm",
+	target: "es2020",
+	logLevel: "info",
+	sourcemap: prod ? false : "inline",
+	outfile: "dist/vss-sqlite-worker.js",
+	minify: prod ? true : false,
+	loader: {
+		'.ts': 'ts',
+		'.js': 'js',
+		'.mjs': 'js',
+	},
+	define: {
+		"process.env.NODE_ENV": prod ? '"production"' : '"development"',
+	},
+});
+
 if (prod) {
-	await buildContext.rebuild();
+	await Promise.all([
+		mainContext.rebuild(),
+		workerContext.rebuild(),
+	]);
 	process.exit(0);
 } else {
-	await buildContext.watch();
+	await Promise.all([
+		mainContext.watch(),
+		workerContext.watch(),
+	]);
 }
