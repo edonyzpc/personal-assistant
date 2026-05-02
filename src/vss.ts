@@ -72,6 +72,9 @@ interface LegacyJsonSummary {
     paths: string[];
 }
 
+type EmbeddingsModel = Awaited<ReturnType<AIUtils["createEmbeddings"]>>;
+type EmbeddingsModelProvider = () => Promise<EmbeddingsModel>;
+
 export class VSS {
     private plugin: PluginManager;
     private vssCacheDir: string;
@@ -196,6 +199,7 @@ export class VSS {
             const candidates = currentPaths
                 ? Array.from(currentPaths)
                 : selectFlushCandidates(this.dirty, now, quiet, VSS_PARAMS.maxDelay, limit);
+            const getEmbeddingsModel = this.createEmbeddingsModelProvider();
 
             if (currentPaths && this.index) {
                 const indexedPaths = await this.index.listFilePaths();
@@ -223,7 +227,7 @@ export class VSS {
 
                 let status: VSSRefreshStatus;
                 try {
-                    status = await this.refreshFileCache(file);
+                    status = await this.refreshFileCache(file, getEmbeddingsModel);
                 } catch (e) {
                     summary.failed++;
                     this.plugin.log("Failed to refresh VSS index", { path, error: e });
@@ -268,10 +272,11 @@ export class VSS {
         const files = this.plugin.getVSSFiles();
         const summary = createEmptyOperationSummary();
         summary.storagePersisted = this.storageStatus.persisted;
+        const getEmbeddingsModel = this.createEmbeddingsModelProvider();
 
         for (const file of files) {
             try {
-                const status = await this.refreshFileCache(file);
+                const status = await this.refreshFileCache(file, getEmbeddingsModel);
                 if (status === "updated") summary.updated++;
                 if (status === "unchanged") summary.unchanged++;
                 if (status === "removed") summary.removed++;
@@ -352,7 +357,7 @@ export class VSS {
         return (await this.refreshFileCache(cacheFile)) === "updated";
     }
 
-    async refreshFileCache(file: TFile): Promise<VSSRefreshStatus> {
+    async refreshFileCache(file: TFile, getEmbeddingsModel?: EmbeddingsModelProvider): Promise<VSSRefreshStatus> {
         await this.initialize();
         await this.ensureIndex({ allowFallback: false });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
@@ -377,7 +382,7 @@ export class VSS {
             return 'unchanged';
         }
 
-        const prepared = await this.prepareFileVectors(file, fileState.hash);
+        const prepared = await this.prepareFileVectors(file, fileState.hash, getEmbeddingsModel);
         if (prepared.chunks.length === 0) {
             await this.index.deleteFile(file.path);
             return 'removed';
@@ -537,6 +542,7 @@ export class VSS {
         const sqliteIndex = new SqliteVectorIndex({
             workerUrl: this.getPluginAssetUrl("vss-sqlite-worker.js"),
             wasmUrl: this.getPluginAssetUrl("sqlite3.wasm"),
+            databaseName: this.getDatabaseName(),
         });
 
         try {
@@ -623,8 +629,11 @@ export class VSS {
         }
     }
 
-    private async prepareFileVectors(file: TFile, contentHash: string): Promise<{ chunks: VSSChunk[]; embeddings: number[][] }> {
-        const profile = this.profile ?? this.createEmbeddingProfile();
+    private async prepareFileVectors(
+        file: TFile,
+        contentHash: string,
+        getEmbeddingsModel?: EmbeddingsModelProvider,
+    ): Promise<{ chunks: VSSChunk[]; embeddings: number[][] }> {
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
@@ -651,7 +660,7 @@ export class VSS {
             },
         }));
 
-        const embeddingsModel = await this.aiUtils.createEmbeddings(profile.dimensions);
+        const embeddingsModel = await (getEmbeddingsModel ?? this.createEmbeddingsModelProvider())();
         const embeddings: number[][] = [];
         for (let i = 0; i < texts.length; i += VSS_PARAMS.embedBatchSize) {
             const batch = texts.slice(i, i + VSS_PARAMS.embedBatchSize);
@@ -662,6 +671,19 @@ export class VSS {
             }
         }
         return { chunks, embeddings };
+    }
+
+    private createEmbeddingsModelProvider(): EmbeddingsModelProvider {
+        let embeddingsPromise: Promise<EmbeddingsModel> | null = null;
+        return () => {
+            embeddingsPromise ??= this.createOperationEmbeddingsModel();
+            return embeddingsPromise;
+        };
+    }
+
+    private async createOperationEmbeddingsModel(): Promise<EmbeddingsModel> {
+        const profile = this.profile ?? this.createEmbeddingProfile();
+        return await this.aiUtils.createEmbeddings(profile.dimensions);
     }
 
     private async waitForEmbeddingRateGap(): Promise<void> {
@@ -864,6 +886,10 @@ export class VSS {
         return adapter.getResourcePath?.(path) ?? path;
     }
 
+    private getDatabaseName(): string {
+        return getVaultScopedDatabaseName(this.plugin.app.vault.getName());
+    }
+
     private showMissingIndexNotice(): void {
         const now = Date.now();
         if (now - this.lastMissingIndexNoticeAt < 60_000) return;
@@ -913,6 +939,13 @@ function createIndexId(): string {
         return cryptoApi.randomUUID();
     }
     return `vss-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getVaultScopedDatabaseName(vaultName: string): string {
+    const normalizedName = vaultName.trim() || "vault";
+    const encodedName = encodeURIComponent(normalizedName).replace(/%/g, "_");
+    const safeName = encodedName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "vault";
+    return `personal-assistant-vss-${safeName}.sqlite3`;
 }
 
 function estimateEmbeddingTokens(chunkCount: number): number {
