@@ -4,20 +4,37 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+No changes yet.
+
+## [1.6.1](https://github.com/edonyzpc/personal-assistant/compare/1.6.0...1.6.1) (2026-05-02)
+
 ### Features
 - vss: replace startup-loaded MemoryVectorStore with manual local SQLite/WASM indexing backed by OPFS when available
 - memory: add pre-chat Memory approval flow with answer-now fallback and hidden advanced controls
 
 ### Fix
-- vss: make exact vector scan ordering deterministic for equal-distance results and show high-chunk performance notices
-- vss: include SQLite worker and WASM assets in release/deploy paths
+- plugin-switch: apply plugin toggle changes reliably
+- commands: align record command descriptions
+- vss: stabilize vector cache lifecycle
 - vss: remove stale indexed files during manual refresh and invalidate indexes when the embedding profile changes
+- vss: make exact vector scan ordering deterministic for equal-distance results and show high-chunk performance notices
+- ai: harden summary and featured image commands
+- statistics: isolate segmented tab styles
+- record: handle root vault note creation
+- local-graph: tolerate missing graph config
+- callout: harden callout manager fallback
 - memory: avoid success notices when a manual memory refresh aborts
 - chat: strip trailing memory reference blocks from chat history more robustly
+- vss: avoid noisy SQLite fallback logging
+- vss: isolate local indexing per vault
+
+### Improvements
+- vss: package SQLite worker and WASM assets for release/deploy
 
 ### Docs
 - vss: document SQLite/WASM architecture, implementation plan, development tracker, and dependency license review note
 - vss: note that Android physical-device validation is still pending
+- memory: document note memory product flow
 
 ### Tests
 - vss: cover SQLite/OPFS unavailable fallback behavior and embedding model migration protection
