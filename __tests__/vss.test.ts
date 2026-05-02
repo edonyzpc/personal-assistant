@@ -61,6 +61,8 @@ jest.mock('../src/vss/sqlite-vector-index', () => ({
     }),
 }));
 
+const MockSqliteVectorIndex = (jest.requireMock('../src/vss/sqlite-vector-index') as { SqliteVectorIndex: jest.Mock }).SqliteVectorIndex;
+
 class FakeVectorIndex implements VectorIndex {
     status: VectorIndexStatus = 'ready';
     records = new Map<string, VSSFileRecord>();
@@ -120,6 +122,7 @@ const createPlugin = (overrides: Record<string, unknown> = {}) => {
 
     const mockVault = {
         adapter: mockAdapter,
+        getName: jest.fn(() => 'Test Vault'),
         getAbstractFileByPath: jest.fn<(path: string) => TFile | null>(),
         getMarkdownFiles: jest.fn(() => []),
     };
@@ -179,6 +182,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         jest.useFakeTimers();
         mockNoticeMessages.length = 0;
         clearMockSqliteIndex();
+        MockSqliteVectorIndex.mockClear();
         Object.defineProperty(globalThis, 'confirm', {
             configurable: true,
             value: undefined,
@@ -210,6 +214,45 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(stats.status).toBe('uninitialized');
         expect(stats.chunkCount).toBe(0);
         expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
+        vss.dispose();
+    });
+
+    it('uses a vault-scoped SQLite database name', async () => {
+        const { plugin, mockVault } = createPlugin();
+        const index = new FakeVectorIndex();
+        setMockSqliteIndex(index);
+        mockVault.getName.mockReturnValue('Work Vault');
+        const vss = new VSS(plugin, 'cache');
+
+        await vss.rebuildLocalIndex({ silent: true });
+
+        expect(MockSqliteVectorIndex).toHaveBeenCalledWith(expect.objectContaining({
+            databaseName: 'personal-assistant-vss-Work_20Vault.sqlite3',
+        }));
+        vss.dispose();
+    });
+
+    it('reuses one embeddings model while rebuilding multiple changed notes', async () => {
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        const now = Date.now();
+        const firstFile = createTFile('first.md', { size: 20, mtime: now, ctime: now }, 'md', 'first.md');
+        const secondFile = createTFile('second.md', { size: 21, mtime: now + 1, ctime: now }, 'md', 'second.md');
+        attachReadyIndex(vss, index);
+        plugin.getVSSFiles.mockReturnValue([firstFile, secondFile]);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'first.md') return 'first memory note';
+            if (path === 'second.md') return 'second memory note';
+            throw createMissingFileError();
+        });
+        (vss as any).waitForEmbeddingRateGap = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.Mock; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        await vss.rebuildLocalIndex({ silent: true });
+
+        expect(createEmbeddings).toHaveBeenCalledTimes(1);
+        expect(index.upsertFile).toHaveBeenCalledTimes(2);
         vss.dispose();
     });
 
