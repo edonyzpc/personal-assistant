@@ -86,6 +86,14 @@ https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 
 Please reference [HERE](./DEVELOPEMENT.md).
 
+### VSS SQLite/WASM dependency note
+
+The local VSS SQLite backend uses `@sqliteai/sqlite-wasm` pinned to `3.50.4-sync.0.8.30-vector.0.9.23`. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
+
+### Mobile VSS validation note
+
+The local VSS SQLite/WASM backend has been smoke-tested on Obsidian Desktop and Obsidian iOS with the test vault, including rebuild, refresh, reload persistence, chat, and RAG references. Android has not been fully validated on a physical device yet because no Android test device is currently available, so Android VSS support should be treated as pending verification.
+
 ## Install
 Now Personal Assistant plugin is available in [plugin market](https://obsidian.md/plugins?search=personal%20assistant#), you can install this plugin directly within Obsidian App, please check this [mannual](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin) to get more details.
 ![install with plugin market](./docs/install-within-plugin-market.png)
@@ -106,7 +114,7 @@ Now Personal Assistant plugin is available in [plugin market](https://obsidian.m
 ### Manually Install
 
 - Build with commandline: `npm install && npm run build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
+- Copy over `main.js`, `styles.css`, `manifest.json`, `vss-sqlite-worker.js`, and `sqlite3.wasm` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
 
 ## Use
 

@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## Unreleased
+
+### Features
+- vss: replace startup-loaded MemoryVectorStore with manual local SQLite/WASM indexing backed by OPFS when available
+
+### Fix
+- vss: make exact vector scan ordering deterministic for equal-distance results and show high-chunk performance notices
+- vss: include SQLite worker and WASM assets in release/deploy paths
+- vss: remove stale indexed files during manual refresh and invalidate indexes when the embedding profile changes
+
+### Docs
+- vss: document SQLite/WASM architecture, implementation plan, development tracker, and dependency license review note
+- vss: note that Android physical-device validation is still pending
+
+### Tests
+- vss: cover SQLite/OPFS unavailable fallback behavior and embedding model migration protection
+
 ## [1.6.0](https://github.com/edonyzpc/personal-assistant/compare/1.5.9...1.6.0) (2026-05-01)
 ### Features
 - statistics: store statistics as daily device shards with legacy migration to reduce multi-device sync conflicts
