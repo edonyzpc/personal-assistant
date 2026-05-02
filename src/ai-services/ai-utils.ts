@@ -15,6 +15,12 @@ interface CreateChatModelOptions {
     transport?: ChatTransport;
 }
 
+export interface CreateEmbeddingsOptions {
+    batchSize?: number;
+    maxConcurrency?: number;
+    maxRetries?: number;
+}
+
 /**
  * AI工具类，提供通用的AI功能
  */
@@ -140,7 +146,7 @@ export class AIUtils {
     /**
      * 创建嵌入模型实例
      */
-    async createEmbeddings(dimensions?: number): Promise<OpenAIEmbeddings | OllamaEmbeddings> {
+    async createEmbeddings(dimensions?: number, options: CreateEmbeddingsOptions = {}): Promise<OpenAIEmbeddings | OllamaEmbeddings> {
         const provider = this.plugin.settings.aiProvider;
         const modelName = this.plugin.settings.embeddingModelName;
         const baseURL = this.plugin.settings.baseURL;
@@ -154,6 +160,9 @@ export class AIUtils {
                     dimensions: dimensions,
                     apiKey: token,
                     configuration: this.createOpenAIClientOptions(baseURL, 'obsidian'),
+                    batchSize: options.batchSize,
+                    maxConcurrency: options.maxConcurrency,
+                    maxRetries: options.maxRetries,
                 });
             }
 
@@ -164,6 +173,8 @@ export class AIUtils {
                 return new OllamaEmbeddings({
                     model: modelName,
                     baseUrl: baseURL,
+                    maxConcurrency: options.maxConcurrency,
+                    maxRetries: options.maxRetries,
                 });
             }
 

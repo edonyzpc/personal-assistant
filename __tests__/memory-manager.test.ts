@@ -8,6 +8,7 @@ import {
 } from '../src/memory-manager';
 
 const mockNoticeMessages: string[] = [];
+const mockProgressSteps: string[] = [];
 
 jest.mock('obsidian', () => ({
     Notice: class {
@@ -15,11 +16,18 @@ jest.mock('obsidian', () => ({
             mockNoticeMessages.push(String(message));
         }
         hide() { }
+        progressBody = {
+            empty: jest.fn(),
+            createEl: jest.fn((_tag: string, options?: { text?: string }) => {
+                if (options?.text) mockProgressSteps.push(options.text);
+                return {};
+            }),
+        };
         noticeEl = {
             addClass: jest.fn(),
             parentElement: { addClass: jest.fn() },
             setCssStyles: jest.fn(),
-            querySelector: jest.fn(),
+            querySelector: jest.fn((selector: string) => selector === '.pa-notice__body' ? this.progressBody : null),
         };
     },
     Platform: { isMobile: false },
@@ -70,9 +78,16 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
     log: jest.fn(),
 });
 
+const createMockDomElement = (): any => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+    createEl: jest.fn(() => createMockDomElement()),
+    createDiv: jest.fn(() => createMockDomElement()),
+    createSpan: jest.fn(() => createMockDomElement()),
+});
+
 describe('MemoryManager chat decisions', () => {
     beforeEach(() => {
         mockNoticeMessages.length = 0;
+        mockProgressSteps.length = 0;
     });
 
     it('uses memory immediately when memory is ready', async () => {
@@ -129,6 +144,7 @@ describe('MemoryManager chat decisions', () => {
 describe('MemoryManager command decisions', () => {
     beforeEach(() => {
         mockNoticeMessages.length = 0;
+        mockProgressSteps.length = 0;
     });
 
     it('keeps manual update on an approval-gated refresh path', async () => {
@@ -182,6 +198,77 @@ describe('MemoryManager command decisions', () => {
         expect(mockNoticeMessages).toEqual([
             'Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.',
         ]);
+    });
+
+    it('updates one progress notice from rebuild progress events', async () => {
+        let now = 0;
+        const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => {
+            now += 400;
+            return now;
+        });
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: {
+            silent?: boolean;
+            onProgress?: (event: {
+                phase: 'scanning' | 'embedding' | 'writing' | 'retrying' | 'ready';
+                filesDone?: number;
+                filesTotal?: number;
+                chunksEmbedded?: number;
+                chunksTotal?: number;
+                currentFile?: string;
+                retryDelayMs?: number;
+            }) => void;
+        }) => {
+            options?.onProgress?.({ phase: 'scanning', filesDone: 1, filesTotal: 3, currentFile: 'one.md' });
+            options?.onProgress?.({ phase: 'embedding', chunksEmbedded: 2, chunksTotal: 10 });
+            options?.onProgress?.({ phase: 'retrying', retryDelayMs: 5000 });
+            options?.onProgress?.({ phase: 'writing', filesDone: 2, filesTotal: 3 });
+            options?.onProgress?.({ phase: 'ready' });
+            return {
+                aborted: false,
+                updated: 3,
+                unchanged: 0,
+                removed: 0,
+                skipped: 0,
+                failed: 0,
+            };
+        });
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+
+        try {
+            await manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+
+            expect(plugin.vss.rebuildLocalIndex).toHaveBeenCalledWith(expect.objectContaining({
+                silent: true,
+                onProgress: expect.any(Function),
+            }));
+            expect(mockProgressSteps).toEqual(expect.arrayContaining([
+                'Checking notes',
+                'Scanning notes 1/3: one.md',
+                'Embedding chunks 2/10',
+                'Retrying in 5s',
+                'Writing index 2/3',
+                'Ready',
+            ]));
+        } finally {
+            nowSpy.mockRestore();
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
     });
 });
 
