@@ -558,7 +558,6 @@ export class VSS {
             return;
         } catch (error) {
             await sqliteIndex.dispose().catch(() => undefined);
-            console.error("SQLite VSS index unavailable", error);
             this.plugin.log("SQLite VSS index unavailable", error);
         }
 
