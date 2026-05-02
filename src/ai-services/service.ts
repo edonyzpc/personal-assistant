@@ -456,7 +456,7 @@ export class AIService {
      */
     async searchSimilarDocuments(prompt: string, vectorStore: MemoryVectorStore): Promise<Array<{ score: number; doc: Document }>> {
         if (!vectorStore) {
-            new Notice("Please wait for the vector store to be loaded.");
+            new Notice("Please wait for memory to be ready.");
             return [];
         }
 

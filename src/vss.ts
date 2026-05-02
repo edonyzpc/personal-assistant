@@ -35,6 +35,7 @@ import {
     type VSSIndexMarker,
     type VSSIndexStats,
 } from './vss/types';
+import type { MemoryMaintenancePlan } from './memory-manager';
 
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
@@ -48,6 +49,16 @@ const VSS_PARAMS = {
 };
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'removed' | 'skipped';
+
+export interface VSSOperationSummary {
+    aborted: boolean;
+    updated: number;
+    unchanged: number;
+    removed: number;
+    skipped: number;
+    failed: number;
+    storagePersisted?: boolean;
+}
 
 interface StoragePersistenceStatus {
     persisted: boolean;
@@ -153,13 +164,20 @@ export class VSS {
         }
     }
 
-    async flush(options: { force?: boolean; reason?: string; limit?: number } = {}) {
-        if (this.isFlushing) return;
+    async flush(options: { force?: boolean; reason?: string; limit?: number; silent?: boolean } = {}): Promise<VSSOperationSummary> {
+        const summary = createEmptyOperationSummary();
+        if (this.isFlushing) {
+            summary.aborted = true;
+            return summary;
+        }
         await this.initialize();
         await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: true });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
-            new Notice("VSS is not initialized. Run Initialize/Rebuild Local VSS Index first.", 5000);
-            return;
+            if (!options.silent) {
+                new Notice("Memory is not ready. Prepare memory first.", 5000);
+            }
+            summary.aborted = true;
+            return summary;
         }
 
         this.isFlushing = true;
@@ -186,6 +204,7 @@ export class VSS {
                         await this.index.deleteFile(indexedPath);
                         this.dirty.delete(indexedPath);
                         dirtyChanged = true;
+                        summary.removed++;
                     }
                 }
             }
@@ -198,6 +217,7 @@ export class VSS {
                     this.dirty.delete(path);
                     dirtyChanged = true;
                     if (this.index) await this.index.deleteFile(path);
+                    summary.removed++;
                     continue;
                 }
 
@@ -205,11 +225,16 @@ export class VSS {
                 try {
                     status = await this.refreshFileCache(file);
                 } catch (e) {
+                    summary.failed++;
                     this.plugin.log("Failed to refresh VSS index", { path, error: e });
                     continue;
                 }
 
+                if (status === 'unchanged') summary.unchanged++;
+                if (status === 'removed') summary.removed++;
+                if (status === 'skipped') summary.skipped++;
                 if (status === 'updated') {
+                    summary.updated++;
                     this.processedWindow.count++;
                 }
 
@@ -223,51 +248,54 @@ export class VSS {
         } finally {
             this.isFlushing = false;
         }
+        return summary;
     }
 
-    async rebuildLocalIndex(): Promise<void> {
+    async rebuildLocalIndex(options: { silent?: boolean } = {}): Promise<VSSOperationSummary> {
         await this.initialize();
         this.storageStatus = await this.requestPersistentStorage();
-        if (!this.storageStatus.persisted) {
-            new Notice("Local VSS index is using best-effort storage. The system or WebView may clear it later, and rebuilding will call the embedding model again.", 7000);
+        if (!this.storageStatus.persisted && !options.silent) {
+            new Notice("This device may need to prepare memory again later.", 7000);
         }
         await this.ensureIndex({ allowFallback: false });
         if (!this.index || this.status === "disabled") {
-            throw new Error("SQLite VSS index is unavailable and Memory fallback is not allowed for rebuild.");
+            throw new Error("Memory is unavailable.");
         }
 
         await this.index.reset();
         this.status = "ready";
         this.dirty.clear();
         const files = this.plugin.getVSSFiles();
-        let updated = 0;
-        let removed = 0;
-        let skipped = 0;
-        let failed = 0;
+        const summary = createEmptyOperationSummary();
+        summary.storagePersisted = this.storageStatus.persisted;
 
         for (const file of files) {
             try {
                 const status = await this.refreshFileCache(file);
-                if (status === "updated") updated++;
-                if (status === "removed") removed++;
-                if (status === "skipped") skipped++;
+                if (status === "updated") summary.updated++;
+                if (status === "unchanged") summary.unchanged++;
+                if (status === "removed") summary.removed++;
+                if (status === "skipped") summary.skipped++;
             } catch (error) {
-                failed++;
+                summary.failed++;
                 this.plugin.log("Failed to rebuild VSS file", { path: file.path, error });
             }
         }
 
         await this.persistDirtyJournal();
         await this.writeIndexStateFiles();
-        new Notice(
-            `Local VSS index rebuilt: ${updated} updated, ${removed} removed, ${skipped} skipped${failed > 0 ? `, ${failed} failed` : ""}.`,
-            5000,
-        );
+        if (!options.silent) {
+            new Notice(summary.failed > 0 ? "Memory is ready, but some notes were skipped." : "Memory is ready. Your notes were not changed.", 5000);
+        }
+        return summary;
     }
 
-    async refreshLocalIndex(): Promise<void> {
-        await this.flush({ force: true, reason: "manual-refresh", limit: Number.MAX_SAFE_INTEGER });
-        new Notice("Local VSS index refresh finished.", 3000);
+    async refreshLocalIndex(options: { silent?: boolean } = {}): Promise<VSSOperationSummary> {
+        const summary = await this.flush({ force: true, reason: "manual-refresh", limit: Number.MAX_SAFE_INTEGER, silent: options.silent });
+        if (!summary.aborted && !options.silent) {
+            new Notice(summary.failed > 0 ? "Memory was updated, but some notes were skipped." : "Memory is ready. Your notes were not changed.", 3000);
+        }
+        return summary;
     }
 
     async resetLocalIndex(): Promise<void> {
@@ -283,33 +311,33 @@ export class VSS {
         this.marker = null;
         this.manifest = null;
         this.status = "uninitialized";
-        new Notice("Local VSS index reset finished.", 3000);
+        new Notice("Local memory copy reset.", 3000);
     }
 
     async cleanLegacyJsonCache(): Promise<void> {
         await this.initialize();
         if (!this.index || this.status !== "ready") {
-            new Notice("Clean legacy VSS JSON cache is available only after SQLite VSS is ready.", 5000);
+            new Notice("Old memory cache cleanup is available only after diagnostic status is ready.", 5000);
             return;
         }
         const stats = await this.index.getStats();
         if (stats.status !== "ready" || stats.chunkCount <= 0 || stats.lastErrorCode) {
-            new Notice("Legacy VSS JSON cache was not cleaned because the SQLite index is not safely ready.", 5000);
+            new Notice("Old memory cache was not cleaned because diagnostic status is not safely ready.", 5000);
             return;
         }
         const marker = await readVSSMarker(this.plugin.app.vault, this.deviceId);
         const profileSignature = this.profile ? getEmbeddingProfileSignature(this.profile) : "";
         if (!marker || marker.profileSignature !== profileSignature) {
-            new Notice("Legacy VSS JSON cache was not cleaned because the local index marker is not safely ready.", 5000);
+            new Notice("Old memory cache was not cleaned because diagnostic state is not safely ready.", 5000);
             return;
         }
         const summary = await this.getLegacyJsonCacheSummary();
         if (summary.fileCount === 0) {
-            new Notice("No legacy VSS JSON cache files found.", 3000);
+            new Notice("No old memory cache files found.", 3000);
             return;
         }
 
-        const message = `Delete ${summary.fileCount} legacy VSS JSON cache files (${formatBytes(summary.bytes)})? Notes will not be deleted.`;
+        const message = `Delete ${summary.fileCount} old memory cache files (${formatBytes(summary.bytes)})? Notes will not be deleted.`;
         const confirmed = typeof globalThis.confirm === "function" ? globalThis.confirm(message) : true;
         if (!confirmed) return;
 
@@ -317,7 +345,7 @@ export class VSS {
             await this.plugin.app.vault.adapter.remove(path);
         }
         await this.writeIndexStateFiles();
-        new Notice(`Deleted ${summary.fileCount} legacy VSS JSON cache files.`, 5000);
+        new Notice(`Deleted ${summary.fileCount} old memory cache files.`, 5000);
     }
 
     async cacheFileVectorStore(cacheFile: TFile): Promise<boolean> {
@@ -415,6 +443,79 @@ export class VSS {
             storagePersisted: this.storageStatus.persisted,
             storageUsage: this.storageStatus.usage,
             storageQuota: this.storageStatus.quota,
+        };
+    }
+
+    async getMemoryReadiness(): Promise<MemoryMaintenancePlan> {
+        await this.initialize();
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: true });
+        }
+
+        const notesToCheck = this.plugin.getVSSFiles().length;
+        const dirtyCount = this.dirty.size;
+        const status = this.status;
+
+        if ((status === "ready" || status === "fallback") && dirtyCount > 0) {
+            return {
+                reason: "changed-notes",
+                action: "refresh",
+                notesToCheck,
+                notesLikelyToUpdate: dirtyCount,
+                requiresApproval: true,
+                canAnswerNow: true,
+            };
+        }
+
+        if (status === "ready" || status === "fallback") {
+            return {
+                reason: "ready",
+                action: "none",
+                notesToCheck,
+                requiresApproval: false,
+                canAnswerNow: true,
+            };
+        }
+
+        if (status === "missing-local-index") {
+            return {
+                reason: "local-memory-missing",
+                action: "rebuild",
+                notesToCheck,
+                notesLikelyToUpdate: notesToCheck,
+                requiresApproval: true,
+                canAnswerNow: true,
+            };
+        }
+
+        if (status === "stale") {
+            return {
+                reason: "settings-changed",
+                action: "rebuild",
+                notesToCheck,
+                notesLikelyToUpdate: notesToCheck,
+                requiresApproval: true,
+                canAnswerNow: true,
+            };
+        }
+
+        if (status === "uninitialized") {
+            return {
+                reason: "first-use",
+                action: "rebuild",
+                notesToCheck,
+                notesLikelyToUpdate: notesToCheck,
+                requiresApproval: true,
+                canAnswerNow: true,
+            };
+        }
+
+        return {
+            reason: "unavailable",
+            action: "none",
+            notesToCheck,
+            requiresApproval: false,
+            canAnswerNow: true,
         };
     }
 
@@ -768,7 +869,7 @@ export class VSS {
         const now = Date.now();
         if (now - this.lastMissingIndexNoticeAt < 60_000) return;
         this.lastMissingIndexNoticeAt = now;
-        new Notice("Local VSS index is missing. Notes are safe, but rebuilding will call the embedding model again.", 7000);
+        new Notice("Memory needs to be prepared again on this device.", 7000);
     }
 
     private isEligible(file: TFile) {
@@ -793,6 +894,17 @@ function normalizeSearchResult(result: VectorSearchResult): { score: number; doc
                 pageContent: rawDoc.pageContent,
                 metadata: rawDoc.metadata,
             }),
+    };
+}
+
+function createEmptyOperationSummary(): VSSOperationSummary {
+    return {
+        aborted: false,
+        updated: 0,
+        unchanged: 0,
+        removed: 0,
+        skipped: 0,
+        failed: 0,
     };
 }
 

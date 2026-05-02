@@ -21,6 +21,7 @@ import { STAT_PREVIEW_TYPE, Stat } from './stats-view'
 import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
 import { normalizeStatisticsView } from './stats/stats-store';
+import { MemoryManager } from './memory-manager';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -70,6 +71,7 @@ export class PluginManager extends Plugin {
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
     vss!: VSS;
+    memoryManager!: MemoryManager;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
     cryptoHelper: CryptoHelper = new CryptoHelper();
@@ -135,16 +137,17 @@ export class PluginManager extends Plugin {
             aiStatusBarItemEl.setAttribute("id", `personal-assistant-ai-statusbar`);
             addIcon('PLUGIN_AI_BRAIN', icons['PLUGIN_AI_BRAIN']);
             this.aiStatusBarItemEl = aiStatusBarItemEl;
-            this.setVssStatusBarText("VSS not initialized");
+            this.setMemoryStatusBarText("Memory needs setup");
             // ai status bar event handling
             aiStatusBarItemEl.onClickEvent((e) => {
-                // init vss in status bar
+                // prepare memory from notes
                 (this.app as any).commands.executeCommandById("personal-assistant:init-vss");// eslint-disable-line @typescript-eslint/no-explicit-any
             });
         }
 
         this.vss = this.initVss();
-        await this.updateVssStatusBar();
+        this.memoryManager = new MemoryManager(this);
+        await this.updateMemoryStatusBar();
 
         this.app.workspace.onLayoutReady(() => {
             this.registerView(
@@ -318,55 +321,13 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "init-vss",
-            name: "Initialize/Rebuild Local VSS Index",
+            name: "Prepare Memory",
             callback: async () => {
-                const confirmed = typeof globalThis.confirm === "function"
-                    ? globalThis.confirm("Rebuild the local VSS index now? This will call the embedding model for notes that need indexing and may incur token cost.")
-                    : true;
-                if (!confirmed) return;
-                await this.cacheVectors();
-                await this.updateVssStatusBar();
+                await this.memoryManager.prepareFromCommand();
             }
         })
 
-        this.addCommand({
-            id: "flush-vss-cache",
-            name: "Refresh Local VSS Index",
-            callback: async () => {
-                await this.vss.refreshLocalIndex();
-                await this.updateVssStatusBar();
-            }
-        })
-
-        this.addCommand({
-            id: "reset-vss-index",
-            name: "Reset Local VSS Index",
-            callback: async () => {
-                const confirmed = typeof globalThis.confirm === "function"
-                    ? globalThis.confirm("Reset the local VSS index? Notes will not be deleted, but RAG will be unavailable until the index is rebuilt.")
-                    : true;
-                if (!confirmed) return;
-                await this.vss.resetLocalIndex();
-                await this.updateVssStatusBar();
-            }
-        })
-
-        this.addCommand({
-            id: "clean-legacy-vss-json-cache",
-            name: "Clean Legacy VSS JSON Cache",
-            callback: async () => {
-                await this.vss.cleanLegacyJsonCache();
-                await this.updateVssStatusBar();
-            }
-        })
-
-        this.addCommand({
-            id: "show-vss-index-status",
-            name: "Show Local VSS Index Status",
-            callback: async () => {
-                await this.showVssIndexStatusNotice();
-            }
-        })
+        this.registerAdvancedMemoryCommands();
 
         this.addCommand({
             id: 'open-chat',
@@ -693,44 +654,44 @@ export class PluginManager extends Plugin {
             const statusBar = document.getElementById("personal-assistant-ai-statusbar");
             statusBar?.addClass("personal-assistant-ai-breathing");
             try {
-                await this.vss.rebuildLocalIndex();
+                await this.vss.rebuildLocalIndex({ silent: true });
                 this.isVssCached = true;
                 statusBar?.addClass("personal-assistant-ai-statusbar-done");
             } catch (error) {
                 this.isVssCached = false;
                 this.log("Failed to rebuild local VSS index", error);
-                new Notice(`Local VSS rebuild failed: ${(error as Error).message}`, 7000);
+                new Notice("Could not prepare memory.", 7000);
             } finally {
                 statusBar?.removeClass("personal-assistant-ai-breathing");
             }
         }
     }
 
-    private async updateVssStatusBar() {
+    async updateMemoryStatusBar() {
         if (!Platform.isDesktop || !this.aiStatusBarItemEl || !this.vss) return;
         const stats = await this.vss.getStats();
         if (stats.status === "ready" || stats.status === "fallback") {
-            this.setVssStatusBarText(`Ready: ${stats.chunkCount} chunks`);
+            this.setMemoryStatusBarText("Memory ready");
             return;
         }
         if (stats.status === "stale") {
-            this.setVssStatusBarText("Index stale");
+            this.setMemoryStatusBarText("Memory needs update");
             return;
         }
         if (stats.status === "missing-local-index") {
-            this.setVssStatusBarText("VSS index missing");
+            this.setMemoryStatusBarText("Memory needs setup");
             return;
         }
         if (stats.status === "disabled" || stats.status === "error") {
-            this.setVssStatusBarText("VSS disabled");
+            this.setMemoryStatusBarText("Memory unavailable");
             return;
         }
-        this.setVssStatusBarText("VSS not initialized");
+        this.setMemoryStatusBarText("Memory needs setup");
     }
 
-    private async showVssIndexStatusNotice() {
+    async showTechnicalMemoryStatus() {
         if (!this.vss) {
-            new Notice("Local VSS: not initialized.", 5000);
+            new Notice("Diagnostic details: memory service is not initialized.", 5000);
             return;
         }
 
@@ -746,10 +707,10 @@ export class PluginManager extends Plugin {
         })();
         const storageText = stats.storagePersisted === false ? "best-effort storage" : "persistent storage";
         const performanceText = this.getVssPerformanceNotice(stats.chunkCount);
-        new Notice(`Local VSS: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${performanceText}`, 7000);
+        new Notice(`Diagnostic details: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${performanceText}`, 7000);
     }
 
-    private setVssStatusBarText(text: string) {
+    private setMemoryStatusBarText(text: string) {
         if (!this.aiStatusBarItemEl) return;
         this.aiStatusBarItemEl.empty();
         setIcon(this.aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
@@ -766,6 +727,58 @@ export class PluginManager extends Plugin {
             return " Performance note: exact search may be slower above 50k chunks.";
         }
         return "";
+    }
+
+    private registerAdvancedMemoryCommands() {
+        this.addCommand({
+            id: "flush-vss-cache",
+            name: "Update memory now",
+            checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
+                await this.memoryManager.updateFromCommand();
+                await this.updateMemoryStatusBar();
+            }),
+        })
+
+        this.addCommand({
+            id: "reset-vss-index",
+            name: "Reset local memory copy",
+            checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
+                const confirmed = typeof globalThis.confirm === "function"
+                    ? globalThis.confirm("Reset the local memory copy? Your notes will not be deleted.")
+                    : true;
+                if (!confirmed) return;
+                await this.vss.resetLocalIndex();
+                await this.updateMemoryStatusBar();
+            }),
+        })
+
+        this.addCommand({
+            id: "clean-legacy-vss-json-cache",
+            name: "Clean old memory cache",
+            checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
+                await this.vss.cleanLegacyJsonCache();
+                await this.updateMemoryStatusBar();
+            }),
+        })
+
+        this.addCommand({
+            id: "show-vss-index-status",
+            name: "Show technical memory status",
+            checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
+                await this.showTechnicalMemoryStatus();
+            }),
+        })
+    }
+
+    private runAdvancedMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
+        if (!this.settings.showAdvancedMemoryControls) return false;
+        if (!checking) {
+            void action().catch((error) => {
+                this.log("Advanced memory command failed", error);
+                new Notice("Could not complete memory action.", 5000);
+            });
+        }
+        return true;
     }
 
     /**
@@ -788,13 +801,29 @@ export class PluginManager extends Plugin {
                 this.settings.statisticsType = normalizedStatisticsType;
                 changed = true;
             }
+            if (typeof this.settings.memoryEnabled !== "boolean") {
+                this.settings.memoryEnabled = true;
+                changed = true;
+            }
+            if (typeof this.settings.memoryAutoCheckBeforeChat !== "boolean") {
+                this.settings.memoryAutoCheckBeforeChat = true;
+                changed = true;
+            }
+            if (this.settings.memoryApprovalPolicy !== "always") {
+                this.settings.memoryApprovalPolicy = "always";
+                changed = true;
+            }
+            if (typeof this.settings.showAdvancedMemoryControls !== "boolean") {
+                this.settings.showAdvancedMemoryControls = false;
+                changed = true;
+            }
             if (
                 this.settings.aiProvider === 'qwen'
                 && this.settings.embeddingModelName === 'text-embedding-v3'
                 && !this.settings.embeddingV4MigrationNoticeDismissed
             ) {
                 new Notice(
-                    "Qwen text-embedding-v4 is recommended for new VSS indexes. Your existing text-embedding-v3 setting was preserved.",
+                    "Qwen's newer memory model is recommended for new memory copies. Your existing memory model setting was preserved.",
                     10000,
                 );
                 this.settings.embeddingV4MigrationNoticeDismissed = true;

@@ -56,6 +56,10 @@ export interface PluginManagerSettings {
     chatModelName: string;
     embeddingModelName: string;
     embeddingV4MigrationNoticeDismissed: boolean;
+    memoryEnabled: boolean;
+    memoryAutoCheckBeforeChat: boolean;
+    memoryApprovalPolicy: "always";
+    showAdvancedMemoryControls: boolean;
     // 兼容旧版本
     modelName: string;
     featuredImagePath: string;
@@ -117,6 +121,10 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     chatModelName: "qwen-plus",
     embeddingModelName: "text-embedding-v4",
     embeddingV4MigrationNoticeDismissed: false,
+    memoryEnabled: true,
+    memoryAutoCheckBeforeChat: true,
+    memoryApprovalPolicy: "always",
+    showAdvancedMemoryControls: false,
     // 兼容旧版本
     modelName: "qwen-plus",
     featuredImagePath: "9.src",
@@ -650,18 +658,6 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
 
-        // Embedding Model Name
-        new Setting(containerEl)
-            .setName("Embedding Model Name")
-            .setDesc("Name of the embedding model to use")
-            .addText((text) => {
-                text.setPlaceholder("text-embedding-3-small");
-                text.setValue(this.plugin.settings.embeddingModelName);
-                text.onChange(async (value: string) => {
-                    this.plugin.settings.embeddingModelName = value;
-                    await this.plugin.saveSettings();
-                });
-            });
         new Setting(containerEl)
             .setName("API Token")
             .setDesc("API Token for the selected provider. For Ollama, this can be empty. NOTE: your input token is protected by AES-GCM encryption.")
@@ -675,6 +671,122 @@ export class SettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 });
             });
+        containerEl.createEl('h2', { text: 'Memory' });
+        containerEl.createEl("p", {
+            text: "Let the assistant use memory from your notes when answering.",
+        }).setAttr("style", "font-size:15px");
+
+        new Setting(containerEl)
+            .setName("Use memory from my notes")
+            .setDesc("The assistant can prepare a local memory copy from your notes. It will ask before any AI cost.")
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(this.plugin.settings.memoryEnabled)
+                    .onChange(async (value) => {
+                        this.plugin.settings.memoryEnabled = value;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName("Check memory before chat")
+            .setDesc("The assistant will ask before preparing anything that may use AI credits.")
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(this.plugin.settings.memoryAutoCheckBeforeChat)
+                    .onChange(async (value) => {
+                        this.plugin.settings.memoryAutoCheckBeforeChat = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new Setting(containerEl)
+            .setName("Advanced memory controls")
+            .setDesc("Show maintenance and diagnostic controls for the local memory copy.")
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(this.plugin.settings.showAdvancedMemoryControls)
+                    .onChange(async (value) => {
+                        this.plugin.settings.showAdvancedMemoryControls = value;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    });
+            });
+
+        if (this.plugin.settings.showAdvancedMemoryControls) {
+            new Setting(containerEl)
+                .setName("Memory model")
+                .setDesc("Advanced: model used to prepare memory from notes.")
+                .addText((text) => {
+                    text.setPlaceholder("model name");
+                    text.setValue(this.plugin.settings.embeddingModelName);
+                    text.onChange(async (value: string) => {
+                        this.plugin.settings.embeddingModelName = value;
+                        await this.plugin.saveSettings();
+                    });
+                });
+
+            new Setting(containerEl)
+                .setName("Update memory now")
+                .setDesc("Update memory for changed notes.")
+                .addButton((button) => {
+                    button.setButtonText("Update").onClick(async () => {
+                        await this.plugin.memoryManager.updateFromCommand();
+                        await this.plugin.updateMemoryStatusBar();
+                    });
+                });
+
+            new Setting(containerEl)
+                .setName("Rebuild memory on this device")
+                .setDesc("Prepare memory again for this device. Your notes will not be changed or deleted.")
+                .addButton((button) => {
+                    button.setButtonText("Rebuild").onClick(async () => {
+                        await this.plugin.memoryManager.prepareFromCommand();
+                    });
+                });
+
+            new Setting(containerEl)
+                .setName("Reset local memory copy")
+                .setDesc("Remove this device's local memory copy. Your notes will not be deleted.")
+                .addButton((button) => {
+                    button.setButtonText("Reset").onClick(async () => {
+                        await this.plugin.vss.resetLocalIndex();
+                        await this.plugin.updateMemoryStatusBar();
+                    });
+                });
+
+            new Setting(containerEl)
+                .setName("Clean old memory cache")
+                .setDesc("Remove old cache files after memory is ready.")
+                .addButton((button) => {
+                    button.setButtonText("Clean").onClick(async () => {
+                        await this.plugin.vss.cleanLegacyJsonCache();
+                        await this.plugin.updateMemoryStatusBar();
+                    });
+                });
+
+            new Setting(containerEl)
+                .setName("Show technical memory status")
+                .setDesc("Diagnostic details for troubleshooting.")
+                .addButton((button) => {
+                    button.setButtonText("Show").onClick(async () => {
+                        await this.plugin.showTechnicalMemoryStatus();
+                    });
+                });
+
+            new Setting(containerEl).setName("Memory Exclude Path")
+                .setDesc("Exclude note folders from memory. Separate paths with commas.")
+                .addText(text => {
+                    text.setPlaceholder('tmp/,notes/templates')
+                        .setValue(this.plugin.settings.vssCacheExcludePath.join(','))
+                        .onChange(async (value) => {
+                            plugin.settings.vssCacheExcludePath = value.split(",").map((path) => path.trim()).filter(Boolean);
+                            await this.plugin.saveSettings();
+                        })
+                });
+        }
+
         // 图片生成设置（仅Qwen支持）
         if (this.plugin.settings.aiProvider === 'qwen') {
             new Setting(containerEl)
@@ -699,16 +811,6 @@ export class SettingTab extends PluginSettingTab {
                         })
                 });
         }
-        new Setting(containerEl).setName("VSS Exclude Path")
-            .setDesc("Exclude files in the directory to cache vector store")
-            .addText(text => {
-                text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
-                    .setValue(this.plugin.settings.vssCacheExcludePath.join(','))
-                    .onChange(async (value) => {
-                        plugin.settings.vssCacheExcludePath = value.split(",").map((path) => path.trim()).filter(Boolean);
-                        await this.plugin.saveSettings();
-                    })
-            });
     }
 
     private findGraphColor(graphColor: GraphColor): number {
