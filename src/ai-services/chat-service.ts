@@ -67,22 +67,31 @@ export class ChatService {
         ]);
 
         const ragContents = await this.plugin.vss.searchSimilarity(prompt);
+        const hasRagContent = ragContents.length > 0;
         // 将ragContents前两个元素中的doc用JSON.stringify拼接在一起并且以---分割
         const ragContent = ragContents
             .slice(0, 3)
             .map((doc) => JSON.stringify(doc, null, 0))
             .join("\n---\n");
 
-        const chainInput = {
-            rag_content: ragContent,
-            input: contextualPrompt,
-        };
+        const normalPrompt = ChatPromptTemplate.fromMessages([
+            HumanMessagePromptTemplate.fromTemplate("{input}"),
+        ]);
+        const activePrompt = hasRagContent ? ragPrompt : normalPrompt;
+        const chainInput = hasRagContent
+            ? {
+                rag_content: ragContent,
+                input: contextualPrompt,
+            }
+            : {
+                input: contextualPrompt,
+            };
 
         let fullResponse = '';
         let receivedAnyChunk = false;
         try {
             const llm = await this.aiUtils.createChatModel(0.8, { transport: 'native' });
-            const chain = ragPrompt.pipe(llm);
+            const chain = activePrompt.pipe(llm);
             const response = await chain.stream(chainInput, { signal: signal });
 
             for await (const chunk of response) {
@@ -105,7 +114,7 @@ export class ChatService {
 
             this.plugin.log("Streaming LLM failed before chunks; retrying without streaming.");
             const fallbackLlm = await this.aiUtils.createChatModel(0.8, { transport: 'obsidian' });
-            const fallbackChain = ragPrompt.pipe(fallbackLlm);
+            const fallbackChain = activePrompt.pipe(fallbackLlm);
             const response = await fallbackChain.invoke(chainInput, { signal: signal });
             onChunk(response.content.toString());
             return;

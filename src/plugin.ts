@@ -74,6 +74,7 @@ export class PluginManager extends Plugin {
     private isVssCached: boolean = false;
     cryptoHelper: CryptoHelper = new CryptoHelper();
     private token: string = "";
+    private aiStatusBarItemEl: HTMLElement | null = null;
 
 
     async onload() {
@@ -133,7 +134,8 @@ export class PluginManager extends Plugin {
             aiStatusBarItemEl.addClass('personal-assistant-ai-statusbar');
             aiStatusBarItemEl.setAttribute("id", `personal-assistant-ai-statusbar`);
             addIcon('PLUGIN_AI_BRAIN', icons['PLUGIN_AI_BRAIN']);
-            setIcon(aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
+            this.aiStatusBarItemEl = aiStatusBarItemEl;
+            this.setVssStatusBarText("VSS not initialized");
             // ai status bar event handling
             aiStatusBarItemEl.onClickEvent((e) => {
                 // init vss in status bar
@@ -142,10 +144,7 @@ export class PluginManager extends Plugin {
         }
 
         this.vss = this.initVss();
-        if (Platform.isDesktop) {
-            await this.ensureVssCacheDir();
-            await this.vss.initialize();
-        }
+        await this.updateVssStatusBar();
 
         this.app.workspace.onLayoutReady(() => {
             this.registerView(
@@ -319,24 +318,53 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "init-vss",
-            name: "Init Vector Store Cache of Current Obisidna Vault",
+            name: "Initialize/Rebuild Local VSS Index",
             callback: async () => {
-                await this.ensureVssCacheDir();
-                if (Platform.isDesktop) {
-                    await this.vss.initialize();
-                }
-                // cache vectors into vss
+                const confirmed = typeof globalThis.confirm === "function"
+                    ? globalThis.confirm("Rebuild the local VSS index now? This will call the embedding model for notes that need indexing and may incur token cost.")
+                    : true;
+                if (!confirmed) return;
                 await this.cacheVectors();
-                const vssFiles = this.getVSSFiles();
-                await this.vss.loadVectorStore(vssFiles);
+                await this.updateVssStatusBar();
             }
         })
 
         this.addCommand({
             id: "flush-vss-cache",
-            name: "Flush VSS Embeddings",
+            name: "Refresh Local VSS Index",
             callback: async () => {
-                await this.vss.flush({ force: true, reason: "manual-command" });
+                await this.vss.refreshLocalIndex();
+                await this.updateVssStatusBar();
+            }
+        })
+
+        this.addCommand({
+            id: "reset-vss-index",
+            name: "Reset Local VSS Index",
+            callback: async () => {
+                const confirmed = typeof globalThis.confirm === "function"
+                    ? globalThis.confirm("Reset the local VSS index? Notes will not be deleted, but RAG will be unavailable until the index is rebuilt.")
+                    : true;
+                if (!confirmed) return;
+                await this.vss.resetLocalIndex();
+                await this.updateVssStatusBar();
+            }
+        })
+
+        this.addCommand({
+            id: "clean-legacy-vss-json-cache",
+            name: "Clean Legacy VSS JSON Cache",
+            callback: async () => {
+                await this.vss.cleanLegacyJsonCache();
+                await this.updateVssStatusBar();
+            }
+        })
+
+        this.addCommand({
+            id: "show-vss-index-status",
+            name: "Show Local VSS Index Status",
+            callback: async () => {
+                await this.showVssIndexStatusNotice();
             }
         })
 
@@ -348,33 +376,31 @@ export class PluginManager extends Plugin {
             }
         });
 
-        if (Platform.isDesktop) {
-            // VSS cache lifecycle events
-            this.registerEvent(
-                this.app.vault.on("modify", async (file) => {
-                    if (file instanceof TFile) {
-                        await this.vss.markDirtyIfEligible(file);
-                    }
-                })
-            );
-            this.registerEvent(
-                this.app.vault.on("delete", async (file) => {
-                    if (file instanceof TFile) {
-                        await this.vss.handleDelete(file);
-                    }
-                })
-            );
-            this.registerEvent(
-                this.app.workspace.on("active-leaf-change", async () => {
-                    await this.vss.handleActiveLeafChange();
-                })
-            );
-            this.registerEvent(
-                this.app.workspace.on("file-open", async (file) => {
-                    await this.vss.handleFileOpen(file);
-                })
-            );
-        }
+        // VSS lifecycle events only mark local state dirty. Indexing remains manual on Desktop and Mobile.
+        this.registerEvent(
+            this.app.vault.on("modify", async (file) => {
+                if (file instanceof TFile) {
+                    await this.vss.markDirtyIfEligible(file);
+                }
+            })
+        );
+        this.registerEvent(
+            this.app.vault.on("delete", async (file) => {
+                if (file instanceof TFile) {
+                    await this.vss.handleDelete(file);
+                }
+            })
+        );
+        this.registerEvent(
+            this.app.workspace.on("active-leaf-change", async () => {
+                await this.vss.handleActiveLeafChange();
+            })
+        );
+        this.registerEvent(
+            this.app.workspace.on("file-open", async (file) => {
+                await this.vss.handleFileOpen(file);
+            })
+        );
         // Handle the Editor Plugins
         this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
 
@@ -664,60 +690,82 @@ export class PluginManager extends Plugin {
 
     private async cacheVectors() {
         if (this.vss) {
-            await this.ensureVssCacheDir();
             const statusBar = document.getElementById("personal-assistant-ai-statusbar");
-            // status bar style setting
             statusBar?.addClass("personal-assistant-ai-breathing");
-
-            const vssFiles = this.getVSSFiles();
-            let count = 0;
-            let updated = 0;
-            let unchanged = 0;
-            let removed = 0;
-            let skipped = 0;
-            let failed = 0;
-
-            for (const file of vssFiles) {
-                if (count === 15) {
-                    // bypass ratelimit, stop for 10s per 15 file-pasrsing
-                    await new Promise(f => setTimeout(f, 10000));
-                    count = 0;
-                }
-
-                try {
-                    const status = await this.vss.refreshFileCache(file);
-                    switch (status) {
-                        case 'updated':
-                            updated++;
-                            count++;
-                            break;
-                        case 'unchanged':
-                            unchanged++;
-                            break;
-                        case 'removed':
-                            removed++;
-                            break;
-                        case 'skipped':
-                            skipped++;
-                            break;
-                    }
-                } catch (e) {
-                    failed++;
-                    this.log("Failed to cache VSS file", { path: file.path, error: e });
-                }
-            }
-
-            // finish init
-            this.isVssCached = failed === 0;
-            statusBar?.removeClass("personal-assistant-ai-breathing");
-            if (failed === 0) {
+            try {
+                await this.vss.rebuildLocalIndex();
+                this.isVssCached = true;
                 statusBar?.addClass("personal-assistant-ai-statusbar-done");
+            } catch (error) {
+                this.isVssCached = false;
+                this.log("Failed to rebuild local VSS index", error);
+                new Notice(`Local VSS rebuild failed: ${(error as Error).message}`, 7000);
+            } finally {
+                statusBar?.removeClass("personal-assistant-ai-breathing");
             }
-            new Notice(
-                `VSS cache: ${updated} updated, ${unchanged} unchanged, ${removed} removed, ${skipped} skipped${failed > 0 ? `, ${failed} failed` : ""}.`,
-                5000,
-            );
         }
+    }
+
+    private async updateVssStatusBar() {
+        if (!Platform.isDesktop || !this.aiStatusBarItemEl || !this.vss) return;
+        const stats = await this.vss.getStats();
+        if (stats.status === "ready" || stats.status === "fallback") {
+            this.setVssStatusBarText(`Ready: ${stats.chunkCount} chunks`);
+            return;
+        }
+        if (stats.status === "stale") {
+            this.setVssStatusBarText("Index stale");
+            return;
+        }
+        if (stats.status === "missing-local-index") {
+            this.setVssStatusBarText("VSS index missing");
+            return;
+        }
+        if (stats.status === "disabled" || stats.status === "error") {
+            this.setVssStatusBarText("VSS disabled");
+            return;
+        }
+        this.setVssStatusBarText("VSS not initialized");
+    }
+
+    private async showVssIndexStatusNotice() {
+        if (!this.vss) {
+            new Notice("Local VSS: not initialized.", 5000);
+            return;
+        }
+
+        const stats = await this.vss.getStats();
+        const statusText = (() => {
+            if (stats.status === "ready" || stats.status === "fallback") {
+                return `Ready: ${stats.chunkCount} chunks across ${stats.fileCount} files`;
+            }
+            if (stats.status === "stale") return "Index stale";
+            if (stats.status === "missing-local-index") return "VSS index missing";
+            if (stats.status === "disabled" || stats.status === "error") return "VSS disabled";
+            return "VSS not initialized";
+        })();
+        const storageText = stats.storagePersisted === false ? "best-effort storage" : "persistent storage";
+        const performanceText = this.getVssPerformanceNotice(stats.chunkCount);
+        new Notice(`Local VSS: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${performanceText}`, 7000);
+    }
+
+    private setVssStatusBarText(text: string) {
+        if (!this.aiStatusBarItemEl) return;
+        this.aiStatusBarItemEl.empty();
+        setIcon(this.aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
+        this.aiStatusBarItemEl.createSpan({ text, cls: 'personal-assistant-ai-statusbar-text' });
+        this.aiStatusBarItemEl.setAttribute("title", text);
+        this.aiStatusBarItemEl.setAttribute("aria-label", text);
+    }
+
+    private getVssPerformanceNotice(chunkCount: number): string {
+        if (chunkCount > 100_000) {
+            return " Performance note: exact search may be slow above 100k chunks; consider a future quantized or ANN backend, which is not enabled automatically.";
+        }
+        if (chunkCount > 50_000) {
+            return " Performance note: exact search may be slower above 50k chunks.";
+        }
+        return "";
     }
 
     /**
@@ -738,6 +786,18 @@ export class PluginManager extends Plugin {
             const normalizedStatisticsType = normalizeStatisticsView(this.settings.statisticsType);
             if (this.settings.statisticsType !== normalizedStatisticsType) {
                 this.settings.statisticsType = normalizedStatisticsType;
+                changed = true;
+            }
+            if (
+                this.settings.aiProvider === 'qwen'
+                && this.settings.embeddingModelName === 'text-embedding-v3'
+                && !this.settings.embeddingV4MigrationNoticeDismissed
+            ) {
+                new Notice(
+                    "Qwen text-embedding-v4 is recommended for new VSS indexes. Your existing text-embedding-v3 setting was preserved.",
+                    10000,
+                );
+                this.settings.embeddingV4MigrationNoticeDismissed = true;
                 changed = true;
             }
             if (changed) {

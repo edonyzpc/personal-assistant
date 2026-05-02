@@ -13,7 +13,7 @@ export const STATS_STORE_VERSION = 2;
 export const STATS_STORE_ROOT = ".obsidian/personal-assistant-stats/v2";
 export const STATS_DAILY_ROOT = `${STATS_STORE_ROOT}/daily`;
 const LEGACY_DEVICE_ID = "legacy";
-const DEVICE_STORAGE_KEY = "personal-assistant.stats.deviceId.v2";
+export const DEVICE_STORAGE_KEY = "personal-assistant.stats.deviceId.v2";
 
 export type StatisticsView = "overview" | "daily" | "growth" | "composition";
 
@@ -158,7 +158,7 @@ function dayToLegacyShard(date: string, day: unknown): StatsDeviceShard {
     );
 }
 
-function getDeviceId(): string {
+export function getDeviceId(): string {
     try {
         const storage = globalThis.localStorage;
         const existing = storage?.getItem(DEVICE_STORAGE_KEY);
@@ -171,7 +171,7 @@ function getDeviceId(): string {
     }
 }
 
-function createDeviceId(): string {
+export function createDeviceId(): string {
     const cryptoApi = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
     if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
         return cryptoApi.randomUUID();
