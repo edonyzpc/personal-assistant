@@ -1,6 +1,8 @@
 import { describe, expect, it, jest } from '@jest/globals';
 import { TFile } from 'obsidian';
 
+const mockNoticeMessages: string[] = [];
+
 jest.mock('obsidian', () => {
     class MockPlugin { }
     class MockTFile {
@@ -19,7 +21,9 @@ jest.mock('obsidian', () => {
         Plugin: MockPlugin,
         TFile: MockTFile,
         Notice: class {
-            constructor(_message?: unknown) { }
+            constructor(message?: unknown) {
+                mockNoticeMessages.push(String(message));
+            }
         },
         Platform: { isDesktop: false, isMobile: false },
         normalizePath: (path: string) => {
@@ -128,5 +132,60 @@ describe('record note creation', () => {
 
         expect(vault.create).not.toHaveBeenCalled();
         expect(openFile).toHaveBeenCalledWith(existingFile);
+    });
+});
+
+describe('settings migration', () => {
+    it('preserves the old default Qwen v3 embedding model and only shows a migration notice', () => {
+        mockNoticeMessages.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'qwen',
+            embeddingModelName: 'text-embedding-v3',
+            embeddingV4MigrationNoticeDismissed: false,
+            statisticsType: 'overview',
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        plugin.migrateSettings();
+
+        expect(plugin.settings.embeddingModelName).toBe('text-embedding-v3');
+        expect(plugin.settings.embeddingV4MigrationNoticeDismissed).toBe(true);
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages).toEqual([
+            expect.stringContaining('text-embedding-v4 is recommended'),
+        ]);
+        expect(plugin.vss).toBeUndefined();
+    });
+
+    it('does not bother custom embedding models during migration', () => {
+        mockNoticeMessages.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'qwen',
+            embeddingModelName: 'custom-embedding-model',
+            embeddingV4MigrationNoticeDismissed: false,
+            statisticsType: 'overview',
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        plugin.migrateSettings();
+
+        expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');
+        expect(plugin.settings.embeddingV4MigrationNoticeDismissed).toBe(false);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual([]);
+    });
+});
+
+describe('VSS status performance notices', () => {
+    it('warns at the exact-search thresholds without enabling another backend automatically', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        expect(plugin.getVssPerformanceNotice(50_000)).toBe('');
+        expect(plugin.getVssPerformanceNotice(50_001)).toContain('above 50k chunks');
+        expect(plugin.getVssPerformanceNotice(100_001)).toContain('not enabled automatically');
     });
 });
