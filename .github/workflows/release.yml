@@ -88,3 +88,23 @@ jobs:
           asset_path: ./styles.css
           asset_name: styles.css
           asset_content_type: text/css
+      - name: Upload vss-sqlite-worker.js
+        id: upload-vss-worker
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/vss-sqlite-worker.js
+          asset_name: vss-sqlite-worker.js
+          asset_content_type: text/javascript
+      - name: Upload sqlite3.wasm
+        id: upload-sqlite-wasm
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ./dist/sqlite3.wasm
+          asset_name: sqlite3.wasm
+          asset_content_type: application/wasm
