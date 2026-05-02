@@ -55,6 +55,7 @@ export interface PluginManagerSettings {
     baseURL: string;
     chatModelName: string;
     embeddingModelName: string;
+    embeddingV4MigrationNoticeDismissed: boolean;
     // 兼容旧版本
     modelName: string;
     featuredImagePath: string;
@@ -114,7 +115,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     apiToken: "sk-xxx",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     chatModelName: "qwen-plus",
-    embeddingModelName: "text-embedding-v3",
+    embeddingModelName: "text-embedding-v4",
+    embeddingV4MigrationNoticeDismissed: false,
     // 兼容旧版本
     modelName: "qwen-plus",
     featuredImagePath: "9.src",
@@ -607,7 +609,7 @@ export class SettingTab extends PluginSettingTab {
                     if (value === 'qwen') {
                         this.plugin.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
                         this.plugin.settings.chatModelName = 'qwen-plus';
-                        this.plugin.settings.embeddingModelName = 'text-embedding-v3';
+                        this.plugin.settings.embeddingModelName = 'text-embedding-v4';
                     } else if (value === 'openai') {
                         this.plugin.settings.baseURL = 'https://api.openai.com/v1';
                         this.plugin.settings.chatModelName = 'gpt-3.5-turbo';
