@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file. See [standa
 
 No changes yet.
 
+## [1.6.3](https://github.com/edonyzpc/personal-assistant/compare/1.6.2...1.6.3) (2026-05-02)
+
+### Fix
+- vss: isolate OPFS storage per vault
+
 ## [1.6.2](https://github.com/edonyzpc/personal-assistant/compare/1.6.1...1.6.2) (2026-05-02)
 
 ### Fix
