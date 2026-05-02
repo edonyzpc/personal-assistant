@@ -2,7 +2,7 @@
 
 ## 背景
 
-当前 VSS 的主路径是将 Markdown 笔记清洗、切块、生成 embedding 后，写入 vault 内的 JSON 缓存文件；插件启动或手动初始化时，再把这些 JSON 中的向量全部加载到 LangChain `MemoryVectorStore`。这个设计能避免重复调用 embedding API，但也带来几个问题：
+重构前的 VSS 主路径是将 Markdown 笔记清洗、切块、生成 embedding 后，写入 vault 内的 JSON 缓存文件；插件启动或手动初始化时，再把这些 JSON 中的向量全部加载到 LangChain `MemoryVectorStore`。这个设计能避免重复调用 embedding API，但也带来几个问题：
 
 - **内存压力**：所有向量和 chunk 内容会进入 JS heap。vault 变大后，Desktop 启动和 Mobile WebView 都可能承压。
 - **移动端不友好**：iPhone、Pixel 等设备的内存、后台执行和 WebView 存储行为更受限制，不能依赖全量内存索引。
@@ -102,7 +102,8 @@ flowchart TB
 `VSS` 继续作为插件内部的统一入口，保持聊天调用方的主要行为稳定：
 
 - `searchSimilarity(prompt)`：生成 query embedding，调用 `VectorIndex.search()`。
-- `refresh/rebuild`：手动扫描文件、计算 hash、生成 embedding、写入索引。
+- `rebuild`：重置本设备本地 index，扫描 eligible Markdown，跨文件全局 batch 生成 embeddings，再按文件写入索引。
+- `refresh`：手动或后台处理 dirty 文件，先按 `contentHash` 跳过 unchanged 文件；当前保持逐文件 refresh 路径，不共享 rebuild 的全局 batch pipeline。
 - `verify`：检查 profile、OPFS DB、marker、manifest 的一致性。
 - `reset`：重置本机索引。
 
@@ -320,13 +321,39 @@ flowchart LR
   Hash --> Changed{"hash 变化?"}
   Changed -->|否| Skip["跳过 unchanged"]
   Changed -->|是| Split["MarkdownTextSplitter\nchunkSize 4000\noverlap 80"]
-  Split --> Embed["调用 AI provider\n生成 Memory 表示"]
+  Split --> Queue{"操作类型"}
+  Queue -->|Rebuild| GlobalBatch["跨文件全局 chunk batch\nQwen v3/v4 <= 10 texts"]
+  Queue -->|Refresh| FileBatch["逐文件 batch\n下一阶段再共享全局 pipeline"]
+  GlobalBatch --> Throttle["provider-aware throttle\nTPM 预算 + 最小间隔"]
+  FileBatch --> Throttle
+  Throttle --> Retry["可重试错误退避\n2s / 5s / 10s / 20s"]
+  Retry --> Embed["调用 AI provider\n生成 Memory 表示"]
   Embed --> Blob["转换 Float32Array/BLOB"]
   Blob --> Tx["SQLite 事务\n删除旧 chunks\n写入新 chunks"]
   Tx --> Update["更新 vss_files / marker / manifest / stats"]
   Skip --> Update
   Update --> Done["Memory ready 或部分失败提示"]
 ```
+
+### Embedding 调度与进度
+
+`rebuildLocalIndex()` 内部维护全局 chunk queue。文件扫描、hash、清洗和 split 完成后，所有待更新 chunks 按 provider policy 组成 batch；embedding 返回后再按文件聚合，只有完整文件才调用 `VectorIndex.upsertFile()`。如果某个 batch 最终失败，涉及文件会标记为 failed，且该文件后续 chunks 不再继续排队，避免产生不会写入的额外 embedding 请求。
+
+当前 provider policy：
+
+- Qwen `text-embedding-v4` / `text-embedding-v3`：最多 10 texts/request，`maxConcurrency: 1`，按安全 TPM 预算平滑发送。
+- OpenAI-compatible default：最多 8 texts/request，`maxConcurrency: 1`。
+- Ollama：最多 3 texts/request，`maxConcurrency: 1`。
+
+VSS 向产品层发出 `VSSProgressEvent`：
+
+- `scanning`：扫描 notes 和当前文件。
+- `embedding`：embedding chunks 总数和已完成数。
+- `writing`：写入 SQLite index。
+- `retrying`：展示退避等待时间。
+- `ready`：准备完成。
+
+`MemoryManager` 使用同一个长驻 Notice 显示 `Scanning notes`、`Embedding chunks`、`Writing index`、`Retrying in Ns`、`Ready`，并对普通 DOM 更新做节流，减少 UI 抖动。
 
 ## 聊天 Memory 检索流程
 
@@ -445,5 +472,5 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 ## 相关文档
 
 - [VSS SQLite/WASM 实施计划](./vss-sqlite-wasm-implementation-plan.md)
-- [VSS Embedding 刷新方案说明](./vss-embedding-refresh.md)：旧 VSS JSON/`MemoryVectorStore` 刷新策略背景文档。
+- [VSS Embedding 刷新方案说明](./vss-embedding-refresh.md)：当前 SQLite/WASM Memory refresh、Rebuild batch、embedding throttle 和进度事件说明。
 - [Obsidian 插件移动端网络兼容优化方案](./mobile-network-optimization-plan.md)：移动网络兼容背景文档；其中 VSS 自动/手动生命周期以本文和实施计划为准。

@@ -18,22 +18,22 @@
 | 重构分支 | `codex/vss-sqlite-wasm-refactor` |
 | 创建日期 | 2026-05-02 |
 | 最后回顾 | 2026-05-02 |
-| 总体阶段 | SQLite/WASM 主路径已完成；Memory 产品体验自动化测试已通过；Obsidian Desktop/iOS 旧 smoke test 已通过，Memory 新交互待补手动 smoke test；Android 待验证 |
+| 总体阶段 | SQLite/WASM 主路径已完成；Memory 产品体验自动化测试已通过；Rebuild embedding 吞吐和实时进度已优化；Obsidian Desktop/iOS 旧 smoke test 已通过，Memory 新交互待补手动 smoke test；Android 待验证 |
 | 设计文档 | 已完成，并已补充当前实现快照、接口对齐和 Android 待验证说明 |
-| 实现状态 | SQLite/WASM 主路径、manifest/marker、fallback 判定、MemoryManager 产品层、聊天前确认、Answer now fallback、高级入口隐藏、SQLite worker/WASM 内联发布路径和关键自动化测试已实现 |
-| 最近结论 | 自动化测试、lint、生产构建已通过；Desktop 已验证 rebuild、refresh、reset、旧 JSON 清理、profile stale、OPFS 丢失检测与恢复、真实 LLM + RAG 聊天；iOS 已验证 rebuild、reload 持久化、refresh、状态命令和真实 LLM + RAG 聊天，存储为 best-effort；Android 因暂无实机设备仍待验证，并已在 README 标注 |
+| 实现状态 | SQLite/WASM 主路径、manifest/marker、fallback 判定、MemoryManager 产品层、聊天前确认、Answer now fallback、高级入口隐藏、SQLite worker/WASM 内联发布路径、Rebuild 跨文件 embedding batch、provider-aware throttle/retry、实时进度 UI 和关键自动化测试已实现 |
+| 最近结论 | 自动化测试、lint、生产构建已通过；1.6.4 发布前验证为 116 个 Jest tests passed；Desktop 已验证 rebuild、refresh、reset、旧 JSON 清理、profile stale、OPFS 丢失检测与恢复、真实 LLM + RAG 聊天；iOS 已验证 rebuild、reload 持久化、refresh、状态命令和真实 LLM + RAG 聊天，存储为 best-effort；Android 因暂无实机设备仍待验证，并已在 README 标注 |
 
 ## 当前代码修改回顾
 
 | 范围 | 主要文件 | 当前结论 |
 | --- | --- | --- |
-| VSS 核心门面 | `src/vss.ts` | 已从启动全量加载 JSON/`MemoryVectorStore` 改为手动 SQLite/WASM lifecycle；保留旧方法为兼容 no-op 或手动入口；支持 rebuild、refresh、reset、legacy JSON 清理、profile stale、missing local index、fallback 判定 |
-| Memory 产品层 | `src/memory-manager.ts`、`src/chat-view.ts`、`src/settings.ts` | 普通用户看到 Memory from your notes；聊天前检查 readiness；成本动作按次确认；`Answer now` 本次跳过 Memory；高级维护入口默认隐藏 |
+| VSS 核心门面 | `src/vss.ts` | 已从启动全量加载 JSON/`MemoryVectorStore` 改为手动 SQLite/WASM lifecycle；保留旧方法为兼容 no-op 或手动入口；支持 rebuild、refresh、reset、legacy JSON 清理、profile stale、missing local index、fallback 判定；Rebuild 已支持跨文件全局 embedding batch、provider-aware throttle/retry 和失败文件隔离 |
+| Memory 产品层 | `src/memory-manager.ts`、`src/chat-view.ts`、`src/settings.ts` | 普通用户看到 Memory from your notes；聊天前检查 readiness；成本动作按次确认；`Answer now` 本次跳过 Memory；高级维护入口默认隐藏；Prepare/Update Memory 使用同一个长驻 Notice 显示实时进度 |
 | VectorIndex 后端 | `src/vss/*` | 新增 `VectorIndex` 类型、`SqliteVectorIndex`、SQLite worker protocol/worker、`MemoryVectorIndex` fallback、marker/manifest helper；主线程不再持有全量向量 |
 | 构建与发布 | `package.json`、`package-lock.json`、`esbuild.config.mjs`、`Makefile`、`.github/workflows/release.yml` | pin `@sqliteai/sqlite-wasm`；worker/WASM 内联进 `main.js`；release 和 test vault deploy 回到 Obsidian 标准三文件安装形态 |
 | 插件命令与状态 | `src/plugin.ts`、`src/settings.ts`、`src/stats/stats-store.ts` | 普通命令保留 `Prepare Memory`；Desktop 状态栏显示 Memory 状态；高级 reset/clean/status 命令按设置动态隐藏；新安装默认 Qwen v4，旧默认 v3 只提示不静默迁移 |
 | 聊天 Memory | `src/ai-services/chat-service.ts` | Memory 有结果时使用 Memory prompt；Memory 无结果或用户选择 `Answer now` 时回到普通 chat prompt，不传空 `memory_content` |
-| 自动化测试 | `__tests__/memory-manager.test.ts`、`__tests__/vss.test.ts`、`__tests__/chat-service.test.ts`、`__tests__/plugin-record-note.test.ts`、`__tests__/memory-vector-index.test.ts`、`__tests__/sqlite-vector-index.test.ts`、`__tests__/vss-state.test.ts` | 覆盖 Memory readiness、产品文案、skip-memory 聊天、lifecycle、fallback 双硬上限、marker/manifest 路径、missing index 恢复、旧 JSON 清理保护、迁移提示、性能提醒、worker fatal error recovery |
+| 自动化测试 | `__tests__/memory-manager.test.ts`、`__tests__/vss.test.ts`、`__tests__/chat-service.test.ts`、`__tests__/plugin-record-note.test.ts`、`__tests__/memory-vector-index.test.ts`、`__tests__/sqlite-vector-index.test.ts`、`__tests__/vss-state.test.ts` | 覆盖 Memory readiness、产品文案、skip-memory 聊天、lifecycle、fallback 双硬上限、marker/manifest 路径、missing index 恢复、旧 JSON 清理保护、迁移提示、性能提醒、worker fatal error recovery、Rebuild 跨文件 batch、embedding retry/progress、失败文件停止排队、refresh 进度事件 |
 | 文档与发布说明 | `docs/vss-sqlite-wasm-*.md`、`README.md`、`README-CN.md`、`CHANGELOG.md` | 架构、实施计划、开发 tracker 已建立；README 标注 Android 待实机验证和标准三文件手动安装；CHANGELOG 增加 Unreleased 记录 |
 
 ## 剩余事项
@@ -42,6 +42,7 @@
 - [ ] Memory 产品交互 smoke test：Desktop 和 iOS 需要补测首次聊天弹窗、`Prepare memory and answer`、`Answer now`、`Cancel`、高级入口默认隐藏。
 - [ ] 发布前许可证复核：`@sqliteai/sqlite-wasm` 已 pin 精确版本并披露，但正式发布前仍需复核上游许可证和分发条款。
 - [ ] `embeddingDimensions` 设置：当前实现固定 `VSS_DEFAULT_DIMENSIONS = 1024`；是否暴露为用户设置待确认，避免错误维度导致索引 stale 或额外重建成本。
+- [ ] 大 vault refresh 吞吐优化：让 manual refresh / changed notes 共享 Rebuild 的全局 embedding batch pipeline，避免大量小文件变更时逐文件请求过多。
 
 ## 执行原则
 
@@ -165,6 +166,8 @@ Gate 结果：
 - [x] profile mismatch 不自动重建。
 - [x] 聊天 RAG 在索引未就绪时跳过检索，不影响普通聊天。
 - [x] OPFS 丢失时进入 `missing-local-index`，不自动重建。
+- [x] Rebuild 将跨文件 chunks 汇入全局 embedding batch，并按 provider policy 控制 batch size、串行发送、退避重试和失败文件隔离。
+- [x] Manual refresh 保留逐文件路径，但接入文件级进度事件。
 
 验收：
 
@@ -192,6 +195,7 @@ Gate 结果：
 - [x] Advanced memory controls 默认隐藏 reset、clean cache、technical status 等高级命令。
 - [x] 技术状态统一放入 `Diagnostic details`。
 - [x] persistent storage denied/unavailable 时显示 `This device may need to prepare memory again later.`。
+- [x] Prepare/Update Memory 使用长驻 Notice 显示 `Scanning notes`、`Embedding chunks`、`Writing index`、`Retrying in Ns`、`Ready`。
 
 验收：
 
@@ -356,6 +360,9 @@ Gate 结果：
 | refresh 后 `storagePersisted` 被默认值覆盖 | 已修复 | 初始化和写 marker/manifest 前读取当前 Storage Persistence 状态；仅 rebuild 主动申请持久化 | Desktop: 2026-05-02 |
 | refresh 对未变更文件也等待 embedding rate gap | 已修复 | 文件 diff 先完成，只有真实调用 embedding batch 前才等待 rate gap | Desktop: 2026-05-02 |
 | `missing-local-index` 后 rebuild 恢复失败 | 已修复 | rebuild 恢复路径复用已打开的空 SQLite 后端，避免创建第二个 worker 导致 SQLite 不可用 | Desktop: 2026-05-02 |
+| 大 vault rebuild embedding 请求过多 | 已优化 | Rebuild 使用跨文件全局 batch；Qwen v3/v4 单次最多 10 chunks，并用 token-aware throttle 和退避重试控制吞吐 | 1.6.4 / 2026-05-02 |
+| refresh 在大量 changed 小文件下仍逐文件 embedding | 待优化 | 当前 refresh 已有文件级进度和 hash skip；下一阶段让 refresh 共享 Rebuild 的全局 batch pipeline | TODO / 2026-05-02 |
+| 未来打开 embedding 并发后的 throttle 竞争 | 当前不触发 | 当前 policy 显式 `maxConcurrency: 1` 且外层串行；如后续允许并发，需要把 `nextEmbeddingRequestAt` 升级为并发安全的发送时间预订或队列限速器 | TODO / 2026-05-02 |
 
 ## 决策记录
 
@@ -372,6 +379,7 @@ Gate 结果：
 | 2026-05-02 | 当前实现固定 VSS embedding dimensions 为 1024 | Qwen v4 目标方案是 1024 维；开放维度设置会引入模型兼容和误配置风险 | 是否提供 `embeddingDimensions` 设置留作后续确认 |
 | 2026-05-02 | 普通用户心智切换为 Memory from your notes | 用户关心数据、成本和安全，不关心 RAG、embedding、SQLite 等实现细节 | 普通聊天、设置、命令和 Notice 默认使用 Memory 文案；技术词只进入 Advanced diagnostics |
 | 2026-05-02 | 成本动作按次确认，不长期记住授权 | Memory 准备可能调用 AI provider 并产生费用，不能静默或长期默认授权 | 聊天前检查 readiness；prepare/update 前显示 Data、AI provider、Cost；用户可 Answer now |
+| 2026-05-02 | Rebuild 优先优化跨文件 embedding batch，refresh 暂不共享管线 | Rebuild 是大 vault 最重的成本路径；refresh 还承担后台 dirty queue 语义，贸然重构影响面更大 | 1.6.4 先解决 Rebuild 吞吐和进度；refresh 共享全局 batch pipeline 留作下一阶段 |
 
 ## 变更记录
 
@@ -399,3 +407,4 @@ Gate 结果：
 | 2026-05-02 | 回顾当前代码修改和任务计划完成度 | 补充代码改动范围、Phase 完成快照、剩余事项、接口对齐和 Android 待验证状态 |
 | 2026-05-02 | 实现 Memory 产品体验重构 | 新增 `MemoryManager`、聊天前确认弹窗、`Answer now` skip-memory、聊天内 Memory 提示、Memory references、高级入口默认隐藏；`npm test -- --runInBand --silent` 通过 102 个测试，`npm run lint` 和 `npm run build` 通过 |
 | 2026-05-02 | 处理 Gemini review feedback | 手动 refresh abort 时不再显示成功 Notice；聊天历史引用块清理改为正则并覆盖空白变化 |
+| 2026-05-02 | 发布 1.6.4 Rebuild 吞吐与进度优化 | Rebuild 跨文件 embedding batch、provider-aware throttle/retry、失败文件停止排队、refresh 文件级进度和 Memory Notice 实时更新已实现；发布前 `npm test -- --runInBand` 通过 116 个测试，`npm run lint` 和 `npm run build` 通过 |

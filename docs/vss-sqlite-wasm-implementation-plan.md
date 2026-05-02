@@ -388,5 +388,5 @@ Manual verification：
 ## Related Documents
 
 - [VSS SQLite/WASM 架构设计](./vss-sqlite-wasm-architecture.md)
-- [VSS Embedding 刷新方案说明](./vss-embedding-refresh.md)：旧 VSS JSON/`MemoryVectorStore` 刷新策略背景文档。
+- [VSS Embedding 刷新方案说明](./vss-embedding-refresh.md)：当前 SQLite/WASM Memory refresh、Rebuild batch、embedding throttle 和进度事件说明。
 - [Obsidian 插件移动端网络兼容优化方案](./mobile-network-optimization-plan.md)：移动网络兼容背景文档；其中 VSS 自动/手动生命周期以本文和架构设计为准。
