@@ -4,7 +4,8 @@
 
 - 主路径从 `MemoryVectorStore` 改为 `sqlite-vector/@sqliteai/sqlite-wasm` + `opfs-sahpool` 本机 SQLite 索引，避免启动时全量向量进入 JS 内存。
 - 正式实现前先做 Phase 0 PoC Gate：Desktop PoC 是进入主实现的硬门槛；iOS/Android PoC 是 Mobile 支持级别门槛，未通过只降级 Mobile 支持。
-- Desktop 和 Mobile 第一版都采用手动 VSS：不启动自动扫描、不自动 embedding、不自动重建。
+- Desktop 和 Mobile 第一版都不做启动或后台自动索引；聊天前默认检查 Memory，任何可能产生 AI 成本的准备或更新动作都需要用户按次确认。
+- 普通用户体验从“维护 VSS 索引”改为“让助手读取来自笔记的 Memory”；技术细节默认隐藏，只在 Advanced diagnostics 中出现。
 - VSS 索引是“有 token 成本的可重建缓存”：OPFS 丢失不影响笔记，但重建前必须提醒用户并确认。
 - 新安装默认 Qwen `text-embedding-v4` + `1024` 维；旧用户和旧索引只提示迁移，不自动消耗 token。
 - 检索精确优先：默认 `vector_full_scan`；超过 `50k` chunks 提醒可能变慢，超过 `100k` chunks 建议未来考虑量化，但不自动切换。
@@ -19,7 +20,7 @@
 | Phase 1 VectorIndex + manifest | 已实现 | marker/manifest 使用设备子目录；fallback 使用双硬上限 |
 | Phase 2 SQLite Worker 后端 | 已实现 | worker/WASM 已纳入 build、deploy、release assets |
 | Phase 3 VSS lifecycle | 已实现 | 插件启动不自动建索引；refresh/rebuild 手动触发 |
-| Phase 4 UI 状态与提醒 | 基础实现已完成 | 状态栏和 Mobile 状态命令已完成；rebuild 确认文案仍可补充预计文件数/chunk 数和当前模型 |
+| Phase 4 UI 状态与提醒 | Memory 产品体验已实现，待补手动 smoke test | 状态栏、聊天前确认弹窗、Answer now fallback 和高级入口隐藏已完成 |
 | Phase 5 旧 JSON 清理和迁移保护 | 已实现 | 清理前检查 SQLite ready、marker/profile、chunkCount 和 fatal error |
 | Phase 6 测试与验证 | 自动化、Desktop、iOS 已通过；Android 待验证 | README 已标注 Android VSS 为待实机验证状态 |
 
@@ -58,7 +59,7 @@ Gate 结果：
 - 首次手动初始化 VSS 时，在主线程主动调用 `navigator.storage.persist()` 请求 persistent storage。
 - 如果 persistent storage 不可用或返回 `false`：
   - 继续允许用户手动建立索引。
-  - UI 标注 `best-effort storage`，提示索引未来可能被系统/WebView 清理，重建会产生 embedding token 成本。
+  - UI 标注 `This device may need to prepare memory again later.`，提示索引未来可能被系统/WebView 清理，重建会产生 AI credits/API calls。
 - 使用 `navigator.storage.persisted()` 和 `navigator.storage.estimate()` 记录并展示 storage 状态、usage/quota、VSS DB 估算大小。
 - OPFS DB 不放入 vault，不参与同步；底层文件只通过 VSS reset/rebuild 管理。
 
@@ -88,12 +89,13 @@ Gate 结果：
   - SQLite 不可用且没有 manifest 时，不扫描旧 JSON 向量，不启用 Memory fallback。
 - 如果 marker 显示本设备曾有索引，但 OPFS DB 打不开、meta 表缺失或 profile 记录缺失：
   - 标记 `missing-local-index`。
-  - 只在 VSS 入口或聊天需要 RAG 时提示，不在插件启动时弹窗。
+  - 只在 Memory 入口或聊天需要读取 Memory 时提示，不在插件启动时弹窗。
   - 提示用户索引可能被系统/WebView 清理；笔记未丢失；重建会重新调用 embedding 并可能产生 token 成本。
   - 不自动重建。
 
 ## Architecture Changes
 
+- 新增产品层 `MemoryManager`，作为 Chat UI 和 VSS 之间的用户体验门面。
 - 新增 `VectorIndex` 接口：
   - `initialize(profile)`
   - `upsertFile(fileState, chunks, embeddings)`
@@ -110,9 +112,37 @@ Gate 结果：
 - fallback 双硬上限：
   - `chunkCount <= 5,000`。
   - `estimatedMemoryBytes <= 128MB`。
-  - 任一条件超限即禁用 VSS，聊天跳过 RAG。
+  - 任一条件超限即禁用 Memory 检索，聊天普通回答。
 - 业务层只依赖 `VectorIndex`，不暴露 sqlite-vector 专有 SQL/API，保留未来替换为 `sqlite-vec` 的空间。
 - `sqlite-vector/@sqliteai/sqlite-wasm` 必须 pin 精确版本，并在 README/release notes 披露许可证边界。
+
+## Memory Product Layer
+
+普通用户不直接管理 VSS、RAG 或向量索引。用户看到的是 `Memory from your notes`：
+
+- 默认开启 `memoryEnabled` 和 `memoryAutoCheckBeforeChat`。
+- 聊天前调用 `MemoryManager.ensureReadyForChat(prompt)`。
+- `ready`：直接使用 Memory 检索并回答。
+- `first-use`、`local-memory-missing`、`settings-changed`：显示确认弹窗，确认后调用 `rebuildLocalIndex({ silent: true })`。
+- `changed-notes`：显示确认弹窗，确认后调用 `refreshLocalIndex({ silent: true })`。
+- `unavailable`：普通提示 `Memory is unavailable`，本次走普通聊天。
+- 用户点 `Answer now`：本次传入 `memoryMode: "skip-memory"`，不调用 `vss.searchSimilarity()`，聊天内显示 `Memory was not used for this answer.`。
+- 用户点 `Cancel`：不发送用户问题，不调用 LLM。
+- 同一聊天视图内拒绝后 10 分钟不重复弹窗。
+
+确认弹窗固定包含：
+
+- `Data`: `Your notes will not be changed or deleted.`
+- `AI provider`: `To prepare memory, note text may be sent to your configured AI provider.`
+- `Cost`: `This may use AI credits or API calls. Unchanged notes will be skipped when possible.`
+
+设置页新增普通 `Memory` 区块：
+
+- `Use memory from my notes`，默认开启。
+- `Check memory before chat`，默认开启。
+- `Advanced memory controls`，默认关闭。
+
+高级入口中保留维护能力：update、rebuild、reset、clean old cache、technical status、memory model。普通命令面板只暴露 `Prepare Memory` 和 `Open Chat in Sidebar`；高级命令通过当前设置动态隐藏或显示。
 
 ## Data Model
 
@@ -206,30 +236,29 @@ profile mismatch：
 
 ## User Interactions
 
-VSS 状态必须在聊天或状态栏可见：
+普通用户看到 Memory 状态，而不是 VSS 技术状态：
 
-- `Not initialized`
-- `Ready: N chunks`
-- `Stale profile`
-- `Missing local index`
-- `Best-effort storage`
-- `Fallback memory mode`
-- `Disabled`
+- `Memory ready`
+- `Memory needs update`
+- `Preparing memory...`
+- `Memory unavailable`
+- `This device may need to prepare memory again later.`
 
-聊天 RAG 行为：
+聊天 Memory 行为：
 
-- Ready：正常检索。
-- Not initialized/stale/missing：提示一次，并跳过 RAG。
-- Disabled：轻量显示状态，不阻塞聊天。
+- Ready：正常读取 Memory。
+- First use / changed notes / local memory missing / settings changed：显示确认弹窗。
+- 用户确认：prepare/update memory，然后继续原问题。
+- 用户选择 `Answer now`：本次不读取 Memory，直接普通回答。
+- 用户选择 `Cancel`：不发送问题。
+- Unavailable：轻量提示后普通回答。
 
-重建确认弹窗必须说明：
+确认弹窗必须说明：
 
-- 将重新调用 embedding 模型。
-- 可能产生 token/API 成本。
-- 预计文件数/chunk 数。
-- 当前模型和维度。
-
-当前实现已经覆盖 token/API 成本确认；预计文件数/chunk 数和当前模型/维度展示属于待补强项，不影响手动 VSS 主路径，但发布前应决定是否纳入本轮。
+- Data：笔记不会被修改或删除。
+- AI provider：准备 Memory 时 note text may be sent to configured AI provider。
+- Cost：可能产生 AI credits/API calls；未变化笔记尽量跳过。
+- 能估算时显示 notes to check、notes likely to update 和 this device only。
 
 不在插件启动时弹窗，避免普通使用被打扰。
 
@@ -289,15 +318,15 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 
 ### Phase 4: UI 状态、提醒、命令
 
-- 新增或调整 VSS 命令：
-  - `Initialize/Rebuild Local VSS Index`
-  - `Refresh Local VSS Index`
-  - `Reset Local VSS Index`
-  - `Clean Legacy VSS JSON Cache`
-- 在聊天或状态栏显示 VSS 状态。
-- 实现 missing local index 提示。
-- 实现 rebuild token 成本确认。
-- 实现 best-effort storage 警告。
+- 新增 `MemoryManager` 产品层。
+- 新增聊天前 Memory readiness 检查。
+- 新增 `MemoryApprovalModal`，覆盖 Data、AI provider、Cost。
+- 普通命令保留 `Prepare Memory` 和 `Open Chat in Sidebar`。
+- 高级命令默认隐藏，并按 `Advanced memory controls` 动态显示。
+- 状态栏显示 `Memory ready`、`Memory needs update`、`Memory unavailable` 等普通文案。
+- ChatService 支持 `memoryMode: "auto" | "use-memory" | "skip-memory"`。
+- `Answer now` 跳过 Memory 检索但继续普通聊天。
+- 技术状态只通过 `Diagnostic details` 暴露。
 
 ### Phase 5: 旧 JSON 清理和迁移保护
 
@@ -327,7 +356,10 @@ Unit tests：
 - old JSON 不再进入主路径内存加载。
 - distance 到 score 转换。
 - SQLite worker fatal error 后可重建 worker。
-- ChatService 在 RAG 无结果时切回普通 prompt，不传空 `rag_content`。
+- ChatService 在 Memory 无结果时切回普通 prompt，不传空 `memory_content`。
+- `Answer now` 不调用 `vss.searchSimilarity()`。
+- Memory readiness 映射到 ready / first-use / changed-notes / local-memory-missing / settings-changed / unavailable。
+- 普通 Memory 文案不包含禁止暴露的技术词。
 
 Phase 0 smoke tests：
 
@@ -340,8 +372,8 @@ Phase 0 smoke tests：
 
 Manual verification：
 
-- Desktop：初始化、刷新、重建、reset、旧 JSON 清理、profile stale 提示、真实 LLM + RAG 聊天。
-- iOS：手动 VSS、reload 持久化、refresh、状态命令、真实 LLM + RAG 聊天。
+- Desktop：初始化、刷新、重建、reset、旧 JSON 清理、profile mismatch 提示、真实 LLM + Memory 聊天。
+- iOS：手动 Memory、reload 持久化、refresh、状态命令、真实 LLM + Memory 聊天。
 - Android：待实机验证；当前没有 Android 测试设备，README 已标注支持状态为 pending verification。
 - 模拟 OPFS 丢失：保留 marker，删除/重置 DB，确认出现 token 成本提醒。
 

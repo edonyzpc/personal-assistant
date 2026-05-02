@@ -11,7 +11,7 @@
     <img alt="Downloads" src="https://img.shields.io/github/downloads/edonyzpc/personal-assistant/total?label=下载量&logo=obsidian&logoColor=%23b300ff&style=social" />
 </p>
 
-> ***号外***: 新特性来啦！Perosnal Assistant 支持 AI 生成 featured images，再也不用为题图烦恼了！
+> ***号外***: 新特性来啦！Personal Assistant 的聊天助手可以读取来自你笔记的 Memory；准备 Memory 前会说明数据流、AI 服务商调用和可能成本，并先征求你的确认。
 <div align="center">
 <video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
 </div>
@@ -65,6 +65,7 @@
 5. 自动更新插件
 6. 自动更新主题
 7. 自动设置关系视图的颜色
+8. 聊天时使用来自笔记的 Memory，也可以选择立刻普通回答
 
 ## 研发
 
@@ -76,7 +77,7 @@
 
 ### Mobile VSS 验证说明
 
-本地 VSS SQLite/WASM 后端已经在 Obsidian Desktop 和 Obsidian iOS 的测试 vault 上完成 smoke test，覆盖重建、刷新、重载后持久化、聊天和 RAG 引用展示。由于当前没有 Android 实机测试设备，Android 尚未完成完整实机验证，因此 Android VSS 支持应视为待验证状态。
+本地 VSS SQLite/WASM 后端已经在 Obsidian Desktop 和 Obsidian iOS 的测试 vault 上完成 smoke test，覆盖重建、刷新、重载后持久化、聊天和 Memory references 展示。由于当前没有 Android 实机测试设备，Android 尚未完成完整实机验证，因此 Android VSS 支持应视为待验证状态。
 
 ## 安装
 

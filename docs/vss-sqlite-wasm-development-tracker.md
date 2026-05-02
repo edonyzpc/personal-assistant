@@ -18,9 +18,9 @@
 | 重构分支 | `codex/vss-sqlite-wasm-refactor` |
 | 创建日期 | 2026-05-02 |
 | 最后回顾 | 2026-05-02 |
-| 总体阶段 | Phase 6 自动化验证已通过；Obsidian Desktop smoke test 已通过，Obsidian iOS VSS + Chat/RAG smoke test 已通过，Android 待验证 |
+| 总体阶段 | SQLite/WASM 主路径已完成；Memory 产品体验自动化测试已通过；Obsidian Desktop/iOS 旧 smoke test 已通过，Memory 新交互待补手动 smoke test；Android 待验证 |
 | 设计文档 | 已完成，并已补充当前实现快照、接口对齐和 Android 待验证说明 |
-| 实现状态 | SQLite/WASM 主路径、manifest/marker、fallback 判定、手动 lifecycle、基础命令、worker/WASM 打包发布路径和关键自动化测试已实现 |
+| 实现状态 | SQLite/WASM 主路径、manifest/marker、fallback 判定、MemoryManager 产品层、聊天前确认、Answer now fallback、高级入口隐藏、worker/WASM 打包发布路径和关键自动化测试已实现 |
 | 最近结论 | 自动化测试、lint、生产构建已通过；Desktop 已验证 rebuild、refresh、reset、旧 JSON 清理、profile stale、OPFS 丢失检测与恢复、真实 LLM + RAG 聊天；iOS 已验证 rebuild、reload 持久化、refresh、状态命令和真实 LLM + RAG 聊天，存储为 best-effort；Android 因暂无实机设备仍待验证，并已在 README 标注 |
 
 ## 当前代码修改回顾
@@ -28,18 +28,19 @@
 | 范围 | 主要文件 | 当前结论 |
 | --- | --- | --- |
 | VSS 核心门面 | `src/vss.ts` | 已从启动全量加载 JSON/`MemoryVectorStore` 改为手动 SQLite/WASM lifecycle；保留旧方法为兼容 no-op 或手动入口；支持 rebuild、refresh、reset、legacy JSON 清理、profile stale、missing local index、fallback 判定 |
+| Memory 产品层 | `src/memory-manager.ts`、`src/chat-view.ts`、`src/settings.ts` | 普通用户看到 Memory from your notes；聊天前检查 readiness；成本动作按次确认；`Answer now` 本次跳过 Memory；高级维护入口默认隐藏 |
 | VectorIndex 后端 | `src/vss/*` | 新增 `VectorIndex` 类型、`SqliteVectorIndex`、SQLite worker protocol/worker、`MemoryVectorIndex` fallback、marker/manifest helper；主线程不再持有全量向量 |
 | 构建与发布 | `package.json`、`package-lock.json`、`esbuild.config.mjs`、`Makefile`、`.github/workflows/release.yml` | pin `@sqliteai/sqlite-wasm`；单独打包 `vss-sqlite-worker.js`；复制/发布 `sqlite3.wasm` 和 worker asset；test vault deploy 路径已补齐 |
-| 插件命令与状态 | `src/plugin.ts`、`src/settings.ts`、`src/stats/stats-store.ts` | 新增本地 VSS 初始化/刷新/reset/清理/状态命令；Desktop 状态栏显示 VSS 状态；Mobile 可通过状态命令自查；新安装默认 Qwen v4，旧默认 v3 只提示不静默迁移 |
-| 聊天 RAG | `src/ai-services/chat-service.ts` | RAG 有结果时使用 RAG prompt；RAG 无结果时回到普通 chat prompt，避免传空 `rag_content` 造成“看起来检索了但没有内容”的行为 |
-| 自动化测试 | `__tests__/vss.test.ts`、`__tests__/chat-service.test.ts`、`__tests__/plugin-record-note.test.ts`、`__tests__/memory-vector-index.test.ts`、`__tests__/sqlite-vector-index.test.ts`、`__tests__/vss-state.test.ts` | 覆盖 lifecycle、fallback 双硬上限、marker/manifest 路径、missing index 恢复、旧 JSON 清理保护、迁移提示、性能提醒、worker fatal error recovery、聊天无 RAG fallback |
+| 插件命令与状态 | `src/plugin.ts`、`src/settings.ts`、`src/stats/stats-store.ts` | 普通命令保留 `Prepare Memory`；Desktop 状态栏显示 Memory 状态；高级 reset/clean/status 命令按设置动态隐藏；新安装默认 Qwen v4，旧默认 v3 只提示不静默迁移 |
+| 聊天 Memory | `src/ai-services/chat-service.ts` | Memory 有结果时使用 Memory prompt；Memory 无结果或用户选择 `Answer now` 时回到普通 chat prompt，不传空 `memory_content` |
+| 自动化测试 | `__tests__/memory-manager.test.ts`、`__tests__/vss.test.ts`、`__tests__/chat-service.test.ts`、`__tests__/plugin-record-note.test.ts`、`__tests__/memory-vector-index.test.ts`、`__tests__/sqlite-vector-index.test.ts`、`__tests__/vss-state.test.ts` | 覆盖 Memory readiness、产品文案、skip-memory 聊天、lifecycle、fallback 双硬上限、marker/manifest 路径、missing index 恢复、旧 JSON 清理保护、迁移提示、性能提醒、worker fatal error recovery |
 | 文档与发布说明 | `docs/vss-sqlite-wasm-*.md`、`README.md`、`README-CN.md`、`CHANGELOG.md` | 架构、实施计划、开发 tracker 已建立；README 标注 Android 待实机验证和手动安装新增 worker/WASM 文件；CHANGELOG 增加 Unreleased 记录 |
 
 ## 剩余事项
 
 - [ ] Android 实机验证：当前没有 Android 测试设备，不能标记为完整通过；README / README-CN 已明确说明 pending verification。
+- [ ] Memory 产品交互 smoke test：Desktop 和 iOS 需要补测首次聊天弹窗、`Prepare memory and answer`、`Answer now`、`Cancel`、高级入口默认隐藏。
 - [ ] 发布前许可证复核：`@sqliteai/sqlite-wasm` 已 pin 精确版本并披露，但正式发布前仍需复核上游许可证和分发条款。
-- [ ] Rebuild 确认弹窗细化：当前已提示 embedding token/API 成本；计划中的预计文件数/chunk 数和当前模型/维度尚未展示，是否本轮补强待确认。
 - [ ] `embeddingDimensions` 设置：当前实现固定 `VSS_DEFAULT_DIMENSIONS = 1024`；是否暴露为用户设置待确认，避免错误维度导致索引 stale 或额外重建成本。
 
 ## 执行原则
@@ -47,8 +48,8 @@
 - 先做 Phase 0 PoC Gate，再进入主实现。
 - Desktop PoC 未通过时停止主实现，重新评估后端方案。
 - Mobile PoC 未通过时不阻塞 Desktop 主路径，但 Mobile VSS 必须降级为实验性手动 VSS 或禁用 VSS。
-- 第一版保持手动 VSS，不做启动自动扫描、自动后台索引或自动重建。
-- OPFS 索引是可重建缓存，但重建会消耗 embedding token，因此丢失检测和重建确认必须优先实现。
+- 第一版不做启动自动扫描、自动后台索引或自动重建；聊天前可以自动检查 Memory，但成本动作必须按次确认。
+- OPFS 索引是可重建缓存，但重建会消耗 AI credits/API calls，因此丢失检测和重建确认必须优先实现。
 - fallback 只能基于 manifest 判断，且必须同时满足 `chunkCount <= 5,000` 和 `estimatedMemoryBytes <= 128MB`。
 
 ## 阶段进展
@@ -171,31 +172,33 @@ Gate 结果：
 - [x] Desktop 和 Mobile 都遵循手动 VSS。
 - [x] 缺失索引只在 VSS 入口或聊天需要 RAG 时提示。
 
-### Phase 4: UI 状态、提醒、命令
+### Phase 4: Memory 产品体验、状态、提醒、命令
 
-目标：让用户清楚知道 VSS 当前是否可用、是否 stale、是否丢失本地索引，以及重建可能产生 token 成本。
+目标：把普通用户心智从“维护技术索引”改为“让助手读取来自笔记的 Memory”；用户只需要理解数据、成本和安全，高级诊断才暴露技术细节。
 
-状态：已实现，Desktop 核心交互和破坏性路径已验证；iOS 核心状态/重建/刷新路径已验证；Android 待验证。
+状态：Memory 产品层和自动化测试已实现；Desktop/iOS 新交互待补 smoke test；Android 待验证。
 
 任务：
 
-- [x] 新增或调整 `Initialize/Rebuild Local VSS Index` 命令。
-- [x] 新增或调整 `Refresh Local VSS Index` 命令。
-- [x] 新增或调整 `Reset Local VSS Index` 命令。
-- [x] 新增或调整 `Clean Legacy VSS JSON Cache` 命令。
-- [x] 在聊天或状态栏显示 `VSS not initialized`。
-- [x] 在聊天或状态栏显示 `Index stale`。
-- [x] 在聊天或状态栏显示 `Ready: N chunks`。
-- [x] 新增 `Show Local VSS Index Status` 命令，补齐 Mobile 无状态栏时的可观测性。
-- [x] persistent storage denied/unavailable 时显示 `best-effort storage` 警告。
-- [x] OPFS 丢失时提醒笔记未丢失，但重建会重新调用 embedding。
-- [x] rebuild 前做 token 成本确认。
+- [x] 新增 `MemoryManager` 产品层。
+- [x] 聊天前默认检查 Memory readiness。
+- [x] 新增 `MemoryApprovalModal`，展示 Data、AI provider、Cost。
+- [x] First use / local missing / settings changed 触发 rebuild 确认。
+- [x] Changed notes 触发 update 确认。
+- [x] `Answer now` 本次跳过 Memory，并继续普通聊天。
+- [x] `Cancel` 不发送问题，不调用 LLM。
+- [x] 状态栏显示 `Memory ready`、`Memory needs update`、`Memory unavailable`。
+- [x] 普通命令保留 `Prepare Memory`。
+- [x] Advanced memory controls 默认隐藏 reset、clean cache、technical status 等高级命令。
+- [x] 技术状态统一放入 `Diagnostic details`。
+- [x] persistent storage denied/unavailable 时显示 `This device may need to prepare memory again later.`。
 
 验收：
 
-- [x] 用户不会因为 RAG 静默不可用而误以为功能正常。
+- [x] 用户不会因为 Memory 静默不可用而误以为功能正常。
 - [x] 不在插件启动时弹 OPFS 丢失提醒。
-- [x] 重建、reset、清理旧 JSON 都有明确确认路径。
+- [x] 凡是可能消耗 AI credits/API calls 的 prepare/update 都先确认。
+- [ ] Desktop/iOS 新 Memory 弹窗与 Answer now / Cancel 交互 smoke test。
 
 ### Phase 5: 旧 JSON 清理和迁移保护
 
@@ -318,7 +321,7 @@ Gate 结果：
    - 再次查看状态仍为 `Ready`。
 6. 打开 `Personal Assistant: Open Chat in Sidebar`。
    - 输入：`请用一句话概括当前测试笔记的主题。`
-   - 预期：模型正常返回，最好能看到 `RAG References`。
+   - 预期：模型正常返回，最好能看到 `Memory references`。
    - 该步骤会触发真实 embedding/query 和 LLM 调用；如需省 token 可跳过。
 7. 可选破坏性验证：运行 `Reset Local VSS Index`。
    - 确认 reset。
@@ -334,7 +337,7 @@ Gate 结果：
 - 每一步 Notice 或错误文案。
 - rebuild 后的 chunk 数、backend、storage 文案。
 - reload 后是否仍为 Ready。
-- 聊天是否返回，以及是否显示 `RAG References`。
+- 聊天是否返回，以及是否显示 `Memory references`。
 
 ## 风险跟踪
 
@@ -367,6 +370,8 @@ Gate 结果：
 | 2026-05-02 | embedding rate gap 只应用在实际 embedding batch 前 | 手动 refresh 大多数时候是检查变更，不应因未变更文件数量线性变慢 | unchanged refresh 不再因为逐文件 throttle 变慢；有变更时仍保护 embedding 调用频率 |
 | 2026-05-02 | `missing-local-index` 下 rebuild 复用当前 SQLite 后端 | OPFS 丢失检测会留下一个已初始化但无 chunks 的后端，恢复时不应再新建 worker 抢占同一 OPFS DB | rebuild 可从 `VSS index missing` 状态恢复到 `Ready: N chunks` |
 | 2026-05-02 | 当前实现固定 VSS embedding dimensions 为 1024 | Qwen v4 目标方案是 1024 维；开放维度设置会引入模型兼容和误配置风险 | 是否提供 `embeddingDimensions` 设置留作后续确认 |
+| 2026-05-02 | 普通用户心智切换为 Memory from your notes | 用户关心数据、成本和安全，不关心 RAG、embedding、SQLite 等实现细节 | 普通聊天、设置、命令和 Notice 默认使用 Memory 文案；技术词只进入 Advanced diagnostics |
+| 2026-05-02 | 成本动作按次确认，不长期记住授权 | Memory 准备可能调用 AI provider 并产生费用，不能静默或长期默认授权 | 聊天前检查 readiness；prepare/update 前显示 Data、AI provider、Cost；用户可 Answer now |
 
 ## 变更记录
 
@@ -383,12 +388,14 @@ Gate 结果：
 | 2026-05-02 | 执行 Desktop 破坏性 smoke test | reset 后状态栏为 `VSS not initialized`；旧 JSON 清理删除 5 个 legacy cache 文件且保留 `dirty.json`；OPFS 丢失模拟进入 `VSS index missing` |
 | 2026-05-02 | 修复 OPFS 丢失后的 rebuild 恢复路径 | 首次恢复暴露 `SQLite VSS index is unavailable`；修复后重新构建、同步 test vault 并从 `VSS index missing` 恢复到 `Ready: 6 chunks` |
 | 2026-05-02 | 验证 Desktop profile stale 提示 | 临时把测试 vault 的 embedding model 从 `text-embedding-v3` 改为 `text-embedding-v4` 后 reload，状态栏显示 `Index stale`；恢复设置后再次 reload 回到 `Ready: 6 chunks` |
-| 2026-05-02 | 修正并补齐聊天无 RAG 单元测试 | mock VSS 返回空检索结果且 mock LLM，不访问真实模型；验证 ChatService 切换到普通聊天 prompt，不传空 `rag_content`，仍正常 stream 响应 |
+| 2026-05-02 | 修正并补齐聊天无 Memory 单元测试 | mock VSS 返回空检索结果且 mock LLM，不访问真实模型；验证 ChatService 切换到普通聊天 prompt，不传空 `memory_content`，仍正常 stream 响应 |
 | 2026-05-02 | 同步最新构建到 test vault | 同步 `main.js`、worker、WASM 和 manifest 后 reload Obsidian，状态栏仍为 `Ready: 6 chunks` |
-| 2026-05-02 | 验证 Desktop 真实 LLM + RAG 聊天 | 在 Obsidian Chat 面板提问“请用一句话概括当前测试笔记的主题。”；模型返回中文回答并显示 `RAG References`，状态栏保持 `Ready: 6 chunks` |
+| 2026-05-02 | 验证 Desktop 真实 LLM + Memory 聊天 | 在 Obsidian Chat 面板提问“请用一句话概括当前测试笔记的主题。”；模型返回中文回答并显示 `Memory references`，状态栏保持 ready |
 | 2026-05-02 | 补齐 Mobile VSS 状态查看命令 | Desktop 有状态栏，Mobile 没有稳定状态栏入口；新增 `Show Local VSS Index Status` 命令用于 iOS/Android smoke test 和用户自查 |
 | 2026-05-02 | 验证 iOS 核心 VSS 路径 | iPhone Mirroring 下初始状态为 `VSS not initialized`；重建后为 `Ready: 6 chunks across 5 files`，后端 `sqlite-wasm-opfs-sahpool`；Obsidian reload 后仍 Ready；Refresh 后仍 Ready；Storage 为 `best-effort storage` |
-| 2026-05-02 | 验证 iOS 真实 LLM + RAG 聊天 | 在 iPhone Mirroring 的 Chat 面板提问 `Summarize this note in one sentence.`；模型正常返回摘要，`RAG References` 可展开并显示来源 `2026-05-01.md` |
+| 2026-05-02 | 验证 iOS 真实 LLM + Memory 聊天 | 在 iPhone Mirroring 的 Chat 面板提问 `Summarize this note in one sentence.`；模型正常返回摘要，`Memory references` 可展开并显示来源 `2026-05-01.md` |
 | 2026-05-02 | 标注 Android 实机验证限制 | 当前没有 Android 设备，README / README-CN 已明确说明 Android VSS 尚未完整实机验证 |
 | 2026-05-02 | 补齐 fallback、迁移和性能阈值自动化验证 | SQLite/OPFS 不可用时根据 manifest 双硬上限进入 Memory fallback 或禁用；迁移提示不改旧默认 v3、不打扰自定义模型；状态命令超过 50k/100k chunks 时显示性能提醒且不自动启用量化检索 |
 | 2026-05-02 | 回顾当前代码修改和任务计划完成度 | 补充代码改动范围、Phase 完成快照、剩余事项、接口对齐和 Android 待验证状态 |
+| 2026-05-02 | 实现 Memory 产品体验重构 | 新增 `MemoryManager`、聊天前确认弹窗、`Answer now` skip-memory、聊天内 Memory 提示、Memory references、高级入口默认隐藏；`npm test -- --runInBand --silent` 通过 102 个测试，`npm run lint` 和 `npm run build` 通过 |
+| 2026-05-02 | 处理 Gemini review feedback | 手动 refresh abort 时不再显示成功 Notice；聊天历史引用块清理改为正则并覆盖空白变化 |

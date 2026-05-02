@@ -14,7 +14,7 @@
  <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
 </p>
 
-> ***NOTE***: New shiny feature: Support LLM chat assistant powered by an intelligent RAG knowledge base, designed to improve the efficiency of users in learning and work, providing comprehensive reading, searching and writing in Obsidian vault.
+> ***NOTE***: New shiny feature: Support an LLM chat assistant that can use Memory from your notes. Before preparing memory, the assistant explains data flow, AI provider usage, and possible cost, then asks for your approval.
 
 <div align="center">
 
@@ -81,6 +81,7 @@ https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 6. automatically update themes with one command
 7. automatically set color of graph view
 8. list all callouts css configuration for quickly inserting
+9. chat with AI using Memory from your notes, or answer immediately without reading memory
 
 ## Develop
 
@@ -92,7 +93,7 @@ The local VSS SQLite backend uses `@sqliteai/sqlite-wasm` pinned to `3.50.4-sync
 
 ### Mobile VSS validation note
 
-The local VSS SQLite/WASM backend has been smoke-tested on Obsidian Desktop and Obsidian iOS with the test vault, including rebuild, refresh, reload persistence, chat, and RAG references. Android has not been fully validated on a physical device yet because no Android test device is currently available, so Android VSS support should be treated as pending verification.
+The local VSS SQLite/WASM backend has been smoke-tested on Obsidian Desktop and Obsidian iOS with the test vault, including rebuild, refresh, reload persistence, chat, and Memory references. Android has not been fully validated on a physical device yet because no Android test device is currently available, so Android VSS support should be treated as pending verification.
 
 ## Install
 Now Personal Assistant plugin is available in [plugin market](https://obsidian.md/plugins?search=personal%20assistant#), you can install this plugin directly within Obsidian App, please check this [mannual](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin) to get more details.
