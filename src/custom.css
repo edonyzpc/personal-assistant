@@ -421,6 +421,15 @@ body {
 	border-bottom-left-radius: 4px;
 }
 
+.llm-message.system {
+	background-color: var(--background-primary);
+	border-style: dashed;
+	color: var(--text-muted);
+	margin-left: auto;
+	margin-right: auto;
+	max-width: 92%;
+}
+
 .llm-view .message-actions {
 	position: absolute;
 	top: 8px;
@@ -595,6 +604,10 @@ body {
 	border-color: var(--background-modifier-border);
 }
 
+.theme-dark .llm-message.system {
+	background-color: var(--background-primary);
+}
+
 .llm-view .cancel-button-hidden {
 	display: none;
 }
@@ -727,4 +740,44 @@ body {
 
 .pa-notice-shell .notice-body {
 	padding: 0 !important;
+}
+
+.pa-memory-modal {
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+}
+
+.pa-memory-modal h2 {
+	margin: 0 0 4px;
+}
+
+.pa-memory-modal__intro {
+	color: var(--text-muted);
+	margin: 0;
+}
+
+.pa-memory-modal__section {
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	padding: 10px 12px;
+}
+
+.pa-memory-modal__section-title {
+	color: var(--text-normal);
+	font-weight: 600;
+	margin-bottom: 4px;
+}
+
+.pa-memory-modal__section-body,
+.pa-memory-modal__details {
+	color: var(--text-muted);
+	font-size: 13px;
+	line-height: 1.4;
+}
+
+.pa-memory-modal__details {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
 }

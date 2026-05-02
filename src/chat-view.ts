@@ -125,21 +125,39 @@ export class LLMView extends ItemView {
             this.updateClickableLink(contentDiv);
         };
 
+        const renderMemoryNotice = (content: string) => {
+            const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message system' });
+            messageDiv.createDiv({ cls: 'message-role', text: 'Memory' });
+            const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
+            contentDiv.setText(content);
+            this.responseDiv.scrollTo({
+                top: this.responseDiv.scrollHeight,
+                behavior: 'smooth'
+            });
+        };
+
         sendButton.onclick = async () => {
             const prompt = textArea.value;
-            if (!prompt) return;
-
-            this.chatHistory.push({ role: 'user', content: prompt });
-            renderMessage(this.chatHistory[this.chatHistory.length - 1], this.chatHistory.length - 1);
-
-            textArea.value = '';
-            addToEditorButton.disabled = true;
-
-            cancelButton.classList.replace('cancel-button-hidden', 'cancel-button-visible');
-            sendButton.classList.replace('send-button-visible', 'send-button-hidden');
+            if (!prompt || sendButton.disabled) return;
+            sendButton.disabled = true;
 
             try {
+                const memoryDecision = await this.plugin.memoryManager.ensureReadyForChat(prompt);
+                if (memoryDecision.decision === "cancel") {
+                    return;
+                }
+
+                this.chatHistory.push({ role: 'user', content: prompt });
+                renderMessage(this.chatHistory[this.chatHistory.length - 1], this.chatHistory.length - 1);
+                if (memoryDecision.message) {
+                    renderMemoryNotice(memoryDecision.message);
+                }
+
+                textArea.value = '';
+                addToEditorButton.disabled = true;
                 this.abortController = new AbortController();
+                cancelButton.classList.replace('cancel-button-hidden', 'cancel-button-visible');
+                sendButton.classList.replace('send-button-visible', 'send-button-hidden');
                 let responseContent = '';
                 let streamingMessageEl: HTMLDivElement | null = null;
                 let contentDiv: HTMLElement | null = null;
@@ -179,7 +197,10 @@ export class LLMView extends ItemView {
                         addToEditorButton.disabled = false;
                     },
                     this.abortController.signal,
-                    this.chatHistory
+                    this.chatHistory,
+                    {
+                        memoryMode: memoryDecision.decision === "answer-now" ? "skip-memory" : "use-memory",
+                    },
                 );
 
                 this.chatHistory.push({ role: 'assistant', content: responseContent });
@@ -202,6 +223,7 @@ export class LLMView extends ItemView {
             } finally {
                 cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
                 sendButton.classList.replace('send-button-hidden', 'send-button-visible');
+                sendButton.disabled = false;
                 this.abortController = null;
             }
         };

@@ -3,10 +3,15 @@ import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemp
 
 import { AIUtils } from './ai-utils';
 import type { PluginManager } from '../plugin'
+import type { MemoryMode } from '../memory-manager';
 
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
+}
+
+export interface StreamLLMOptions {
+    memoryMode?: MemoryMode;
 }
 
 const isAbortError = (error: unknown, signal?: AbortSignal): boolean => {
@@ -40,24 +45,30 @@ export class ChatService {
     /**
      * 流式LLM调用
      */
-    async streamLLM(prompt: string, onChunk: (chunk: string) => void, signal?: AbortSignal, chatHistory?: ChatMessage[]): Promise<void> {
-        // TODO: filter the RAG References from the history string
+    async streamLLM(
+        prompt: string,
+        onChunk: (chunk: string) => void,
+        signal?: AbortSignal,
+        chatHistory?: ChatMessage[],
+        options: StreamLLMOptions = {},
+    ): Promise<void> {
+        const memoryMode = options.memoryMode ?? "auto";
         const formattedHistory = (chatHistory || [])
-            .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.role === 'assistant' ? msg.content.split("\n\n---\n> [!personal-assistant-ai]- RAG References")[0] : msg.content}`)
+            .map(msg => `${msg.role === 'user' ? 'Human' : 'Assistant'}: ${msg.role === 'assistant' ? stripReferenceBlock(msg.content) : msg.content}`)
             .join('\n');
 
         const contextualPrompt = formattedHistory ?
             `${formattedHistory}\nHuman: ${prompt}\nAssistant:` :
             `Human: ${prompt}\nAssistant:`;
 
-        const ragPrompt = ChatPromptTemplate.fromMessages([
-            SystemMessagePromptTemplate.fromTemplate("你是一个严格根据知识库的内容回答问题的助手。\n\n** 知识库内容：**\n{rag_content}\n---\n"),
+        const memoryPrompt = ChatPromptTemplate.fromMessages([
+            SystemMessagePromptTemplate.fromTemplate("你是一个严格根据用户记忆内容回答问题的助手。\n\n** 用户记忆：**\n{memory_content}\n---\n"),
             HumanMessagePromptTemplate.fromTemplate(`{input}
-**注意**：1. 最后以列表形式附上你回答问题中引用知识库内容的来源，即知识库内容中metadata中的path字段
+**注意**：1. 最后以列表形式附上你回答问题中引用用户记忆的来源，即记忆内容中metadata中的path字段
 2. 输出格式为：
 
 ---
-> [!personal-assistant-ai]- RAG Referencs
+> [!personal-assistant-ai]- Memory references
 > 
 > 1. [[<metadata1.path>]]
 > 2. [[<metadata2.path>]]
@@ -66,10 +77,9 @@ export class ChatService {
 `),
         ]);
 
-        const ragContents = await this.plugin.vss.searchSimilarity(prompt);
-        const hasRagContent = ragContents.length > 0;
-        // 将ragContents前两个元素中的doc用JSON.stringify拼接在一起并且以---分割
-        const ragContent = ragContents
+        const memoryContents = memoryMode === "skip-memory" ? [] : await this.plugin.vss.searchSimilarity(prompt);
+        const hasMemoryContent = memoryContents.length > 0;
+        const memoryContent = memoryContents
             .slice(0, 3)
             .map((doc) => JSON.stringify(doc, null, 0))
             .join("\n---\n");
@@ -77,10 +87,10 @@ export class ChatService {
         const normalPrompt = ChatPromptTemplate.fromMessages([
             HumanMessagePromptTemplate.fromTemplate("{input}"),
         ]);
-        const activePrompt = hasRagContent ? ragPrompt : normalPrompt;
-        const chainInput = hasRagContent
+        const activePrompt = hasMemoryContent ? memoryPrompt : normalPrompt;
+        const chainInput = hasMemoryContent
             ? {
-                rag_content: ragContent,
+                memory_content: memoryContent,
                 input: contextualPrompt,
             }
             : {
@@ -124,4 +134,8 @@ export class ChatService {
             throw new DOMException('Aborted', 'AbortError');
         }
     }
+}
+
+function stripReferenceBlock(content: string): string {
+    return content.replace(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*(Memory references|RAG Referenc(?:es?|s))\b[\s\S]*$/i, "");
 }
