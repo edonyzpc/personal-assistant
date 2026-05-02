@@ -277,13 +277,224 @@ describe('VSS SQLite/WASM lifecycle', () => {
             if (path === 'second.md') return 'second memory note';
             throw createMissingFileError();
         });
-        (vss as any).waitForEmbeddingRateGap = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
-        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.Mock; // eslint-disable-line @typescript-eslint/no-explicit-any
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
         await vss.rebuildLocalIndex({ silent: true });
 
         expect(createEmbeddings).toHaveBeenCalledTimes(1);
         expect(index.upsertFile).toHaveBeenCalledTimes(2);
+        vss.dispose();
+    });
+
+    it('batches rebuild embeddings across files with the qwen v4 request cap', async () => {
+        const files = Array.from({ length: 21 }, (_, index) =>
+            createTFile(`note-${index}.md`, { size: 30, mtime: index + 1, ctime: 1 }, 'md', `note-${index}.md`)
+        );
+        const { plugin, mockAdapter } = createPlugin({
+            settings: {
+                apiToken: 'token',
+                vssCacheExcludePath: [],
+                aiProvider: 'qwen',
+                embeddingModelName: 'text-embedding-v4',
+                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                chatModelName: '',
+            },
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        (vss as any).profile = { // eslint-disable-line @typescript-eslint/no-explicit-any
+            provider: 'qwen',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            model: 'text-embedding-v4',
+            dimensions: 1024,
+            distanceMetric: 'COSINE',
+        };
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.getVSSFiles.mockReturnValue(files);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path.startsWith('note-')) return `memory text for ${path}`;
+            throw createMissingFileError();
+        });
+        const embedDocuments = jest.fn(async (texts: string[]) => texts.map((_, index) => [texts.length, index]));
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+        const progressEvents: unknown[] = [];
+
+        const summary = await vss.rebuildLocalIndex({
+            silent: true,
+            onProgress: (event) => progressEvents.push(event),
+        });
+
+        expect(summary.updated).toBe(21);
+        expect(embedDocuments.mock.calls.map(call => call[0].length)).toEqual([10, 10, 1]);
+        expect(createEmbeddings).toHaveBeenCalledWith(1024, expect.objectContaining({
+            batchSize: 10,
+            maxConcurrency: 1,
+            maxRetries: 0,
+        }));
+        expect(index.upsertFile).toHaveBeenCalledTimes(21);
+        expect(progressEvents).toEqual(expect.arrayContaining([
+            expect.objectContaining({ phase: 'scanning', filesTotal: 21 }),
+            expect.objectContaining({ phase: 'embedding', chunksTotal: 21 }),
+            expect.objectContaining({ phase: 'writing' }),
+            expect.objectContaining({ phase: 'ready', filesDone: 21 }),
+        ]));
+        vss.dispose();
+    });
+
+    it('keeps rebuilt chunks grouped by file when batches span files', async () => {
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        const longFile = createTFile('long.md', { size: 9_000, mtime: 1, ctime: 1 }, 'md', 'long.md');
+        const shortFile = createTFile('short.md', { size: 20, mtime: 2, ctime: 1 }, 'md', 'short.md');
+        attachReadyIndex(vss, index);
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.getVSSFiles.mockReturnValue([longFile, shortFile]);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'long.md') return 'A'.repeat(9_000);
+            if (path === 'short.md') return 'short memory';
+            throw createMissingFileError();
+        });
+        const embedDocuments = jest.fn(async (texts: string[]) => texts.map((_, index) => [index, 1]));
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        await vss.rebuildLocalIndex({ silent: true });
+
+        const longCall = index.upsertFile.mock.calls.find(call => call[0].path === 'long.md');
+        const shortCall = index.upsertFile.mock.calls.find(call => call[0].path === 'short.md');
+        expect(longCall).toBeDefined();
+        expect(shortCall).toBeDefined();
+        expect(longCall?.[1].length).toBeGreaterThan(1);
+        expect(longCall?.[1].every(chunk => chunk.path === 'long.md')).toBe(true);
+        expect(longCall?.[1]).toHaveLength(longCall?.[2].length ?? 0);
+        expect(shortCall?.[1]).toHaveLength(1);
+        expect(shortCall?.[1][0].path).toBe('short.md');
+        vss.dispose();
+    });
+
+    it('retries retryable embedding failures and reports retry progress', async () => {
+        jest.useRealTimers();
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        const file = createTFile('retry.md', { size: 20, mtime: 1, ctime: 1 }, 'md', 'retry.md');
+        attachReadyIndex(vss, index);
+        (vss as any).getEmbeddingBatchPolicy = jest.fn(() => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            maxBatchItems: 8,
+            minRequestGapMs: 0,
+            retryDelaysMs: [1],
+            createOptions: { batchSize: 8, maxConcurrency: 1, maxRetries: 0 },
+        }));
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.getVSSFiles.mockReturnValue([file]);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'retry.md') return 'retry memory';
+            throw createMissingFileError();
+        });
+        const rateLimitError = Object.assign(new Error('Requests rate limit exceeded'), { status: 429 });
+        const embedDocuments = jest.fn<(texts: string[]) => Promise<number[][]>>()
+            .mockRejectedValueOnce(rateLimitError)
+            .mockResolvedValueOnce([[1, 0]]);
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+        const progressEvents: unknown[] = [];
+
+        const summary = await vss.rebuildLocalIndex({
+            silent: true,
+            onProgress: (event) => progressEvents.push(event),
+        });
+
+        expect(summary.updated).toBe(1);
+        expect(summary.failed).toBe(0);
+        expect(embedDocuments).toHaveBeenCalledTimes(2);
+        expect(progressEvents).toContainEqual(expect.objectContaining({
+            phase: 'retrying',
+            retryDelayMs: 1,
+        }));
+        vss.dispose();
+    });
+
+    it('does not retry non-retryable embedding failures', async () => {
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        const file = createTFile('bad.md', { size: 20, mtime: 1, ctime: 1 }, 'md', 'bad.md');
+        attachReadyIndex(vss, index);
+        (vss as any).getEmbeddingBatchPolicy = jest.fn(() => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            maxBatchItems: 8,
+            minRequestGapMs: 0,
+            retryDelaysMs: [1],
+            createOptions: { batchSize: 8, maxConcurrency: 1, maxRetries: 0 },
+        }));
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.getVSSFiles.mockReturnValue([file]);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'bad.md') return 'bad memory';
+            throw createMissingFileError();
+        });
+        const embedDocuments = jest.fn<(texts: string[]) => Promise<number[][]>>()
+            .mockRejectedValue(new Error('invalid embedding input'));
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        const summary = await vss.rebuildLocalIndex({ silent: true });
+
+        expect(summary.updated).toBe(0);
+        expect(summary.failed).toBe(1);
+        expect(embedDocuments).toHaveBeenCalledTimes(1);
+        expect(index.upsertFile).not.toHaveBeenCalled();
+        vss.dispose();
+    });
+
+    it('stops scheduling later chunks for a file after a rebuild embedding batch fails', async () => {
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        const file = createTFile('many-chunks.md', { size: 20, mtime: 1, ctime: 1 }, 'md', 'many-chunks.md');
+        attachReadyIndex(vss, index);
+        (vss as any).getEmbeddingBatchPolicy = jest.fn(() => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            maxBatchItems: 2,
+            minRequestGapMs: 0,
+            retryDelaysMs: [1],
+            createOptions: { batchSize: 2, maxConcurrency: 1, maxRetries: 0 },
+        }));
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        (vss as any).prepareFileChunks = jest.fn(async () => Array.from({ length: 5 }, (_, index): VSSChunk => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            path: file.path,
+            chunkIndex: index,
+            content: `chunk ${index}`,
+            contentHash: 'hash',
+            created: file.stat.ctime,
+            lastModified: file.stat.mtime,
+            metadata: {
+                path: file.path,
+                created: file.stat.ctime,
+                lastModified: file.stat.mtime,
+                contentHash: 'hash',
+                chunkIndex: index,
+            },
+        })));
+        plugin.getVSSFiles.mockReturnValue([file]);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'many-chunks.md') return 'many chunks memory';
+            throw createMissingFileError();
+        });
+        const embedDocuments = jest.fn<(texts: string[]) => Promise<number[][]>>()
+            .mockRejectedValue(new Error('invalid embedding input'));
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        const summary = await vss.rebuildLocalIndex({ silent: true });
+
+        expect(summary.updated).toBe(0);
+        expect(summary.failed).toBe(1);
+        expect(embedDocuments).toHaveBeenCalledTimes(1);
+        expect(embedDocuments).toHaveBeenCalledWith(['chunk 0', 'chunk 1']);
+        expect(index.upsertFile).not.toHaveBeenCalled();
         vss.dispose();
     });
 
@@ -531,6 +742,35 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(mockNoticeMessages).toEqual([
             'Memory is not ready. Prepare memory first.',
         ]);
+    });
+
+    it('emits progress events during manual refresh', async () => {
+        const { plugin, mockAdapter, mockVault } = createPlugin();
+        const index = new FakeVectorIndex();
+        const vss = new VSS(plugin, 'cache');
+        const file = createTFile('refresh.md', { size: 20, mtime: 1, ctime: 1 }, 'md', 'refresh.md');
+        attachReadyIndex(vss, index);
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.getVSSFiles.mockReturnValue([file]);
+        mockVault.getAbstractFileByPath.mockReturnValue(file);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'refresh.md') return 'refresh memory';
+            throw createMissingFileError();
+        });
+        const progressEvents: unknown[] = [];
+
+        const summary = await vss.refreshLocalIndex({
+            silent: true,
+            onProgress: (event) => progressEvents.push(event),
+        });
+
+        expect(summary.updated).toBe(1);
+        expect(progressEvents).toEqual(expect.arrayContaining([
+            expect.objectContaining({ phase: 'scanning', filesTotal: 1, filesDone: 0 }),
+            expect.objectContaining({ phase: 'writing', filesTotal: 1, filesDone: 1, filesUpdated: 1 }),
+            expect.objectContaining({ phase: 'ready', filesTotal: 1, filesDone: 1, filesUpdated: 1 }),
+        ]));
+        vss.dispose();
     });
 
     it('reports missing-local-index when marker exists but local SQLite chunks are gone', async () => {

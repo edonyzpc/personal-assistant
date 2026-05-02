@@ -4,9 +4,9 @@ import { Document } from "@langchain/core/documents";
 import { MarkdownTextSplitter } from '@langchain/textsplitters';
 
 import { AIService } from './ai-services/service';
-import { AIUtils } from './ai-services/ai-utils';
+import { AIUtils, type CreateEmbeddingsOptions } from './ai-services/ai-utils';
 import { PluginManager } from './plugin';
-import { computeContentHash, selectFlushCandidates, shouldRespectRateGap, DirtyTimestamps } from './vss-helpers';
+import { computeContentHash, selectFlushCandidates, DirtyTimestamps } from './vss-helpers';
 import { MemoryVectorIndex } from './vss/memory-vector-index';
 import { createInlineSqliteWorker, getInlineSqliteWasmUrl } from './vss/sqlite-inline-assets';
 import { SqliteVectorIndex } from './vss/sqlite-vector-index';
@@ -41,15 +41,14 @@ import type { MemoryMaintenancePlan } from './memory-manager';
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
     maxDelay: 10 * 60 * 1000,
-    rateGap: 3000,
     maxPerMinute: 5,
     largeFileThreshold: 1_000_000,
     dirtyJournal: "dirty.json",
-    embedBatchSize: 3,
-    embedBatchDelayMs: 3000,
 };
 const VSS_OPFS_ROOT = "/personal-assistant-vss-v2";
 const VSS_LEGACY_OPFS_ROOT = "/personal-assistant-vss";
+const EMBEDDING_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000];
+const QWEN_TEXT_EMBEDDING_SAFE_TPM = 900_000;
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'removed' | 'skipped';
 
@@ -61,6 +60,31 @@ export interface VSSOperationSummary {
     skipped: number;
     failed: number;
     storagePersisted?: boolean;
+}
+
+export type VSSProgressPhase = "scanning" | "embedding" | "writing" | "retrying" | "ready";
+
+export interface VSSProgressEvent {
+    phase: VSSProgressPhase;
+    filesTotal?: number;
+    filesDone?: number;
+    filesUpdated?: number;
+    chunksTotal?: number;
+    chunksEmbedded?: number;
+    failed?: number;
+    currentFile?: string;
+    retryDelayMs?: number;
+}
+
+interface VSSOperationOptions {
+    silent?: boolean;
+    onProgress?: (event: VSSProgressEvent) => void;
+}
+
+interface VSSFlushOptions extends VSSOperationOptions {
+    force?: boolean;
+    reason?: string;
+    limit?: number;
 }
 
 interface StoragePersistenceStatus {
@@ -78,6 +102,29 @@ interface LegacyJsonSummary {
 type EmbeddingsModel = Awaited<ReturnType<AIUtils["createEmbeddings"]>>;
 type EmbeddingsModelProvider = () => Promise<EmbeddingsModel>;
 
+interface EmbeddingBatchPolicy {
+    maxBatchItems: number;
+    minRequestGapMs: number;
+    safeTokensPerMinute?: number;
+    retryDelaysMs: number[];
+    createOptions: CreateEmbeddingsOptions;
+}
+
+interface RebuildFileState {
+    file: TFile;
+    contentHash: string;
+    chunks: VSSChunk[];
+    embeddings: number[][];
+    remaining: number;
+    failed: boolean;
+}
+
+interface RebuildChunkWorkItem {
+    state: RebuildFileState;
+    chunkIndex: number;
+    text: string;
+}
+
 export class VSS {
     private plugin: PluginManager;
     private vssCacheDir: string;
@@ -85,8 +132,8 @@ export class VSS {
     private aiUtils: AIUtils;
     private dirty = new Map<string, DirtyTimestamps>();
     private isFlushing = false;
-    private lastProcessedAt: number | null = null;
     private processedWindow = { count: 0, windowStart: 0 };
+    private nextEmbeddingRequestAt = 0;
     private initialized = false;
     private disposed = false;
     private index: VectorIndex | null = null;
@@ -170,7 +217,7 @@ export class VSS {
         }
     }
 
-    async flush(options: { force?: boolean; reason?: string; limit?: number; silent?: boolean } = {}): Promise<VSSOperationSummary> {
+    async flush(options: VSSFlushOptions = {}): Promise<VSSOperationSummary> {
         const summary = createEmptyOperationSummary();
         if (this.isFlushing) {
             summary.aborted = true;
@@ -202,8 +249,22 @@ export class VSS {
             const candidates = currentPaths
                 ? Array.from(currentPaths)
                 : selectFlushCandidates(this.dirty, now, quiet, VSS_PARAMS.maxDelay, limit);
-            const getEmbeddingsModel = this.createEmbeddingsModelProvider();
+            const getEmbeddingsModel = this.createEmbeddingsModelProvider(this.getEmbeddingBatchPolicy().createOptions);
+            const filesTotal = candidates.length;
+            let filesDone = 0;
+            let filesUpdated = 0;
+            const emitProgress = (phase: VSSProgressPhase, overrides: Partial<VSSProgressEvent> = {}) => {
+                options.onProgress?.({
+                    phase,
+                    filesTotal,
+                    filesDone,
+                    filesUpdated,
+                    failed: summary.failed,
+                    ...overrides,
+                });
+            };
 
+            emitProgress("scanning");
             if (currentPaths && this.index) {
                 const indexedPaths = await this.index.listFilePaths();
                 for (const indexedPath of indexedPaths) {
@@ -220,11 +281,14 @@ export class VSS {
                 if (!options.force && this.processedWindow.count >= VSS_PARAMS.maxPerMinute) break;
 
                 const file = this.plugin.app.vault.getAbstractFileByPath(path);
+                emitProgress("scanning", { currentFile: file instanceof TFile ? getProgressFileName(file) : getProgressPathName(path) });
                 if (!file || !(file instanceof TFile)) {
                     this.dirty.delete(path);
                     dirtyChanged = true;
                     if (this.index) await this.index.deleteFile(path);
                     summary.removed++;
+                    filesDone++;
+                    emitProgress("writing", { currentFile: getProgressPathName(path) });
                     continue;
                 }
 
@@ -234,6 +298,8 @@ export class VSS {
                 } catch (e) {
                     summary.failed++;
                     this.plugin.log("Failed to refresh VSS index", { path, error: e });
+                    filesDone++;
+                    emitProgress("writing", { currentFile: getProgressFileName(file) });
                     continue;
                 }
 
@@ -242,8 +308,11 @@ export class VSS {
                 if (status === 'skipped') summary.skipped++;
                 if (status === 'updated') {
                     summary.updated++;
+                    filesUpdated++;
                     this.processedWindow.count++;
                 }
+                filesDone++;
+                emitProgress("writing", { currentFile: getProgressFileName(file) });
 
                 this.dirty.delete(path);
                 dirtyChanged = true;
@@ -252,13 +321,14 @@ export class VSS {
                 await this.persistDirtyJournal();
                 await this.writeIndexStateFiles();
             }
+            emitProgress("ready", { filesDone });
         } finally {
             this.isFlushing = false;
         }
         return summary;
     }
 
-    async rebuildLocalIndex(options: { silent?: boolean } = {}): Promise<VSSOperationSummary> {
+    async rebuildLocalIndex(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
         await this.initialize();
         this.storageStatus = await this.requestPersistentStorage();
         if (!this.storageStatus.persisted && !options.silent) {
@@ -269,37 +339,183 @@ export class VSS {
             throw new Error("Memory is unavailable.");
         }
 
-        await this.index.reset();
+        const index = this.index;
+        await index.reset();
         this.status = "ready";
         this.dirty.clear();
+        this.nextEmbeddingRequestAt = 0;
         const files = this.plugin.getVSSFiles();
         const summary = createEmptyOperationSummary();
         summary.storagePersisted = this.storageStatus.persisted;
-        const getEmbeddingsModel = this.createEmbeddingsModelProvider();
+        const embeddingPolicy = this.getEmbeddingBatchPolicy();
+        const getEmbeddingsModel = this.createEmbeddingsModelProvider(embeddingPolicy.createOptions);
+        const pendingFiles = new Map<string, RebuildFileState>();
+        let currentBatch: RebuildChunkWorkItem[] = [];
+        let filesScanned = 0;
+        let filesFinalized = 0;
+        let filesUpdated = 0;
+        let chunksTotal = 0;
+        let chunksEmbedded = 0;
 
-        for (const file of files) {
+        const emitProgress = (phase: VSSProgressPhase, overrides: Partial<VSSProgressEvent> = {}) => {
+            options.onProgress?.({
+                phase,
+                filesTotal: files.length,
+                filesDone: phase === "scanning" ? filesScanned : filesFinalized,
+                filesUpdated,
+                chunksTotal,
+                chunksEmbedded,
+                failed: summary.failed,
+                ...overrides,
+            });
+        };
+
+        const finalizeReadyFiles = async (states: Iterable<RebuildFileState>) => {
+            const readyStates = Array.from(new Set(states))
+                .filter(state => state.remaining === 0 && pendingFiles.has(state.file.path));
+
+            for (const state of readyStates) {
+                pendingFiles.delete(state.file.path);
+                emitProgress("writing", { currentFile: getProgressFileName(state.file) });
+                if (state.failed) {
+                    summary.failed++;
+                    filesFinalized++;
+                    this.plugin.log("Skipped rebuilding VSS file after embedding failure", { path: state.file.path });
+                    emitProgress("writing", { currentFile: getProgressFileName(state.file) });
+                    continue;
+                }
+
+                try {
+                    await index.upsertFile({
+                        path: state.file.path,
+                        contentHash: state.contentHash,
+                        mtime: state.file.stat.mtime,
+                        size: state.file.stat.size,
+                    }, state.chunks, state.embeddings);
+                    summary.updated++;
+                    filesUpdated++;
+                } catch (error) {
+                    summary.failed++;
+                    this.plugin.log("Failed to write rebuilt VSS file", { path: state.file.path, error });
+                }
+                filesFinalized++;
+                emitProgress("writing", { currentFile: getProgressFileName(state.file) });
+            }
+        };
+
+        const processBatch = async () => {
+            if (currentBatch.length === 0) return;
+            const batch = currentBatch;
+            currentBatch = [];
+            const currentFile = getProgressFileName(batch[0].state.file);
+            emitProgress("embedding", { currentFile });
             try {
-                const status = await this.refreshFileCache(file, getEmbeddingsModel);
-                if (status === "updated") summary.updated++;
-                if (status === "unchanged") summary.unchanged++;
-                if (status === "removed") summary.removed++;
-                if (status === "skipped") summary.skipped++;
+                const embeddings = await this.embedDocumentsWithRetry(
+                    batch.map(item => item.text),
+                    getEmbeddingsModel,
+                    embeddingPolicy,
+                    (retryDelayMs) => emitProgress("retrying", { currentFile, retryDelayMs }),
+                );
+                if (embeddings.length !== batch.length) {
+                    throw new Error(`Embedding count ${embeddings.length} does not match batch size ${batch.length}.`);
+                }
+                for (let index = 0; index < batch.length; index++) {
+                    const item = batch[index];
+                    item.state.embeddings[item.chunkIndex] = embeddings[index];
+                    item.state.remaining--;
+                }
+                chunksEmbedded += embeddings.length;
+            } catch (error) {
+                const affectedStates = Array.from(new Set(batch.map(item => item.state)));
+                const affectedFiles = affectedStates.map(state => state.file.path);
+                this.plugin.log("Failed to embed rebuilt VSS batch", { paths: affectedFiles, error });
+                for (const state of affectedStates) {
+                    state.failed = true;
+                    state.remaining = 0;
+                }
+            }
+            await finalizeReadyFiles(batch.map(item => item.state));
+            emitProgress("embedding", { currentFile });
+        };
+
+        emitProgress("scanning");
+        for (const file of files) {
+            filesScanned++;
+            emitProgress("scanning", { currentFile: getProgressFileName(file) });
+            try {
+                const fileState = await this.computeFileHash(file);
+
+                if (fileState.tooLarge) {
+                    await index.deleteFile(file.path);
+                    summary.skipped++;
+                    filesFinalized++;
+                    this.plugin.log(`Skipped VSS index for large file ${file.path}`);
+                    emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                    continue;
+                }
+
+                if (!fileState.hash) {
+                    await index.deleteFile(file.path);
+                    summary.removed++;
+                    filesFinalized++;
+                    emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                    continue;
+                }
+
+                const chunks = await this.prepareFileChunks(file, fileState.hash);
+                if (chunks.length === 0) {
+                    await index.deleteFile(file.path);
+                    summary.removed++;
+                    filesFinalized++;
+                    emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                    continue;
+                }
+
+                const state: RebuildFileState = {
+                    file,
+                    contentHash: fileState.hash,
+                    chunks,
+                    embeddings: new Array(chunks.length) as number[][],
+                    remaining: chunks.length,
+                    failed: false,
+                };
+                pendingFiles.set(file.path, state);
+                chunksTotal += chunks.length;
+                for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+                    if (state.failed || !pendingFiles.has(file.path)) break;
+                    currentBatch.push({ state, chunkIndex, text: chunks[chunkIndex].content });
+                    if (currentBatch.length >= embeddingPolicy.maxBatchItems) {
+                        await processBatch();
+                        if (state.failed || !pendingFiles.has(file.path)) break;
+                    }
+                }
             } catch (error) {
                 summary.failed++;
-                this.plugin.log("Failed to rebuild VSS file", { path: file.path, error });
+                filesFinalized++;
+                this.plugin.log("Failed to scan rebuilt VSS file", { path: file.path, error });
+                emitProgress("scanning", { currentFile: getProgressFileName(file) });
             }
         }
 
+        await processBatch();
+        emitProgress("writing");
         await this.persistDirtyJournal();
         await this.writeIndexStateFiles();
+        emitProgress("ready", { filesDone: filesFinalized });
         if (!options.silent) {
             new Notice(summary.failed > 0 ? "Memory is ready, but some notes were skipped." : "Memory is ready. Your notes were not changed.", 5000);
         }
         return summary;
     }
 
-    async refreshLocalIndex(options: { silent?: boolean } = {}): Promise<VSSOperationSummary> {
-        const summary = await this.flush({ force: true, reason: "manual-refresh", limit: Number.MAX_SAFE_INTEGER, silent: options.silent });
+    async refreshLocalIndex(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
+        const summary = await this.flush({
+            force: true,
+            reason: "manual-refresh",
+            limit: Number.MAX_SAFE_INTEGER,
+            silent: options.silent,
+            onProgress: options.onProgress,
+        });
         if (!summary.aborted && !options.silent) {
             new Notice(summary.failed > 0 ? "Memory was updated, but some notes were skipped." : "Memory is ready. Your notes were not changed.", 3000);
         }
@@ -646,17 +862,26 @@ export class VSS {
         contentHash: string,
         getEmbeddingsModel?: EmbeddingsModelProvider,
     ): Promise<{ chunks: VSSChunk[]; embeddings: number[][] }> {
+        const chunks = await this.prepareFileChunks(file, contentHash);
+        const embeddings = await this.embedTexts(
+            chunks.map(chunk => chunk.content),
+            getEmbeddingsModel,
+        );
+        return { chunks, embeddings };
+    }
+
+    private async prepareFileChunks(file: TFile, contentHash: string): Promise<VSSChunk[]> {
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
 
         if (cleanedContent.length === 0) {
-            return { chunks: [], embeddings: [] };
+            return [];
         }
 
         const splitter = new MarkdownTextSplitter({ chunkSize: 4000, chunkOverlap: 80 });
         const texts = await splitter.splitText(cleanedContent);
-        const chunks = texts.map((text, index): VSSChunk => ({
+        return texts.map((text, index): VSSChunk => ({
             path: file.path,
             chunkIndex: index,
             content: text,
@@ -671,40 +896,117 @@ export class VSS {
                 chunkIndex: index,
             },
         }));
-
-        const embeddingsModel = await (getEmbeddingsModel ?? this.createEmbeddingsModelProvider())();
-        const embeddings: number[][] = [];
-        for (let i = 0; i < texts.length; i += VSS_PARAMS.embedBatchSize) {
-            const batch = texts.slice(i, i + VSS_PARAMS.embedBatchSize);
-            await this.waitForEmbeddingRateGap();
-            embeddings.push(...await embeddingsModel.embedDocuments(batch));
-            if (i + VSS_PARAMS.embedBatchSize < texts.length) {
-                await new Promise(resolve => setTimeout(resolve, VSS_PARAMS.embedBatchDelayMs));
-            }
-        }
-        return { chunks, embeddings };
     }
 
-    private createEmbeddingsModelProvider(): EmbeddingsModelProvider {
+    private async embedTexts(
+        texts: string[],
+        getEmbeddingsModel?: EmbeddingsModelProvider,
+    ): Promise<number[][]> {
+        const policy = this.getEmbeddingBatchPolicy();
+        const embeddingsModelProvider = getEmbeddingsModel ?? this.createEmbeddingsModelProvider(policy.createOptions);
+        const embeddings: number[][] = [];
+        for (let i = 0; i < texts.length; i += policy.maxBatchItems) {
+            const batch = texts.slice(i, i + policy.maxBatchItems);
+            embeddings.push(...await this.embedDocumentsWithRetry(batch, embeddingsModelProvider, policy));
+        }
+        return embeddings;
+    }
+
+    private async embedDocumentsWithRetry(
+        texts: string[],
+        getEmbeddingsModel: EmbeddingsModelProvider,
+        policy: EmbeddingBatchPolicy,
+        onRetry?: (retryDelayMs: number) => void,
+    ): Promise<number[][]> {
+        let lastError: unknown;
+        for (let attempt = 0; attempt <= policy.retryDelaysMs.length; attempt++) {
+            await this.waitForEmbeddingThrottle(texts, policy);
+            try {
+                const embeddingsModel = await getEmbeddingsModel();
+                return await embeddingsModel.embedDocuments(texts);
+            } catch (error) {
+                lastError = error;
+                if (!isRetryableEmbeddingError(error) || attempt >= policy.retryDelaysMs.length) {
+                    throw error;
+                }
+                const retryDelayMs = policy.retryDelaysMs[attempt];
+                onRetry?.(retryDelayMs);
+                await sleep(retryDelayMs);
+            }
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    }
+
+    private async waitForEmbeddingThrottle(texts: string[], policy: EmbeddingBatchPolicy): Promise<void> {
+        const now = Date.now();
+        const delayMs = Math.max(0, this.nextEmbeddingRequestAt - now);
+        if (delayMs > 0) {
+            await sleep(delayMs);
+        }
+
+        const scheduledAt = Math.max(Date.now(), this.nextEmbeddingRequestAt);
+        const estimatedTokens = estimateEmbeddingTokensForTexts(texts);
+        const tokenDelayMs = policy.safeTokensPerMinute
+            ? Math.ceil((estimatedTokens / policy.safeTokensPerMinute) * 60_000)
+            : 0;
+        this.nextEmbeddingRequestAt = scheduledAt + Math.max(policy.minRequestGapMs, tokenDelayMs);
+    }
+
+    private getEmbeddingBatchPolicy(): EmbeddingBatchPolicy {
+        const profile = this.profile ?? this.createEmbeddingProfile();
+        const provider = profile.provider.toLowerCase();
+        const model = profile.model.toLowerCase();
+        const retryDelaysMs = EMBEDDING_RETRY_DELAYS_MS;
+
+        if (provider === "qwen" && (model.includes("text-embedding-v4") || model.includes("text-embedding-v3"))) {
+            return {
+                maxBatchItems: 10,
+                minRequestGapMs: 100,
+                safeTokensPerMinute: QWEN_TEXT_EMBEDDING_SAFE_TPM,
+                retryDelaysMs,
+                createOptions: {
+                    batchSize: 10,
+                    maxConcurrency: 1,
+                    maxRetries: 0,
+                },
+            };
+        }
+
+        if (provider === "ollama") {
+            return {
+                maxBatchItems: 3,
+                minRequestGapMs: 0,
+                retryDelaysMs,
+                createOptions: {
+                    maxConcurrency: 1,
+                    maxRetries: 0,
+                },
+            };
+        }
+
+        return {
+            maxBatchItems: 8,
+            minRequestGapMs: 100,
+            retryDelaysMs,
+            createOptions: {
+                batchSize: 8,
+                maxConcurrency: 1,
+                maxRetries: 0,
+            },
+        };
+    }
+
+    private createEmbeddingsModelProvider(options?: CreateEmbeddingsOptions): EmbeddingsModelProvider {
         let embeddingsPromise: Promise<EmbeddingsModel> | null = null;
         return () => {
-            embeddingsPromise ??= this.createOperationEmbeddingsModel();
+            embeddingsPromise ??= this.createOperationEmbeddingsModel(options);
             return embeddingsPromise;
         };
     }
 
-    private async createOperationEmbeddingsModel(): Promise<EmbeddingsModel> {
+    private async createOperationEmbeddingsModel(options?: CreateEmbeddingsOptions): Promise<EmbeddingsModel> {
         const profile = this.profile ?? this.createEmbeddingProfile();
-        return await this.aiUtils.createEmbeddings(profile.dimensions);
-    }
-
-    private async waitForEmbeddingRateGap(): Promise<void> {
-        const now = Date.now();
-        const last = this.lastProcessedAt;
-        if (last !== null && !shouldRespectRateGap(last, now, VSS_PARAMS.rateGap)) {
-            await new Promise(resolve => setTimeout(resolve, VSS_PARAMS.rateGap - (now - last)));
-        }
-        this.lastProcessedAt = Date.now();
+        return await this.aiUtils.createEmbeddings(profile.dimensions, options);
     }
 
     private async computeFileHash(file: TFile): Promise<{ hash: string | null; tooLarge: boolean }> {
@@ -972,6 +1274,76 @@ function createIndexId(): string {
         return cryptoApi.randomUUID();
     }
     return `vss-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+function getProgressFileName(file: TFile): string {
+    return file.name || file.path.split("/").pop() || file.path;
+}
+
+function getProgressPathName(path: string): string {
+    return path.split("/").pop() || path;
+}
+
+function estimateEmbeddingTokensForTexts(texts: string[]): number {
+    return texts.reduce((total, text) => total + estimateEmbeddingTokensForText(text), 0);
+}
+
+function estimateEmbeddingTokensForText(text: string): number {
+    const cjkMatches = text.match(/[\u3400-\u9FFF\uF900-\uFAFF]/g);
+    const cjkCount = cjkMatches?.length ?? 0;
+    const nonCjkCount = Math.max(0, text.length - cjkCount);
+    return Math.max(1, cjkCount + Math.ceil(nonCjkCount / 4));
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function isRetryableEmbeddingError(error: unknown): boolean {
+    const status = getErrorStatus(error);
+    if (status === 408 || status === 429 || (status !== undefined && status >= 500)) {
+        return true;
+    }
+
+    const message = getErrorMessage(error).toLowerCase();
+    return [
+        "rate limit",
+        "too many requests",
+        "requests rate limit exceeded",
+        "you exceeded your current requests",
+        "allocated quota exceeded",
+        "you exceeded your current quota",
+        "request rate increased too quickly",
+        "timeout",
+        "timed out",
+        "network",
+        "fetch failed",
+        "econnreset",
+        "econnaborted",
+        "temporarily",
+    ].some(fragment => message.includes(fragment));
+}
+
+function getErrorStatus(error: unknown): number | undefined {
+    if (!isObject(error)) return undefined;
+    const directStatus = numberValueOrUndefined(error.status) ?? numberValueOrUndefined(error.statusCode);
+    if (directStatus !== undefined) return directStatus;
+    const response = error.response;
+    return isObject(response) ? numberValueOrUndefined(response.status) : undefined;
+}
+
+function getErrorMessage(error: unknown): string {
+    if (error instanceof Error) return error.message;
+    if (isObject(error) && typeof error.message === "string") return error.message;
+    try {
+        return JSON.stringify(error);
+    } catch {
+        return String(error);
+    }
+}
+
+function numberValueOrUndefined(value: unknown): number | undefined {
+    return typeof value === "number" ? value : undefined;
 }
 
 interface VaultStorageScope {

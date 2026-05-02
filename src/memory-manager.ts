@@ -2,7 +2,7 @@
 
 import { Modal, Notice, Platform, Setting } from "obsidian";
 import type { PluginManager } from "./plugin";
-import type { VSSOperationSummary } from "./vss";
+import type { VSSOperationSummary, VSSProgressEvent } from "./vss";
 
 export type MemoryDecision = "use-memory" | "answer-now" | "cancel";
 export type MemoryMode = "auto" | "use-memory" | "skip-memory";
@@ -165,11 +165,12 @@ export class MemoryManager {
 
     async prepareMemory(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
         const progress = createMemoryProgressNotice("Preparing memory...");
+        const updateProgress = createMemoryProgressUpdater(progress.notice);
         try {
             setMemoryProgressStep(progress.notice, "Checking notes");
             const summary = plan.action === "refresh"
-                ? await this.plugin.vss.refreshLocalIndex({ silent: true })
-                : await this.plugin.vss.rebuildLocalIndex({ silent: true });
+                ? await this.plugin.vss.refreshLocalIndex({ silent: true, onProgress: updateProgress })
+                : await this.plugin.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgress });
             if (summary.aborted) {
                 return {
                     ok: false,
@@ -393,4 +394,45 @@ function setMemoryProgressStep(notice: Notice, text: string): void {
         cls: "pa-notice__item",
         text,
     });
+}
+
+function createMemoryProgressUpdater(notice: Notice): (event: VSSProgressEvent) => void {
+    let lastUpdatedAt = 0;
+    return (event) => {
+        const text = formatMemoryProgressEvent(event);
+        if (!text) return;
+        const now = Date.now();
+        const force = event.phase === "retrying" || event.phase === "ready";
+        if (!force && now - lastUpdatedAt < 350) return;
+        lastUpdatedAt = now;
+        setMemoryProgressStep(notice, text);
+    };
+}
+
+function formatMemoryProgressEvent(event: VSSProgressEvent): string {
+    if (event.phase === "retrying") {
+        const seconds = Math.max(1, Math.ceil((event.retryDelayMs ?? 0) / 1000));
+        return `Retrying in ${seconds}s`;
+    }
+    if (event.phase === "ready") {
+        return "Ready";
+    }
+    if (event.phase === "writing") {
+        return formatCountProgress("Writing index", event.filesDone, event.filesTotal);
+    }
+    if (event.phase === "embedding") {
+        return formatCountProgress("Embedding chunks", event.chunksEmbedded, event.chunksTotal);
+    }
+    if (event.phase === "scanning") {
+        return formatCountProgress("Scanning notes", event.filesDone, event.filesTotal, event.currentFile);
+    }
+    return "";
+}
+
+function formatCountProgress(label: string, done?: number, total?: number, detail?: string): string {
+    const count = typeof done === "number" && typeof total === "number" && total > 0
+        ? ` ${Math.min(done, total)}/${total}`
+        : "";
+    const suffix = detail ? `: ${detail}` : "";
+    return `${label}${count}${suffix}`;
 }
