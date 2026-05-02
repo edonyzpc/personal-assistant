@@ -162,6 +162,27 @@ describe('MemoryManager command decisions', () => {
             action: 'refresh',
         });
     });
+
+    it('shows the prepare failure message for manual commands', async () => {
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        (manager as any).requestApproval = jest.fn(async () => 'use-memory'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        (manager as any).prepareMemory = jest.fn(async () => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            ok: false,
+            partial: false,
+            message: 'Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.',
+        }));
+
+        await manager.prepareFromCommand();
+
+        expect(mockNoticeMessages).toEqual([
+            'Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.',
+        ]);
+    });
 });
 
 describe('Memory product language', () => {

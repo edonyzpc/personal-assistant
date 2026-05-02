@@ -13,6 +13,9 @@ import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-
 export interface SqliteVectorIndexOptions {
     workerUrl: string;
     databaseName?: string;
+    opfsDirectory?: string;
+    legacyOpfsDirectory?: string;
+    opfsVfsName?: string;
     wasmUrl?: string;
     workerFactory?: (url: string) => Worker | Promise<Worker>;
 }
@@ -20,6 +23,9 @@ export interface SqliteVectorIndexOptions {
 export class SqliteVectorIndex implements VectorIndex {
     private readonly workerUrl: string;
     private readonly databaseName: string;
+    private readonly opfsDirectory: string | undefined;
+    private readonly legacyOpfsDirectory: string | undefined;
+    private readonly opfsVfsName: string | undefined;
     private readonly wasmUrl: string | undefined;
     private readonly workerFactory: ((url: string) => Worker | Promise<Worker>) | undefined;
     private worker: Worker | null = null;
@@ -35,6 +41,9 @@ export class SqliteVectorIndex implements VectorIndex {
     constructor(options: SqliteVectorIndexOptions) {
         this.workerUrl = options.workerUrl;
         this.databaseName = options.databaseName ?? "personal-assistant-vss.sqlite3";
+        this.opfsDirectory = options.opfsDirectory;
+        this.legacyOpfsDirectory = options.legacyOpfsDirectory;
+        this.opfsVfsName = options.opfsVfsName;
         this.wasmUrl = options.wasmUrl;
         this.workerFactory = options.workerFactory;
     }
@@ -44,6 +53,9 @@ export class SqliteVectorIndex implements VectorIndex {
         return this.enqueue(() => this.send<VectorIndexStatus>("initialize", {
             profile,
             databaseName: this.databaseName,
+            opfsDirectory: this.opfsDirectory,
+            legacyOpfsDirectory: this.legacyOpfsDirectory,
+            opfsVfsName: this.opfsVfsName,
             wasmUrl,
         }));
     }

@@ -48,6 +48,8 @@ const VSS_PARAMS = {
     embedBatchSize: 3,
     embedBatchDelayMs: 3000,
 };
+const VSS_OPFS_ROOT = "/personal-assistant-vss-v2";
+const VSS_LEGACY_OPFS_ROOT = "/personal-assistant-vss";
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'removed' | 'skipped';
 
@@ -544,6 +546,9 @@ export class VSS {
             workerUrl: "inline:personal-assistant-vss-worker",
             wasmUrl: getInlineSqliteWasmUrl(),
             databaseName: this.getDatabaseName(),
+            opfsDirectory: this.getOpfsDirectory(),
+            legacyOpfsDirectory: VSS_LEGACY_OPFS_ROOT,
+            opfsVfsName: this.getOpfsVfsName(),
             workerFactory: createInlineSqliteWorker,
         });
 
@@ -567,6 +572,11 @@ export class VSS {
         } catch (error) {
             await sqliteIndex.dispose().catch(() => undefined);
             this.plugin.log("SQLite VSS index unavailable", error);
+            if (!options.allowFallback) {
+                this.index = null;
+                this.status = "error";
+                throw error;
+            }
         }
 
         if (options.allowFallback) {
@@ -880,7 +890,37 @@ export class VSS {
     }
 
     private getDatabaseName(): string {
-        return getVaultScopedDatabaseName(this.plugin.app.vault.getName());
+        return getVaultScopedDatabaseName(this.getVaultStorageScope());
+    }
+
+    private getOpfsDirectory(): string {
+        return `${VSS_OPFS_ROOT}/${this.getVaultStorageScope().safeName}`;
+    }
+
+    private getOpfsVfsName(): string {
+        return `opfs-sahpool-${this.getVaultStorageScope().safeName}`.slice(0, 120);
+    }
+
+    private getVaultStorageScope(): VaultStorageScope {
+        return getVaultStorageScope(this.plugin.app.vault.getName(), this.getVaultLocalPath());
+    }
+
+    private getVaultLocalPath(): string | undefined {
+        const adapter = this.plugin.app.vault.adapter as {
+            getBasePath?: () => string;
+            getFullPath?: (path: string) => string;
+        };
+        try {
+            if (typeof adapter.getBasePath === "function") {
+                return adapter.getBasePath();
+            }
+            if (typeof adapter.getFullPath === "function") {
+                return adapter.getFullPath("");
+            }
+        } catch {
+            return undefined;
+        }
+        return undefined;
     }
 
     private showMissingIndexNotice(): void {
@@ -934,11 +974,30 @@ function createIndexId(): string {
     return `vss-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
-function getVaultScopedDatabaseName(vaultName: string): string {
+interface VaultStorageScope {
+    safeName: string;
+}
+
+function getVaultStorageScope(vaultName: string, vaultLocalPath?: string): VaultStorageScope {
     const normalizedName = vaultName.trim() || "vault";
+    const scopeSource = `${normalizedName}\n${vaultLocalPath?.trim() ?? ""}`;
+    const hash = hashStorageScope(scopeSource);
     const encodedName = encodeURIComponent(normalizedName).replace(/%/g, "_");
-    const safeName = encodedName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 120) || "vault";
-    return `personal-assistant-vss-${safeName}.sqlite3`;
+    const safeName = `${encodedName.replace(/[^A-Za-z0-9._-]/g, "_").slice(0, 80) || "vault"}-${hash}`;
+    return { safeName };
+}
+
+function getVaultScopedDatabaseName(scope: VaultStorageScope): string {
+    return `personal-assistant-vss-${scope.safeName}.sqlite3`;
+}
+
+function hashStorageScope(value: string): string {
+    let hash = 0x811c9dc5;
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 0x01000193);
+    }
+    return (hash >>> 0).toString(36);
 }
 
 function estimateEmbeddingTokens(chunkCount: number): number {

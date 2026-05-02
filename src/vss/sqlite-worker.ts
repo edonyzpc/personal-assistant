@@ -22,6 +22,12 @@ type SqliteApiConfig = {
     debug?: (...args: unknown[]) => void;
 };
 
+interface OpfsDatabaseOptions {
+    directory?: string;
+    legacyDirectory?: string;
+    vfsName?: string;
+}
+
 let sqlite3: SQLiteModule | null = null;
 let db: SQLiteDatabase | null = null;
 let activeProfile: EmbeddingProfile | null = null;
@@ -56,7 +62,11 @@ ctx.onmessage = (event: MessageEvent<SqliteWorkerRequest>) => {
 async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
     switch (request.type) {
         case "initialize":
-            return await initialize(request.payload.profile, request.payload.databaseName, request.payload.wasmUrl);
+            return await initialize(request.payload.profile, request.payload.databaseName, request.payload.wasmUrl, {
+                directory: request.payload.opfsDirectory,
+                legacyDirectory: request.payload.legacyOpfsDirectory,
+                vfsName: request.payload.opfsVfsName,
+            });
         case "upsertFile":
             requireDb();
             upsertFile(request.payload.fileState, request.payload.chunks, request.payload.embeddings);
@@ -90,7 +100,12 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
     }
 }
 
-async function initialize(profile: EmbeddingProfile, databaseName: string, wasmUrl?: string): Promise<VSSIndexStats["status"]> {
+async function initialize(
+    profile: EmbeddingProfile,
+    databaseName: string,
+    wasmUrl?: string,
+    opfsOptions: OpfsDatabaseOptions = {},
+): Promise<VSSIndexStats["status"]> {
     const startedAt = performance.now();
     activeProfile = profile;
     status = "initializing";
@@ -110,7 +125,8 @@ async function initialize(profile: EmbeddingProfile, databaseName: string, wasmU
         });
 
         if (!db) {
-            db = await openOpfsDatabase(sqlite3, databaseName);
+            db = await openOpfsDatabase(sqlite3, databaseName, opfsOptions);
+            await cleanupLegacyOpfsDirectory(opfsOptions.legacyDirectory, opfsOptions.directory);
         }
 
         createSchema(db);
@@ -137,17 +153,36 @@ async function initialize(profile: EmbeddingProfile, databaseName: string, wasmU
     }
 }
 
-async function openOpfsDatabase(module: SQLiteModule, databaseName: string): Promise<SQLiteDatabase> {
+async function openOpfsDatabase(
+    module: SQLiteModule,
+    databaseName: string,
+    options: OpfsDatabaseOptions = {},
+): Promise<SQLiteDatabase> {
     if (!module.installOpfsSAHPoolVfs) {
         throw createWorkerError("opfs-sahpool-unavailable", "sqlite-wasm does not expose opfs-sahpool.");
     }
 
-    const pool = await module.installOpfsSAHPoolVfs({
-        name: "opfs-sahpool",
-        directory: "/personal-assistant-vss",
-        initialCapacity: 8,
-        verbosity: 0,
-    });
+    let pool: SQLiteModule;
+    try {
+        pool = await module.installOpfsSAHPoolVfs({
+            name: options.vfsName ?? "opfs-sahpool",
+            directory: options.directory ?? "/personal-assistant-vss",
+            initialCapacity: 8,
+            verbosity: 0,
+            forceReinitIfPreviouslyFailed: true,
+        });
+    } catch (error) {
+        if (isOpfsBusyError(error)) {
+            throw createWorkerError(
+                "opfs-sahpool-locked",
+                "Local memory storage is busy. Close other Obsidian windows for this vault, then try again.",
+            );
+        }
+        if (isMissingOpfsApiError(error)) {
+            throw createWorkerError("opfs-sahpool-unavailable", "Local memory storage is not available on this device.");
+        }
+        throw error;
+    }
     const DbCtor = pool.OpfsSAHPoolDb;
     if (!DbCtor) {
         throw createWorkerError("opfs-sahpool-unavailable", "opfs-sahpool database constructor is unavailable.");
@@ -165,7 +200,7 @@ function configureSqliteLogging(): void {
             }
         },
         error: (...args: unknown[]) => {
-            if (!isExpectedUnusedOpfsVfsWarning(args)) {
+            if (!isExpectedUnusedOpfsVfsWarning(args) && !isExpectedOpfsCleanupBusyWarning(args)) {
                 console.error(...args);
             }
         },
@@ -179,8 +214,80 @@ function isExpectedUnusedOpfsVfsWarning(args: unknown[]): boolean {
     return message.includes("Ignoring inability to install OPFS sqlite3_vfs") && message.includes("Invalid URL");
 }
 
+function isExpectedOpfsCleanupBusyWarning(args: unknown[]): boolean {
+    const message = stringifyErrorArgs(args);
+    return message.includes("removeVfs() failed with no recovery strategy") && isOpfsBusyMessage(message);
+}
+
 function isExpectedUnusedOpfsVfsMessage(message: string): boolean {
     return message.includes("sqlite3_wasm_extra_init");
+}
+
+function isOpfsBusyError(error: unknown): boolean {
+    return isOpfsBusyMessage(stringifyError(error));
+}
+
+function isOpfsBusyMessage(message: string): boolean {
+    return message.includes("NoModificationAllowedError")
+        || message.includes("Access Handles cannot")
+        || message.includes("modifications are not allowed")
+        || message.includes("object where modifications are not allowed");
+}
+
+function isMissingOpfsApiError(error: unknown): boolean {
+    return stringifyError(error).includes("Missing required OPFS APIs");
+}
+
+async function cleanupLegacyOpfsDirectory(legacyDirectory?: string, activeDirectory?: string): Promise<void> {
+    const legacyPath = normalizeOpfsPath(legacyDirectory);
+    const activePath = normalizeOpfsPath(activeDirectory);
+    if (!legacyPath || !activePath || legacyPath === activePath || activePath.startsWith(`${legacyPath}/`)) return;
+
+    const storage = globalThis.navigator?.storage as { getDirectory?: () => Promise<OpfsDirectoryHandle> } | undefined;
+    if (typeof storage?.getDirectory !== "function") return;
+
+    try {
+        const root = await storage.getDirectory();
+        await removeOpfsPath(root, legacyPath);
+    } catch {
+        // Best effort cleanup only; old storage may still be locked by another window.
+    }
+}
+
+type OpfsDirectoryHandle = {
+    getDirectoryHandle(name: string): Promise<OpfsDirectoryHandle>;
+    removeEntry(name: string, options?: { recursive?: boolean }): Promise<void>;
+};
+
+function normalizeOpfsPath(path?: string): string | null {
+    const normalized = path?.trim().replace(/^\/+|\/+$/g, "");
+    return normalized || null;
+}
+
+async function removeOpfsPath(root: OpfsDirectoryHandle, path: string): Promise<void> {
+    const parts = path.split("/").filter(Boolean);
+    if (parts.length === 0) return;
+    let parent = root;
+    for (const part of parts.slice(0, -1)) {
+        parent = await parent.getDirectoryHandle(part);
+    }
+    await parent.removeEntry(parts[parts.length - 1], { recursive: true });
+}
+
+function stringifyErrorArgs(args: unknown[]): string {
+    return args.map((arg) => stringifyError(arg)).join(" ");
+}
+
+function stringifyError(error: unknown): string {
+    if (error instanceof Error) {
+        const cause = (error as Error & { cause?: unknown }).cause;
+        return [
+            error.name,
+            error.message,
+            cause ? stringifyError(cause) : "",
+        ].filter(Boolean).join(" ");
+    }
+    return String(error);
 }
 
 function createSchema(database: SQLiteDatabase): void {

@@ -150,7 +150,7 @@ export class MemoryManager {
 
         const result = await this.prepareMemory(plan);
         if (!result.ok) {
-            new Notice("Could not prepare memory. I will answer normally for now.", 5000);
+            new Notice(result.message ?? "Could not prepare memory. I will answer normally for now.", 7000);
             return {
                 decision: "answer-now",
                 message: result.message ?? "I could not prepare memory this time, so I answered normally.",
@@ -196,7 +196,7 @@ export class MemoryManager {
             return {
                 ok: false,
                 partial: false,
-                message: "I could not prepare memory this time, so I answered normally.",
+                message: getMemoryPrepareFailureMessage(error),
             };
         } finally {
             progress.notice.hide();
@@ -236,7 +236,10 @@ export class MemoryManager {
             : plan;
         const decision = await this.requestApproval(actionPlan, "command");
         if (decision !== "use-memory") return;
-        await this.prepareMemory(actionPlan);
+        const result = await this.prepareMemory(actionPlan);
+        if (!result.ok) {
+            new Notice(result.message ?? "Could not prepare memory.", 7000);
+        }
     }
 
     private requestApproval(
@@ -251,6 +254,25 @@ export class MemoryManager {
     private isAnswerNowCoolingDown(): boolean {
         return Date.now() - this.lastAnswerNowAt < DECLINE_COOLDOWN_MS;
     }
+}
+
+function getMemoryPrepareFailureMessage(error: unknown): string {
+    const code = getErrorCode(error);
+    if (code === "opfs-sahpool-locked") {
+        return "Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.";
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("Local memory storage is busy")) {
+        return "Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.";
+    }
+    return "I could not prepare memory this time, so I answered normally.";
+}
+
+function getErrorCode(error: unknown): string | undefined {
+    if (error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string") {
+        return (error as { code: string }).code;
+    }
+    return undefined;
 }
 
 export class MemoryApprovalModal extends Modal {

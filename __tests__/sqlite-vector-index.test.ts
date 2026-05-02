@@ -24,13 +24,16 @@ class MockWorker {
                 data: {
                     id: request.id,
                     ok: true,
-                    result: readyStats,
+                    result: this.result,
                 },
             } as MessageEvent<SqliteWorkerResponse>);
         });
     });
 
-    constructor(private readonly respond = false) { }
+    constructor(
+        private readonly respond = false,
+        private readonly result: unknown = readyStats,
+    ) { }
 
     fail(message: string): void {
         this.onerror?.({
@@ -83,5 +86,40 @@ describe('SqliteVectorIndex worker recovery', () => {
         expect(firstWorker.terminate).toHaveBeenCalledTimes(1);
         expect(secondWorker.postMessage).toHaveBeenCalledTimes(1);
         expect(workerQueue).toHaveLength(0);
+    });
+
+    it('passes scoped OPFS options to worker initialization', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(true, 'ready');
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            databaseName: 'personal-assistant-vss-work.sqlite3',
+            opfsDirectory: '/personal-assistant-vss-v2/work-scope',
+            legacyOpfsDirectory: '/personal-assistant-vss',
+            opfsVfsName: 'opfs-sahpool-work-scope',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        const status = await index.initialize({
+            provider: 'openai',
+            baseURL: '',
+            model: 'model',
+            dimensions: 1024,
+            distanceMetric: 'COSINE',
+        });
+
+        expect(status).toBe('ready');
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'initialize',
+            payload: expect.objectContaining({
+                databaseName: 'personal-assistant-vss-work.sqlite3',
+                opfsDirectory: '/personal-assistant-vss-v2/work-scope',
+                legacyOpfsDirectory: '/personal-assistant-vss',
+                opfsVfsName: 'opfs-sahpool-work-scope',
+            }),
+        }));
     });
 });

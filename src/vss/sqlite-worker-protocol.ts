@@ -9,7 +9,18 @@ import type {
 } from "./types";
 
 export type SqliteWorkerRequest =
-    | { id: number; type: "initialize"; payload: { profile: EmbeddingProfile; databaseName: string; wasmUrl?: string } }
+    | {
+        id: number;
+        type: "initialize";
+        payload: {
+            profile: EmbeddingProfile;
+            databaseName: string;
+            wasmUrl?: string;
+            opfsDirectory?: string;
+            legacyOpfsDirectory?: string;
+            opfsVfsName?: string;
+        };
+    }
     | { id: number; type: "upsertFile"; payload: { fileState: VSSFileState; chunks: VSSChunk[]; embeddings: number[][] } }
     | { id: number; type: "deleteFile"; payload: { path: string } }
     | { id: number; type: "listFilePaths"; payload: Record<string, never> }

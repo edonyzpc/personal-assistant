@@ -117,6 +117,7 @@ const createPlugin = (overrides: Record<string, unknown> = {}) => {
         list: jest.fn<(path: string) => Promise<{ files: string[]; folders: string[] }>>(async () => ({ files: [], folders: [] })),
         remove: jest.fn<(path: string) => Promise<void>>(),
         mkdir: jest.fn<(path: string) => Promise<void>>(),
+        getBasePath: jest.fn(() => '/vaults/Test Vault'),
         getResourcePath: jest.fn((path: string) => path),
     };
 
@@ -217,22 +218,49 @@ describe('VSS SQLite/WASM lifecycle', () => {
         vss.dispose();
     });
 
-    it('uses a vault-scoped SQLite database name', async () => {
-        const { plugin, mockVault } = createPlugin();
+    it('uses a vault-scoped SQLite database and OPFS pool', async () => {
+        const { plugin, mockAdapter, mockVault } = createPlugin();
         const index = new FakeVectorIndex();
         setMockSqliteIndex(index);
         mockVault.getName.mockReturnValue('Work Vault');
+        mockAdapter.getBasePath.mockReturnValue('/vaults/Work Vault');
         const vss = new VSS(plugin, 'cache');
 
         await vss.rebuildLocalIndex({ silent: true });
 
         expect(MockSqliteVectorIndex).toHaveBeenCalledWith(expect.objectContaining({
-            databaseName: 'personal-assistant-vss-Work_20Vault.sqlite3',
+            databaseName: expect.stringMatching(/^personal-assistant-vss-Work_20Vault-[a-z0-9]+\.sqlite3$/),
+            opfsDirectory: expect.stringMatching(/^\/personal-assistant-vss-v2\/Work_20Vault-[a-z0-9]+$/),
+            legacyOpfsDirectory: '/personal-assistant-vss',
+            opfsVfsName: expect.stringMatching(/^opfs-sahpool-Work_20Vault-[a-z0-9]+$/),
             wasmUrl: expect.stringContaining('data:application/wasm'),
             workerFactory: expect.any(Function),
             workerUrl: 'inline:personal-assistant-vss-worker',
         }));
         vss.dispose();
+    });
+
+    it('separates same-name vaults by local vault path', async () => {
+        const first = createPlugin();
+        const second = createPlugin();
+        setMockSqliteIndex(new FakeVectorIndex());
+        first.mockVault.getName.mockReturnValue('Work Vault');
+        second.mockVault.getName.mockReturnValue('Work Vault');
+        first.mockAdapter.getBasePath.mockReturnValue('/vaults/personal/Work Vault');
+        second.mockAdapter.getBasePath.mockReturnValue('/vaults/client/Work Vault');
+
+        const firstVss = new VSS(first.plugin, 'cache');
+        await firstVss.rebuildLocalIndex({ silent: true });
+        const secondVss = new VSS(second.plugin, 'cache');
+        await secondVss.rebuildLocalIndex({ silent: true });
+
+        const firstOptions = MockSqliteVectorIndex.mock.calls[0][0] as { databaseName: string; opfsDirectory: string; opfsVfsName: string };
+        const secondOptions = MockSqliteVectorIndex.mock.calls[1][0] as { databaseName: string; opfsDirectory: string; opfsVfsName: string };
+        expect(firstOptions.databaseName).not.toBe(secondOptions.databaseName);
+        expect(firstOptions.opfsDirectory).not.toBe(secondOptions.opfsDirectory);
+        expect(firstOptions.opfsVfsName).not.toBe(secondOptions.opfsVfsName);
+        firstVss.dispose();
+        secondVss.dispose();
     });
 
     it('reuses one embeddings model while rebuilding multiple changed notes', async () => {
@@ -649,6 +677,19 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(stats.status).toBe('disabled');
         expect(results).toEqual([]);
         expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
+    });
+
+    it('surfaces SQLite initialization failures during manual rebuild', async () => {
+        const { plugin } = createPlugin();
+        const failingIndex = new FailingVectorIndex();
+        setMockSqliteIndex(failingIndex);
+        const vss = new VSS(plugin, 'cache');
+
+        await expect(vss.rebuildLocalIndex({ silent: true })).rejects.toThrow('opfs unavailable');
+
+        expect(failingIndex.dispose).toHaveBeenCalled();
+        expect(plugin.log).toHaveBeenCalledWith('SQLite VSS index unavailable', expect.any(Error));
+        vss.dispose();
     });
 
     it('continues rebuild in best-effort storage when persistent storage is denied', async () => {
