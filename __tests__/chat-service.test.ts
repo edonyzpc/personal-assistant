@@ -1,5 +1,6 @@
 import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { ChatService, canFallbackToNonStreaming } from '../src/ai-services/chat-service';
+import { parsePlannerAction } from '../src/ai-services/chat-agent';
 
 jest.mock('obsidian');
 
@@ -29,6 +30,45 @@ beforeEach(() => {
     mockCreateChatModel.mockReset();
 });
 
+function createInvokeModel(content: string, onInput?: (input: unknown) => void) {
+    return {
+        invoke: jest.fn(async (input: unknown) => {
+            onInput?.(input);
+            return { content };
+        }),
+    };
+}
+
+function createStreamModel(content: string, onInput?: (input: Record<string, string>) => void) {
+    return {
+        stream: jest.fn(async function* (input: Record<string, string>) {
+            onInput?.(input);
+            yield { content };
+        }),
+    };
+}
+
+function createPlugin(overrides: {
+    searchSimilarity?: (query: string) => Promise<unknown[]>;
+    ensureReadyForChat?: (query?: string) => Promise<{ decision: 'use-memory' | 'answer-now' | 'cancel'; message?: string }>;
+    getMaintenancePlan?: () => Promise<{ reason: string; action: string; requiresApproval: boolean }>;
+} = {}) {
+    return {
+        vss: {
+            searchSimilarity: jest.fn(overrides.searchSimilarity ?? (async () => [])),
+        },
+        memoryManager: {
+            ensureReadyForChat: jest.fn(overrides.ensureReadyForChat ?? (async () => ({ decision: 'use-memory' }))),
+            getMaintenancePlan: jest.fn(overrides.getMaintenancePlan ?? (async () => ({
+                reason: 'ready',
+                action: 'none',
+                requiresApproval: false,
+            }))),
+        },
+        log: jest.fn(),
+    };
+}
+
 describe('streaming fallback policy', () => {
     it('allows fallback when streaming fails before any chunk', () => {
         expect(canFallbackToNonStreaming(new Error('network failed'), false)).toBe(true);
@@ -46,51 +86,127 @@ describe('streaming fallback policy', () => {
     });
 });
 
-describe('ChatService memory behavior', () => {
-    it('uses the normal chat path when memory returns no references', async () => {
-        let chainInput: Record<string, string> | undefined;
-        const stream = jest.fn(async function* (input: Record<string, string>) {
-            chainInput = input;
-            yield { content: 'answer without memory' };
+describe('planner action parser', () => {
+    it('parses answer actions', () => {
+        expect(parsePlannerAction('{"action":"answer","reason":"general question"}')).toEqual({
+            action: 'answer',
+            reason: 'general question',
         });
-        mockCreateChatModel.mockResolvedValueOnce({ stream });
+    });
 
-        const plugin = {
-            vss: {
-                searchSimilarity: jest.fn<(query: string) => Promise<unknown[]>>(async () => []),
-            },
-            log: jest.fn(),
-        };
+    it('parses retrieve actions from fenced JSON', () => {
+        expect(parsePlannerAction('```json\n{"action":"retrieve","query":"project notes","reason":"needs notes"}\n```')).toEqual({
+            action: 'retrieve',
+            query: 'project notes',
+            reason: 'needs notes',
+        });
+    });
+
+    it('rejects retrieve actions without a query', () => {
+        expect(() => parsePlannerAction('{"action":"retrieve","reason":"missing"}')).toThrow(/query/i);
+    });
+});
+
+describe('ChatService memory behavior', () => {
+    it('answers without memory when planner chooses answer', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const planner = createInvokeModel('{"action":"answer","reason":"no memory needed"}');
+        const final = createStreamModel('answer without memory', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin();
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const chunks: string[] = [];
 
         await service.streamLLM('hello', (chunk) => chunks.push(chunk));
 
-        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('hello');
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
         expect(chainInput).toMatchObject({
             input: 'Human: hello\nAssistant:',
         });
         expect(chainInput).not.toHaveProperty('memory_content');
-        expect(stream).toHaveBeenCalledTimes(1);
+        expect(final.stream).toHaveBeenCalledTimes(1);
         expect(chunks).toEqual(['answer without memory']);
     });
 
-    it('skips memory lookup when asked to answer now', async () => {
+    it('uses planner query for memory retrieval', async () => {
         let chainInput: Record<string, string> | undefined;
-        const stream = jest.fn(async function* (input: Record<string, string>) {
+        const plannerRetrieve = createInvokeModel('{"action":"retrieve","query":"project alpha decision","reason":"needs notes"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"memory gathered"}');
+        const final = createStreamModel('answer with memory', (input) => {
             chainInput = input;
-            yield { content: 'plain answer' };
         });
-        mockCreateChatModel.mockResolvedValueOnce({ stream });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerRetrieve)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
 
-        const plugin = {
-            vss: {
-                searchSimilarity: jest.fn<(query: string) => Promise<unknown[]>>(async () => {
-                    throw new Error('memory should not be searched');
-                }),
+        const plugin = createPlugin({
+            searchSimilarity: async () => [{
+                score: 0.9,
+                doc: {
+                    pageContent: 'Alpha decision from notes',
+                    metadata: { path: 'alpha.md', chunkIndex: 2 },
+                },
+            }],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const chunks: string[] = [];
+
+        await service.streamLLM('what did we decide?', (chunk) => chunks.push(chunk));
+
+        expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledWith('project alpha decision');
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('project alpha decision');
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalledWith('what did we decide?');
+        expect(chainInput?.memory_content).toContain('Alpha decision from notes');
+        expect(chainInput?.memory_content).toContain('alpha.md');
+        expect(chainInput?.allowed_sources).toBe('alpha.md');
+        expect(chunks).toEqual(['answer with memory']);
+    });
+
+    it('does not repeat duplicate retrieve queries', async () => {
+        const plannerRetrieve = createInvokeModel('{"action":"retrieve","query":"same query","reason":"needs notes"}');
+        const plannerDuplicate = createInvokeModel('{"action":"retrieve","query":"same query","reason":"try again"}');
+        const final = createStreamModel('answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerRetrieve)
+            .mockResolvedValueOnce(plannerDuplicate)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => [{
+                score: 0.8,
+                doc: {
+                    pageContent: 'Memory content',
+                    metadata: { path: 'note.md', chunkIndex: 0 },
+                },
+            }],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('question', jest.fn());
+
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledTimes(1);
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('same query');
+    });
+
+    it('skips planner and memory lookup when asked to answer now', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const final = createStreamModel('plain answer', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel.mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => {
+                throw new Error('memory should not be searched');
             },
-            log: jest.fn(),
-        };
+        });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
         const chunks: string[] = [];
 
@@ -98,6 +214,8 @@ describe('ChatService memory behavior', () => {
             memoryMode: 'skip-memory',
         });
 
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(1);
+        expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
         expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
         expect(chainInput).toMatchObject({
             input: 'Human: hello\nAssistant:',
@@ -106,20 +224,49 @@ describe('ChatService memory behavior', () => {
         expect(chunks).toEqual(['plain answer']);
     });
 
+    it('falls back when planner output cannot be parsed', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const planner = createInvokeModel('not json');
+        const final = createStreamModel('fallback answer', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => [{
+                score: 0.7,
+                doc: {
+                    pageContent: 'Fallback memory',
+                    metadata: { path: 'fallback.md', chunkIndex: 1 },
+                },
+            }],
+        });
+        const statuses: string[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('question', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status.type),
+        });
+
+        expect(plugin.memoryManager.getMaintenancePlan).toHaveBeenCalled();
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('question');
+        expect(chainInput?.memory_content).toContain('Fallback memory');
+        expect(statuses).toContain('fallback');
+    });
+
     it('strips trailing memory reference callouts from chat history with flexible whitespace', async () => {
         let chainInput: Record<string, string> | undefined;
-        const stream = jest.fn(async function* (input: Record<string, string>) {
+        const planner = createInvokeModel('{"action":"answer","reason":"no memory needed"}');
+        const final = createStreamModel('next answer', (input) => {
             chainInput = input;
-            yield { content: 'next answer' };
         });
-        mockCreateChatModel.mockResolvedValueOnce({ stream });
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
 
-        const plugin = {
-            vss: {
-                searchSimilarity: jest.fn<(query: string) => Promise<unknown[]>>(async () => []),
-            },
-            log: jest.fn(),
-        };
+        const plugin = createPlugin();
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
         await service.streamLLM(

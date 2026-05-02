@@ -1,5 +1,5 @@
 import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, Vault, setIcon } from 'obsidian';
-import { ChatService } from './ai-services/chat-service';
+import { ChatService, type ChatAgentStatus } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
 import { isPluginEnabled } from './utils';
@@ -136,22 +136,34 @@ export class LLMView extends ItemView {
             });
         };
 
+        const renderAgentStatus = (status: ChatAgentStatus) => {
+            if (status.type === 'thinking') {
+                renderMemoryNotice('Thinking about whether memory is needed...');
+            } else if (status.type === 'retrieving') {
+                renderMemoryNotice(`Searching memory: ${status.query}`);
+            } else if (status.type === 'retrieved') {
+                const sources = status.sources
+                    .slice(0, 4)
+                    .map((source) => source.path)
+                    .join(', ');
+                renderMemoryNotice(sources ? `Found memory references: ${sources}` : 'No memory references found.');
+            } else if (status.type === 'memory-skipped') {
+                renderMemoryNotice(status.reason);
+            } else if (status.type === 'answering') {
+                renderMemoryNotice('Answering...');
+            } else if (status.type === 'fallback') {
+                renderMemoryNotice('I could not use the planner this time, so I will answer with a fallback path.');
+            }
+        };
+
         sendButton.onclick = async () => {
             const prompt = textArea.value;
             if (!prompt || sendButton.disabled) return;
             sendButton.disabled = true;
 
             try {
-                const memoryDecision = await this.plugin.memoryManager.ensureReadyForChat(prompt);
-                if (memoryDecision.decision === "cancel") {
-                    return;
-                }
-
                 this.chatHistory.push({ role: 'user', content: prompt });
                 renderMessage(this.chatHistory[this.chatHistory.length - 1], this.chatHistory.length - 1);
-                if (memoryDecision.message) {
-                    renderMemoryNotice(memoryDecision.message);
-                }
 
                 textArea.value = '';
                 addToEditorButton.disabled = true;
@@ -199,7 +211,8 @@ export class LLMView extends ItemView {
                     this.abortController.signal,
                     this.chatHistory,
                     {
-                        memoryMode: memoryDecision.decision === "answer-now" ? "skip-memory" : "use-memory",
+                        memoryMode: "auto",
+                        onStatus: renderAgentStatus,
                     },
                 );
 
