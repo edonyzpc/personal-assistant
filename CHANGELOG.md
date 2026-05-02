@@ -6,6 +6,11 @@ All notable changes to this project will be documented in this file. See [standa
 
 No changes yet.
 
+## [1.6.4](https://github.com/edonyzpc/personal-assistant/compare/1.6.3...1.6.4) (2026-05-02)
+
+### Improvements
+- vss: batch rebuild embeddings and report progress
+
 ## [1.6.3](https://github.com/edonyzpc/personal-assistant/compare/1.6.2...1.6.3) (2026-05-02)
 
 ### Fix
