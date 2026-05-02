@@ -6,11 +6,14 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Features
 - vss: replace startup-loaded MemoryVectorStore with manual local SQLite/WASM indexing backed by OPFS when available
+- memory: add pre-chat Memory approval flow with answer-now fallback and hidden advanced controls
 
 ### Fix
 - vss: make exact vector scan ordering deterministic for equal-distance results and show high-chunk performance notices
 - vss: include SQLite worker and WASM assets in release/deploy paths
 - vss: remove stale indexed files during manual refresh and invalidate indexes when the embedding profile changes
+- memory: avoid success notices when a manual memory refresh aborts
+- chat: strip trailing memory reference blocks from chat history more robustly
 
 ### Docs
 - vss: document SQLite/WASM architecture, implementation plan, development tracker, and dependency license review note
@@ -18,6 +21,7 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Tests
 - vss: cover SQLite/OPFS unavailable fallback behavior and embedding model migration protection
+- memory: cover readiness decisions, product copy, and skip-memory chat behavior
 
 ## [1.6.0](https://github.com/edonyzpc/personal-assistant/compare/1.5.9...1.6.0) (2026-05-01)
 ### Features
