@@ -20,7 +20,7 @@
 | 最后回顾 | 2026-05-02 |
 | 总体阶段 | SQLite/WASM 主路径已完成；Memory 产品体验自动化测试已通过；Obsidian Desktop/iOS 旧 smoke test 已通过，Memory 新交互待补手动 smoke test；Android 待验证 |
 | 设计文档 | 已完成，并已补充当前实现快照、接口对齐和 Android 待验证说明 |
-| 实现状态 | SQLite/WASM 主路径、manifest/marker、fallback 判定、MemoryManager 产品层、聊天前确认、Answer now fallback、高级入口隐藏、worker/WASM 打包发布路径和关键自动化测试已实现 |
+| 实现状态 | SQLite/WASM 主路径、manifest/marker、fallback 判定、MemoryManager 产品层、聊天前确认、Answer now fallback、高级入口隐藏、SQLite worker/WASM 内联发布路径和关键自动化测试已实现 |
 | 最近结论 | 自动化测试、lint、生产构建已通过；Desktop 已验证 rebuild、refresh、reset、旧 JSON 清理、profile stale、OPFS 丢失检测与恢复、真实 LLM + RAG 聊天；iOS 已验证 rebuild、reload 持久化、refresh、状态命令和真实 LLM + RAG 聊天，存储为 best-effort；Android 因暂无实机设备仍待验证，并已在 README 标注 |
 
 ## 当前代码修改回顾
@@ -30,11 +30,11 @@
 | VSS 核心门面 | `src/vss.ts` | 已从启动全量加载 JSON/`MemoryVectorStore` 改为手动 SQLite/WASM lifecycle；保留旧方法为兼容 no-op 或手动入口；支持 rebuild、refresh、reset、legacy JSON 清理、profile stale、missing local index、fallback 判定 |
 | Memory 产品层 | `src/memory-manager.ts`、`src/chat-view.ts`、`src/settings.ts` | 普通用户看到 Memory from your notes；聊天前检查 readiness；成本动作按次确认；`Answer now` 本次跳过 Memory；高级维护入口默认隐藏 |
 | VectorIndex 后端 | `src/vss/*` | 新增 `VectorIndex` 类型、`SqliteVectorIndex`、SQLite worker protocol/worker、`MemoryVectorIndex` fallback、marker/manifest helper；主线程不再持有全量向量 |
-| 构建与发布 | `package.json`、`package-lock.json`、`esbuild.config.mjs`、`Makefile`、`.github/workflows/release.yml` | pin `@sqliteai/sqlite-wasm`；单独打包 `vss-sqlite-worker.js`；复制/发布 `sqlite3.wasm` 和 worker asset；test vault deploy 路径已补齐 |
+| 构建与发布 | `package.json`、`package-lock.json`、`esbuild.config.mjs`、`Makefile`、`.github/workflows/release.yml` | pin `@sqliteai/sqlite-wasm`；worker/WASM 内联进 `main.js`；release 和 test vault deploy 回到 Obsidian 标准三文件安装形态 |
 | 插件命令与状态 | `src/plugin.ts`、`src/settings.ts`、`src/stats/stats-store.ts` | 普通命令保留 `Prepare Memory`；Desktop 状态栏显示 Memory 状态；高级 reset/clean/status 命令按设置动态隐藏；新安装默认 Qwen v4，旧默认 v3 只提示不静默迁移 |
 | 聊天 Memory | `src/ai-services/chat-service.ts` | Memory 有结果时使用 Memory prompt；Memory 无结果或用户选择 `Answer now` 时回到普通 chat prompt，不传空 `memory_content` |
 | 自动化测试 | `__tests__/memory-manager.test.ts`、`__tests__/vss.test.ts`、`__tests__/chat-service.test.ts`、`__tests__/plugin-record-note.test.ts`、`__tests__/memory-vector-index.test.ts`、`__tests__/sqlite-vector-index.test.ts`、`__tests__/vss-state.test.ts` | 覆盖 Memory readiness、产品文案、skip-memory 聊天、lifecycle、fallback 双硬上限、marker/manifest 路径、missing index 恢复、旧 JSON 清理保护、迁移提示、性能提醒、worker fatal error recovery |
-| 文档与发布说明 | `docs/vss-sqlite-wasm-*.md`、`README.md`、`README-CN.md`、`CHANGELOG.md` | 架构、实施计划、开发 tracker 已建立；README 标注 Android 待实机验证和手动安装新增 worker/WASM 文件；CHANGELOG 增加 Unreleased 记录 |
+| 文档与发布说明 | `docs/vss-sqlite-wasm-*.md`、`README.md`、`README-CN.md`、`CHANGELOG.md` | 架构、实施计划、开发 tracker 已建立；README 标注 Android 待实机验证和标准三文件手动安装；CHANGELOG 增加 Unreleased 记录 |
 
 ## 剩余事项
 
@@ -71,7 +71,7 @@
 - [x] 执行 `vector_init`。
 - [x] 执行 `vector_full_scan` 并返回 top-k。
 - [x] 重开 DB 后验证数据仍存在。
-- [x] 验证打包后的 WASM/worker asset 路径。
+- [x] 验证内联 WASM/worker 在标准三文件安装下可加载。
 - [x] 验证 OPFS 不可用时返回明确错误码。
 
 平台验证：
@@ -129,7 +129,7 @@ Gate 结果：
 任务：
 
 - [x] 引入并 pin `sqlite-vector/@sqliteai/sqlite-wasm` 精确版本。
-- [x] 配置 esbuild 复制 WASM/worker assets。
+- [x] 配置 esbuild 内联 WASM/worker assets。
 - [x] 实现 Worker message protocol。
 - [x] 初始化 SQLite schema。
 - [x] 初始化 `vector_init`。
@@ -294,7 +294,7 @@ Gate 结果：
 
 前置条件：
 
-- `test` vault 已同步最新插件构建文件：`main.js`、`manifest.json`、`styles.css`、`vss-sqlite-worker.js`、`sqlite3.wasm`。
+- `test` vault 已同步最新插件构建文件：`main.js`、`manifest.json`、`styles.css`。
 - Mobile 端 Obsidian 已完整同步 `.obsidian/plugins/personal-assistant/`。
 - Mobile 端已启用 Personal Assistant 插件。
 - Mobile 端已重新打开 Obsidian，以确保加载最新 `main.js`。
@@ -351,7 +351,7 @@ Gate 结果：
 | rebuild 确认信息不够完整 | 待确认是否本轮补强 | 当前已提示 token/API 成本；计划中的预计文件数/chunk 数和当前模型/维度尚未展示 | 2026-05-02 |
 | embedding dimensions 是否配置化 | 待确认 | 当前固定 1024 维，避免错误维度导致 stale 或额外重建；如需支持非 1024 维模型，需要补 setting、profile 和 UI 验证 | 2026-05-02 |
 | `sqlite-vector` 许可证和包稳定性 | 已处理基础披露 | 已 pin 精确版本，并在 README / README-CN / CHANGELOG 标注发布前复核上游许可证和条款 | - |
-| Obsidian `app://` Worker 直接加载失败 | 已修复 | Worker 直连失败时拉取 worker/WASM 并创建同源 Blob URL | Desktop: 2026-05-02 |
+| Obsidian 安装器不复制 worker/WASM 额外资产 | 已修复 | worker/WASM 内联进 `main.js`，运行时从内联源码和 wasm data URL 创建 Worker | Desktop: 2026-05-02 |
 | sqlite-wasm 控制台噪音 | 已修复 | 过滤未使用的 async OPFS VFS warning/error，并关闭 SQL trace 打开参数 | Desktop: 2026-05-02 |
 | refresh 后 `storagePersisted` 被默认值覆盖 | 已修复 | 初始化和写 marker/manifest 前读取当前 Storage Persistence 状态；仅 rebuild 主动申请持久化 | Desktop: 2026-05-02 |
 | refresh 对未变更文件也等待 embedding rate gap | 已修复 | 文件 diff 先完成，只有真实调用 embedding batch 前才等待 rate gap | Desktop: 2026-05-02 |
@@ -364,8 +364,8 @@ Gate 结果：
 | 2026-05-02 | 使用设备子目录保存 marker/manifest | 避免跨设备同步后误判 OPFS 索引可用 | 后续所有本机 VSS 状态文件放入 `vss-index-state/<deviceId>/` |
 | 2026-05-02 | fallback 使用双硬上限 | 防止小 chunk 数但高内存或低内存估算但 chunk 过多的情况进入 Memory fallback | fallback 判断必须同时检查 chunk 数和估算内存 |
 | 2026-05-02 | Desktop PoC 是硬 gate，Mobile PoC 是支持级别 gate | Desktop 主路径不能建立在未验证的 SQLite/OPFS 后端上；Mobile 不应阻塞 Desktop 价值交付 | Mobile 失败时标记实验性或禁用 VSS |
-| 2026-05-02 | Worker 单独打包为 ESM，主插件继续 CJS | Obsidian 插件主入口保持现有打包方式，SQLite WASM 在 Worker 内 lazy-load | 构建输出新增 `vss-sqlite-worker.js` 和 `sqlite3.wasm` |
-| 2026-05-02 | Worker 在 Obsidian Desktop 下使用 Blob fallback | Obsidian `app://<random-host>` worker URL 会被 `app://obsidian.md` origin 拦截 | Worker client 负责同源化 worker/WASM asset，并在 dispose 时释放 Blob URL |
+| 2026-05-02 | Worker/WASM 内联进主插件 bundle | Obsidian/BRAT/手动安装通常只可靠安装 `main.js`、`manifest.json`、`styles.css`，额外 release assets 可能不会进入 vault 插件目录 | Rebuild 不再依赖 `vss-sqlite-worker.js` 或 `sqlite3.wasm` 外部文件 |
+| 2026-05-02 | Inline Worker 使用 Blob URL，WASM 使用 data URL 转 Blob URL | 保持 Worker module 运行隔离，同时避免 `app://` 文件加载和安装目录缺文件问题 | Worker client 仍在 dispose 时释放 wasm Blob URL；inline worker 在 terminate 时释放自身 Blob URL |
 | 2026-05-02 | marker/manifest 写入前重新读取 Storage Persistence 状态 | reload 后内存默认值不能代表当前浏览器存储持久化状态 | refresh 不再把 `storagePersisted` 误写成 false |
 | 2026-05-02 | embedding rate gap 只应用在实际 embedding batch 前 | 手动 refresh 大多数时候是检查变更，不应因未变更文件数量线性变慢 | unchanged refresh 不再因为逐文件 throttle 变慢；有变更时仍保护 embedding 调用频率 |
 | 2026-05-02 | `missing-local-index` 下 rebuild 复用当前 SQLite 后端 | OPFS 丢失检测会留下一个已初始化但无 chunks 的后端，恢复时不应再新建 worker 抢占同一 OPFS DB | rebuild 可从 `VSS index missing` 状态恢复到 `Ready: N chunks` |

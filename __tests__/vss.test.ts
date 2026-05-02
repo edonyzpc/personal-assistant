@@ -228,6 +228,9 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
         expect(MockSqliteVectorIndex).toHaveBeenCalledWith(expect.objectContaining({
             databaseName: 'personal-assistant-vss-Work_20Vault.sqlite3',
+            wasmUrl: expect.stringContaining('data:application/wasm'),
+            workerFactory: expect.any(Function),
+            workerUrl: 'inline:personal-assistant-vss-worker',
         }));
         vss.dispose();
     });

@@ -1,6 +1,7 @@
-import { context } from 'esbuild';
+import { build as esbuildBuild, context } from 'esbuild';
 import process from 'process';
 import { copy } from 'esbuild-plugin-copy';
+import path from 'node:path';
 
 const banner =
 	`/*
@@ -10,6 +11,49 @@ if you want to view the source, please visit the github repository of this plugi
 `;
 
 const prod = (process.argv[2] === "production");
+
+const inlineSqliteWorkerPlugin = {
+	name: "inline-sqlite-worker",
+	setup(build) {
+		build.onResolve({ filter: /\?worker-source$/ }, (args) => {
+			const sourcePath = args.path.replace(/\?worker-source$/, "");
+			return {
+				path: path.resolve(args.resolveDir, sourcePath),
+				namespace: "sqlite-worker-source",
+			};
+		});
+
+		build.onLoad({ filter: /.*/, namespace: "sqlite-worker-source" }, async (args) => {
+			const result = await esbuildBuild({
+				platform: "browser",
+				mainFields: ["browser", "module", "main"],
+				conditions: ["browser"],
+				entryPoints: [args.path],
+				bundle: true,
+				format: "esm",
+				target: "es2020",
+				logLevel: "silent",
+				write: false,
+				metafile: true,
+				minify: prod ? true : false,
+				sourcemap: false,
+				loader: {
+					'.ts': 'ts',
+					'.js': 'js',
+					'.mjs': 'js',
+				},
+				define: {
+					"process.env.NODE_ENV": prod ? '"production"' : '"development"',
+				},
+			});
+			return {
+				contents: `export default ${JSON.stringify(result.outputFiles[0].text)};`,
+				loader: "js",
+				watchFiles: Object.keys(result.metafile.inputs),
+			};
+		});
+	},
+};
 
 const mainContext = await context({
 	platform: "browser",
@@ -46,6 +90,7 @@ const mainContext = await context({
 		'.tsx': 'tsx',
 		'.js': 'js',
 		'.jsx': 'jsx',
+		'.wasm': 'dataurl',
 	},
 	define: {
 		"process.env.NODE_ENV": prod ? '"production"' : '"development"',
@@ -66,46 +111,15 @@ const mainContext = await context({
 					from: ['./styles.css'],
 					to: ['styles.css'],
 				},
-				{
-					from: ['./node_modules/@sqliteai/sqlite-wasm/sqlite-wasm/jswasm/sqlite3.wasm'],
-					to: ['sqlite3.wasm'],
-				},
 			],
 		}),
+		inlineSqliteWorkerPlugin,
 	],
 });
 
-const workerContext = await context({
-	platform: "browser",
-	mainFields: ["browser", "module", "main"],
-	conditions: ["browser"],
-	entryPoints: ["src/vss/sqlite-worker.ts"],
-	bundle: true,
-	format: "esm",
-	target: "es2020",
-	logLevel: "info",
-	sourcemap: prod ? false : "inline",
-	outfile: "dist/vss-sqlite-worker.js",
-	minify: prod ? true : false,
-	loader: {
-		'.ts': 'ts',
-		'.js': 'js',
-		'.mjs': 'js',
-	},
-	define: {
-		"process.env.NODE_ENV": prod ? '"production"' : '"development"',
-	},
-});
-
 if (prod) {
-	await Promise.all([
-		mainContext.rebuild(),
-		workerContext.rebuild(),
-	]);
+	await mainContext.rebuild();
 	process.exit(0);
 } else {
-	await Promise.all([
-		mainContext.watch(),
-		workerContext.watch(),
-	]);
+	await mainContext.watch();
 }

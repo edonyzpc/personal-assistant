@@ -115,7 +115,7 @@ Now Personal Assistant plugin is available in [plugin market](https://obsidian.m
 ### Manually Install
 
 - Build with commandline: `npm install && npm run build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
-- Copy over `main.js`, `styles.css`, `manifest.json`, `vss-sqlite-worker.js`, and `sqlite3.wasm` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
+- Copy over `main.js`, `styles.css`, and `manifest.json` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
 
 ## Use
 

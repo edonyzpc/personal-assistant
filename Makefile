@@ -11,8 +11,6 @@ deploy: clean bin
 	cp dist/manifest.json test/.obsidian/plugins/personal-assistant/
 	cp dist/manifest-beta.json test/.obsidian/plugins/personal-assistant/
 	cp dist/styles.css test/.obsidian/plugins/personal-assistant/
-	cp dist/vss-sqlite-worker.js test/.obsidian/plugins/personal-assistant/
-	cp dist/sqlite3.wasm test/.obsidian/plugins/personal-assistant/
 
 clean:
 	rm -rf test/.obsidian/plugins/personal-assistant/main.js

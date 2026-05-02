@@ -4,7 +4,8 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
-No changes yet.
+### Fix
+- vss: inline SQLite worker and WASM assets so installed plugins can rebuild memory without extra files
 
 ## [1.6.1](https://github.com/edonyzpc/personal-assistant/compare/1.6.0...1.6.1) (2026-05-02)
 

@@ -8,6 +8,7 @@ import { AIUtils } from './ai-services/ai-utils';
 import { PluginManager } from './plugin';
 import { computeContentHash, selectFlushCandidates, shouldRespectRateGap, DirtyTimestamps } from './vss-helpers';
 import { MemoryVectorIndex } from './vss/memory-vector-index';
+import { createInlineSqliteWorker, getInlineSqliteWasmUrl } from './vss/sqlite-inline-assets';
 import { SqliteVectorIndex } from './vss/sqlite-vector-index';
 import {
     ensureVSSIndexStateDir,
@@ -540,9 +541,10 @@ export class VSS {
         const marker = this.marker ?? await readVSSMarker(this.plugin.app.vault, this.deviceId);
 
         const sqliteIndex = new SqliteVectorIndex({
-            workerUrl: this.getPluginAssetUrl("vss-sqlite-worker.js"),
-            wasmUrl: this.getPluginAssetUrl("sqlite3.wasm"),
+            workerUrl: "inline:personal-assistant-vss-worker",
+            wasmUrl: getInlineSqliteWasmUrl(),
             databaseName: this.getDatabaseName(),
+            workerFactory: createInlineSqliteWorker,
         });
 
         try {
@@ -875,15 +877,6 @@ export class VSS {
         } catch {
             return { persisted };
         }
-    }
-
-    private getPluginAssetUrl(filename: string): string {
-        const manifestDir = this.plugin.manifest.dir;
-        const path = manifestDir ? this.plugin.join(manifestDir, filename) : filename;
-        const adapter = this.plugin.app.vault.adapter as typeof this.plugin.app.vault.adapter & {
-            getResourcePath?: (path: string) => string;
-        };
-        return adapter.getResourcePath?.(path) ?? path;
     }
 
     private getDatabaseName(): string {

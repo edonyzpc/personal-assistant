@@ -97,7 +97,7 @@
 ### 手动安装
 
 - 通过源码编译: `npm install && npm run build` 或者直接从 [release page](https://github.com/edonyzpc/personal-assistant/releases) 下载
-- 将这些文件 `main.js`, `styles.css`, `manifest.json`, `vss-sqlite-worker.js`, `sqlite3.wasm` 拷贝到 Obsidian 的插件目录 `{VaultFolder}/.obsidian/plugins/perosonal-assistant/`.
+- 将这些文件 `main.js`, `styles.css`, `manifest.json` 拷贝到 Obsidian 的插件目录 `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
 
 ## 使用
 

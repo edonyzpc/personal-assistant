@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | Phase 0 PoC Gate | Desktop/iOS 已通过，Android 待验证 | Desktop 是主实现硬 gate；Android 因无实机设备暂未完整验证 |
 | Phase 1 VectorIndex + manifest | 已实现 | marker/manifest 使用设备子目录；fallback 使用双硬上限 |
-| Phase 2 SQLite Worker 后端 | 已实现 | worker/WASM 已纳入 build、deploy、release assets |
+| Phase 2 SQLite Worker 后端 | 已实现 | worker/WASM 已内联进 `main.js`，release/deploy 回到标准三文件安装 |
 | Phase 3 VSS lifecycle | 已实现 | 插件启动不自动建索引；refresh/rebuild 手动触发 |
 | Phase 4 UI 状态与提醒 | Memory 产品体验已实现，待补手动 smoke test | 状态栏、聊天前确认弹窗、Answer now fallback 和高级入口隐藏已完成 |
 | Phase 5 旧 JSON 清理和迁移保护 | 已实现 | 清理前检查 SQLite ready、marker/profile、chunkCount 和 fatal error |
@@ -45,7 +45,7 @@
 额外验证：
 
 - `navigator.storage.persist()` / `persisted()` / `estimate()` 在主线程可调用。
-- 打包后的 WASM/worker asset 路径可加载。
+- 内联 WASM/worker 在标准三文件安装下可加载。
 - OPFS 不可用时能返回明确错误码。
 
 Gate 结果：
@@ -290,7 +290,7 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 - 新增最小 PoC worker。
 - 验证 `opfs-sahpool`、`vector_init`、`vector_full_scan`。
 - 验证 Desktop/iOS/Android。
-- 验证打包后的 WASM/worker asset 路径。
+- 验证内联 WASM/worker 在标准三文件安装下可加载。
 - 输出 gate 结果，决定是否进入主实现。
 
 ### Phase 1: VectorIndex 接口和 fallback manifest
@@ -303,7 +303,7 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 ### Phase 2: SQLite Worker 后端
 
 - 引入并 pin `sqlite-vector/@sqliteai/sqlite-wasm`。
-- 配置 esbuild 复制 WASM/worker assets。
+- 配置 esbuild 内联 WASM/worker assets。
 - 实现 `SqliteVectorIndex` worker message protocol。
 - 实现 schema 初始化、`vector_init`、upsert、delete、search、stats、reset。
 - 保证 DB 操作串行化。
@@ -368,7 +368,7 @@ Phase 0 smoke tests：
 - `vector_init` 成功。
 - 插入 Float32 embedding。
 - `vector_full_scan` 返回 top-k。
-- 打包后 WASM/worker asset 路径可加载。
+- 内联 WASM/worker 在标准三文件安装下可加载。
 
 Manual verification：
 
