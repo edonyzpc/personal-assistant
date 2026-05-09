@@ -235,6 +235,16 @@ export class LLMView extends ItemView {
                 return sources ? `Found memory references: ${sources}` : 'No memory references found.';
             } else if (status.type === 'memory-skipped') {
                 return status.reason;
+            } else if (status.type === 'tool-running') {
+                return status.message;
+            } else if (status.type === 'tool-done') {
+                const sources = status.sources
+                    ?.slice(0, 4)
+                    .map((source) => source.path)
+                    .join(', ');
+                return sources ? `${status.message}: ${sources}` : status.message;
+            } else if (status.type === 'tool-skipped') {
+                return status.reason;
             } else if (status.type === 'answering') {
                 return 'Answering...';
             } else if (status.type === 'fallback') {

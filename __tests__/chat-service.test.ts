@@ -104,6 +104,15 @@ describe('planner action parser', () => {
         });
     });
 
+    it('parses tool actions', () => {
+        expect(parsePlannerAction('{"action":"tool","tool":"search_memory","input":{"query":"project notes"},"reason":"needs notes"}')).toEqual({
+            action: 'tool',
+            tool: 'search_memory',
+            input: { query: 'project notes' },
+            reason: 'needs notes',
+        });
+    });
+
     it('rejects retrieve actions without a query', () => {
         expect(() => parsePlannerAction('{"action":"retrieve","reason":"missing"}')).toThrow(/query/i);
     });
@@ -140,6 +149,7 @@ describe('ChatService memory behavior', () => {
 
         const plannerTemplate = (SystemMessagePromptTemplate.fromTemplate as unknown as jest.Mock).mock.calls[0]?.[0] as string;
         expect(plannerTemplate).toContain('{{"action":"answer","reason":"短原因"}}');
+        expect(plannerTemplate).toContain('{{"action":"tool","tool":"search_memory","input":{"query":"适合搜索用户笔记的检索词"},"reason":"短原因"}}');
         expect(plannerTemplate).toContain('{{"action":"retrieve","query":"适合搜索用户笔记的检索词","reason":"短原因"}}');
     });
 
@@ -204,6 +214,144 @@ describe('ChatService memory behavior', () => {
         expect(chunks).toEqual(['answer with memory']);
     });
 
+    it('executes search_memory through tool actions', async () => {
+        let chainInput: Record<string, string> | undefined;
+        let secondPlannerInput: unknown;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_memory","input":{"query":"phase two registry"},"reason":"needs notes"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"tool result gathered"}', (input) => {
+            secondPlannerInput = input;
+        });
+        const final = createStreamModel('answer with tool memory', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => [{
+                score: 0.88,
+                doc: {
+                    pageContent: 'Tool registry plan from notes',
+                    metadata: { path: 'phase2.md', chunkIndex: 3 },
+                },
+            }],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('what is phase two?', jest.fn());
+
+        expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledWith('phase two registry');
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('phase two registry');
+        expect(chainInput?.memory_content).toContain('Tool registry plan from notes');
+        expect(chainInput?.allowed_sources).toBe('phase2.md');
+        expect(JSON.stringify(secondPlannerInput)).toContain('phase2.md');
+        expect(JSON.stringify(secondPlannerInput)).not.toContain('Tool registry plan from notes');
+    });
+
+    it('does not execute unregistered tools', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"delete_note","input":{"path":"note.md"},"reason":"not allowed"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"tool unavailable"}');
+        const final = createStreamModel('answer without tool', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => {
+                throw new Error('memory should not be searched');
+            },
+        });
+        const statuses: string[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('delete a note', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status.type),
+        });
+
+        expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(statuses).toContain('tool-skipped');
+        expect(statuses).not.toContain('tool-running');
+    });
+
+    it('does not call memory when search_memory input is invalid', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_memory","input":{"query":""},"reason":"bad input"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"tool input invalid"}');
+        const final = createStreamModel('answer without invalid tool', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => {
+                throw new Error('memory should not be searched');
+            },
+        });
+        const statuses: string[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('question about notes', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status.type),
+        });
+
+        expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(statuses).toContain('tool-skipped');
+        expect(statuses).not.toContain('tool-running');
+    });
+
+    it('answers without memory when registered search_memory execution fails', async () => {
+        let chainInput: Record<string, string> | undefined;
+        let secondPlannerInput: unknown;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_memory","input":{"query":"failing memory"},"reason":"needs notes"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"tool unavailable"}', (input) => {
+            secondPlannerInput = input;
+        });
+        const final = createStreamModel('answer without failed memory', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => {
+                throw new Error('sqlite internal path /private/tmp/secret.sqlite failed');
+            },
+        });
+        const statuses: Array<{ type: string; reason?: string }> = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('question about notes', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledWith('failing memory');
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('failing memory');
+        expect(chainInput).toMatchObject({
+            input: 'Human: question about notes\nAssistant:',
+        });
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'tool-skipped', reason: 'Read-only tool was unavailable.' }),
+        ]));
+        expect(JSON.stringify(secondPlannerInput)).toContain('Read-only tool was unavailable.');
+        expect(JSON.stringify(secondPlannerInput)).not.toContain('/private/tmp/secret.sqlite');
+    });
+
     it('keeps allowed memory references limited to retrieved source metadata', async () => {
         let chainInput: Record<string, string> | undefined;
         const plannerRetrieve = createInvokeModel('{"action":"retrieve","query":"adversarial memory note","reason":"needs notes"}');
@@ -256,6 +404,33 @@ describe('ChatService memory behavior', () => {
 
         await service.streamLLM('question', jest.fn());
 
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledTimes(1);
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('same query');
+    });
+
+    it('does not repeat duplicate search_memory tool inputs', async () => {
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_memory","input":{"query":"same query"},"reason":"needs notes"}');
+        const plannerDuplicate = createInvokeModel('{"action":"tool","tool":"search_memory","input":{"query":" Same   Query "},"reason":"try again"}');
+        const final = createStreamModel('answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerDuplicate)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => [{
+                score: 0.8,
+                doc: {
+                    pageContent: 'Memory content',
+                    metadata: { path: 'note.md', chunkIndex: 0 },
+                },
+            }],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('question', jest.fn());
+
+        expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledTimes(1);
         expect(plugin.vss.searchSimilarity).toHaveBeenCalledTimes(1);
         expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('same query');
     });
