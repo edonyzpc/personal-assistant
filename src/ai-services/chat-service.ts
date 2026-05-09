@@ -6,9 +6,9 @@ import type { PluginManager } from '../plugin'
 import type { MemoryMode } from '../memory-manager';
 import {
     ChatAgentRuntime,
-    type ChatAgentStatus,
-    type ChatMessage,
 } from './chat-agent';
+import { createAbortError, isAbortError } from './chat-utils';
+import type { ChatAgentStatus, ChatMessage } from './chat-types';
 
 export type { ChatAgentStatus, ChatMessage };
 
@@ -16,14 +16,6 @@ export interface StreamLLMOptions {
     memoryMode?: MemoryMode;
     onStatus?: (status: ChatAgentStatus) => void;
 }
-
-const isAbortError = (error: unknown, signal?: AbortSignal): boolean => {
-    if (signal?.aborted) return true;
-    if (typeof DOMException !== 'undefined' && error instanceof DOMException && error.name === 'AbortError') {
-        return true;
-    }
-    return error instanceof Error && error.name === 'AbortError';
-};
 
 export const canFallbackToNonStreaming = (
     error: unknown,
@@ -124,7 +116,7 @@ current note path 不属于用户记忆来源，不要放入 Memory references�
             }
         } catch (error) {
             if (!canFallbackToNonStreaming(error, receivedAnyChunk, signal)) {
-                throw error;
+                throw signal?.aborted ? createAbortError() : error;
             }
 
             this.plugin.log("Streaming LLM failed before chunks; retrying without streaming.");

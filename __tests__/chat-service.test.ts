@@ -2,6 +2,7 @@ import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { SystemMessagePromptTemplate } from '@langchain/core/prompts';
 import { ChatService, canFallbackToNonStreaming } from '../src/ai-services/chat-service';
 import { parsePlannerAction, stripReferenceBlock } from '../src/ai-services/chat-agent';
+import { ToolRegistry, type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 
 jest.mock('obsidian');
 
@@ -101,6 +102,14 @@ function createMarkdownView(overrides: {
     };
 }
 
+function extractCurrentNoteContextPayload(input: string | undefined): Record<string, unknown> {
+    const match = input?.match(/<current_note_context>\n([\s\S]*?)\n<\/current_note_context>/);
+    if (!match) {
+        throw new Error('Current note context block was not found.');
+    }
+    return JSON.parse(match[1]) as Record<string, unknown>;
+}
+
 describe('streaming fallback policy', () => {
     it('allows fallback when streaming fails before any chunk', () => {
         expect(canFallbackToNonStreaming(new Error('network failed'), false)).toBe(true);
@@ -115,6 +124,31 @@ describe('streaming fallback policy', () => {
         controller.abort();
 
         expect(canFallbackToNonStreaming(new Error('aborted'), false, controller.signal)).toBe(false);
+    });
+
+    it('throws canonical abort errors when a tool failure races with cancellation', async () => {
+        const registry = new ToolRegistry();
+        const controller = new AbortController();
+        const execute = async (): Promise<ChatToolResult<string>> => {
+            controller.abort();
+            throw new Error('tool failed during cancellation');
+        };
+        const definition: ChatToolDefinition<Record<string, never>, string> = {
+            name: 'get_current_note_context',
+            description: 'test tool',
+            permission: 'read-only',
+            cost: 'free',
+            outputBudgetChars: 100,
+            statusMessage: () => 'running test tool',
+            validateInput: () => ({}),
+            execute,
+        };
+        registry.register(definition);
+
+        await expect(registry.execute('get_current_note_context', {}, {
+            plugin: createPlugin() as unknown as Parameters<typeof registry.execute>[2]['plugin'],
+            signal: controller.signal,
+        })).rejects.toMatchObject({ name: 'AbortError' });
     });
 });
 
@@ -704,6 +738,75 @@ describe('ChatService memory behavior', () => {
         expect(activeMarkdownView.editor.getValue).not.toHaveBeenCalled();
         expect(chainInput?.input).toContain('"nearby_text": "## Current Section\\nline one for current section\\nline two for current section"');
         expect(chainInput?.input).not.toContain('should not be included');
+    });
+
+    it('bounds current note outline scanning for very large notes', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"get_current_note_context","input":{"mode":"outline"},"reason":"needs outline"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"outline gathered"}');
+        const final = createStreamModel('answer with bounded outline', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const lines = Array.from({ length: 5002 }, (_, index) => `body ${index}`);
+        lines[0] = '# Early';
+        lines[4999] = '## Last scanned';
+        lines[5000] = '## Not scanned';
+        const activeMarkdownView = createMarkdownView({
+            path: 'notes/huge.md',
+            basename: 'huge',
+            value: lines.join('\n'),
+        });
+        const plugin = createPlugin({ activeMarkdownView });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('show this note outline', jest.fn());
+
+        const payload = extractCurrentNoteContextPayload(chainInput?.input);
+        expect(chainInput?.input).toContain('# Early');
+        expect(chainInput?.input).toContain('## Last scanned');
+        expect(chainInput?.input).not.toContain('## Not scanned');
+        expect(payload.outline_truncated).toBe(true);
+        expect(payload.scanned_line_limit).toBe(5000);
+        expect(payload.total_lines).toBe(5002);
+        expect(payload.max_headings).toBe(30);
+        expect(activeMarkdownView.editor.getLine).not.toHaveBeenCalledWith(5000);
+    });
+
+    it('keeps current note context JSON valid when context budget truncates outline content', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"get_current_note_context","input":{"mode":"outline"},"reason":"needs outline"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"outline gathered"}');
+        const final = createStreamModel('answer with valid current note json', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const lines = Array.from({ length: 35 }, (_, index) => `## Heading ${index} ${'long-heading-content-'.repeat(20)}TAIL_${index}`);
+        const plugin = createPlugin({
+            activeMarkdownView: createMarkdownView({
+                path: 'notes/long-outline.md',
+                basename: 'long-outline',
+                value: lines.join('\n'),
+            }),
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('show this note outline', jest.fn());
+
+        const payload = extractCurrentNoteContextPayload(chainInput?.input);
+        expect(payload.kind).toBe('current_note_context');
+        expect(payload.content_truncated).toBe(true);
+        expect(payload.outline_truncated).toBe(true);
+        expect(Array.isArray(payload.headings)).toBe(true);
+        expect(chainInput?.input).toContain('</current_note_context>');
     });
 
     it('does not execute get_current_note_context when input mode is invalid', async () => {

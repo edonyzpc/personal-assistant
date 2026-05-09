@@ -1,26 +1,21 @@
 import { MarkdownView } from "obsidian";
 
 import type { PluginManager } from "../plugin";
-import type { ChatAgentSource, MemorySearchResult } from "./chat-agent";
+import type {
+    ChatAgentSource,
+    ChatToolName,
+    ChatToolResult,
+    MemorySearchResult,
+} from "./chat-types";
+import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 
-export type ChatToolName =
-    | "search_memory"
-    | "get_current_note_context";
+export type { ChatToolName, ChatToolResult } from "./chat-types";
 
 export interface ChatToolContext {
     plugin: PluginManager;
     signal?: AbortSignal;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
-}
-
-export interface ChatToolResult<Output> {
-    ok: boolean;
-    tool: string;
-    inputSummary: string;
-    content: Output | null;
-    sources: ChatAgentSource[];
-    error?: string;
 }
 
 export interface ChatToolDefinition<Input, Output> {
@@ -58,6 +53,10 @@ export interface CurrentNoteContextOutput {
     selection?: string;
     nearbyText?: string;
     headings?: string[];
+    outlineTruncated?: boolean;
+    scannedLineLimit?: number;
+    totalLines?: number;
+    maxHeadings?: number;
 }
 
 interface EditorLike {
@@ -72,6 +71,7 @@ const CURRENT_NOTE_CONTENT_BUDGET_CHARS = 3000;
 const CURRENT_NOTE_MAX_HEADINGS = 30;
 const CURRENT_NOTE_NEARBY_RADIUS_LINES = 12;
 const CURRENT_NOTE_HEADING_SCAN_LINES = 200;
+const CURRENT_NOTE_OUTLINE_SCAN_LINES = 5000;
 
 export class ToolRegistry {
     private readonly tools = new Map<ChatToolName, RegisteredChatTool>();
@@ -113,7 +113,7 @@ export class ToolRegistry {
             return result;
         } catch (error) {
             if (isAbortError(error, context.signal)) {
-                throw error;
+                throw context.signal?.aborted ? createAbortError() : error;
             }
             context.plugin.log("Chat tool execution failed", { tool: name, error: getErrorMessage(error) });
             return createToolFailureResult(name, tool.statusMessage(validatedInput), "Read-only tool was unavailable.");
@@ -179,7 +179,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
             }
 
             if (input.mode === "outline") {
-                output.headings = extractHeadingsFromEditor(editor);
+                applyOutline(output, extractHeadingsFromEditor(editor));
                 return createCurrentNoteResult(input.mode, output, source);
             }
 
@@ -193,7 +193,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
             if (nearbyText) {
                 output.nearbyText = truncate(nearbyText, CURRENT_NOTE_CONTENT_BUDGET_CHARS);
             }
-            output.headings = extractHeadingsFromEditor(editor);
+            applyOutline(output, extractHeadingsFromEditor(editor));
             return createCurrentNoteResult("nearby", output, source);
         },
     };
@@ -279,17 +279,48 @@ function getFileTitle(file: { basename?: string; name?: string; path: string }):
     return lastSegment.replace(/\.md$/i, "");
 }
 
-function extractHeadingsFromEditor(editor: EditorLike): string[] {
+interface CurrentNoteOutline {
+    headings: string[];
+    outlineTruncated: boolean;
+    scannedLineLimit: number;
+    totalLines: number;
+    maxHeadings: number;
+}
+
+function applyOutline(output: CurrentNoteContextOutput, outline: CurrentNoteOutline): void {
+    output.headings = outline.headings;
+    output.outlineTruncated = outline.outlineTruncated;
+    output.scannedLineLimit = outline.scannedLineLimit;
+    output.totalLines = outline.totalLines;
+    output.maxHeadings = outline.maxHeadings;
+}
+
+function extractHeadingsFromEditor(editor: EditorLike): CurrentNoteOutline {
     const lineCount = getLineCount(editor);
-    if (lineCount === undefined || !editor.getLine) return [];
+    if (lineCount === undefined || !editor.getLine) {
+        return {
+            headings: [],
+            outlineTruncated: false,
+            scannedLineLimit: 0,
+            totalLines: 0,
+            maxHeadings: CURRENT_NOTE_MAX_HEADINGS,
+        };
+    }
     const headings: string[] = [];
-    for (let index = 0; index < lineCount && headings.length < CURRENT_NOTE_MAX_HEADINGS; index++) {
+    const maxScanLine = Math.min(lineCount, CURRENT_NOTE_OUTLINE_SCAN_LINES);
+    for (let index = 0; index < maxScanLine && headings.length < CURRENT_NOTE_MAX_HEADINGS; index++) {
         const heading = parseHeading(editor.getLine(index));
         if (heading) {
             headings.push(heading.text);
         }
     }
-    return headings;
+    return {
+        headings,
+        outlineTruncated: lineCount > maxScanLine || headings.length >= CURRENT_NOTE_MAX_HEADINGS,
+        scannedLineLimit: maxScanLine,
+        totalLines: lineCount,
+        maxHeadings: CURRENT_NOTE_MAX_HEADINGS,
+    };
 }
 
 function getHeadingSectionOrNearbyText(editor: EditorLike): string {
@@ -386,29 +417,6 @@ function describeToolInput(input: unknown): string {
 
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
-}
-
-function isAbortError(error: unknown, signal?: AbortSignal): boolean {
-    if (signal?.aborted) return true;
-    if (typeof DOMException !== "undefined" && error instanceof DOMException && error.name === "AbortError") {
-        return true;
-    }
-    return error instanceof Error && error.name === "AbortError";
-}
-
-function throwIfAborted(signal?: AbortSignal): void {
-    if (signal?.aborted) {
-        throw createAbortError();
-    }
-}
-
-function createAbortError(): Error {
-    if (typeof DOMException !== "undefined") {
-        return new DOMException("Aborted", "AbortError");
-    }
-    const error = new Error("Aborted");
-    error.name = "AbortError";
-    return error;
 }
 
 function truncate(value: string, maxLength: number): string {

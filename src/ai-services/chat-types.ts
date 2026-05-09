@@ -1,0 +1,72 @@
+export interface ChatMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
+export interface ChatAgentSource {
+    path: string;
+    chunkIndex?: number;
+    score?: number;
+}
+
+export type ChatAgentStatus =
+    | { type: "thinking" }
+    | { type: "memory-prefetching"; query: string }
+    | { type: "memory-prefetched"; query: string; sources: ChatAgentSource[] }
+    | { type: "retrieving"; query: string }
+    | { type: "retrieved"; query: string; sources: ChatAgentSource[] }
+    | { type: "memory-skipped"; reason: string }
+    | { type: "tool-running"; tool: string; message: string }
+    | { type: "tool-done"; tool: string; message: string; sources?: ChatAgentSource[] }
+    | { type: "tool-skipped"; tool: string; reason: string }
+    | { type: "answering" }
+    | { type: "fallback"; reason: string };
+
+export type ChatPlannerAction =
+    | { action: "answer"; reason: string; useMemory?: boolean }
+    | { action: "retrieve"; query: string; reason: string }
+    | { action: "tool"; tool: string; input: unknown; reason: string };
+
+export interface MemorySearchDocument {
+    content: string;
+    score: number;
+    source: ChatAgentSource;
+}
+
+export interface MemorySearchResult {
+    usedMemory: boolean;
+    query: string;
+    documents: MemorySearchDocument[];
+    sources: ChatAgentSource[];
+    skipReason?: string;
+}
+
+export interface AgentPromptPlan {
+    hasMemoryContent: boolean;
+    chainInput: Record<string, string>;
+    usedMemory: boolean;
+}
+
+export type ChatToolName =
+    | "search_memory"
+    | "get_current_note_context";
+
+export interface ChatToolResult<Output> {
+    ok: boolean;
+    tool: string;
+    inputSummary: string;
+    content: Output | null;
+    sources: ChatAgentSource[];
+    error?: string;
+}
+
+export type ChatContextKind = "memory" | "current-note" | "tool-note";
+
+export interface ChatContextItem {
+    kind: ChatContextKind;
+    tool: string;
+    content: string;
+    sources: ChatAgentSource[];
+    score?: number;
+    metadata?: Record<string, unknown>;
+}

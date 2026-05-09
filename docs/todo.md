@@ -2,17 +2,20 @@
 
 ## Chat Agent Follow-ups
 
-- [ ] Extract shared Chat Agent types before adding more tools.
+- [x] Extract shared Chat Agent types before adding more tools.
   - Context: `src/ai-services/chat-agent.ts` owns core result/source types while `src/ai-services/chat-tools.ts` owns the registry, so the current Phase 2A implementation has a type-level dependency in both directions.
-  - Current impact: low. The import is type-only and does not create a runtime cycle, but it will become harder to maintain once `get_current_note_context` and context item types land.
-  - Suggested fix: move shared public types such as `ChatAgentSource`, `MemorySearchResult`, tool result types, and future context item types into a dedicated `chat-types.ts` or equivalent module before adding the next batch of Phase 2 tools.
-  - Suggested commit: `refactor(chat-agent): extract shared chat types`
+  - Result: Shared public types now live in `src/ai-services/chat-types.ts`; `chat-agent.ts` and `chat-tools.ts` import from that module, while `chat-tools.ts` preserves type re-exports for compatibility.
+  - Evidence: `npx tsc -noEmit -skipLibCheck`.
 
-- [ ] Consolidate duplicate abort helpers in Chat Agent modules.
-  - Context: `isAbortError` / abort error helpers now exist in `chat-agent.ts`, `chat-tools.ts`, and `chat-service.ts` so the runtime, registry, and streaming fallback can safely preserve abort semantics.
-  - Current impact: low. The duplication is small and intentional for this scoped Phase 2A fix, but it should not spread as more tools are added.
-  - Suggested fix: extract a tiny shared abort utility for chat-agent/tool code instead of placing it in broad AI model helpers.
-  - Suggested commit: `refactor(chat-agent): share abort helpers`
+- [x] Consolidate duplicate abort helpers in Chat Agent modules.
+  - Context: `isAbortError` / abort error helpers were previously duplicated across `chat-agent.ts`, `chat-tools.ts`, and `chat-service.ts`.
+  - Result: Chat Agent modules now share `src/ai-services/chat-utils.ts`, and cancellation races normalize to canonical `AbortError` when the signal is already aborted.
+  - Evidence: `throws canonical abort errors when a tool failure races with cancellation`.
+
+- [ ] Consider a generic abort utility for transport helpers.
+  - Context: `src/ai-services/obsidian-fetch.ts` still has local `createAbortError` / `throwIfAborted` helpers. It is a transport shim rather than Chat Agent code, so it should not import `chat-utils.ts` directly.
+  - Current impact: low. Behavior is currently correct, but the duplication can be removed later by extracting a broader `abort-utils.ts` and migrating both Chat Agent and transport code.
+  - Suggested commit: `refactor(ai-services): share abort helpers`
 
 - [x] Preserve safe current-note context during planner fallback.
   - Context: Phase 2B now keeps successfully read `get_current_note_context` results when a later planner step fails; Phase 2C fallback also reuses already collected presearch Memory documents instead of starting a separate fallback Memory search.
