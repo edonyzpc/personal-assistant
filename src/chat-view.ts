@@ -225,6 +225,14 @@ export class LLMView extends ItemView {
         const formatAgentStatus = (status: ChatAgentStatus): string => {
             if (status.type === 'thinking') {
                 return 'Deciding what context to use...';
+            } else if (status.type === 'memory-prefetching') {
+                return `Finding related memory: ${status.query}`;
+            } else if (status.type === 'memory-prefetched') {
+                const sources = status.sources
+                    .slice(0, 4)
+                    .map((source) => source.path)
+                    .join(', ');
+                return sources ? `Found memory references: ${sources}` : 'No related memory found.';
             } else if (status.type === 'retrieving') {
                 return `Searching memory: ${status.query}`;
             } else if (status.type === 'retrieved') {
@@ -248,7 +256,8 @@ export class LLMView extends ItemView {
             } else if (status.type === 'answering') {
                 return 'Answering...';
             } else if (status.type === 'fallback') {
-                return 'I could not use the planner this time, so I will answer with a fallback path.';
+                const reason = status.reason ? ` Reason: ${status.reason}` : '';
+                return `I could not use the planner this time, so I will answer with a fallback path.${reason}`;
             }
             return 'Thinking...';
         };
