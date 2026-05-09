@@ -12,8 +12,12 @@
     "dev:tailwind": "tailwindcss -i ./src/custom.css -o ./styles.css --watch",
     "tailwind:build": "tailwindcss -i ./src/custom.css -o ./styles.css --minify",
     "build": "tsc -noEmit -skipLibCheck && tailwindcss -i ./src/custom.css -o ./styles.css --minify && node --no-warnings=ExperimentalWarning esbuild.config.mjs production",
+    "changelog": "node scripts/changelog.mjs",
     "version": "node version-bump.mjs && git add manifest-beta.json manifest.json versions.json CHANGELOG.md",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"__mocks__/**/*.ts\"",
+    "release": "node scripts/release.mjs",
+    "release:dry-run": "node scripts/release.mjs --dry-run",
+    "release:publish": "node scripts/publish-release.mjs",
     "test": "jest"
   },
   "keywords": [],

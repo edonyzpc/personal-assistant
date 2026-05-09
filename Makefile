@@ -1,4 +1,4 @@
-.PHONY: deploy clean bin install release tag test
+.PHONY: deploy clean bin install changelog release-dry-run release publish tag test
 
 install:
 	npm install
@@ -25,6 +25,15 @@ test:
 
 release:
 	node scripts/release.mjs "$(VERSION)"
+
+release-dry-run:
+	node scripts/release.mjs --dry-run "$(VERSION)"
+
+changelog:
+	node scripts/changelog.mjs --target-version "$(VERSION)" --write
+
+publish:
+	node scripts/publish-release.mjs "$(VERSION)"
 
 tag:
 	git tag -a `node tag.mjs` -m "[release] v`node tag.mjs`, check the CHANGELOG.md for details"
