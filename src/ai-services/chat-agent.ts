@@ -103,7 +103,7 @@ export function parsePlannerAction(content: string): ChatPlannerAction {
 }
 
 export function stripReferenceBlock(content: string): string {
-    return content.replace(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*(Memory references|RAG Referenc(?:es?|s))\b[\s\S]*$/i, "");
+    return content.replace(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*(Memory references|RAG Referenc(?:es?)?)\b[\s\S]*$/i, "");
 }
 
 export class ChatAgentRuntime {
@@ -146,8 +146,9 @@ export class ChatAgentRuntime {
                 }
                 seenQueries.add(queryKey);
 
-                options.onStatus?.({ type: "retrieving", query: action.query });
-                const result = await this.memoryTool.search(action.query, options.signal);
+                const result = await this.memoryTool.search(action.query, options.signal, () => {
+                    options.onStatus?.({ type: "retrieving", query: action.query });
+                });
                 observations.push(result);
 
                 if (result.skipReason) {
@@ -191,11 +192,14 @@ class ChatPlanner {
                 "你是 Personal Assistant Chat 的动作规划器。",
                 "你只决定下一步动作，不回答用户问题，也不展示完整推理。",
                 "只有当问题依赖用户个人笔记、项目记录、历史上下文、会议结论、读书笔记或此前记录的事实时，才选择 retrieve。",
+                "如果用户问题可以用通用知识直接回答，即使 Memory 可用、当前打开了笔记、历史对话曾使用 Memory，也必须选择 answer。",
                 "普通知识、翻译、润色、代码解释、通用建议、无需个人笔记的问题，选择 answer。",
                 "只输出 JSON，不要输出 Markdown，不要输出额外解释。",
                 "合法格式：",
-                "{\"action\":\"answer\",\"reason\":\"短原因\"}",
-                "{\"action\":\"retrieve\",\"query\":\"适合搜索用户笔记的检索词\",\"reason\":\"短原因\"}",
+                "{{\"action\":\"answer\",\"reason\":\"短原因\"}}",
+                "{{\"action\":\"retrieve\",\"query\":\"适合搜索用户笔记的检索词\",\"reason\":\"短原因\"}}",
+                "示例：用户问“什么是 HTTP 404？”或“解释一下递归”，选择 {{\"action\":\"answer\",\"reason\":\"通用知识问题\"}}。",
+                "示例：用户问“我之前在笔记里记录的 HTTP 404 排查结论是什么？”，选择 {{\"action\":\"retrieve\",\"query\":\"HTTP 404 排查结论\",\"reason\":\"需要用户笔记\"}}。",
             ].join("\n")),
             HumanMessagePromptTemplate.fromTemplate("{input}"),
         ]);
@@ -233,7 +237,7 @@ class MemorySearchTool {
         this.plugin = plugin;
     }
 
-    async search(query: string, signal?: AbortSignal): Promise<MemorySearchResult> {
+    async search(query: string, signal?: AbortSignal, onBeforeVssSearch?: () => void): Promise<MemorySearchResult> {
         throwIfAborted(signal);
         const decision = await this.plugin.memoryManager.ensureReadyForChat(query);
         throwIfAborted(signal);
@@ -252,6 +256,7 @@ class MemorySearchTool {
             };
         }
 
+        onBeforeVssSearch?.();
         return this.searchVss(query, signal);
     }
 
