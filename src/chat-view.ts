@@ -11,6 +11,13 @@ export interface ChatMessage {
     content: string;
 }
 
+interface ThinkingStatusView {
+    summaryEl: HTMLElement;
+    detailsEl: HTMLElement;
+    toggleButton: HTMLButtonElement;
+    expanded: boolean;
+}
+
 export class LLMView extends ItemView {
     plugin: PluginManager;
     result: string = '';
@@ -72,6 +79,49 @@ export class LLMView extends ItemView {
 
         this.responseDiv = chatContainer;
 
+        const AUTO_SCROLL_THRESHOLD_PX = 80;
+        let shouldAutoScroll = true;
+        let scheduledScrollFrame: number | null = null;
+
+        const isNearBottom = () => {
+            const distanceFromBottom = this.responseDiv.scrollHeight
+                - this.responseDiv.scrollTop
+                - this.responseDiv.clientHeight;
+            return distanceFromBottom <= AUTO_SCROLL_THRESHOLD_PX;
+        };
+
+        const scrollToBottom = (
+            { force = false, behavior = 'smooth' }: { force?: boolean; behavior?: ScrollBehavior } = {}
+        ) => {
+            if (force) {
+                shouldAutoScroll = true;
+            } else if (!shouldAutoScroll) {
+                return;
+            }
+
+            if (scheduledScrollFrame !== null) {
+                window.cancelAnimationFrame(scheduledScrollFrame);
+            }
+
+            scheduledScrollFrame = window.requestAnimationFrame(() => {
+                scheduledScrollFrame = null;
+                this.responseDiv.scrollTo({
+                    top: this.responseDiv.scrollHeight,
+                    behavior,
+                });
+            });
+        };
+
+        const pauseAutoScroll = () => {
+            shouldAutoScroll = false;
+        };
+
+        this.responseDiv.addEventListener('scroll', () => {
+            // Resume auto-scroll whenever the viewport returns to the bottom,
+            // regardless of whether the user used wheel, keyboard, touch, or the scrollbar.
+            shouldAutoScroll = isNearBottom();
+        });
+
         cancelButton.onclick = () => {
             if (this.abortController) {
                 this.abortController.abort();
@@ -82,7 +132,7 @@ export class LLMView extends ItemView {
             }
         };
 
-        const renderMessage = (message: ChatMessage, index?: number) => {
+        const renderMessage = (message: ChatMessage, index?: number, forceScroll = false) => {
             const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
             const roleLabel = messageDiv.createDiv({ cls: 'message-role', text: message.role === 'user' ? 'You' : 'Assistant' }); // eslint-disable-line @typescript-eslint/no-unused-vars
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
@@ -118,52 +168,98 @@ export class LLMView extends ItemView {
             }
 
             MarkdownRenderer.render(this.plugin.app, message.content, contentDiv, '', this.plugin);
-            this.responseDiv.scrollTo({
-                top: this.responseDiv.scrollHeight,
-                behavior: 'smooth'
-            });
+            scrollToBottom({ force: forceScroll });
             this.updateClickableLink(contentDiv);
         };
 
-        const renderMemoryNotice = (content: string) => {
-            const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message system' });
-            messageDiv.createDiv({ cls: 'message-role', text: 'Memory' });
-            const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
-            contentDiv.setText(content);
-            this.responseDiv.scrollTo({
-                top: this.responseDiv.scrollHeight,
-                behavior: 'smooth'
+        const createThinkingStatusView = (): ThinkingStatusView => {
+            const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message system thinking-status' });
+            const headerDiv = messageDiv.createDiv({ cls: 'thinking-status-header' });
+            const toggleButton = headerDiv.createEl('button', {
+                cls: 'thinking-status-toggle',
+                attr: {
+                    type: 'button',
+                    'aria-label': 'Show thinking details',
+                    'aria-expanded': 'false',
+                },
             });
+            setIcon(toggleButton, 'chevron-right');
+            headerDiv.createDiv({ cls: 'message-role thinking-status-role', text: 'Thinking' });
+            const summaryEl = headerDiv.createDiv({ cls: 'thinking-status-summary' });
+            const detailsEl = messageDiv.createDiv({ cls: 'thinking-status-details' });
+            detailsEl.hidden = true;
+
+            const statusView: ThinkingStatusView = {
+                summaryEl,
+                detailsEl,
+                toggleButton,
+                expanded: false,
+            };
+
+            const toggleThinkingDetails = () => {
+                pauseAutoScroll();
+                statusView.expanded = !statusView.expanded;
+                detailsEl.hidden = !statusView.expanded;
+                toggleButton.setAttribute('aria-expanded', String(statusView.expanded));
+                toggleButton.setAttribute(
+                    'aria-label',
+                    statusView.expanded ? 'Hide thinking details' : 'Show thinking details'
+                );
+                setIcon(toggleButton, statusView.expanded ? 'chevron-down' : 'chevron-right');
+            };
+            toggleButton.onclick = (event) => {
+                event.stopPropagation();
+                toggleThinkingDetails();
+            };
+            headerDiv.onclick = () => toggleThinkingDetails();
+
+            return statusView;
         };
 
-        const renderAgentStatus = (status: ChatAgentStatus) => {
+        const appendThinkingStatus = (statusView: ThinkingStatusView, content: string) => {
+            statusView.summaryEl.setText(content);
+            statusView.detailsEl.createDiv({ cls: 'thinking-status-detail-item', text: content });
+            scrollToBottom();
+        };
+
+        const formatAgentStatus = (status: ChatAgentStatus): string => {
             if (status.type === 'thinking') {
-                renderMemoryNotice('Thinking about whether memory is needed...');
+                return 'Thinking about whether memory is needed...';
             } else if (status.type === 'retrieving') {
-                renderMemoryNotice(`Searching memory: ${status.query}`);
+                return `Searching memory: ${status.query}`;
             } else if (status.type === 'retrieved') {
                 const sources = status.sources
                     .slice(0, 4)
                     .map((source) => source.path)
                     .join(', ');
-                renderMemoryNotice(sources ? `Found memory references: ${sources}` : 'No memory references found.');
+                return sources ? `Found memory references: ${sources}` : 'No memory references found.';
             } else if (status.type === 'memory-skipped') {
-                renderMemoryNotice(status.reason);
+                return status.reason;
             } else if (status.type === 'answering') {
-                renderMemoryNotice('Answering...');
+                return 'Answering...';
             } else if (status.type === 'fallback') {
-                renderMemoryNotice('I could not use the planner this time, so I will answer with a fallback path.');
+                return 'I could not use the planner this time, so I will answer with a fallback path.';
             }
+            return 'Thinking...';
+        };
+
+        let activeStatusView: ThinkingStatusView | null = null;
+
+        const renderAgentStatus = (status: ChatAgentStatus) => {
+            activeStatusView ??= createThinkingStatusView();
+            appendThinkingStatus(activeStatusView, formatAgentStatus(status));
         };
 
         sendButton.onclick = async () => {
             const prompt = textArea.value;
             if (!prompt || sendButton.disabled) return;
             sendButton.disabled = true;
+            shouldAutoScroll = true;
+            activeStatusView = null;
 
             try {
                 this.chatHistory.push({ role: 'user', content: prompt });
-                renderMessage(this.chatHistory[this.chatHistory.length - 1], this.chatHistory.length - 1);
+                renderMessage(this.chatHistory[this.chatHistory.length - 1], this.chatHistory.length - 1, true);
 
                 textArea.value = '';
                 addToEditorButton.disabled = true;
@@ -199,10 +295,7 @@ export class LLMView extends ItemView {
                         if (contentDiv) {
                             contentDiv.empty();
                             MarkdownRenderer.render(this.plugin.app, responseContent, contentDiv, '', this.plugin);
-                            this.responseDiv.scrollTo({
-                                top: this.responseDiv.scrollHeight,
-                                behavior: 'smooth'
-                            });
+                            scrollToBottom({ behavior: 'auto' });
                         }
 
                         this.result = chunk;
