@@ -1,3 +1,5 @@
+import { MarkdownView } from "obsidian";
+
 import type { PluginManager } from "../plugin";
 import type { ChatAgentSource, MemorySearchResult } from "./chat-agent";
 
@@ -42,6 +44,34 @@ interface RegisteredChatTool {
 export interface SearchMemoryInput {
     query: string;
 }
+
+export type CurrentNoteContextMode = "selection-or-nearby" | "outline" | "metadata";
+
+export interface CurrentNoteContextInput {
+    mode: CurrentNoteContextMode;
+}
+
+export interface CurrentNoteContextOutput {
+    path: string;
+    title: string;
+    mode: CurrentNoteContextMode;
+    selection?: string;
+    nearbyText?: string;
+    headings?: string[];
+}
+
+interface EditorLike {
+    getSelection?: () => string;
+    getValue?: () => string;
+    getCursor?: () => { line: number; ch: number };
+    lineCount?: () => number;
+    getLine?: (line: number) => string;
+}
+
+const CURRENT_NOTE_CONTENT_BUDGET_CHARS = 3000;
+const CURRENT_NOTE_MAX_HEADINGS = 30;
+const CURRENT_NOTE_NEARBY_RADIUS_LINES = 12;
+const CURRENT_NOTE_HEADING_SCAN_LINES = 200;
 
 export class ToolRegistry {
     private readonly tools = new Map<ChatToolName, RegisteredChatTool>();
@@ -115,6 +145,60 @@ export function createSearchMemoryTool(
     };
 }
 
+export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteContextInput, CurrentNoteContextOutput> {
+    return {
+        name: "get_current_note_context",
+        description: "Read the active Markdown note title, path, selection, nearby text, or outline.",
+        permission: "read-only",
+        cost: "free",
+        outputBudgetChars: CURRENT_NOTE_CONTENT_BUDGET_CHARS,
+        statusMessage: () => "Reading current note",
+        validateInput: validateCurrentNoteContextInput,
+        execute: async (input, context) => {
+            throwIfAborted(context.signal);
+            const view = context.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+            if (!view?.file?.path) {
+                return createToolFailureResult(
+                    "get_current_note_context",
+                    input.mode,
+                    "No active Markdown note was available.",
+                );
+            }
+
+            const file = view.file;
+            const editor = view.editor as EditorLike | undefined;
+            const output: CurrentNoteContextOutput = {
+                path: file.path,
+                title: getFileTitle(file),
+                mode: input.mode,
+            };
+            const source = [{ path: file.path }];
+
+            if (input.mode === "metadata" || !editor) {
+                return createCurrentNoteResult(input.mode, output, source);
+            }
+
+            if (input.mode === "outline") {
+                output.headings = extractHeadingsFromEditor(editor);
+                return createCurrentNoteResult(input.mode, output, source);
+            }
+
+            const selection = editor.getSelection?.().trim();
+            if (selection) {
+                output.selection = truncate(selection, CURRENT_NOTE_CONTENT_BUDGET_CHARS);
+                return createCurrentNoteResult("selection", output, source);
+            }
+
+            const nearbyText = getHeadingSectionOrNearbyText(editor);
+            if (nearbyText) {
+                output.nearbyText = truncate(nearbyText, CURRENT_NOTE_CONTENT_BUDGET_CHARS);
+            }
+            output.headings = extractHeadingsFromEditor(editor);
+            return createCurrentNoteResult("nearby", output, source);
+        },
+    };
+}
+
 export function isSearchMemoryResult(content: unknown): content is MemorySearchResult {
     return Boolean(
         content
@@ -122,6 +206,17 @@ export function isSearchMemoryResult(content: unknown): content is MemorySearchR
         && "query" in content
         && "documents" in content
         && "sources" in content,
+    );
+}
+
+export function isCurrentNoteContextResult(content: unknown): content is CurrentNoteContextOutput {
+    return Boolean(
+        content
+        && typeof content === "object"
+        && "path" in content
+        && typeof (content as Record<string, unknown>).path === "string"
+        && "title" in content
+        && typeof (content as Record<string, unknown>).title === "string",
     );
 }
 
@@ -137,11 +232,22 @@ function validateSearchMemoryInput(input: unknown): SearchMemoryInput {
     return { query };
 }
 
+function validateCurrentNoteContextInput(input: unknown): CurrentNoteContextInput {
+    if (!input || typeof input !== "object") {
+        throw new Error("get_current_note_context input must be an object.");
+    }
+    const mode = (input as Record<string, unknown>).mode;
+    if (mode === "selection-or-nearby" || mode === "outline" || mode === "metadata") {
+        return { mode };
+    }
+    throw new Error("get_current_note_context input.mode is invalid.");
+}
+
 function isChatToolName(name: string): name is ChatToolName {
     return name === "search_memory" || name === "get_current_note_context";
 }
 
-function createToolFailureResult(tool: string, inputSummary: string, error: string): ChatToolResult<unknown> {
+function createToolFailureResult<Output = unknown>(tool: string, inputSummary: string, error: string): ChatToolResult<Output> {
     return {
         ok: false,
         tool,
@@ -150,6 +256,122 @@ function createToolFailureResult(tool: string, inputSummary: string, error: stri
         sources: [],
         error,
     };
+}
+
+function createCurrentNoteResult(
+    inputSummary: string,
+    content: CurrentNoteContextOutput,
+    sources: ChatAgentSource[],
+): ChatToolResult<CurrentNoteContextOutput> {
+    return {
+        ok: true,
+        tool: "get_current_note_context",
+        inputSummary,
+        content,
+        sources,
+    };
+}
+
+function getFileTitle(file: { basename?: string; name?: string; path: string }): string {
+    if (file.basename) return file.basename;
+    if (file.name) return file.name.replace(/\.md$/i, "");
+    const lastSegment = file.path.split("/").pop() ?? file.path;
+    return lastSegment.replace(/\.md$/i, "");
+}
+
+function extractHeadingsFromEditor(editor: EditorLike): string[] {
+    const lineCount = getLineCount(editor);
+    if (lineCount === undefined || !editor.getLine) return [];
+    const headings: string[] = [];
+    for (let index = 0; index < lineCount && headings.length < CURRENT_NOTE_MAX_HEADINGS; index++) {
+        const heading = parseHeading(editor.getLine(index));
+        if (heading) {
+            headings.push(heading.text);
+        }
+    }
+    return headings;
+}
+
+function getHeadingSectionOrNearbyText(editor: EditorLike): string {
+    const lineCount = getLineCount(editor);
+    if (lineCount === undefined || !editor.getLine) return "";
+    if (lineCount === 0) return "";
+    const cursor = editor.getCursor?.();
+    const currentLine = clampLine(cursor?.line ?? 0, lineCount);
+    const section = getCurrentHeadingSection(editor, currentLine, lineCount);
+    if (section) return section;
+
+    const start = Math.max(0, currentLine - CURRENT_NOTE_NEARBY_RADIUS_LINES);
+    const end = Math.min(lineCount, currentLine + CURRENT_NOTE_NEARBY_RADIUS_LINES + 1);
+    return collectLinesWithinBudget(editor, start, end).trim();
+}
+
+function getCurrentHeadingSection(editor: EditorLike, cursorLine: number, lineCount: number): string | null {
+    if (!editor.getLine) return null;
+    let start = -1;
+    let level = 0;
+    const minScanLine = Math.max(0, cursorLine - CURRENT_NOTE_HEADING_SCAN_LINES);
+    for (let index = cursorLine; index >= minScanLine; index--) {
+        const heading = parseHeading(editor.getLine(index));
+        if (heading) {
+            start = index;
+            level = heading.level;
+            break;
+        }
+    }
+    if (start < 0) return null;
+
+    let end = lineCount;
+    const maxScanLine = Math.min(lineCount, start + CURRENT_NOTE_HEADING_SCAN_LINES + 1);
+    for (let index = start + 1; index < maxScanLine; index++) {
+        const heading = parseHeading(editor.getLine(index));
+        if (heading && heading.level <= level) {
+            end = index;
+            break;
+        }
+    }
+    return collectLinesWithinBudget(editor, start, end).trim();
+}
+
+function collectLinesWithinBudget(editor: EditorLike, start: number, end: number): string {
+    if (!editor.getLine) return "";
+    const lines: string[] = [];
+    let used = 0;
+    for (let index = start; index < end; index++) {
+        const line = editor.getLine(index);
+        const nextUsed = used + line.length + (lines.length > 0 ? 1 : 0);
+        if (nextUsed > CURRENT_NOTE_CONTENT_BUDGET_CHARS) {
+            const remaining = CURRENT_NOTE_CONTENT_BUDGET_CHARS - used;
+            if (remaining > 0) {
+                lines.push(line.slice(0, remaining));
+            }
+            break;
+        }
+        lines.push(line);
+        used = nextUsed;
+    }
+    return lines.join("\n");
+}
+
+function parseHeading(line: string): { level: number; text: string } | null {
+    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (!match) return null;
+    return {
+        level: match[1].length,
+        text: `${match[1]} ${match[2].trim()}`,
+    };
+}
+
+function getLineCount(editor: EditorLike): number | undefined {
+    const lineCount = editor.lineCount?.();
+    return typeof lineCount === "number" && Number.isFinite(lineCount)
+        ? Math.max(0, Math.floor(lineCount))
+        : undefined;
+}
+
+function clampLine(line: number, lineCount: number): number {
+    if (!Number.isFinite(line)) return 0;
+    return Math.min(Math.max(Math.floor(line), 0), Math.max(lineCount - 1, 0));
 }
 
 function describeToolInput(input: unknown): string {
@@ -187,4 +409,9 @@ function createAbortError(): Error {
     const error = new Error("Aborted");
     error.name = "AbortError";
     return error;
+}
+
+function truncate(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    return `${value.slice(0, maxLength)}...`;
 }

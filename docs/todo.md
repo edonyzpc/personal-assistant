@@ -14,11 +14,10 @@
   - Suggested fix: extract a tiny shared abort utility for chat-agent/tool code instead of placing it in broad AI model helpers.
   - Suggested commit: `refactor(chat-agent): share abort helpers`
 
-- [ ] Revisit fallback partial-context salvage after multi-tool context exists.
-  - Context: planner failure currently uses a clean fallback path and ignores any already collected tool observations, matching the safer Phase 1 behavior.
-  - Current impact: low. Clean fallback is safer than mixing partially planned tool state, but future multi-tool flows may benefit from preserving already validated read-only observations.
-  - Suggested fix: decide after `ChatContextItem[]` exists whether fallback should include prior successful read-only observations, with explicit injection boundaries and source policy.
-  - Suggested commit: `feat(chat-agent): preserve safe fallback context`
+- [x] Preserve safe current-note context during planner fallback.
+  - Context: Phase 2B now keeps successfully read `get_current_note_context` results when a later planner step fails and falls back to ready-only Memory search.
+  - Result: current-note context is preserved only after it has passed the read-only tool boundary and is wrapped as untrusted context in the final prompt.
+  - Evidence: `keeps current note context when planner fallback runs after a tool observation`.
 
 - [ ] Re-evaluate ToolRegistry generic casting as tool complexity grows.
   - Context: `ToolRegistry.register` stores generic tool definitions behind an erased internal type and relies on each tool's runtime validator before execution.

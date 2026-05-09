@@ -224,7 +224,7 @@ export class LLMView extends ItemView {
 
         const formatAgentStatus = (status: ChatAgentStatus): string => {
             if (status.type === 'thinking') {
-                return 'Thinking about whether memory is needed...';
+                return 'Deciding what context to use...';
             } else if (status.type === 'retrieving') {
                 return `Searching memory: ${status.query}`;
             } else if (status.type === 'retrieved') {

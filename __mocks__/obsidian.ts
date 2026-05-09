@@ -42,6 +42,20 @@ export class Setting {
     }) => void) { return this; }
 }
 
+export class MarkdownView {
+    editor: unknown;
+    file?: TFile | null;
+
+    constructor(editor?: unknown, file?: TFile | null) {
+        this.editor = editor;
+        this.file = file;
+    }
+
+    getMode() {
+        return 'source';
+    }
+}
+
 type MockAdapter = {
     write: jest.Mock;
     read: jest.Mock;
@@ -60,6 +74,7 @@ type MockVault = {
 type MockWorkspace = {
     getLeaf: jest.Mock;
     getMostRecentLeaf: jest.Mock;
+    getActiveViewOfType: jest.Mock;
     on: jest.Mock;
 };
 
@@ -77,7 +92,12 @@ export class App {
         getMarkdownFiles: () => [],
     };
     metadataCache = { getCache: jest.fn() };
-    workspace: MockWorkspace = { getLeaf: jest.fn(), getMostRecentLeaf: jest.fn(), on: jest.fn() };
+    workspace: MockWorkspace = {
+        getLeaf: jest.fn(),
+        getMostRecentLeaf: jest.fn(),
+        getActiveViewOfType: jest.fn(() => null),
+        on: jest.fn(),
+    };
 }
 
 export const requestUrl: jest.Mock = jest.fn(async () => ({ arrayBuffer: new ArrayBuffer(0) }));

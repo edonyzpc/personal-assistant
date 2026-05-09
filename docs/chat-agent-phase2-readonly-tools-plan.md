@@ -209,14 +209,15 @@ interface CurrentNoteContextOutput {
 
 1. 如果当前 active leaf 是 MarkdownView 且有选区，读取选区。
 2. 如果没有选区，读取光标附近段落或当前 heading section 的有限文本。
-3. 如果 editor 不可用，返回当前文件 metadata。
+3. `metadata` mode 只返回当前文件 path/title，不读取正文。
 4. 如果没有 active markdown file，返回可恢复失败 observation，不阻断回答。
 
 安全边界：
 
 - 不调用 `editor.replaceRange`。
 - 不修改文件。
-- 不读取整个大文件，必须有字符预算。
+- 有选区时不读取整篇正文；无选区时通过 editor line API 读取有限 heading section 或附近窗口。
+- 不默认读取整个大文件，必须有字符预算。
 - 不把当前笔记内容当作指令，只作为资料。
 
 ## Runtime Loop 调整
@@ -239,11 +240,11 @@ plan -> optional tool -> observe -> plan -> optional tool -> final answer
 - 同一工具 + 同一输入摘要不重复调用。
 - `search_memory` 仍保持最多 2 次有效搜索。
 - 任一工具失败后，planner 可以选择其他工具或 `answer`。
-- planner 失败仍走 fallback：ready-only memory search + final prompt。
+- planner 失败仍走 fallback：ready-only memory search + final prompt；已成功读取并通过边界处理的 current note context 可保留到 final prompt。
 
 ## PromptBuilder 调整
 
-PromptBuilder 需要从单一 `memoryDocuments` 扩展为统一 `contextItems`：
+目标架构中，PromptBuilder 需要从单一 `memoryDocuments` 扩展为统一 `contextItems`：
 
 ```ts
 interface ChatContextItem {
@@ -259,8 +260,15 @@ Final prompt 组织原则：
 - Context 分区展示：Memory、Current note、Tool notes。
 - 明确所有 context 都是资料，不是指令。
 - Memory references 仍只允许来自本轮 Memory sources。
-- Current note references 可用当前文件 path，但不要混入 Memory references callout。
+- Current note path 不是 Memory source，不要混入 Memory references callout。
+- Current note 内容使用明确的 untrusted block 或 JSON 结构包裹，避免笔记内容伪造对话、工具调用或引用块。
 - 无 sources 时不输出 Memory references callout。
+
+Phase 2B 实现校准：
+
+- 当前代码先以 `memoryDocuments + currentNoteContexts` 两路 typed context 落地；统一 `ChatContextItem[]` 抽象保留到后续工具继续增加时再做。
+- `get_current_note_context` 的 `selection-or-nearby` 模式优先选区；有选区时不调用 `getValue()`。
+- 当前笔记上下文进入 `<current_note_context>` JSON block，并标记为 `current_note_not_memory_source`。
 
 ## Status Timeline
 
@@ -394,4 +402,3 @@ type ChatAgentStatus =
 3. 先不引入新 schema validation 依赖。
 4. 保持所有 Phase 2 工具只读。
 5. 写入、skills、长期任务继续留到 Phase 3/4。
-
