@@ -147,6 +147,7 @@ export class PluginManager extends Plugin {
 
         this.vss = this.initVss();
         this.memoryManager = new MemoryManager(this);
+        this.memoryManager.startAutoMaintenance();
         await this.updateMemoryStatusBar();
 
         this.app.workspace.onLayoutReady(() => {
@@ -337,11 +338,25 @@ export class PluginManager extends Plugin {
             }
         });
 
-        // VSS lifecycle events only mark local state dirty. Indexing remains manual on Desktop and Mobile.
+        // VSS lifecycle events mark local state dirty; approved memory can then maintain itself in the background.
+        this.registerEvent(
+            this.app.vault.on("create", async (file) => {
+                if (file instanceof TFile && await this.vss.markDirtyIfEligible(file)) {
+                    this.memoryManager.scheduleAutoFlush("vault-create");
+                }
+            })
+        );
         this.registerEvent(
             this.app.vault.on("modify", async (file) => {
-                if (file instanceof TFile) {
-                    await this.vss.markDirtyIfEligible(file);
+                if (file instanceof TFile && await this.vss.markDirtyIfEligible(file)) {
+                    this.memoryManager.scheduleAutoFlush("vault-modify");
+                }
+            })
+        );
+        this.registerEvent(
+            this.app.vault.on("rename", async (file, oldPath) => {
+                if (file instanceof TFile && await this.vss.handleRename(file, oldPath)) {
+                    this.memoryManager.scheduleAutoFlush("vault-rename");
                 }
             })
         );
@@ -349,6 +364,7 @@ export class PluginManager extends Plugin {
             this.app.vault.on("delete", async (file) => {
                 if (file instanceof TFile) {
                     await this.vss.handleDelete(file);
+                    await this.updateMemoryStatusBar();
                 }
             })
         );
@@ -359,7 +375,9 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.workspace.on("file-open", async (file) => {
-                await this.vss.handleFileOpen(file);
+                if (await this.vss.handleFileOpen(file)) {
+                    this.memoryManager.scheduleAutoFlush("file-open");
+                }
             })
         );
         // Handle the Editor Plugins
@@ -384,6 +402,7 @@ export class PluginManager extends Plugin {
 
     onunload() {
         const statsManager = this.statsManager;
+        this.memoryManager?.stopAutoMaintenance();
         this.vss?.dispose();
         if (statsManager) {
             const flush = statsManager.flush();
@@ -809,7 +828,7 @@ export class PluginManager extends Plugin {
                 this.settings.memoryAutoCheckBeforeChat = true;
                 changed = true;
             }
-            if (this.settings.memoryApprovalPolicy !== "always") {
+            if (!["always", "auto-refresh-after-prepare"].includes(this.settings.memoryApprovalPolicy)) {
                 this.settings.memoryApprovalPolicy = "always";
                 changed = true;
             }

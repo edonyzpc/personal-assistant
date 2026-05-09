@@ -44,7 +44,15 @@ export interface MemoryApprovalCopy {
 }
 
 const DECLINE_COOLDOWN_MS = 10 * 60 * 1000;
+const AUTO_MEMORY_POLICY = "auto-refresh-after-prepare";
+const AUTO_FLUSH_RETRY_DELAYS_MS = [60_000, 5 * 60_000, 15 * 60_000];
+const STARTUP_RECONCILE_DELAY_MS = 60_000;
+const PREPARE_RECONCILE_DELAY_MS = 5_000;
+const RESUME_RECONCILE_DELAY_MS = 30_000;
+const PERIODIC_RECONCILE_INTERVAL_MS = 60 * 60_000;
+const QUIET_AUTO_FLUSH_DELAY_MS = 30_000;
 type MemoryApprovalContext = "chat" | "command";
+type BackgroundTaskKind = "flush" | "reconcile";
 
 export const MEMORY_USER_FORBIDDEN_TERMS = [
     "VSS",
@@ -98,6 +106,13 @@ export function getMemoryApprovalCopy(
 export class MemoryManager {
     private readonly plugin: PluginManager;
     private lastAnswerNowAt = 0;
+    private started = false;
+    private autoFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    private reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+    private periodicReconcileTimer: ReturnType<typeof setInterval> | null = null;
+    private maintenanceQueue: Promise<void> = Promise.resolve();
+    private backgroundFailureCount = 0;
+    private readonly cleanupListeners: Array<() => void> = [];
 
     constructor(plugin: PluginManager) {
         this.plugin = plugin;
@@ -105,6 +120,73 @@ export class MemoryManager {
 
     async getMaintenancePlan(): Promise<MemoryMaintenancePlan> {
         return this.plugin.vss.getMemoryReadiness();
+    }
+
+    startAutoMaintenance(): void {
+        if (this.started) return;
+        this.started = true;
+        this.scheduleReconcile("startup", STARTUP_RECONCILE_DELAY_MS);
+        this.periodicReconcileTimer = setInterval(() => {
+            this.scheduleReconcile("periodic");
+        }, PERIODIC_RECONCILE_INTERVAL_MS);
+
+        const scheduleResume = () => this.scheduleReconcile("resume", RESUME_RECONCILE_DELAY_MS);
+        if (typeof window !== "undefined") {
+            window.addEventListener("focus", scheduleResume);
+            this.cleanupListeners.push(() => window.removeEventListener("focus", scheduleResume));
+        }
+        if (typeof document !== "undefined") {
+            const onVisibilityChange = () => {
+                if (document.visibilityState === "visible") {
+                    scheduleResume();
+                }
+            };
+            document.addEventListener("visibilitychange", onVisibilityChange);
+            this.cleanupListeners.push(() => document.removeEventListener("visibilitychange", onVisibilityChange));
+        }
+    }
+
+    stopAutoMaintenance(): void {
+        this.started = false;
+        if (this.autoFlushTimer) {
+            clearTimeout(this.autoFlushTimer);
+            this.autoFlushTimer = null;
+        }
+        if (this.reconcileTimer) {
+            clearTimeout(this.reconcileTimer);
+            this.reconcileTimer = null;
+        }
+        if (this.periodicReconcileTimer) {
+            clearInterval(this.periodicReconcileTimer);
+            this.periodicReconcileTimer = null;
+        }
+        while (this.cleanupListeners.length > 0) {
+            this.cleanupListeners.pop()?.();
+        }
+    }
+
+    scheduleAutoFlush(reason: string, delayMs = QUIET_AUTO_FLUSH_DELAY_MS): void {
+        if (!this.started) return;
+        if (!this.isAutoPolicyEnabled()) return;
+        if (this.autoFlushTimer) {
+            clearTimeout(this.autoFlushTimer);
+        }
+        this.autoFlushTimer = setTimeout(() => {
+            this.autoFlushTimer = null;
+            this.enqueueBackgroundTask("flush", reason);
+        }, Math.max(0, delayMs));
+    }
+
+    scheduleReconcile(reason: string, delayMs = 0): void {
+        if (!this.started) return;
+        if (!this.isAutoPolicyEnabled()) return;
+        if (this.reconcileTimer) {
+            clearTimeout(this.reconcileTimer);
+        }
+        this.reconcileTimer = setTimeout(() => {
+            this.reconcileTimer = null;
+            this.enqueueBackgroundTask("reconcile", reason);
+        }, Math.max(0, delayMs));
     }
 
     async ensureReadyForChat(_prompt?: string): Promise<MemoryDecisionResult> {
@@ -126,6 +208,23 @@ export class MemoryManager {
         }
         if (plan.reason === "ready" || plan.action === "none" && !plan.requiresApproval) {
             return { decision: "use-memory" };
+        }
+
+        if (plan.reason === "changed-notes" && this.isAutoPolicyEnabled()) {
+            if (await this.canRunAutoMaintenance()) {
+                this.scheduleReconcile("chat", 0);
+                this.scheduleAutoFlush("chat", 0);
+                return {
+                    decision: "use-memory",
+                    message: "Memory is using the last prepared copy while updates continue in the background.",
+                };
+            } else {
+                this.plugin.log("Memory changed, but background maintenance is waiting for durable local memory.");
+                return {
+                    decision: "use-memory",
+                    message: "Memory is using the last prepared copy. Background updates are unavailable until memory is prepared again on this device.",
+                };
+            }
         }
 
         if (this.isAnswerNowCoolingDown()) {
@@ -190,6 +289,8 @@ export class MemoryManager {
                 new Notice("Memory is ready. Your notes were not changed.", 3000);
             }
 
+            await this.enableAutoRefreshAfterPrepare();
+            this.scheduleReconcile("prepare", PREPARE_RECONCILE_DELAY_MS);
             await this.plugin.updateMemoryStatusBar();
             return { ok: true, partial, summary };
         } catch (error) {
@@ -241,6 +342,84 @@ export class MemoryManager {
         if (!result.ok) {
             new Notice(result.message ?? "Could not prepare memory.", 7000);
         }
+    }
+
+    private enqueueBackgroundTask(kind: BackgroundTaskKind, reason: string): void {
+        const run = this.maintenanceQueue.then(
+            () => this.runBackgroundTask(kind, reason),
+            () => this.runBackgroundTask(kind, reason),
+        );
+        this.maintenanceQueue = run.then(() => undefined, () => undefined);
+        void run;
+    }
+
+    private async runBackgroundTask(kind: BackgroundTaskKind, reason: string): Promise<void> {
+        try {
+            if (!await this.canRunAutoMaintenance()) return;
+            if (kind === "flush") {
+                const summary = await this.plugin.vss.flush({
+                    silent: true,
+                    reason: "auto-refresh",
+                });
+                if (summary.failed > 0) {
+                    throw new Error(`Background memory update skipped ${summary.failed} note(s).`);
+                }
+                if (!summary.aborted) {
+                    await this.plugin.updateMemoryStatusBar();
+                }
+                if (this.plugin.vss.hasDirtyChanges()) {
+                    this.scheduleAutoFlush("dirty-pending", QUIET_AUTO_FLUSH_DELAY_MS);
+                }
+            } else {
+                const summary = await this.plugin.vss.reconcileLocalFiles({
+                    reason,
+                    verifyHashLimit: reason === "periodic" ? 50 : 0,
+                });
+                if (summary.failed > 0) {
+                    throw new Error(`Background memory reconcile failed for ${summary.failed} note(s).`);
+                }
+                if (!summary.aborted) {
+                    await this.plugin.updateMemoryStatusBar();
+                }
+                if (summary.hasMore) {
+                    this.scheduleReconcile(reason, 1_000);
+                }
+                if (summary.markedDirty > 0 || this.plugin.vss.hasDirtyChanges()) {
+                    this.scheduleAutoFlush("reconcile", 0);
+                }
+            }
+            this.backgroundFailureCount = 0;
+        } catch (error) {
+            this.plugin.log("Background memory maintenance failed", { kind, reason, error });
+            const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
+            this.backgroundFailureCount++;
+            if (kind === "flush") {
+                this.scheduleAutoFlush(`retry:${reason}`, delay);
+            } else {
+                this.scheduleReconcile(`retry:${reason}`, delay);
+            }
+        }
+    }
+
+    private isAutoPolicyEnabled(): boolean {
+        return this.plugin.settings.memoryEnabled
+            && this.plugin.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY;
+    }
+
+    private async canRunAutoMaintenance(): Promise<boolean> {
+        if (!this.isAutoPolicyEnabled()) return false;
+        try {
+            return await this.plugin.vss.canAutoMaintain();
+        } catch (error) {
+            this.plugin.log("Could not check background memory readiness", error);
+            return false;
+        }
+    }
+
+    private async enableAutoRefreshAfterPrepare(): Promise<void> {
+        if (this.plugin.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) return;
+        this.plugin.settings.memoryApprovalPolicy = AUTO_MEMORY_POLICY;
+        await (this.plugin as { saveSettings?: () => Promise<void> }).saveSettings?.();
     }
 
     private requestApproval(

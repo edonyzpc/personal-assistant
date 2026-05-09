@@ -53,10 +53,33 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
     settings: {
         memoryEnabled: true,
         memoryAutoCheckBeforeChat: true,
+        memoryApprovalPolicy: 'always',
         ...settings,
     },
     vss: {
         getMemoryReadiness: jest.fn(async () => plan),
+        canAutoMaintain: jest.fn(async () => true),
+        hasDirtyChanges: jest.fn(() => false),
+        flush: jest.fn(async (_options?: unknown) => ({
+            aborted: false,
+            updated: 0,
+            unchanged: 0,
+            removed: 0,
+            skipped: 0,
+            failed: 0,
+        })),
+        reconcileLocalFiles: jest.fn(async (_options?: unknown) => ({
+            aborted: false,
+            updated: 0,
+            unchanged: 0,
+            removed: 0,
+            skipped: 0,
+            failed: 0,
+            scanned: 0,
+            markedDirty: 0,
+            verified: 0,
+            hasMore: false,
+        })),
         refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => ({
             aborted: false,
             updated: 0,
@@ -74,6 +97,7 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
             failed: 0,
         })),
     },
+    saveSettings: jest.fn(async () => undefined),
     updateMemoryStatusBar: jest.fn(async () => undefined),
     log: jest.fn(),
 });
@@ -138,6 +162,69 @@ describe('MemoryManager chat decisions', () => {
 
         expect(decision).toEqual({ decision: 'use-memory' });
         expect(plugin.vss.getMemoryReadiness).not.toHaveBeenCalled();
+    });
+
+    it('does not block chat on changed notes after memory has been approved once', async () => {
+        jest.useFakeTimers();
+        const plugin = createPlugin(createPlan({
+            reason: 'changed-notes',
+            action: 'refresh',
+            notesLikelyToUpdate: 2,
+            requiresApproval: true,
+        }), { memoryApprovalPolicy: 'auto-refresh-after-prepare' });
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        (manager as any).requestApproval = jest.fn(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        manager.startAutoMaintenance();
+
+        try {
+            const decision = await manager.ensureReadyForChat('question');
+            jest.advanceTimersByTime(0);
+            await (manager as any).maintenanceQueue; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+            expect(decision).toEqual({
+                decision: 'use-memory',
+                message: 'Memory is using the last prepared copy while updates continue in the background.',
+            });
+            expect((manager as any).requestApproval).not.toHaveBeenCalled(); // eslint-disable-line @typescript-eslint/no-explicit-any
+            expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+            expect(plugin.vss.flush).toHaveBeenCalledWith(expect.objectContaining({
+                silent: true,
+                reason: 'auto-refresh',
+            }));
+            expect(plugin.vss.reconcileLocalFiles).toHaveBeenCalled();
+        } finally {
+            manager.stopAutoMaintenance();
+            jest.useRealTimers();
+        }
+    });
+
+    it('keeps fallback memory read-only during automatic chat maintenance', async () => {
+        jest.useFakeTimers();
+        const plugin = createPlugin(createPlan({
+            reason: 'changed-notes',
+            action: 'refresh',
+            notesLikelyToUpdate: 2,
+            requiresApproval: true,
+        }), { memoryApprovalPolicy: 'auto-refresh-after-prepare' });
+        plugin.vss.canAutoMaintain.mockResolvedValue(false);
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        manager.startAutoMaintenance();
+
+        try {
+            const decision = await manager.ensureReadyForChat('question');
+            jest.advanceTimersByTime(0);
+            await (manager as any).maintenanceQueue; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+            expect(decision).toEqual({
+                decision: 'use-memory',
+                message: 'Memory is using the last prepared copy. Background updates are unavailable until memory is prepared again on this device.',
+            });
+            expect(plugin.vss.flush).not.toHaveBeenCalled();
+            expect(plugin.vss.reconcileLocalFiles).not.toHaveBeenCalled();
+        } finally {
+            manager.stopAutoMaintenance();
+            jest.useRealTimers();
+        }
     });
 });
 

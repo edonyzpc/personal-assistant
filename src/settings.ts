@@ -58,7 +58,7 @@ export interface PluginManagerSettings {
     embeddingV4MigrationNoticeDismissed: boolean;
     memoryEnabled: boolean;
     memoryAutoCheckBeforeChat: boolean;
-    memoryApprovalPolicy: "always";
+    memoryApprovalPolicy: "always" | "auto-refresh-after-prepare";
     showAdvancedMemoryControls: boolean;
     // 兼容旧版本
     modelName: string;
@@ -715,6 +715,22 @@ export class SettingTab extends PluginSettingTab {
             });
 
         if (this.plugin.settings.showAdvancedMemoryControls) {
+            new Setting(containerEl)
+                .setName("Keep memory updated in background")
+                .setDesc("After memory has been prepared, update changed notes automatically while Obsidian is open.")
+                .addToggle((toggle) => {
+                    toggle
+                        .setValue(this.plugin.settings.memoryApprovalPolicy === "auto-refresh-after-prepare")
+                        .onChange(async (value) => {
+                            this.plugin.settings.memoryApprovalPolicy = value ? "auto-refresh-after-prepare" : "always";
+                            await this.plugin.saveSettings();
+                            if (value) {
+                                this.plugin.memoryManager.scheduleReconcile("settings");
+                                this.plugin.memoryManager.scheduleAutoFlush("settings");
+                            }
+                        });
+                });
+
             new Setting(containerEl)
                 .setName("Memory model")
                 .setDesc("Advanced: model used to prepare memory from notes.")

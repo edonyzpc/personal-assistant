@@ -211,6 +211,27 @@ describe('settings migration', () => {
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages).toEqual([]);
     });
+
+    it('preserves the background memory approval policy during migration', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'openai',
+            embeddingModelName: 'custom-embedding-model',
+            embeddingV4MigrationNoticeDismissed: true,
+            statisticsType: 'overview',
+            memoryEnabled: true,
+            memoryAutoCheckBeforeChat: true,
+            memoryApprovalPolicy: 'auto-refresh-after-prepare',
+            showAdvancedMemoryControls: false,
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        plugin.migrateSettings();
+
+        expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
 });
 
 describe('VSS status performance notices', () => {
