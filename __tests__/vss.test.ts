@@ -70,6 +70,7 @@ class FakeVectorIndex implements VectorIndex {
         this.records.delete(path);
     });
     listFilePaths = jest.fn<() => Promise<string[]>>(async () => Array.from(this.records.keys()).sort());
+    listFileRecords = jest.fn<() => Promise<VSSFileRecord[]>>(async () => Array.from(this.records.values()).sort((left, right) => left.path.localeCompare(right.path)));
     upsertFile = jest.fn<(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]) => Promise<void>>(async (fileState) => {
         this.records.set(fileState.path, {
             path: fileState.path,
@@ -85,7 +86,7 @@ class FakeVectorIndex implements VectorIndex {
     getFileRecord = jest.fn<(path: string) => Promise<VSSFileRecord | null>>(async (path) => this.records.get(path) ?? null);
     getStats = jest.fn<() => Promise<VSSIndexStats>>(async () => ({
         status: this.status,
-        backend: 'fake',
+        backend: 'sqlite-wasm-opfs-sahpool',
         chunkCount: this.records.size,
         fileCount: this.records.size,
         fallbackMode: false,
@@ -625,6 +626,105 @@ describe('VSS SQLite/WASM lifecycle', () => {
             requiresApproval: true,
             canAnswerNow: true,
         });
+    });
+
+    it('reconciles vault metadata into dirty paths and removes stale indexed rows', async () => {
+        const now = Date.now();
+        const changed = createTFile('changed.md', { size: 10, mtime: now + 5, ctime: now }, 'md', 'changed.md');
+        const created = createTFile('created.md', { size: 11, mtime: now + 6, ctime: now }, 'md', 'created.md');
+        const { plugin, mockAdapter } = createPlugin({
+            getVSSFiles: jest.fn(() => [changed, created]),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        index.records.set('changed.md', {
+            path: 'changed.md',
+            contentHash: 'old-hash',
+            mtime: now,
+            size: 10,
+            status: 'ready',
+            updatedAt: now,
+        });
+        index.records.set('deleted.md', {
+            path: 'deleted.md',
+            contentHash: 'deleted-hash',
+            mtime: now,
+            size: 3,
+            status: 'ready',
+            updatedAt: now,
+        });
+
+        const summary = await vss.reconcileLocalFiles({ verifyHashLimit: 0 });
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(summary.markedDirty).toBe(2);
+        expect(summary.removed).toBe(1);
+        expect(dirtyMap.has('changed.md')).toBe(true);
+        expect(dirtyMap.has('created.md')).toBe(true);
+        expect(index.deleteFile).toHaveBeenCalledWith('deleted.md');
+        expect(mockAdapter.write).toHaveBeenCalledWith('cache/dirty.json', expect.stringContaining('changed.md'));
+    });
+
+    it('uses rolling hash verification to catch synced content changes without metadata changes', async () => {
+        const now = Date.now();
+        const file = createTFile('same-meta.md', { size: 12, mtime: now, ctime: now }, 'md', 'same-meta.md');
+        const { plugin, mockAdapter } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        index.records.set('same-meta.md', {
+            path: 'same-meta.md',
+            contentHash: 'old-hash',
+            mtime: now,
+            size: 12,
+            status: 'ready',
+            updatedAt: now,
+        });
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'same-meta.md') return 'new synced content';
+            throw createMissingFileError();
+        });
+
+        const summary = await vss.reconcileLocalFiles({ reason: 'periodic', verifyHashLimit: 1 });
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(summary.verified).toBe(1);
+        expect(summary.markedDirty).toBe(1);
+        expect(dirtyMap.has('same-meta.md')).toBe(true);
+    });
+
+    it('settles hasMore after continuing a large metadata reconcile round', async () => {
+        const now = Date.now();
+        const files = Array.from({ length: 1001 }, (_, index) =>
+            createTFile(`large-${index}.md`, { size: index + 1, mtime: now + index, ctime: now }, 'md', `large-${index}.md`)
+        );
+        const { plugin } = createPlugin({
+            getVSSFiles: jest.fn(() => files),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        for (const file of files) {
+            index.records.set(file.path, {
+                path: file.path,
+                contentHash: `hash-${file.path}`,
+                mtime: file.stat.mtime,
+                size: file.stat.size,
+                status: 'ready',
+                updatedAt: now,
+            });
+        }
+
+        const first = await vss.reconcileLocalFiles({ batchSize: 10_000, maxMetadataItems: 2000, verifyHashLimit: 0 });
+        const second = await vss.reconcileLocalFiles({ batchSize: 10_000, maxMetadataItems: 2000, verifyHashLimit: 0 });
+
+        expect(first.hasMore).toBe(true);
+        expect(first.scanned).toBe(2000);
+        expect(second.hasMore).toBe(false);
+        expect(second.scanned).toBe(2);
     });
 
     it('maps ready memory to a no-op memory plan', async () => {

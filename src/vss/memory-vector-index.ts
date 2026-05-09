@@ -48,6 +48,24 @@ export class MemoryVectorIndex implements VectorIndex {
         return Array.from(this.records.keys());
     }
 
+    async listFileRecords(): Promise<VSSFileRecord[]> {
+        const records: VSSFileRecord[] = [];
+        for (const [path, fileRecords] of this.records) {
+            const first = fileRecords[0];
+            if (!first) continue;
+            records.push({
+                path,
+                contentHash: first.fileState.contentHash,
+                mtime: first.fileState.mtime,
+                size: first.fileState.size,
+                status: "ready",
+                updatedAt: Date.now(),
+            });
+        }
+        records.sort((left, right) => left.path.localeCompare(right.path));
+        return records;
+    }
+
     async search(queryEmbedding: number[], k: number): Promise<VectorSearchResult[]> {
         const startedAt = performance.now();
         const metric = this.profile?.distanceMetric ?? "COSINE";

@@ -80,6 +80,7 @@ export interface VectorIndex {
     upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]): Promise<void>;
     deleteFile(path: string): Promise<void>;
     listFilePaths(): Promise<string[]>;
+    listFileRecords(): Promise<VSSFileRecord[]>;
     search(queryEmbedding: number[], k: number): Promise<VectorSearchResult[]>;
     getFileRecord(path: string): Promise<VSSFileRecord | null>;
     getStats(): Promise<VSSIndexStats>;

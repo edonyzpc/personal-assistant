@@ -78,6 +78,9 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
         case "listFilePaths":
             requireDb();
             return listFilePaths();
+        case "listFileRecords":
+            requireDb();
+            return listFileRecords();
         case "search":
             requireDb();
             return search(request.payload.queryEmbedding, request.payload.k);
@@ -410,6 +413,20 @@ function listFilePaths(): string[] {
     return rows.map((row) => String(row.path));
 }
 
+function listFileRecords(): VSSFileRecord[] {
+    const rows: Array<Record<string, unknown>> = [];
+    requireDb().exec({
+        sql: `
+            SELECT path, content_hash AS contentHash, mtime, size, status, updated_at AS updatedAt
+            FROM vss_files
+            ORDER BY path ASC
+        `,
+        rowMode: "object",
+        resultRows: rows,
+    });
+    return rows.map(rowToFileRecord);
+}
+
 function search(queryEmbedding: number[], k: number): unknown[] {
     const profile = activeProfile;
     if (!profile) {
@@ -464,6 +481,10 @@ function getFileRecord(path: string): VSSFileRecord | null {
     });
     const row = rows[0];
     if (!row) return null;
+    return rowToFileRecord(row);
+}
+
+function rowToFileRecord(row: Record<string, unknown>): VSSFileRecord {
     return {
         path: String(row.path),
         contentHash: String(row.contentHash),

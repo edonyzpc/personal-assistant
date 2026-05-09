@@ -49,6 +49,9 @@ const VSS_OPFS_ROOT = "/personal-assistant-vss-v2";
 const VSS_LEGACY_OPFS_ROOT = "/personal-assistant-vss";
 const EMBEDDING_RETRY_DELAYS_MS = [2_000, 5_000, 10_000, 20_000];
 const QWEN_TEXT_EMBEDDING_SAFE_TPM = 900_000;
+const VSS_RECONCILE_BATCH_SIZE = 250;
+const VSS_RECONCILE_MAX_METADATA_PER_RUN = 2_000;
+const VSS_ROLLING_HASH_VERIFY_LIMIT = 50;
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'removed' | 'skipped';
 
@@ -85,6 +88,20 @@ interface VSSFlushOptions extends VSSOperationOptions {
     force?: boolean;
     reason?: string;
     limit?: number;
+}
+
+export interface VSSReconcileOptions {
+    reason?: string;
+    batchSize?: number;
+    maxMetadataItems?: number;
+    verifyHashLimit?: number;
+}
+
+export interface VSSReconcileSummary extends VSSOperationSummary {
+    scanned: number;
+    markedDirty: number;
+    verified: number;
+    hasMore: boolean;
 }
 
 interface StoragePersistenceStatus {
@@ -132,8 +149,13 @@ export class VSS {
     private aiUtils: AIUtils;
     private dirty = new Map<string, DirtyTimestamps>();
     private isFlushing = false;
+    private operationQueue: Promise<void> = Promise.resolve();
     private processedWindow = { count: 0, windowStart: 0 };
     private nextEmbeddingRequestAt = 0;
+    private recordReconcileCursor = 0;
+    private reconcileCursor = 0;
+    private reconcilePhase: "records" | "files" = "records";
+    private hashVerifyCursor = 0;
     private initialized = false;
     private disposed = false;
     private index: VectorIndex | null = null;
@@ -184,51 +206,95 @@ export class VSS {
         this.status = "uninitialized";
     }
 
-    async markDirtyIfEligible(file: TAbstractFile) {
-        if (!(file instanceof TFile)) return;
-        if (!this.isEligible(file)) return;
-        const now = Date.now();
-        const existing = this.dirty.get(file.path);
-        const updated: DirtyTimestamps = existing
-            ? { first: existing.first, last: now }
-            : { first: now, last: now };
-        this.dirty.set(file.path, updated);
-        await this.persistDirtyJournal();
+    async markDirtyIfEligible(file: TAbstractFile): Promise<boolean> {
+        if (!(file instanceof TFile)) return false;
+        if (!this.isEligible(file)) return false;
+        const changed = this.markDirtyPath(file.path);
+        if (changed) {
+            await this.persistDirtyJournal();
+        }
+        return changed;
     }
 
-    async handleDelete(file: TFile) {
-        this.dirty.delete(file.path);
-        await this.persistDirtyJournal();
+    async markDirtyIfIndexedMetadataChanged(file: TFile | null): Promise<boolean> {
+        if (!(file instanceof TFile)) return false;
+        if (!this.isEligible(file)) return false;
         await this.initialize();
-        if (this.index) {
-            await this.index.deleteFile(file.path);
-            await this.writeIndexStateFiles();
+        if (!this.index || (this.status !== "ready" && this.status !== "fallback")) {
+            return false;
         }
+
+        const record = await this.index.getFileRecord(file.path);
+        if (record && record.mtime === file.stat.mtime && record.size === file.stat.size) {
+            return false;
+        }
+
+        const changed = this.markDirtyPath(file.path);
+        if (changed) {
+            await this.persistDirtyJournal();
+        }
+        return changed;
+    }
+
+    async handleDelete(file: TFile): Promise<void> {
+        await this.runExclusive(() => this.deleteIndexedPath(file.path));
         this.plugin.log("delete VSS entry", file.path);
+    }
+
+    async handleRename(file: TFile, oldPath: string): Promise<boolean> {
+        return this.runExclusive(async () => {
+            if (oldPath && oldPath !== file.path) {
+                await this.deleteIndexedPath(oldPath);
+            }
+            if (!this.isEligible(file)) return false;
+            const changed = this.markDirtyPath(file.path);
+            if (changed) {
+                await this.persistDirtyJournal();
+            }
+            return changed;
+        });
     }
 
     async handleActiveLeafChange() {
         await this.persistDirtyJournal();
     }
 
-    async handleFileOpen(file: TFile | null) {
-        if (file instanceof TFile && this.isEligible(file)) {
-            await this.markDirtyIfEligible(file);
+    async handleFileOpen(file: TFile | null): Promise<boolean> {
+        return this.markDirtyIfIndexedMetadataChanged(file);
+    }
+
+    hasDirtyChanges(): boolean {
+        return this.dirty.size > 0;
+    }
+
+    async canAutoMaintain(): Promise<boolean> {
+        await this.initialize();
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: true });
         }
+        return await this.isDurableReady();
     }
 
     async flush(options: VSSFlushOptions = {}): Promise<VSSOperationSummary> {
+        return this.runExclusive(() => this.flushUnlocked(options));
+    }
+
+    private async flushUnlocked(options: VSSFlushOptions = {}): Promise<VSSOperationSummary> {
         const summary = createEmptyOperationSummary();
         if (this.isFlushing) {
             summary.aborted = true;
             return summary;
         }
         await this.initialize();
-        await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: true });
+        await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: options.force === true });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             if (!options.silent) {
                 new Notice("Memory is not ready. Prepare memory first.", 5000);
             }
+            summary.aborted = true;
+            return summary;
+        }
+        if (options.reason === "auto-refresh" && !await this.isDurableReady()) {
             summary.aborted = true;
             return summary;
         }
@@ -294,7 +360,7 @@ export class VSS {
 
                 let status: VSSRefreshStatus;
                 try {
-                    status = await this.refreshFileCache(file, getEmbeddingsModel);
+                    status = await this.refreshFileCacheUnlocked(file, getEmbeddingsModel);
                 } catch (e) {
                     summary.failed++;
                     this.plugin.log("Failed to refresh VSS index", { path, error: e });
@@ -329,6 +395,10 @@ export class VSS {
     }
 
     async rebuildLocalIndex(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
+        return this.runExclusive(() => this.rebuildLocalIndexUnlocked(options));
+    }
+
+    private async rebuildLocalIndexUnlocked(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
         await this.initialize();
         this.storageStatus = await this.requestPersistentStorage();
         if (!this.storageStatus.persisted && !options.silent) {
@@ -523,6 +593,10 @@ export class VSS {
     }
 
     async resetLocalIndex(): Promise<void> {
+        await this.runExclusive(() => this.resetLocalIndexUnlocked());
+    }
+
+    private async resetLocalIndexUnlocked(): Promise<void> {
         await this.initialize();
         if (this.index) {
             const index = this.index;
@@ -536,6 +610,155 @@ export class VSS {
         this.manifest = null;
         this.status = "uninitialized";
         new Notice("Local memory copy reset.", 3000);
+    }
+
+    async reconcileLocalFiles(options: VSSReconcileOptions = {}): Promise<VSSReconcileSummary> {
+        return this.runExclusive(() => this.reconcileLocalFilesUnlocked(options));
+    }
+
+    private async reconcileLocalFilesUnlocked(options: VSSReconcileOptions = {}): Promise<VSSReconcileSummary> {
+        const summary: VSSReconcileSummary = {
+            ...createEmptyOperationSummary(),
+            scanned: 0,
+            markedDirty: 0,
+            verified: 0,
+            hasMore: false,
+        };
+        await this.initialize();
+        await this.ensureIndex({ allowFallback: false });
+        if (!this.index || !await this.isDurableReady()) {
+            summary.aborted = true;
+            return summary;
+        }
+        const index = this.index;
+
+        const batchSize = Math.max(1, options.batchSize ?? VSS_RECONCILE_BATCH_SIZE);
+        const maxMetadataItems = Math.max(1, options.maxMetadataItems ?? VSS_RECONCILE_MAX_METADATA_PER_RUN);
+        const verifyHashLimit = Math.max(0, options.verifyHashLimit ?? (options.reason === "periodic" ? VSS_ROLLING_HASH_VERIFY_LIMIT : 0));
+        const files = this.plugin.getVSSFiles();
+        const fileByPath = new Map(files.map((file) => [file.path, file]));
+        const records = await index.listFileRecords();
+        const recordByPath = new Map(records.map((record) => [record.path, record]));
+        let dirtyChanged = false;
+        let indexChanged = false;
+
+        const maybeYield = async () => {
+            if (summary.scanned > 0 && summary.scanned % batchSize === 0) {
+                await sleep(0);
+            }
+        };
+
+        const hasBudget = () => summary.scanned < maxMetadataItems;
+        const processIndexedRecords = async (): Promise<boolean> => {
+            if (records.length === 0) {
+                this.recordReconcileCursor = 0;
+                return true;
+            }
+            if (this.recordReconcileCursor >= records.length) {
+                this.recordReconcileCursor = 0;
+            }
+            while (hasBudget() && this.recordReconcileCursor < records.length) {
+                const record = records[this.recordReconcileCursor];
+                this.recordReconcileCursor++;
+                summary.scanned++;
+                if (!fileByPath.has(record.path)) {
+                    await index.deleteFile(record.path);
+                    if (this.dirty.delete(record.path)) {
+                        dirtyChanged = true;
+                    }
+                    indexChanged = true;
+                    summary.removed++;
+                }
+                await maybeYield();
+            }
+            if (this.recordReconcileCursor >= records.length) {
+                this.recordReconcileCursor = 0;
+                return true;
+            }
+            return false;
+        };
+
+        const processVaultFiles = async (): Promise<boolean> => {
+            if (files.length === 0) {
+                this.reconcileCursor = 0;
+                return true;
+            }
+            if (this.reconcileCursor >= files.length) {
+                this.reconcileCursor = 0;
+            }
+            while (hasBudget() && this.reconcileCursor < files.length) {
+                const file = files[this.reconcileCursor];
+                this.reconcileCursor++;
+                summary.scanned++;
+                const record = recordByPath.get(file.path);
+                if (!record || record.mtime !== file.stat.mtime || record.size !== file.stat.size) {
+                    if (this.markDirtyPath(file.path)) {
+                        dirtyChanged = true;
+                        summary.markedDirty++;
+                    }
+                } else {
+                    summary.unchanged++;
+                }
+                await maybeYield();
+            }
+            if (this.reconcileCursor >= files.length) {
+                this.reconcileCursor = 0;
+                return true;
+            }
+            return false;
+        };
+
+        if (this.reconcilePhase === "records") {
+            const recordsComplete = await processIndexedRecords();
+            if (!recordsComplete) {
+                summary.hasMore = true;
+            } else {
+                this.reconcilePhase = "files";
+                const filesComplete = await processVaultFiles();
+                if (!filesComplete) {
+                    summary.hasMore = true;
+                } else {
+                    this.reconcilePhase = "records";
+                }
+            }
+        } else {
+            const filesComplete = await processVaultFiles();
+            if (!filesComplete) {
+                summary.hasMore = true;
+            } else {
+                this.reconcilePhase = "records";
+            }
+        }
+
+        if (!summary.hasMore && verifyHashLimit > 0 && summary.scanned < maxMetadataItems && files.length > 0) {
+            const filesToVerify = rotateByCursor(files, this.hashVerifyCursor);
+            for (let index = 0; index < filesToVerify.length && summary.verified < verifyHashLimit && summary.scanned < maxMetadataItems; index++) {
+                const file = filesToVerify[index];
+                this.hashVerifyCursor = (this.hashVerifyCursor + 1) % files.length;
+                const record = recordByPath.get(file.path);
+                if (!record || record.mtime !== file.stat.mtime || record.size !== file.stat.size || this.dirty.has(file.path)) {
+                    continue;
+                }
+                summary.scanned++;
+                summary.verified++;
+                const fileState = await this.computeFileHash(file);
+                if (fileState.tooLarge || !fileState.hash || fileState.hash !== record.contentHash) {
+                    if (this.markDirtyPath(file.path)) {
+                        dirtyChanged = true;
+                        summary.markedDirty++;
+                    }
+                }
+                await maybeYield();
+            }
+        }
+
+        if (dirtyChanged) {
+            await this.persistDirtyJournal();
+        }
+        if (indexChanged) {
+            await this.writeIndexStateFiles();
+        }
+        return summary;
     }
 
     async cleanLegacyJsonCache(): Promise<void> {
@@ -577,6 +800,10 @@ export class VSS {
     }
 
     async refreshFileCache(file: TFile, getEmbeddingsModel?: EmbeddingsModelProvider): Promise<VSSRefreshStatus> {
+        return this.runExclusive(() => this.refreshFileCacheUnlocked(file, getEmbeddingsModel));
+    }
+
+    private async refreshFileCacheUnlocked(file: TFile, getEmbeddingsModel?: EmbeddingsModelProvider): Promise<VSSRefreshStatus> {
         await this.initialize();
         await this.ensureIndex({ allowFallback: false });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
@@ -743,11 +970,61 @@ export class VSS {
         };
     }
 
+    private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+        const run = this.operationQueue.then(operation, operation);
+        this.operationQueue = run.then(() => undefined, () => undefined);
+        return run;
+    }
+
+    private markDirtyPath(path: string, now = Date.now()): boolean {
+        const existing = this.dirty.get(path);
+        const updated: DirtyTimestamps = existing
+            ? { first: existing.first, last: now }
+            : { first: now, last: now };
+        if (existing && existing.last === updated.last) {
+            return false;
+        }
+        this.dirty.set(path, updated);
+        return true;
+    }
+
+    private async deleteIndexedPath(path: string): Promise<void> {
+        await this.initialize();
+        if (!await this.isDurableReady()) {
+            if (path.endsWith(".md") && this.markDirtyPath(path)) {
+                await this.persistDirtyJournal();
+            }
+            return;
+        }
+
+        const dirtyChanged = this.dirty.delete(path);
+        if (this.index) {
+            await this.index.deleteFile(path);
+            await this.writeIndexStateFiles();
+        }
+        if (dirtyChanged) {
+            await this.persistDirtyJournal();
+        }
+    }
+
+    private async isDurableReady(): Promise<boolean> {
+        if (!this.index || this.status !== "ready") return false;
+        const stats = await this.index.getStats();
+        return stats.status === "ready"
+            && !stats.fallbackMode
+            && stats.backend === "sqlite-wasm-opfs-sahpool";
+    }
+
     private async ensureIndex(options: { allowFallback: boolean; allowMissingIndexRecovery?: boolean }): Promise<void> {
         const { profile, profileSignature } = await this.refreshEmbeddingProfile();
 
-        if (this.index && (this.status === "ready" || this.status === "fallback" || this.status === "stale")) {
+        if (this.index && (this.status === "ready" || this.status === "stale" || (this.status === "fallback" && options.allowFallback))) {
             return;
+        }
+        if (this.index && this.status === "fallback" && !options.allowFallback) {
+            await this.index.dispose().catch((error) => this.plugin.log("Failed to dispose fallback VSS index", error));
+            this.index = null;
+            this.status = "uninitialized";
         }
         if (this.index && this.status === "missing-local-index") {
             if (options.allowMissingIndexRecovery) {
@@ -1282,6 +1559,14 @@ function getProgressFileName(file: TFile): string {
 
 function getProgressPathName(path: string): string {
     return path.split("/").pop() || path;
+}
+
+function rotateByCursor<T>(items: T[], cursor: number): T[] {
+    if (items.length === 0) return [];
+    const normalized = Math.max(0, Math.min(items.length - 1, cursor % items.length));
+    return normalized === 0
+        ? items
+        : items.slice(normalized).concat(items.slice(0, normalized));
 }
 
 function estimateEmbeddingTokensForTexts(texts: string[]): number {
