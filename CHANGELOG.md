@@ -4,6 +4,16 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.6.5](https://github.com/edonyzpc/personal-assistant/compare/1.6.4...1.6.5) (2026-05-09)
+
+### Features
+- vss: reconcile durable index changes
+- memory: maintain approved memory in background
+
+### Docs
+- memory: document rebuild batching and progress
+- memory: document background maintenance
+
 ## [1.6.4](https://github.com/edonyzpc/personal-assistant/compare/1.6.3...1.6.4) (2026-05-02)
 
 ### Improvements
