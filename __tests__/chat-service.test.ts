@@ -58,7 +58,20 @@ function createPlugin(overrides: {
     activeMarkdownView?: unknown;
     mostRecentLeafView?: unknown;
     markdownLeaves?: unknown[];
+    markdownFiles?: Array<{
+        path: string;
+        basename?: string;
+        name?: string;
+        stat?: { mtime?: number; ctime?: number; size?: number };
+    }>;
+    fileContents?: Record<string, string>;
+    metadataByPath?: Record<string, {
+        tags?: Array<{ tag?: string }>;
+        frontmatter?: Record<string, unknown>;
+        headings?: Array<{ heading?: string; level?: number }>;
+    }>;
 } = {}) {
+    const markdownFiles = overrides.markdownFiles ?? [];
     return {
         app: {
             workspace: {
@@ -67,6 +80,14 @@ function createPlugin(overrides: {
                 getLeavesOfType: jest.fn((type: string) => type === 'markdown'
                     ? (overrides.markdownLeaves ?? []).map((view) => ({ view }))
                     : []),
+            },
+            vault: {
+                getMarkdownFiles: jest.fn(() => markdownFiles),
+                getAbstractFileByPath: jest.fn((path: string) => markdownFiles.find((file) => file.path === path) ?? null),
+                cachedRead: jest.fn(async (file: { path: string }) => overrides.fileContents?.[file.path] ?? ''),
+            },
+            metadataCache: {
+                getFileCache: jest.fn((file: { path: string }) => overrides.metadataByPath?.[file.path] ?? null),
             },
         },
         vss: {
@@ -112,6 +133,14 @@ function extractCurrentNoteContextPayload(input: string | undefined): Record<str
     const match = input?.match(/<current_note_context>\n([\s\S]*?)\n<\/current_note_context>/);
     if (!match) {
         throw new Error('Current note context block was not found.');
+    }
+    return JSON.parse(match[1]) as Record<string, unknown>;
+}
+
+function extractToolContextPayload(input: string | undefined, tool: string): Record<string, unknown> {
+    const match = input?.match(new RegExp(`<tool_context tool="${tool}">\\n([\\s\\S]*?)\\n<\\/tool_context>`));
+    if (!match) {
+        throw new Error(`${tool} context block was not found.`);
     }
     return JSON.parse(match[1]) as Record<string, unknown>;
 }
@@ -221,6 +250,24 @@ describe('planner action parser', () => {
             tool: 'search_memory',
             input: { query: 'project notes' },
             reason: 'needs notes',
+        });
+        expect(parsePlannerAction('{"action":"search_vault_metadata","query":"project","limit":5,"reason":"find note"}')).toEqual({
+            action: 'tool',
+            tool: 'search_vault_metadata',
+            input: { query: 'project', limit: 5 },
+            reason: 'find note',
+        });
+        expect(parsePlannerAction('{"action":"list_recent_notes","order":"created","limit":3,"reason":"recent notes"}')).toEqual({
+            action: 'tool',
+            tool: 'list_recent_notes',
+            input: { order: 'created', limit: 3 },
+            reason: 'recent notes',
+        });
+        expect(parsePlannerAction('{"action":"read_note_outline","path":"notes/project.md","max_headings":12,"reason":"outline"}')).toEqual({
+            action: 'tool',
+            tool: 'read_note_outline',
+            input: { path: 'notes/project.md', max_headings: 12 },
+            reason: 'outline',
         });
     });
 
@@ -1142,6 +1189,377 @@ describe('ChatService memory behavior', () => {
         expect(chainInput?.input).not.toContain('[[notes/current.md]]');
         expect(chainInput?.memory_content).toContain('Trusted project source from Memory.');
         expect(chainInput?.allowed_sources).toBe('memory/trusted.md');
+    });
+
+    it('executes search_vault_metadata as read-only tool context', async () => {
+        let chainInput: Record<string, string> | undefined;
+        let secondPlannerInput: unknown;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_vault_metadata","input":{"query":"roadmap","limit":5},"reason":"find matching notes"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"metadata gathered"}', (input) => {
+            secondPlannerInput = input;
+        });
+        const final = createStreamModel('answer with metadata context', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'projects/phase-2.md', basename: 'phase-2', stat: { mtime: 20, ctime: 10 } },
+                { path: 'notes/other.md', basename: 'other', stat: { mtime: 30, ctime: 15 } },
+            ],
+            metadataByPath: {
+                'projects/phase-2.md': {
+                    tags: [{ tag: '#project' }],
+                    frontmatter: { type: 'roadmap', owner: 'Eddie' },
+                },
+                'notes/other.md': {
+                    tags: [{ tag: '#misc' }],
+                    frontmatter: { type: 'journal' },
+                },
+            },
+        });
+        const statuses: Array<{ type: string; tool?: string; message?: string }> = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('find roadmap note', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(plugin.app.vault.getMarkdownFiles).toHaveBeenCalled();
+        expect(plugin.app.metadataCache.getFileCache).toHaveBeenCalled();
+        expect(chainInput?.input).toContain('<tool_context tool="search_vault_metadata">');
+        expect(chainInput?.input).toContain('"source_type": "read_only_tool_not_memory_source"');
+        expect(chainInput?.input).toContain('"path": "projects/phase-2.md"');
+        expect(chainInput?.input).toContain('"type": "roadmap"');
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(JSON.stringify(secondPlannerInput)).toContain('untrusted_content');
+        expect(JSON.stringify(secondPlannerInput)).toContain('projects/phase-2.md');
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-running',
+                tool: 'search_vault_metadata',
+                message: 'Searching note metadata: roadmap',
+            }),
+            expect.objectContaining({
+                type: 'tool-done',
+                tool: 'search_vault_metadata',
+                message: 'Found 1 metadata match(es).',
+            }),
+        ]));
+    });
+
+    it('searches frontmatter fields beyond the returned metadata preview', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_vault_metadata","input":{"query":"late-frontmatter-value","limit":5},"reason":"find matching metadata"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"metadata gathered"}');
+        const final = createStreamModel('answer with deep metadata match', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'projects/deep-frontmatter.md', basename: 'deep-frontmatter', stat: { mtime: 20 } },
+            ],
+            metadataByPath: {
+                'projects/deep-frontmatter.md': {
+                    frontmatter: {
+                        key1: 'value1',
+                        key2: 'value2',
+                        key3: 'value3',
+                        key4: 'value4',
+                        key5: 'value5',
+                        key6: 'value6',
+                        key7: 'value7',
+                        key8: 'value8',
+                        lateKey: 'late-frontmatter-value',
+                    },
+                },
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('find deep metadata note', jest.fn());
+
+        const payload = extractToolContextPayload(chainInput?.input, 'search_vault_metadata');
+        const content = payload.content as { matches: Array<{ path: string; frontmatter: Record<string, string> }> };
+        expect(content.matches).toHaveLength(1);
+        expect(content.matches[0].path).toBe('projects/deep-frontmatter.md');
+        expect(content.matches[0].frontmatter).not.toHaveProperty('lateKey');
+    });
+
+    it('bounds long metadata queries before adding tool context', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const longQuery = `roadmap-${'x'.repeat(5000)}`;
+        const plannerTool = createInvokeModel(JSON.stringify({
+            action: 'tool',
+            tool: 'search_vault_metadata',
+            input: { query: longQuery, limit: 5 },
+            reason: 'find matching notes',
+        }));
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"metadata gathered"}');
+        const final = createStreamModel('answer with bounded metadata context', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('find metadata with long query', jest.fn());
+
+        const toolBlock = chainInput?.input.match(/<tool_context tool="search_vault_metadata">\n([\s\S]*?)\n<\/tool_context>/)?.[1] ?? '';
+        const payload = JSON.parse(toolBlock) as { input?: string; content?: { query?: string } };
+        expect(toolBlock.length).toBeLessThanOrEqual(4000);
+        expect(payload.input?.length).toBeLessThanOrEqual(240);
+        expect(payload.content?.query?.length).toBeLessThanOrEqual(240);
+        expect(toolBlock).not.toContain('x'.repeat(1000));
+    });
+
+    it('truncates oversized metadata tool context to the hard budget', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_vault_metadata","input":{"query":"roadmap","limit":12},"reason":"find matching notes"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"metadata gathered"}');
+        const final = createStreamModel('answer with large metadata context', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const markdownFiles = Array.from({ length: 12 }, (_, index) => ({
+            path: `projects/roadmap-${index}.md`,
+            basename: `roadmap-${index}`,
+            stat: { mtime: 100 - index },
+        }));
+        const metadataByPath = Object.fromEntries(markdownFiles.map((file, index) => [
+            file.path,
+            {
+                tags: [{ tag: '#project' }],
+                frontmatter: {
+                    topic: 'roadmap',
+                    owner: `owner-${index}`,
+                    detail1: 'a'.repeat(180),
+                    detail2: 'b'.repeat(180),
+                    detail3: 'c'.repeat(180),
+                    detail4: 'd'.repeat(180),
+                    detail5: 'e'.repeat(180),
+                    detail6: 'f'.repeat(180),
+                },
+            },
+        ]));
+        const plugin = createPlugin({ markdownFiles, metadataByPath });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('find many roadmap notes', jest.fn());
+
+        const toolBlock = chainInput?.input.match(/<tool_context tool="search_vault_metadata">\n([\s\S]*?)\n<\/tool_context>/)?.[1] ?? '';
+        const payload = JSON.parse(toolBlock) as { content_truncated?: boolean; preview?: string };
+        expect(toolBlock.length).toBeLessThanOrEqual(4000);
+        expect(payload.content_truncated).toBe(true);
+        expect(payload.preview).toContain('projects/roadmap-0.md');
+    });
+
+    it('keeps read-only tool paths out of memory references when memory is also used', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerMetadata = createInvokeModel('{"action":"tool","tool":"search_vault_metadata","input":{"query":"roadmap","limit":5},"reason":"find note path"}');
+        const plannerMemory = createInvokeModel('{"action":"tool","tool":"search_memory","input":{"query":"trusted roadmap decision"},"reason":"needs memory evidence"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"context gathered","use_memory":true}');
+        const final = createStreamModel('answer with memory and metadata context', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerMetadata)
+            .mockResolvedValueOnce(plannerMemory)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'projects/phase-2.md', basename: 'phase-2', stat: { mtime: 20, ctime: 10 } },
+            ],
+            metadataByPath: {
+                'projects/phase-2.md': {
+                    tags: [{ tag: '#project' }],
+                    frontmatter: { type: 'roadmap' },
+                },
+            },
+            searchSimilarity: async (query) => query === 'trusted roadmap decision'
+                ? [{
+                    score: 0.91,
+                    doc: {
+                        pageContent: 'Trusted Memory source for the roadmap decision.',
+                        metadata: { path: 'memory/roadmap.md', chunkIndex: 0 },
+                    },
+                }]
+                : [],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('connect the roadmap note to my memory', jest.fn());
+
+        expect(chainInput?.input).toContain('<tool_context tool="search_vault_metadata">');
+        expect(chainInput?.input).toContain('"path": "projects/phase-2.md"');
+        expect(chainInput?.memory_content).toContain('Trusted Memory source for the roadmap decision.');
+        expect(chainInput?.allowed_sources).toBe('memory/roadmap.md');
+        expect(chainInput?.allowed_sources).not.toContain('projects/phase-2.md');
+    });
+
+    it('executes list_recent_notes sorted by modified time', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"list_recent_notes","input":{"order":"modified","limit":2},"reason":"needs recent notes"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"recent notes gathered"}');
+        const final = createStreamModel('answer with recent notes', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'notes/old.md', basename: 'old', stat: { mtime: 10, ctime: 1, size: 100 } },
+                { path: 'notes/new.md', basename: 'new', stat: { mtime: 30, ctime: 2, size: 120 } },
+                { path: 'notes/mid.md', basename: 'mid', stat: { mtime: 20, ctime: 3, size: 110 } },
+            ],
+        });
+        const statuses: Array<{ type: string; tool?: string; message?: string }> = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('what notes changed recently?', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status),
+        });
+
+        const input = chainInput?.input ?? '';
+        expect(input).toContain('<tool_context tool="list_recent_notes">');
+        expect(input.indexOf('notes/new.md')).toBeLessThan(input.indexOf('notes/mid.md'));
+        expect(input).not.toContain('notes/old.md');
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-done',
+                tool: 'list_recent_notes',
+                message: 'Listed 2 recent note(s).',
+            }),
+        ]));
+    });
+
+    it('executes read_note_outline for a known Markdown path', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"read_note_outline","input":{"path":"projects/phase-2.md","max_headings":2},"reason":"needs outline"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"outline gathered"}');
+        const final = createStreamModel('answer with outline', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'projects/phase-2.md', basename: 'phase-2', stat: { mtime: 20 } },
+            ],
+            metadataByPath: {
+                'projects/phase-2.md': {
+                    headings: [
+                        { heading: 'Goal', level: 1 },
+                        { heading: 'Tool registry', level: 2 },
+                        { heading: 'Deferred', level: 2 },
+                    ],
+                },
+            },
+            fileContents: {
+                'projects/phase-2.md': '# Should not be read when cache exists',
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('show project outline', jest.fn());
+
+        expect(plugin.app.vault.getAbstractFileByPath).toHaveBeenCalledWith('projects/phase-2.md');
+        expect(plugin.app.vault.cachedRead).not.toHaveBeenCalled();
+        expect(chainInput?.input).toContain('<tool_context tool="read_note_outline">');
+        expect(chainInput?.input).toContain('"path": "projects/phase-2.md"');
+        expect(chainInput?.input).toContain('"text": "Goal"');
+        expect(chainInput?.input).toContain('"outlineTruncated": true');
+        expect(chainInput?.input).not.toContain('Should not be read');
+    });
+
+    it('falls back to reading note contents when outline cache is missing', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"read_note_outline","input":{"path":"projects/cache-miss.md","max_headings":2},"reason":"needs outline"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"outline gathered"}');
+        const final = createStreamModel('answer with outline fallback', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'projects/cache-miss.md', basename: 'cache-miss', stat: { mtime: 20 } },
+            ],
+            fileContents: {
+                'projects/cache-miss.md': '# Goal\nBody\n## Tool registry\n### Deferred',
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('show fallback outline', jest.fn());
+
+        expect(plugin.app.vault.cachedRead).toHaveBeenCalledWith(expect.objectContaining({
+            path: 'projects/cache-miss.md',
+        }));
+        expect(chainInput?.input).toContain('<tool_context tool="read_note_outline">');
+        expect(chainInput?.input).toContain('"text": "Goal"');
+        expect(chainInput?.input).toContain('"text": "Tool registry"');
+        expect(chainInput?.input).not.toContain('"text": "Deferred"');
+        expect(chainInput?.input).toContain('"outlineTruncated": true');
+    });
+
+    it('treats missing read_note_outline path as a recoverable tool failure', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"read_note_outline","input":{"path":"missing.md"},"reason":"needs outline"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"outline unavailable"}');
+        const final = createStreamModel('answer without outline', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin();
+        const statuses: Array<{ type: string; tool?: string; reason?: string }> = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('show missing outline', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(chainInput?.input).not.toContain('<tool_context');
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-skipped',
+                tool: 'read_note_outline',
+                reason: 'Requested Markdown note was not found.',
+            }),
+        ]));
     });
 
     it('does not execute unregistered tools', async () => {

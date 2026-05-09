@@ -49,7 +49,10 @@ export interface AgentPromptPlan {
 
 export type ChatToolName =
     | "search_memory"
-    | "get_current_note_context";
+    | "get_current_note_context"
+    | "search_vault_metadata"
+    | "list_recent_notes"
+    | "read_note_outline";
 
 export interface ChatToolResult<Output> {
     ok: boolean;
