@@ -49,6 +49,7 @@ Use this file as the project README for coding agents. Keep changes aligned with
   - `dist/styles.css`
 - The destination is `test/.obsidian/plugins/personal-assistant/`.
 - When validating behavior in the already-open Obsidian test vault, run `make deploy`, then reload or re-enable the plugin in Obsidian as needed.
+- To speed up Obsidian smoke setup, first check `command -v obsidian`. When available, use the Obsidian CLI with `obsidian://open` deep links to jump the test vault to the target note or asset before using Computer Use for visual/chat verification. Example: `obsidian "obsidian://open?vault=test&file=0.unsorted%2FDog.md"`. URL-encode vault file paths when needed.
 - Standard plugin packaging should work with `main.js`, `manifest.json`, and `styles.css`. If a change adds worker/WASM runtime assets, audit build, deploy, release, install, and docs together.
 
 ## Testing Instructions
@@ -61,6 +62,7 @@ Use this file as the project README for coding agents. Keep changes aligned with
   - `npm run build`
   - `git diff --check`
 - For dependency or lockfile changes, also run `npm ci --dry-run` when practical.
+- For Obsidian UI smoke tests, prefer the fast path: `make deploy`, reload/re-enable the plugin, use the Obsidian CLI/deep link to open the exact test vault target, then use Computer Use only for the interaction that must be observed in the app.
 - If a command cannot be run, state that clearly and explain the residual risk.
 - Do not claim behavior was validated in Obsidian unless it was actually deployed/tested in the app.
 
