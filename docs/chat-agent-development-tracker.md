@@ -25,12 +25,13 @@
 | --- | --- |
 | 开发分支 | `codex/chat-agent-architecture` |
 | 创建日期 | 2026-05-02 |
-| 最后回顾 | 2026-05-02 |
+| 最后回顾 | 2026-05-09 |
 | 当前阶段 | Phase 1: Agentic Memory Retrieval |
 | 架构文档 | [x] 已创建 `docs/chat-agent-architecture.md` |
+| 文档状态 | [x] 架构文档与 tracker 已按当前实现和最终验证结果校准；后续以本 tracker 追踪 Phase 2+ |
 | 实现状态 | [x] Phase 1 agentic retrieval 主路径已实现 |
-| 测试状态 | [x] Targeted Jest、full Jest、lint 和 TypeScript type check 已通过；手动 smoke test 待补 |
-| 最近结论 | planner-driven retrieve 闭环已完成自动化验证；下一步补 UI smoke test，再考虑只读 tools/skills |
+| 测试状态 | [x] 2026-05-09 Targeted Jest、full Jest、lint、TypeScript type check、`make deploy`、普通问题 UI smoke、笔记检索 UI smoke、UI 取消路径和 Memory 未准备路径均已通过 |
+| 最近结论 | Phase 1 planner-driven retrieve 闭环已完成实现与验证；下一步进入 Phase 2 只读 tool registry / context tool 方案拆解 |
 
 ## 当前范围
 
@@ -49,7 +50,7 @@ Phase 1 的目标是完成第一条可上线闭环：
 | Phase | Goal | Status | Owner/Notes | Evidence |
 | --- | --- | --- | --- | --- |
 | Phase 0 | 完成架构文档和任务追踪文档 | [x] Done | 当前分支 `codex/chat-agent-architecture` | `docs/chat-agent-architecture.md`、`docs/chat-agent-development-tracker.md` |
-| Phase 1 | Agentic Memory Retrieval | [~] 自动化验证已通过，手动 smoke test 待补 | 当前唯一实现目标 | `npm test -- __tests__/chat-service.test.ts`；`npm test -- --runInBand`；`npm run lint`；`npx tsc -noEmit -skipLibCheck` |
+| Phase 1 | Agentic Memory Retrieval | [x] Done | 当前实现目标已完成，后续只保留回归追踪 | `npm test -- __tests__/chat-service.test.ts`；`npm test -- --runInBand`；`npm run lint`；`npx tsc -noEmit -skipLibCheck`；`make deploy`；Obsidian UI smoke |
 | Phase 2 | 只读工具扩展 | [ ] Todo | 后续迭代占位 | 待 Phase 1 完成后拆解 |
 | Phase 3 | Skills / Context Packs | [ ] Todo | 后续迭代占位 | 待 Phase 2 基础稳定 |
 | Phase 4 | 受控写入与长期任务 | [ ] Todo | 后续迭代占位 | 待只读工具和审批模型稳定 |
@@ -66,19 +67,51 @@ Phase 1 的目标是完成第一条可上线闭环：
 | Runtime status events | `src/ai-services/chat-agent.ts`、`src/chat-view.ts` | [x] Done | 能发出 `thinking`、`retrieving`、`retrieved`、`memory-skipped`、`answering`、`fallback` | fallback status test；UI wiring type checked |
 | 实现 `ChatPlanner` | `src/ai-services/chat-agent.ts` | [x] Done | 低温、非流式调用当前 chat model；只输出 action-only JSON；不展示完整内部推理 | parser/runtime tests |
 | Planner prompt 策略 | `src/ai-services/chat-agent.ts` | [x] Done | 普通知识、翻译、润色、代码解释走 `answer`；用户笔记、项目记录、历史决策走 `retrieve` | Prompt implemented；behavior covered through mocked actions |
+| Planner prompt 模板转义 | `src/ai-services/chat-agent.ts`、`__tests__/chat-service.test.ts` | [x] Done | LangChain prompt template 中的 JSON 示例使用双花括号转义，避免 planner 因模板变量解析失败进入 fallback | `escapes planner JSON examples for LangChain prompt templates` |
 | 新增 `MemorySearchTool` | `src/ai-services/chat-agent.ts` | [x] Done | 只在 retrieve 路径调用 `memoryManager.ensureReadyForChat(query)` | `uses planner query for memory retrieval` |
 | Memory approval 下沉 | `src/chat-view.ts`、`src/ai-services/chat-agent.ts` | [x] Done | `chat-view.ts` 不再发送前固定调用 `ensureReadyForChat(prompt)` | Targeted test confirms answer path does not call approval |
 | VSS retrieve query 使用 | `src/ai-services/chat-agent.ts`、`__tests__/chat-service.test.ts` | [x] Done | `vss.searchSimilarity` 使用 planner query，而不是用户原始 prompt | `uses planner query for memory retrieval` |
 | Source 去重和裁剪 | `src/ai-services/chat-agent.ts` | [x] Done | 按 `path + chunkIndex` 去重；最多注入 4 个 chunks；有长度预算 | Type check；duplicate query/source path covered indirectly |
-| 新增 `PromptBuilder` | `src/ai-services/chat-agent.ts` | [x] Done | 统一构建 planner prompt、fallback prompt、final answer prompt | `strips trailing memory reference callouts...` |
+| 新增 `PromptBuilder` | `src/ai-services/chat-agent.ts` | [x] Done | 统一构建 final answer prompt、history、memory context 和 references；fallback 复用 final prompt | `strips trailing memory reference callouts...` |
 | History budget | `src/ai-services/chat-agent.ts`、`__tests__/chat-service.test.ts` | [x] Done | 默认只带最近 8 条消息；继续剥离 assistant 历史里的旧 Memory references | `strips trailing memory reference callouts...` |
 | Memory references 约束 | `src/ai-services/chat-service.ts`、`src/ai-services/chat-agent.ts` | [x] Done | 只引用本轮真实 sources；无 sources 时不输出 Memory references | `allowed_sources` assertion |
 | `skip-memory` 行为 | `src/ai-services/chat-agent.ts`、`__tests__/chat-service.test.ts` | [x] Done | 不调用 planner、不调用 VSS，直接普通回答 | `skips planner and memory lookup...` |
 | Planner fallback | `src/ai-services/chat-agent.ts`、`__tests__/chat-service.test.ts` | [x] Done | Planner 解析失败时 Chat 不失败；Memory ready 时可旧逻辑检索，否则普通回答 | `falls back when planner output cannot be parsed` |
-| UI 轻量状态 | `src/chat-view.ts` | [x] Done | Chat 中能显示判断、检索、跳过 Memory、fallback、回答状态；不展示完整内部推理 | UI wiring type checked；manual smoke pending |
+| UI 轻量状态 | `src/chat-view.ts` | [x] Done | Chat 中能显示判断、检索、跳过 Memory、fallback、回答状态；不展示完整内部推理 | 普通、检索、取消、Memory 未准备路径 UI smoke passed |
 | Streaming fallback 保持 | `src/ai-services/chat-service.ts`、`__tests__/chat-service.test.ts` | [x] Done | 未收到 chunk 时可非流式 fallback；收到部分 chunk 后不重试；abort 不 fallback | Existing streaming fallback policy tests |
 | Targeted tests | `__tests__/chat-service.test.ts` | [x] Done | `npm test -- __tests__/chat-service.test.ts` 通过 | Passed 2026-05-02 |
 | Type check | TypeScript project | [x] Done | `npx tsc -noEmit -skipLibCheck` 通过 | Passed 2026-05-02 |
+
+## Phase 1 收尾验证计划
+
+目标：确认 planner-driven retrieve 主路径不仅在 service/runtime 层通过测试，也能在真实 Chat 使用路径中保持产品体验、取消行为和安全边界稳定。
+
+| Verification Item | Area | Status | Acceptance | Evidence |
+| --- | --- | --- | --- | --- |
+| 文档状态校准 | `docs/chat-agent-architecture.md`、`docs/chat-agent-development-tracker.md` | [x] Done | 文档准确说明当前实现、状态映射、fallback 路径、`use-memory` 语义和待验证项 | 2026-05-09 docs calibration |
+| 自动化基线刷新 | Chat service/runtime | [x] Done | targeted Chat tests、type check、lint 通过 | 16 targeted tests passed on 2026-05-09 |
+| 全量 Jest 刷新 | Jest suite | [x] Done | `npm test -- --runInBand` 在当前 rebase 后通过 | 18 suites / 132 tests passed on 2026-05-09 |
+| 文档 whitespace 检查 | Markdown diff | [x] Done | `git diff --check` 通过 | Passed 2026-05-09 |
+| UI smoke：普通问题 | Chat UI | [x] Done | 普通知识/写作问题不触发 Memory approval，状态不显得过度打扰 | Obsidian test vault: HTTP 404 问题只显示 thinking -> answering，无 retrieve / references |
+| UI smoke：笔记问题 | Chat UI + Memory | [x] Done | 笔记相关问题使用 planner query 检索，展示 sources，回答只引用本轮 sources | Obsidian test vault: `根据我的笔记，agent意图安全经历了几个阶段？` 使用 `agent意图安全 阶段` 检索并展示 Memory references |
+| UI smoke：Memory 未准备 | Chat UI + Memory approval | [x] Done | 只有 retrieve 路径触发准备确认；`Answer now` 后本轮不调用 VSS | Obsidian test vault: reset 后状态为 `Memory needs setup`；普通 HTTP 404 不弹确认；笔记问题弹 `Prepare memory from your notes?`；点击 `Answer now` 后显示 `Memory was not used for this answer.`，无 `Searching memory`、`Found memory references` 或本轮 references callout |
+| UI smoke：取消路径 | Chat UI + AbortSignal | [x] Done | planning、retrieving、answering 阶段取消后不继续追加回答，不启动新的 fallback | Obsidian test vault: 长回答生成中点击 `✕` 后显示 `Generation cancelled`，未继续追加 fallback |
+| Runtime：Answer now | Chat service/runtime | [x] Done | Memory approval 返回 `answer-now` 时本轮不调用 VSS，普通回答继续完成 | `answers without VSS when memory approval chooses answer now` |
+| Runtime：approval cancel | Chat service/runtime | [x] Done | Memory approval 返回 `cancel` 时抛出 AbortError，不调用 VSS，不进入 fallback | `aborts without fallback when memory approval is cancelled` |
+| Adversarial Memory references | Prompt / Memory sources | [x] Done | Memory 内容要求越权、伪造引用或改写规则时，最终回答仍只按 allowed sources 引用 | `keeps allowed memory references limited to retrieved source metadata` |
+| Phase 1 Done 判定 | Release readiness | [x] Done | UI smoke 完成，Memory references adversarial test 已覆盖，剩余 prompt injection 风险转入后续 tool/skill 阶段跟踪 | Phase 1 closed on 2026-05-09 |
+
+### Memory 未准备路径复测指引
+
+这个场景已在 2026-05-09 手动通过。后续回归时需要把 test vault 临时切到 `Memory needs setup` 或 `local-memory-missing` 状态。该操作只影响本地 Memory 缓存，不会修改或删除笔记；如果选择重新准备 Memory，可能会消耗 AI credits/API calls。为避免成本，验证时优先点击 `Answer now`。
+
+1. 确认当前已部署最新插件：运行过 `make deploy`，并在 Obsidian test vault 中 reload / re-enable plugin。
+2. 打开命令面板，确认能看到高级 Memory 命令。如果看不到 `Reset local memory copy`，先到 Personal Assistant 设置里打开 advanced memory controls。
+3. 执行 `Personal Assistant: Reset local memory copy`，在确认框中确认 reset。预期状态栏从 `Memory ready` 变为 `Memory needs setup` 或等价未准备状态。
+4. 先问一个普通问题，例如 `请用一句话解释什么是 HTTP 404？`。预期只显示 `Thinking about whether memory is needed...` 和 `Answering...`，不弹 Memory 准备确认。
+5. 再问明确依赖笔记的问题，例如 `根据我的笔记，agent意图安全经历了几个阶段？`。预期这时才弹出 Memory 准备确认，说明 approval 下沉到了 retrieve 路径。
+6. 点击 `Answer now`。预期 Chat 中出现 `Memory was not used for this answer.`，随后正常回答；不应出现 `Searching memory:`、`Found memory references:` 或 Memory references callout。
+7. 可选恢复：验证结束后运行 `Prepare Memory` 或再次提出笔记问题并选择 `Prepare memory and answer`，确认成本提示后恢复 `Memory ready`。
 
 ## Phase 2 计划：只读工具扩展
 
@@ -157,13 +190,15 @@ Phase 1 的目标是完成第一条可上线闭环：
 | Risk | Impact | Mitigation | Status |
 | --- | --- | --- | --- |
 | Planner JSON 不稳定 | 普通问题或检索路径判断失败 | action parser + schema validation + fallback | [x] 自动化覆盖 |
+| Planner prompt 模板转义遗漏 | LangChain 将 JSON 示例里的 `{}` 当作模板变量，导致 planner 失败并误入 fallback | JSON 示例使用 `{{...}}` 转义并增加回归测试 | [x] 已修复并覆盖 |
 | 成本上升 | 多一次 planner 调用和可能的多轮检索 | 低温短 planner、最多 2 次 retrieve、`skip-memory` 绕过 | [x] 代码约束已实现 |
-| 延迟变高 | 用户感觉 Chat 变慢 | 轻量状态 timeline、快速无结果路径、streaming final answer | [~] 状态事件已实现，手动体验待验证 |
-| Memory approval 时机错误 | 普通问题被无意义打断 | approval 下沉到 `MemorySearchTool` retrieve 路径 | [x] 自动化覆盖 |
+| 延迟变高 | 用户感觉 Chat 变慢 | 轻量状态 timeline、快速无结果路径、streaming final answer | [~] Phase 1 smoke 可接受；后续仍需真实使用中观察 latency |
+| Memory approval 时机错误 | 普通问题被无意义打断 | approval 下沉到 `MemorySearchTool` retrieve 路径 | [x] 自动化和 UI smoke 覆盖 |
 | 引用幻觉 | 回答引用不存在或非本轮来源 | sources 结构化传入，只允许引用本轮 sources | [x] prompt 约束已实现 |
-| Prompt injection | 笔记内容影响 agent 权限或工具调用 | Memory 作为资料，工具调用由 runtime 执行，Policy 不被 Memory 覆盖 | [x] prompt 约束已实现 |
+| Prompt injection | 笔记内容影响 agent 权限或工具调用 | Memory 作为资料，工具调用由 runtime 执行，Policy 不被 Memory 覆盖 | [~] references adversarial test 已补，后续 tool/permission injection 待 Phase 2 扩展 |
 | Abort 漏传 | 用户取消后仍继续检索或回答 | `AbortSignal` 贯穿 planner、tool、final LLM | [x] 代码路径已实现 |
-| UI 状态噪音 | 用户被过多内部细节打扰 | 只展示轻量状态，不展示完整内部推理 | [~] UI 已接入，文案密度待 smoke test |
+| UI 状态噪音 | 用户被过多内部细节打扰 | 只展示轻量状态，不展示完整内部推理 | [x] 普通、检索、取消、Memory 未准备路径 smoke test 可接受 |
+| 文档与实现漂移 | reviewer 无法判断当前能力和待验证项 | 文档状态校准并由 tracker 记录最新验证计划 | [x] 2026-05-09 已校准 |
 
 ## 验证记录
 
@@ -177,8 +212,37 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 2026-05-02 | `npm run lint` | [x] Passed | ESLint passed for `src` and `__mocks__` |
 | 2026-05-02 | 普通知识问题不查 VSS | [x] Passed | `answers without memory when planner chooses answer` |
 | 2026-05-02 | 笔记相关问题使用 planner query 检索 | [x] Passed | `uses planner query for memory retrieval` |
-| TBD | Memory 未准备时只在 retrieve 路径提示 | [ ] Todo | 手动 smoke test |
-| TBD | 用户取消中断 planner/retrieve/answer | [ ] Todo | 手动或自动验证 |
+| 2026-05-09 | `npm test -- __tests__/chat-service.test.ts` | [x] Passed | 12 tests passed after rebase/docs review |
+| 2026-05-09 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors after rebase/docs review |
+| 2026-05-09 | `npm run lint` | [x] Passed | ESLint passed for `src` and `__mocks__` after rebase/docs review |
+| 2026-05-09 | `git diff --check` | [x] Passed | Docs calibration diff has no whitespace errors |
+| 2026-05-09 | `npm test -- --runInBand` | [x] Passed | 18 suites / 128 tests passed after docs tracker update |
+| 2026-05-09 | `npm test -- __tests__/chat-service.test.ts` | [x] Passed | 13 tests passed after adversarial references test |
+| 2026-05-09 | `npm test -- --runInBand` | [x] Passed | 18 suites / 129 tests passed after adversarial references test |
+| 2026-05-09 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors after adversarial references test |
+| 2026-05-09 | `npm run lint` | [x] Passed | ESLint passed after adversarial references test |
+| 2026-05-09 | `git diff --check` | [x] Passed | Current diff has no whitespace errors |
+| 2026-05-09 | `npm test -- __tests__/chat-service.test.ts` | [x] Passed | 15 tests passed after Memory approval runtime tests |
+| 2026-05-09 | `npm test -- --runInBand` | [x] Passed | 18 suites / 131 tests passed after Memory approval runtime tests |
+| 2026-05-09 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors after Memory approval runtime tests |
+| 2026-05-09 | `npm run lint` | [x] Passed | ESLint passed after Memory approval runtime tests |
+| 2026-05-09 | `git diff --check` | [x] Passed | Current diff has no whitespace errors after Memory approval runtime tests |
+| 2026-05-09 | `npm test -- __tests__/chat-service.test.ts` | [x] Passed | 16 tests passed after planner prompt template escaping regression |
+| 2026-05-09 | `make deploy` | [x] Passed | 18 suites / 132 tests passed, lint/build completed, plugin assets copied to test vault |
+| 2026-05-09 | Obsidian UI smoke：普通问题 | [x] Passed | Reloaded test vault after deploy；HTTP 404 问题只显示 thinking -> answering，无 fallback / retrieve / Memory references |
+| 2026-05-09 | Obsidian UI smoke：笔记问题 | [x] Passed | `根据我的笔记，agent意图安全经历了几个阶段？` 触发 `agent意图安全 阶段` 检索，回答“三个阶段”并展示 Memory references |
+| 2026-05-09 | Obsidian UI smoke：取消路径 | [x] Passed | 长回答生成中点击 `✕` 后显示 `Generation cancelled` notice 和取消消息，未继续追加 fallback |
+| 2026-05-09 | `npm test -- __tests__/chat-service.test.ts` | [x] Passed | Final check after tracker/UI smoke update: 16 tests passed |
+| 2026-05-09 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | Final check after tracker/UI smoke update |
+| 2026-05-09 | `npm run lint` | [x] Passed | Final check after tracker/UI smoke update |
+| 2026-05-09 | `git diff --check` | [x] Passed | Final check after tracker/UI smoke update |
+| 2026-05-09 | Obsidian UI smoke：Memory 未准备 | [x] Passed | Reset local memory copy 后状态为 `Memory needs setup`；普通 HTTP 404 不弹确认；笔记问题触发 Memory 准备确认；点击 `Answer now` 后显示 `Memory was not used for this answer.`，状态仍为 `Memory needs setup`；随后补充回归断言确保 answer-now 不发出 `retrieving` 状态 |
+| 2026-05-09 | `npm test -- __tests__/chat-service.test.ts` | [x] Passed | 16 tests passed after status timing fix |
+| 2026-05-09 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors after status timing fix |
+| 2026-05-09 | `npm run lint` | [x] Passed | ESLint passed after status timing fix |
+| 2026-05-09 | `git diff --check` | [x] Passed | Whitespace check passed after status timing fix |
+| 2026-05-09 | `make deploy` | [x] Passed | 18 suites / 132 tests passed, lint/build completed, plugin assets copied to test vault after status timing fix |
+| 2026-05-09 | Obsidian UI smoke：Memory 未准备状态时机 | [x] Passed | Reloaded test vault after deploy；note-related prompt showed `Thinking...` then Memory approval；`Answer now` showed `Memory was not used for this answer.` and `Answering...` without `Searching memory` or Memory references |
 
 ## 执行原则
 
@@ -196,3 +260,8 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 2026-05-02 | Memory approval 下沉到 retrieve 路径 | 普通问题不应该被 Memory 准备确认打断 |
 | 2026-05-02 | 不新增用户可见开关 | 直接升级 Chat 主路径，内部保留 fallback 降低风险 |
 | 2026-05-02 | 后续按只读工具、skills、受控写入分阶段演进 | 先稳定用户信任模型和只读上下文，再引入写入副作用 |
+| 2026-05-09 | 本次只做文档校准，不修改代码 | 当前 Phase 1 主路径已实现，剩余工作是让文档准确反映实现和待验收项 |
+| 2026-05-09 | `memoryMode: use-memory` 仍由 planner 判断是否 retrieve | 保持现有语义：允许使用 Memory，但不强制检索 |
+| 2026-05-09 | 产品状态与 `ChatAgentStatus` 采用文档映射，不扩展 API | 当前 UI 只需要轻量状态事件，`NeedMemoryApproval`、`Cancelled`、`Error` 作为产品流程状态说明 |
+| 2026-05-09 | 明确笔记意图才稳定触发 retrieve | 为降低普通问题误检索，planner 对通用问题保持保守；真实 UI 验证中“根据我的笔记...”能稳定进入检索路径 |
+| 2026-05-09 | Phase 1 验证闭环完成 | 自动化、部署、普通问题、笔记检索、取消路径和 Memory 未准备路径均已通过，后续迭代进入 Phase 2 只读工具扩展 |

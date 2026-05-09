@@ -142,9 +142,11 @@ sequenceDiagram
     LLM-->>View: chunks
   else planner failed
     Runtime-->>View: status: fallback
-    Runtime->>Prompt: buildFallbackPrompt()
-    Prompt-->>Runtime: fallback prompt
-    Runtime->>LLM: stream(fallback prompt)
+    Runtime->>MemoryTool: searchReadyOnly(prompt)
+    MemoryTool-->>Runtime: ready memory or no memory
+    Runtime->>Prompt: buildFinalPrompt(fallback context)
+    Prompt-->>Runtime: final prompt
+    Runtime->>LLM: stream(final prompt)
     LLM-->>View: chunks
   end
 ```
@@ -403,12 +405,12 @@ Planner prompt 应明确：
 
 `PromptBuilder` 负责所有 prompt 组装：
 
-- Planner prompt。
 - Final answer prompt。
-- Fallback prompt。
 - 最近对话 history。
 - Memory context。
 - Memory references 来源约束。
+
+Planner input 也复用 `PromptBuilder` 的 history formatting。当前实现没有独立 `Fallback prompt`；planner 失败时 runtime 会尝试 ready-only Memory search，再把得到的 documents 或空上下文交给 `buildFinalPrompt(...)`。
 
 它还负责剥离历史 assistant 消息中的旧 Memory references，避免引用块在多轮对话中反复污染上下文。
 
@@ -481,6 +483,18 @@ type ChatAgentStatus =
   | { type: "answering" }
   | { type: "fallback"; reason: string };
 ```
+
+产品状态机是 review 用的概念模型，当前公开给 UI 的 `ChatAgentStatus` 是轻量事件接口，不与所有产品状态一一对应：
+
+| 产品状态 | 当前 status event | 说明 |
+| --- | --- | --- |
+| `Planning` | `thinking` | 表示 runtime 正在让 planner 判断下一步动作。 |
+| `NeedMemoryApproval` | 由 `MemoryManager.ensureReadyForChat(...)` 的确认 UI 表达 | 当前不新增独立 `approval` status event。 |
+| `Retrieving` | `retrieving`、`retrieved` | 分别表达开始检索和已有来源结果。 |
+| `Answering` | `answering` | 表示 final LLM 即将开始输出。 |
+| `Fallback` | `fallback` | planner 输出不可用时进入可恢复路径。 |
+| `Cancelled` | `AbortError` 由 UI catch 后显示取消消息 | 当前不新增独立 `cancelled` status event。 |
+| `Error` | UI Notice 或调用方错误处理 | 不可恢复错误不映射为常规 status event。 |
 
 ### Memory Tool Result
 
@@ -576,6 +590,8 @@ v3 仍默认只读，不直接写入笔记。
 ## 分阶段路线图与验收标准
 
 ### Phase 1: Agentic Memory Retrieval
+
+当前代码已经实现并验证 Phase 1 闭环：用户输入后先由 planner 选择 `answer` 或 `retrieve(query)`，只有 retrieve 路径才进入 Memory readiness / approval，并由 `PromptBuilder` 统一整理 final prompt。2026-05-09 已完成 targeted/full Jest、type check、lint、`make deploy`，以及普通问题、笔记检索、用户取消和 Memory 未准备路径的 Obsidian UI smoke test。剩余更广义的 tool/permission prompt injection 风险进入 Phase 2+ 继续跟踪。
 
 产品目标：
 
