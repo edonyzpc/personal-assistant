@@ -23,15 +23,16 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 当前工作区 / HEAD | `master`；`codex/chat-agent-architecture` 当前也指向同一提交 |
+| 当前开发分支 | `codex/chat-agent-phase2-tools-plan` |
+| Phase 1 合并状态 | [x] 本地 `master` 已更新到 `d44d716`，包含 Thinking UI / scroll tracker 校准 |
 | 创建日期 | 2026-05-02 |
 | 最后回顾 | 2026-05-09，最新 UI Thinking / scroll 修复后校准 |
-| 当前阶段 | Phase 1: Agentic Memory Retrieval 已实现；进入 UI 回归验证与 Phase 2 拆解 |
+| 当前阶段 | Phase 2: Read-only Tool Expansion Planning |
 | 架构文档 | [x] 已创建 `docs/chat-agent-architecture.md` |
-| 文档状态 | [x] 架构文档与 tracker 已按当前实现、Thinking UI 行为和 review follow-ups 校准；后续以本 tracker 与 `docs/todo.md` 追踪 |
-| 实现状态 | [x] Phase 1 agentic retrieval 主路径已实现；Thinking 单块状态与 streaming scroll 修复已落地 |
+| 文档状态 | [x] 架构文档与 tracker 已按当前实现、Thinking UI 行为、review follow-ups 和 Phase 2 方案校准；后续以本 tracker、`docs/todo.md` 和 `docs/chat-agent-phase2-readonly-tools-plan.md` 追踪 |
+| 实现状态 | [x] Phase 1 agentic retrieval 主路径已实现；Thinking 单块状态与 streaming scroll 修复已落地；Phase 2 第一轮实现待开始 |
 | 测试状态 | [~] 2026-05-09 Targeted Jest、full Jest、lint、TypeScript type check、`make deploy`、普通问题/笔记检索/取消/Memory 未准备 UI smoke 均已通过；最新 Thinking 展开与 scroll resume 修复仍建议补一次 Obsidian UI 回归 smoke |
-| 最近结论 | Phase 1 planner-driven retrieve 闭环已完成；最新 UI 修复解决状态噪音和 streaming 滚动问题，下一步先补 UI 回归验证，再进入 Phase 2 只读 tool registry / context tool 方案拆解 |
+| 最近结论 | Phase 1 planner-driven retrieve 闭环已完成；Phase 2 先完成只读 tool registry / `search_memory` 工具化，再实现 current note context |
 
 ## 当前范围
 
@@ -51,7 +52,7 @@ Phase 1 的目标是完成第一条可上线闭环：
 | --- | --- | --- | --- | --- |
 | Phase 0 | 完成架构文档和任务追踪文档 | [x] Done | 当前 HEAD 已包含架构与 tracker | `docs/chat-agent-architecture.md`、`docs/chat-agent-development-tracker.md` |
 | Phase 1 | Agentic Memory Retrieval | [x] Done | 核心实现目标已完成；最新 UI polish 保留回归验证追踪 | `npm test -- __tests__/chat-service.test.ts`；`npm test -- --runInBand`；`npm run lint`；`npx tsc -noEmit -skipLibCheck`；`make deploy`；Obsidian UI smoke；Thinking/scroll code review |
-| Phase 2 | 只读工具扩展 | [ ] Todo | 后续迭代占位 | 待 Phase 1 完成后拆解 |
+| Phase 2 | 只读工具扩展 | [~] In progress | 先完成方案拆解，再实现 MVP | `docs/chat-agent-phase2-readonly-tools-plan.md` |
 | Phase 3 | Skills / Context Packs | [ ] Todo | 后续迭代占位 | 待 Phase 2 基础稳定 |
 | Phase 4 | 受控写入与长期任务 | [ ] Todo | 后续迭代占位 | 待只读工具和审批模型稳定 |
 
@@ -131,16 +132,23 @@ Phase 1 的目标是完成第一条可上线闭环：
 
 目标：把 Phase 1 的 `MemorySearchTool` 演进为 tool registry 的第一个工具 `search_memory`，并增加更多只读上下文工具。
 
-任务占位：
+详细方案见：`docs/chat-agent-phase2-readonly-tools-plan.md`。
+
+当前 MVP 任务：
 
 - [ ] 设计 tool registry 接口。
 - [ ] 将 `MemorySearchTool` 注册为 `search_memory`。
 - [ ] 增加 `get_current_note_context`，读取当前笔记标题、路径、选区或附近段落。
+- [ ] 扩展 planner action protocol，支持显式 `tool` action，并兼容 Phase 1 `retrieve(query)`。
+- [ ] 将 tool observations 统一交给 `PromptBuilder` 做上下文预算和来源约束。
+- [ ] 为每个工具记录 `name`、`description`、`input schema`、`permission level`、`cost profile`、`output budget`、`failure behavior`、`status message`。
+- [ ] 扩展 status timeline，展示只读工具调用摘要。
+
+后续只读工具候选：
+
 - [ ] 增加 `search_vault_metadata`，基于文件名、路径、tag、frontmatter 搜索。
 - [ ] 增加 `list_recent_notes`，读取最近打开或最近修改的笔记。
 - [ ] 增加 `read_note_outline`，读取单篇笔记标题结构。
-- [ ] 为每个工具记录 `name`、`description`、`input schema`、`permission level`、`cost profile`、`output budget`、`failure behavior`、`status message`。
-- [ ] 扩展 status timeline，展示只读工具调用摘要。
 
 验收标准：
 
@@ -263,6 +271,8 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 2026-05-09 | Code review：reference block regex | [x] Reviewed | 支持 `Memory references`、`RAG Referenc`、`RAG Reference`、`RAG References`；自动化测试确认不剥离拼写错误的 `RAG Referencs` |
 | 2026-05-09 | Obsidian UI smoke：Thinking 展开与 scroll resume | [ ] Pending | 需要按本文档回归验证指引手动执行 |
 | 2026-05-09 | `git diff --check` | [x] Passed | Docs calibration for latest UI Thinking / scroll state has no whitespace errors |
+| 2026-05-09 | Phase 1 fast-forward merge to local `master` | [x] Done | `master` updated from `6297e6e` to `6ceb104`，随后同步到 `d44d716` |
+| 2026-05-09 | 创建 Phase 2 只读工具方案 | [x] Done | `docs/chat-agent-phase2-readonly-tools-plan.md` |
 
 ## 执行原则
 
@@ -288,3 +298,6 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 2026-05-09 | `Memory` 状态文案改为 `Thinking`，并合并为单个可折叠状态块 | 更准确表达 planner / retrieval / answering 的整体过程，同时减少状态消息刷屏 |
 | 2026-05-09 | Streaming 自动滚动由 scroll 位置恢复，不依赖最近 wheel 事件 | 支持用户通过触控、键盘、滚动条等方式回到底部后恢复自动跟随 |
 | 2026-05-09 | 最终 assistant message 原地更新暂不进入本轮修复 | 当前行为正确但可能有轻微结束抖动，作为低风险 follow-up 记录在 `docs/todo.md` |
+| 2026-05-09 | Phase 2 采用显式 `tool` action | 保持 planner 决策透明，避免 runtime 隐式补上下文，便于后续 skills/write action 扩展 |
+| 2026-05-09 | Phase 2 MVP 只做 `search_memory` 和 `get_current_note_context` | 先覆盖长期 Memory 与当前笔记两个最高价值上下文来源，控制风险和测试面 |
+| 2026-05-09 | Phase 2 暂不引入 schema validation 新依赖 | 当前项目没有现成 validator 依赖，MVP 先用轻量 TypeScript 类型守卫和手写 validator |
