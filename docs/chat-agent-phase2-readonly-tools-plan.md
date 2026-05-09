@@ -34,10 +34,10 @@ Phase 1 已完成 planner-driven Memory retrieval。Phase 2 的目标不是让 a
 
 | 用户问题类型 | 期望 agent 行为 | 用户可见状态 | 安全边界 |
 | --- | --- | --- | --- |
-| 普通知识、翻译、润色 | 直接回答 | `Thinking` -> `Answering` | 不读取 Memory 或当前笔记 |
-| 当前笔记相关问题 | 读取当前笔记标题、路径、选区或附近内容 | `Thinking` -> `Reading current note` -> `Answering` | 只读当前笔记，不修改内容 |
-| 历史笔记相关问题 | 搜索 Memory | `Thinking` -> `Searching memory` -> `Answering` | 只有 retrieve 路径触发 Memory readiness / approval |
-| 当前笔记 + 历史笔记混合问题 | 先读当前笔记，再按需要搜索 Memory | `Thinking` -> `Reading current note` -> `Searching memory` -> `Answering` | 多工具结果统一受预算限制 |
+| 普通知识、翻译、润色 | 先 presearch Memory；无相关候选时直接回答 | `Thinking` -> `Finding related memory` -> `Answering` | Memory digest 只作为资料；不读取当前笔记 |
+| 当前笔记相关问题 | 先 presearch Memory，再读取当前笔记标题、路径、选区或附近内容 | `Thinking` -> `Finding related memory` -> `Reading current note` -> `Answering` | Memory / 当前笔记都只读，不修改内容 |
+| 历史笔记相关问题 | 先 presearch Memory，再按需补充搜索 | `Thinking` -> `Finding related memory` -> `Answering` 或继续 `Searching memory` | Memory readiness / approval 可在 presearch 或后续 search 路径触发 |
+| 当前笔记 + 历史笔记混合问题 | 先 presearch Memory，再读当前笔记，必要时补充搜索 Memory | `Thinking` -> `Finding related memory` -> `Reading current note` -> `Searching memory` -> `Answering` | 多工具结果统一受预算限制 |
 | 工具失败或不可用 | 降级回答，并说明缺少上下文 | `Thinking` -> `Answering` | 工具失败不阻断普通回答 |
 
 ## 架构概览
@@ -47,13 +47,17 @@ flowchart TD
   User["用户输入"] --> UI["LLMView"]
   UI --> Service["ChatService.streamLLM"]
   Service --> Runtime["ChatAgentRuntime"]
-  Runtime --> Planner["Planner"]
+  Runtime --> Presearch["Memory presearch"]
+  Presearch --> MemoryTool["search_memory"]
+  MemoryTool --> MemoryLayer["MemoryManager + VSS"]
+  Presearch --> Digest["Memory digest"]
+  Digest --> Planner["Planner"]
+  Runtime --> Planner
   Planner --> Action{"Action JSON"}
   Action -->|answer| Prompt["PromptBuilder"]
   Action -->|tool| Registry["ToolRegistry"]
-  Registry --> MemoryTool["search_memory"]
+  Registry --> MemoryTool
   Registry --> CurrentNoteTool["get_current_note_context"]
-  MemoryTool --> MemoryLayer["MemoryManager + VSS"]
   CurrentNoteTool --> Obsidian["Obsidian workspace/editor"]
   MemoryLayer --> Observation["Tool observations"]
   Obsidian --> Observation
@@ -178,7 +182,7 @@ interface SearchMemoryInput {
 
 策略：
 
-- 继续只在该工具执行时调用 `memoryManager.ensureReadyForChat(query)`。
+- `MemorySearchTool` 统一承载 presearch 和 `search_memory` 的 `memoryManager.ensureReadyForChat(query)` 调用。
 - 继续按 `path + chunkIndex` 去重。
 - 保持 Phase 1 的每轮最多 4 个 memory chunks 和内容长度预算。
 - `answer-now` 返回 ok=false 或 ok=true 但无 documents 都可以；建议返回 ok=true + `skipReason`，便于 final answer 继续。
@@ -228,19 +232,19 @@ Phase 1 loop：
 plan -> optional retrieve -> final answer
 ```
 
-Phase 2 loop：
+Phase 2C loop：
 
 ```text
-plan -> optional tool -> observe -> plan -> optional tool -> final answer
+presearch memory -> plan -> optional tool -> observe -> plan -> optional tool -> final answer
 ```
 
 建议约束：
 
 - `MAX_TOOL_STEPS = 3`。
 - 同一工具 + 同一输入摘要不重复调用。
-- `search_memory` 仍保持最多 2 次有效搜索。
+- 每轮最多 2 次 Memory search，presearch 计入这个上限。
 - 任一工具失败后，planner 可以选择其他工具或 `answer`。
-- planner 失败仍走 fallback：ready-only memory search + final prompt；已成功读取并通过边界处理的 current note context 可保留到 final prompt。
+- planner 失败仍走 fallback：复用本轮已收集的 current note context；Memory documents 只有在来自补充 `search_memory`，或 presearch 结果通过相关性守卫时才进入 final prompt。
 
 ## PromptBuilder 调整
 
@@ -269,6 +273,8 @@ Phase 2B 实现校准：
 - 当前代码先以 `memoryDocuments + currentNoteContexts` 两路 typed context 落地；统一 `ChatContextItem[]` 抽象保留到后续工具继续增加时再做。
 - `get_current_note_context` 的 `selection-or-nearby` 模式优先选区；有选区时不调用 `getValue()`。
 - 当前笔记上下文进入 `<current_note_context>` JSON block，并标记为 `current_note_not_memory_source`。
+- Phase 2C 已将 planner prompt 中 nested JSON 示例全部转义，避免 LangChain prompt template 把 `input` 对象误解析为变量。
+- Phase 2C fallback 不再额外 raw-prompt search，也不会把普通问题的无关 presearch docs 注入 final prompt。
 
 ## Status Timeline
 
@@ -277,6 +283,11 @@ Phase 2B 实现校准：
 ```ts
 type ChatAgentStatus =
   | { type: "thinking" }
+  | { type: "memory-prefetching"; query: string }
+  | { type: "memory-prefetched"; query: string; sources: ChatAgentSource[] }
+  | { type: "retrieving"; query: string }
+  | { type: "retrieved"; query: string; sources: ChatAgentSource[] }
+  | { type: "memory-skipped"; reason: string }
   | { type: "tool-running"; tool: string; message: string }
   | { type: "tool-done"; tool: string; message: string; sources?: ChatAgentSource[] }
   | { type: "tool-skipped"; tool: string; reason: string }
@@ -286,8 +297,9 @@ type ChatAgentStatus =
 
 迁移策略：
 
-- 保留 Phase 1 的 `retrieving`、`retrieved`、`memory-skipped` 一轮，UI 可同时支持新旧 status。
-- `search_memory` 后续映射到 `tool-running/tool-done/tool-skipped`。
+- `memory-prefetching` / `memory-prefetched` 表达 planner 前的 Memory presearch。
+- `retrieving` / `retrieved` / `memory-skipped` 继续表达 planner 后续 `search_memory` 和 Memory approval skip。
+- 非 Memory 只读工具映射到 `tool-running/tool-done/tool-skipped`。
 - `THINKING` 组件继续只显示一行 summary，展开后展示详细时间线。
 
 ## 实现阶段
@@ -379,9 +391,9 @@ type ChatAgentStatus =
 
 手动 smoke：
 
-1. 普通知识问题：不调用工具，直接回答。
-2. 当前笔记问题：显示 `Reading current note`，不触发 Memory approval。
-3. 笔记历史问题：显示 `Searching memory`，仍按需触发 Memory readiness。
+1. 普通知识问题：Memory ready 时先显示 `Finding related memory`；无相关 Memory 时不显示 references，随后直接回答。
+2. 当前笔记问题：Memory ready 时先显示 `Finding related memory`，planner 可继续显示 `Reading current note`。
+3. 笔记历史问题：可通过 presearch 直接命中；需要更精确上下文时才继续显示 `Searching memory`。
 4. 混合问题：先读当前笔记，再搜索 Memory，最终回答引用边界正确。
 5. 工具失败：关闭 Markdown active leaf 或打开非 Markdown view，确认 Chat 降级回答。
 
