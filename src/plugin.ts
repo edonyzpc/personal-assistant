@@ -86,6 +86,7 @@ export class PluginManager extends Plugin {
     cryptoHelper: CryptoHelper = new CryptoHelper();
     private token: string = "";
     private aiStatusBarItemEl: HTMLElement | null = null;
+    private hoverPopoverObserver: MutationObserver | null = null;
 
 
     async onload() {
@@ -101,7 +102,7 @@ export class PluginManager extends Plugin {
             monkeyPatchConsole(this);
         }
         // observe element which is concerned by commands
-        const observer = new MutationObserver((mutations) => {
+        this.hoverPopoverObserver = new MutationObserver((mutations) => {
             mutations.forEach((mutation) => {
                 mutation.addedNodes.forEach((node) => {
                     if ((node instanceof HTMLElement)) {
@@ -113,7 +114,7 @@ export class PluginManager extends Plugin {
                 });
             });
         });
-        observer.observe(document.body, {
+        this.hoverPopoverObserver.observe(document.body, {
             attributes: true,
             childList: true
         });
@@ -411,6 +412,8 @@ export class PluginManager extends Plugin {
 
     onunload() {
         const statsManager = this.statsManager;
+        this.hoverPopoverObserver?.disconnect();
+        this.hoverPopoverObserver = null;
         this.memoryManager?.stopAutoMaintenance();
         this.vss?.dispose();
         if (statsManager) {
