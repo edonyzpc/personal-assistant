@@ -26,6 +26,15 @@ import { MemoryManager } from './memory-manager';
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
+const MEMORY_STATUS_BAR_STATE_CLASSES = [
+    "personal-assistant-ai-statusbar-ready",
+    "personal-assistant-ai-statusbar-needs-update",
+    "personal-assistant-ai-statusbar-needs-setup",
+    "personal-assistant-ai-statusbar-unavailable",
+    "personal-assistant-ai-statusbar-done",
+] as const;
+
+type MemoryStatusBarState = "ready" | "needs-update" | "needs-setup" | "unavailable";
 
 interface ObsidianPluginRegistry {
     enabledPlugins?: Set<string>;
@@ -137,7 +146,7 @@ export class PluginManager extends Plugin {
             aiStatusBarItemEl.setAttribute("id", `personal-assistant-ai-statusbar`);
             addIcon('PLUGIN_AI_BRAIN', icons['PLUGIN_AI_BRAIN']);
             this.aiStatusBarItemEl = aiStatusBarItemEl;
-            this.setMemoryStatusBarText("Memory needs setup");
+            this.setMemoryStatusBarStatus("Memory needs setup", "needs-setup");
             // ai status bar event handling
             aiStatusBarItemEl.onClickEvent((e) => {
                 // prepare memory from notes
@@ -675,7 +684,7 @@ export class PluginManager extends Plugin {
             try {
                 await this.vss.rebuildLocalIndex({ silent: true });
                 this.isVssCached = true;
-                statusBar?.addClass("personal-assistant-ai-statusbar-done");
+                await this.updateMemoryStatusBar();
             } catch (error) {
                 this.isVssCached = false;
                 this.log("Failed to rebuild local VSS index", error);
@@ -690,22 +699,22 @@ export class PluginManager extends Plugin {
         if (!Platform.isDesktop || !this.aiStatusBarItemEl || !this.vss) return;
         const stats = await this.vss.getStats();
         if (stats.status === "ready" || stats.status === "fallback") {
-            this.setMemoryStatusBarText("Memory ready");
+            this.setMemoryStatusBarStatus("Memory ready", "ready");
             return;
         }
         if (stats.status === "stale") {
-            this.setMemoryStatusBarText("Memory needs update");
+            this.setMemoryStatusBarStatus("Memory needs update", "needs-update");
             return;
         }
         if (stats.status === "missing-local-index") {
-            this.setMemoryStatusBarText("Memory needs setup");
+            this.setMemoryStatusBarStatus("Memory needs setup", "needs-setup");
             return;
         }
         if (stats.status === "disabled" || stats.status === "error") {
-            this.setMemoryStatusBarText("Memory unavailable");
+            this.setMemoryStatusBarStatus("Memory unavailable", "unavailable");
             return;
         }
-        this.setMemoryStatusBarText("Memory needs setup");
+        this.setMemoryStatusBarStatus("Memory needs setup", "needs-setup");
     }
 
     async showTechnicalMemoryStatus() {
@@ -729,11 +738,12 @@ export class PluginManager extends Plugin {
         new Notice(`Diagnostic details: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${performanceText}`, 7000);
     }
 
-    private setMemoryStatusBarText(text: string) {
+    private setMemoryStatusBarStatus(text: string, state: MemoryStatusBarState) {
         if (!this.aiStatusBarItemEl) return;
         this.aiStatusBarItemEl.empty();
         setIcon(this.aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
-        this.aiStatusBarItemEl.createSpan({ text, cls: 'personal-assistant-ai-statusbar-text' });
+        this.aiStatusBarItemEl.classList.remove(...MEMORY_STATUS_BAR_STATE_CLASSES);
+        this.aiStatusBarItemEl.addClass(`personal-assistant-ai-statusbar-${state}`);
         this.aiStatusBarItemEl.setAttribute("title", text);
         this.aiStatusBarItemEl.setAttribute("aria-label", text);
     }

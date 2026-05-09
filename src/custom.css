@@ -10,6 +10,8 @@ body {
 	--status-bar-ai: #0544ff;
 	--status-bar-ai-breathing: #ac05ff;
 	--status-bar-ai-hover: #ff0101;
+	--status-bar-ai-warning: #f59e0b;
+	--status-bar-ai-unavailable: #ef4444;
 }
 
 .theme-light {
@@ -113,9 +115,25 @@ body {
 	color: var(--status-bar-ai);
 }
 
+.personal-assistant-ai-statusbar-ready svg,
 .personal-assistant-ai-statusbar-done svg {
 	order: 1;
 	color: var(--status-bar);
+}
+
+.personal-assistant-ai-statusbar-needs-update svg {
+	order: 1;
+	color: var(--status-bar-ai-warning);
+}
+
+.personal-assistant-ai-statusbar-needs-setup svg {
+	order: 1;
+	color: var(--status-bar-ai);
+}
+
+.personal-assistant-ai-statusbar-unavailable svg {
+	order: 1;
+	color: var(--status-bar-ai-unavailable);
 }
 
 .personal-assistant-ai-breathing {
