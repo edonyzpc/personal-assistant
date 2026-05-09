@@ -11,13 +11,13 @@
 
 本设计将 VSS 从“JSON + 全量内存向量库”改为“设备本地 SQLite/WASM 向量索引”。SQLite 索引仍然是本机缓存，不是源数据；源数据仍然是 Markdown 笔记。
 
-产品层不再把这套能力暴露为“索引维护”。普通用户看到的是 **Memory from your notes**：笔记是长期记忆，聊天前助手检查这份 Memory 是否准备好；凡是可能消耗 AI credits/API calls 的准备动作，都必须先解释数据流、服务商调用和成本，再获得用户确认。
+产品层不再把这套能力暴露为“索引维护”。普通用户看到的是 **Memory from your notes**：笔记是长期记忆，聊天前助手检查这份 Memory 是否准备好；首次 prepare、缺失本地索引、settings/profile stale 等可能产生大额 AI credits/API calls 的动作仍必须先解释数据流、服务商调用和成本，再获得用户确认。用户首次确认并成功准备 Memory 后，后续 changed notes 可以由后台自动维护。
 
 ## 目标
 
 - 使用本地向量检索，不引入远程向量数据库。
 - 降低常驻 JS 内存，避免启动时全量加载向量。
-- Desktop 和 Mobile 第一版都不做启动或后台自动索引；聊天前可以自动检查 Memory，但任何准备或更新动作都需要用户按次确认。
+- 首次 prepare、missing local index、settings/profile stale 不自动重建；用户确认并成功准备 Memory 后，changed notes 可以在 durable SQLite/WASM ready 时自动后台刷新。
 - 使用 Qwen `text-embedding-v4` + `1024` 维作为新安装默认 embedding profile。
 - 对任何可能重新消耗 token 的动作进行显式提示和确认。
 - 在 OPFS 被系统或 WebView 清理后，能检测并提醒用户，而不是静默自动重建。
@@ -25,7 +25,8 @@
 
 ## 非目标
 
-- 第一版不实现启动或后台自动索引。
+- 不实现首次启动自动 prepare/rebuild，也不在 OPFS 丢失或 profile stale 时静默重建。
+- 不在 `MemoryVectorIndex` fallback 下自动写入；fallback 只作为只读降级检索路径。
 - 第一版不自动启用 ANN 或量化检索。
 - 第一版不实现 DashScope 专用的 query/document、instruct、sparse embedding 能力。
 - 第一版不保证 Mobile 与 Desktop 有完全一致的 VSS 能力；Mobile 先以手动可用和安全降级为目标。
@@ -49,10 +50,13 @@ flowchart TB
   User["用户"] --> ChatUI["Chat UI\nAsk / Answer now / Cancel"]
   User --> Commands["普通命令\nPrepare Memory / Open Chat"]
   User --> Advanced["高级入口\nAdvanced memory controls"]
+  Vault["Vault events\ncreate / modify / rename / delete"] --> MemoryManager
+  Resume["Startup / focus / visibility / periodic"] --> MemoryManager
   ChatUI --> MemoryManager["MemoryManager\n检查 readiness\n显示确认弹窗"]
   Commands --> MemoryManager
   Advanced --> VSS["VSS Facade\nsearchSimilarity / refresh / rebuild"]
-  MemoryManager --> VSS
+  MemoryManager -->|manual prepare/update| VSS
+  MemoryManager -->|auto reconcile/flush| VSS
 
   VSS --> Profile["Embedding Profile\nprovider + baseURL + model + dimensions + metric"]
   VSS --> Embedder["AIUtils Embeddings\nOpenAI-compatible\nQwen v4 / OpenAI / Ollama Desktop"]
@@ -82,7 +86,9 @@ flowchart TB
 - 聊天前默认检查 Memory 是否准备好。
 - `ready` 时直接使用 Memory 搜索。
 - `first-use`、`changed-notes`、`local-memory-missing`、`settings-changed` 时显示专用确认弹窗。
-- 用户选择 `Prepare memory and answer` 后执行 rebuild 或 refresh，并继续原问题。
+- 用户选择 `Prepare memory and answer` 后执行 rebuild 或 refresh，并继续原问题；成功后将 `memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`。
+- 后续 `changed-notes` 在 auto policy + durable SQLite/WASM ready 时不再弹窗，Chat 使用上一版 Memory 回答，同时后台排队 reconcile/flush。
+- fallback 或非 durable 状态下不会执行自动写入，Chat 使用上一版 Memory 并提示后台更新暂不可用。
 - 用户选择 `Answer now` 后本次跳过 Memory，聊天内显示 `Memory was not used for this answer.`。
 - 用户选择 `Cancel` 后不发送问题，也不调用 LLM。
 - 同一聊天视图内用户拒绝后 10 分钟不重复弹窗，直接普通回答并显示轻量提示。
@@ -104,8 +110,10 @@ flowchart TB
 - `searchSimilarity(prompt)`：生成 query embedding，调用 `VectorIndex.search()`。
 - `rebuild`：重置本设备本地 index，扫描 eligible Markdown，跨文件全局 batch 生成 embeddings，再按文件写入索引。
 - `refresh`：手动或后台处理 dirty 文件，先按 `contentHash` 跳过 unchanged 文件；当前保持逐文件 refresh 路径，不共享 rebuild 的全局 batch pipeline。
+- `reconcileLocalFiles`：批量读取 indexed metadata，与 vault 当前文件对齐；发现新文件、metadata mismatch、已删除 indexed path，并按预算分批 yield。
 - `verify`：检查 profile、OPFS DB、marker、manifest 的一致性。
 - `reset`：重置本机索引。
+- `runExclusive`：统一串行化 flush、rebuild、reset、delete、rename 和 reconcile 写操作，避免多个入口并发写同一个 SQLite index。
 
 ### VectorIndex
 
@@ -117,6 +125,7 @@ interface VectorIndex {
   upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]): Promise<void>;
   deleteFile(path: string): Promise<void>;
   listFilePaths(): Promise<string[]>;
+  listFileRecords(): Promise<VSSFileRecord[]>;
   getFileRecord(path: string): Promise<VSSFileRecord | null>;
   search(queryEmbedding: number[], k: number): Promise<VectorSearchResult[]>;
   getStats(): Promise<VSSIndexStats>;
@@ -126,7 +135,7 @@ interface VectorIndex {
 }
 ```
 
-`listFilePaths()` 用于手动 refresh 时清理已从 vault 删除的文件索引；`getFileRecord()` 用于按文件 `contentHash` 判断 unchanged 文件，避免无变更 refresh 继续消耗 embedding token。
+`listFilePaths()` 保留兼容旧 refresh 路径；`listFileRecords()` 用于 reconcile 批量读取 indexed metadata，避免逐文件 worker round-trip；`getFileRecord()` 用于按文件 `contentHash` 判断 unchanged 文件，避免无变更 refresh 继续消耗 embedding token。
 
 ### SqliteVectorIndex
 
@@ -335,6 +344,28 @@ flowchart LR
   Update --> Done["Memory ready 或部分失败提示"]
 ```
 
+## 后台维护与跨设备 Reconcile
+
+后台维护只在用户已成功 prepare/update Memory 并启用 `auto-refresh-after-prepare` 后运行。它不负责首次建索引，也不负责 OPFS 丢失或 profile stale 后的自动重建。
+
+发现变化的三层来源：
+
+1. Vault events：`create` / `modify` 标记 dirty，`rename` 删除旧 path 并标记新 path，`delete` 直接删除 indexed row。
+2. Reconcile scan：启动后 60s、prepare 后 5s、focus/visibility 恢复后 30s、每 60min 扫描一次 vault 当前文件和 indexed records。
+3. Rolling hash verify：周期 reconcile 每小时最多校验 50 个 metadata 未变化文件的 hash，按游标轮转，用于发现跨设备同步中 mtime/size 未变化但内容变化的情况。
+
+预算控制：
+
+- `listFileRecords()` 一次批量读取 indexed metadata，避免逐文件 worker round-trip。
+- reconcile 每批 250 个 metadata 项后 `sleep(0)` 让出主线程。
+- 单轮最多扫描 2000 个 metadata 项；未完成时通过 `hasMore` 继续排队，cursor 会跨轮推进并最终收敛。
+
+写入边界：
+
+- 自动 flush 只调用非 force `flush({ silent: true, reason: "auto-refresh" })`，并遵守 30s quiet window 与 10min max delay。
+- 手动 `Update memory now` 保留 force refresh，用于用户主动要求立刻更新。
+- `MemoryVectorIndex` fallback 只读；自动维护不会向 fallback 写入。
+
 ### Embedding 调度与进度
 
 `rebuildLocalIndex()` 内部维护全局 chunk queue。文件扫描、hash、清洗和 split 完成后，所有待更新 chunks 按 provider policy 组成 batch；embedding 返回后再按文件聚合，只有完整文件才调用 `VectorIndex.upsertFile()`。如果某个 batch 最终失败，涉及文件会标记为 failed，且该文件后续 chunks 不再继续排队，避免产生不会写入的额外 embedding 请求。
@@ -380,6 +411,12 @@ sequenceDiagram
     I-->>V: docs + scores
     V-->>C: Memory references
     C-->>U: 使用 Memory 回答
+  else Changed notes + auto policy + durable ready
+    M-->>C: use-memory + background update message
+    M->>V: schedule reconcile/auto flush
+    C->>V: searchSimilarity(prompt)
+    V-->>C: last prepared Memory references
+    C-->>U: 使用上一版 Memory 回答
   else Needs prepare/update
     M-->>U: Data / AI provider / Cost 确认
     U-->>M: Prepare memory and answer / Answer now / Cancel
@@ -401,7 +438,7 @@ stateDiagram-v2
 
   Ready --> Stale: profile/schema mismatch
   Ready --> MissingLocalIndex: marker存在但OPFS DB缺失
-  Ready --> Refreshing: 用户确认 Update memory
+  Ready --> Refreshing: 用户确认 Update memory 或 auto policy flush
 
   Refreshing --> Ready: 刷新完成
   Refreshing --> Disabled: fatal error

@@ -4,9 +4,6 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
-### Docs
-- memory: document rebuild batching and progress behavior from 1.6.4
-
 ## [1.6.4](https://github.com/edonyzpc/personal-assistant/compare/1.6.3...1.6.4) (2026-05-02)
 
 ### Improvements

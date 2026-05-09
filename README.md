@@ -93,6 +93,12 @@ Since `1.6.4`, rebuilding Memory batches note chunks across files and uses provi
 
 Manual "Update memory" keeps the safer per-file refresh path for now, but it also reports file-level progress and still skips unchanged notes before calling the embedding provider. Sharing the global rebuild batching pipeline with refresh is planned as a later large-vault optimization.
 
+### Background memory maintenance note
+
+After you approve and successfully prepare Memory once on a device, changed notes can be maintained automatically while Obsidian is open. Chat no longer waits for a refresh when the local SQLite/WASM Memory index is ready; it can answer with the last prepared Memory while a background reconcile/refresh updates changed notes.
+
+Automatic maintenance only writes to the durable SQLite/WASM backend. If the plugin is running from the in-memory fallback path, Memory remains read-only and the assistant tells you background updates are unavailable until Memory is prepared again on this device.
+
 ### VSS SQLite/WASM dependency note
 
 The local VSS SQLite backend uses `@sqliteai/sqlite-wasm` pinned to `3.50.4-sync.0.8.30-vector.0.9.23`. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.

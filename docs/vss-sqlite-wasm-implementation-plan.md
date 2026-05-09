@@ -4,7 +4,7 @@
 
 - 主路径从 `MemoryVectorStore` 改为 `sqlite-vector/@sqliteai/sqlite-wasm` + `opfs-sahpool` 本机 SQLite 索引，避免启动时全量向量进入 JS 内存。
 - 正式实现前先做 Phase 0 PoC Gate：Desktop PoC 是进入主实现的硬门槛；iOS/Android PoC 是 Mobile 支持级别门槛，未通过只降级 Mobile 支持。
-- Desktop 和 Mobile 第一版都不做启动或后台自动索引；聊天前默认检查 Memory，任何可能产生 AI 成本的准备或更新动作都需要用户按次确认。
+- 首次 prepare、missing local index、settings/profile stale 仍需用户确认；用户首次确认并成功准备 Memory 后，changed notes 可在 durable SQLite/WASM ready 时由后台自动维护，Chat 不再等待 refresh。
 - 普通用户体验从“维护 VSS 索引”改为“让助手读取来自笔记的 Memory”；技术细节默认隐藏，只在 Advanced diagnostics 中出现。
 - VSS 索引是“有 token 成本的可重建缓存”：OPFS 丢失不影响笔记，但重建前必须提醒用户并确认。
 - 新安装默认 Qwen `text-embedding-v4` + `1024` 维；旧用户和旧索引只提示迁移，不自动消耗 token。
@@ -12,15 +12,15 @@
 
 ## Implementation Status Snapshot
 
-截至 2026-05-02，本计划已经进入 Phase 6 验证阶段。当前执行状态以 [VSS SQLite/WASM 重构开发测试进展](./vss-sqlite-wasm-development-tracker.md) 为准，摘要如下：
+截至 2026-05-09，本计划已经进入 Phase 6 后的后台维护优化阶段。当前执行状态以 [VSS SQLite/WASM 重构开发测试进展](./vss-sqlite-wasm-development-tracker.md) 为准，摘要如下：
 
 | Phase | 当前状态 | 备注 |
 | --- | --- | --- |
 | Phase 0 PoC Gate | Desktop/iOS 已通过，Android 待验证 | Desktop 是主实现硬 gate；Android 因无实机设备暂未完整验证 |
 | Phase 1 VectorIndex + manifest | 已实现 | marker/manifest 使用设备子目录；fallback 使用双硬上限 |
 | Phase 2 SQLite Worker 后端 | 已实现 | worker/WASM 已内联进 `main.js`，release/deploy 回到标准三文件安装 |
-| Phase 3 VSS lifecycle | 已实现 | 插件启动不自动建索引；refresh/rebuild 手动触发 |
-| Phase 4 UI 状态与提醒 | Memory 产品体验已实现，待补手动 smoke test | 状态栏、聊天前确认弹窗、Answer now fallback 和高级入口隐藏已完成 |
+| Phase 3 VSS lifecycle | 已实现并扩展 | 插件启动不自动 prepare/rebuild；changed notes 可在首次授权后后台自动 reconcile/flush |
+| Phase 4 UI 状态与提醒 | Memory 产品体验已实现，Desktop 后台维护 smoke test 已通过 | 状态栏、聊天前确认弹窗、Answer now fallback、高级入口隐藏和 auto policy 已完成 |
 | Phase 5 旧 JSON 清理和迁移保护 | 已实现 | 清理前检查 SQLite ready、marker/profile、chunkCount 和 fatal error |
 | Phase 6 测试与验证 | 自动化、Desktop、iOS 已通过；Android 待验证 | README 已标注 Android VSS 为待实机验证状态 |
 
@@ -101,6 +101,7 @@ Gate 结果：
   - `upsertFile(fileState, chunks, embeddings)`
   - `deleteFile(path)`
   - `listFilePaths()`
+  - `listFileRecords()`
   - `getFileRecord(path)`
   - `search(queryEmbedding, k)`
   - `getStats()`
@@ -124,7 +125,11 @@ Gate 结果：
 - 聊天前调用 `MemoryManager.ensureReadyForChat(prompt)`。
 - `ready`：直接使用 Memory 检索并回答。
 - `first-use`、`local-memory-missing`、`settings-changed`：显示确认弹窗，确认后调用 `rebuildLocalIndex({ silent: true })`。
-- `changed-notes`：显示确认弹窗，确认后调用 `refreshLocalIndex({ silent: true })`。
+- `changed-notes`：
+  - 默认 `always` 策略下显示确认弹窗，确认后调用 `refreshLocalIndex({ silent: true })`。
+  - 首次成功 prepare/update 后策略升级为 `auto-refresh-after-prepare`。
+  - auto policy + durable SQLite/WASM ready 时不弹确认、不等待 refresh；Chat 使用上一版 Memory，同时后台排队 `reconcileLocalFiles()` 和非 force `flush({ silent: true, reason: "auto-refresh" })`。
+  - fallback 或其他非 durable 状态下不自动写入，只提示后台更新不可用。
 - `unavailable`：普通提示 `Memory is unavailable`，本次走普通聊天。
 - 用户点 `Answer now`：本次传入 `memoryMode: "skip-memory"`，不调用 `vss.searchSimilarity()`，聊天内显示 `Memory was not used for this answer.`。
 - 用户点 `Cancel`：不发送用户问题，不调用 LLM。
@@ -142,7 +147,7 @@ Gate 结果：
 - `Check memory before chat`，默认开启。
 - `Advanced memory controls`，默认关闭。
 
-高级入口中保留维护能力：update、rebuild、reset、clean old cache、technical status、memory model。普通命令面板只暴露 `Prepare Memory` 和 `Open Chat in Sidebar`；高级命令通过当前设置动态隐藏或显示。
+高级入口中保留维护能力：update、rebuild、reset、clean old cache、technical status、memory model，以及 `Keep memory updated in background` 开关。普通命令面板只暴露 `Prepare Memory` 和 `Open Chat in Sidebar`；高级命令通过当前设置动态隐藏或显示。
 
 ## Data Model
 
@@ -247,8 +252,9 @@ profile mismatch：
 聊天 Memory 行为：
 
 - Ready：正常读取 Memory。
-- First use / changed notes / local memory missing / settings changed：显示确认弹窗。
-- 用户确认：prepare/update memory，然后继续原问题。
+- First use / local memory missing / settings changed：显示确认弹窗。
+- Changed notes：默认策略下显示确认弹窗；首次成功 prepare/update 后启用 auto policy，durable ready 时不阻塞 Chat，由后台自动 reconcile/flush。
+- 用户确认：prepare/update memory，然后继续原问题；成功后后续 changed notes 可自动维护。
 - 用户选择 `Answer now`：本次不读取 Memory，直接普通回答。
 - 用户选择 `Cancel`：不发送问题。
 - Unavailable：轻量提示后普通回答。
@@ -315,6 +321,8 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 - 移除启动全量加载 JSON 到 `MemoryVectorStore` 的主路径。
 - 手动 refresh/rebuild 清理已删除文件索引。
 - profile mismatch 时标记 stale，不自动重建。
+- 新增 VSS operation queue，串行化 flush、rebuild、reset、delete、rename 和 reconcile 写操作。
+- 新增 `reconcileLocalFiles()`，批量对齐 vault 当前文件与 indexed records。
 
 ### Phase 4: UI 状态、提醒、命令
 
@@ -327,6 +335,9 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 - ChatService 支持 `memoryMode: "auto" | "use-memory" | "skip-memory"`。
 - `Answer now` 跳过 Memory 检索但继续普通聊天。
 - 技术状态只通过 `Diagnostic details` 暴露。
+- 首次成功 prepare/update 后升级 `memoryApprovalPolicy` 为 `auto-refresh-after-prepare`。
+- auto policy 下 changed notes 使用上一版 Memory 回答并后台维护，不再阻塞 Chat。
+- fallback 或非 durable 状态下不自动写入，只提示后台更新不可用。
 
 ### Phase 5: 旧 JSON 清理和迁移保护
 
@@ -359,6 +370,9 @@ Unit tests：
 - ChatService 在 Memory 无结果时切回普通 prompt，不传空 `memory_content`。
 - `Answer now` 不调用 `vss.searchSimilarity()`。
 - Memory readiness 映射到 ready / first-use / changed-notes / local-memory-missing / settings-changed / unavailable。
+- auto policy + durable ready + changed notes 不弹确认、不等待 refresh，并调度后台维护。
+- fallback 或非 durable 状态下自动维护不写入。
+- reconcile 覆盖新增文件、metadata mismatch、删除 indexed path、rolling hash verify 和大 vault `hasMore` 收敛。
 - 普通 Memory 文案不包含禁止暴露的技术词。
 
 Phase 0 smoke tests：
@@ -373,15 +387,17 @@ Phase 0 smoke tests：
 Manual verification：
 
 - Desktop：初始化、刷新、重建、reset、旧 JSON 清理、profile mismatch 提示、真实 LLM + Memory 聊天。
+- Desktop background maintenance：首次授权后策略升级、create/modify/delete 事件、Chat 非阻塞 auto update、纯后台 quiet-window flush。
 - iOS：手动 Memory、reload 持久化、refresh、状态命令、真实 LLM + Memory 聊天。
 - Android：待实机验证；当前没有 Android 测试设备，README 已标注支持状态为 pending verification。
+- iOS resume/focus 后 reconcile 自动触发仍需真实设备补测；移动端 timers 可能被系统挂起或节流。
 - 模拟 OPFS 丢失：保留 marker，删除/重置 DB，确认出现 token 成本提醒。
 
 ## Assumptions
 
 - 接受继续使用 `sqlite-vector/@sqliteai/sqlite-wasm`，并承担版本 pin、许可证披露和 smoke test 成本。
 - VSS 索引是可重建缓存，但因为重建有 API 成本，必须显式检测和提醒。
-- 第一版优先稳定、可控、低内存，不追求自动后台索引和量化/ANN。
+- 自动维护只在 Obsidian 插件运行期间执行，不创建系统级后台任务；首次 prepare/rebuild、missing local index、profile stale 仍保持用户确认。
 - Android 支持在没有实机验证前不能视为完整通过。
 - `embeddingDimensions` 是否暴露为用户设置需要后续确认；当前实现固定为 1024 维。
 

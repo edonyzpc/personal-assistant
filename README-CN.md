@@ -77,6 +77,12 @@
 
 手动 `Update memory` 当前仍保留更保守的逐文件 refresh 路径，但也会显示文件级进度，并且仍会先跳过 unchanged notes，避免无变化文件消耗 embedding。让 refresh 共享 rebuild 的全局 batch pipeline 是下一阶段的大 vault 体验优化。
 
+### Memory 后台维护说明
+
+在某台设备上首次确认并成功准备 Memory 后，后续 changed notes 可以在 Obsidian 打开期间由后台自动维护。只要本地 SQLite/WASM Memory index 已 ready，Chat 不再等待 refresh；它会先使用上一版已准备好的 Memory 回答，同时后台 reconcile/refresh 会更新 changed notes。
+
+自动维护只写入 durable SQLite/WASM 后端。如果插件当前处于内存 fallback 路径，Memory 会保持只读，助手会提示后台更新不可用，需要在本设备重新准备 Memory 后才能恢复自动维护。
+
 ### VSS SQLite/WASM 依赖说明
 
 本地 VSS SQLite 后端使用固定版本 `@sqliteai/sqlite-wasm@3.50.4-sync.0.8.30-vector.0.9.23`。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。

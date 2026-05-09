@@ -7,6 +7,8 @@
 - 移动端策略：Mobile 默认不自动初始化 VSS 后台任务；聊天可尝试原生流式，失败时回退为非流式响应。
 - 开发顺序：先网络 adapter，再服务替换，再 Mobile gating，最后构建和验证。
 
+> VSS lifecycle note: this document records the older mobile-network compatibility plan. Current SQLite/WASM Memory behavior is documented in [VSS SQLite/WASM 架构设计](./vss-sqlite-wasm-architecture.md) and [VSS Embedding 刷新方案说明](./vss-embedding-refresh.md): first prepare/rebuild still requires user confirmation, while changed notes can be maintained automatically after successful approval when the durable SQLite/WASM backend is ready.
+
 ## Implementation Changes
 
 - 新增浏览器安全的 `obsidianFetch` adapter：
@@ -22,7 +24,7 @@
 - Mobile 兼容：
   - `manifest*.json` 改为 `isDesktopOnly: false`。
   - Ollama 仅 Desktop 可用，Mobile 设置页隐藏或禁用。
-  - Mobile 不自动启动 VSS 初始化和后台索引；提供手动触发入口。
+  - Mobile 不自动执行首次 VSS prepare/rebuild；提供手动触发入口。首次授权后的 changed notes 自动维护以当前 SQLite/WASM VSS 文档为准。
   - 聊天 RAG 在 VSS 未初始化时静默跳过相似度检索。
 - Node 依赖清理：
   - 移除 `node-fetch` 依赖。
@@ -49,8 +51,9 @@
   - 若请求尚未产生任何 chunk 且非用户主动 abort，则自动回退非流式。
   - 若已经产生部分内容，不重试，避免重复计费或重复输出。
 - VSS：
-  - Desktop 保持现有自动初始化行为。
-  - Mobile 改为手动初始化/刷新，聊天功能不因 VSS 不可用而失败。
+  - Desktop 和 Mobile 都不静默执行首次 prepare/rebuild。
+  - 用户首次授权并成功准备 Memory 后，changed notes 可在 durable SQLite/WASM ready 时自动后台维护。
+  - 聊天功能不因 VSS 不可用而失败。
 
 ## Test Plan
 
@@ -71,4 +74,4 @@
 
 - 不把全部 AI 能力重写为自维护 OpenAI client，继续使用 LangChain/OpenAI SDK。
 - 图片生成仍使用 DashScope/Bailian 原生接口，因为它不是当前 OpenAI-compatible chat/embedding API 的同一能力面。
-- Mobile 的首要目标是可用和稳定；VSS 后台自动化在 Mobile 暂缓，避免启动慢、耗电和网络不可控。
+- Mobile 的首要目标是可用和稳定；首次 prepare/rebuild 仍保持手动确认。首次授权后的 changed notes 后台维护以 SQLite/WASM VSS 文档为准，并且 iOS resume/focus 触发仍需真实设备补测。
