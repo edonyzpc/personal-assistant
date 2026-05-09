@@ -125,7 +125,10 @@ Phase 2 先不引入新 schema validator 依赖，使用轻量 TypeScript 类型
 ```ts
 type ChatToolName =
   | "search_memory"
-  | "get_current_note_context";
+  | "get_current_note_context"
+  | "search_vault_metadata"
+  | "list_recent_notes"
+  | "read_note_outline";
 
 interface ChatToolDefinition<Input, Output> {
   name: ChatToolName;
@@ -160,7 +163,7 @@ interface ChatToolResult<Output> {
 - `execute` 必须支持 `AbortSignal`。
 - tool result 必须裁剪到预算内，再交给 `PromptBuilder`。
 
-## Phase 2 MVP 工具
+## Phase 2 工具
 
 ### `search_memory`
 
@@ -224,6 +227,77 @@ interface CurrentNoteContextOutput {
 - 不默认读取整个大文件，必须有字符预算。
 - 不把当前笔记内容当作指令，只作为资料。
 
+### `search_vault_metadata`
+
+输入：
+
+```ts
+interface SearchVaultMetadataInput {
+  query: string;
+  limit?: number;
+}
+```
+
+输出：
+
+- matching Markdown note path/title
+- matching tags
+- frontmatter preview
+- modified / created timestamps when available
+
+策略：
+
+- 只搜索 Obsidian vault metadata：文件名、路径、tag、frontmatter。
+- 不读取正文内容。
+- frontmatter 搜索使用完整 primitive key/value；返回给模型的结果只保留 preview，避免上下文膨胀。
+- query/path 输入需要有长度上限，工具结果必须被硬裁剪到 prompt budget 内。
+- 结果作为 `<tool_context>` 注入 final prompt，并标记为非 Memory source。
+
+### `list_recent_notes`
+
+输入：
+
+```ts
+interface ListRecentNotesInput {
+  order?: "modified" | "created";
+  limit?: number;
+}
+```
+
+输出：
+
+- recent Markdown note path/title
+- mtime / ctime / size
+
+策略：
+
+- 基于 vault Markdown file stat 排序。
+- 当前实现是最近修改 / 最近创建，不读取最近打开历史。
+- 结果只作为只读工具资料，不进入 Memory references。
+
+### `read_note_outline`
+
+输入：
+
+```ts
+interface ReadNoteOutlineInput {
+  path: string;
+  maxHeadings?: number;
+}
+```
+
+输出：
+
+- note path/title
+- heading level/text
+- truncation metadata
+
+策略：
+
+- 优先使用 Obsidian metadata cache。
+- cache 缺失时 fallback 到只读文件内容并限制扫描行数。
+- 工具失败（path 不存在）不阻断回答。
+
 ## Runtime Loop 调整
 
 Phase 1 loop：
@@ -252,7 +326,7 @@ presearch memory -> plan -> optional tool -> observe -> plan -> optional tool ->
 
 ```ts
 interface ChatContextItem {
-  kind: "memory" | "current-note" | "tool-error";
+  kind: "memory" | "current-note" | "tool-note";
   tool: ChatToolName;
   content: string;
   sources: ChatAgentSource[];
@@ -268,11 +342,14 @@ Final prompt 组织原则：
 - Current note 内容使用明确的 untrusted block 或 JSON 结构包裹，避免笔记内容伪造对话、工具调用或引用块。
 - 无 sources 时不输出 Memory references callout。
 
-Phase 2B 实现校准：
+Phase 2D 实现校准：
 
-- 当前代码先以 `memoryDocuments + currentNoteContexts` 两路 typed context 落地；统一 `ChatContextItem[]` 抽象保留到后续工具继续增加时再做。
+- 当前代码已将 Memory、current note 和非 Memory 只读工具统一转换为 `ChatContextItem[]`，再按 per-tool budget + `MAX_TOTAL_CONTEXT_CHARS` 选择上下文。
 - `get_current_note_context` 的 `selection-or-nearby` 模式优先选区；有选区时不调用 `getValue()`。
 - 当前笔记上下文进入 `<current_note_context>` JSON block，并标记为 `current_note_not_memory_source`。
+- `search_vault_metadata`、`list_recent_notes`、`read_note_outline` 进入 `<tool_context>` JSON block，并标记为 `read_only_tool_not_memory_source`。
+- `search_vault_metadata` 检索使用完整 primitive frontmatter key/value，返回给模型的 frontmatter 仍只保留 preview。
+- Metadata query、outline path 和 `<tool_context>` JSON block 都有明确长度上限；oversized tool context 会被硬裁剪到 prompt budget 内。
 - Phase 2C 已将 planner prompt 中 nested JSON 示例全部转义，避免 LangChain prompt template 把 `input` 对象误解析为变量。
 - Phase 2C fallback 不再额外 raw-prompt search，也不会把普通问题的无关 presearch docs 注入 final prompt。
 
@@ -371,6 +448,24 @@ type ChatAgentStatus =
 - UI 只显示工具摘要，不展示完整内部推理。
 - 用户滚动查看历史时 streaming 不强制抢到底部。
 
+### Step 5: Metadata / recent / outline tools
+
+目标：补齐不需要正文读取或 AI cost 的 vault 导航工具。
+
+任务：
+
+- 实现 `search_vault_metadata`。
+- 实现 `list_recent_notes`。
+- 实现 `read_note_outline`。
+- 将三类输出统一接入 `tool-note` / `<tool_context>`。
+- 增加 parser、runtime、prompt 注入、失败降级测试。
+
+验收：
+
+- metadata/recent/outline 工具失败不阻断回答。
+- 工具 path 不会被加入 Memory references。
+- planner observation 只看到裁剪后的 `untrusted_content`。
+
 ## 测试计划
 
 自动化：
@@ -382,6 +477,9 @@ type ChatAgentStatus =
   - reject invalid tool input。
   - execute `search_memory` through registry。
   - execute `get_current_note_context` with selection.
+  - execute `search_vault_metadata` as read-only tool context.
+  - execute `list_recent_notes` sorted by modified time.
+  - execute `read_note_outline` for a known Markdown path.
   - no active markdown file returns recoverable failure.
   - tool failure still reaches final answer.
 - `npx tsc -noEmit -skipLibCheck`
@@ -396,6 +494,9 @@ type ChatAgentStatus =
 3. 笔记历史问题：可通过 presearch 直接命中；需要更精确上下文时才继续显示 `Searching memory`。
 4. 混合问题：先读当前笔记，再搜索 Memory，最终回答引用边界正确。
 5. 工具失败：关闭 Markdown active leaf 或打开非 Markdown view，确认 Chat 降级回答。
+6. Metadata 工具：询问某个 tag / frontmatter / 文件名，确认显示 `Searching note metadata` 并能基于结果回答。
+7. Recent 工具：询问最近修改的笔记，确认显示 `Listing recent modified notes`。
+8. Outline 工具：先找到 path，再读取 outline，确认显示 `Reading note outline`。
 
 ## 主要风险
 
@@ -404,13 +505,13 @@ type ChatAgentStatus =
 | Planner 过度调用工具 | 延迟上升、状态噪音 | Prompt 保守策略、MAX_TOOL_STEPS、重复 input 去重 |
 | 工具结果上下文过大 | token 成本和回答质量下降 | per-tool budget + total context budget |
 | 当前笔记内容被当成指令 | Prompt injection | PromptBuilder 明确标注为资料；工具结果不参与 policy |
-| Tool registry 抽象过早复杂 | 实现成本变高 | MVP 只支持 2 个工具、手写 validator |
+| Tool registry 抽象过早复杂 | 实现成本变高 | 保持手写 validator 和单一 registry；Phase 2D 增加到 5 个只读工具后仍未引入新依赖 |
 | UI 状态变复杂 | 用户不理解 agent 做了什么 | THINKING 保持一行 summary，详情折叠 |
 
 ## 推荐决策
 
 1. Phase 2 采用显式 `tool` action，而不是让 runtime 隐式补上下文。
-2. MVP 只做 `search_memory` 和 `get_current_note_context`。
+2. MVP 先做 `search_memory` 和 `get_current_note_context`；Phase 2D 再补 `search_vault_metadata`、`list_recent_notes`、`read_note_outline`。
 3. 先不引入新 schema validation 依赖。
 4. 保持所有 Phase 2 工具只读。
 5. 写入、skills、长期任务继续留到 Phase 3/4。

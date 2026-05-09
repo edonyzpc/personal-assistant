@@ -29,17 +29,20 @@
   - Suggested fix: collect Obsidian smoke examples with short, long, and conversational note questions before deciding whether to add lightweight query cleanup, planner-generated supplemental query heuristics, or a configurable rewrite step.
   - Suggested commit: `test(chat-agent): evaluate presearch query relevance`
 
-- [ ] Re-evaluate ToolRegistry generic casting as tool complexity grows.
+- [x] Re-evaluate ToolRegistry generic casting as tool complexity grows.
   - Context: `ToolRegistry.register` stores generic tool definitions behind an erased internal type and relies on each tool's runtime validator before execution.
-  - Current impact: low. This is acceptable for the Phase 2A MVP, but more complex tools may need stronger compile-time constraints or per-tool wrappers.
-  - Suggested fix: revisit when adding the next real read-only tool beyond `search_memory` and `get_current_note_context`; avoid a broad abstraction until tool shape diversity justifies it.
-  - Suggested commit: `refactor(chat-agent): tighten tool registry typing`
+  - Result: Phase 2D added three more read-only tools while keeping the registry shape stable; runtime validators still gate every execution, and tests cover unregistered tools, invalid inputs, and tool-specific success paths.
+  - Evidence: `does not execute unregistered tools`; `does not execute get_current_note_context when input mode is invalid`; `executes search_vault_metadata as read-only tool context`.
 
-- [ ] Tune planner observation budgets after Current Note tool lands.
+- [x] Add a generic prompt path for non-Memory read-only tool context.
   - Context: Phase 2C now feeds bounded Memory presearch excerpts to the planner as `untrusted_content`; future tools may expose structured summaries or metadata with their own budgets.
-  - Current impact: low. The right value depends on real `search_memory + get_current_note_context` mixed prompts.
-  - Observed: 2026-05-09 Obsidian test vault mixed prompt using selected Agent intent safety content plus the Dog note succeeded, including presearch and a supplemental `search_memory` for dog-related context. No budget tuning is required from this sample yet.
-  - Suggested fix: collect mixed prompt smoke evidence, then tune per-tool observation summaries and total planner observation budget.
+  - Result: metadata search, recent notes, and note outline now use `tool-note` / `<tool_context>` with per-tool, metadata, and total context budgets; their paths are explicitly not Memory references.
+  - Evidence: `executes search_vault_metadata as read-only tool context`; `keeps read-only tool paths out of memory references when memory is also used`; `truncates oversized metadata tool context to the hard budget`; `executes list_recent_notes sorted by modified time`; `executes read_note_outline for a known Markdown path`.
+
+- [ ] Tune planner observation budgets with real mixed-tool samples.
+  - Context: Phase 2D now has five read-only tools, with planner observations trimmed to `MAX_OBSERVATION_PREVIEW_CHARS` and final prompt tool notes capped by `MAX_TOOL_NOTE_CONTEXT_CHARS`.
+  - Current impact: low. Automatic tests now cover hard budget truncation and long metadata query bounding; Obsidian smoke covers the individual metadata/recent/outline paths. Real notes may still reveal whether mixed-tool previews should be shorter or more structured.
+  - Suggested fix: collect Obsidian mixed prompts that combine current note, metadata search, note outline, and Memory search before changing constants.
   - Suggested commit: `perf(chat-agent): tune tool observation budgets`
 
 - [x] Bound current-note outline scanning for very large notes.
