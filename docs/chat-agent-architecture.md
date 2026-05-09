@@ -163,7 +163,7 @@ Review 关注点：
 ```mermaid
 flowchart TB
   subgraph UI["UI Layer"]
-    LLMView["LLMView\n输入 / 取消 / 流式渲染\n轻量状态 timeline"]
+    LLMView["LLMView\n输入 / 取消 / 流式渲染\nThinking 摘要 / 可折叠详情"]
   end
 
   subgraph Service["Service Layer"]
@@ -345,10 +345,19 @@ Planner 输出不是合法 JSON，或 action schema 不合规。
 
 - 收集用户输入和当前 chat history。
 - 渲染用户消息、assistant 流式输出和系统轻量状态。
+- 将同一轮 agent run 的状态合并到一个 `Thinking` 状态块中，默认只显示最新一行摘要，展开后查看本轮状态明细。
 - 处理取消、清空、复制、加入编辑器。
 - 不再在发送前固定调用 `memoryManager.ensureReadyForChat(...)`。
 
 UI 层不决定是否检索，也不拼接 Memory prompt。它只把 `prompt`、`history`、`AbortSignal` 和 `onStatus` 传给 `ChatService`。
+
+当前 UI 交互约束：
+
+- 状态块命名为 `Thinking`，避免把 planner / retrieval / answering 的整体过程误表达为单纯 Memory。
+- Streaming 过程中 `Thinking` 展开按钮必须可点击；展开状态会暂停自动跟随底部，方便用户阅读详情。
+- 当用户向上滚动查看历史时，新的 status 或 answer chunk 不应该强行把视口拉回底部。
+- 当用户通过滚轮、触控、键盘或滚动条回到底部附近时，后续 streaming 自动滚动应恢复。
+- 最终 assistant message 可以复用更完整的 Markdown 渲染和 action buttons，但要持续关注结束时的轻微布局抖动。
 
 ### ChatService
 
@@ -496,6 +505,8 @@ type ChatAgentStatus =
 | `Cancelled` | `AbortError` 由 UI catch 后显示取消消息 | 当前不新增独立 `cancelled` status event。 |
 | `Error` | UI Notice 或调用方错误处理 | 不可恢复错误不映射为常规 status event。 |
 
+UI 当前不会为每个 event 创建一条独立系统消息，而是把同一轮请求的 events 聚合到一个 `Thinking` 状态块：摘要区显示最新 event，详情区追加完整轻量 timeline。这个策略属于展示层约束，不改变 `ChatAgentStatus` 的公共事件模型。
+
 ### Memory Tool Result
 
 ```ts
@@ -591,7 +602,7 @@ v3 仍默认只读，不直接写入笔记。
 
 ### Phase 1: Agentic Memory Retrieval
 
-当前代码已经实现并验证 Phase 1 闭环：用户输入后先由 planner 选择 `answer` 或 `retrieve(query)`，只有 retrieve 路径才进入 Memory readiness / approval，并由 `PromptBuilder` 统一整理 final prompt。2026-05-09 已完成 targeted/full Jest、type check、lint、`make deploy`，以及普通问题、笔记检索、用户取消和 Memory 未准备路径的 Obsidian UI smoke test。剩余更广义的 tool/permission prompt injection 风险进入 Phase 2+ 继续跟踪。
+当前代码已经实现并验证 Phase 1 闭环：用户输入后先由 planner 选择 `answer` 或 `retrieve(query)`，只有 retrieve 路径才进入 Memory readiness / approval，并由 `PromptBuilder` 统一整理 final prompt。2026-05-09 已完成 targeted/full Jest、type check、lint、`make deploy`，以及普通问题、笔记检索、用户取消和 Memory 未准备路径的 Obsidian UI smoke test。最新代码还将多条 Memory 状态消息收敛为单个 `Thinking` 可折叠状态块，并在代码层面修复 streaming 时展开详情和回到底部后恢复自动滚动的问题；该交互仍需按 tracker 补一次 Obsidian UI smoke 回归验证。剩余更广义的 tool/permission prompt injection 风险进入 Phase 2+ 继续跟踪。
 
 产品目标：
 

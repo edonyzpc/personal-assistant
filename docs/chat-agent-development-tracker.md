@@ -23,15 +23,15 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 开发分支 | `codex/chat-agent-architecture` |
+| 当前工作区 / HEAD | `master`；`codex/chat-agent-architecture` 当前也指向同一提交 |
 | 创建日期 | 2026-05-02 |
-| 最后回顾 | 2026-05-09 |
-| 当前阶段 | Phase 1: Agentic Memory Retrieval |
+| 最后回顾 | 2026-05-09，最新 UI Thinking / scroll 修复后校准 |
+| 当前阶段 | Phase 1: Agentic Memory Retrieval 已实现；进入 UI 回归验证与 Phase 2 拆解 |
 | 架构文档 | [x] 已创建 `docs/chat-agent-architecture.md` |
-| 文档状态 | [x] 架构文档与 tracker 已按当前实现和最终验证结果校准；后续以本 tracker 追踪 Phase 2+ |
-| 实现状态 | [x] Phase 1 agentic retrieval 主路径已实现 |
-| 测试状态 | [x] 2026-05-09 Targeted Jest、full Jest、lint、TypeScript type check、`make deploy`、普通问题 UI smoke、笔记检索 UI smoke、UI 取消路径和 Memory 未准备路径均已通过 |
-| 最近结论 | Phase 1 planner-driven retrieve 闭环已完成实现与验证；下一步进入 Phase 2 只读 tool registry / context tool 方案拆解 |
+| 文档状态 | [x] 架构文档与 tracker 已按当前实现、Thinking UI 行为和 review follow-ups 校准；后续以本 tracker 与 `docs/todo.md` 追踪 |
+| 实现状态 | [x] Phase 1 agentic retrieval 主路径已实现；Thinking 单块状态与 streaming scroll 修复已落地 |
+| 测试状态 | [~] 2026-05-09 Targeted Jest、full Jest、lint、TypeScript type check、`make deploy`、普通问题/笔记检索/取消/Memory 未准备 UI smoke 均已通过；最新 Thinking 展开与 scroll resume 修复仍建议补一次 Obsidian UI 回归 smoke |
+| 最近结论 | Phase 1 planner-driven retrieve 闭环已完成；最新 UI 修复解决状态噪音和 streaming 滚动问题，下一步先补 UI 回归验证，再进入 Phase 2 只读 tool registry / context tool 方案拆解 |
 
 ## 当前范围
 
@@ -49,8 +49,8 @@ Phase 1 的目标是完成第一条可上线闭环：
 
 | Phase | Goal | Status | Owner/Notes | Evidence |
 | --- | --- | --- | --- | --- |
-| Phase 0 | 完成架构文档和任务追踪文档 | [x] Done | 当前分支 `codex/chat-agent-architecture` | `docs/chat-agent-architecture.md`、`docs/chat-agent-development-tracker.md` |
-| Phase 1 | Agentic Memory Retrieval | [x] Done | 当前实现目标已完成，后续只保留回归追踪 | `npm test -- __tests__/chat-service.test.ts`；`npm test -- --runInBand`；`npm run lint`；`npx tsc -noEmit -skipLibCheck`；`make deploy`；Obsidian UI smoke |
+| Phase 0 | 完成架构文档和任务追踪文档 | [x] Done | 当前 HEAD 已包含架构与 tracker | `docs/chat-agent-architecture.md`、`docs/chat-agent-development-tracker.md` |
+| Phase 1 | Agentic Memory Retrieval | [x] Done | 核心实现目标已完成；最新 UI polish 保留回归验证追踪 | `npm test -- __tests__/chat-service.test.ts`；`npm test -- --runInBand`；`npm run lint`；`npx tsc -noEmit -skipLibCheck`；`make deploy`；Obsidian UI smoke；Thinking/scroll code review |
 | Phase 2 | 只读工具扩展 | [ ] Todo | 后续迭代占位 | 待 Phase 1 完成后拆解 |
 | Phase 3 | Skills / Context Packs | [ ] Todo | 后续迭代占位 | 待 Phase 2 基础稳定 |
 | Phase 4 | 受控写入与长期任务 | [ ] Todo | 后续迭代占位 | 待只读工具和审批模型稳定 |
@@ -78,6 +78,8 @@ Phase 1 的目标是完成第一条可上线闭环：
 | `skip-memory` 行为 | `src/ai-services/chat-agent.ts`、`__tests__/chat-service.test.ts` | [x] Done | 不调用 planner、不调用 VSS，直接普通回答 | `skips planner and memory lookup...` |
 | Planner fallback | `src/ai-services/chat-agent.ts`、`__tests__/chat-service.test.ts` | [x] Done | Planner 解析失败时 Chat 不失败；Memory ready 时可旧逻辑检索，否则普通回答 | `falls back when planner output cannot be parsed` |
 | UI 轻量状态 | `src/chat-view.ts` | [x] Done | Chat 中能显示判断、检索、跳过 Memory、fallback、回答状态；不展示完整内部推理 | 普通、检索、取消、Memory 未准备路径 UI smoke passed |
+| Thinking 状态 UI 优化 | `src/chat-view.ts`、`src/custom.css`、`styles.css` | [x] Done | 同一轮请求只渲染一个 `Thinking` 状态块；摘要只显示最新状态；展开后查看详情；不再以多条 `Memory` 消息刷屏 | Code review: `fix(chat-ui): improve thinking status scrolling` |
+| Streaming 滚动策略修复 | `src/chat-view.ts` | [x] Done | 用户展开 Thinking 或向上查看历史时暂停自动跟随；用户回到底部附近后恢复 streaming 自动滚动 | Code review: scroll listener resumes auto-scroll independent of wheel events |
 | Streaming fallback 保持 | `src/ai-services/chat-service.ts`、`__tests__/chat-service.test.ts` | [x] Done | 未收到 chunk 时可非流式 fallback；收到部分 chunk 后不重试；abort 不 fallback | Existing streaming fallback policy tests |
 | Targeted tests | `__tests__/chat-service.test.ts` | [x] Done | `npm test -- __tests__/chat-service.test.ts` 通过 | Passed 2026-05-02 |
 | Type check | TypeScript project | [x] Done | `npx tsc -noEmit -skipLibCheck` 通过 | Passed 2026-05-02 |
@@ -99,7 +101,8 @@ Phase 1 的目标是完成第一条可上线闭环：
 | Runtime：Answer now | Chat service/runtime | [x] Done | Memory approval 返回 `answer-now` 时本轮不调用 VSS，普通回答继续完成 | `answers without VSS when memory approval chooses answer now` |
 | Runtime：approval cancel | Chat service/runtime | [x] Done | Memory approval 返回 `cancel` 时抛出 AbortError，不调用 VSS，不进入 fallback | `aborts without fallback when memory approval is cancelled` |
 | Adversarial Memory references | Prompt / Memory sources | [x] Done | Memory 内容要求越权、伪造引用或改写规则时，最终回答仍只按 allowed sources 引用 | `keeps allowed memory references limited to retrieved source metadata` |
-| Phase 1 Done 判定 | Release readiness | [x] Done | UI smoke 完成，Memory references adversarial test 已覆盖，剩余 prompt injection 风险转入后续 tool/skill 阶段跟踪 | Phase 1 closed on 2026-05-09 |
+| UI regression：Thinking 展开与滚动 | Chat UI streaming | [ ] Todo | Streaming 过程中 Thinking 可展开；用户滚到上方历史时不被拉回底部；回到底部后自动滚动恢复 | 需要 Obsidian UI smoke |
+| Phase 1 Core Done 判定 | Release readiness | [x] Done | 核心 planner-driven retrieve、Memory approval、引用约束和取消路径已完成；最新 UI polish 作为回归项单独跟踪 | Phase 1 core closed on 2026-05-09 |
 
 ### Memory 未准备路径复测指引
 
@@ -112,6 +115,17 @@ Phase 1 的目标是完成第一条可上线闭环：
 5. 再问明确依赖笔记的问题，例如 `根据我的笔记，agent意图安全经历了几个阶段？`。预期这时才弹出 Memory 准备确认，说明 approval 下沉到了 retrieve 路径。
 6. 点击 `Answer now`。预期 Chat 中出现 `Memory was not used for this answer.`，随后正常回答；不应出现 `Searching memory:`、`Found memory references:` 或 Memory references callout。
 7. 可选恢复：验证结束后运行 `Prepare Memory` 或再次提出笔记问题并选择 `Prepare memory and answer`，确认成本提示后恢复 `Memory ready`。
+
+### Thinking / Streaming UI 回归验证指引
+
+该场景用于验证最新 `Thinking` 单块状态和 streaming 滚动修复。它不需要重置 Memory，优先在已经部署最新插件的 Obsidian test vault 中执行。
+
+1. 提交一个会持续流式输出的长回答问题，例如 `请写一篇不少于3000字的中文长文，主题是浏览器缓存、HTTP 404、CDN、以及前端排障之间的关系。`
+2. 在回答还在 streaming 时点击 `Thinking` 左侧箭头或状态行。预期详情可以展开/收起，不会因为新 chunk 刷新而失效。
+3. 展开后观察摘要行。预期默认只保留一行最新状态，例如 `Answering...`，历史状态只在详情中展示。
+4. Streaming 过程中向上滚动到更早的聊天记录。预期视口停留在用户选择的位置，不被新 chunk 或 status 更新强行拉回底部。
+5. 再滚回底部附近。预期后续 chunk 自动跟随到底部，直到回答结束。
+6. 回答结束时可观察是否有明显闪烁或布局跳动。轻微最终渲染切换仍可接受，已在 `docs/todo.md` 中单独跟踪为后续优化。
 
 ## Phase 2 计划：只读工具扩展
 
@@ -197,7 +211,9 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 引用幻觉 | 回答引用不存在或非本轮来源 | sources 结构化传入，只允许引用本轮 sources | [x] prompt 约束已实现 |
 | Prompt injection | 笔记内容影响 agent 权限或工具调用 | Memory 作为资料，工具调用由 runtime 执行，Policy 不被 Memory 覆盖 | [~] references adversarial test 已补，后续 tool/permission injection 待 Phase 2 扩展 |
 | Abort 漏传 | 用户取消后仍继续检索或回答 | `AbortSignal` 贯穿 planner、tool、final LLM | [x] 代码路径已实现 |
-| UI 状态噪音 | 用户被过多内部细节打扰 | 只展示轻量状态，不展示完整内部推理 | [x] 普通、检索、取消、Memory 未准备路径 smoke test 可接受 |
+| UI 状态噪音 | 用户被过多内部细节打扰 | 单个 `Thinking` 状态块只显示最新摘要，详情折叠展示；不展示完整内部推理 | [x] 代码已按最新 UI 要求优化 |
+| Streaming 滚动打断用户阅读 | 用户展开 Thinking 或查看历史时被新 chunk 拉回底部 | 用户离开底部时暂停自动跟随，回到底部附近后恢复 | [~] 代码已修复，Obsidian UI 回归 smoke 待补 |
+| 最终消息重渲染轻微抖动 | 长回答结束时可能有轻微 flicker 或 layout shift | 暂保留当前 remove/re-render 策略，后续考虑原地更新 | [ ] 已记录到 `docs/todo.md` |
 | 文档与实现漂移 | reviewer 无法判断当前能力和待验证项 | 文档状态校准并由 tracker 记录最新验证计划 | [x] 2026-05-09 已校准 |
 
 ## 验证记录
@@ -243,6 +259,10 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 2026-05-09 | `git diff --check` | [x] Passed | Whitespace check passed after status timing fix |
 | 2026-05-09 | `make deploy` | [x] Passed | 18 suites / 132 tests passed, lint/build completed, plugin assets copied to test vault after status timing fix |
 | 2026-05-09 | Obsidian UI smoke：Memory 未准备状态时机 | [x] Passed | Reloaded test vault after deploy；note-related prompt showed `Thinking...` then Memory approval；`Answer now` showed `Memory was not used for this answer.` and `Answering...` without `Searching memory` or Memory references |
+| 2026-05-09 | Code review：Thinking 状态 UI 与 streaming 滚动修复 | [x] Reviewed | 当前 HEAD `fix(chat-ui): improve thinking status scrolling`：单个 `Thinking` 状态块、可折叠详情、展开暂停自动跟随、scroll 事件恢复 auto-scroll |
+| 2026-05-09 | Code review：reference block regex | [x] Reviewed | 支持 `Memory references`、`RAG Referenc`、`RAG Reference`、`RAG References`；自动化测试确认不剥离拼写错误的 `RAG Referencs` |
+| 2026-05-09 | Obsidian UI smoke：Thinking 展开与 scroll resume | [ ] Pending | 需要按本文档回归验证指引手动执行 |
+| 2026-05-09 | `git diff --check` | [x] Passed | Docs calibration for latest UI Thinking / scroll state has no whitespace errors |
 
 ## 执行原则
 
@@ -265,3 +285,6 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 2026-05-09 | 产品状态与 `ChatAgentStatus` 采用文档映射，不扩展 API | 当前 UI 只需要轻量状态事件，`NeedMemoryApproval`、`Cancelled`、`Error` 作为产品流程状态说明 |
 | 2026-05-09 | 明确笔记意图才稳定触发 retrieve | 为降低普通问题误检索，planner 对通用问题保持保守；真实 UI 验证中“根据我的笔记...”能稳定进入检索路径 |
 | 2026-05-09 | Phase 1 验证闭环完成 | 自动化、部署、普通问题、笔记检索、取消路径和 Memory 未准备路径均已通过，后续迭代进入 Phase 2 只读工具扩展 |
+| 2026-05-09 | `Memory` 状态文案改为 `Thinking`，并合并为单个可折叠状态块 | 更准确表达 planner / retrieval / answering 的整体过程，同时减少状态消息刷屏 |
+| 2026-05-09 | Streaming 自动滚动由 scroll 位置恢复，不依赖最近 wheel 事件 | 支持用户通过触控、键盘、滚动条等方式回到底部后恢复自动跟随 |
+| 2026-05-09 | 最终 assistant message 原地更新暂不进入本轮修复 | 当前行为正确但可能有轻微结束抖动，作为低风险 follow-up 记录在 `docs/todo.md` |

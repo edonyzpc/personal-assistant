@@ -2,6 +2,12 @@
 
 ## Chat Agent Follow-ups
 
+- [ ] Run Obsidian smoke for Thinking status and streaming scroll regression.
+  - Context: latest Chat UI now renders one collapsible `Thinking` status block and pauses auto-scroll when the user expands details or scrolls up during streaming.
+  - Current impact: medium. The code path is implemented, but this interaction is best verified in Obsidian because it depends on real streaming, DOM layout, scroll position, and user input timing.
+  - Suggested validation: during a long streaming answer, expand/collapse `Thinking`, scroll to older messages, confirm the viewport is not forced to bottom, then scroll back near bottom and confirm auto-scroll resumes.
+  - Suggested commit: `test(chat-ui): smoke test thinking scroll behavior`
+
 - [ ] Optimize final assistant message rendering after streaming.
   - Context: `src/chat-view.ts` currently removes the streaming placeholder and calls `renderMessage(...)` again when the final assistant response completes, so the final message gets consistent formatting, copy action, and persisted rendering behavior.
   - Current impact: low. The behavior is correct, but users may notice a slight layout shift or flicker at the end of streaming.
