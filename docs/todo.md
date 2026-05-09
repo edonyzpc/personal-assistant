@@ -25,6 +25,7 @@
 - [ ] Evaluate raw-prompt Memory presearch relevance on natural prompts.
   - Context: Phase 2C intentionally uses the user's original input as the first Memory presearch query to avoid an extra query-rewrite LLM call. This is correct for explicit or keyword-rich prompts, but long or conversational prompts may produce weaker vector matches.
   - Current impact: low to medium. Planner can still perform one supplemental `search_memory` within the per-turn Memory search budget, but poor presearch recall may make implicit note questions less reliable.
+  - Observed: 2026-05-09 Obsidian test vault smoke with `我前几天好像记过一条关于 agent 安全技术演进的笔记...` did presearch first and found `2026-05-01.md`; the final stream was manually cancelled because the provider response was very slow, so this remains a multi-sample evaluation task.
   - Suggested fix: collect Obsidian smoke examples with short, long, and conversational note questions before deciding whether to add lightweight query cleanup, planner-generated supplemental query heuristics, or a configurable rewrite step.
   - Suggested commit: `test(chat-agent): evaluate presearch query relevance`
 
@@ -37,18 +38,19 @@
 - [ ] Tune planner observation budgets after Current Note tool lands.
   - Context: Phase 2C now feeds bounded Memory presearch excerpts to the planner as `untrusted_content`; future tools may expose structured summaries or metadata with their own budgets.
   - Current impact: low. The right value depends on real `search_memory + get_current_note_context` mixed prompts.
+  - Observed: 2026-05-09 Obsidian test vault mixed prompt using selected Agent intent safety content plus the Dog note succeeded, including presearch and a supplemental `search_memory` for dog-related context. No budget tuning is required from this sample yet.
   - Suggested fix: collect mixed prompt smoke evidence, then tune per-tool observation summaries and total planner observation budget.
   - Suggested commit: `perf(chat-agent): tune tool observation budgets`
 
-- [ ] Bound current-note outline scanning for very large notes.
+- [x] Bound current-note outline scanning for very large notes.
   - Context: Phase 2B uses editor line APIs for current-note reads, but `outline` mode can still scan until it finds 30 headings. In extremely large notes with few headings, that could cause a small UI pause.
-  - Current impact: low. Typical notes should be fine, and selection / nearby reads are already bounded, but outline mode should have a defensive max scan line limit before more tools build on it.
-  - Suggested fix: cap `extractHeadingsFromEditor` with a maximum scanned line count, such as 2000 or 5000 lines, and document that outline is a preview rather than exhaustive for very large notes.
-  - Suggested commit: `perf(chat-agent): bound current note outline scan`
+  - Result: `extractHeadingsFromEditor` now caps outline scanning at 5000 editor lines, reports `outline_truncated`, `scanned_line_limit`, `total_lines`, and `max_headings`, and final current-note context keeps valid JSON under context truncation.
+  - Evidence: `bounds current note outline scanning for very large notes`; `keeps current note context JSON valid when context budget truncates outline content`.
 
 - [ ] Run Obsidian smoke for Thinking status and streaming scroll regression.
   - Context: latest Chat UI now renders one collapsible `Thinking` status block and pauses auto-scroll when the user expands details or scrolls up during streaming.
   - Current impact: medium. The code path is implemented, but this interaction is best verified in Obsidian because it depends on real streaming, DOM layout, scroll position, and user input timing.
+  - Observed: 2026-05-09 Obsidian test vault smoke verified Thinking can expand during a real streaming answer and shows Memory presearch/planning details; cancelling the slow stream displayed `Generation cancelled`. The full long-output scroll-up / return-to-bottom auto-scroll cycle is still not verified.
   - Suggested validation: during a long streaming answer, expand/collapse `Thinking`, scroll to older messages, confirm the viewport is not forced to bottom, then scroll back near bottom and confirm auto-scroll resumes. Also smoke `get_current_note_context` with a large selected block, no selection inside a heading section, no active Markdown file, and an adversarial note containing `</current_note_context>` plus fake Memory references.
   - Suggested commit: `test(chat-ui): smoke test thinking scroll behavior`
 
