@@ -30,13 +30,13 @@
 | 当前阶段 | Phase 2: Read-only Tool Expansion Planning |
 | 架构文档 | [x] 已创建 `docs/chat-agent-architecture.md` |
 | 文档状态 | [x] 架构文档与 tracker 已按当前实现、Thinking UI 行为、review follow-ups 和 Phase 2 方案校准；后续以本 tracker、`docs/todo.md` 和 `docs/chat-agent-phase2-readonly-tools-plan.md` 追踪 |
-| 实现状态 | [x] Phase 1 agentic retrieval 主路径已实现；Thinking 单块状态与 streaming scroll 修复已落地；Phase 2 第一轮实现待开始 |
-| 测试状态 | [~] 2026-05-09 Targeted Jest、full Jest、lint、TypeScript type check、`make deploy`、普通问题/笔记检索/取消/Memory 未准备 UI smoke 均已通过；最新 Thinking 展开与 scroll resume 修复仍建议补一次 Obsidian UI 回归 smoke |
+| 实现状态 | [~] Phase 2 第一轮已实现 tool registry、`search_memory` 注册、显式 `tool` action 与旧 `retrieve` 兼容；`get_current_note_context` 待下一轮 |
+| 测试状态 | [~] Phase 1 baseline 已完成 full Jest、lint、type check、`make deploy` 和主要 UI smoke；Phase 2A 当前 diff 已完成 targeted Jest、type check、lint、build、whitespace；Thinking 展开与 scroll resume 仍建议补一次 Obsidian UI 回归 smoke |
 | 最近结论 | Phase 1 planner-driven retrieve 闭环已完成；Phase 2 先完成只读 tool registry / `search_memory` 工具化，再实现 current note context |
 
-## 当前范围
+## 当前阶段范围
 
-Phase 1 的目标是完成第一条可上线闭环：
+Phase 1 已完成的闭环：
 
 1. 用户输入后，agent 先判断是否需要读取 Memory。
 2. 如果需要 Memory，agent 生成适合检索的 query。
@@ -44,7 +44,15 @@ Phase 1 的目标是完成第一条可上线闭环：
 4. 检索结果去重、裁剪并整理为上下文。
 5. 最终 LLM 使用用户问题、recent history、memory context 和 sources 回答。
 
-本阶段不实现通用 tool registry、skills、写入动作、长期任务或用户可见实验开关。
+Phase 2A 当前范围：
+
+1. 引入只读 `ToolRegistry` 基础接口。
+2. 将现有 Memory 检索注册为 `search_memory`。
+3. 支持显式 `tool` action，并兼容旧 `retrieve(query)`。
+4. 让工具失败、未注册工具和非法输入都降级为普通回答。
+5. 保持 Memory 内容作为最终回答资料，不把原始 Memory 片段回流给 planner。
+
+Phase 2A 不实现 skills、写入动作、长期任务、外部网络工具或用户可见实验开关；`get_current_note_context` 留到 Phase 2B。
 
 ## Milestone 追踪
 
@@ -136,13 +144,13 @@ Phase 1 的目标是完成第一条可上线闭环：
 
 当前 MVP 任务：
 
-- [ ] 设计 tool registry 接口。
-- [ ] 将 `MemorySearchTool` 注册为 `search_memory`。
+- [x] 设计 tool registry 接口。
+- [x] 将 `MemorySearchTool` 注册为 `search_memory`。
 - [ ] 增加 `get_current_note_context`，读取当前笔记标题、路径、选区或附近段落。
-- [ ] 扩展 planner action protocol，支持显式 `tool` action，并兼容 Phase 1 `retrieve(query)`。
-- [ ] 将 tool observations 统一交给 `PromptBuilder` 做上下文预算和来源约束。
-- [ ] 为每个工具记录 `name`、`description`、`input schema`、`permission level`、`cost profile`、`output budget`、`failure behavior`、`status message`。
-- [ ] 扩展 status timeline，展示只读工具调用摘要。
+- [x] 扩展 planner action protocol，支持显式 `tool` action，并兼容 Phase 1 `retrieve(query)`。
+- [~] 将 tool observations 统一交给 `PromptBuilder` 做上下文预算和来源约束。当前第一轮已把 `search_memory` observation 提供给 planner，并继续复用既有 Memory final prompt；多类型 context item 待 `get_current_note_context` 一起完成。
+- [~] 为每个工具记录 `name`、`description`、`input schema`、`permission level`、`cost profile`、`output budget`、`failure behavior`、`status message`。当前 `search_memory` 已覆盖，`get_current_note_context` 待实现。
+- [x] 扩展 status timeline，展示只读工具调用摘要。
 
 后续只读工具候选：
 
@@ -152,10 +160,10 @@ Phase 1 的目标是完成第一条可上线闭环：
 
 验收标准：
 
-- [ ] 工具失败不阻断普通回答。
-- [ ] UI 能展示轻量 tool 状态。
-- [ ] 多工具结果不会突破上下文预算。
-- [ ] 模型不能直接构造未注册工具调用。
+- [x] 工具失败不阻断普通回答。
+- [x] UI 能展示轻量 tool 状态。
+- [~] 多工具结果不会突破上下文预算。当前 `search_memory` 仍沿用 Memory 文档数和字符预算；多工具统一预算待 Current Note 工具落地。
+- [x] 模型不能直接构造未注册工具调用。
 
 ## Phase 3 计划：Skills / Context Packs
 
@@ -273,6 +281,12 @@ Phase 1 的目标是完成第一条可上线闭环：
 | 2026-05-09 | `git diff --check` | [x] Passed | Docs calibration for latest UI Thinking / scroll state has no whitespace errors |
 | 2026-05-09 | Phase 1 fast-forward merge to local `master` | [x] Done | `master` updated from `6297e6e` to `6ceb104`，随后同步到 `d44d716` |
 | 2026-05-09 | 创建 Phase 2 只读工具方案 | [x] Done | `docs/chat-agent-phase2-readonly-tools-plan.md` |
+| 2026-05-09 | Phase 2 分支 rebase 到最新 `master` | [x] Done | `codex/chat-agent-phase2-tools-plan` rebased onto `d44d716`；tracker 冲突已合并，保留 Thinking UI 回归项和 Phase 2 计划项 |
+| 2026-05-09 | `npm test -- __tests__/chat-service.test.ts` | [x] Passed | 24 tests passed after Phase 2A review fixes: sanitized tool errors, no raw Memory snippets in planner observations, duplicate tool input coverage |
+| 2026-05-09 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors after Phase 2A review fixes |
+| 2026-05-09 | `npm run lint` | [x] Passed | ESLint passed after Phase 2A review fixes |
+| 2026-05-09 | `npm run build` | [x] Passed | Type check, Tailwind build, and production esbuild passed after Phase 2A review fixes; Browserslist data warning only |
+| 2026-05-09 | `git diff --check` | [x] Passed | Whitespace check passed after Phase 2A review fixes |
 
 ## 执行原则
 

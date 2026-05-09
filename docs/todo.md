@@ -2,6 +2,36 @@
 
 ## Chat Agent Follow-ups
 
+- [ ] Extract shared Chat Agent types before adding more tools.
+  - Context: `src/ai-services/chat-agent.ts` owns core result/source types while `src/ai-services/chat-tools.ts` owns the registry, so the current Phase 2A implementation has a type-level dependency in both directions.
+  - Current impact: low. The import is type-only and does not create a runtime cycle, but it will become harder to maintain once `get_current_note_context` and context item types land.
+  - Suggested fix: move shared public types such as `ChatAgentSource`, `MemorySearchResult`, tool result types, and future context item types into a dedicated `chat-types.ts` or equivalent module during Phase 2B.
+  - Suggested commit: `refactor(chat-agent): extract shared chat types`
+
+- [ ] Consolidate duplicate abort helpers in Chat Agent modules.
+  - Context: `isAbortError` / abort error helpers now exist in both `chat-agent.ts` and `chat-tools.ts` so the registry can safely preserve abort semantics.
+  - Current impact: low. The duplication is small and intentional for this scoped Phase 2A fix, but it should not spread as more tools are added.
+  - Suggested fix: extract a tiny shared abort utility for chat-agent/tool code instead of placing it in broad AI model helpers.
+  - Suggested commit: `refactor(chat-agent): share abort helpers`
+
+- [ ] Revisit fallback partial-context salvage after multi-tool context exists.
+  - Context: planner failure currently uses a clean fallback path and ignores any already collected tool observations, matching the safer Phase 1 behavior.
+  - Current impact: low. Clean fallback is safer than mixing partially planned tool state, but future multi-tool flows may benefit from preserving already validated read-only observations.
+  - Suggested fix: decide after `ChatContextItem[]` exists whether fallback should include prior successful read-only observations, with explicit injection boundaries and source policy.
+  - Suggested commit: `feat(chat-agent): preserve safe fallback context`
+
+- [ ] Re-evaluate ToolRegistry generic casting as tool complexity grows.
+  - Context: `ToolRegistry.register` stores generic tool definitions behind an erased internal type and relies on each tool's runtime validator before execution.
+  - Current impact: low. This is acceptable for the Phase 2A MVP, but more complex tools may need stronger compile-time constraints or per-tool wrappers.
+  - Suggested fix: revisit after adding `get_current_note_context` and context item typing; avoid a broad abstraction until there are at least two real tools.
+  - Suggested commit: `refactor(chat-agent): tighten tool registry typing`
+
+- [ ] Tune planner observation budgets after Current Note tool lands.
+  - Context: Phase 2A no longer feeds raw Memory snippets back into the planner; future tools may expose structured summaries or metadata with their own budgets.
+  - Current impact: low. The right value depends on real `search_memory + get_current_note_context` mixed prompts.
+  - Suggested fix: collect smoke evidence in Phase 2B, then tune per-tool observation summaries and total planner observation budget.
+  - Suggested commit: `perf(chat-agent): tune tool observation budgets`
+
 - [ ] Run Obsidian smoke for Thinking status and streaming scroll regression.
   - Context: latest Chat UI now renders one collapsible `Thinking` status block and pauses auto-scroll when the user expands details or scrolls up during streaming.
   - Current impact: medium. The code path is implemented, but this interaction is best verified in Obsidian because it depends on real streaming, DOM layout, scroll position, and user input timing.
