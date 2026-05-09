@@ -1,4 +1,4 @@
-import { MarkdownView } from "obsidian";
+import { MarkdownView, type Workspace } from "obsidian";
 
 import type { PluginManager } from "../plugin";
 import type {
@@ -65,6 +65,17 @@ interface EditorLike {
     getCursor?: () => { line: number; ch: number };
     lineCount?: () => number;
     getLine?: (line: number) => string;
+}
+
+interface MarkdownFileLike {
+    path: string;
+    basename?: string;
+    name?: string;
+}
+
+interface MarkdownViewLike {
+    file: MarkdownFileLike;
+    editor?: EditorLike;
 }
 
 const CURRENT_NOTE_CONTENT_BUDGET_CHARS = 3000;
@@ -156,7 +167,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
         validateInput: validateCurrentNoteContextInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const view = context.plugin.app.workspace.getActiveViewOfType(MarkdownView);
+            const view = findCurrentMarkdownView(context.plugin.app.workspace);
             if (!view?.file?.path) {
                 return createToolFailureResult(
                     "get_current_note_context",
@@ -197,6 +208,36 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
             return createCurrentNoteResult("nearby", output, source);
         },
     };
+}
+
+function findCurrentMarkdownView(workspace: Workspace): MarkdownViewLike | null {
+    const activeView = workspace.getActiveViewOfType(MarkdownView);
+    if (isMarkdownViewLike(activeView)) {
+        return activeView;
+    }
+
+    const recentLeaf = workspace.getMostRecentLeaf?.();
+    if (isMarkdownViewLike(recentLeaf?.view)) {
+        return recentLeaf.view;
+    }
+
+    const markdownLeaf = workspace.getLeavesOfType?.("markdown")
+        .find((leaf) => isMarkdownViewLike(leaf.view));
+    return isMarkdownViewLike(markdownLeaf?.view) ? markdownLeaf.view : null;
+}
+
+function isMarkdownViewLike(view: unknown): view is MarkdownViewLike {
+    if (
+        !view
+        || typeof view !== "object"
+        || !("file" in view)
+        || typeof (view as MarkdownViewLike).file?.path !== "string"
+    ) {
+        return false;
+    }
+
+    const getViewType = (view as { getViewType?: unknown }).getViewType;
+    return typeof getViewType !== "function" || getViewType.call(view) === "markdown";
 }
 
 export function isSearchMemoryResult(content: unknown): content is MemorySearchResult {

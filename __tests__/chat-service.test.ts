@@ -56,11 +56,17 @@ function createPlugin(overrides: {
     ensureReadyForChat?: (query?: string) => Promise<{ decision: 'use-memory' | 'answer-now' | 'cancel'; message?: string }>;
     getMaintenancePlan?: () => Promise<{ reason: string; action: string; requiresApproval: boolean }>;
     activeMarkdownView?: unknown;
+    mostRecentLeafView?: unknown;
+    markdownLeaves?: unknown[];
 } = {}) {
     return {
         app: {
             workspace: {
                 getActiveViewOfType: jest.fn(() => overrides.activeMarkdownView ?? null),
+                getMostRecentLeaf: jest.fn(() => overrides.mostRecentLeafView ? { view: overrides.mostRecentLeafView } : null),
+                getLeavesOfType: jest.fn((type: string) => type === 'markdown'
+                    ? (overrides.markdownLeaves ?? []).map((view) => ({ view }))
+                    : []),
             },
         },
         vss: {
@@ -196,6 +202,21 @@ describe('planner action parser', () => {
 
     it('parses tool actions', () => {
         expect(parsePlannerAction('{"action":"tool","tool":"search_memory","input":{"query":"project notes"},"reason":"needs notes"}')).toEqual({
+            action: 'tool',
+            tool: 'search_memory',
+            input: { query: 'project notes' },
+            reason: 'needs notes',
+        });
+    });
+
+    it('normalizes direct tool-name actions from planner output', () => {
+        expect(parsePlannerAction('{"action":"get_current_note_context","reason":"needs current note"}')).toEqual({
+            action: 'tool',
+            tool: 'get_current_note_context',
+            input: { mode: 'selection-or-nearby' },
+            reason: 'needs current note',
+        });
+        expect(parsePlannerAction('{"action":"search_memory","query":"project notes","reason":"needs notes"}')).toEqual({
             action: 'tool',
             tool: 'search_memory',
             input: { query: 'project notes' },
@@ -666,6 +687,159 @@ describe('ChatService memory behavior', () => {
         ]));
         expect(JSON.stringify(secondPlannerInput)).toContain('untrusted_content');
         expect(JSON.stringify(secondPlannerInput)).toContain('Selected project insight from the current note.');
+    });
+
+    it('executes direct get_current_note_context planner actions as tool calls', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"get_current_note_context","reason":"needs current note"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"current note gathered"}');
+        const final = createStreamModel('answer with direct current note action', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const activeMarkdownView = createMarkdownView({
+            path: 'notes/current.md',
+            basename: 'current',
+            selection: 'Direct action selected text.',
+            value: '# Current\nDirect action selected text.',
+            cursorLine: 1,
+        });
+        const plugin = createPlugin({ activeMarkdownView });
+        const statuses: Array<{ type: string; tool?: string }> = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('what does this selected text say?', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(chainInput?.input).toContain('Direct action selected text.');
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-running',
+                tool: 'get_current_note_context',
+            }),
+        ]));
+        expect(statuses).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ type: 'fallback' }),
+        ]));
+    });
+
+    it('uses an open Markdown leaf when the chat sidebar has focus', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"get_current_note_context","reason":"needs current note"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"current note gathered"}');
+        const final = createStreamModel('answer with open markdown leaf', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const markdownLeafView = createMarkdownView({
+            path: 'notes/open.md',
+            basename: 'open',
+            value: '# Open note\nVisible note content even while chat has focus.',
+            cursorLine: 1,
+        });
+        const plugin = createPlugin({
+            activeMarkdownView: null,
+            markdownLeaves: [markdownLeafView],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('what does this note say?', jest.fn());
+
+        expect(plugin.app.workspace.getActiveViewOfType).toHaveBeenCalled();
+        expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith('markdown');
+        expect(chainInput?.input).toContain('"path": "notes/open.md"');
+        expect(chainInput?.input).toContain('Visible note content even while chat has focus.');
+    });
+
+    it('uses the most recent Markdown leaf before the first open leaf when the chat sidebar has focus', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"get_current_note_context","reason":"needs current note"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"current note gathered"}');
+        const final = createStreamModel('answer with most recent markdown leaf', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const firstOpenLeafView = createMarkdownView({
+            path: 'notes/first-open.md',
+            basename: 'first-open',
+            value: '# First\nThis older split should not be used.',
+            cursorLine: 1,
+        });
+        const mostRecentLeafView = createMarkdownView({
+            path: 'notes/recent.md',
+            basename: 'recent',
+            value: '# Recent\nThis is the recently active split.',
+            cursorLine: 1,
+        });
+        const plugin = createPlugin({
+            activeMarkdownView: null,
+            mostRecentLeafView,
+            markdownLeaves: [firstOpenLeafView, mostRecentLeafView],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('what does this note say?', jest.fn());
+
+        expect(plugin.app.workspace.getActiveViewOfType).toHaveBeenCalled();
+        expect(plugin.app.workspace.getMostRecentLeaf).toHaveBeenCalled();
+        expect(plugin.app.workspace.getLeavesOfType).not.toHaveBeenCalled();
+        expect(chainInput?.input).toContain('"path": "notes/recent.md"');
+        expect(chainInput?.input).toContain('This is the recently active split.');
+        expect(chainInput?.input).not.toContain('This older split should not be used.');
+    });
+
+    it('does not treat a non-Markdown recent leaf as the current note', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"get_current_note_context","reason":"needs current note"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"current note gathered"}');
+        const final = createStreamModel('answer without non-markdown leaf', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const imageLeafView = {
+            file: {
+                path: 'attachments/current.png',
+                basename: 'current',
+            },
+            getViewType: jest.fn(() => 'image'),
+        };
+        const markdownLeafView = createMarkdownView({
+            path: 'notes/open.md',
+            basename: 'open',
+            value: '# Open note\nUse this markdown note instead.',
+            cursorLine: 1,
+        });
+        const plugin = createPlugin({
+            activeMarkdownView: null,
+            mostRecentLeafView: imageLeafView,
+            markdownLeaves: [markdownLeafView],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('what does this note say?', jest.fn());
+
+        expect(imageLeafView.getViewType).toHaveBeenCalled();
+        expect(plugin.app.workspace.getLeavesOfType).toHaveBeenCalledWith('markdown');
+        expect(chainInput?.input).toContain('"path": "notes/open.md"');
+        expect(chainInput?.input).toContain('Use this markdown note instead.');
+        expect(chainInput?.input).not.toContain('attachments/current.png');
     });
 
     it('treats missing active Markdown note as a recoverable tool failure', async () => {

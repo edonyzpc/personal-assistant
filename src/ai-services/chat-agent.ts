@@ -164,6 +164,27 @@ export function parsePlannerAction(content: unknown): ChatPlannerAction {
         return { action, tool, input: value.input, reason };
     }
 
+    if (action === "search_memory") {
+        const input = value.input && typeof value.input === "object" && !Array.isArray(value.input)
+            ? value.input as Record<string, unknown>
+            : value;
+        const query = typeof input.query === "string" ? input.query.trim() : "";
+        if (!query) {
+            throw new Error("Planner search_memory action must include a query.");
+        }
+        return { action: "tool", tool: "search_memory", input: { query }, reason };
+    }
+
+    if (action === "get_current_note_context") {
+        const input = value.input && typeof value.input === "object" && !Array.isArray(value.input)
+            ? value.input as Record<string, unknown>
+            : value;
+        const mode = typeof input.mode === "string" && input.mode.trim()
+            ? input.mode.trim()
+            : "selection-or-nearby";
+        return { action: "tool", tool: "get_current_note_context", input: { mode }, reason };
+    }
+
     throw new Error(`Unsupported planner action: ${action || "<missing>"}.`);
 }
 
