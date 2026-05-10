@@ -56,8 +56,8 @@ Smoke gate 固定要求：
 | --- | --- |
 | 创建日期 | 2026-05-10 |
 | Source of truth | `docs/PLAN.md` |
-| 当前阶段 | Phase 2: Core Extraction + Turn Lifecycle |
-| 当前状态 | [~] Phase 0A, 0B, and 1 closed; Phase 2 ready to start |
+| 当前阶段 | Phase 3: Policy / ToolRegistry / Vault Advice Hardening |
+| 当前状态 | [~] Phase 0A, 0B, 1, and 2 closed; Phase 3 ready to start |
 | 当前分支 | `codex/chat-agent-next-refactor-plan` |
 | Review policy | 每个阶段 review 必须使用 Codex subagents |
 | Smoke policy | UI/runtime 行为变更必须 deploy 到 `test/` vault 后验证 |
@@ -69,7 +69,7 @@ Smoke gate 固定要求：
 | Phase 0A | Docs Migration Gate | [x] Done | `docs/PLAN.md`, `docs/archive/*`, this tracker | 旧 docs 归档，source-of-truth 冲突消除 |
 | Phase 0B | Baseline Behavior Inventory | [x] Done | `docs/PLAN.md`, `src/ai-services/*`, `__tests__/chat-service.test.ts` | 当前行为、保持项、待重构项记录清楚 |
 | Phase 1 | Intent-aware Memory Workflow | [x] Done | `chat-agent.ts`, `memory-manager.ts`, `chat-service.test.ts` | 内容型输入默认 Memory search；agent-control 跳过 |
-| Phase 2 | Core Extraction + Turn Lifecycle | [ ] Todo | `chat-agent.ts`, `chat-service.ts`, `chat-view.ts`, `chat-types.ts` | `AgentTurnPlan` 与 `sessionId/turnId` lifecycle 落地 |
+| Phase 2 | Core Extraction + Turn Lifecycle | [x] Done | `chat-agent.ts`, `chat-service.ts`, `chat-view.ts`, `chat-types.ts` | `AgentTurnPlan` 与 `sessionId/turnId` lifecycle 落地 |
 | Phase 3 | Policy / ToolRegistry / Vault Advice Hardening | [ ] Todo | `chat-tools.ts`, `chat-agent.ts`, `chat-types.ts` | Registry 成为唯一 source of truth；vault advice evidence gate 落地 |
 | Phase 4 | Native Feasibility Behind Internal Gate | [ ] Todo | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Native path behind gate；JSON planner 默认稳定 |
 | Phase 5 | Native Rollout Decision | [ ] Todo | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts` | 只对验证通过 provider/model/baseURL 启用 native context/tool loop |
@@ -188,15 +188,15 @@ Goal: Extract `ObsidianAgentCore`/`AgentTurnPlan` without moving final answer st
 
 | Step | Task | Owner Files | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| dev | Introduce `AgentTurnPlan` | `src/ai-services/chat-types.ts`, `src/ai-services/chat-agent.ts` | [ ] Todo | Core returns prompt/context/diagnostics plan, not visible chunks |
-| dev | Keep `ChatService` as final streaming owner | `src/ai-services/chat-service.ts` | [ ] Todo | Existing streaming and non-streaming fallback semantics preserved |
-| dev | Add lightweight turn lifecycle | `src/chat-view.ts`, `src/ai-services/chat-service.ts` | [ ] Todo | `sessionId/turnId` active turn guards status/chunk/final render |
-| dev | Invalidate active turn on cancel/clear/view close | `src/chat-view.ts` | [ ] Todo | Stale callbacks cannot write into cleared/cancelled view |
-| test | Add stale callback and lifecycle tests | `__tests__/chat-service.test.ts` and/or UI-adjacent tests | [ ] Todo | cancel/clear/rapid send stale status/chunk paths covered |
-| review | Codex subagents review Phase 2 diff | runtime/UI/tests | [ ] Todo | Review confirms no second streaming owner |
-| fix | Address subagent findings | runtime/UI/tests | [ ] Todo | Must-fix findings closed |
-| Obsidian smoke test | Deploy and validate lifecycle | `test/` vault | [ ] Todo | cancel/clear/long streaming Thinking behavior validated |
-| fix | Address smoke findings | runtime/UI/tests/docs | [ ] Todo | Smoke blockers fixed and re-tested |
+| dev | Introduce `AgentTurnPlan` | `src/ai-services/chat-types.ts`, `src/ai-services/chat-agent.ts` | [x] Done | Runtime now exposes `planTurn(...)` returning a prompt plan wrapper, not visible chunks |
+| dev | Keep `ChatService` as final streaming owner | `src/ai-services/chat-service.ts` | [x] Done | Existing streaming and non-streaming fallback semantics preserved |
+| dev | Add lightweight turn lifecycle | `src/chat-view.ts`, `src/ai-services/chat-service.ts` | [x] Done | `sessionId/turnId` active turn guards status/chunk/final render |
+| dev | Invalidate active turn on cancel/clear/view close | `src/chat-view.ts` | [x] Done | Stale callbacks cannot write into cleared/cancelled view |
+| test | Add stale callback and lifecycle tests | `__tests__/chat-view.test.ts` | [x] Done | clear, cancel, close, stale status/chunk, AbortError, button state, and pending rAF paths covered |
+| review | Codex subagents review Phase 2 diff | runtime/UI/tests | [x] Done | Architecture/UI review found no P1/P2; testing review findings were fixed |
+| fix | Address subagent findings | runtime/UI/tests | [x] Done | AbortError reject tests, hidden cancel assertions, and pending rAF cleanup coverage added |
+| Obsidian smoke test | Deploy and validate lifecycle | `test/` vault | [x] Done | `make deploy` plus real Obsidian reload validated initial controls, clear active turn, cancel final answer, and rapid send after cancel |
+| fix | Address smoke findings | runtime/UI/tests/docs | [x] Done | Smoke found visible initial cancel button; fixed with explicit hidden class and stronger scoped CSS selectors, then re-deployed and re-tested |
 
 Required smoke cases:
 
@@ -312,6 +312,8 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 0A | Codex subagents: product, architecture, safety/trust, implementation/QA | [x] Must-fix addressed | P1/P2: archived docs lacked superseded banners; archive evidence was not indexed in new tracker; `git diff --check` wording overstated untracked-doc coverage | Added archive banners, migrated compact evidence summary, added explicit untracked-doc whitespace evidence, and recorded docs-only smoke skip |
 | 2026-05-10 | Phase 0B | Codex subagents: product, architecture, safety/trust, implementation/QA | [x] Fixed | P2/P3: `PLAN.md` still assigned turn lifecycle / `AgentEvent` adapter wording to Phase 1; top tracker status lagged behind actual progress | Updated PLAN wording to Phase 2, closed baseline smoke as skipped for docs-only work, and moved tracker to Phase 1 |
 | 2026-05-10 | Phase 1 | Codex subagents: product, architecture/runtime, safety/trust, QA | [x] Fixed | P1/P2: classifier was brittle in both directions; test covered legacy `retrieve` but not primary `tool/search_memory`; per-turn Memory search trust copy was not reflected in approval copy/tracker | Added source-signal guard, broader workflow-control phrases, primary tool-call regression, classifier positive/negative tests, and per-turn Memory search copy |
+| 2026-05-10 | Phase 2 | Codex subagents: architecture/runtime, UI lifecycle, testing/QA | [x] Fixed | P1/P2: clear/onClose tests did not reject with real AbortError; cancel visibility assertions could click a hidden affordance; rAF cleanup was not exercised while pending | Added AbortError rejection paths, visible/hidden button assertions, controllable rAF tests, and stale-frame guard |
+| 2026-05-10 | Phase 2 smoke | Live Obsidian test vault | [x] Fixed | P2: after real Obsidian reload the initial cancel button was visible because class application/CSS specificity did not match the deployed DOM | Added `cancel-button-hidden` via `classList.add`, strengthened `.llm-view .llm-buttons button.*` selectors, rebuilt, deployed, and re-tested |
 
 ## Verification Log
 
@@ -339,14 +341,31 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 1 Obsidian smoke | Agent-control while Memory ready | [x] Passed | Asked `下一步`; Thinking showed only context/answer steps, with no Memory search, no confirmation, and no Memory references |
 | 2026-05-10 | Phase 1 Obsidian smoke | Content question while Memory needs setup | [x] Passed | Reset local Memory copy through the product command; approval dialog showed Data, AI provider, Memory search, and Cost sections; `Answer now` continued without Memory and status remained `Memory needs setup` |
 | 2026-05-10 | Phase 1 Obsidian smoke | Agent-control while Memory needs setup | [x] Passed | Asked `下一步`; no Memory confirmation appeared, Thinking showed only context/answer steps, and status remained `Memory needs setup` |
+| 2026-05-10 | Phase 2 | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 3 lifecycle tests passed after stale callback, AbortError, button-state, and rAF fixes |
+| 2026-05-10 | Phase 2 | `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts` | [x] Passed | 2 suites / 74 tests passed for chat-service and chat-view coverage |
+| 2026-05-10 | Phase 2 | `npm test -- --runInBand` | [x] Passed | 19 suites / 190 tests passed |
+| 2026-05-10 | Phase 2 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors |
+| 2026-05-10 | Phase 2 | `npm run lint` | [x] Passed | ESLint passed |
+| 2026-05-10 | Phase 2 | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
+| 2026-05-10 | Phase 2 smoke setup | `make deploy` | [x] Passed | Ran full Jest, lint, build, and copied `dist/main.js`, manifests, and `styles.css` into `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-10 | Phase 2 Obsidian smoke | Initial controls after real reload | [x] Passed | Used command palette reload after deploy; initial state showed `Ask`, `Clear Chat`, disabled `Add to Editor`, and no visible cancel button after smoke fix |
+| 2026-05-10 | Phase 2 Obsidian smoke | Clear chat during active generation | [x] Passed | Started a long response, clicked `Clear Chat`, waited, and no stale Thinking, chunk, or cancelled message returned |
+| 2026-05-10 | Phase 2 Obsidian smoke | Cancel during final answer | [x] Passed | Cancelled a long streaming response; partial answer remained with `Generation cancelled`, Ask returned, and no later chunks appended |
+| 2026-05-10 | Phase 2 Obsidian smoke | Rapid send after previous cancel | [x] Passed | Sent a new prompt after cancellation; new turn started normally and was independently cancellable |
+| 2026-05-10 | Phase 2 Obsidian smoke | Early Memory/tool-stage cancellation boundary | [~] Covered by tests | UI smoke covered visible final-answer cancellation; automated AbortController/stale-callback tests cover stale status/chunk/write suppression across earlier agent stages |
+| 2026-05-10 | Phase 2 final recheck | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | Re-run after tracker/smoke fixes; 1 suite / 3 tests passed |
+| 2026-05-10 | Phase 2 final recheck | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors |
+| 2026-05-10 | Phase 2 final recheck | `npm run lint` | [x] Passed | ESLint passed |
+| 2026-05-10 | Phase 2 final recheck | `git diff --check` | [x] Passed | Whitespace check passed for current Phase 2 diff |
 
 ## Risk Register
 
 | Risk | Severity | Phase | Mitigation | Status |
 | --- | --- | --- | --- | --- |
 | Agent-control intent accidentally triggers Memory search/cost | P1 | Phase 1 | Intent routing tests and Obsidian smoke covered ready and not-ready states | [x] Mitigated |
-| Core/native path creates a second final streaming owner | P1 | Phase 2/4 | `ChatService` remains final streaming owner; subagent architecture review | [ ] Todo |
-| Stale status/chunk updates cleared or cancelled chat | P1 | Phase 2 | `sessionId/turnId` active turn guard | [ ] Todo |
+| Core/native path creates a second final streaming owner | P1 | Phase 2/4 | `ChatService` remains final streaming owner; `AgentTurnPlan` only wraps prompt planning; subagent architecture review passed | [x] Mitigated for Phase 2 |
+| Stale status/chunk updates cleared or cancelled chat | P1 | Phase 2 | `sessionId/turnId` active turn guard, AbortError tests, rAF cleanup tests, and Obsidian clear/cancel smoke | [x] Mitigated |
+| Cancel button visible while no generation is active | P2 | Phase 2 | Explicit hidden class plus scoped CSS specificity; Obsidian reload smoke verified initial controls | [x] Mitigated |
 | Tool metadata diverges between JSON and native path | P2 | Phase 3/4 | Single ToolRegistry source of truth | [ ] Todo |
 | Vault advice upgrades ordinary notes into user preferences | P2 | Phase 3 | `vault_advice_context` evidence classification | [ ] Todo |
 | Native fallback replays answer after visible chunk | P1 | Phase 4 | Final-answer state rule and tests | [ ] Todo |
