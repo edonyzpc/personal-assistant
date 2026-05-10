@@ -56,8 +56,8 @@ Smoke gate 固定要求：
 | --- | --- |
 | 创建日期 | 2026-05-10 |
 | Source of truth | `docs/PLAN.md` |
-| 当前阶段 | Phase 3: Policy / ToolRegistry / Vault Advice Hardening |
-| 当前状态 | [~] Phase 0A, 0B, 1, and 2 closed; Phase 3 ready to start |
+| 当前阶段 | Phase 4: Native Feasibility Behind Internal Gate |
+| 当前状态 | [~] Phase 0A, 0B, 1, 2, and 3 closed; Phase 4 ready to start |
 | 当前分支 | `codex/chat-agent-next-refactor-plan` |
 | Review policy | 每个阶段 review 必须使用 Codex subagents |
 | Smoke policy | UI/runtime 行为变更必须 deploy 到 `test/` vault 后验证 |
@@ -70,7 +70,7 @@ Smoke gate 固定要求：
 | Phase 0B | Baseline Behavior Inventory | [x] Done | `docs/PLAN.md`, `src/ai-services/*`, `__tests__/chat-service.test.ts` | 当前行为、保持项、待重构项记录清楚 |
 | Phase 1 | Intent-aware Memory Workflow | [x] Done | `chat-agent.ts`, `memory-manager.ts`, `chat-service.test.ts` | 内容型输入默认 Memory search；agent-control 跳过 |
 | Phase 2 | Core Extraction + Turn Lifecycle | [x] Done | `chat-agent.ts`, `chat-service.ts`, `chat-view.ts`, `chat-types.ts` | `AgentTurnPlan` 与 `sessionId/turnId` lifecycle 落地 |
-| Phase 3 | Policy / ToolRegistry / Vault Advice Hardening | [ ] Todo | `chat-tools.ts`, `chat-agent.ts`, `chat-types.ts` | Registry 成为唯一 source of truth；vault advice evidence gate 落地 |
+| Phase 3 | Policy / ToolRegistry / Vault Advice Hardening | [x] Done | `chat-tools.ts`, `chat-agent.ts`, `chat-types.ts` | Registry 成为唯一 source of truth；vault advice evidence gate 落地 |
 | Phase 4 | Native Feasibility Behind Internal Gate | [ ] Todo | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Native path behind gate；JSON planner 默认稳定 |
 | Phase 5 | Native Rollout Decision | [ ] Todo | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts` | 只对验证通过 provider/model/baseURL 启用 native context/tool loop |
 | Phase 6 | Write Action Design Handoff | [ ] Todo | docs only initially | 写入和 command execution 另开 product/security review |
@@ -220,15 +220,15 @@ Goal: Make ToolRegistry the single source of truth, and make `vault_advice_conte
 
 | Step | Task | Owner Files | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| dev | Preserve complete tool metadata in registry | `src/ai-services/chat-tools.ts` | [ ] Todo | Registry retains schema/policy/budget/source-boundary metadata |
-| dev | Add registry access/export APIs | `src/ai-services/chat-tools.ts` | [ ] Todo | `listDefinitions()`, `getDefinition()`, provider schema export hooks exist |
-| dev | Route JSON planner and native path through same registry | `src/ai-services/chat-agent.ts`, `src/ai-services/chat-tools.ts` | [ ] Todo | No native adapter can bypass registry execution |
-| dev | Implement vault advice evidence classification | `src/ai-services/chat-agent.ts`, `src/ai-services/chat-types.ts` | [ ] Todo | `explicit_rule`, `template_or_workflow`, `fact_context`, `insufficient_evidence` enforced |
-| test | Add policy/source-boundary/prompt-injection tests | `__tests__/chat-service.test.ts` | [ ] Todo | Ordinary notes cannot become preferences; fake refs/commands/writes are rejected |
-| review | Codex subagents review Phase 3 diff | tools/policy/tests | [ ] Todo | Safety/trust subagent must explicitly review prompt-injection fixtures |
-| fix | Address subagent findings | tools/policy/tests | [ ] Todo | Must-fix findings closed |
-| Obsidian smoke test | Deploy and validate vault advice and references | `test/` vault | [ ] Todo | Mixed Memory/current/tool context boundaries verified |
-| fix | Address smoke findings | tools/policy/tests/docs | [ ] Todo | Smoke blockers fixed and re-tested |
+| dev | Preserve complete tool metadata in registry | `src/ai-services/chat-tools.ts` | [x] Done | Registry retains schema/policy/budget/source-boundary metadata |
+| dev | Add registry access/export APIs | `src/ai-services/chat-tools.ts` | [x] Done | `listDefinitions()`, `getDefinition()`, provider schema export hooks exist |
+| dev | Route JSON planner and native path through same registry | `src/ai-services/chat-agent.ts`, `src/ai-services/chat-tools.ts` | [x] Done | JSON planner consumes registry definitions; future native schema export is registry-derived |
+| dev | Implement vault advice evidence classification | `src/ai-services/chat-agent.ts`, `src/ai-services/chat-types.ts` | [x] Done | `explicit_rule`, `template_or_workflow`, `fact_context`, `insufficient_evidence` enforced |
+| test | Add policy/source-boundary/prompt-injection tests | `__tests__/chat-service.test.ts` | [x] Done | Ordinary notes cannot become preferences; fake refs/commands/writes are rejected |
+| review | Codex subagents review Phase 3 diff | tools/policy/tests | [x] Done | Safety/trust subagent explicitly reviewed prompt-injection and evidence fixtures |
+| fix | Address subagent findings | tools/policy/tests | [x] Done | Must-fix findings closed and re-reviewed |
+| Obsidian smoke test | Deploy and validate vault advice and references | `test/` vault | [x] Done | Mixed Memory/current/tool context boundaries verified |
+| fix | Address smoke findings | tools/policy/tests/docs | [x] Done | No P1/P2 smoke blockers found; explicit/template fixtures covered by automated tests |
 
 Expected commands:
 
@@ -314,6 +314,9 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 1 | Codex subagents: product, architecture/runtime, safety/trust, QA | [x] Fixed | P1/P2: classifier was brittle in both directions; test covered legacy `retrieve` but not primary `tool/search_memory`; per-turn Memory search trust copy was not reflected in approval copy/tracker | Added source-signal guard, broader workflow-control phrases, primary tool-call regression, classifier positive/negative tests, and per-turn Memory search copy |
 | 2026-05-10 | Phase 2 | Codex subagents: architecture/runtime, UI lifecycle, testing/QA | [x] Fixed | P1/P2: clear/onClose tests did not reject with real AbortError; cancel visibility assertions could click a hidden affordance; rAF cleanup was not exercised while pending | Added AbortError rejection paths, visible/hidden button assertions, controllable rAF tests, and stale-frame guard |
 | 2026-05-10 | Phase 2 smoke | Live Obsidian test vault | [x] Fixed | P2: after real Obsidian reload the initial cancel button was visible because class application/CSS specificity did not match the deployed DOM | Added `cancel-button-hidden` via `classList.add`, strengthened `.llm-view .llm-buttons button.*` selectors, rebuilt, deployed, and re-tested |
+| 2026-05-10 | Phase 3 | Codex subagents: architecture/runtime, safety/trust, testing/QA | [x] Fixed | P1/P2: planner prompt still duplicated hardcoded tool examples outside registry; broad terms like `must`, `frontmatter`, and `template` could upgrade factual notes into advice evidence; registry tests were too shallow and lacked `template_or_workflow` coverage | Moved planner tool guidance to registry definitions, tightened evidence anchors, added ordinary-word negative tests, added provider-schema/export assertions, and added template/workflow coverage |
+| 2026-05-10 | Phase 3 re-review | Codex subagents: architecture/runtime, safety/trust, testing/QA | [x] Passed | No remaining P0/P1/P2 findings after fixes | Proceeded to Obsidian smoke after focused, full, lint, type, build, and whitespace checks passed |
+| 2026-05-10 | Phase 3 smoke | Live Obsidian test vault | [x] Passed | No P1/P2 smoke blockers found; app smoke covered current-note/frontmatter vault advice and metadata search boundaries | Recorded that explicit-rule/template evidence was covered by automated tests because the test vault has no dedicated rule/template fixture |
 
 ## Verification Log
 
@@ -357,6 +360,16 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 2 final recheck | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors |
 | 2026-05-10 | Phase 2 final recheck | `npm run lint` | [x] Passed | ESLint passed |
 | 2026-05-10 | Phase 2 final recheck | `git diff --check` | [x] Passed | Whitespace check passed for current Phase 2 diff |
+| 2026-05-10 | Phase 3 | `npm test -- __tests__/chat-service.test.ts --runInBand` | [x] Passed | 1 suite / 77 tests passed after ToolRegistry metadata and vault-advice policy changes; warning: `--localstorage-file` without valid path |
+| 2026-05-10 | Phase 3 | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors |
+| 2026-05-10 | Phase 3 | `npm run lint` | [x] Passed | ESLint passed |
+| 2026-05-10 | Phase 3 | `git diff --check` | [x] Passed | Whitespace check passed after Phase 3 code/test fixes |
+| 2026-05-10 | Phase 3 | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
+| 2026-05-10 | Phase 3 | `npm test -- --runInBand` | [x] Passed | 19 suites / 196 tests passed |
+| 2026-05-10 | Phase 3 smoke setup | `make deploy` | [x] Passed | Ran full Jest, lint, build, and copied `dist/main.js`, manifests, and `styles.css` into `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-10 | Phase 3 Obsidian smoke | Current-note/frontmatter vault advice | [x] Passed | Asked for 3 vault organization suggestions based on the current `0.unsorted/Dog.md` note and frontmatter/tags; Thinking showed Memory search plus current-note metadata read, and the answer said no explicit rule/template/workflow evidence was found, did not call the advice a user preference/rule, and did not claim command execution |
+| 2026-05-10 | Phase 3 Obsidian smoke | Metadata search with vault advice boundary | [x] Passed | Asked for dog/canine tag/frontmatter related notes and 2 general suggestions; Thinking/answer used `search_vault_metadata`, listed `0.unsorted/Dog.md`, `Cat.md`, and `About.md`, preserved general-advice wording, and did not claim preferences/rules or command execution |
+| 2026-05-10 | Phase 3 Obsidian smoke | Explicit-rule/template evidence fixture | [~] Covered by tests | The current test vault has no dedicated rule/template note fixture; automated tests cover `explicit_rule`, `template_or_workflow`, ordinary factual notes, fake refs, command text, and write-injection attempts |
 
 ## Risk Register
 
@@ -366,8 +379,9 @@ Goal: Keep write action and command execution out of this implementation track u
 | Core/native path creates a second final streaming owner | P1 | Phase 2/4 | `ChatService` remains final streaming owner; `AgentTurnPlan` only wraps prompt planning; subagent architecture review passed | [x] Mitigated for Phase 2 |
 | Stale status/chunk updates cleared or cancelled chat | P1 | Phase 2 | `sessionId/turnId` active turn guard, AbortError tests, rAF cleanup tests, and Obsidian clear/cancel smoke | [x] Mitigated |
 | Cancel button visible while no generation is active | P2 | Phase 2 | Explicit hidden class plus scoped CSS specificity; Obsidian reload smoke verified initial controls | [x] Mitigated |
-| Tool metadata diverges between JSON and native path | P2 | Phase 3/4 | Single ToolRegistry source of truth | [ ] Todo |
-| Vault advice upgrades ordinary notes into user preferences | P2 | Phase 3 | `vault_advice_context` evidence classification | [ ] Todo |
+| Tool metadata diverges between JSON and native path | P2 | Phase 3/4 | ToolRegistry now stores schema/policy/budget/source-boundary metadata, exposes `listDefinitions()` / `getDefinition()` / provider schema export, and JSON planner consumes registry definitions | [x] Mitigated for JSON planner / Phase 3 |
+| Vault advice upgrades ordinary notes into user preferences | P2 | Phase 3 | Strict `vault_advice_context` evidence classification, prompt policy, prompt-injection fixtures, subagent safety review, and Obsidian smoke | [x] Mitigated |
+| Planner prompt duplicates tool metadata outside registry | P2 | Phase 3 | Removed hardcoded registered-tool examples from planner system prompt and asserted registry-derived tool definitions in tests | [x] Mitigated |
 | Native fallback replays answer after visible chunk | P1 | Phase 4 | Final-answer state rule and tests | [ ] Todo |
 | Diagnostics or write audit records private note paths/content | P2 | Phase 5/6 | Redacted diagnostics and local-only redacted audit contract | [ ] Todo |
 | Archived docs accidentally treated as active source | P2 | Phase 0A | Archive banners point to PLAN and this tracker; compact evidence summary marks archive as historical only | [x] Mitigated |
