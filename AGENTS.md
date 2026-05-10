@@ -118,6 +118,16 @@ Use this file as the project README for coding agents. Keep changes aligned with
   - `docs/vss-sqlite-wasm-architecture.md`
   - `docs/vss-embedding-refresh.md`
 
+## Refactor Workflow
+
+- For repo-scale refactors, follow `docs/refactor-workflow.md`.
+- Start with a plan doc and a separate development tracker.
+- Each phase must loop through `dev -> test -> review -> fix -> Obsidian smoke test -> fix` until P2/P1/P0 issues are closed or explicitly deferred.
+- Use Codex subagents for phase review when available.
+- Runtime/UI changes require `make deploy` and real Obsidian test-vault smoke before the phase is marked done.
+- Keep tracker status, risk table, verification log, open decisions, and `docs/todo.md` aligned with the actual final behavior.
+- Split commits by intent: runtime/tests, docs/tracker, TODO/future milestones, and release automation.
+
 ## Release Instructions
 
 - See `docs/release-process.md` for the full release workflow.
