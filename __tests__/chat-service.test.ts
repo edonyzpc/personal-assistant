@@ -1,16 +1,22 @@
 import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { SystemMessagePromptTemplate } from '@langchain/core/prompts';
 import { ChatService, canFallbackToNonStreaming } from '../src/ai-services/chat-service';
-import { parsePlannerAction, stripReferenceBlock } from '../src/ai-services/chat-agent';
+import {
+    parseNativeToolCallsFromModelResponse,
+    parsePlannerAction,
+    stripReferenceBlock,
+} from '../src/ai-services/chat-agent';
 import { ToolRegistry, type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 
 jest.mock('obsidian');
 
 const mockCreateChatModel = jest.fn<(...args: unknown[]) => Promise<unknown>>();
+const mockGetNativeToolCallingCapability = jest.fn<(...args: unknown[]) => unknown>();
 
 jest.mock('../src/ai-services/ai-utils', () => ({
     AIUtils: jest.fn().mockImplementation(() => ({
         createChatModel: mockCreateChatModel,
+        getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
     })),
 }));
 
@@ -30,6 +36,15 @@ jest.mock('@langchain/core/prompts', () => ({
 
 beforeEach(() => {
     mockCreateChatModel.mockReset();
+    mockGetNativeToolCallingCapability.mockReset();
+    mockGetNativeToolCallingCapability.mockReturnValue({
+        supported: false,
+        status: 'disabled',
+        provider: 'qwen',
+        model: 'qwen-plus',
+        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        reason: 'Native tool calling is disabled by the internal gate.',
+    });
     (SystemMessagePromptTemplate.fromTemplate as unknown as jest.Mock).mockClear();
 });
 
@@ -357,6 +372,66 @@ describe('planner action parser', () => {
     });
 });
 
+describe('native tool call fixtures', () => {
+    it('parses OpenAI-compatible tool call response shapes', () => {
+        const result = parseNativeToolCallsFromModelResponse({
+            additional_kwargs: {
+                tool_calls: [{
+                    id: 'call_1',
+                    function: {
+                        name: 'search_vault_metadata',
+                        arguments: '{"query":"dog","limit":2}',
+                    },
+                }],
+            },
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            calls: [{
+                id: 'call_1',
+                name: 'search_vault_metadata',
+                input: { query: 'dog', limit: 2 },
+                index: undefined,
+            }],
+        });
+    });
+
+    it('parses LangChain tool call chunks with complete arguments', () => {
+        const result = parseNativeToolCallsFromModelResponse({
+            tool_call_chunks: [{
+                index: 0,
+                name: 'get_current_note_context',
+                args: '{"mode":"metadata"}',
+            }],
+        });
+
+        expect(result).toEqual({
+            ok: true,
+            calls: [{
+                id: undefined,
+                name: 'get_current_note_context',
+                input: { mode: 'metadata' },
+                index: 0,
+            }],
+        });
+    });
+
+    it('returns a bounded failure for incomplete native tool arguments', () => {
+        expect(parseNativeToolCallsFromModelResponse({
+            tool_call_chunks: [{
+                index: 0,
+                name: 'search_memory',
+                args: '{"query":"unfinished"',
+            }],
+        })).toEqual({
+            ok: false,
+            calls: [],
+            reason: 'tool_call_chunks contained incomplete or invalid JSON arguments.',
+        });
+    });
+});
+
 describe('reference block stripping', () => {
     it('strips supported memory reference callout titles from assistant history', () => {
         const content = 'previous answer';
@@ -420,6 +495,9 @@ describe('ChatService memory behavior', () => {
 
         expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledWith('hello');
         expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('hello');
+        expect(mockGetNativeToolCallingCapability).toHaveBeenCalledWith({
+            internalGate: false,
+        });
         const toolDefinitions = extractPlannerRegistryDefinitions(plannerInput);
         expect(toolDefinitions.map((definition) => definition.name)).toEqual([
             'search_memory',

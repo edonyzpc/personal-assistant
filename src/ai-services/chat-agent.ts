@@ -148,8 +148,26 @@ const GENERIC_CJK_QUERY_SIGNALS = new Set([
     "几个",
     "多少",
 ]);
+const NATIVE_TOOL_PLANNING_INTERNAL_GATE = false;
 
 type ModelContentPart = string | Record<string, unknown>;
+
+interface NativeToolPlanningGate {
+    enabled: boolean;
+    reason: string;
+    schemaCount: number;
+}
+
+export interface NativeToolCallCandidate {
+    id?: string;
+    name: string;
+    input: unknown;
+    index?: number;
+}
+
+export type NativeToolCallParseResult =
+    | { ok: true; calls: NativeToolCallCandidate[] }
+    | { ok: false; calls: []; reason: string };
 
 export function parsePlannerAction(content: unknown): ChatPlannerAction {
     const jsonText = extractJson(stringifyModelContent(content));
@@ -254,6 +272,113 @@ export function stripReferenceBlock(content: string): string {
     return content.replace(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*(Memory references|RAG Referenc(?:es?)?)\b[\s\S]*$/i, "");
 }
 
+export function parseNativeToolCallsFromModelResponse(response: unknown): NativeToolCallParseResult {
+    const value = asRecord(response);
+    if (!value) {
+        return { ok: true, calls: [] };
+    }
+
+    const directCalls = parseNativeToolCallArray(value.tool_calls, "tool_calls");
+    if (!directCalls.ok || directCalls.calls.length > 0) {
+        return directCalls;
+    }
+
+    const additionalKwargs = asRecord(value.additional_kwargs);
+    const openaiCalls = parseNativeToolCallArray(additionalKwargs?.tool_calls, "additional_kwargs.tool_calls");
+    if (!openaiCalls.ok || openaiCalls.calls.length > 0) {
+        return openaiCalls;
+    }
+
+    return parseNativeToolCallArray(value.tool_call_chunks, "tool_call_chunks");
+}
+
+function parseNativeToolCallArray(value: unknown, source: string): NativeToolCallParseResult {
+    if (!Array.isArray(value)) {
+        return { ok: true, calls: [] };
+    }
+
+    const calls: NativeToolCallCandidate[] = [];
+    for (const entry of value) {
+        const record = asRecord(entry);
+        const functionRecord = asRecord(record?.function);
+        const name = readNativeToolCallName(record, functionRecord);
+        if (!name) {
+            return {
+                ok: false,
+                calls: [],
+                reason: `${source} contained a tool call without a function name.`,
+            };
+        }
+
+        const input = parseNativeToolCallInput(
+            record?.args ?? record?.arguments ?? functionRecord?.arguments,
+            source,
+        );
+        if (!input.ok) {
+            return input;
+        }
+
+        calls.push({
+            id: typeof record?.id === "string" && record.id.trim() ? record.id.trim() : undefined,
+            name,
+            input: input.value,
+            index: typeof record?.index === "number" ? record.index : undefined,
+        });
+    }
+
+    return { ok: true, calls };
+}
+
+function readNativeToolCallName(
+    record: Record<string, unknown> | undefined,
+    functionRecord: Record<string, unknown> | undefined,
+): string {
+    const directName = typeof record?.name === "string" ? record.name.trim() : "";
+    if (directName) return directName;
+    return typeof functionRecord?.name === "string" ? functionRecord.name.trim() : "";
+}
+
+function parseNativeToolCallInput(
+    value: unknown,
+    source: string,
+): { ok: true; value: unknown } | { ok: false; calls: []; reason: string } {
+    if (value === undefined || value === null || value === "") {
+        return { ok: true, value: {} };
+    }
+
+    if (typeof value === "string") {
+        try {
+            const parsed = JSON.parse(value) as unknown;
+            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                return { ok: true, value: parsed };
+            }
+        } catch {
+            // Fall through to the bounded fallback reason below.
+        }
+        return {
+            ok: false,
+            calls: [],
+            reason: `${source} contained incomplete or invalid JSON arguments.`,
+        };
+    }
+
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+        return { ok: true, value };
+    }
+
+    return {
+        ok: false,
+        calls: [],
+        reason: `${source} contained non-object tool arguments.`,
+    };
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+    return value && typeof value === "object" && !Array.isArray(value)
+        ? value as Record<string, unknown>
+        : undefined;
+}
+
 export class ChatAgentRuntime {
     private readonly plugin: PluginManager;
     private readonly planner: ChatPlanner;
@@ -317,6 +442,13 @@ export class ChatAgentRuntime {
                     reason: "Initial related Memory search.",
                 }));
             }
+        }
+
+        const nativeToolPlanningGate = this.inspectNativeToolPlanningGate();
+        if (nativeToolPlanningGate.enabled) {
+            this.plugin.log("Native tool planning gate passed; using JSON planner fallback until native loop is validated.", {
+                schemaCount: nativeToolPlanningGate.schemaCount,
+            });
         }
 
         try {
@@ -474,6 +606,35 @@ export class ChatAgentRuntime {
             return { result: null, skipReason: "Memory was unavailable for this answer." };
         }
     }
+
+    private inspectNativeToolPlanningGate(): NativeToolPlanningGate {
+        const capability = this.planner.getNativeToolCallingCapability({
+            internalGate: NATIVE_TOOL_PLANNING_INTERNAL_GATE,
+        });
+        if (!capability.supported) {
+            return {
+                enabled: false,
+                reason: capability.reason,
+                schemaCount: 0,
+            };
+        }
+
+        const schemaResult = this.toolRegistry.exportProviderSchemasSafe();
+        if (!schemaResult.ok) {
+            this.plugin.log("Native tool schema export failed; using JSON planner fallback.", schemaResult.error);
+            return {
+                enabled: false,
+                reason: schemaResult.error,
+                schemaCount: 0,
+            };
+        }
+
+        return {
+            enabled: true,
+            reason: capability.reason,
+            schemaCount: schemaResult.schemas.length,
+        };
+    }
 }
 
 class ChatPlanner {
@@ -481,6 +642,10 @@ class ChatPlanner {
 
     constructor(aiUtils: AIUtils) {
         this.aiUtils = aiUtils;
+    }
+
+    getNativeToolCallingCapability(options: Parameters<AIUtils["getNativeToolCallingCapability"]>[0]) {
+        return this.aiUtils.getNativeToolCallingCapability(options);
     }
 
     async plan(input: PlannerInput, signal?: AbortSignal): Promise<ChatPlannerAction> {

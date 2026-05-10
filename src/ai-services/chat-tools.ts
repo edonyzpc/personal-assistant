@@ -61,6 +61,10 @@ export interface ChatToolProviderSchema {
     };
 }
 
+export type ChatToolProviderSchemaExportResult =
+    | { ok: true; schemas: ChatToolProviderSchema[] }
+    | { ok: false; schemas: []; error: string };
+
 export interface ChatToolDefinition<Input, Output> {
     name: ChatToolName;
     description: string;
@@ -259,6 +263,18 @@ export class ToolRegistry {
                 parameters: definition.inputSchema,
             },
         }));
+    }
+
+    exportProviderSchemasSafe(): ChatToolProviderSchemaExportResult {
+        try {
+            return { ok: true, schemas: this.exportProviderSchemas() };
+        } catch (error) {
+            return {
+                ok: false,
+                schemas: [],
+                error: getErrorMessage(error),
+            };
+        }
     }
 
     has(name: string): boolean {
