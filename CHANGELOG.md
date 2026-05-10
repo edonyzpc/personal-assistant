@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.6.6](https://github.com/edonyzpc/personal-assistant/compare/1.6.5...1.6.6) (2026-05-10)
+
+### Features
+- chat: add agentic memory retrieval
+- chat-agent: add readonly tool registry
+- chat-agent: add current note context tool
+- chat-agent: presearch memory before planning
+- chat-agent: add readonly vault navigation tools
+
+### Fix
+- chat-agent: harden planner memory handling
+- chat-ui: improve thinking status scrolling
+- memory: show status through icon state
+- chat-agent: harden current note context handling
+- chat-agent: harden readonly tool planning
+- plugin: disconnect hover popover observer
+
+### Improvements
+- release: automate release workflow
+
+### Docs
+- release: document release process
+- agents: document project workflow
+- todo: track follow-up cleanup tasks
+- chat-agent: add architecture design
+- chat-agent: update phase 1 tracker and follow-ups
+- chat-agent: sync tracker with thinking UI state
+- chat-agent: plan phase 2 readonly tools
+- chat-agent: track phase 2a progress
+- chat-agent: sync phase 2c verification
+- chat-agent: sync phase 2 smoke status
+- document Obsidian CLI smoke workflow
+- chat-agent: mark phase 2 readonly tools complete
+- chat-agent: close completed follow-ups
+
 ## [1.6.5](https://github.com/edonyzpc/personal-assistant/compare/1.6.4...1.6.5) (2026-05-09)
 
 ### Features
