@@ -1,5 +1,4 @@
 import { describe, expect, it, jest } from "@jest/globals";
-import { readFileSync } from "node:fs";
 import type { Vault } from "obsidian";
 import {
     STATS_DAILY_ROOT,
@@ -7,6 +6,7 @@ import {
     createStatsShard,
     normalizeStatisticsView,
 } from "../src/stats/stats-store";
+import type { VaultStatistics } from "../src/stats/stats-types";
 
 jest.mock("obsidian");
 
@@ -83,8 +83,59 @@ function createVault(adapter: MemoryAdapter): Vault {
     } as unknown as Vault;
 }
 
-function readLegacyFixture() {
-    return JSON.parse(readFileSync("test/.obsidian/stats.json", "utf8"));
+const LEGACY_STATS_FIXTURE: VaultStatistics = {
+    history: {
+        "2025-05-31": {
+            words: 120,
+            characters: 640,
+            sentences: 8,
+            pages: 1.2,
+            files: 10,
+            footnotes: 1,
+            citations: 2,
+            totalWords: 1200,
+            totalCharacters: 6400,
+            totalSentences: 80,
+            totalFootnotes: 10,
+            totalCitations: 20,
+            totalPages: 12.3,
+        },
+        "2025-06-01": {
+            words: 80,
+            characters: 420,
+            sentences: 5,
+            pages: 0.8,
+            files: 11,
+            footnotes: 0,
+            citations: 1,
+            totalWords: 1280,
+            totalCharacters: 6820,
+            totalSentences: 85,
+            totalFootnotes: 10,
+            totalCitations: 21,
+            totalPages: 13.1,
+        },
+        "2025-06-02": {
+            words: 45,
+            characters: 230,
+            sentences: 3,
+            pages: 0.5,
+            files: 12,
+            footnotes: 2,
+            citations: 0,
+            totalWords: 1325,
+            totalCharacters: 7050,
+            totalSentences: 88,
+            totalFootnotes: 12,
+            totalCitations: 21,
+            totalPages: 13.6,
+        },
+    },
+    modifiedFiles: {},
+};
+
+function readLegacyFixture(): VaultStatistics {
+    return JSON.parse(JSON.stringify(LEGACY_STATS_FIXTURE)) as VaultStatistics;
 }
 
 describe("StatsStore", () => {
