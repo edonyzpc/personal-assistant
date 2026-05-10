@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.7.0](https://github.com/edonyzpc/personal-assistant/compare/1.6.6...1.7.0) (2026-05-10)
+
+### Features
+- chat-agent: skip memory for task-control prompts
+- chat-agent: expose turn plan boundary
+- chat-agent: harden tool registry policy
+- chat-agent: gate native tool planning
+- chat-agent: add gated native planning loop
+- chat-agent: harden native rollout diagnostics
+- chat-agent: add native smoke gate
+- chat-agent: enable qwen native planning by default
+
+### Fix
+- chat-view: ignore stale turn callbacks
+
+### Improvements
+- Merge branch 'codex/chat-agent-next-refactor-plan'
+
+### Docs
+- chat-agent: consolidate next refactor plan
+- assistant: track vault-native refactor plan
+- assistant: close phase 2 tracker
+- assistant: close phase 3 tracker
+- assistant: track phase 4 native gate
+- assistant: close phase 4 native loop
+- assistant: close phase 6 write handoff
+- assistant: mark tracker coverage complete
+- todo: track write action review milestone
+
 ## [1.6.6](https://github.com/edonyzpc/personal-assistant/compare/1.6.5...1.6.6) (2026-05-10)
 
 ### Features
