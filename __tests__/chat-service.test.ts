@@ -922,7 +922,7 @@ describe('ChatService memory behavior', () => {
         expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledWith('hello');
         expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('hello');
         expect(mockGetNativeToolCallingCapability).toHaveBeenCalledWith({
-            internalGate: false,
+            internalGate: true,
         });
         const toolDefinitions = extractPlannerRegistryDefinitions(plannerInput);
         expect(toolDefinitions.map((definition) => definition.name)).toEqual([
@@ -977,7 +977,7 @@ describe('ChatService memory behavior', () => {
         expect(chunks).toEqual(['answer without memory']);
     });
 
-    it('enables native planning in ChatService only behind the hidden smoke flag', async () => {
+    it('enables native planning in ChatService by default for the validated qwen rollout', async () => {
         mockGetNativeToolCallingCapability.mockReturnValue({
             supported: true,
             status: 'supported',
@@ -1007,7 +1007,6 @@ describe('ChatService memory behavior', () => {
             .mockResolvedValueOnce(final);
 
         const plugin = createPlugin({
-            nativeToolPlanningSmokeEnabled: true,
             markdownFiles: [
                 { path: 'projects/SECRET_PATH.md', basename: 'SECRET_PATH', stat: { mtime: 20, ctime: 10 } },
             ],
@@ -1025,11 +1024,6 @@ describe('ChatService memory behavior', () => {
 
         expect(mockGetNativeToolCallingCapability).toHaveBeenCalledWith({
             internalGate: true,
-            validatedModels: [expect.objectContaining({
-                provider: 'qwen',
-                model: 'qwen-plus',
-                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            })],
         });
         expect(nativeToolCall.bindTools).toHaveBeenCalledTimes(1);
         expect(final.stream).toHaveBeenCalledTimes(1);

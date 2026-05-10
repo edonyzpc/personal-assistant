@@ -329,15 +329,15 @@ Rules:
 
 ## Native Tool Calling Strategy
 
-Native tool calling is a future implementation path for context/tool planning, not the current final answer streaming owner. The default user path stays JSON planner until provider capability, schema export, fallback behavior and smoke validation pass.
+Native tool calling is the default context/tool planning path for validated `qwen` / `qwen-plus` / DashScope configurations, not the final answer streaming owner. The JSON planner remains the default fallback for unvalidated provider/model/baseURL combinations and for native failures before visible final-answer output.
 
 Provider capability gate:
 
-| Provider family | Current creation path | Required decision before native |
+| Provider family | Current creation path | Current rollout decision |
 | --- | --- | --- |
-| OpenAI-compatible `openai` | `AIUtils.createChatModel(...)` returns `ChatOpenAI` | 确认当前 LangChain model、baseURL、streaming 和 tool schema 支持。 |
-| OpenAI-compatible `qwen` | `ChatOpenAI` with configured baseURL | 确认 DashScope/OpenAI-compatible endpoint 的 tool call schema、stream chunks 和 error shape。 |
-| `ollama` | `ChatOllama` | 确认所选 model 是否支持 tool calling；不支持时固定 JSON fallback。 |
+| OpenAI-compatible `openai` | `AIUtils.createChatModel(...)` returns `ChatOpenAI` | Deferred/unverified; stay on JSON planner fallback until provider smoke validates LangChain model, baseURL, streaming, tool schema, error, abort, and fallback behavior. |
+| OpenAI-compatible `qwen` | `ChatOpenAI` with configured baseURL | `qwen` / `qwen-plus` / DashScope has passed the current smoke gate and is promoted to the default native context/tool planning table. |
+| `ollama` | `ChatOllama` | Deferred/unverified; stay on JSON planner fallback until the selected local model proves tool-calling support, error, abort, and fallback behavior. |
 
 Native tool calling contract:
 
@@ -353,11 +353,11 @@ Native rollout gate:
 
 - Registry 必须能导出 provider-compatible schema，并在 schema 生成失败时不影响 JSON planner fallback。
 - `AIUtils.createChatModel(...)` 或其上层 capability helper 必须能判断 provider/model/baseURL 是否允许 native tool calling；未知能力一律视为不支持。
-- OpenAI-compatible `openai`、OpenAI-compatible `qwen` 和 `ollama` 必须分别验证 tool call request shape、stream chunk shape、error shape、abort 行为和 fallback 行为。
+- OpenAI-compatible `openai`、OpenAI-compatible `qwen` 和 `ollama` 必须分别验证 tool call request shape、stream chunk shape、error shape、abort 行为和 fallback 行为；当前只有 `qwen` / `qwen-plus` / DashScope 被提升到默认表。
 - Native path 的 tool observations、source boundary、Memory references、current note/tool context 隔离必须与 JSON planner path 等价。
 - Provider smoke 通过前，native path 只能通过内部 gate 启用；provider smoke 通过后，才允许按 provider/model 逐步切换默认 context/tool planning path。
-- Code-level rollout table starts empty; add provider/model/baseURL tuples only after provider smoke proves request shape、chunk/error shape、abort、fallback and source-boundary equivalence.
-- Provider smoke/canary tuples stay separate from the default rollout table and require an explicit hidden local opt-in before they can run in `ChatService`.
+- Code-level rollout table starts with `qwen` / `qwen-plus` / DashScope only; add more provider/model/baseURL tuples only after provider smoke proves request shape、chunk/error shape、abort、fallback and source-boundary equivalence.
+- Provider smoke/canary tuples stay separate from the default rollout table for future validations and require an explicit hidden local opt-in before they can run outside the default table in `ChatService`.
 - 一旦 native path 出现 schema、stream、tool execution、source-boundary 或 abort 不确定性，本轮必须在 final answer 输出前回到 JSON planner fallback 或普通回答。
 
 Fallback matrix:
@@ -659,7 +659,7 @@ Deliverables:
 - Enable native context/tool loop only for validated provider/model/baseURL combinations.
 - Keep JSON planner as long-term fallback.
 - Record only redacted diagnostics.
-- Keep smoke/canary validation behind a hidden local opt-in until the rollout decision promotes a tuple to the default table.
+- Promote `qwen` / `qwen-plus` / DashScope to the default table after smoke validation; keep future smoke/canary validation behind a hidden local opt-in until another tuple is promoted.
 
 Owner files:
 
@@ -720,7 +720,7 @@ Behavior-specific automated checks:
 - Memory search results only enter final prompt when relevant and source-boundary safe.
 - JSON planner path remains behavior-equivalent after core extraction except intentional intent-aware routing.
 - Native tool call path and JSON fallback produce equivalent tool observations and source boundaries.
-- Native path remains behind internal gate until provider/model smoke passes.
+- Native path is enabled for the validated `qwen` / `qwen-plus` / DashScope tuple; other provider/model/baseURL combinations remain on JSON planner fallback until provider smoke passes.
 - Tool metadata policy enforcement covers permission、cost、budget、requires confirmation、source boundary 和 failure behavior。
 - Memory references 只来自本轮真实 Memory sources。
 - Current note 和 read-only tool context path 不进入 Memory references。
@@ -745,7 +745,7 @@ Obsidian smoke matrix:
 - Cancel during Memory search / tool execution / final answer：no stale status or stale chunk after cancel.
 - Clear chat during active turn：old callbacks do not write into the cleared view.
 - Long streaming response with Thinking expanded or user scrolled away：auto-scroll behavior remains stable.
-- Native internal gate disabled/unsupported provider：JSON planner path remains the default.
+- Native unsupported provider/model/baseURL：JSON planner path remains the fallback.
 - Native internal gate failure before visible final answer：fallback is bounded and does not duplicate tool context.
 - Native/final streaming failure after visible chunk：does not replay fallback.
 

@@ -33,12 +33,18 @@ export interface NativeToolCallingCapabilityOptions {
     validatedModels?: readonly NativeToolCallingValidation[];
 }
 
-export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [];
-export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [{
+const QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION: NativeToolCallingValidation = {
     provider: "qwen",
     model: "qwen-plus",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-}];
+};
+
+export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [
+    QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION,
+];
+export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [
+    QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION,
+];
 
 interface CreateChatModelOptions {
     transport?: ChatTransport;

@@ -48,15 +48,18 @@ export class ChatService {
         options: StreamLLMOptions = {},
     ): Promise<void> {
         const memoryMode = options.memoryMode ?? "auto";
+        const nativeToolPlanningOptions = this.plugin.settings.nativeToolPlanningSmokeEnabled
+            ? {
+                nativeToolPlanningInternalGate: true,
+                nativeToolCallingValidatedModels: SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
+            }
+            : {
+                nativeToolPlanningInternalGate: true,
+            };
         const runtime = new ChatAgentRuntime(
             this.plugin,
             this.aiUtils,
-            this.plugin.settings.nativeToolPlanningSmokeEnabled
-                ? {
-                    nativeToolPlanningInternalGate: true,
-                    nativeToolCallingValidatedModels: SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
-                }
-                : {},
+            nativeToolPlanningOptions,
         );
         const turnPlan = await runtime.planTurn({
             prompt,

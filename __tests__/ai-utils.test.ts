@@ -23,17 +23,16 @@ function createPlugin(settings: {
 }
 
 describe('native tool calling capability', () => {
-    it('starts with an empty default rollout table', () => {
-        expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([]);
-    });
-
-    it('keeps smoke validations separate from the default rollout table', () => {
-        expect(SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([{
+    it('promotes the validated qwen tuple into the default rollout table', () => {
+        expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([{
             provider: 'qwen',
             model: 'qwen-plus',
             baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         }]);
-        expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([]);
+    });
+
+    it('keeps smoke validations explicit for provider canary runs', () => {
+        expect(SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS);
     });
 
     it('defaults to disabled behind the internal gate', () => {
@@ -46,6 +45,19 @@ describe('native tool calling capability', () => {
             model: 'qwen-plus',
             baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             reason: 'Native tool calling is disabled by the internal gate.',
+        });
+    });
+
+    it('supports qwen native tool calling when the internal gate is enabled', () => {
+        const aiUtils = new AIUtils(createPlugin({}) as never);
+
+        expect(aiUtils.getNativeToolCallingCapability({ internalGate: true })).toEqual({
+            supported: true,
+            status: 'supported',
+            provider: 'qwen',
+            model: 'qwen-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            reason: 'Provider/model/baseURL is validated for native tool calling.',
         });
     });
 

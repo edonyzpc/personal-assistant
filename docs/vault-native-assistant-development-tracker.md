@@ -56,8 +56,8 @@ Smoke gate 固定要求：
 | --- | --- |
 | 创建日期 | 2026-05-10 |
 | Source of truth | `docs/PLAN.md` |
-| 当前阶段 | Phase 6: Write Action Design Handoff |
-| 当前状态 | [x] Refactor track closed through Phase 6 handoff; Chat remains read-only and future writes require separate product/security review |
+| 当前阶段 | Phase 5 follow-up: Qwen Native Default Rollout |
+| 当前状态 | [x] qwen/qwen-plus/DashScope is the default native context/tool planning path; Chat remains read-only and future writes require separate product/security review |
 | 当前分支 | `codex/chat-agent-next-refactor-plan` |
 | Review policy | 每个阶段 review 必须使用 Codex subagents |
 | Smoke policy | UI/runtime 行为变更必须 deploy 到 `test/` vault 后验证 |
@@ -71,8 +71,8 @@ Smoke gate 固定要求：
 | Phase 1 | Intent-aware Memory Workflow | [x] Done | `chat-agent.ts`, `memory-manager.ts`, `chat-service.test.ts` | 内容型输入默认 Memory search；agent-control 跳过 |
 | Phase 2 | Core Extraction + Turn Lifecycle | [x] Done | `chat-agent.ts`, `chat-service.ts`, `chat-view.ts`, `chat-types.ts` | `AgentTurnPlan` 与 `sessionId/turnId` lifecycle 落地 |
 | Phase 3 | Policy / ToolRegistry / Vault Advice Hardening | [x] Done | `chat-tools.ts`, `chat-agent.ts`, `chat-types.ts` | Registry 成为唯一 source of truth；vault advice evidence gate 落地 |
-| Phase 4 | Native Feasibility Behind Internal Gate | [x] Done | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Native planning loop stays behind internal gate; default JSON path and disabled-gate smoke passed |
-| Phase 5 | Native Rollout Decision | [x] Done | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Default rollout deferred; qwen hidden canary passed, JSON fallback stays default, openai/ollama remain unverified |
+| Phase 4 | Native Feasibility Behind Internal Gate | [x] Done | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Native planning loop landed behind capability gate; JSON fallback and disabled-gate smoke passed |
+| Phase 5 | Native Rollout Decision | [x] Done | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | qwen/qwen-plus/DashScope promoted to default native context/tool planning; openai/ollama remain unverified and use JSON fallback |
 | Phase 6 | Write Action Design Handoff | [x] Done | docs only | 写入和 command execution 另开 product/security review |
 
 ## Archived Evidence Summary
@@ -272,16 +272,16 @@ Goal: Enable native context/tool loop only for validated provider/model/baseURL 
 
 | Step | Task | Owner Files | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| dev | Add validated provider rollout table/config | `src/ai-services/ai-utils.ts`, docs | [x] Done | Default rollout table is empty; smoke/canary tuple list is separate from default rollout |
-| dev | Keep JSON planner long-term fallback | `src/ai-services/chat-agent.ts` | [x] Done | Unvalidated provider/model/baseURL combinations stay on JSON planner fallback |
+| dev | Add validated provider rollout table/config | `src/ai-services/ai-utils.ts`, docs | [x] Done | Default rollout table promotes qwen/qwen-plus/DashScope; smoke/canary tuple list remains available for future validations |
+| dev | Keep JSON planner long-term fallback | `src/ai-services/chat-agent.ts`, `src/ai-services/chat-service.ts` | [x] Done | Unvalidated provider/model/baseURL combinations stay on JSON planner fallback while validated qwen defaults to native planning |
 | dev | Add redacted diagnostics | runtime/docs | [x] Done | Native diagnostics record gate/result/schema category only; tests assert no prompt body or note path in logs |
-| dev | Add hidden provider smoke gate | `src/ai-services/chat-service.ts`, `src/settings.ts`, `src/plugin.ts` | [x] Done | `ChatService` only enables native planning when ignored local settings explicitly set `nativeToolPlanningSmokeEnabled=true` |
-| test | Add native-vs-JSON equivalence tests | tests | [x] Done for this track | Same-scenario read-only context equivalence is covered; broader provider equivalence is deferred to future rollout because default native promotion is no-go |
-| review | Codex subagents review Phase 5 rollout | native/runtime/docs | [x] Done | First-slice rollout gate, diagnostics/privacy, and coverage reviews passed after fixes |
-| fix | Address subagent findings | native/runtime/docs | [x] Done | Added invalid-args/schema-export redaction sentinels, same-scenario native-vs-JSON context equivalence, and log redaction hardening |
-| Obsidian smoke test | Validate enabled provider path | `test/` vault | [x] Done | Hidden opt-in qwen/qwen-plus/DashScope smoke executed metadata search and completed without fallback; hidden flag restored afterward |
+| dev | Add hidden provider smoke gate | `src/ai-services/chat-service.ts`, `src/settings.ts`, `src/plugin.ts` | [x] Done | Hidden flag now selects the smoke/canary validation list for future provider checks; validated qwen/qwen-plus/DashScope uses the default validation table |
+| test | Add native-vs-JSON equivalence tests | tests | [x] Done | Same-scenario read-only context equivalence is covered; qwen default rollout adds focused default-gate coverage |
+| review | Codex subagents review Phase 5 rollout | native/runtime/docs | [x] Done | Runtime review found no P0/P1/P2; docs review P2 status drift was fixed |
+| fix | Address subagent findings | native/runtime/docs | [x] Done | Fixed docs/tracker drift around hidden smoke gate, default table status, and openai/ollama deferred state |
+| Obsidian smoke test | Validate enabled provider path | `test/` vault | [x] Done | Hidden flag stayed false; default qwen/qwen-plus/DashScope native metadata path found `0.unsorted/Dog.md` without fallback |
 | fix | Address smoke findings | native/runtime/docs | [x] Done | No P1/P2 smoke blockers found |
-| go/no-go | Default rollout decision | docs | [x] Done | No-go for default native promotion in this track; keep qwen as hidden canary, keep default rollout table empty, defer openai/ollama |
+| go/no-go | Default rollout decision | docs/runtime | [x] Done | Go for qwen/qwen-plus/DashScope default native planning after validation; defer openai/ollama |
 
 Expected commands:
 
@@ -324,7 +324,8 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 4 native loop | Codex subagents: architecture/runtime, provider/native shape, test coverage | [x] Passed | No P0/P1/P2 findings; native loop remains context/tool planning only, `ChatService` still owns final streaming, provider schema bind and fallback boundaries looked sound | Added mock native schema-bind/tool-execution coverage, invalid-args JSON fallback, and incomplete-native-planning JSON fallback before final answer output |
 | 2026-05-10 | Phase 5 first slice | Codex subagents: rollout gate, diagnostics/privacy, test coverage | [x] Fixed | P2: fallback diagnostics redaction coverage did not yet include invalid native args/schema export failure sentinels; native-vs-JSON equivalence lacked a same-scenario read-only context comparison | Added privacy sentinel tests for invalid args and schema export failure, added same-scenario `search_vault_metadata` native-vs-JSON context equivalence test, and re-reviewed to no actionable findings |
 | 2026-05-10 | Phase 5 smoke gate | Codex subagents: rollout/runtime gate, privacy/logging | [x] Passed | No P0/P1/P2 findings; one full-test migration save regression was found locally and fixed before commit | Kept default rollout table empty, added hidden local qwen smoke gate, hardened tool failure logs, and verified settings migration does not save merely because the hidden flag is absent |
-| 2026-05-10 | Phase 5 rollout decision | Local go/no-go | [x] Deferred default rollout | qwen/qwen-plus/DashScope hidden canary passed, but openai/ollama remain unverified and qwen has only one real metadata-path smoke in this track | Keep default rollout table empty, keep hidden canary path for future smoke, and move to Phase 6 write-action design handoff |
+| 2026-05-10 | Phase 5 rollout decision | Local go/no-go | [x] Superseded by qwen default follow-up | Initial decision deferred default rollout because openai/ollama remained unverified and qwen had only one real metadata-path smoke in that slice | Later qwen validation promoted qwen/qwen-plus/DashScope to the default table; openai/ollama remain deferred |
+| 2026-05-10 | Phase 5 qwen default rollout | Codex subagents: runtime/fallback/privacy, docs/tracker | [x] Fixed | Runtime review found no P0/P1/P2; docs review found P2 stale wording around hidden smoke gate, default table state, and openai/ollama status | Fixed docs/tracker status drift, promoted qwen/qwen-plus/DashScope to default native planning, and kept openai/ollama on JSON fallback |
 | 2026-05-10 | Phase 6 write handoff | Codex subagents: product/security, architecture/QA | [x] Fixed | P2: Phase 5 was marked done while a QA row still said in progress; Phase 6 handoff doc read as closed while tracker gates still said in progress/todo | Marked Phase 5 equivalence done-for-this-track with future provider work deferred; closed Phase 6 docs/test/review/smoke gates as docs-only handoff |
 
 ## Verification Log
@@ -410,6 +411,14 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 5 smoke setup | `make deploy` | [x] Passed | Ran full Jest 20 suites / 213 tests, lint, build, and copied plugin assets into `test/.obsidian/plugins/personal-assistant/` |
 | 2026-05-10 | Phase 5 Obsidian smoke | Hidden opt-in qwen native metadata path | [x] Passed | Temporarily set ignored `nativeToolPlanningSmokeEnabled=true`, reloaded Obsidian, asked for notes with tag `canine-variety`; Thinking showed metadata search and `Found 1 metadata match(es).: 0.unsorted/Dog.md`, final answer was `0.unsorted/Dog.md`, and no fallback status appeared |
 | 2026-05-10 | Phase 5 Obsidian smoke cleanup | Restore hidden smoke flag | [x] Passed | Restored ignored test vault `data.json` to the pre-smoke state by removing the temporary hidden flag |
+| 2026-05-10 | Phase 5 qwen default rollout | `npm test -- __tests__/ai-utils.test.ts __tests__/chat-service.test.ts --runInBand` | [x] Passed | 2 suites / 95 tests passed after default qwen rollout and default-gate coverage |
+| 2026-05-10 | Phase 5 qwen default rollout | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors |
+| 2026-05-10 | Phase 5 qwen default rollout | `npm run lint` | [x] Passed | ESLint passed |
+| 2026-05-10 | Phase 5 qwen default rollout | `git diff --check` | [x] Passed | Whitespace check passed |
+| 2026-05-10 | Phase 5 qwen default rollout | `npm test -- --runInBand` | [x] Passed | 20 suites / 214 tests passed |
+| 2026-05-10 | Phase 5 qwen default rollout | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
+| 2026-05-10 | Phase 5 qwen default smoke setup | `make deploy` | [x] Passed | Ran full Jest 20 suites / 214 tests, lint, build, and copied plugin assets into `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-10 | Phase 5 qwen default Obsidian smoke | Default qwen native metadata path | [x] Passed | With `nativeToolPlanningSmokeEnabled=false`, reloaded Obsidian, asked for notes with tag `canine-variety`; Thinking showed metadata search and `Found 1 metadata match(es).: 0.unsorted/Dog.md`, final answer was `0.unsorted/Dog.md`, and no fallback status appeared |
 | 2026-05-10 | Phase 6 docs draft | `docs/write-action-design-handoff.md` | [x] Passed | Drafted write-action boundary, preview/confirm gates, local-only redacted audit contract, runtime boundary, test matrix, and open decisions |
 | 2026-05-10 | Phase 6 docs check | `git diff --check -- docs/PLAN.md docs/vault-native-assistant-development-tracker.md docs/write-action-design-handoff.md` | [x] Passed | Docs whitespace check passed after handoff draft |
 | 2026-05-10 | Phase 6 Obsidian smoke decision | Docs-only handoff | [x] Skipped | No Chat UI, runtime, Memory routing, ToolRegistry/native path, lifecycle behavior, or write prototype changed |
@@ -422,7 +431,7 @@ Goal: Keep write action and command execution out of this implementation track u
 | Core/native path creates a second final streaming owner | P1 | Phase 2/4 | `ChatService` remains final streaming owner; `AgentTurnPlan` only wraps prompt planning; subagent architecture review passed | [x] Mitigated for Phase 2 |
 | Stale status/chunk updates cleared or cancelled chat | P1 | Phase 2 | `sessionId/turnId` active turn guard, AbortError tests, rAF cleanup tests, and Obsidian clear/cancel smoke | [x] Mitigated |
 | Cancel button visible while no generation is active | P2 | Phase 2 | Explicit hidden class plus scoped CSS specificity; Obsidian reload smoke verified initial controls | [x] Mitigated |
-| Tool metadata diverges between JSON and native path | P2 | Phase 3/4 | ToolRegistry now stores schema/policy/budget/source-boundary metadata, exposes `listDefinitions()` / `getDefinition()` / provider schema export, and JSON planner consumes registry definitions | [x] Mitigated for JSON planner / Phase 3 |
+| Tool metadata diverges between JSON and native path | P2 | Phase 3/4/5 | ToolRegistry now stores schema/policy/budget/source-boundary metadata, exports provider schemas, JSON/native paths share registry semantics, and qwen default rollout smoke passed metadata tool context without fallback | [x] Mitigated for current qwen default rollout |
 | Vault advice upgrades ordinary notes into user preferences | P2 | Phase 3 | Strict `vault_advice_context` evidence classification, prompt policy, prompt-injection fixtures, subagent safety review, and Obsidian smoke | [x] Mitigated |
 | Planner prompt duplicates tool metadata outside registry | P2 | Phase 3 | Removed hardcoded registered-tool examples from planner system prompt and asserted registry-derived tool definitions in tests | [x] Mitigated |
 | Native capability allowlist accidentally wildcards custom baseURL | P2 | Phase 4 | `NativeToolCallingValidation.baseURL` is required, matching uses normalized exact baseURL, and custom OpenAI-compatible baseURL negative test covers the regression | [x] Mitigated |
@@ -438,7 +447,7 @@ Goal: Keep write action and command execution out of this implementation track u
 | --- | --- | --- | --- |
 | Branch name for implementation | Before Phase 1 dev | [x] Done | Current branch: `codex/chat-agent-next-refactor-plan` |
 | Whether to create a separate implementation tracker per phase | Before large implementation | [x] Not needed | Current tracker covered all phases through Phase 6 |
-| Provider smoke availability for `openai` / `qwen` / `ollama` | Phase 5 | [x] Decided for this track | qwen/qwen-plus/DashScope hidden opt-in smoke passed; openai/ollama remain unverified; default rollout table remains empty by no-go decision |
+| Provider smoke availability for `openai` / `qwen` / `ollama` | Phase 5 | [x] Decided for this track | qwen/qwen-plus/DashScope hidden opt-in and default native smoke passed; openai/ollama remain unverified and deferred to JSON planner fallback |
 
 ## Final Completion Criteria
 
