@@ -11,6 +11,41 @@ import { obsidianFetch } from './obsidian-fetch';
 
 type ChatTransport = 'obsidian' | 'native';
 
+export type NativeToolCallingCapabilityStatus = "disabled" | "unsupported" | "supported";
+
+export interface NativeToolCallingCapability {
+    supported: boolean;
+    status: NativeToolCallingCapabilityStatus;
+    provider: string;
+    model: string;
+    baseURL: string;
+    reason: string;
+}
+
+export interface NativeToolCallingValidation {
+    provider: string;
+    model: string;
+    baseURL: string;
+}
+
+export interface NativeToolCallingCapabilityOptions {
+    internalGate?: boolean;
+    validatedModels?: readonly NativeToolCallingValidation[];
+}
+
+const QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION: NativeToolCallingValidation = {
+    provider: "qwen",
+    model: "qwen-plus",
+    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+};
+
+export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [
+    QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION,
+];
+export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [
+    QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION,
+];
+
 interface CreateChatModelOptions {
     transport?: ChatTransport;
 }
@@ -143,6 +178,74 @@ export class AIUtils {
         }
     }
 
+    getNativeToolCallingCapability(
+        options: NativeToolCallingCapabilityOptions = {},
+    ): NativeToolCallingCapability {
+        const provider = normalizeCapabilityValue(this.plugin.settings.aiProvider);
+        const model = normalizeCapabilityValue(this.plugin.settings.chatModelName);
+        const baseURL = normalizeBaseURL(this.plugin.settings.baseURL);
+
+        if (!options.internalGate) {
+            return {
+                supported: false,
+                status: "disabled",
+                provider,
+                model,
+                baseURL,
+                reason: "Native tool calling is disabled by the internal gate.",
+            };
+        }
+
+        if (!isKnownNativeToolProvider(provider)) {
+            return {
+                supported: false,
+                status: "unsupported",
+                provider,
+                model,
+                baseURL,
+                reason: "Unknown AI provider; native tool calling defaults to unsupported.",
+            };
+        }
+
+        if (!model) {
+            return {
+                supported: false,
+                status: "unsupported",
+                provider,
+                model,
+                baseURL,
+                reason: "Chat model is not configured for native tool calling validation.",
+            };
+        }
+
+        const validatedModels = options.validatedModels ?? DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS;
+        const validated = validatedModels.some((entry) => {
+            return normalizeCapabilityValue(entry.provider) === provider
+                && normalizeCapabilityValue(entry.model) === model
+                && normalizeBaseURL(entry.baseURL) === baseURL;
+        });
+
+        if (!validated) {
+            return {
+                supported: false,
+                status: "unsupported",
+                provider,
+                model,
+                baseURL,
+                reason: "Provider/model/baseURL is not validated for native tool calling.",
+            };
+        }
+
+        return {
+            supported: true,
+            status: "supported",
+            provider,
+            model,
+            baseURL,
+            reason: "Provider/model/baseURL is validated for native tool calling.",
+        };
+    }
+
     /**
      * 创建嵌入模型实例
      */
@@ -234,4 +337,17 @@ export class AIUtils {
         const content = markdown.slice(frontmatterInfo.contentStart);
         return { content, frontmatterInfo };
     }
-} 
+}
+
+function normalizeCapabilityValue(value: unknown): string {
+    return typeof value === "string" ? value.trim().toLowerCase() : "";
+}
+
+function normalizeBaseURL(value: unknown): string {
+    const normalized = normalizeCapabilityValue(value);
+    return normalized.replace(/\/+$/, "");
+}
+
+function isKnownNativeToolProvider(provider: string): boolean {
+    return provider === "openai" || provider === "qwen" || provider === "ollama";
+}

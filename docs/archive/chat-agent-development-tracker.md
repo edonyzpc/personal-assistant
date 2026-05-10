@@ -1,5 +1,8 @@
 # Chat Agent 开发任务计划与进展追踪
 
+> [!IMPORTANT]
+> Archived historical record. This document is no longer a design or execution source of truth. Use [Vault-native Obsidian Assistant Refactor Plan](../PLAN.md) and [Vault-native Assistant Development Tracker](../vault-native-assistant-development-tracker.md) for current work. Any guidance below is historical evidence only; if it conflicts with the current plan or tracker, the current docs win.
+
 ## 文档目的
 
 本文档用于追踪 Chat Agent 从 v1 agentic retrieval 到后续 tools、skills、write actions 的开发进度、测试证据、风险处理和关键决策。

@@ -1,5 +1,8 @@
 # Chat Agent 架构设计
 
+> [!IMPORTANT]
+> Archived historical record. This document is no longer a design or execution source of truth. Use [Vault-native Obsidian Assistant Refactor Plan](../PLAN.md) and [Vault-native Assistant Development Tracker](../vault-native-assistant-development-tracker.md) for current work. Any guidance below is historical evidence only; if it conflicts with the current plan or tracker, the current docs win.
+
 ## 背景
 
 当前 Chat 功能的主路径是：

@@ -850,6 +850,13 @@ export class PluginManager extends Plugin {
                 changed = true;
             }
             if (
+                "nativeToolPlanningSmokeEnabled" in this.settings
+                && typeof this.settings.nativeToolPlanningSmokeEnabled !== "boolean"
+            ) {
+                this.settings.nativeToolPlanningSmokeEnabled = false;
+                changed = true;
+            }
+            if (
                 this.settings.aiProvider === 'qwen'
                 && this.settings.embeddingModelName === 'text-embedding-v3'
                 && !this.settings.embeddingV4MigrationNoticeDismissed

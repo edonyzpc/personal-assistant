@@ -1,5 +1,8 @@
 # Chat Agent Phase 2 只读工具扩展方案
 
+> [!IMPORTANT]
+> Archived historical record. This document is no longer a design or execution source of truth. Use [Vault-native Obsidian Assistant Refactor Plan](../PLAN.md) and [Vault-native Assistant Development Tracker](../vault-native-assistant-development-tracker.md) for current work. Any guidance below is historical evidence only; if it conflicts with the current plan or tracker, the current docs win.
+
 ## 文档目的
 
 本文档承接 `./chat-agent-architecture.md` 和 `./chat-agent-development-tracker.md`，把 Phase 2 的“只读工具扩展”从 tracker 占位拆成可开发、可验证、可持续演进的实现计划。

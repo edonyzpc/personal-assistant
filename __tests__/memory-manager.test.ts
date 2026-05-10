@@ -377,6 +377,8 @@ describe('Memory product language', () => {
             expect(visibleCopy.toLowerCase()).not.toContain(term.toLowerCase());
         }
         expect(visibleCopy).toContain('Your notes will not be changed or deleted.');
+        expect(visibleCopy).toContain('your question may be sent to your configured AI provider to search Memory');
+        expect(visibleCopy).toContain('This does not send all note text.');
         expect(visibleCopy).toContain('AI credits or API calls');
         expect(commandCopy.primaryAction).toBe('Prepare memory');
     });

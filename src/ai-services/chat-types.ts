@@ -47,6 +47,32 @@ export interface AgentPromptPlan {
     usedMemory: boolean;
 }
 
+export type VaultAdviceEvidenceKind =
+    | "explicit_rule"
+    | "template_or_workflow"
+    | "fact_context"
+    | "insufficient_evidence";
+
+export interface VaultAdviceEvidence {
+    kind: VaultAdviceEvidenceKind;
+    tool: string;
+    path?: string;
+    reason: string;
+    excerpt?: string;
+}
+
+export interface VaultAdviceContext {
+    applies: boolean;
+    evidence: VaultAdviceEvidence[];
+}
+
+export interface AgentTurnPlan {
+    finalAnswer: AgentPromptPlan;
+    vaultAdviceContext?: VaultAdviceContext;
+}
+
+export type ChatAgentIntent = "content-seeking" | "agent-control";
+
 export type ChatToolName =
     | "search_memory"
     | "get_current_note_context"

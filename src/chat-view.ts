@@ -26,6 +26,10 @@ export class LLMView extends ItemView {
     chatHistory: ChatMessage[] = [];
     vss: VSS;
     private chatService: ChatService;
+    private viewSessionId = 0;
+    private activeTurnId = 0;
+    private activeTurnCancelled = false;
+    private scheduledScrollFrame: number | null = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
@@ -47,6 +51,7 @@ export class LLMView extends ItemView {
     }
 
     async onOpen() {
+        const sessionId = this.startViewSession();
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
@@ -70,10 +75,11 @@ export class LLMView extends ItemView {
         });
 
         const buttonDiv = inputDiv.createDiv({ cls: 'llm-buttons' });
-        const sendButton = buttonDiv.createEl('button', { text: 'Ask' });
+        const sendButton = buttonDiv.createEl('button', { text: 'Ask', cls: 'send-button-visible' });
         const clearButton = buttonDiv.createEl('button', { text: 'Clear Chat' });
         const addToEditorButton = buttonDiv.createEl('button', { text: 'Add to Editor' });
-        const cancelButton = buttonDiv.createEl('button', { text: '✕', cls: 'cancel-button cancel-button-hidden' });
+        const cancelButton = buttonDiv.createEl('button', { text: '✕', cls: 'cancel-button' });
+        cancelButton.classList.add('cancel-button-hidden');
 
         addToEditorButton.disabled = true;
 
@@ -81,7 +87,6 @@ export class LLMView extends ItemView {
 
         const AUTO_SCROLL_THRESHOLD_PX = 80;
         let shouldAutoScroll = true;
-        let scheduledScrollFrame: number | null = null;
 
         const isNearBottom = () => {
             const distanceFromBottom = this.responseDiv.scrollHeight
@@ -99,17 +104,19 @@ export class LLMView extends ItemView {
                 return;
             }
 
-            if (scheduledScrollFrame !== null) {
-                window.cancelAnimationFrame(scheduledScrollFrame);
+            if (this.scheduledScrollFrame !== null) {
+                window.cancelAnimationFrame(this.scheduledScrollFrame);
             }
 
-            scheduledScrollFrame = window.requestAnimationFrame(() => {
-                scheduledScrollFrame = null;
+            const frameId = window.requestAnimationFrame(() => {
+                if (this.scheduledScrollFrame !== frameId) return;
+                this.scheduledScrollFrame = null;
                 this.responseDiv.scrollTo({
                     top: this.responseDiv.scrollHeight,
                     behavior,
                 });
             });
+            this.scheduledScrollFrame = frameId;
         };
 
         const pauseAutoScroll = () => {
@@ -124,8 +131,8 @@ export class LLMView extends ItemView {
 
         cancelButton.onclick = () => {
             if (this.abortController) {
+                this.activeTurnCancelled = true;
                 this.abortController.abort();
-                this.abortController = null;
                 cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
                 sendButton.classList.replace('send-button-hidden', 'send-button-visible');
                 new Notice('Generation cancelled');
@@ -275,6 +282,11 @@ export class LLMView extends ItemView {
             sendButton.disabled = true;
             shouldAutoScroll = true;
             activeStatusView = null;
+            const turnId = this.startTurn();
+            const controller = new AbortController();
+            this.abortController = controller;
+            const isLiveTurn = () => this.isCurrentTurn(sessionId, turnId, controller);
+            const isSameTurn = () => this.isCurrentTurn(sessionId, turnId, controller, { includeCancelled: true });
 
             try {
                 this.chatHistory.push({ role: 'user', content: prompt });
@@ -282,7 +294,6 @@ export class LLMView extends ItemView {
 
                 textArea.value = '';
                 addToEditorButton.disabled = true;
-                this.abortController = new AbortController();
                 cancelButton.classList.replace('cancel-button-hidden', 'cancel-button-visible');
                 sendButton.classList.replace('send-button-visible', 'send-button-hidden');
                 let responseContent = '';
@@ -292,6 +303,7 @@ export class LLMView extends ItemView {
                 await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
+                        if (!isLiveTurn()) return;
                         responseContent = chunk;
                         if (!streamingMessageEl) {
                             streamingMessageEl = this.responseDiv.createDiv({ cls: 'llm-message assistant' });
@@ -320,14 +332,18 @@ export class LLMView extends ItemView {
                         this.result = chunk;
                         addToEditorButton.disabled = false;
                     },
-                    this.abortController.signal,
+                    controller.signal,
                     this.chatHistory,
                     {
                         memoryMode: "auto",
-                        onStatus: renderAgentStatus,
+                        onStatus: (status) => {
+                            if (!isLiveTurn()) return;
+                            renderAgentStatus(status);
+                        },
                     },
                 );
 
+                if (!isLiveTurn()) return;
                 this.chatHistory.push({ role: 'assistant', content: responseContent });
 
                 if (streamingMessageEl) {
@@ -340,23 +356,32 @@ export class LLMView extends ItemView {
                 );
 
             } catch (error) {
+                if (!isSameTurn()) return;
                 if (error instanceof DOMException && error.name === 'AbortError') {
                     renderMessage({ role: 'assistant', content: '*Generation cancelled*' });
                 } else {
                     new Notice('Error: ' + error);
                 }
             } finally {
-                cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
-                sendButton.classList.replace('send-button-hidden', 'send-button-visible');
-                sendButton.disabled = false;
-                this.abortController = null;
+                if (isSameTurn()) {
+                    cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
+                    sendButton.classList.replace('send-button-hidden', 'send-button-visible');
+                    sendButton.disabled = false;
+                    this.abortController = null;
+                    this.activeTurnCancelled = false;
+                }
             }
         };
 
         clearButton.onclick = () => {
+            this.invalidateActiveTurn();
+            this.cancelScheduledScroll();
             this.chatHistory = [];
             this.responseDiv.empty();
             addToEditorButton.disabled = true;
+            cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
+            sendButton.classList.replace('send-button-hidden', 'send-button-visible');
+            sendButton.disabled = false;
             new Notice('Chat cleared');
         };
 
@@ -382,6 +407,49 @@ export class LLMView extends ItemView {
         };
 
         // vss cache updates are now handled globally in the plugin
+    }
+
+    async onClose() {
+        this.invalidateActiveTurn();
+        this.cancelScheduledScroll();
+    }
+
+    private startViewSession(): number {
+        this.cancelScheduledScroll();
+        this.viewSessionId += 1;
+        return this.viewSessionId;
+    }
+
+    private startTurn(): number {
+        this.activeTurnId += 1;
+        this.activeTurnCancelled = false;
+        return this.activeTurnId;
+    }
+
+    private isCurrentTurn(
+        sessionId: number,
+        turnId: number,
+        controller: AbortController,
+        options: { includeCancelled?: boolean } = {},
+    ): boolean {
+        return this.viewSessionId === sessionId
+            && this.activeTurnId === turnId
+            && this.abortController === controller
+            && (options.includeCancelled || !this.activeTurnCancelled);
+    }
+
+    private invalidateActiveTurn() {
+        this.activeTurnId += 1;
+        this.activeTurnCancelled = true;
+        this.abortController?.abort();
+        this.abortController = null;
+    }
+
+    private cancelScheduledScroll() {
+        if (this.scheduledScrollFrame !== null) {
+            window.cancelAnimationFrame(this.scheduledScrollFrame);
+            this.scheduledScrollFrame = null;
+        }
     }
 
     private updateClickableLink(containerEl: HTMLElement) {

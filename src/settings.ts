@@ -60,6 +60,7 @@ export interface PluginManagerSettings {
     memoryAutoCheckBeforeChat: boolean;
     memoryApprovalPolicy: "always" | "auto-refresh-after-prepare";
     showAdvancedMemoryControls: boolean;
+    nativeToolPlanningSmokeEnabled: boolean;
     // 兼容旧版本
     modelName: string;
     featuredImagePath: string;
@@ -125,6 +126,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     memoryAutoCheckBeforeChat: true,
     memoryApprovalPolicy: "always",
     showAdvancedMemoryControls: false,
+    nativeToolPlanningSmokeEnabled: false,
     // 兼容旧版本
     modelName: "qwen-plus",
     featuredImagePath: "9.src",
