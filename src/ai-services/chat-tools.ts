@@ -18,12 +18,61 @@ export interface ChatToolContext {
     onToolRunning?: (tool: string, message: string) => void;
 }
 
+export type ChatToolPermission = "read-only";
+export type ChatToolCost = "free" | "ai-calls";
+export type ChatToolFailureBehavior = "recoverable";
+export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool";
+
+export interface ChatToolInputSchemaProperty {
+    type: "string" | "number" | "integer" | "boolean";
+    description?: string;
+    enum?: string[];
+    minimum?: number;
+    maximum?: number;
+}
+
+export interface ChatToolInputSchema {
+    type: "object";
+    properties: Record<string, ChatToolInputSchemaProperty>;
+    required?: string[];
+    additionalProperties: boolean;
+}
+
+export interface ChatToolRegistryDefinition {
+    name: ChatToolName;
+    description: string;
+    inputSchema: ChatToolInputSchema;
+    plannerGuidance: string[];
+    permission: ChatToolPermission;
+    cost: ChatToolCost;
+    outputBudgetChars: number;
+    requiresConfirmation: boolean;
+    failureBehavior: ChatToolFailureBehavior;
+    statusMessage: string;
+    sourceBoundary: ChatToolSourceBoundary;
+}
+
+export interface ChatToolProviderSchema {
+    type: "function";
+    function: {
+        name: string;
+        description: string;
+        parameters: ChatToolInputSchema;
+    };
+}
+
 export interface ChatToolDefinition<Input, Output> {
     name: ChatToolName;
     description: string;
-    permission: "read-only";
-    cost: "free" | "ai-calls";
+    inputSchema: ChatToolInputSchema;
+    plannerGuidance: string[];
+    permission: ChatToolPermission;
+    cost: ChatToolCost;
     outputBudgetChars: number;
+    requiresConfirmation: boolean;
+    failureBehavior: ChatToolFailureBehavior;
+    statusMessageText: string;
+    sourceBoundary: ChatToolSourceBoundary;
     statusMessage(input: Input): string;
     validateInput(input: unknown): Input;
     execute(input: Input, context: ChatToolContext): Promise<ChatToolResult<Output>>;
@@ -31,6 +80,7 @@ export interface ChatToolDefinition<Input, Output> {
 
 interface RegisteredChatTool {
     name: ChatToolName;
+    definition: ChatToolRegistryDefinition;
     validateInput(input: unknown): unknown;
     statusMessage(input: unknown): string;
     execute(input: unknown, context: ChatToolContext): Promise<ChatToolResult<unknown>>;
@@ -178,12 +228,37 @@ export class ToolRegistry {
     private readonly tools = new Map<ChatToolName, RegisteredChatTool>();
 
     register<Input, Output>(definition: ChatToolDefinition<Input, Output>): void {
-        this.tools.set(definition.name, definition as unknown as RegisteredChatTool);
+        this.tools.set(definition.name, {
+            name: definition.name,
+            definition: toRegistryDefinition(definition),
+            validateInput: definition.validateInput,
+            statusMessage: definition.statusMessage as (input: unknown) => string,
+            execute: definition.execute as (input: unknown, context: ChatToolContext) => Promise<ChatToolResult<unknown>>,
+        });
     }
 
     get(name: string): RegisteredChatTool | undefined {
         if (!isChatToolName(name)) return undefined;
         return this.tools.get(name);
+    }
+
+    getDefinition(name: string): ChatToolRegistryDefinition | undefined {
+        return this.get(name)?.definition;
+    }
+
+    listDefinitions(): ChatToolRegistryDefinition[] {
+        return [...this.tools.values()].map((tool) => cloneRegistryDefinition(tool.definition));
+    }
+
+    exportProviderSchemas(): ChatToolProviderSchema[] {
+        return this.listDefinitions().map((definition) => ({
+            type: "function",
+            function: {
+                name: definition.name,
+                description: definition.description,
+                parameters: definition.inputSchema,
+            },
+        }));
     }
 
     has(name: string): boolean {
@@ -222,15 +297,72 @@ export class ToolRegistry {
     }
 }
 
+function toRegistryDefinition<Input, Output>(
+    definition: ChatToolDefinition<Input, Output>,
+): ChatToolRegistryDefinition {
+    return {
+        name: definition.name,
+        description: definition.description,
+        inputSchema: cloneInputSchema(definition.inputSchema),
+        plannerGuidance: [...definition.plannerGuidance],
+        permission: definition.permission,
+        cost: definition.cost,
+        outputBudgetChars: definition.outputBudgetChars,
+        requiresConfirmation: definition.requiresConfirmation,
+        failureBehavior: definition.failureBehavior,
+        statusMessage: definition.statusMessageText,
+        sourceBoundary: definition.sourceBoundary,
+    };
+}
+
+function cloneRegistryDefinition(definition: ChatToolRegistryDefinition): ChatToolRegistryDefinition {
+    return {
+        ...definition,
+        inputSchema: cloneInputSchema(definition.inputSchema),
+        plannerGuidance: [...definition.plannerGuidance],
+    };
+}
+
+function cloneInputSchema(schema: ChatToolInputSchema): ChatToolInputSchema {
+    return {
+        ...schema,
+        properties: Object.fromEntries(Object.entries(schema.properties).map(([name, property]) => [
+            name,
+            { ...property, enum: property.enum ? [...property.enum] : undefined },
+        ])),
+        required: schema.required ? [...schema.required] : undefined,
+    };
+}
+
 export function createSearchMemoryTool(
     executeSearch: (input: SearchMemoryInput, context: ChatToolContext) => Promise<MemorySearchResult>,
 ): ChatToolDefinition<SearchMemoryInput, MemorySearchResult> {
     return {
         name: "search_memory",
         description: "Search Memory prepared from the user's notes.",
+        plannerGuidance: [
+            "Use for questions that need the user's prepared Memory or historical note context beyond currently supplied context.",
+            "Do not use for general knowledge, pure rewriting, or agent-control requests.",
+            "Use a concise query that preserves the user's important terms.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Search query for Memory prepared from the user's notes.",
+                },
+            },
+            required: ["query"],
+            additionalProperties: false,
+        },
         permission: "read-only",
         cost: "ai-calls",
         outputBudgetChars: 8000,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Searching memory",
+        sourceBoundary: "memory",
         statusMessage: (input) => `Searching memory: ${input.query}`,
         validateInput: validateSearchMemoryInput,
         execute: async (input, context) => {
@@ -250,9 +382,29 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
     return {
         name: "get_current_note_context",
         description: "Read the active Markdown note title, path, selection, nearby text, or outline.",
+        plannerGuidance: [
+            "Use when the user refers to the current note, selected text, this paragraph, nearby content, outline, or current note metadata.",
+            "Prefer selection-or-nearby for summary, explanation, rewrite, or local context questions.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                mode: {
+                    type: "string",
+                    description: "Current note context mode.",
+                    enum: ["selection-or-nearby", "outline", "metadata"],
+                },
+            },
+            required: ["mode"],
+            additionalProperties: false,
+        },
         permission: "read-only",
         cost: "free",
         outputBudgetChars: CURRENT_NOTE_CONTENT_BUDGET_CHARS,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Reading current note",
+        sourceBoundary: "current-note",
         statusMessage: () => "Reading current note",
         validateInput: validateCurrentNoteContextInput,
         execute: async (input, context) => {
@@ -304,9 +456,34 @@ export function createSearchVaultMetadataTool(): ChatToolDefinition<SearchVaultM
     return {
         name: "search_vault_metadata",
         description: "Search Markdown note filenames, paths, tags, and frontmatter metadata.",
+        plannerGuidance: [
+            "Use when the user wants to find notes by title, path, tag, frontmatter, folder, or metadata keyword.",
+            "This returns vault facts and note paths; it does not create Memory references or user preferences.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                query: {
+                    type: "string",
+                    description: "Filename, path, tag, or frontmatter search query.",
+                },
+                limit: {
+                    type: "integer",
+                    description: "Maximum number of matches to return.",
+                    minimum: 1,
+                    maximum: VAULT_METADATA_MAX_LIMIT,
+                },
+            },
+            required: ["query"],
+            additionalProperties: false,
+        },
         permission: "read-only",
         cost: "free",
         outputBudgetChars: 5000,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Searching note metadata",
+        sourceBoundary: "read-only-tool",
         statusMessage: (input) => `Searching note metadata: ${input.query}`,
         validateInput: validateSearchVaultMetadataInput,
         execute: async (input, context) => {
@@ -334,9 +511,35 @@ export function createListRecentNotesTool(): ChatToolDefinition<ListRecentNotesI
     return {
         name: "list_recent_notes",
         description: "List recently modified or created Markdown notes.",
+        plannerGuidance: [
+            "Use when the user asks what they recently wrote, modified, created, or worked on in the vault.",
+            "This returns vault facts only; it does not establish long-term user preferences.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                limit: {
+                    type: "integer",
+                    description: "Maximum number of notes to return.",
+                    minimum: 1,
+                    maximum: RECENT_NOTES_MAX_LIMIT,
+                },
+                order: {
+                    type: "string",
+                    description: "Sort by modified time or created time.",
+                    enum: ["modified", "created"],
+                },
+            },
+            required: ["order"],
+            additionalProperties: false,
+        },
         permission: "read-only",
         cost: "free",
         outputBudgetChars: 4000,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Listing recent notes",
+        sourceBoundary: "read-only-tool",
         statusMessage: (input) => `Listing recent ${input.order === "created" ? "created" : "modified"} notes`,
         validateInput: validateListRecentNotesInput,
         execute: async (input, context) => {
@@ -362,9 +565,34 @@ export function createReadNoteOutlineTool(): ChatToolDefinition<ReadNoteOutlineI
     return {
         name: "read_note_outline",
         description: "Read the heading outline for a specific Markdown note path.",
+        plannerGuidance: [
+            "Use after a note path is known and the user needs heading structure, organization, or outline-level context.",
+            "This returns read-only outline facts; it does not read full note bodies.",
+        ],
+        inputSchema: {
+            type: "object",
+            properties: {
+                path: {
+                    type: "string",
+                    description: "Markdown note path to read.",
+                },
+                max_headings: {
+                    type: "integer",
+                    description: "Maximum number of headings to return.",
+                    minimum: 1,
+                    maximum: NOTE_OUTLINE_MAX_HEADINGS,
+                },
+            },
+            required: ["path"],
+            additionalProperties: false,
+        },
         permission: "read-only",
         cost: "free",
         outputBudgetChars: 5000,
+        requiresConfirmation: false,
+        failureBehavior: "recoverable",
+        statusMessageText: "Reading note outline",
+        sourceBoundary: "read-only-tool",
         statusMessage: (input) => `Reading note outline: ${input.path}`,
         validateInput: validateReadNoteOutlineInput,
         execute: async (input, context) => {
