@@ -478,6 +478,8 @@ Diagnostics and metrics privacy contract:
 
 ## Future Write Action Contract
 
+Phase 6 handoff doc: [Write Action Design Handoff](./write-action-design-handoff.md).
+
 本轮不实现直接写入笔记、不创建或删除笔记、不新增 bash、不提供任意文件系统 edit。未来写入能力只保留设计契约。
 
 本轮也不实现 Obsidian command 自动执行。Vault 管理相关输出只生成建议、步骤和用户可执行的操作计划；任何 command execution 能力都必须作为独立 action family 重新设计和确认。
