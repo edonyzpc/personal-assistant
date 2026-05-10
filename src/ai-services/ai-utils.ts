@@ -33,6 +33,8 @@ export interface NativeToolCallingCapabilityOptions {
     validatedModels?: readonly NativeToolCallingValidation[];
 }
 
+export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [];
+
 interface CreateChatModelOptions {
     transport?: ChatTransport;
 }
@@ -205,11 +207,12 @@ export class AIUtils {
             };
         }
 
-        const validated = options.validatedModels?.some((entry) => {
+        const validatedModels = options.validatedModels ?? DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS;
+        const validated = validatedModels.some((entry) => {
             return normalizeCapabilityValue(entry.provider) === provider
                 && normalizeCapabilityValue(entry.model) === model
                 && normalizeBaseURL(entry.baseURL) === baseURL;
-        }) ?? false;
+        });
 
         if (!validated) {
             return {

@@ -478,6 +478,48 @@ describe('native tool planning loop', () => {
         );
     }
 
+    function nativeDiagnostics(plugin: ReturnType<typeof createPlugin>) {
+        return (plugin.log as jest.Mock).mock.calls
+            .filter(([message]) => message === 'Native tool planning diagnostic')
+            .map(([, diagnostic]) => diagnostic);
+    }
+
+    it('keeps unvalidated provider/model/baseURL combinations on JSON planner fallback', async () => {
+        mockGetNativeToolCallingCapability.mockReturnValue({
+            supported: false,
+            status: 'unsupported',
+            provider: 'openai',
+            model: 'gpt-test',
+            baseURL: 'https://api.openai.com/v1',
+            reason: 'Provider/model/baseURL is not validated for native tool calling.',
+        });
+        const jsonPlanner = createInvokeModel('{"action":"answer","reason":"json fallback","use_memory":false}');
+        mockCreateChatModel.mockResolvedValueOnce(jsonPlanner);
+
+        const plugin = createPlugin();
+        const runtime = createRuntime(plugin);
+
+        const plan = await runtime.planTurn({
+            prompt: 'question about notes',
+            memoryMode: 'auto',
+        });
+
+        expect(plan.finalAnswer.chainInput).toMatchObject({
+            input: 'Human: question about notes\nAssistant:',
+        });
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(1);
+        expect(nativeDiagnostics(plugin)).toEqual([
+            expect.objectContaining({
+                event: 'gate-rejected',
+                provider: 'openai',
+                modelConfigured: true,
+                baseURLConfigured: true,
+                capabilityStatus: 'unsupported',
+                reasonCategory: 'provider_model_baseurl_not_validated',
+            }),
+        ]);
+    });
+
     it('binds provider schemas and executes native read-only tool calls through the registry', async () => {
         enableNativeCapability();
         let boundTools: unknown[] = [];
@@ -555,7 +597,123 @@ describe('native tool planning loop', () => {
                 message: 'Found 1 metadata match(es).',
             }),
         ]));
+        expect(nativeDiagnostics(plugin)).toEqual([
+            expect.objectContaining({
+                event: 'native-planning-started',
+                provider: 'openai',
+                modelConfigured: true,
+                baseURLConfigured: true,
+                capabilityStatus: 'supported',
+                schemaCount: expect.any(Number),
+            }),
+            expect.objectContaining({
+                event: 'native-planning-completed',
+                provider: 'openai',
+                schemaCount: expect.any(Number),
+            }),
+        ]);
+        const serializedLogs = JSON.stringify((plugin.log as jest.Mock).mock.calls);
+        expect(serializedLogs).not.toContain('find roadmap note');
+        expect(serializedLogs).not.toContain('projects/phase-4.md');
         expect(mockCreateChatModel).toHaveBeenCalledTimes(2);
+    });
+
+    it('produces equivalent read-only context for native and JSON planner tool paths', async () => {
+        enableNativeCapability();
+        const createRoadmapPlugin = () => createPlugin({
+            markdownFiles: [
+                { path: 'projects/equivalence.md', basename: 'equivalence', stat: { mtime: 20, ctime: 10 } },
+            ],
+            metadataByPath: {
+                'projects/equivalence.md': {
+                    tags: [{ tag: '#roadmap' }],
+                    frontmatter: { type: 'roadmap', owner: 'Team' },
+                },
+            },
+        });
+
+        const nativeToolCall = createNativeToolPlanningModel({
+            additional_kwargs: {
+                tool_calls: [{
+                    id: 'call_metadata',
+                    function: {
+                        name: 'search_vault_metadata',
+                        arguments: '{"query":"roadmap","limit":5}',
+                    },
+                }],
+            },
+        });
+        const nativeAnswer = createNativeToolPlanningModel({
+            content: '{"action":"answer","reason":"metadata gathered","use_memory":false}',
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(nativeToolCall)
+            .mockResolvedValueOnce(nativeAnswer);
+        const nativeStatuses: Array<{ type: string; tool?: string; message?: string }> = [];
+        const nativePlugin = createRoadmapPlugin();
+        const nativePlan = await createRuntime(nativePlugin).planTurn({
+            prompt: 'find roadmap note',
+            memoryMode: 'auto',
+            onStatus: (status) => nativeStatuses.push(status),
+        });
+        const nativePayload = extractToolContextPayload(nativePlan.finalAnswer.chainInput.input, 'search_vault_metadata');
+
+        mockCreateChatModel.mockReset();
+        mockGetNativeToolCallingCapability.mockReset();
+        mockGetNativeToolCallingCapability.mockReturnValue({
+            supported: false,
+            status: 'disabled',
+            provider: 'qwen',
+            model: 'qwen-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            reason: 'Native tool calling is disabled by the internal gate.',
+        });
+        const jsonPlannerTool = createInvokeModel('{"action":"tool","tool":"search_vault_metadata","input":{"query":"roadmap","limit":5},"reason":"find metadata"}');
+        const jsonPlannerAnswer = createInvokeModel('{"action":"answer","reason":"metadata gathered","use_memory":false}');
+        mockCreateChatModel
+            .mockResolvedValueOnce(jsonPlannerTool)
+            .mockResolvedValueOnce(jsonPlannerAnswer);
+        const jsonPlugin = createRoadmapPlugin();
+        const jsonStatuses: Array<{ type: string; tool?: string; message?: string }> = [];
+        const jsonPlan = await new ChatAgentRuntime(
+            jsonPlugin as unknown as ConstructorParameters<typeof ChatAgentRuntime>[0],
+            {
+                createChatModel: mockCreateChatModel,
+                getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
+            } as never,
+        ).planTurn({
+            prompt: 'find roadmap note',
+            memoryMode: 'auto',
+            onStatus: (status) => jsonStatuses.push(status),
+        });
+        const jsonPayload = extractToolContextPayload(jsonPlan.finalAnswer.chainInput.input, 'search_vault_metadata');
+
+        expect(nativePlan.finalAnswer.hasMemoryContent).toBe(false);
+        expect(jsonPlan.finalAnswer.hasMemoryContent).toBe(false);
+        expect(nativePlan.finalAnswer.chainInput).not.toHaveProperty('memory_content');
+        expect(jsonPlan.finalAnswer.chainInput).not.toHaveProperty('memory_content');
+        expect(nativePayload).toEqual(jsonPayload);
+        expect(nativePayload).toMatchObject({
+            source_type: 'read_only_tool_not_memory_source',
+            tool: 'search_vault_metadata',
+            content: {
+                matches: [expect.objectContaining({ path: 'projects/equivalence.md' })],
+            },
+        });
+        expect(nativeStatuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-done',
+                tool: 'search_vault_metadata',
+                message: 'Found 1 metadata match(es).',
+            }),
+        ]));
+        expect(jsonStatuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-done',
+                tool: 'search_vault_metadata',
+                message: 'Found 1 metadata match(es).',
+            }),
+        ]));
     });
 
     it('falls back to the JSON planner when native tool arguments are incomplete', async () => {
@@ -564,7 +722,7 @@ describe('native tool planning loop', () => {
             tool_call_chunks: [{
                 index: 0,
                 name: 'search_memory',
-                args: '{"query":"unfinished"',
+                args: '{"query":"RAW_ARG_SENTINEL"',
             }],
         });
         const jsonPlanner = createInvokeModel('{"action":"answer","reason":"json fallback","use_memory":false}');
@@ -577,13 +735,13 @@ describe('native tool planning loop', () => {
         const runtime = createRuntime(plugin);
 
         const plan = await runtime.planTurn({
-            prompt: 'question about notes',
+            prompt: 'question about notes PRIVATE_PROMPT_SENTINEL',
             memoryMode: 'auto',
             onStatus: (status) => statuses.push(status),
         });
 
         expect(plan.finalAnswer.chainInput).toMatchObject({
-            input: 'Human: question about notes\nAssistant:',
+            input: 'Human: question about notes PRIVATE_PROMPT_SENTINEL\nAssistant:',
         });
         expect(statuses).toEqual(expect.arrayContaining([
             expect.objectContaining({
@@ -591,8 +749,61 @@ describe('native tool planning loop', () => {
                 reason: 'tool_call_chunks contained incomplete or invalid JSON arguments.',
             }),
         ]));
+        expect(nativeDiagnostics(plugin)).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                event: 'native-planning-fallback',
+                reasonCategory: 'invalid_native_tool_arguments',
+            }),
+        ]));
+        const serializedLogs = JSON.stringify((plugin.log as jest.Mock).mock.calls);
+        expect(serializedLogs).not.toContain('PRIVATE_PROMPT_SENTINEL');
+        expect(serializedLogs).not.toContain('RAW_ARG_SENTINEL');
         expect(nativeInvalidToolCall.bindTools).toHaveBeenCalledTimes(1);
         expect(mockCreateChatModel).toHaveBeenCalledTimes(2);
+    });
+
+    it('redacts raw schema export errors when falling back to the JSON planner', async () => {
+        enableNativeCapability();
+        const schemaSpy = jest.spyOn(ToolRegistry.prototype, 'exportProviderSchemasSafe')
+            .mockReturnValueOnce({
+                ok: false,
+                schemas: [],
+                error: 'schema failed for /private/vault/projects/SECRET_PATH.md with PRIVATE_PROMPT_SENTINEL',
+            });
+        const jsonPlanner = createInvokeModel('{"action":"answer","reason":"json fallback","use_memory":false}');
+        mockCreateChatModel.mockResolvedValueOnce(jsonPlanner);
+
+        const plugin = createPlugin();
+        const statuses: Array<{ type: string; reason?: string }> = [];
+        const runtime = createRuntime(plugin);
+
+        const plan = await runtime.planTurn({
+            prompt: 'question about notes PRIVATE_PROMPT_SENTINEL',
+            memoryMode: 'auto',
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(plan.finalAnswer.chainInput).toMatchObject({
+            input: 'Human: question about notes PRIVATE_PROMPT_SENTINEL\nAssistant:',
+        });
+        expect(nativeDiagnostics(plugin)).toEqual([
+            expect.objectContaining({
+                event: 'schema-export-failed',
+                reasonCategory: 'schema_export_failed',
+            }),
+        ]);
+        const serializedLogs = JSON.stringify((plugin.log as jest.Mock).mock.calls);
+        expect(serializedLogs).not.toContain('PRIVATE_PROMPT_SENTINEL');
+        expect(serializedLogs).not.toContain('SECRET_PATH.md');
+        expect(serializedLogs).not.toContain('/private/vault');
+        expect(statuses).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'fallback',
+                reason: expect.stringContaining('PRIVATE_PROMPT_SENTINEL'),
+            }),
+        ]));
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(1);
+        schemaSpy.mockRestore();
     });
 
     it('falls back to the JSON planner when native planning stops without a final action', async () => {

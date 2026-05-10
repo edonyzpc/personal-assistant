@@ -57,7 +57,7 @@ Smoke gate 固定要求：
 | 创建日期 | 2026-05-10 |
 | Source of truth | `docs/PLAN.md` |
 | 当前阶段 | Phase 5: Native Rollout Decision |
-| 当前状态 | [~] Phase 4 closed; Phase 5 ready to start with native loop still internal-gated and default JSON path stable |
+| 当前状态 | [~] Phase 5 first slice complete: empty rollout table, JSON fallback, redacted diagnostics, and first equivalence tests are reviewed; enabled provider smoke/enablement remains pending |
 | 当前分支 | `codex/chat-agent-next-refactor-plan` |
 | Review policy | 每个阶段 review 必须使用 Codex subagents |
 | Smoke policy | UI/runtime 行为变更必须 deploy 到 `test/` vault 后验证 |
@@ -72,7 +72,7 @@ Smoke gate 固定要求：
 | Phase 2 | Core Extraction + Turn Lifecycle | [x] Done | `chat-agent.ts`, `chat-service.ts`, `chat-view.ts`, `chat-types.ts` | `AgentTurnPlan` 与 `sessionId/turnId` lifecycle 落地 |
 | Phase 3 | Policy / ToolRegistry / Vault Advice Hardening | [x] Done | `chat-tools.ts`, `chat-agent.ts`, `chat-types.ts` | Registry 成为唯一 source of truth；vault advice evidence gate 落地 |
 | Phase 4 | Native Feasibility Behind Internal Gate | [x] Done | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Native planning loop stays behind internal gate; default JSON path and disabled-gate smoke passed |
-| Phase 5 | Native Rollout Decision | [ ] Todo | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts` | 只对验证通过 provider/model/baseURL 启用 native context/tool loop |
+| Phase 5 | Native Rollout Decision | [~] In progress | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts` | Empty rollout table and redacted diagnostics landed; provider smoke/enablement still pending |
 | Phase 6 | Write Action Design Handoff | [ ] Todo | docs only initially | 写入和 command execution 另开 product/security review |
 
 ## Archived Evidence Summary
@@ -272,13 +272,13 @@ Goal: Enable native context/tool loop only for validated provider/model/baseURL 
 
 | Step | Task | Owner Files | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| dev | Add validated provider rollout table/config | `src/ai-services/ai-utils.ts`, docs | [ ] Todo | Native only enabled for verified combinations |
-| dev | Keep JSON planner long-term fallback | `src/ai-services/chat-agent.ts` | [ ] Todo | JSON path remains reliable and tested |
-| dev | Add redacted diagnostics | runtime/docs | [ ] Todo | No prompt body, note path, Chat behavior log or Memory writes |
-| test | Add native-vs-JSON equivalence tests | tests | [ ] Todo | Observations/source boundaries/fallback/abort remain equivalent |
-| review | Codex subagents review Phase 5 rollout | native/runtime/docs | [ ] Todo | Product and safety subagents approve rollout gates |
-| fix | Address subagent findings | native/runtime/docs | [ ] Todo | Must-fix findings closed |
-| Obsidian smoke test | Validate enabled provider path | `test/` vault | [ ] Todo | Enabled native path passes provider smoke; unsupported path remains JSON |
+| dev | Add validated provider rollout table/config | `src/ai-services/ai-utils.ts`, docs | [x] Done | Default rollout table is empty; native only enabled for explicit verified tuples |
+| dev | Keep JSON planner long-term fallback | `src/ai-services/chat-agent.ts` | [x] Done | Unvalidated provider/model/baseURL combinations stay on JSON planner fallback |
+| dev | Add redacted diagnostics | runtime/docs | [x] Done | Native diagnostics record gate/result/schema category only; tests assert no prompt body or note path in logs |
+| test | Add native-vs-JSON equivalence tests | tests | [~] In progress | Current slice covers same-scenario read-only context equivalence; broader enabled-provider equivalence still pending provider smoke |
+| review | Codex subagents review Phase 5 rollout | native/runtime/docs | [x] Done | First-slice rollout gate, diagnostics/privacy, and coverage reviews passed after fixes |
+| fix | Address subagent findings | native/runtime/docs | [x] Done | Added invalid-args/schema-export redaction sentinels and same-scenario native-vs-JSON context equivalence test |
+| Obsidian smoke test | Validate enabled provider path | `test/` vault | [!] Blocked | Enabled native smoke requires a selected provider/model/baseURL tuple and credentials; unsupported/default path remains JSON |
 | fix | Address smoke findings | native/runtime/docs | [ ] Todo | Smoke blockers fixed and re-tested |
 
 Expected commands:
@@ -320,6 +320,7 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 4 first slice | Codex subagents: architecture/runtime, provider/schema, safety/QA | [x] Fixed | P2: native capability validation treated missing `baseURL` as a wildcard, which could enable native tool calling for arbitrary OpenAI-compatible endpoints sharing provider/model strings | Made `NativeToolCallingValidation.baseURL` required, required exact normalized baseURL match, added custom-baseURL negative test, and re-reviewed to no actionable findings |
 | 2026-05-10 | Phase 4 disabled-gate smoke | Live Obsidian test vault | [x] Passed | No P1/P2 smoke blockers found; deployed plugin reload kept normal JSON planner/Memory flow stable with native gate disabled | Continue with actual native execution loop only behind internal gate |
 | 2026-05-10 | Phase 4 native loop | Codex subagents: architecture/runtime, provider/native shape, test coverage | [x] Passed | No P0/P1/P2 findings; native loop remains context/tool planning only, `ChatService` still owns final streaming, provider schema bind and fallback boundaries looked sound | Added mock native schema-bind/tool-execution coverage, invalid-args JSON fallback, and incomplete-native-planning JSON fallback before final answer output |
+| 2026-05-10 | Phase 5 first slice | Codex subagents: rollout gate, diagnostics/privacy, test coverage | [x] Fixed | P2: fallback diagnostics redaction coverage did not yet include invalid native args/schema export failure sentinels; native-vs-JSON equivalence lacked a same-scenario read-only context comparison | Added privacy sentinel tests for invalid args and schema export failure, added same-scenario `search_vault_metadata` native-vs-JSON context equivalence test, and re-reviewed to no actionable findings |
 
 ## Verification Log
 
@@ -389,6 +390,13 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 4 native loop | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
 | 2026-05-10 | Phase 4 native loop smoke setup | `make deploy` | [x] Passed | Ran full Jest 20 suites / 206 tests, lint, build, and copied `dist/main.js`, manifests, and `styles.css` into `test/.obsidian/plugins/personal-assistant/` |
 | 2026-05-10 | Phase 4 native loop Obsidian smoke | Disabled native gate keeps JSON planner stable after native loop landed | [x] Passed | Reloaded Obsidian after deploy, asked `What notes in this vault mention dog or canine? Answer in one sentence.`; Thinking showed related Memory search, `search_memory: dog OR canine`, and Answering; final answer cited `0.unsorted/Dog.md` with Memory references and no native UI behavior change |
+| 2026-05-10 | Phase 5 first slice | `npm test -- __tests__/ai-utils.test.ts __tests__/chat-service.test.ts --runInBand` | [x] Passed | 2 suites / 91 tests passed after empty rollout table, redacted diagnostics, fallback redaction, and native-vs-JSON equivalence coverage |
+| 2026-05-10 | Phase 5 first slice | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors |
+| 2026-05-10 | Phase 5 first slice | `npm run lint` | [x] Passed | ESLint passed |
+| 2026-05-10 | Phase 5 first slice | `git diff --check` | [x] Passed | Whitespace check passed |
+| 2026-05-10 | Phase 5 first slice | `npm test -- --runInBand` | [x] Passed | 20 suites / 210 tests passed |
+| 2026-05-10 | Phase 5 first slice | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
+| 2026-05-10 | Phase 5 first slice Obsidian smoke decision | Enabled native provider smoke | [!] Blocked | Default rollout table is intentionally empty, so no enabled provider path exists to smoke yet; a real provider/model/baseURL tuple and credentials must be selected before enabling native path |
 
 ## Risk Register
 
@@ -403,7 +411,7 @@ Goal: Keep write action and command execution out of this implementation track u
 | Planner prompt duplicates tool metadata outside registry | P2 | Phase 3 | Removed hardcoded registered-tool examples from planner system prompt and asserted registry-derived tool definitions in tests | [x] Mitigated |
 | Native capability allowlist accidentally wildcards custom baseURL | P2 | Phase 4 | `NativeToolCallingValidation.baseURL` is required, matching uses normalized exact baseURL, and custom OpenAI-compatible baseURL negative test covers the regression | [x] Mitigated |
 | Native fallback replays answer after visible chunk | P1 | Phase 4 | Native planning fallback happens inside `planTurn` before final answer output; `ChatService.canFallbackToNonStreaming` still forbids non-streaming replay after visible chunks | [x] Mitigated |
-| Diagnostics or write audit records private note paths/content | P2 | Phase 5/6 | Redacted diagnostics and local-only redacted audit contract | [ ] Todo |
+| Diagnostics or write audit records private note paths/content | P2 | Phase 5/6 | Phase 5 native diagnostics are redacted and covered by prompt/path/sentinel tests; Phase 6 write audit contract remains future work | [~] Partially mitigated |
 | Archived docs accidentally treated as active source | P2 | Phase 0A | Archive banners point to PLAN and this tracker; compact evidence summary marks archive as historical only | [x] Mitigated |
 | Untracked Phase 0A docs missed by tracked diff whitespace check | P2 | Phase 0A | Run explicit trailing-whitespace scan across `docs/PLAN.md`, tracker, and `docs/archive` | [x] Mitigated |
 | Phase label drift mixes intent routing with turn lifecycle | P2 | Phase 0B | PLAN now assigns `AgentEvent` / turn lifecycle wording to Phase 2 | [x] Mitigated |
@@ -414,7 +422,7 @@ Goal: Keep write action and command execution out of this implementation track u
 | --- | --- | --- | --- |
 | Branch name for implementation | Before Phase 1 dev | [x] Done | Current branch: `codex/chat-agent-next-refactor-plan` |
 | Whether to create a separate implementation tracker per phase | Before large implementation | [ ] Todo | Current tracker can cover all phases unless it becomes too large |
-| Provider smoke availability for `openai` / `qwen` / `ollama` | Phase 4 | [ ] Todo | Unknown capability must default to JSON planner |
+| Provider smoke availability for `openai` / `qwen` / `ollama` | Phase 5 | [!] Pending | Unknown capability defaults to JSON planner; enabled native smoke requires a chosen provider/model/baseURL tuple and credentials |
 
 ## Final Completion Criteria
 

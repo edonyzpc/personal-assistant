@@ -1,6 +1,11 @@
 import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate } from "@langchain/core/prompts";
 
-import type { AIUtils, NativeToolCallingValidation } from "./ai-utils";
+import type {
+    AIUtils,
+    NativeToolCallingCapability,
+    NativeToolCallingCapabilityStatus,
+    NativeToolCallingValidation,
+} from "./ai-utils";
 import type { MemoryMode } from "../memory-manager";
 import type { PluginManager } from "../plugin";
 import {
@@ -164,6 +169,27 @@ interface NativeToolPlanningGate {
     reason: string;
     schemaCount: number;
     schemas: ChatToolProviderSchema[];
+    diagnostic: NativeToolPlanningDiagnosticBase;
+}
+
+type NativeToolPlanningDiagnosticEvent =
+    | "gate-rejected"
+    | "schema-export-failed"
+    | "native-planning-started"
+    | "native-planning-fallback"
+    | "native-planning-completed";
+
+interface NativeToolPlanningDiagnosticBase {
+    provider: string;
+    modelConfigured: boolean;
+    baseURLConfigured: boolean;
+    capabilityStatus: NativeToolCallingCapabilityStatus;
+}
+
+interface NativeToolPlanningDiagnostic extends NativeToolPlanningDiagnosticBase {
+    event: NativeToolPlanningDiagnosticEvent;
+    schemaCount?: number;
+    reasonCategory?: string;
 }
 
 export interface NativeToolCallCandidate {
@@ -487,6 +513,11 @@ export class ChatAgentRuntime {
             this.plugin.log("Native tool planning gate passed; attempting native read-only tool planning.", {
                 schemaCount: nativeToolPlanningGate.schemaCount,
             });
+            this.logNativeToolPlanningDiagnostic({
+                ...nativeToolPlanningGate.diagnostic,
+                event: "native-planning-started",
+                schemaCount: nativeToolPlanningGate.schemaCount,
+            });
             const nativeOutcome = await this.runNativeToolPlanningLoop(
                 options,
                 state,
@@ -495,8 +526,19 @@ export class ChatAgentRuntime {
             if (nativeOutcome.ok) {
                 nativePlanningCompleted = true;
                 shouldUseMemoryInFinalAnswer = nativeOutcome.shouldUseMemoryInFinalAnswer;
+                this.logNativeToolPlanningDiagnostic({
+                    ...nativeToolPlanningGate.diagnostic,
+                    event: "native-planning-completed",
+                    schemaCount: nativeToolPlanningGate.schemaCount,
+                });
             } else {
-                this.plugin.log("Native tool planning failed; using JSON planner fallback.", nativeOutcome.reason);
+                this.plugin.log("Native tool planning failed; using JSON planner fallback.");
+                this.logNativeToolPlanningDiagnostic({
+                    ...nativeToolPlanningGate.diagnostic,
+                    event: "native-planning-fallback",
+                    schemaCount: nativeToolPlanningGate.schemaCount,
+                    reasonCategory: getNativeDiagnosticReasonCategory(nativeOutcome.reason),
+                });
                 options.onStatus?.({ type: "fallback", reason: nativeOutcome.reason });
             }
         }
@@ -577,31 +619,53 @@ export class ChatAgentRuntime {
         }
         const capability = this.planner.getNativeToolCallingCapability(capabilityOptions);
         if (!capability.supported) {
+            const diagnostic = createNativeToolPlanningDiagnosticBase(capability);
+            if (capabilityOptions.internalGate) {
+                this.logNativeToolPlanningDiagnostic({
+                    ...diagnostic,
+                    event: "gate-rejected",
+                    reasonCategory: getNativeDiagnosticReasonCategory(capability.reason),
+                });
+            }
             return {
                 enabled: false,
                 reason: capability.reason,
                 schemaCount: 0,
                 schemas: [],
+                diagnostic,
             };
         }
 
         const schemaResult = this.toolRegistry.exportProviderSchemasSafe();
         if (!schemaResult.ok) {
-            this.plugin.log("Native tool schema export failed; using JSON planner fallback.", schemaResult.error);
+            const diagnostic = createNativeToolPlanningDiagnosticBase(capability);
+            this.plugin.log("Native tool schema export failed; using JSON planner fallback.");
+            this.logNativeToolPlanningDiagnostic({
+                ...diagnostic,
+                event: "schema-export-failed",
+                reasonCategory: "schema_export_failed",
+            });
             return {
                 enabled: false,
-                reason: schemaResult.error,
+                reason: "Native tool schema export failed.",
                 schemaCount: 0,
                 schemas: [],
+                diagnostic,
             };
         }
 
+        const diagnostic = createNativeToolPlanningDiagnosticBase(capability);
         return {
             enabled: true,
             reason: capability.reason,
             schemaCount: schemaResult.schemas.length,
             schemas: schemaResult.schemas,
+            diagnostic,
         };
+    }
+
+    private logNativeToolPlanningDiagnostic(diagnostic: NativeToolPlanningDiagnostic): void {
+        this.plugin.log("Native tool planning diagnostic", diagnostic);
     }
 
     private async runJsonPlanningLoop(
@@ -682,7 +746,7 @@ export class ChatAgentRuntime {
             if (isAbortError(error, options.signal)) {
                 throw options.signal?.aborted ? createAbortError() : error;
             }
-            return { ok: false, reason: describePlannerFailure(error) };
+            return { ok: false, reason: describeNativePlanningFailure(error) };
         }
     }
 
@@ -1826,6 +1890,31 @@ function asNativeToolBindableModel(value: unknown): NativeToolBindableModel | un
     return typeof bindTools === "function" ? value as NativeToolBindableModel : undefined;
 }
 
+function createNativeToolPlanningDiagnosticBase(
+    capability: NativeToolCallingCapability,
+): NativeToolPlanningDiagnosticBase {
+    return {
+        provider: capability.provider || "unknown",
+        modelConfigured: capability.model.length > 0,
+        baseURLConfigured: capability.baseURL.length > 0,
+        capabilityStatus: capability.status,
+    };
+}
+
+function getNativeDiagnosticReasonCategory(reason: string): string {
+    const normalized = reason.toLowerCase();
+    if (normalized.includes("internal gate")) return "internal_gate_disabled";
+    if (normalized.includes("unknown ai provider")) return "unknown_provider";
+    if (normalized.includes("not configured")) return "model_missing";
+    if (normalized.includes("not validated")) return "provider_model_baseurl_not_validated";
+    if (normalized.includes("validated")) return "provider_model_baseurl_validated";
+    if (normalized.includes("schema")) return "schema_export_failed";
+    if (normalized.includes("incomplete or invalid json")) return "invalid_native_tool_arguments";
+    if (normalized.includes("stopped before a final planner action")) return "native_planning_incomplete";
+    if (normalized.includes("bindtools")) return "native_bind_tools_missing";
+    return "native_planning_failed";
+}
+
 function toToolObservation(result: ChatToolResult<unknown>): ChatToolObservation {
     const memoryResult = isSearchMemoryResult(result.content) ? result.content : undefined;
     const currentNoteContext = isCurrentNoteContextResult(result.content) ? result.content : undefined;
@@ -2086,6 +2175,22 @@ function describePlannerFailure(error: unknown): string {
         return truncate(error.message.replace(/\s+/g, " "), 160);
     }
     return "Planner output could not be used.";
+}
+
+function describeNativePlanningFailure(error: unknown): string {
+    if (error instanceof Error && error.message.trim()) {
+        const message = error.message.replace(/\s+/g, " ");
+        if (message.includes("contained incomplete or invalid JSON arguments")
+            || message.includes("contained non-object tool arguments")
+            || message.includes("contained a tool call without a function name")
+            || message.includes("does not expose bindTools")) {
+            return truncate(message, 160);
+        }
+    }
+    if (error instanceof SyntaxError) {
+        return "Native tool planning returned invalid JSON.";
+    }
+    return "Native tool planning could not be used.";
 }
 
 function truncate(value: string, maxLength: number): string {

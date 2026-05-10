@@ -356,6 +356,7 @@ Native rollout gate:
 - OpenAI-compatible `openai`、OpenAI-compatible `qwen` 和 `ollama` 必须分别验证 tool call request shape、stream chunk shape、error shape、abort 行为和 fallback 行为。
 - Native path 的 tool observations、source boundary、Memory references、current note/tool context 隔离必须与 JSON planner path 等价。
 - Provider smoke 通过前，native path 只能通过内部 gate 启用；provider smoke 通过后，才允许按 provider/model 逐步切换默认 context/tool planning path。
+- Code-level rollout table starts empty; add provider/model/baseURL tuples only after provider smoke proves request shape、chunk/error shape、abort、fallback and source-boundary equivalence.
 - 一旦 native path 出现 schema、stream、tool execution、source-boundary 或 abort 不确定性，本轮必须在 final answer 输出前回到 JSON planner fallback 或普通回答。
 
 Fallback matrix:

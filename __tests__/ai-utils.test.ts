@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { AIUtils } from '../src/ai-services/ai-utils';
+import { AIUtils, DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS } from '../src/ai-services/ai-utils';
 
 jest.mock('obsidian');
 
@@ -19,6 +19,10 @@ function createPlugin(settings: {
 }
 
 describe('native tool calling capability', () => {
+    it('starts with an empty default rollout table', () => {
+        expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([]);
+    });
+
     it('defaults to disabled behind the internal gate', () => {
         const aiUtils = new AIUtils(createPlugin({}) as never);
 
