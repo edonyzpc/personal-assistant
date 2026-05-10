@@ -704,19 +704,19 @@ body {
 	background-color: var(--background-primary);
 }
 
-.llm-view .cancel-button-hidden {
+.llm-view .llm-buttons button.cancel-button-hidden {
 	display: none;
 }
 
-.llm-view .cancel-button-visible {
-	display: inline-block;
+.llm-view .llm-buttons button.cancel-button-visible {
+	display: flex;
 }
 
-.llm-view .send-button-hidden {
+.llm-view .llm-buttons button.send-button-hidden {
 	display: none;
 }
 
-.llm-view .send-button-visible {
+.llm-view .llm-buttons button.send-button-visible {
 	display: inline-block;
 }
 

@@ -56,6 +56,43 @@ export class MarkdownView {
     }
 }
 
+export class ItemView {
+    app: App;
+    containerEl: HTMLElement;
+
+    constructor(leaf: { app?: App; containerEl?: HTMLElement } = {}) {
+        this.app = leaf.app ?? new App();
+        this.containerEl = leaf.containerEl ?? {} as HTMLElement;
+    }
+
+    getViewType() {
+        return '';
+    }
+
+    getDisplayText() {
+        return '';
+    }
+
+    getIcon() {
+        return '';
+    }
+
+    async onOpen() { }
+    async onClose() { }
+}
+
+export const MarkdownRenderer = {
+    render: jest.fn((_app: unknown, markdown: string, el: { setText?: (text: string) => void; textContent?: string }) => {
+        if (typeof el.setText === 'function') {
+            el.setText(markdown);
+        } else {
+            el.textContent = markdown;
+        }
+    }),
+};
+
+export const setIcon = jest.fn();
+
 type MockAdapter = {
     write: jest.Mock;
     read: jest.Mock;
@@ -74,7 +111,9 @@ type MockVault = {
 type MockWorkspace = {
     getLeaf: jest.Mock;
     getMostRecentLeaf: jest.Mock;
+    getLeavesOfType: jest.Mock;
     getActiveViewOfType: jest.Mock;
+    setActiveLeaf: jest.Mock;
     on: jest.Mock;
 };
 
@@ -95,7 +134,9 @@ export class App {
     workspace: MockWorkspace = {
         getLeaf: jest.fn(),
         getMostRecentLeaf: jest.fn(),
+        getLeavesOfType: jest.fn(() => []),
         getActiveViewOfType: jest.fn(() => null),
+        setActiveLeaf: jest.fn(),
         on: jest.fn(),
     };
 }
