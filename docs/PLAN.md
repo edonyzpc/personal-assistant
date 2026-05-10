@@ -357,6 +357,7 @@ Native rollout gate:
 - Native path 的 tool observations、source boundary、Memory references、current note/tool context 隔离必须与 JSON planner path 等价。
 - Provider smoke 通过前，native path 只能通过内部 gate 启用；provider smoke 通过后，才允许按 provider/model 逐步切换默认 context/tool planning path。
 - Code-level rollout table starts empty; add provider/model/baseURL tuples only after provider smoke proves request shape、chunk/error shape、abort、fallback and source-boundary equivalence.
+- Provider smoke/canary tuples stay separate from the default rollout table and require an explicit hidden local opt-in before they can run in `ChatService`.
 - 一旦 native path 出现 schema、stream、tool execution、source-boundary 或 abort 不确定性，本轮必须在 final answer 输出前回到 JSON planner fallback 或普通回答。
 
 Fallback matrix:
@@ -656,6 +657,7 @@ Deliverables:
 - Enable native context/tool loop only for validated provider/model/baseURL combinations.
 - Keep JSON planner as long-term fallback.
 - Record only redacted diagnostics.
+- Keep smoke/canary validation behind a hidden local opt-in until the rollout decision promotes a tuple to the default table.
 
 Owner files:
 

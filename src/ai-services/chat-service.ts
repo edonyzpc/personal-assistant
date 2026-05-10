@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from "@langchain/core/prompts";
 
-import { AIUtils } from './ai-utils';
+import { AIUtils, SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS } from './ai-utils';
 import type { PluginManager } from '../plugin'
 import type { MemoryMode } from '../memory-manager';
 import {
@@ -48,7 +48,16 @@ export class ChatService {
         options: StreamLLMOptions = {},
     ): Promise<void> {
         const memoryMode = options.memoryMode ?? "auto";
-        const runtime = new ChatAgentRuntime(this.plugin, this.aiUtils);
+        const runtime = new ChatAgentRuntime(
+            this.plugin,
+            this.aiUtils,
+            this.plugin.settings.nativeToolPlanningSmokeEnabled
+                ? {
+                    nativeToolPlanningInternalGate: true,
+                    nativeToolCallingValidatedModels: SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
+                }
+                : {},
+        );
         const turnPlan = await runtime.planTurn({
             prompt,
             chatHistory,

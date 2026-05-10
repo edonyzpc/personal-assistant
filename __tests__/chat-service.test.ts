@@ -19,6 +19,11 @@ jest.mock('../src/ai-services/ai-utils', () => ({
         createChatModel: mockCreateChatModel,
         getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
     })),
+    SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: [{
+        provider: 'qwen',
+        model: 'qwen-plus',
+        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    }],
 }));
 
 jest.mock('@langchain/core/prompts', () => ({
@@ -108,9 +113,17 @@ function createPlugin(overrides: {
         frontmatter?: Record<string, unknown>;
         headings?: Array<{ heading?: string; level?: number }>;
     }>;
+    nativeToolPlanningSmokeEnabled?: boolean;
 } = {}) {
     const markdownFiles = overrides.markdownFiles ?? [];
     return {
+        settings: {
+            nativeToolPlanningSmokeEnabled: overrides.nativeToolPlanningSmokeEnabled ?? false,
+            aiProvider: 'qwen',
+            chatModelName: 'qwen-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            apiToken: 'sk-SECRET_TOKEN_SENTINEL',
+        },
         app: {
             workspace: {
                 getActiveViewOfType: jest.fn(() => overrides.activeMarkdownView ?? null),
@@ -962,6 +975,111 @@ describe('ChatService memory behavior', () => {
         expect(chainInput).not.toHaveProperty('memory_content');
         expect(final.stream).toHaveBeenCalledTimes(1);
         expect(chunks).toEqual(['answer without memory']);
+    });
+
+    it('enables native planning in ChatService only behind the hidden smoke flag', async () => {
+        mockGetNativeToolCallingCapability.mockReturnValue({
+            supported: true,
+            status: 'supported',
+            provider: 'qwen',
+            model: 'qwen-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            reason: 'Provider/model/baseURL is validated for native tool calling.',
+        });
+        const nativeToolCall = createNativeToolPlanningModel({
+            additional_kwargs: {
+                tool_calls: [{
+                    id: 'call_metadata',
+                    function: {
+                        name: 'search_vault_metadata',
+                        arguments: '{"query":"roadmap","limit":5}',
+                    },
+                }],
+            },
+        });
+        const nativeAnswer = createNativeToolPlanningModel({
+            content: '{"action":"answer","reason":"metadata gathered","use_memory":false}',
+        });
+        const final = createStreamModel('native smoke final answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(nativeToolCall)
+            .mockResolvedValueOnce(nativeAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            nativeToolPlanningSmokeEnabled: true,
+            markdownFiles: [
+                { path: 'projects/SECRET_PATH.md', basename: 'SECRET_PATH', stat: { mtime: 20, ctime: 10 } },
+            ],
+            metadataByPath: {
+                'projects/SECRET_PATH.md': {
+                    tags: [{ tag: '#roadmap' }],
+                    frontmatter: { type: 'roadmap' },
+                },
+            },
+        });
+        const chunks: string[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('find roadmap PRIVATE_PROMPT_SENTINEL', (chunk) => chunks.push(chunk));
+
+        expect(mockGetNativeToolCallingCapability).toHaveBeenCalledWith({
+            internalGate: true,
+            validatedModels: [expect.objectContaining({
+                provider: 'qwen',
+                model: 'qwen-plus',
+                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            })],
+        });
+        expect(nativeToolCall.bindTools).toHaveBeenCalledTimes(1);
+        expect(final.stream).toHaveBeenCalledTimes(1);
+        expect(chunks).toEqual(['native smoke final answer']);
+        const serializedLogs = JSON.stringify((plugin.log as jest.Mock).mock.calls);
+        expect(serializedLogs).not.toContain('PRIVATE_PROMPT_SENTINEL');
+        expect(serializedLogs).not.toContain('SECRET_PATH.md');
+        expect(serializedLogs).not.toContain('sk-SECRET_TOKEN_SENTINEL');
+    });
+
+    it('keeps smoke-enabled unsupported capabilities on the JSON planner fallback', async () => {
+        mockGetNativeToolCallingCapability.mockReturnValue({
+            supported: false,
+            status: 'unsupported',
+            provider: 'qwen',
+            model: 'qwen-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            reason: 'Provider/model/baseURL is not validated for native tool calling.',
+        });
+        const planner = createInvokeModel('{"action":"answer","reason":"json fallback","use_memory":false}');
+        const final = createStreamModel('json fallback answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({ nativeToolPlanningSmokeEnabled: true });
+        const chunks: string[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('hello', (chunk) => chunks.push(chunk));
+
+        expect(mockGetNativeToolCallingCapability).toHaveBeenCalledWith({
+            internalGate: true,
+            validatedModels: [expect.objectContaining({
+                provider: 'qwen',
+                model: 'qwen-plus',
+                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            })],
+        });
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(2);
+        expect(chunks).toEqual(['json fallback answer']);
+        expect((plugin.log as jest.Mock).mock.calls).toEqual(expect.arrayContaining([
+            expect.arrayContaining([
+                'Native tool planning diagnostic',
+                expect.objectContaining({
+                    event: 'gate-rejected',
+                    reasonCategory: 'provider_model_baseurl_not_validated',
+                }),
+            ]),
+        ]));
     });
 
     it('skips memory presearch for agent-control inputs', async () => {
@@ -2394,6 +2512,11 @@ describe('ChatService memory behavior', () => {
         ]));
         expect(JSON.stringify(secondPlannerInput)).toContain('Read-only tool was unavailable.');
         expect(JSON.stringify(secondPlannerInput)).not.toContain('/private/tmp/secret.sqlite');
+        const serializedLogs = JSON.stringify((plugin.log as jest.Mock).mock.calls);
+        expect(serializedLogs).toContain('Chat tool execution failed');
+        expect(serializedLogs).toContain('errorType');
+        expect(serializedLogs).not.toContain('failing memory');
+        expect(serializedLogs).not.toContain('/private/tmp/secret.sqlite');
     });
 
     it('keeps allowed memory references limited to retrieved source metadata', async () => {

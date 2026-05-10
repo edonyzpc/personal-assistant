@@ -1,6 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
-import { AIUtils, DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS } from '../src/ai-services/ai-utils';
+import {
+    AIUtils,
+    DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS,
+    SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
+} from '../src/ai-services/ai-utils';
 
 jest.mock('obsidian');
 
@@ -20,6 +24,15 @@ function createPlugin(settings: {
 
 describe('native tool calling capability', () => {
     it('starts with an empty default rollout table', () => {
+        expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([]);
+    });
+
+    it('keeps smoke validations separate from the default rollout table', () => {
+        expect(SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([{
+            provider: 'qwen',
+            model: 'qwen-plus',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+        }]);
         expect(DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS).toEqual([]);
     });
 

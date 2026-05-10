@@ -286,15 +286,15 @@ export class ToolRegistry {
         const tool = this.get(name);
         if (!tool) {
             context.plugin.log("Chat tool is not registered", { tool: name });
-            return createToolFailureResult(name, describeToolInput(input), "Skipped an unavailable read-only tool.");
+            return createToolFailureResult(name, "unregistered tool", "Skipped an unavailable read-only tool.");
         }
 
         let validatedInput: unknown;
         try {
             validatedInput = tool.validateInput(input);
         } catch (error) {
-            context.plugin.log("Chat tool input validation failed", { tool: name, error: getErrorMessage(error) });
-            return createToolFailureResult(name, describeToolInput(input), "Skipped a read-only tool because its input was invalid.");
+            context.plugin.log("Chat tool input validation failed", { tool: name, errorType: getErrorType(error) });
+            return createToolFailureResult(name, "invalid input", "Skipped a read-only tool because its input was invalid.");
         }
 
         throwIfAborted(context.signal);
@@ -307,8 +307,8 @@ export class ToolRegistry {
             if (isAbortError(error, context.signal)) {
                 throw context.signal?.aborted ? createAbortError() : error;
             }
-            context.plugin.log("Chat tool execution failed", { tool: name, error: getErrorMessage(error) });
-            return createToolFailureResult(name, tool.statusMessage(validatedInput), "Read-only tool was unavailable.");
+            context.plugin.log("Chat tool execution failed", { tool: name, errorType: getErrorType(error) });
+            return createToolFailureResult(name, "execution failed", "Read-only tool was unavailable.");
         }
     }
 }
@@ -1178,18 +1178,12 @@ function clampLine(line: number, lineCount: number): number {
     return Math.min(Math.max(Math.floor(line), 0), Math.max(lineCount - 1, 0));
 }
 
-function describeToolInput(input: unknown): string {
-    if (typeof input === "string") return input;
-    if (!input || typeof input !== "object") return String(input);
-    try {
-        return JSON.stringify(input);
-    } catch {
-        return "[unserializable input]";
-    }
-}
-
 function getErrorMessage(error: unknown): string {
     return error instanceof Error ? error.message : String(error);
+}
+
+function getErrorType(error: unknown): string {
+    return error instanceof Error ? error.name : typeof error;
 }
 
 function truncate(value: string, maxLength: number): string {
