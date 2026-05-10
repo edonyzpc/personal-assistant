@@ -20,6 +20,7 @@ import {
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import type {
     AgentPromptPlan,
+    ChatAgentIntent,
     ChatAgentSource,
     ChatAgentStatus,
     ChatContextItem,
@@ -32,6 +33,7 @@ import type {
 
 export type {
     AgentPromptPlan,
+    ChatAgentIntent,
     ChatAgentSource,
     ChatAgentStatus,
     ChatContextItem,
@@ -114,6 +116,7 @@ const MAX_TOOL_CONTEXT_TOOL_NAME_CHARS = 80;
 const MAX_TOTAL_CONTEXT_CHARS = 16000;
 const MAX_OBSERVATION_PREVIEW_CHARS = 800;
 const MAX_HISTORY_MESSAGES = 8;
+const AGENT_CONTROL_SKIP_REASON = "Memory was skipped because this request controls the current task.";
 const GENERIC_LATIN_QUERY_SIGNALS = new Set([
     "http",
     "https",
@@ -279,19 +282,24 @@ export class ChatAgentRuntime {
         let memorySearchSteps = 0;
         let memorySearchDisabledReason: string | undefined;
         let shouldUseMemoryInFinalAnswer = false;
+        const intent = classifyChatIntent(options.prompt);
 
-        const presearch = await this.presearchMemory(options);
-        if (presearch.skipReason) {
-            memorySearchDisabledReason = presearch.skipReason;
-        }
-        if (presearch.result) {
-            memoryResults.push({ result: presearch.result, stage: "presearch" });
-            memorySearchSteps++;
-            seenToolCalls.add(normalizeToolCallKey({
-                tool: "search_memory",
-                input: { query: presearch.result.query },
-                reason: "Initial related Memory search.",
-            }));
+        if (intent === "agent-control") {
+            memorySearchDisabledReason = AGENT_CONTROL_SKIP_REASON;
+        } else {
+            const presearch = await this.presearchMemory(options);
+            if (presearch.skipReason) {
+                memorySearchDisabledReason = presearch.skipReason;
+            }
+            if (presearch.result) {
+                memoryResults.push({ result: presearch.result, stage: "presearch" });
+                memorySearchSteps++;
+                seenToolCalls.add(normalizeToolCallKey({
+                    tool: "search_memory",
+                    input: { query: presearch.result.query },
+                    reason: "Initial related Memory search.",
+                }));
+            }
         }
 
         try {
@@ -1042,6 +1050,81 @@ function shouldUseMemoryForAnswer(
 function shouldUseMemoryForFallback(memoryResults: CollectedMemoryResult[], prompt: string): boolean {
     const hasSupplementalDocuments = memoryResults.some((entry) => entry.stage === "tool" && entry.result.documents.length > 0);
     return hasSupplementalDocuments || hasRelevantPresearchDocument(prompt, getPresearchDocuments(memoryResults));
+}
+
+function classifyChatIntent(prompt: string): ChatAgentIntent {
+    const normalized = normalizeIntentText(prompt);
+    if (!normalized) {
+        return "content-seeking";
+    }
+
+    if (isAgentControlIntent(normalized)) {
+        return "agent-control";
+    }
+
+    return "content-seeking";
+}
+
+function isAgentControlIntent(prompt: string): boolean {
+    const compact = prompt.replace(/[\s,.;:!?，。！？、；："'“”‘’()[\]{}<>《》【】]+/g, "");
+    if (!compact) {
+        return false;
+    }
+    if (hasExplicitKnowledgeSourceSignal(compact)) {
+        return false;
+    }
+
+    if ([
+        "继续",
+        "继续任务",
+        "接着来",
+        "下一步",
+        "下一个",
+        "重试",
+        "停止",
+        "continue",
+        "goon",
+        "keepgoing",
+        "next",
+        "nextstep",
+        "proceed",
+        "retry",
+        "stop",
+    ].includes(compact)) {
+        return true;
+    }
+
+    return [
+        /^(继续|继续任务|接着来|下一步|下一个|重试|停止)(吧|一下)?$/,
+        /^(继续|接着)(处理|做|推进|完成)?(这个|该|当前|本次)?(任务|工作|方案|计划)?(吧|一下)?$/,
+        /^(按|按照|根据)?(上面|上述|前面|刚才)(的)?(分析|方案|计划|finding|findings|review|结论|建议|问题)?(进行)?(修复|修改|处理|实现|继续|推进).*$/,
+        /^(帮我)?(修复|处理|解决)(上面|上述|前面|刚才)(的)?(finding|findings|问题|review|分析|方案|建议).*$/,
+        /^(continue|proceed)(with)?(the|this|current)?(task|work|plan|fix)?$/,
+        /^(continue|proceed|retry|stop)(the)?(task|work|plan|fix)?$/,
+        /^(keepgoing)(with)?(the|this|current)?(task|work|plan|fix)?$/,
+        /^(fix|address|apply|implement)(the)?(above|previous|review|findings|plan|analysis|comments).*$/,
+    ].some((pattern) => pattern.test(compact));
+}
+
+function normalizeIntentText(prompt: string): string {
+    return prompt.toLowerCase().normalize("NFKC").trim();
+}
+
+function hasExplicitKnowledgeSourceSignal(compactPrompt: string): boolean {
+    return [
+        "笔记",
+        "记忆",
+        "记录",
+        "资料",
+        "文档",
+        "note",
+        "notes",
+        "memory",
+        "vault",
+        "obsidian",
+        "document",
+        "documents",
+    ].some((signal) => compactPrompt.includes(signal));
 }
 
 function getPresearchDocuments(results: CollectedMemoryResult[]): MemorySearchDocument[] {

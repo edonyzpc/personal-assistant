@@ -77,6 +77,10 @@ export const MEMORY_APPROVAL_SECTIONS = [
         body: "To prepare memory, note text may be sent to your configured AI provider.",
     },
     {
+        title: "Memory search",
+        body: "When Memory is ready, your question may be sent to your configured AI provider to search Memory. This does not send all note text.",
+    },
+    {
         title: "Cost",
         body: "This may use AI credits or API calls. Unchanged notes will be skipped when possible.",
     },

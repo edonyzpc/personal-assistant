@@ -347,6 +347,126 @@ describe('ChatService memory behavior', () => {
         expect(chunks).toEqual(['answer without memory']);
     });
 
+    it('skips memory presearch for agent-control inputs', async () => {
+        let chainInput: Record<string, string> | undefined;
+        let plannerInput: unknown;
+        const planner = createInvokeModel('{"action":"answer","reason":"continue without memory","use_memory":false}', (input) => {
+            plannerInput = input;
+        });
+        const final = createStreamModel('continuing task', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => {
+                throw new Error('memory should not be searched');
+            },
+        });
+        const statuses: string[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('继续任务', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status.type),
+        });
+
+        expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        expect(JSON.stringify(plannerInput)).toContain('Related Memory candidates from the current vault:\\nNone');
+        expect(chainInput).toMatchObject({
+            input: 'Human: 继续任务\nAssistant:',
+        });
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(statuses).toEqual(expect.arrayContaining(['thinking', 'answering']));
+        expect(statuses).not.toContain('memory-prefetching');
+        expect(statuses).not.toContain('retrieving');
+    });
+
+    it('keeps memory disabled for agent-control inputs even when planner asks to search', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerRetrieve = createInvokeModel('{"action":"tool","tool":"search_memory","input":{"query":"previous findings"},"reason":"needs previous notes"}');
+        const final = createStreamModel('handled without memory search', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerRetrieve)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => {
+                throw new Error('memory should not be searched');
+            },
+        });
+        const statuses: string[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('按照上面的分析进行修复', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status.type),
+        });
+
+        expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        expect(chainInput).toMatchObject({
+            input: 'Human: 按照上面的分析进行修复\nAssistant:',
+        });
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(statuses).toContain('memory-skipped');
+        expect(statuses).not.toContain('memory-prefetching');
+        expect(statuses).not.toContain('retrieving');
+    });
+
+    it.each([
+        '下一步',
+        '停止',
+        '重试',
+        'continue with the task',
+        'keep going with this',
+        '继续处理这个任务',
+        '接着做',
+    ])('skips memory for workflow-control phrase: %s', async (prompt) => {
+        const planner = createInvokeModel('{"action":"answer","reason":"workflow control","use_memory":false}');
+        const final = createStreamModel('workflow answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => {
+                throw new Error('memory should not be searched');
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM(prompt, jest.fn());
+
+        expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
+        expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
+        mockCreateChatModel.mockReset();
+    });
+
+    it.each([
+        'address previous meeting notes from my vault',
+        '继续分析这篇笔记',
+        'fix previous Memory notes',
+    ])('keeps Memory search for content-seeking phrase with source signal: %s', async (prompt) => {
+        const planner = createInvokeModel('{"action":"answer","reason":"content question","use_memory":false}');
+        const final = createStreamModel('content answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM(prompt, jest.fn());
+
+        expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledWith(prompt);
+        expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith(prompt);
+        mockCreateChatModel.mockReset();
+    });
+
     it('uses structured planner content without entering fallback', async () => {
         let chainInput: Record<string, string> | undefined;
         const planner = createInvokeModel([
