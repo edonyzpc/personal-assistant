@@ -2,6 +2,7 @@ import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { SystemMessagePromptTemplate } from '@langchain/core/prompts';
 import { ChatService, canFallbackToNonStreaming } from '../src/ai-services/chat-service';
 import {
+    ChatAgentRuntime,
     parseNativeToolCallsFromModelResponse,
     parsePlannerAction,
     stripReferenceBlock,
@@ -54,6 +55,28 @@ function createInvokeModel(content: unknown, onInput?: (input: unknown) => void)
             onInput?.(input);
             return { content };
         }),
+    };
+}
+
+function createNativeToolPlanningModel(
+    response: unknown,
+    callbacks: {
+        onTools?: (tools: unknown[]) => void;
+        onInput?: (input: unknown) => void;
+    } = {},
+) {
+    const bound = {
+        invoke: jest.fn(async (input: unknown) => {
+            callbacks.onInput?.(input);
+            return response;
+        }),
+    };
+    return {
+        bindTools: jest.fn((tools: unknown[]) => {
+            callbacks.onTools?.(tools);
+            return bound;
+        }),
+        boundInvoke: bound.invoke,
     };
 }
 
@@ -429,6 +452,185 @@ describe('native tool call fixtures', () => {
             calls: [],
             reason: 'tool_call_chunks contained incomplete or invalid JSON arguments.',
         });
+    });
+});
+
+describe('native tool planning loop', () => {
+    function enableNativeCapability() {
+        mockGetNativeToolCallingCapability.mockReturnValue({
+            supported: true,
+            status: 'supported',
+            provider: 'openai',
+            model: 'gpt-test',
+            baseURL: 'https://api.openai.com/v1',
+            reason: 'Provider/model/baseURL is validated for native tool calling.',
+        });
+    }
+
+    function createRuntime(plugin: ReturnType<typeof createPlugin>) {
+        return new ChatAgentRuntime(
+            plugin as unknown as ConstructorParameters<typeof ChatAgentRuntime>[0],
+            {
+                createChatModel: mockCreateChatModel,
+                getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
+            } as never,
+            { nativeToolPlanningInternalGate: true },
+        );
+    }
+
+    it('binds provider schemas and executes native read-only tool calls through the registry', async () => {
+        enableNativeCapability();
+        let boundTools: unknown[] = [];
+        let secondNativeInput: unknown;
+        const nativeToolCall = createNativeToolPlanningModel({
+            additional_kwargs: {
+                tool_calls: [{
+                    id: 'call_metadata',
+                    function: {
+                        name: 'search_vault_metadata',
+                        arguments: '{"query":"roadmap","limit":5}',
+                    },
+                }],
+            },
+        }, {
+            onTools: (tools) => {
+                boundTools = tools;
+            },
+        });
+        const nativeAnswer = createNativeToolPlanningModel({
+            content: '{"action":"answer","reason":"metadata gathered","use_memory":false}',
+        }, {
+            onInput: (input) => {
+                secondNativeInput = input;
+            },
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(nativeToolCall)
+            .mockResolvedValueOnce(nativeAnswer);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'projects/phase-4.md', basename: 'phase-4', stat: { mtime: 20, ctime: 10 } },
+            ],
+            metadataByPath: {
+                'projects/phase-4.md': {
+                    tags: [{ tag: '#roadmap' }],
+                    frontmatter: { type: 'roadmap' },
+                },
+            },
+        });
+        const statuses: Array<{ type: string; tool?: string; message?: string }> = [];
+        const runtime = createRuntime(plugin);
+
+        const plan = await runtime.planTurn({
+            prompt: 'find roadmap note',
+            memoryMode: 'auto',
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(mockGetNativeToolCallingCapability).toHaveBeenCalledWith({ internalGate: true });
+        expect(boundTools).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'function',
+                function: expect.objectContaining({
+                    name: 'search_vault_metadata',
+                }),
+            }),
+        ]));
+        expect(plugin.app.vault.getMarkdownFiles).toHaveBeenCalled();
+        expect(plan.finalAnswer.chainInput.input).toContain('<tool_context tool="search_vault_metadata">');
+        expect(plan.finalAnswer.chainInput.input).toContain('"source_type": "read_only_tool_not_memory_source"');
+        expect(plan.finalAnswer.chainInput.input).toContain('"path": "projects/phase-4.md"');
+        expect(plan.finalAnswer.hasMemoryContent).toBe(false);
+        expect(JSON.stringify(secondNativeInput)).toContain('Found 1 metadata match(es).');
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-running',
+                tool: 'search_vault_metadata',
+                message: 'Searching note metadata: roadmap',
+            }),
+            expect.objectContaining({
+                type: 'tool-done',
+                tool: 'search_vault_metadata',
+                message: 'Found 1 metadata match(es).',
+            }),
+        ]));
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to the JSON planner when native tool arguments are incomplete', async () => {
+        enableNativeCapability();
+        const nativeInvalidToolCall = createNativeToolPlanningModel({
+            tool_call_chunks: [{
+                index: 0,
+                name: 'search_memory',
+                args: '{"query":"unfinished"',
+            }],
+        });
+        const jsonPlanner = createInvokeModel('{"action":"answer","reason":"json fallback","use_memory":false}');
+        mockCreateChatModel
+            .mockResolvedValueOnce(nativeInvalidToolCall)
+            .mockResolvedValueOnce(jsonPlanner);
+
+        const plugin = createPlugin();
+        const statuses: Array<{ type: string; reason?: string }> = [];
+        const runtime = createRuntime(plugin);
+
+        const plan = await runtime.planTurn({
+            prompt: 'question about notes',
+            memoryMode: 'auto',
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(plan.finalAnswer.chainInput).toMatchObject({
+            input: 'Human: question about notes\nAssistant:',
+        });
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'fallback',
+                reason: 'tool_call_chunks contained incomplete or invalid JSON arguments.',
+            }),
+        ]));
+        expect(nativeInvalidToolCall.bindTools).toHaveBeenCalledTimes(1);
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(2);
+    });
+
+    it('falls back to the JSON planner when native planning stops without a final action', async () => {
+        enableNativeCapability();
+        const nativeDuplicateSearch = createNativeToolPlanningModel({
+            additional_kwargs: {
+                tool_calls: [{
+                    id: 'call_duplicate',
+                    function: {
+                        name: 'search_memory',
+                        arguments: '{"query":"question about notes"}',
+                    },
+                }],
+            },
+        });
+        const jsonPlanner = createInvokeModel('{"action":"answer","reason":"json fallback","use_memory":false}');
+        mockCreateChatModel
+            .mockResolvedValueOnce(nativeDuplicateSearch)
+            .mockResolvedValueOnce(jsonPlanner);
+
+        const plugin = createPlugin();
+        const statuses: Array<{ type: string; reason?: string }> = [];
+        const runtime = createRuntime(plugin);
+
+        await runtime.planTurn({
+            prompt: 'question about notes',
+            memoryMode: 'auto',
+            onStatus: (status) => statuses.push(status),
+        });
+
+        expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledTimes(1);
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'fallback',
+                reason: 'Native tool planning stopped before a final planner action.',
+            }),
+        ]));
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(2);
     });
 });
 
