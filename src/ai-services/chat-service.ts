@@ -49,13 +49,14 @@ export class ChatService {
     ): Promise<void> {
         const memoryMode = options.memoryMode ?? "auto";
         const runtime = new ChatAgentRuntime(this.plugin, this.aiUtils);
-        const promptPlan = await runtime.run({
+        const turnPlan = await runtime.planTurn({
             prompt,
             chatHistory,
             memoryMode,
             signal,
             onStatus: options.onStatus,
         });
+        const promptPlan = turnPlan.finalAnswer;
 
         const memoryPrompt = ChatPromptTemplate.fromMessages([
             SystemMessagePromptTemplate.fromTemplate([

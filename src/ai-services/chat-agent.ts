@@ -20,6 +20,7 @@ import {
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import type {
     AgentPromptPlan,
+    AgentTurnPlan,
     ChatAgentIntent,
     ChatAgentSource,
     ChatAgentStatus,
@@ -33,6 +34,7 @@ import type {
 
 export type {
     AgentPromptPlan,
+    AgentTurnPlan,
     ChatAgentIntent,
     ChatAgentSource,
     ChatAgentStatus,
@@ -268,10 +270,14 @@ export class ChatAgentRuntime {
     }
 
     async run(options: ChatAgentRunOptions): Promise<AgentPromptPlan> {
+        return (await this.planTurn(options)).finalAnswer;
+    }
+
+    async planTurn(options: ChatAgentRunOptions): Promise<AgentTurnPlan> {
         throwIfAborted(options.signal);
         if (options.memoryMode === "skip-memory") {
             options.onStatus?.({ type: "answering" });
-            return this.promptBuilder.buildFinalPrompt(options.prompt, options.chatHistory, []);
+            return { finalAnswer: this.promptBuilder.buildFinalPrompt(options.prompt, options.chatHistory, []) };
         }
 
         const observations: ChatToolObservation[] = [];
@@ -404,21 +410,25 @@ export class ChatAgentRuntime {
             throwIfAborted(options.signal);
             options.onStatus?.({ type: "answering" });
             const documents = shouldUseMemoryInFinalAnswer ? getFinalMemoryDocuments(memoryResults) : [];
-            return this.promptBuilder.buildFinalPrompt(
-                options.prompt,
-                options.chatHistory,
-                buildContextItems(documents, currentNoteContexts, toolContextItems),
-            );
+            return {
+                finalAnswer: this.promptBuilder.buildFinalPrompt(
+                    options.prompt,
+                    options.chatHistory,
+                    buildContextItems(documents, currentNoteContexts, toolContextItems),
+                ),
+            };
         }
 
         const documents = shouldUseMemoryInFinalAnswer ? getFinalMemoryDocuments(memoryResults) : [];
         throwIfAborted(options.signal);
         options.onStatus?.({ type: "answering" });
-        return this.promptBuilder.buildFinalPrompt(
-            options.prompt,
-            options.chatHistory,
-            buildContextItems(documents, currentNoteContexts, toolContextItems),
-        );
+        return {
+            finalAnswer: this.promptBuilder.buildFinalPrompt(
+                options.prompt,
+                options.chatHistory,
+                buildContextItems(documents, currentNoteContexts, toolContextItems),
+            ),
+        };
     }
 
     private async presearchMemory(options: ChatAgentRunOptions): Promise<MemoryPresearchOutcome> {

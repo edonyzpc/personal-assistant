@@ -47,6 +47,10 @@ export interface AgentPromptPlan {
     usedMemory: boolean;
 }
 
+export interface AgentTurnPlan {
+    finalAnswer: AgentPromptPlan;
+}
+
 export type ChatAgentIntent = "content-seeking" | "agent-control";
 
 export type ChatToolName =
