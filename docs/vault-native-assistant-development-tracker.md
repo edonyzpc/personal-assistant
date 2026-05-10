@@ -56,8 +56,8 @@ Smoke gate 固定要求：
 | --- | --- |
 | 创建日期 | 2026-05-10 |
 | Source of truth | `docs/PLAN.md` |
-| 当前阶段 | Phase 4: Native Feasibility Behind Internal Gate |
-| 当前状态 | [~] Phase 4 first slice complete: capability/schema gate, mock native tool-call fixtures, review fix, and disabled-gate smoke passed |
+| 当前阶段 | Phase 5: Native Rollout Decision |
+| 当前状态 | [~] Phase 4 closed; Phase 5 ready to start with native loop still internal-gated and default JSON path stable |
 | 当前分支 | `codex/chat-agent-next-refactor-plan` |
 | Review policy | 每个阶段 review 必须使用 Codex subagents |
 | Smoke policy | UI/runtime 行为变更必须 deploy 到 `test/` vault 后验证 |
@@ -71,7 +71,7 @@ Smoke gate 固定要求：
 | Phase 1 | Intent-aware Memory Workflow | [x] Done | `chat-agent.ts`, `memory-manager.ts`, `chat-service.test.ts` | 内容型输入默认 Memory search；agent-control 跳过 |
 | Phase 2 | Core Extraction + Turn Lifecycle | [x] Done | `chat-agent.ts`, `chat-service.ts`, `chat-view.ts`, `chat-types.ts` | `AgentTurnPlan` 与 `sessionId/turnId` lifecycle 落地 |
 | Phase 3 | Policy / ToolRegistry / Vault Advice Hardening | [x] Done | `chat-tools.ts`, `chat-agent.ts`, `chat-types.ts` | Registry 成为唯一 source of truth；vault advice evidence gate 落地 |
-| Phase 4 | Native Feasibility Behind Internal Gate | [~] In progress | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Capability/schema gate and disabled-gate smoke passed; native execution loop still gated/unimplemented |
+| Phase 4 | Native Feasibility Behind Internal Gate | [x] Done | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts`, `chat-service.ts` | Native planning loop stays behind internal gate; default JSON path and disabled-gate smoke passed |
 | Phase 5 | Native Rollout Decision | [ ] Todo | `ai-utils.ts`, `chat-agent.ts`, `chat-tools.ts` | 只对验证通过 provider/model/baseURL 启用 native context/tool loop |
 | Phase 6 | Write Action Design Handoff | [ ] Todo | docs only initially | 写入和 command execution 另开 product/security review |
 
@@ -248,11 +248,11 @@ Goal: Prove native tool calling feasibility without changing the default JSON pl
 | --- | --- | --- | --- | --- |
 | dev | Add provider/model/baseURL capability helper | `src/ai-services/ai-utils.ts` | [x] Done | Unknown capability defaults to unsupported; validated tuple requires provider/model/baseURL |
 | dev | Prototype provider-compatible schema export | `src/ai-services/chat-tools.ts` | [x] Done | Safe export result exists and export failure can fall back to JSON planner |
-| dev | Add native path behind internal gate | `src/ai-services/chat-agent.ts` | [~] In progress | Disabled by default; current slice inspects gate/schema and always keeps JSON planner path |
+| dev | Add native path behind internal gate | `src/ai-services/chat-agent.ts` | [x] Done | Disabled by default; runtime option enables native read-only tool planning in tests; final answer streaming remains owned by `ChatService` |
 | dev | Add fallback-before-visible-output guard | `src/ai-services/chat-service.ts`, `src/ai-services/chat-agent.ts` | [x] Done | Existing `canFallbackToNonStreaming` guard remains covered; no replay after visible final chunk |
-| test | Add mock tool-call stream fixtures | tests | [x] Done | OpenAI-compatible tool call response, LangChain tool-call chunk, and incomplete JSON argument fixtures covered |
-| review | Codex subagents review Phase 4 diff | native/tool/provider/tests | [x] Done | Architecture and QA found no P0/P1/P2; provider review P2 was fixed and re-reviewed |
-| fix | Address subagent findings | native/tool/provider/tests | [x] Done | Must-fix baseURL wildcard finding closed |
+| test | Add mock tool-call stream fixtures | tests | [x] Done | OpenAI-compatible response, LangChain chunk, schema bind, native registry execution, invalid args fallback, and incomplete native planning fallback covered |
+| review | Codex subagents review Phase 4 diff | native/tool/provider/tests | [x] Done | First-slice provider P2 was fixed; native-loop architecture/provider/test reviews found no P0/P1/P2 |
+| fix | Address subagent findings | native/tool/provider/tests | [x] Done | Must-fix baseURL wildcard finding closed; no second-slice P0/P1/P2 findings |
 | Obsidian smoke test | Provider smoke where practical | `test/` vault | [x] Done | Unsupported/disabled native gate keeps JSON path stable |
 | fix | Address smoke findings | native/tool/provider/tests/docs | [x] Done | No smoke blockers found |
 
@@ -319,6 +319,7 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 3 smoke | Live Obsidian test vault | [x] Passed | No P1/P2 smoke blockers found; app smoke covered current-note/frontmatter vault advice and metadata search boundaries | Recorded that explicit-rule/template evidence was covered by automated tests because the test vault has no dedicated rule/template fixture |
 | 2026-05-10 | Phase 4 first slice | Codex subagents: architecture/runtime, provider/schema, safety/QA | [x] Fixed | P2: native capability validation treated missing `baseURL` as a wildcard, which could enable native tool calling for arbitrary OpenAI-compatible endpoints sharing provider/model strings | Made `NativeToolCallingValidation.baseURL` required, required exact normalized baseURL match, added custom-baseURL negative test, and re-reviewed to no actionable findings |
 | 2026-05-10 | Phase 4 disabled-gate smoke | Live Obsidian test vault | [x] Passed | No P1/P2 smoke blockers found; deployed plugin reload kept normal JSON planner/Memory flow stable with native gate disabled | Continue with actual native execution loop only behind internal gate |
+| 2026-05-10 | Phase 4 native loop | Codex subagents: architecture/runtime, provider/native shape, test coverage | [x] Passed | No P0/P1/P2 findings; native loop remains context/tool planning only, `ChatService` still owns final streaming, provider schema bind and fallback boundaries looked sound | Added mock native schema-bind/tool-execution coverage, invalid-args JSON fallback, and incomplete-native-planning JSON fallback before final answer output |
 
 ## Verification Log
 
@@ -380,6 +381,14 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 4 first slice | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
 | 2026-05-10 | Phase 4 smoke setup | `make deploy` | [x] Passed | Ran full Jest 20 suites / 203 tests, lint, build, and copied `dist/main.js`, manifests, and `styles.css` into `test/.obsidian/plugins/personal-assistant/` |
 | 2026-05-10 | Phase 4 Obsidian smoke | Disabled native gate keeps JSON planner stable | [x] Passed | Reloaded the app after deploy, asked `What notes in this vault mention dog or canine? Answer in one sentence.`; Thinking showed normal Memory/answer flow, final answer completed with Memory references, and no native/tool-call UI behavior changed |
+| 2026-05-10 | Phase 4 native loop | `npm test -- __tests__/chat-service.test.ts __tests__/ai-utils.test.ts --runInBand` | [x] Passed | 2 suites / 87 tests passed after native loop and fallback-before-final-action test |
+| 2026-05-10 | Phase 4 native loop | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors |
+| 2026-05-10 | Phase 4 native loop | `npm run lint` | [x] Passed | ESLint passed |
+| 2026-05-10 | Phase 4 native loop | `git diff --check` | [x] Passed | Whitespace check passed |
+| 2026-05-10 | Phase 4 native loop | `npm test -- --runInBand` | [x] Passed | 20 suites / 206 tests passed |
+| 2026-05-10 | Phase 4 native loop | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
+| 2026-05-10 | Phase 4 native loop smoke setup | `make deploy` | [x] Passed | Ran full Jest 20 suites / 206 tests, lint, build, and copied `dist/main.js`, manifests, and `styles.css` into `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-10 | Phase 4 native loop Obsidian smoke | Disabled native gate keeps JSON planner stable after native loop landed | [x] Passed | Reloaded Obsidian after deploy, asked `What notes in this vault mention dog or canine? Answer in one sentence.`; Thinking showed related Memory search, `search_memory: dog OR canine`, and Answering; final answer cited `0.unsorted/Dog.md` with Memory references and no native UI behavior change |
 
 ## Risk Register
 
@@ -393,7 +402,7 @@ Goal: Keep write action and command execution out of this implementation track u
 | Vault advice upgrades ordinary notes into user preferences | P2 | Phase 3 | Strict `vault_advice_context` evidence classification, prompt policy, prompt-injection fixtures, subagent safety review, and Obsidian smoke | [x] Mitigated |
 | Planner prompt duplicates tool metadata outside registry | P2 | Phase 3 | Removed hardcoded registered-tool examples from planner system prompt and asserted registry-derived tool definitions in tests | [x] Mitigated |
 | Native capability allowlist accidentally wildcards custom baseURL | P2 | Phase 4 | `NativeToolCallingValidation.baseURL` is required, matching uses normalized exact baseURL, and custom OpenAI-compatible baseURL negative test covers the regression | [x] Mitigated |
-| Native fallback replays answer after visible chunk | P1 | Phase 4 | Final-answer state rule and tests | [ ] Todo |
+| Native fallback replays answer after visible chunk | P1 | Phase 4 | Native planning fallback happens inside `planTurn` before final answer output; `ChatService.canFallbackToNonStreaming` still forbids non-streaming replay after visible chunks | [x] Mitigated |
 | Diagnostics or write audit records private note paths/content | P2 | Phase 5/6 | Redacted diagnostics and local-only redacted audit contract | [ ] Todo |
 | Archived docs accidentally treated as active source | P2 | Phase 0A | Archive banners point to PLAN and this tracker; compact evidence summary marks archive as historical only | [x] Mitigated |
 | Untracked Phase 0A docs missed by tracked diff whitespace check | P2 | Phase 0A | Run explicit trailing-whitespace scan across `docs/PLAN.md`, tracker, and `docs/archive` | [x] Mitigated |
