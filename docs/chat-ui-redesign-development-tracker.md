@@ -57,8 +57,8 @@ Smoke gate 固定要求：
 | 创建日期 | 2026-05-10 |
 | Source of truth | `docs/Chat UI Redesign Final Plan.md` |
 | Spec gate | `docs/chat-ui-redesign-spec.md` 已创建并通过 Phase A subagent review |
-| 当前阶段 | Phase C: Main Chat UI |
-| 当前状态 | [x] Phase C complete; Phase D paused/not started by user request |
+| 当前阶段 | Phase D: Memory Adjacent Polish |
+| 当前状态 | [x] Phase D complete; all implementation phases A-D have passed dev/test/review/fix/deploy/smoke loop |
 | 当前分支 | `codex/chat-ui-redesign` |
 | Review policy | Phase A-D 均需要 subagent review；Phase B-D review live code diff |
 | Smoke policy | Phase B-D 必须 `make deploy` 后做 Obsidian test vault dark/light quick smoke |
@@ -70,7 +70,7 @@ Smoke gate 固定要求：
 | Phase A | Spec Gate | [x] Done | `docs/chat-ui-redesign-spec.md`, this tracker | Spec includes all required tables and smoke matrix, then passed subagent review with no remaining P0/P1/P2 findings |
 | Phase B | Chat State And Renderer | [x] Done | `src/chat-view.ts`, `src/ai-services/chat-service.ts`, `__tests__/chat-view.test.ts`, `__tests__/chat-service.test.ts` | UI turns are separate from successful `modelHistory`; renderer handles streaming/final consistently |
 | Phase C | Main Chat UI | [x] Done | `src/chat-view.ts`, `src/custom.css`, `__tests__/chat-view.test.ts` | Compact Codex-hybrid chat UI, composer, menus, confirmations, and a11y behavior land behind existing Obsidian patterns |
-| Phase D | Memory Adjacent Polish | [ ] Todo | `src/chat-view.ts`, `src/memory-manager.ts`, `src/custom.css`, relevant tests | Memory chip/menu, references source bar, approval modal, and notices are polished without semantic changes |
+| Phase D | Memory Adjacent Polish | [x] Done | `src/chat-view.ts`, `src/memory-manager.ts`, `src/custom.css`, relevant tests | Memory chip/menu, references source bar, approval modal, and notices are polished without semantic changes |
 
 ## Execution Schedule
 
@@ -173,17 +173,17 @@ Goal: Polish Memory chip, Memory references, Memory approval modal, and notices 
 
 | Step | Task | Owner Files | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| dev | Add Memory chip state/menu | `src/chat-view.ts`, `src/memory-manager.ts`, `src/custom.css` | [ ] Todo | Shows current product state, Prepare/Update when applicable, Settings, and diagnostics only behind technical entry |
-| dev | Transform Memory references post-render only inside `.llm-view` | `src/chat-view.ts`, `src/custom.css` | [ ] Todo | Existing Markdown protocol stays unchanged; transform failure falls back to normal callout |
-| dev | Add collapsed source bar behavior | `src/chat-view.ts`, `src/custom.css` | [ ] Todo | Default collapsed, toggle uses `aria-expanded` / `aria-controls`, links reuse existing internal-link handling |
-| dev | Polish Memory approval modal visual shell | `src/memory-manager.ts`, `src/custom.css` | [ ] Todo | Preserves Data / AI provider / Memory search / Cost copy and chat buttons `Prepare memory`, `Answer now`, `Cancel` |
-| dev | Preserve command behavior | `src/memory-manager.ts` | [ ] Todo | Command-triggered prepare/update keeps no `Answer now`; closing modal still resolves `cancel` |
-| dev | Polish notices without lifecycle changes | `src/memory-manager.ts`, `src/custom.css` | [ ] Todo | Progress lifecycle and dirty/backoff behavior remain unchanged |
-| test | Add Memory UI/policy regression tests | `__tests__/memory-manager.test.ts`, `__tests__/chat-view.test.ts`, `__tests__/chat-service.test.ts` | [ ] Todo | Covers modal buttons, command vs chat behavior, source transform fallback, product labels, and no semantic retrieval changes |
-| review | Subagent review Phase D diff | Memory/UI/tests | [ ] Todo | Memory safety, product copy, UI/a11y, and QA findings triaged |
-| fix | Address review findings | Memory/UI/tests/docs | [ ] Todo | Focused tests and static checks pass after fixes |
-| Obsidian smoke test | Deploy and validate Memory adjacent UI | `test/` vault | [ ] Todo | Dark/light smoke covers Memory ready unused, Memory used collapsed/expanded references, no related Memory, Memory skipped, setup/update/failure states, approval modal, notices |
-| fix | Address smoke findings | Memory/UI/tests/docs | [ ] Todo | No unresolved P1/P2 Memory safety or UX blockers |
+| dev | Add Memory chip state/menu | `src/chat-view.ts`, `src/memory-manager.ts`, `src/custom.css` | [x] Done | Shows current product state, Prepare/Update when applicable, Settings, and diagnostics only behind technical entry |
+| dev | Transform Memory references post-render only inside `.llm-view` | `src/chat-view.ts`, `src/custom.css` | [x] Done | Existing Markdown protocol stays unchanged; transform failure falls back to normal callout |
+| dev | Add collapsed source bar behavior | `src/chat-view.ts`, `src/custom.css` | [x] Done | Default collapsed, toggle uses `aria-expanded` / `aria-controls`, links reuse existing internal-link handling |
+| dev | Polish Memory approval modal visual shell | `src/memory-manager.ts`, `src/custom.css` | [x] Done | Preserves Data / AI provider / Memory search / Cost copy and chat buttons `Prepare memory`, `Answer now`, `Cancel`; refresh paths use `Update memory` |
+| dev | Preserve command behavior | `src/memory-manager.ts` | [x] Done | Command-triggered prepare/update keeps no `Answer now`; closing modal still resolves `cancel` |
+| dev | Polish notices without lifecycle changes | `src/memory-manager.ts`, `src/custom.css` | [x] Done | Progress lifecycle and dirty/backoff behavior remain unchanged; visible progress copy uses product language |
+| test | Add Memory UI/policy regression tests | `__tests__/memory-manager.test.ts`, `__tests__/chat-view.test.ts`, `__tests__/chat-service.test.ts` | [x] Done | Covers modal buttons, command vs chat behavior, source transform fallback, product labels, and no semantic retrieval changes |
+| review | Subagent review Phase D diff | Memory/UI/tests | [x] Done | Memory safety, product copy, UI/a11y, and QA findings triaged; P2 findings fixed |
+| fix | Address review findings | Memory/UI/tests/docs | [x] Done | Focused tests and static checks pass after fixes |
+| Obsidian smoke test | Deploy and validate Memory adjacent UI | `test/` vault | [x] Done | Dark/light smoke covered Memory ready/update chip/menu, update approval/cancel, source bar collapsed/expanded, ordinary no-source answer, and menu mutual exclusion; setup/failure/progress paths are covered by automated tests to avoid forcing destructive or costly live states |
+| fix | Address smoke findings | Memory/UI/tests/docs | [x] Done | No unresolved P1/P2 Memory safety or UX blockers |
 
 Expected commands:
 
@@ -204,30 +204,30 @@ Expected commands:
 | Empty state without active note | Phase C | [x] Automated | `__tests__/chat-view.test.ts` covers disabled current-note prompt chips when no Markdown leaf is active |
 | Long answer | Phase B/C | [x] Passed | Phase C dark smoke rendered a multi-section Markdown answer in the redesigned assistant layout without overlap |
 | Generation + draft next message | Phase C | [x] Passed | Real smoke confirmed draft text can be entered while generation is active; automated test covers Enter showing a muted hint instead of sending while still generating |
-| Stop during generation | Phase B/C | [x] Passed | Phase C dark smoke: Stop produced a cancelled row with Retry/Delete and recovered Ask/Add to Editor state |
+| Stop during generation | Phase B/C | [x] Passed | Phase C dark smoke: Stop produced a cancelled row with Retry/Delete and recovered Ask state; Add to Editor remains a per-message action covered by automated tests |
 | Inline error + retry | Phase B/C | [x] Automated | Automated tests cover provider error + retry; Obsidian smoke covered cancelled-row Retry without forcing live AI settings into an error state |
-| Memory ready but unused | Phase D | [ ] Todo | - |
-| Memory used with collapsed references | Phase D | [ ] Todo | - |
-| Memory used with expanded references | Phase D | [ ] Todo | - |
-| No related Memory | Phase D | [ ] Todo | - |
-| Memory skipped / Answer now | Phase D | [ ] Todo | - |
-| Memory setup approval modal | Phase D | [ ] Todo | - |
-| Memory command prepare/update modal | Phase D | [ ] Todo | - |
-| Memory approval close/cancel | Phase D | [ ] Todo | - |
-| Memory failure state | Phase D | [ ] Todo | - |
-| Memory progress notice | Phase D | [ ] Todo | - |
+| Memory ready but unused | Phase D | [x] Passed | Real Obsidian smoke after deploy showed the chat chip as `Memory ready`; opening the chip menu showed only `Open settings` and `Show technical Memory status`, with no prepare/update action |
+| Memory used with collapsed references | Phase D | [x] Passed | Real Obsidian smoke on `Dog.md`: Memory-backed answer rendered a collapsed `Memory used (1)` source bar instead of the raw Memory references callout |
+| Memory used with expanded references | Phase D | [x] Passed | Real Obsidian smoke expanded `Memory used (1)` and showed the internal source link `0.unsorted/Dog.md` |
+| No related Memory | Phase D | [x] Passed | Real smoke ordinary arithmetic answer rendered without a source bar; automated status-copy test covers `No related memory` wording |
+| Memory skipped / Answer now | Phase D | [x] Automated | `__tests__/memory-manager.test.ts` covers `Answer now` chat decision and unavailable Memory answer-now path without mutating live settings |
+| Memory setup approval modal | Phase D | [x] Automated | `__tests__/memory-manager.test.ts` covers first-use chat modal buttons: `Prepare memory`, `Answer now`, `Cancel` |
+| Memory command prepare/update modal | Phase D | [x] Passed | Real Obsidian smoke opened the changed-notes update modal from the Memory chip and verified title/copy/buttons; automated tests cover command mode omitting `Answer now` |
+| Memory approval close/cancel | Phase D | [x] Passed | Real Obsidian smoke cancelled the update approval modal; automated test covers close resolving `cancel` |
+| Memory failure state | Phase D | [x] Automated | `__tests__/memory-manager.test.ts` covers manual prepare failure notice copy without forcing a live storage/provider failure |
+| Memory progress notice | Phase D | [x] Automated | `__tests__/memory-manager.test.ts` covers one progress notice updating through `Checking notes`, `Preparing notes`, `Saving memory`, retry, and ready states |
 | Clear confirmation | Phase B/C | [x] Passed | Phase C dark smoke showed danger-styled `Clear chat` modal and cancel path; automated tests cover clear lifecycle |
 | Delete confirmation | Phase B/C | [x] Passed | Phase C per-message menu exposes Delete; Phase B smoke and automated tests cover confirmation-gated pair deletion |
 | Add to Editor | Phase C | [x] Automated | Automated test inserts the selected assistant answer; real smoke verified the per-message `Add to Editor` action is present but did not click it to avoid editing `Dog.md` |
-| Keyboard traversal | Phase C/D | [x] Automated | Tests cover Enter/Shift+Enter, activity toggle attributes, and action availability; Phase D will recheck source toggle traversal |
-| Activity/source a11y attributes | Phase C/D | [~] Phase C passed | Activity row exposes polite summary and toggle `aria-expanded` / `aria-controls`; source-bar a11y remains Phase D |
-| Reduced motion | Phase C/D | [~] Phase C passed | CSS includes reduced-motion guard for chat message animation; Phase D will recheck source/notice additions |
+| Keyboard traversal | Phase C/D | [x] Passed | Tests cover Enter/Shift+Enter, activity/source toggle attributes, and action availability; Phase D smoke clicked source toggle and menu controls successfully |
+| Activity/source a11y attributes | Phase C/D | [x] Passed | Activity row exposes polite summary and toggle `aria-expanded` / `aria-controls`; source bar toggle uses `aria-expanded` / `aria-controls` and was exercised in real smoke |
+| Reduced motion | Phase C/D | [x] Passed | CSS includes reduced-motion guard for chat message animation; Phase D source/notice additions do not add motion-dependent behavior |
 | Focus visibility | Phase C/D | [x] Passed | Scoped focus-visible styles exist for chat buttons and textarea; smoke showed controls remain visible and reachable |
 | Narrow width `<360px` | Phase C/D | [x] Passed | Real Obsidian smoke after splitter drag: composer stacked Memory chip above textarea/actions and messages remained readable |
 | Normal width `360-520px` | Phase C/D | [x] Passed | Real Obsidian smoke in restored normal chat pane: composer/menu/message layout readable with no overlap |
 | Wide width `>520px` | Phase C/D | [x] Passed | Real Obsidian smoke after splitter drag: wider assistant flow and composer remained readable with no overlap |
-| Dark theme quick check | Phase C/D | [x] Passed | Phase C dark smoke covered empty/chip, long answer, stop, retry, clear modal, per-message menu, and width checks |
-| Light theme quick check | Phase C/D | [x] Passed | Phase C light smoke covered redesigned message cards, menu, composer readability, then restored dark theme |
+| Dark theme quick check | Phase C/D | [x] Passed | Phase D dark smoke covered Memory ready/update menus, update approval modal, source bar collapsed/expanded, ordinary no-source answer, and menu mutual exclusion |
+| Light theme quick check | Phase C/D | [x] Passed | Phase D light smoke covered message cards, Memory source bar, Memory chip, and composer readability, then restored dark theme |
 
 ## Review Log
 
@@ -244,6 +244,16 @@ Expected commands:
 | 2026-05-10 | Phase C review | Codex subagents: product/UX, runtime/a11y, QA re-review | [x] Fixed | P2: width behavior was viewport-based instead of panel-based; activity details could grow unbounded; destructive clear CTA was not danger-styled; Memory chip implied readiness; Stop settling left Ask clickable; composer menu needed local positioning; activity header nested interaction; generated `styles.css` drifted from source CSS | Added `ResizeObserver` density classes, coalesced/capped activity details, danger confirmation, neutral Memory chip copy, `isStopping` guard, local menu positioning, toggle-only activity interaction, regenerated `styles.css`, and added/expanded tests |
 | 2026-05-10 | Phase C re-review | Codex subagent: narrow generated CSS/runtime re-review | [x] Passed | No remaining P0/P1/P2 after generated stylesheet sync; verified no old viewport max-width rules remain and panel-density classes are present in source and generated CSS | Proceeded to deploy and Obsidian smoke |
 | 2026-05-10 | Phase C smoke/fix | Real Obsidian test vault | [x] Passed | Dark/light and narrow/normal/wide smoke found no P1/P2 blockers; manual Add to Editor click was intentionally skipped to avoid editing `Dog.md` and remains covered by automated tests | Removed a stale pointer cursor from non-interactive activity header before final Phase C closeout checks |
+| 2026-05-11 | Phase D dev/test | Local implementation | [x] Ready for review | Added per-turn Memory metadata, Memory chip state/menu, post-render source bar transform with allow-list guard, approval modal and notice copy polish, and scoped theme CSS | Focused tests, type check, lint, build, full tests, deploy checks, and whitespace checks passed |
+| 2026-05-11 | Phase D review | Codex subagents: Memory/runtime safety, UI/a11y/theme/QA | [x] Fixed | P2: More menu could overlap the Memory chip menu after an async Memory state read; changed-notes update CTA used `Prepare memory` instead of `Update memory` | Added menu request invalidation and mutual-exclusion regression test; refresh approval paths now use `Update memory` and have modal/copy regression coverage |
+| 2026-05-11 | Phase D re-review | Codex subagent: Memory/runtime safety | [x] Passed | No P0/P1/P2 findings; verified Memory source allow-list metadata does not change planner/search flow, Add to Editor preserves original Markdown, retry still uses normal send pipeline, and approval/search remains owned by `MemoryManager` | Proceeded to deploy and Obsidian smoke |
+| 2026-05-11 | Phase D smoke/fix | Real Obsidian test vault | [x] Passed | Dark/light smoke found no P1/P2 blockers; verified Memory ready/update chip/menu, update approval/cancel, menu mutual exclusion, Memory used source bar collapsed/expanded, ordinary no-source answer, and source/theme readability | Updated modal intro copy to `Memory from your notes`; setup/failure/progress paths remain automated to avoid forcing live destructive or costly states |
+| 2026-05-11 | Phase D post-smoke fix | User screenshot + real Obsidian test vault | [x] Fixed | P2: Obsidian status bar could overlap the composer action buttons at the bottom-right of the chat pane | Chat view now measures overlap with `.status-bar`, reserves scoped bottom clearance, and has a regression test for the computed clearance |
+| 2026-05-11 | Phase D post-smoke polish | User screenshot + real Obsidian test vault | [x] Fixed | P2: text Memory state chip consumed left-side composer space and duplicated the status-bar brain affordance visually | Chat Memory control is now an icon-only brain action immediately after `Ask`; it keeps the existing state/menu behavior and status color classes |
+| 2026-05-11 | Phase D post-smoke fix | User screenshot + real Obsidian test vault | [x] Fixed | P2: empty-state prompt chips stayed disabled after switching from `New tab` back to an active Markdown note | Empty state now uses workspace active-file detection before leaf fallbacks and refreshes prompt-chip availability on workspace active/file changes |
+| 2026-05-11 | Phase D post-smoke polish | User screenshot + real Obsidian test vault | [x] Fixed | P2: right-bottom composer action row still showed a large `Add to Editor` button after Memory moved next to `Ask` | Removed the composer-level `Add to Editor` button while preserving per-message `More -> Add to Editor` semantics |
+| 2026-05-11 | Phase D post-smoke polish | User request + real Obsidian test vault | [x] Fixed | P2: composer `More` action appeared before `Ask` and Memory instead of at the far right | Reordered composer actions to `Ask`, Memory, Stop when visible, then `More`; removed Stop auto-left spacing so the group stays compact |
+| 2026-05-11 | Phase D post-smoke polish | User report + real Obsidian test vault | [x] Fixed | P2: composer `More` menu and per-message action menus could stay open indefinitely after idle time | Added 8-second idle auto-close for composer and message action menus, with mouse/focus/key/click activity refreshing the timer |
 
 ## Verification Log
 
@@ -280,6 +290,43 @@ Expected commands:
 | 2026-05-10 | Phase C Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded after deploy; validated active-note empty state, current-note chip fill, composer More menu, long answer, draft entry during generation, Stop/cancel row, Retry, danger-styled Clear modal, per-message menu, focus/readability, and restored Ask/Add to Editor state |
 | 2026-05-10 | Phase C Obsidian smoke | Real Obsidian test vault, light theme | [x] Passed | Toggled light theme and checked redesigned message cards, menu, and composer readability; restored dark theme afterward |
 | 2026-05-10 | Phase C Obsidian smoke | Real Obsidian test vault, width checks | [x] Passed | Splitter drag verified wide, normal, and narrow chat pane behavior; narrow layout stacked the Memory chip above textarea/actions without overlap |
+| 2026-05-11 | Phase D focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 34 tests passed; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D focused test | `npm test -- __tests__/memory-manager.test.ts --runInBand` | [x] Passed | 1 suite / 13 tests passed; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D combined focused test | `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts __tests__/memory-manager.test.ts --runInBand` | [x] Passed | 3 suites / 135 tests passed; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D type check | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors after review fixes and final modal copy polish |
+| 2026-05-11 | Phase D lint | `npm run lint` | [x] Passed | ESLint passed |
+| 2026-05-11 | Phase D build | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
+| 2026-05-11 | Phase D full test | `npm test -- --runInBand` | [x] Passed | 20 suites / 248 tests passed; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D whitespace | `git diff --check` | [x] Passed | No whitespace errors after Phase D dev/test/review fixes |
+| 2026-05-11 | Phase D deploy | `make deploy` | [x] Passed | Full tests/lint/build passed inside deploy; copied current generated assets to `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-11 | Phase D Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded after deploy; verified Memory ready/update chip/menu, More menu mutual exclusion, update approval modal and cancel, Memory used source bar collapsed/expanded, and ordinary no-source answer |
+| 2026-05-11 | Phase D Obsidian smoke | Real Obsidian test vault, light theme | [x] Passed | Toggled light theme and checked source bar, Memory chip, message cards, and composer readability; restored dark theme afterward |
+| 2026-05-11 | Phase D automated smoke supplements | Jest focused suites | [x] Passed | Covers first-use setup modal, command prepare/update modal without `Answer now`, close/cancel resolution, manual prepare failure notice, progress notice copy, fallback callout behavior, and source allow-list safety |
+| 2026-05-11 | Phase D status-bar fix focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 35 tests passed; includes composer bottom-clearance regression; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D status-bar fix type check | `npx tsc -noEmit -skipLibCheck` | [x] Passed | No type errors after status-bar clearance guard |
+| 2026-05-11 | Phase D status-bar fix lint/build | `npm run lint`, `npm run build` | [x] Passed | Lint and build passed; build emitted only Browserslist stale-data warning |
+| 2026-05-11 | Phase D status-bar fix deploy | `make deploy` | [x] Passed | 20 suites / 249 tests passed inside deploy, then lint/build passed and copied current assets to `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-11 | Phase D status-bar fix Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded app after deploy and confirmed Memory chip, textarea, and More/Ask buttons render above the Obsidian status bar with no bottom-right overlap |
+| 2026-05-11 | Phase D Memory icon polish focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 36 tests passed; includes Memory icon placement after `Ask`; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D Memory icon polish static checks | `npx tsc -noEmit -skipLibCheck`, `npm run lint`, `npm run build`, `git diff --check` | [x] Passed | Type check, lint, build, and whitespace checks passed; build emitted only Browserslist stale-data warning |
+| 2026-05-11 | Phase D Memory icon polish deploy | `make deploy` | [x] Passed | 20 suites / 250 tests passed inside deploy, then lint/build passed and copied current assets to `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-11 | Phase D Memory icon polish Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded app after deploy and confirmed the left Memory text button is gone, the brain icon appears after `Ask`, its Memory menu opens, More closes the Memory menu, and bottom controls still avoid the status bar |
+| 2026-05-11 | Phase D active-note fix focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 37 tests passed; includes active-note empty-state refresh after workspace event; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D active-note fix static checks | `npx tsc -noEmit -skipLibCheck`, `npm run lint`, `npm run build`, `git diff --check` | [x] Passed | Type check, lint, build, and whitespace checks passed; build emitted only Browserslist stale-data warning |
+| 2026-05-11 | Phase D active-note fix deploy | `make deploy` | [x] Passed | 20 suites / 251 tests passed inside deploy, then lint/build passed and copied current assets to `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-11 | Phase D active-note fix Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded app after deploy; switched from `New tab` back to `Dog.md`, verified `Summarize current note` is clickable, fills the composer, and enables `Ask` without sending |
+| 2026-05-11 | Phase D composer Add removal focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 37 tests passed; includes composer action row without `Add to Editor` and per-message Add-to-Editor coverage; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D composer Add removal static checks | `npx tsc -noEmit -skipLibCheck`, `npm run lint`, `npm run build`, `git diff --check` | [x] Passed | Type check, lint, build, and whitespace checks passed; build emitted only Browserslist stale-data warning |
+| 2026-05-11 | Phase D composer Add removal deploy | `make deploy` | [x] Passed | 20 suites / 251 tests passed inside deploy, then lint/build passed and copied current assets to `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-11 | Phase D composer Add removal Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded app after deploy and confirmed the right-bottom composer controls show only More, Ask, and Memory; no composer-level `Add to Editor` button remains |
+| 2026-05-11 | Phase D composer More placement focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 37 tests passed; verifies composer action order keeps `More` as the final action; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D composer More placement static checks | `npx tsc -noEmit -skipLibCheck`, `npm run lint`, `npm run build`, `git diff --check` | [x] Passed | Type check, lint, build, and whitespace checks passed; build emitted only Browserslist stale-data warning |
+| 2026-05-11 | Phase D composer More placement deploy | `make deploy` | [x] Passed | 20 suites / 251 tests passed inside deploy, then lint/build passed and copied current assets to `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-11 | Phase D composer More placement Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded app after deploy and confirmed bottom-right composer controls render in visual order Ask, Memory, then More at the far right |
+| 2026-05-11 | Phase D menu idle auto-close focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 39 tests passed; covers composer More idle close with activity reset and message action menu idle close; warning: `--localstorage-file` without valid path |
+| 2026-05-11 | Phase D menu idle auto-close static checks | `npx tsc -noEmit -skipLibCheck`, `npm run lint`, `npm run build`, `git diff --check` | [x] Passed | Type check, lint, build, and whitespace checks passed; build emitted only Browserslist stale-data warning |
+| 2026-05-11 | Phase D menu idle auto-close deploy | `make deploy` | [x] Passed | 20 suites / 253 tests passed inside deploy, then lint/build passed and copied current assets to `test/.obsidian/plugins/personal-assistant/` |
+| 2026-05-11 | Phase D menu idle auto-close Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded app after deploy, opened composer `More`, waited past the 8-second idle timeout, and confirmed the menu auto-closed; message action idle close is covered by automated test to avoid another live model request |
 
 ## Risk Register
 
@@ -290,14 +337,16 @@ Expected commands:
 | Retry bypasses normal Memory approval/search behavior | P1 | Phase B | Retry must rerun normal send pipeline with original prompt; cover ready/not-ready behavior in tests | [x] Closed for Phase B |
 | Delete removes only visible row but leaves stale history pair | P1 | Phase B | Delete successful turn as paired UI/history operation; confirmation-gated | [x] Closed for Phase B |
 | Draft next message accidentally auto-sends or clears | P2 | Phase C | Send disabled during generation, Enter hint test, Stop/complete preserves draft, Clear is only draft-clearing action | [x] Closed for Phase C |
-| Theme compatibility regresses through hard-coded surfaces | P2 | Phase A/C/D | Spec token table requires Obsidian variables; review CSS for hard-coded large surfaces | [~] Phase C closed; Phase D pending |
+| Theme compatibility regresses through hard-coded surfaces | P2 | Phase A/C/D | Spec token table requires Obsidian variables; review CSS for hard-coded large surfaces | [x] Closed for Phase D |
 | Activity updates become noisy for screen readers | P2 | Phase C | Summary only uses `aria-live="polite"`; details are not live-announced; fast status updates coalesced | [x] Closed for Phase C |
-| Memory references transform changes protocol or leaks outside Chat view | P1 | Phase D | Post-render transform only inside `.llm-view`; original Markdown remains source; fallback to normal callout on failure; source-bar eligibility requires per-turn `hasMemoryContent` and `allowedMemorySourcePaths` metadata | [~] Spec mitigated; implementation pending |
-| Product UI leaks technical Memory terms | P2 | Phase D | Memory state table separates user-facing product copy from diagnostics-only terms; visible Memory notices must avoid forbidden diagnostics terms | [~] Spec mitigated; implementation pending |
-| Tracker claims Obsidian validation without real smoke | P2 | Phase B-D | Each phase must record `make deploy` and exact Obsidian smoke evidence before `[x] Done` | [~] Phase B/C closed; remains required for D |
+| Memory references transform changes protocol or leaks outside Chat view | P1 | Phase D | Post-render transform only inside `.llm-view`; original Markdown remains source; fallback to normal callout on failure; source-bar eligibility requires per-turn `hasMemoryContent` and `allowedMemorySourcePaths` metadata | [x] Closed for Phase D |
+| Product UI leaks technical Memory terms | P2 | Phase D | Memory state table separates user-facing product copy from diagnostics-only terms; visible Memory notices must avoid forbidden diagnostics terms | [x] Closed for Phase D |
+| Tracker claims Obsidian validation without real smoke | P2 | Phase B-D | Each phase must record `make deploy` and exact Obsidian smoke evidence before `[x] Done` | [x] Closed for Phase D |
 | Delayed Markdown render writes stale DOM | P2 | Phase B | Shared renderer requires per-message render tokens and tests with delayed `MarkdownRenderer.render(...)` | [x] Closed for Phase B |
 | Successful-turn delete mutates history during active generation | P2 | Phase B | Disable successful-turn delete while a newer turn is active; Clear chat remains the explicit abort-and-clear path | [x] Closed for Phase B |
-| Generated stylesheet drifts from source CSS | P2 | Phase C/D | After CSS fixes, run `npm run build` and grep source/generated CSS for required selectors and removed stale responsive rules | [x] Closed for Phase C |
+| Generated stylesheet drifts from source CSS | P2 | Phase C/D | After CSS fixes, run `npm run build` and grep source/generated CSS for required selectors and removed stale responsive rules | [x] Closed for Phase D |
+| Obsidian status bar overlaps composer actions | P2 | Phase D | Measure real status-bar overlap and reserve scoped bottom clearance in the chat view; verify in test vault after deploy | [x] Closed for Phase D post-smoke fix |
+| Empty-state prompt chips stay disabled after active note changes | P2 | Phase D | Listen for workspace active/file changes, prefer workspace active-file detection before leaf fallbacks, and verify `New tab` to Markdown-note switching in test vault | [x] Closed for Phase D post-smoke fix |
 
 ## Open Decisions
 
@@ -307,7 +356,7 @@ Expected commands:
 | Exact `docs/chat-ui-redesign-spec.md` signoff owner | Before Phase B runtime code | [x] Done | Phase A subagent review and re-review completed with no remaining P0/P1/P2 findings; user instructed to continue automatically when a phase completes |
 | Empty state chip prompt text | Phase A spec | [x] Done | Spec defines all three chip prompts; all are current-note aware, fill composer only, and never auto-send |
 | Technical Memory status presentation | Phase A/D | [x] Done | Spec chooses existing `plugin.showTechnicalMemoryStatus()` Notice path; no new diagnostics modal/panel in v1 |
-| Smoke vault target notes | Phase C/D smoke | [~] Phase C done; Phase D pending | Phase C used `Dog.md` in the `test/` vault for active-note smoke; no-active-note chip behavior is covered by automated tests. Phase D still needs stable Memory used/skipped/failure smoke setup |
+| Smoke vault target notes | Phase C/D smoke | [x] Done | Phase C and Phase D used `Dog.md` in the `test/` vault for active-note and Memory source smoke; no-active-note, setup, skipped, progress, and failure paths are covered by automated tests where forcing live state would mutate settings or consume provider calls |
 
 ## Final Completion Criteria
 
