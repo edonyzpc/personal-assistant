@@ -1,8 +1,9 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, Vault, setIcon, Modal, Setting } from 'obsidian';
-import { ChatService, type ChatAgentStatus } from './ai-services/chat-service';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, Vault, setIcon, Modal, Setting, type EventRef } from 'obsidian';
+import { ChatService, type ChatAgentStatus, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
 import { isPluginEnabled } from './utils';
+import type { MemoryMaintenancePlan } from './memory-manager';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
 
@@ -28,6 +29,25 @@ interface ChatConfirmationOptions {
     cancelText?: string;
     danger?: boolean;
 }
+
+interface MemoryReferenceMatch {
+    paths: string[];
+}
+
+type MemoryChipState = {
+    label: string;
+    visualState: "ready" | "needs-update" | "needs-setup" | "unavailable";
+    actionLabel?: string;
+    actionKind?: "prepare" | "update";
+};
+
+const MEMORY_CHIP_STATE_CLASSES = [
+    "personal-assistant-ai-statusbar-ready",
+    "personal-assistant-ai-statusbar-needs-update",
+    "personal-assistant-ai-statusbar-needs-setup",
+    "personal-assistant-ai-statusbar-unavailable",
+];
+export const CHAT_MENU_IDLE_CLOSE_MS = 8000;
 
 class ChatConfirmationModal extends Modal {
     private resolved = false;
@@ -98,6 +118,9 @@ export class LLMView extends ItemView {
     private activeTurnCancelled = false;
     private scheduledScrollFrame: number | null = null;
     private panelResizeObserver: ResizeObserver | null = null;
+    private statusBarResizeObserver: ResizeObserver | null = null;
+    private statusBarResizeHandler: (() => void) | null = null;
+    private memorySourceBarId = 0;
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
@@ -124,21 +147,12 @@ export class LLMView extends ItemView {
         containerEl.empty();
         containerEl.classList.add('llm-view');
         this.observePanelDensity(containerEl);
+        this.observeStatusBarClearance(containerEl);
 
         const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container' });
 
         const inputDiv = containerEl.createDiv({ cls: 'llm-input' });
         const composerRow = inputDiv.createDiv({ cls: 'pa-chat-composer-row' });
-        const memoryChip = composerRow.createEl('button', {
-            cls: 'pa-chat-memory-chip',
-            attr: {
-                type: 'button',
-                'aria-label': 'Show Memory status',
-                title: 'Show Memory status',
-            },
-        });
-        setIcon(memoryChip, 'brain');
-        memoryChip.createSpan({ text: 'Memory' });
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: 'Ask about your notes...' }
         });
@@ -165,17 +179,6 @@ export class LLMView extends ItemView {
         composerHint.setAttribute('aria-live', 'polite');
 
         const buttonDiv = inputDiv.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
-        const moreButton = buttonDiv.createEl('button', {
-            cls: 'pa-chat-icon-button pa-chat-more-button',
-            attr: {
-                type: 'button',
-                'aria-label': 'More chat actions',
-                title: 'More chat actions',
-                'aria-expanded': 'false',
-            },
-        });
-        setIcon(moreButton, 'ellipsis');
-        moreButton.createSpan({ cls: 'pa-sr-only', text: 'More chat actions' });
         const composerMenu = inputDiv.createDiv({ cls: 'pa-chat-menu pa-chat-composer-menu' });
         composerMenu.hidden = true;
         const copyConversationButton = composerMenu.createEl('button', {
@@ -209,7 +212,23 @@ export class LLMView extends ItemView {
         });
         setIcon(sendButton, 'send');
         sendButton.createSpan({ cls: 'pa-sr-only', text: 'Ask' });
-        const addToEditorButton = buttonDiv.createEl('button', { text: 'Add to Editor' });
+        const memoryControl = buttonDiv.createSpan({ cls: 'pa-chat-memory-control' });
+        const memoryChip = memoryControl.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-memory-chip personal-assistant-ai-statusbar',
+            attr: {
+                type: 'button',
+                'aria-label': 'Show Memory status',
+                title: 'Show Memory status',
+            },
+        });
+        setIcon(memoryChip, 'brain');
+        const memoryChipLabel = memoryChip.createSpan({ cls: 'pa-sr-only', text: 'Memory' });
+        const memoryMenu = memoryControl.createDiv({ cls: 'pa-chat-menu pa-chat-memory-menu' });
+        const memoryMenuId = `pa-chat-memory-menu-${sessionId}`;
+        memoryMenu.id = memoryMenuId;
+        memoryMenu.hidden = true;
+        memoryChip.setAttribute('aria-controls', memoryMenuId);
+        memoryChip.setAttribute('aria-expanded', 'false');
         const cancelButton = buttonDiv.createEl('button', {
             cls: 'pa-chat-icon-button cancel-button',
             attr: {
@@ -221,8 +240,18 @@ export class LLMView extends ItemView {
         setIcon(cancelButton, 'square');
         cancelButton.createSpan({ cls: 'pa-sr-only', text: 'Stop generation' });
         cancelButton.classList.add('cancel-button-hidden');
+        const moreButton = buttonDiv.createEl('button', {
+            cls: 'pa-chat-icon-button pa-chat-more-button',
+            attr: {
+                type: 'button',
+                'aria-label': 'More chat actions',
+                title: 'More chat actions',
+                'aria-expanded': 'false',
+            },
+        });
+        setIcon(moreButton, 'ellipsis');
+        moreButton.createSpan({ cls: 'pa-sr-only', text: 'More chat actions' });
 
-        addToEditorButton.disabled = true;
         sendButton.disabled = true;
 
         this.responseDiv = chatContainer;
@@ -276,10 +305,12 @@ export class LLMView extends ItemView {
             contentDiv: HTMLElement;
             renderToken: number;
             copyContent: string;
+            memoryMetadata?: ChatTurnMemoryMetadata;
         };
         type UiTurn = {
             id: number;
             prompt: string;
+            memoryMetadata?: ChatTurnMemoryMetadata;
             userMessage?: RenderedMessage;
             assistantMessage?: RenderedMessage;
             statusView?: ThinkingStatusView;
@@ -289,6 +320,7 @@ export class LLMView extends ItemView {
             kind: 'history';
             user: ChatMessage;
             assistant: ChatMessage;
+            memoryMetadata?: ChatTurnMemoryMetadata;
         };
         type TerminalTurnEntry = {
             kind: 'terminal';
@@ -319,6 +351,42 @@ export class LLMView extends ItemView {
             composerHint.setText(message);
             composerHint.hidden = false;
         };
+        const createIdleMenuAutoClose = (
+            menu: HTMLElement,
+            toggleButton: HTMLElement,
+            closeMenu: () => void,
+        ) => {
+            let idleTimer: ReturnType<typeof setTimeout> | null = null;
+            const clear = () => {
+                if (idleTimer === null) return;
+                clearTimeout(idleTimer);
+                idleTimer = null;
+            };
+            const schedule = () => {
+                clear();
+                if (menu.hidden) return;
+                idleTimer = setTimeout(() => {
+                    idleTimer = null;
+                    if (!isCurrentSession()) return;
+                    closeMenu();
+                }, CHAT_MENU_IDLE_CLOSE_MS);
+                (idleTimer as unknown as { unref?: () => void }).unref?.();
+            };
+            const close = () => {
+                clear();
+                closeMenu();
+            };
+            const refresh = () => {
+                if (!menu.hidden) schedule();
+            };
+            const idleEvents = ['mousemove', 'focusin', 'keydown', 'click'];
+            for (const element of [menu, toggleButton]) {
+                for (const eventName of idleEvents) {
+                    element.addEventListener(eventName, refresh);
+                }
+            }
+            return { clear, close, schedule };
+        };
         const syncComposerControls = () => {
             const generating = isGenerating();
             const hasDraft = textArea.value.trim().length > 0;
@@ -346,18 +414,141 @@ export class LLMView extends ItemView {
         const isCurrentSession = () => this.viewSessionId === sessionId;
         const isMarkdownNoteAvailable = () => {
             const workspace = this.app.workspace as {
+                getActiveFile?: () => { path?: string; extension?: string } | null;
+                getActiveViewOfType?: <T>(type: new (...args: never[]) => T) => T | null;
                 getMostRecentLeaf?: () => WorkspaceLeaf | null;
                 getLeavesOfType?: (type: string) => WorkspaceLeaf[];
             };
+            const activeFile = workspace.getActiveFile?.();
+            if (activeFile?.extension === 'md' || activeFile?.path?.endsWith('.md')) return true;
+
+            if (workspace.getActiveViewOfType?.(MarkdownView)) return true;
+
+            const isMarkdownLeaf = (leaf?: WorkspaceLeaf | null) => {
+                const view = leaf?.view as (WorkspaceLeaf['view'] & {
+                    file?: { path?: string; extension?: string } | null;
+                    getViewType?: () => string;
+                }) | undefined;
+                return view instanceof MarkdownView
+                    || view?.getViewType?.() === 'markdown'
+                    || view?.file?.extension === 'md'
+                    || Boolean(view?.file?.path?.endsWith('.md'));
+            };
             const mostRecentLeaf = workspace.getMostRecentLeaf?.();
-            if (mostRecentLeaf?.view instanceof MarkdownView) return true;
-            return Boolean(workspace.getLeavesOfType?.('markdown')?.some((leaf) => leaf.view instanceof MarkdownView));
+            if (isMarkdownLeaf(mostRecentLeaf)) return true;
+            return Boolean(workspace.getLeavesOfType?.('markdown')?.some(isMarkdownLeaf));
         };
         const fillComposer = (prompt: string) => {
             textArea.value = prompt;
             hideComposerHint();
             syncComposerControls();
             textArea.focus();
+        };
+        const getMemoryChipState = (plan?: MemoryMaintenancePlan | null): MemoryChipState => {
+            if (this.plugin.settings?.memoryEnabled === false) {
+                return { label: 'Memory unavailable', visualState: 'unavailable' };
+            }
+            if (!plan) {
+                return { label: 'Memory', visualState: 'unavailable' };
+            }
+            if (plan.reason === 'ready') {
+                return { label: 'Memory ready', visualState: 'ready' };
+            }
+            if (plan.reason === 'changed-notes') {
+                return {
+                    label: 'Memory needs update',
+                    visualState: 'needs-update',
+                    actionLabel: 'Update memory',
+                    actionKind: 'update',
+                };
+            }
+            if (plan.reason === 'settings-changed') {
+                return {
+                    label: 'Memory needs update',
+                    visualState: 'needs-update',
+                    actionLabel: 'Prepare memory',
+                    actionKind: 'prepare',
+                };
+            }
+            if (plan.reason === 'first-use' || plan.reason === 'local-memory-missing') {
+                return {
+                    label: 'Memory needs setup',
+                    visualState: 'needs-setup',
+                    actionLabel: 'Prepare memory',
+                    actionKind: 'prepare',
+                };
+            }
+            return { label: 'Memory unavailable', visualState: 'unavailable' };
+        };
+        const setMemoryChipState = (state: MemoryChipState) => {
+            memoryChipLabel.setText(state.label);
+            memoryChip.setAttribute('aria-label', state.label);
+            memoryChip.setAttribute('title', state.label);
+            memoryChip.classList.remove(...MEMORY_CHIP_STATE_CLASSES);
+            memoryChip.classList.add(`personal-assistant-ai-statusbar-${state.visualState}`);
+        };
+        const readMemoryPlan = async (): Promise<MemoryMaintenancePlan | null> => {
+            try {
+                return await this.plugin.memoryManager?.getMaintenancePlan?.() ?? null;
+            } catch (error) {
+                this.plugin.log?.("Could not read Memory state for chat chip", error);
+                return { reason: 'unavailable', action: 'none', notesToCheck: 0, requiresApproval: false, canAnswerNow: true };
+            }
+        };
+        const refreshMemoryChipState = async () => {
+            setMemoryChipState(getMemoryChipState(await readMemoryPlan()));
+        };
+        let memoryMenuRequestId = 0;
+        const closeMemoryMenu = () => {
+            memoryMenuRequestId += 1;
+            memoryMenu.hidden = true;
+            memoryChip.setAttribute('aria-expanded', 'false');
+        };
+        const renderMemoryMenu = async () => {
+            memoryMenu.empty();
+            const state = getMemoryChipState(await readMemoryPlan());
+            setMemoryChipState(state);
+            memoryMenu.createDiv({ cls: 'pa-chat-menu-label', text: state.label });
+            if (state.actionLabel && state.actionKind) {
+                const actionButton = memoryMenu.createEl('button', {
+                    text: state.actionLabel,
+                    cls: 'pa-chat-menu-item pa-chat-memory-action',
+                    attr: { type: 'button' },
+                });
+                actionButton.onclick = () => {
+                    closeMemoryMenu();
+                    if (state.actionKind === 'update') {
+                        void this.plugin.memoryManager?.updateFromCommand?.().then(refreshMemoryChipState);
+                    } else {
+                        void this.plugin.memoryManager?.prepareFromCommand?.().then(refreshMemoryChipState);
+                    }
+                };
+            }
+            const openSettingsButton = memoryMenu.createEl('button', {
+                text: 'Open settings',
+                cls: 'pa-chat-menu-item',
+                attr: { type: 'button' },
+            });
+            openSettingsButton.onclick = () => {
+                closeMemoryMenu();
+                const appWithSettings = this.app as typeof this.app & {
+                    setting?: {
+                        open: () => void;
+                        openTabById: (id: string) => void;
+                    };
+                };
+                appWithSettings.setting?.open();
+                appWithSettings.setting?.openTabById('personal-assistant');
+            };
+            const technicalButton = memoryMenu.createEl('button', {
+                text: 'Show technical Memory status',
+                cls: 'pa-chat-menu-item',
+                attr: { type: 'button' },
+            });
+            technicalButton.onclick = () => {
+                closeMemoryMenu();
+                void this.plugin.showTechnicalMemoryStatus?.();
+            };
         };
         const renderEmptyState = () => {
             removeElement(emptyStateEl);
@@ -392,6 +583,17 @@ export class LLMView extends ItemView {
                 emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: 'Open a note to use this.' });
             }
         };
+        const refreshEmptyStateForWorkspace = () => {
+            if (!isCurrentSession() || !emptyStateEl) return;
+            renderEmptyState();
+        };
+        const workspaceWithEvents = this.app.workspace as typeof this.app.workspace & {
+            on?: (name: 'active-leaf-change' | 'file-open', callback: () => void) => EventRef;
+        };
+        if (typeof workspaceWithEvents.on === 'function') {
+            this.registerEvent(workspaceWithEvents.on('active-leaf-change', refreshEmptyStateForWorkspace));
+            this.registerEvent(workspaceWithEvents.on('file-open', refreshEmptyStateForWorkspace));
+        }
         const createRenderBuffer = (): HTMLElement => {
             if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
                 return document.createElement('div');
@@ -400,6 +602,74 @@ export class LLMView extends ItemView {
         };
         const renderedFallbackBuffer = (): HTMLElement => {
             return this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' }) as HTMLElement;
+        };
+        const parseMemoryReferences = (content: string): MemoryReferenceMatch | null => {
+            const match = content.match(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*(Memory references|RAG Referenc(?:es?)?)\b([\s\S]*)$/i);
+            if (!match) return null;
+            const block = match[2] ?? "";
+            const paths = [...block.matchAll(/\[\[([^\]]+)\]\]/g)]
+                .map((linkMatch) => linkMatch[1].split('|')[0].split('#')[0].trim())
+                .filter(Boolean);
+            return { paths: [...new Set(paths)] };
+        };
+        const removeRenderedMemoryReferenceCallout = (buffer: HTMLElement): boolean => {
+            const callouts = Array.from(buffer.querySelectorAll('.callout[data-callout="personal-assistant-ai"]')) as HTMLElement[];
+            const referenceCallout = callouts.find((callout) =>
+                /Memory references|RAG Referenc(?:es?)?/i.test(callout.textContent ?? '')
+            ) ?? (callouts.length === 1 ? callouts[0] : null);
+            if (!referenceCallout?.parentElement) return false;
+            referenceCallout.parentElement.removeChild(referenceCallout);
+            return true;
+        };
+        const createMemorySourceBar = (contentDiv: HTMLElement, paths: string[]) => {
+            const sourceBar = contentDiv.createDiv({ cls: 'pa-chat-source-bar' });
+            const detailsId = `pa-chat-memory-sources-${sessionId}-${++this.memorySourceBarId}`;
+            const toggleButton = sourceBar.createEl('button', {
+                cls: 'pa-chat-source-toggle',
+                attr: {
+                    type: 'button',
+                    'aria-expanded': 'false',
+                    'aria-controls': detailsId,
+                },
+            });
+            setIcon(toggleButton, 'chevron-right');
+            toggleButton.createSpan({ text: `Memory used (${paths.length})` });
+            const sourceList = sourceBar.createDiv({ cls: 'pa-chat-source-list' });
+            sourceList.id = detailsId;
+            sourceList.hidden = true;
+            paths.forEach((path) => {
+                const link = sourceList.createEl('a', {
+                    text: path,
+                    cls: 'pa-chat-source-link internal-link',
+                    attr: { href: path },
+                });
+                link.setAttribute('data-href', path);
+            });
+            this.updateClickableLink(sourceBar);
+            toggleButton.onclick = () => {
+                sourceList.hidden = !sourceList.hidden;
+                const expanded = !sourceList.hidden;
+                toggleButton.setAttribute('aria-expanded', String(expanded));
+                setIcon(toggleButton, expanded ? 'chevron-down' : 'chevron-right');
+            };
+        };
+        const transformMemoryReferences = (
+            rendered: RenderedMessage,
+            content: string,
+            buffer: HTMLElement,
+        ) => {
+            try {
+                const references = parseMemoryReferences(content);
+                if (!references || references.paths.length === 0) return;
+                const metadata = rendered.memoryMetadata;
+                if (!metadata?.hasMemoryContent) return;
+                const allowedPaths = new Set(metadata.allowedMemorySourcePaths);
+                if (!references.paths.every((path) => allowedPaths.has(path))) return;
+                if (!removeRenderedMemoryReferenceCallout(buffer)) return;
+                createMemorySourceBar(rendered.contentDiv, references.paths);
+            } catch (error) {
+                this.plugin.log?.("Could not transform Memory references", error);
+            }
         };
 
         const renderMarkdownInto = (
@@ -423,6 +693,7 @@ export class LLMView extends ItemView {
                     rendered.contentDiv.empty();
                     rendered.contentDiv.appendChild(buffer);
                     this.updateClickableLink(buffer);
+                    transformMemoryReferences(rendered, content, buffer);
                     scrollToBottom({ force: forceScroll, behavior: forceScroll ? 'smooth' : 'auto' });
                 })
                 .catch((error) => {
@@ -442,6 +713,7 @@ export class LLMView extends ItemView {
                 onDelete?: () => void | Promise<void>;
                 onAddToEditor?: (content: string) => void | Promise<void>;
                 disableDeleteWhileGenerating?: boolean;
+                memoryMetadata?: ChatTurnMemoryMetadata;
             } = {},
         ): RenderedMessage => {
             const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
@@ -453,6 +725,7 @@ export class LLMView extends ItemView {
                 contentDiv,
                 renderToken: 0,
                 copyContent: message.content,
+                memoryMetadata: options.memoryMetadata,
             };
             const menuButton = actionDiv.createEl('button', {
                 cls: 'message-action-button message-more-button',
@@ -466,9 +739,18 @@ export class LLMView extends ItemView {
             setIcon(menuButton, 'ellipsis');
             const actionMenu = actionDiv.createDiv({ cls: 'pa-chat-menu pa-chat-message-menu' });
             actionMenu.hidden = true;
+            const actionMenuAutoClose = createIdleMenuAutoClose(actionMenu, menuButton, () => {
+                actionMenu.hidden = true;
+                menuButton.setAttribute('aria-expanded', 'false');
+            });
             menuButton.onclick = () => {
-                actionMenu.hidden = !actionMenu.hidden;
-                menuButton.setAttribute('aria-expanded', String(!actionMenu.hidden));
+                if (actionMenu.hidden) {
+                    actionMenu.hidden = false;
+                    menuButton.setAttribute('aria-expanded', 'true');
+                    actionMenuAutoClose.schedule();
+                } else {
+                    actionMenuAutoClose.close();
+                }
             };
             const copyButton = actionMenu.createEl('button', {
                 text: 'Copy',
@@ -557,6 +839,7 @@ export class LLMView extends ItemView {
                         onDelete: () => deleteHistoryPair(pairStart + 1),
                         onAddToEditor: (content) => addContentToEditor(content),
                         disableDeleteWhileGenerating: true,
+                        memoryMetadata: entry.memoryMetadata,
                     });
                     return;
                 }
@@ -569,7 +852,6 @@ export class LLMView extends ItemView {
             });
             const lastAssistant = [...this.chatHistory].reverse().find((message) => message.role === 'assistant');
             this.result = lastAssistant?.content ?? '';
-            addToEditorButton.disabled = !this.result;
             renderEmptyState();
         };
 
@@ -733,23 +1015,23 @@ export class LLMView extends ItemView {
             if (status.type === 'thinking') {
                 return 'Deciding what context to use...';
             } else if (status.type === 'memory-prefetching') {
-                return `Finding related memory: ${status.query}`;
+                return `Searching notes: ${status.query}`;
             } else if (status.type === 'memory-prefetched') {
                 const sources = status.sources
                     .slice(0, 4)
                     .map((source) => source.path)
                     .join(', ');
-                return sources ? `Found memory references: ${sources}` : 'No related memory found.';
+                return sources ? `Related notes found: ${sources}` : 'No related memory';
             } else if (status.type === 'retrieving') {
-                return `Searching memory: ${status.query}`;
+                return `Searching notes: ${status.query}`;
             } else if (status.type === 'retrieved') {
                 const sources = status.sources
                     .slice(0, 4)
                     .map((source) => source.path)
                     .join(', ');
-                return sources ? `Found memory references: ${sources}` : 'No memory references found.';
+                return sources ? `Related notes found: ${sources}` : 'No related memory';
             } else if (status.type === 'memory-skipped') {
-                return status.reason;
+                return /returned 0 source/i.test(status.reason) ? 'No related memory' : 'Memory skipped';
             } else if (status.type === 'tool-running') {
                 return status.message;
             } else if (status.type === 'tool-done') {
@@ -763,8 +1045,7 @@ export class LLMView extends ItemView {
             } else if (status.type === 'answering') {
                 return 'Answering...';
             } else if (status.type === 'fallback') {
-                const reason = status.reason ? ` Reason: ${status.reason}` : '';
-                return `I could not use the planner this time, so I will answer with a fallback path.${reason}`;
+                return 'I will answer normally this time.';
             }
             return 'Thinking...';
         };
@@ -803,7 +1084,6 @@ export class LLMView extends ItemView {
                 );
                 textArea.value = '';
                 hideComposerHint();
-                addToEditorButton.disabled = true;
                 setHistoryDeleteButtonsDisabled(true);
                 syncComposerControls();
                 let responseContent = '';
@@ -816,9 +1096,10 @@ export class LLMView extends ItemView {
                         if (!turn.assistantMessage) {
                             turn.assistantMessage = createMessageElement(
                                 { role: 'assistant', content: responseContent },
-                                { isLive: isLiveTurn },
+                                { isLive: isLiveTurn, memoryMetadata: turn.memoryMetadata },
                             );
                         } else {
+                            turn.assistantMessage.memoryMetadata = turn.memoryMetadata;
                             renderMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn);
                         }
                     },
@@ -829,6 +1110,13 @@ export class LLMView extends ItemView {
                         onStatus: (status) => {
                             if (!isLiveTurn()) return;
                             renderAgentStatus(turn, status);
+                        },
+                        onTurnMetadata: (metadata) => {
+                            if (!isSameTurn()) return;
+                            turn.memoryMetadata = metadata;
+                            if (turn.assistantMessage) {
+                                turn.assistantMessage.memoryMetadata = metadata;
+                            }
                         },
                     },
                 );
@@ -841,6 +1129,7 @@ export class LLMView extends ItemView {
                     kind: 'history',
                     user: userMessage,
                     assistant: assistantMessage,
+                    memoryMetadata: turn.memoryMetadata,
                 });
                 this.result = responseContent;
                 renderTimeline();
@@ -850,11 +1139,9 @@ export class LLMView extends ItemView {
                 if (error instanceof DOMException && error.name === 'AbortError') {
                     createTerminalEntry(turn, 'Generation cancelled', 'cancelled');
                     this.result = previousResult;
-                    addToEditorButton.disabled = !this.result;
                 } else {
                     createTerminalEntry(turn, 'The answer did not finish.', 'error', String(error));
                     this.result = previousResult;
-                    addToEditorButton.disabled = !this.result;
                 }
             } finally {
                 if (isSameTurn()) {
@@ -897,7 +1184,6 @@ export class LLMView extends ItemView {
             this.responseDiv.empty();
             textArea.value = '';
             this.result = '';
-            addToEditorButton.disabled = true;
             hideComposerHint();
             syncComposerControls();
             renderEmptyState();
@@ -925,10 +1211,6 @@ export class LLMView extends ItemView {
             }
         };
 
-        addToEditorButton.onclick = async () => {
-            await addContentToEditor(this.result);
-        };
-
         copyConversationButton.onclick = () => {
             const conversationText = timelineEntries.map((entry) => {
                 if (entry.kind === 'history') {
@@ -944,9 +1226,21 @@ export class LLMView extends ItemView {
             });
         };
 
+        const composerMenuAutoClose = createIdleMenuAutoClose(composerMenu, moreButton, () => {
+            composerMenu.hidden = true;
+            moreButton.setAttribute('aria-expanded', 'false');
+        });
+
         moreButton.onclick = () => {
-            composerMenu.hidden = !composerMenu.hidden;
-            moreButton.setAttribute('aria-expanded', String(!composerMenu.hidden));
+            const willOpen = composerMenu.hidden;
+            if (willOpen) {
+                closeMemoryMenu();
+                composerMenu.hidden = false;
+                moreButton.setAttribute('aria-expanded', 'true');
+                composerMenuAutoClose.schedule();
+            } else {
+                composerMenuAutoClose.close();
+            }
         };
         technicalMemoryButton.onclick = () => {
             void this.plugin.showTechnicalMemoryStatus?.();
@@ -963,11 +1257,23 @@ export class LLMView extends ItemView {
         };
 
         memoryChip.onclick = () => {
-            void this.plugin.showTechnicalMemoryStatus?.();
+            const willOpen = memoryMenu.hidden;
+            composerMenuAutoClose.close();
+            if (!willOpen) {
+                closeMemoryMenu();
+                return;
+            }
+            const requestId = ++memoryMenuRequestId;
+            void renderMemoryMenu().then(() => {
+                if (!isCurrentSession() || requestId !== memoryMenuRequestId) return;
+                memoryMenu.hidden = false;
+                memoryChip.setAttribute('aria-expanded', 'true');
+            });
         };
 
         syncComposerControls();
         renderEmptyState();
+        void refreshMemoryChipState();
 
         // vss cache updates are now handled globally in the plugin
     }
@@ -978,6 +1284,7 @@ export class LLMView extends ItemView {
         this.cancelScheduledScroll();
         this.panelResizeObserver?.disconnect();
         this.panelResizeObserver = null;
+        this.disconnectStatusBarClearance();
     }
 
     private startViewSession(): number {
@@ -1019,6 +1326,72 @@ export class LLMView extends ItemView {
             updateDensity(entries[0]?.contentRect.width);
         });
         this.panelResizeObserver.observe(containerEl);
+    }
+
+    private observeStatusBarClearance(containerEl: HTMLElement) {
+        this.disconnectStatusBarClearance();
+
+        const updateClearance = () => {
+            const clearance = this.calculateStatusBarClearance(containerEl);
+            containerEl.style?.setProperty('--pa-chat-status-bar-clearance', `${clearance}px`);
+        };
+
+        updateClearance();
+
+        if (typeof ResizeObserver !== 'undefined') {
+            this.statusBarResizeObserver = new ResizeObserver(updateClearance);
+            this.statusBarResizeObserver.observe(containerEl);
+            const statusBarEl = this.getStatusBarElement();
+            if (statusBarEl) {
+                this.statusBarResizeObserver.observe(statusBarEl);
+            }
+        }
+
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+            this.statusBarResizeHandler = updateClearance;
+            window.addEventListener('resize', updateClearance);
+        }
+    }
+
+    private disconnectStatusBarClearance() {
+        this.statusBarResizeObserver?.disconnect();
+        this.statusBarResizeObserver = null;
+
+        if (
+            this.statusBarResizeHandler
+            && typeof window !== 'undefined'
+            && typeof window.removeEventListener === 'function'
+        ) {
+            window.removeEventListener('resize', this.statusBarResizeHandler);
+        }
+        this.statusBarResizeHandler = null;
+    }
+
+    private getStatusBarElement(): HTMLElement | null {
+        if (typeof document === 'undefined') return null;
+        if (typeof document.querySelector !== 'function') return null;
+        return document.querySelector('.status-bar') as HTMLElement | null;
+    }
+
+    private calculateStatusBarClearance(containerEl: HTMLElement): number {
+        const statusBarEl = this.getStatusBarElement();
+        if (!statusBarEl || !containerEl.getBoundingClientRect || !statusBarEl.getBoundingClientRect) {
+            return 0;
+        }
+
+        const viewRect = containerEl.getBoundingClientRect();
+        const statusRect = statusBarEl.getBoundingClientRect();
+        const horizontalOverlap = Math.max(
+            0,
+            Math.min(viewRect.right, statusRect.right) - Math.max(viewRect.left, statusRect.left),
+        );
+        const verticalOverlap = Math.max(
+            0,
+            Math.min(viewRect.bottom, statusRect.bottom) - Math.max(viewRect.top, statusRect.top),
+        );
+
+        if (!horizontalOverlap || !verticalOverlap) return 0;
+        return Math.ceil(Math.min(statusRect.height, verticalOverlap));
     }
 
     private startTurn(): number {

@@ -101,7 +101,7 @@ export function getMemoryApprovalCopy(
 
     return {
         title: titleByReason[plan.reason],
-        primaryAction: context === "chat" ? "Prepare memory and answer" : "Prepare memory",
+        primaryAction: plan.action === "refresh" ? "Update memory" : "Prepare memory",
         secondaryAction: context === "chat" ? "Answer now" : "Not now",
         cancelAction: "Cancel",
     };
@@ -487,7 +487,7 @@ export class MemoryApprovalModal extends Modal {
         contentEl.createEl("h2", { text: copy.title });
         contentEl.createEl("p", {
             cls: "pa-memory-modal__intro",
-            text: "The assistant can use memory from your notes when answering.",
+            text: "The assistant can use Memory from your notes when answering.",
         });
 
         for (const section of MEMORY_APPROVAL_SECTIONS) {
@@ -601,13 +601,13 @@ function formatMemoryProgressEvent(event: VSSProgressEvent): string {
         return "Ready";
     }
     if (event.phase === "writing") {
-        return formatCountProgress("Writing index", event.filesDone, event.filesTotal);
+        return formatCountProgress("Saving memory", event.filesDone, event.filesTotal);
     }
     if (event.phase === "embedding") {
-        return formatCountProgress("Embedding chunks", event.chunksEmbedded, event.chunksTotal);
+        return formatCountProgress("Preparing notes", event.chunksEmbedded, event.chunksTotal);
     }
     if (event.phase === "scanning") {
-        return formatCountProgress("Scanning notes", event.filesDone, event.filesTotal, event.currentFile);
+        return formatCountProgress("Checking notes", event.filesDone, event.filesTotal, event.currentFile);
     }
     return "";
 }

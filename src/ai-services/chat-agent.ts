@@ -1053,23 +1053,28 @@ class PromptBuilder {
         if (memoryItems.length === 0) {
             return {
                 hasMemoryContent: false,
+                allowedMemorySourcePaths: [],
                 chainInput: { input: contextualPrompt },
                 usedMemory: false,
             };
         }
 
+        const memorySourcePaths = memoryItems
+            .flatMap((entry) => entry.sources)
+            .map((source) => source.path)
+            .filter(Boolean);
+        const allowedMemorySourcePaths = [...new Set(memorySourcePaths)];
+
         return {
             hasMemoryContent: true,
+            allowedMemorySourcePaths,
             chainInput: {
                 memory_content: memoryItems.map((entry) => JSON.stringify({
                     score: entry.score,
                     content: entry.content,
                     metadata: entry.sources[0] ?? entry.metadata ?? {},
                 }, null, 0)).join("\n---\n"),
-                allowed_sources: memoryItems
-                    .flatMap((entry) => entry.sources)
-                    .map((source) => source.path)
-                    .join("\n"),
+                allowed_sources: memorySourcePaths.join("\n"),
                 input: contextualPrompt,
             },
             usedMemory: true,

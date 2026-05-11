@@ -3,12 +3,45 @@ import {
     MEMORY_APPROVAL_SECTIONS,
     MEMORY_USER_FORBIDDEN_TERMS,
     MemoryManager,
+    MemoryApprovalModal,
     getMemoryApprovalCopy,
     type MemoryMaintenancePlan,
 } from '../src/memory-manager';
 
 const mockNoticeMessages: string[] = [];
 const mockProgressSteps: string[] = [];
+const mockSettingGroups: Array<Array<{ text?: string; click?: () => void; cta?: boolean }>> = [];
+
+const mockCreateDomElement = (): any => { // eslint-disable-line @typescript-eslint/no-explicit-any
+    const element = {
+        children: [] as any[], // eslint-disable-line @typescript-eslint/no-explicit-any
+        textContent: '',
+        addClass: jest.fn(),
+        empty: jest.fn(() => {
+            element.children.length = 0;
+            element.textContent = '';
+        }),
+        createEl: jest.fn((_tag: string, options?: { text?: string }) => {
+            const child = mockCreateDomElement();
+            if (options?.text) child.textContent = options.text;
+            element.children.push(child);
+            return child;
+        }),
+        createDiv: jest.fn((options?: { text?: string }) => {
+            const child = mockCreateDomElement();
+            if (options?.text) child.textContent = options.text;
+            element.children.push(child);
+            return child;
+        }),
+        createSpan: jest.fn((options?: { text?: string }) => {
+            const child = mockCreateDomElement();
+            if (options?.text) child.textContent = options.text;
+            element.children.push(child);
+            return child;
+        }),
+    };
+    return element;
+};
 
 jest.mock('obsidian', () => ({
     Notice: class {
@@ -32,11 +65,43 @@ jest.mock('obsidian', () => ({
     },
     Platform: { isMobile: false },
     Modal: class {
+        contentEl = mockCreateDomElement();
         constructor(_app: unknown) { }
-        open() { }
-        close() { }
+        open() { this.onOpen(); }
+        close() { this.onClose(); }
+        onOpen() { }
+        onClose() { }
     },
-    Setting: class { },
+    Setting: class {
+        private readonly buttons: Array<{ text?: string; click?: () => void; cta?: boolean }> = [];
+        constructor(_containerEl: unknown) {
+            mockSettingGroups.push(this.buttons);
+        }
+        addButton(callback: (button: {
+            setCta: () => unknown;
+            setButtonText: (text: string) => unknown;
+            onClick: (callback: () => void) => unknown;
+        }) => void) {
+            const record: { text?: string; click?: () => void; cta?: boolean } = {};
+            this.buttons.push(record);
+            const button = {
+                setCta: () => {
+                    record.cta = true;
+                    return button;
+                },
+                setButtonText: (text: string) => {
+                    record.text = text;
+                    return button;
+                },
+                onClick: (onClick: () => void) => {
+                    record.click = onClick;
+                    return button;
+                },
+            };
+            callback(button);
+            return this;
+        }
+    },
 }));
 
 const createPlan = (overrides: Partial<MemoryMaintenancePlan> = {}): MemoryMaintenancePlan => ({
@@ -102,11 +167,11 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
     log: jest.fn(),
 });
 
-const createMockDomElement = (): any => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
-    createEl: jest.fn(() => createMockDomElement()),
-    createDiv: jest.fn(() => createMockDomElement()),
-    createSpan: jest.fn(() => createMockDomElement()),
+beforeEach(() => {
+    mockSettingGroups.length = 0;
 });
+
+const createMockDomElement = mockCreateDomElement;
 
 describe('MemoryManager chat decisions', () => {
     beforeEach(() => {
@@ -342,10 +407,10 @@ describe('MemoryManager command decisions', () => {
             }));
             expect(mockProgressSteps).toEqual(expect.arrayContaining([
                 'Checking notes',
-                'Scanning notes 1/3: one.md',
-                'Embedding chunks 2/10',
+                'Checking notes 1/3: one.md',
+                'Preparing notes 2/10',
                 'Retrying in 5s',
-                'Writing index 2/3',
+                'Saving memory 2/3',
                 'Ready',
             ]));
         } finally {
@@ -356,6 +421,41 @@ describe('MemoryManager command decisions', () => {
                 delete (globalThis as { document?: Document }).document;
             }
         }
+    });
+});
+
+describe('MemoryApprovalModal', () => {
+    it('shows chat approval buttons and resolves the primary action', () => {
+        const decisions: string[] = [];
+        const modal = new MemoryApprovalModal(
+            createPlugin(createPlan()) as unknown as ConstructorParameters<typeof MemoryApprovalModal>[0],
+            createPlan({ reason: 'first-use', action: 'rebuild', requiresApproval: true }),
+            (decision) => decisions.push(decision),
+        );
+
+        modal.onOpen();
+
+        const buttonLabels = mockSettingGroups.flatMap((group) => group.map((button) => button.text));
+        expect(buttonLabels).toEqual(['Prepare memory', 'Answer now', 'Cancel']);
+        mockSettingGroups[0][0].click?.();
+        expect(decisions).toEqual(['use-memory']);
+    });
+
+    it('omits Answer now for command approval and resolves close as cancel', () => {
+        const decisions: string[] = [];
+        const modal = new MemoryApprovalModal(
+            createPlugin(createPlan()) as unknown as ConstructorParameters<typeof MemoryApprovalModal>[0],
+            createPlan({ reason: 'changed-notes', action: 'refresh', requiresApproval: true }),
+            (decision) => decisions.push(decision),
+            'command',
+        );
+
+        modal.onOpen();
+
+        const buttonLabels = mockSettingGroups.flatMap((group) => group.map((button) => button.text));
+        expect(buttonLabels).toEqual(['Update memory', 'Cancel']);
+        modal.onClose();
+        expect(decisions).toEqual(['cancel']);
     });
 });
 
@@ -380,6 +480,21 @@ describe('Memory product language', () => {
         expect(visibleCopy).toContain('your question may be sent to your configured AI provider to search Memory');
         expect(visibleCopy).toContain('This does not send all note text.');
         expect(visibleCopy).toContain('AI credits or API calls');
+        expect(chatCopy.primaryAction).toBe('Prepare memory');
+        expect(chatCopy.secondaryAction).toBe('Answer now');
         expect(commandCopy.primaryAction).toBe('Prepare memory');
+        expect(commandCopy.secondaryAction).toBe('Not now');
+    });
+
+    it('uses Update memory for refresh approval paths', () => {
+        const copy = getMemoryApprovalCopy(createPlan({
+            reason: 'changed-notes',
+            action: 'refresh',
+            requiresApproval: true,
+        }));
+
+        expect(copy.title).toBe('Update memory before answering?');
+        expect(copy.primaryAction).toBe('Update memory');
+        expect(copy.secondaryAction).toBe('Answer now');
     });
 });

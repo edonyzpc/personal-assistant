@@ -8,13 +8,14 @@ import {
     ChatAgentRuntime,
 } from './chat-agent';
 import { createAbortError, isAbortError } from './chat-utils';
-import type { ChatAgentStatus, ChatMessage } from './chat-types';
+import type { ChatAgentStatus, ChatMessage, ChatTurnMemoryMetadata } from './chat-types';
 
-export type { ChatAgentStatus, ChatMessage };
+export type { ChatAgentStatus, ChatMessage, ChatTurnMemoryMetadata };
 
 export interface StreamLLMOptions {
     memoryMode?: MemoryMode;
     onStatus?: (status: ChatAgentStatus) => void;
+    onTurnMetadata?: (metadata: ChatTurnMemoryMetadata) => void;
 }
 
 export const canFallbackToNonStreaming = (
@@ -69,6 +70,10 @@ export class ChatService {
             onStatus: options.onStatus,
         });
         const promptPlan = turnPlan.finalAnswer;
+        options.onTurnMetadata?.({
+            hasMemoryContent: promptPlan.hasMemoryContent,
+            allowedMemorySourcePaths: promptPlan.allowedMemorySourcePaths,
+        });
 
         const memoryPrompt = ChatPromptTemplate.fromMessages([
             SystemMessagePromptTemplate.fromTemplate([

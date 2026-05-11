@@ -1247,10 +1247,12 @@ describe('ChatService memory behavior', () => {
             }],
         });
         const statuses: string[] = [];
+        const turnMetadata: unknown[] = [];
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
 
         await service.streamLLM('agent意图安全有几个阶段？', jest.fn(), undefined, undefined, {
             onStatus: (status) => statuses.push(status.type),
+            onTurnMetadata: (metadata) => turnMetadata.push(metadata),
         });
 
         expect(plugin.memoryManager.ensureReadyForChat).toHaveBeenCalledWith('agent意图安全有几个阶段？');
@@ -1261,6 +1263,10 @@ describe('ChatService memory behavior', () => {
         expect(JSON.stringify(plannerInput)).toContain('Agent意图安全有三个阶段');
         expect(chainInput?.memory_content).toContain('Agent意图安全有三个阶段');
         expect(chainInput?.allowed_sources).toBe('2026-05-01.md');
+        expect(turnMetadata).toEqual([{
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['2026-05-01.md'],
+        }]);
         expect(statuses).toEqual(expect.arrayContaining(['memory-prefetching', 'memory-prefetched', 'thinking', 'answering']));
         expect(statuses).not.toContain('retrieving');
     });
@@ -1285,8 +1291,11 @@ describe('ChatService memory behavior', () => {
             }],
         });
         const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const turnMetadata: unknown[] = [];
 
-        await service.streamLLM('HTTP 404 是什么意思？', jest.fn());
+        await service.streamLLM('HTTP 404 是什么意思？', jest.fn(), undefined, undefined, {
+            onTurnMetadata: (metadata) => turnMetadata.push(metadata),
+        });
 
         expect(plugin.vss.searchSimilarity).toHaveBeenCalledWith('HTTP 404 是什么意思？');
         expect(chainInput).toMatchObject({
@@ -1294,6 +1303,10 @@ describe('ChatService memory behavior', () => {
         });
         expect(chainInput).not.toHaveProperty('memory_content');
         expect(chainInput).not.toHaveProperty('allowed_sources');
+        expect(turnMetadata).toEqual([{
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+        }]);
     });
 
     it('does not include unrelated presearched memory even if planner over-selects memory', async () => {

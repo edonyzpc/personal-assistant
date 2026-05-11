@@ -43,8 +43,14 @@ export interface MemorySearchResult {
 
 export interface AgentPromptPlan {
     hasMemoryContent: boolean;
+    allowedMemorySourcePaths: string[];
     chainInput: Record<string, string>;
     usedMemory: boolean;
+}
+
+export interface ChatTurnMemoryMetadata {
+    hasMemoryContent: boolean;
+    allowedMemorySourcePaths: string[];
 }
 
 export type VaultAdviceEvidenceKind =

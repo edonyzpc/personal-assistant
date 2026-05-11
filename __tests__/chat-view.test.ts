@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { MarkdownRenderer, MarkdownView } from 'obsidian';
 import type { ChatAgentStatus, StreamLLMOptions } from '../src/ai-services/chat-service';
-import { LLMView } from '../src/chat-view';
+import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat-view';
+import type { MemoryMaintenancePlan } from '../src/memory-manager';
 
 jest.mock('obsidian');
 
@@ -19,6 +20,15 @@ type AnimationFrameCall = {
     id: number;
     callback: FrameRequestCallback;
     cancelled: boolean;
+};
+
+type MockRect = {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
 };
 
 const mockStreamLLM = jest.fn<(
@@ -83,6 +93,13 @@ class MockElement {
     readonly children: MockElement[] = [];
     readonly attributes = new Map<string, string>();
     readonly listeners = new Map<string, Array<(event: unknown) => void>>();
+    readonly style = {
+        values: new Map<string, string>(),
+        setProperty: (name: string, value: string) => {
+            this.style.values.set(name, value);
+        },
+        getPropertyValue: (name: string) => this.style.values.get(name) ?? '',
+    };
     parentElement: MockElement | null = null;
     textContent = '';
     private _value = '';
@@ -92,6 +109,7 @@ class MockElement {
     scrollTop = 0;
     clientWidth = 600;
     clientHeight = 80;
+    boundingRect: MockRect | null = null;
     id = '';
     readonly scrollToCalls: Array<{ top?: number; behavior?: ScrollBehavior }> = [];
     href = '';
@@ -168,13 +186,32 @@ class MockElement {
         return this.attributes.get(name) ?? null;
     }
 
-    querySelectorAll(_selector: string) {
+    querySelectorAll(selector: string) {
+        if (selector === '.callout[data-callout="personal-assistant-ai"]') {
+            return walkAll(this, (el) =>
+                el.classList.contains('callout') && el.getAttribute('data-callout') === 'personal-assistant-ai'
+            );
+        }
+        if (selector === 'a.internal-link') {
+            return walkAll(this, (el) => el.tagName === 'a' && el.classList.contains('internal-link'));
+        }
         return [] as MockElement[];
     }
 
     scrollTo(options: { top?: number; behavior?: ScrollBehavior }) {
         this.scrollToCalls.push(options);
         this.scrollTop = options.top ?? this.scrollTop;
+    }
+
+    getBoundingClientRect() {
+        return this.boundingRect ?? {
+            left: 0,
+            top: 0,
+            right: this.clientWidth,
+            bottom: this.clientHeight,
+            width: this.clientWidth,
+            height: this.clientHeight,
+        };
     }
 
     removeChild(child: MockElement) {
@@ -254,6 +291,10 @@ function getButtonByText(root: MockElement, text: string) {
     return button;
 }
 
+function getButtonsByText(root: MockElement, text: string) {
+    return walkAll(root, (el) => el.tagName === 'button' && el.textContent === text);
+}
+
 function getButtonByClass(root: MockElement, className: string) {
     const button = walk(root, (el) => el.tagName === 'button' && el.classList.contains(className));
     if (!button) throw new Error(`button not found: ${className}`);
@@ -296,9 +337,23 @@ function flushPromises() {
     return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+function mockRenderedMemoryCallout() {
+    (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        el.setText(markdown.replace(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*Memory references\b[\s\S]*$/i, ''));
+        if (/>\s*\[!personal-assistant-ai\]-\s*Memory references\b/i.test(markdown)) {
+            const callout = el.createDiv({
+                cls: 'callout',
+                attr: { 'data-callout': 'personal-assistant-ai' },
+            });
+            callout.setText('Memory references');
+        }
+    });
+}
+
 function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number } = {}) {
     const containerEl = new MockElement('div');
     containerEl.clientWidth = options.panelWidth ?? 600;
+    const workspaceHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
     const editor = {
         getCursor: jest.fn(() => ({ line: 0, ch: 0 })),
         replaceRange: jest.fn(),
@@ -306,19 +361,48 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
     const markdownLeaf = {
         view: new MarkdownView(editor as unknown as ConstructorParameters<typeof MarkdownView>[0]),
     };
+    const markdownFile = { path: '0.unsorted/Dog.md', extension: 'md' };
     const app = {
         workspace: {
+            getActiveFile: jest.fn(() => options.withMarkdownLeaf ? markdownFile : null),
+            getActiveViewOfType: jest.fn(() => options.withMarkdownLeaf ? markdownLeaf.view : null),
             getMostRecentLeaf: jest.fn(() => options.withMarkdownLeaf ? markdownLeaf : null),
             getLeavesOfType: jest.fn(() => options.withMarkdownLeaf ? [markdownLeaf] : []),
             setActiveLeaf: jest.fn(),
+            on: jest.fn((eventName: string, callback: (...args: unknown[]) => void) => {
+                const handlers = workspaceHandlers.get(eventName) ?? [];
+                handlers.push(callback);
+                workspaceHandlers.set(eventName, handlers);
+                return { eventName, callback };
+            }),
         },
         vault: {
             getName: jest.fn(() => 'test'),
         },
+        setting: {
+            open: jest.fn(),
+            openTabById: jest.fn(),
+        },
     };
     const plugin = {
         app,
+        settings: {
+            memoryEnabled: true,
+            memoryApprovalPolicy: 'always',
+        },
+        memoryManager: {
+            getMaintenancePlan: jest.fn(async (): Promise<MemoryMaintenancePlan> => ({
+                reason: 'ready',
+                action: 'none',
+                notesToCheck: 0,
+                requiresApproval: false,
+                canAnswerNow: true,
+            })),
+            prepareFromCommand: jest.fn(async () => undefined),
+            updateFromCommand: jest.fn(async () => undefined),
+        },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
+        log: jest.fn(),
     };
     const leaf = { app, containerEl };
     const view = new LLMView(
@@ -326,7 +410,12 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
         plugin as unknown as ConstructorParameters<typeof LLMView>[1],
         {} as unknown as ConstructorParameters<typeof LLMView>[2],
     );
-    return { view, containerEl, app, plugin, editor };
+    const emitWorkspaceEvent = (eventName: string, ...args: unknown[]) => {
+        for (const handler of workspaceHandlers.get(eventName) ?? []) {
+            handler(...args);
+        }
+    };
+    return { view, containerEl, app, plugin, editor, markdownLeaf, markdownFile, emitWorkspaceEvent };
 }
 
 describe('LLMView turn lifecycle', () => {
@@ -389,6 +478,10 @@ describe('LLMView turn lifecycle', () => {
             configurable: true,
             value: undefined,
         });
+    });
+
+    afterEach(() => {
+        jest.useRealTimers();
     });
 
     it('aborts and ignores stale stream callbacks when the chat is cleared', async () => {
@@ -872,7 +965,7 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Generation cancelled');
     });
 
-    it('does not publish partial streamed content to Add to Editor after cancellation', async () => {
+    it('keeps partial streamed content out of reusable editor actions after cancellation', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -882,14 +975,14 @@ describe('LLMView turn lifecycle', () => {
         const call = streamCalls[0];
         call.onChunk('partial answer');
         expect(view.result).toBe('');
-        expect(getButtonByText(containerEl, 'Add to Editor').disabled).toBe(true);
+        expect(getButtonsByText(containerEl, 'Add to Editor')).toHaveLength(0);
         getButtonByClass(containerEl, 'cancel-button').click();
         call.reject(new DOMException('Aborted', 'AbortError'));
         await flushPromises();
         await flushPromises();
 
         expect(view.result).toBe('');
-        expect(getButtonByText(containerEl, 'Add to Editor').disabled).toBe(true);
+        expect(getButtonsByText(containerEl, 'Add to Editor')).toHaveLength(0);
     });
 
     it('keeps Ask disabled while empty and sends with Enter only when a draft exists', async () => {
@@ -973,12 +1066,77 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Open a note to use this.');
     });
 
+    it('refreshes empty state chips when a markdown note becomes active', async () => {
+        const { view, containerEl, app, markdownLeaf, markdownFile, emitWorkspaceEvent } = createView();
+        await view.onOpen();
+
+        expect(getButtonByText(containerEl, 'Summarize current note').disabled).toBe(true);
+        app.workspace.getActiveFile.mockReturnValue(markdownFile);
+        app.workspace.getActiveViewOfType.mockReturnValue(markdownLeaf.view);
+        app.workspace.getMostRecentLeaf.mockReturnValue(markdownLeaf);
+        app.workspace.getLeavesOfType.mockReturnValue([markdownLeaf]);
+
+        emitWorkspaceEvent('active-leaf-change', markdownLeaf);
+
+        expect(getButtonByText(containerEl, 'Summarize current note').disabled).toBe(false);
+        expect(getButtonByText(containerEl, 'Find related notes').disabled).toBe(false);
+        expect(getButtonByText(containerEl, 'Draft from current note').disabled).toBe(false);
+        expect(allText(containerEl)).not.toContain('Open a note to use this.');
+
+        getButtonByText(containerEl, 'Summarize current note').click();
+
+        expect(getTextArea(containerEl).value).toBe('Summarize the current note.');
+        expect(getButtonByText(containerEl, 'Ask').disabled).toBe(false);
+    });
+
     it('uses panel-width density classes instead of viewport media queries', async () => {
         const { view, containerEl } = createView({ panelWidth: 340 });
         await view.onOpen();
 
         expect(containerEl.classList.contains('is-narrow')).toBe(true);
         expect(containerEl.classList.contains('is-compact')).toBe(true);
+    });
+
+    it('places Memory after Ask and More as the rightmost composer action', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        await flushPromises();
+
+        const actions = getElementByClass(containerEl, 'pa-chat-composer-actions');
+        const composerRow = getElementByClass(containerEl, 'pa-chat-composer-row');
+        const askButton = getButtonByText(containerEl, 'Ask');
+        const memoryControl = getElementByClass(containerEl, 'pa-chat-memory-control');
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        const cancelButton = getButtonByClass(containerEl, 'cancel-button');
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
+
+        expect(composerRow.children).toEqual([getTextArea(containerEl)]);
+        expect(actions.children).toEqual([askButton, memoryControl, cancelButton, moreButton]);
+        expect(actions.children.indexOf(memoryControl)).toBe(actions.children.indexOf(askButton) + 1);
+        expect(actions.children.indexOf(moreButton)).toBe(actions.children.length - 1);
+        expect(getButtonsByText(actions, 'Add to Editor')).toHaveLength(0);
+        expect(memoryControl.children).toContain(memoryChip);
+        expect(memoryChip.classList.contains('pa-chat-icon-button')).toBe(true);
+        expect(memoryChip.classList.contains('personal-assistant-ai-statusbar')).toBe(true);
+        expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-ready')).toBe(true);
+        expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
+    });
+
+    it('reserves bottom clearance when the Obsidian status bar overlaps the chat view', async () => {
+        const { view, containerEl } = createView({ panelWidth: 900 });
+        const statusBar = new MockElement('div');
+        containerEl.boundingRect = { left: 0, top: 0, right: 900, bottom: 700, width: 900, height: 700 };
+        statusBar.boundingRect = { left: 600, top: 672, right: 900, bottom: 700, width: 300, height: 28 };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                querySelector: jest.fn((selector: string) => selector === '.status-bar' ? statusBar : null),
+            },
+        });
+
+        await view.onOpen();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('28px');
     });
 
     it('adds a specific assistant message to the editor from its message menu', async () => {
@@ -1002,11 +1160,141 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         const addButtons = getButtonsByClass(containerEl, 'add-to-editor-message-button');
+        const composerActions = getElementByClass(containerEl, 'pa-chat-composer-actions');
         expect(addButtons).toHaveLength(2);
+        expect(getButtonsByText(composerActions, 'Add to Editor')).toHaveLength(0);
         addButtons[0].click();
         await flushPromises();
 
         expect(editor.replaceRange).toHaveBeenCalledWith('first answer', { line: 0, ch: 0 });
+    });
+
+    it('turns verified Memory references into a collapsed source bar', async () => {
+        mockRenderedMemoryCallout();
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const answer = [
+            'answer from memory',
+            '',
+            '---',
+            '> [!personal-assistant-ai]- Memory references',
+            '>',
+            '> 1. [[memory/trusted.md]]',
+        ].join('\n');
+        getTextArea(containerEl).value = 'memory prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/trusted.md'],
+        });
+        streamCalls[0].onChunk(answer);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(1);
+        expect(allText(containerEl)).toContain('Memory used (1)');
+        expect(allText(containerEl)).not.toContain('Memory references');
+        const toggle = getButtonByClass(containerEl, 'pa-chat-source-toggle');
+        const sourceList = getElementByClass(containerEl, 'pa-chat-source-list');
+        expect(toggle.getAttribute('aria-controls')).toBe(sourceList.id);
+        expect(toggle.getAttribute('aria-expanded')).toBe('false');
+        expect(sourceList.hidden).toBe(true);
+
+        toggle.click();
+
+        expect(toggle.getAttribute('aria-expanded')).toBe('true');
+        expect(sourceList.hidden).toBe(false);
+    });
+
+    it('keeps the rendered callout when Memory references are not from allowed sources', async () => {
+        mockRenderedMemoryCallout();
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const answer = [
+            'answer with unsafe source',
+            '',
+            '---',
+            '> [!personal-assistant-ai]- Memory references',
+            '>',
+            '> 1. [[notes/current.md]]',
+        ].join('\n');
+        getTextArea(containerEl).value = 'memory prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/trusted.md'],
+        });
+        streamCalls[0].onChunk(answer);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+        expect(allText(containerEl)).toContain('Memory references');
+    });
+
+    it('keeps the rendered callout when Memory metadata is absent or transform cannot remove it', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const answer = [
+            'answer with normal fallback',
+            '',
+            '---',
+            '> [!personal-assistant-ai]- Memory references',
+            '>',
+            '> 1. [[memory/trusted.md]]',
+        ].join('\n');
+        getTextArea(containerEl).value = 'memory prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/trusted.md'],
+        });
+        streamCalls[0].onChunk(answer);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+        expect(allText(containerEl)).toContain('Memory references');
+    });
+
+    it('keeps Add to Editor content as the original Markdown with Memory references', async () => {
+        mockRenderedMemoryCallout();
+        const { view, containerEl, editor } = createView({ withMarkdownLeaf: true });
+        await view.onOpen();
+
+        const answer = [
+            'answer from memory',
+            '',
+            '---',
+            '> [!personal-assistant-ai]- Memory references',
+            '>',
+            '> 1. [[memory/trusted.md]]',
+        ].join('\n');
+        getTextArea(containerEl).value = 'memory prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/trusted.md'],
+        });
+        streamCalls[0].onChunk(answer);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        getButtonByClass(containerEl, 'add-to-editor-message-button').click();
+        await flushPromises();
+
+        expect(editor.replaceRange).toHaveBeenCalledWith(answer, { line: 0, ch: 0 });
     });
 
     it('exposes composer More menu actions and technical Memory status', async () => {
@@ -1022,6 +1310,132 @@ describe('LLMView turn lifecycle', () => {
         expect(moreButton.getAttribute('aria-expanded')).toBe('true');
 
         getButtonByText(containerEl, 'Show technical Memory status').click();
+        expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('auto-closes the composer More menu after idle time and resets on activity', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        jest.useFakeTimers();
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
+        const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
+
+        moreButton.click();
+        expect(composerMenu.hidden).toBe(false);
+
+        jest.advanceTimersByTime(CHAT_MENU_IDLE_CLOSE_MS - 1);
+        composerMenu.dispatchEvent('mousemove');
+        jest.advanceTimersByTime(CHAT_MENU_IDLE_CLOSE_MS - 1);
+        expect(composerMenu.hidden).toBe(false);
+
+        jest.advanceTimersByTime(1);
+        expect(composerMenu.hidden).toBe(true);
+        expect(moreButton.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('auto-closes a message action menu after idle time', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'hello';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('answer');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        jest.useFakeTimers();
+        const messageMenuButton = getButtonByClass(containerEl, 'message-more-button');
+        const messageMenu = getElementByClass(containerEl, 'pa-chat-message-menu');
+
+        messageMenuButton.click();
+        expect(messageMenu.hidden).toBe(false);
+        expect(messageMenuButton.getAttribute('aria-expanded')).toBe('true');
+
+        jest.advanceTimersByTime(CHAT_MENU_IDLE_CLOSE_MS);
+        expect(messageMenu.hidden).toBe(true);
+        expect(messageMenuButton.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('keeps the Memory chip menu and More menu mutually exclusive', async () => {
+        let resolvePlan: (plan: MemoryMaintenancePlan) => void = () => {};
+        const pendingPlan = new Promise<MemoryMaintenancePlan>((resolve) => {
+            resolvePlan = resolve;
+        });
+        const { view, containerEl, plugin } = createView();
+        plugin.memoryManager.getMaintenancePlan.mockReturnValue(pendingPlan);
+        await view.onOpen();
+
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
+        const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
+
+        memoryChip.click();
+        moreButton.click();
+        expect(composerMenu.hidden).toBe(false);
+        expect(moreButton.getAttribute('aria-expanded')).toBe('true');
+        expect(memoryMenu.hidden).toBe(true);
+        expect(memoryChip.getAttribute('aria-expanded')).toBe('false');
+
+        resolvePlan({
+            reason: 'ready',
+            action: 'none',
+            notesToCheck: 0,
+            requiresApproval: false,
+            canAnswerNow: true,
+        });
+        await flushPromises();
+
+        expect(memoryMenu.hidden).toBe(true);
+        expect(memoryChip.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('opens the Memory chip menu with product state and update action', async () => {
+        const { view, containerEl, plugin } = createView();
+        plugin.memoryManager.getMaintenancePlan.mockResolvedValue({
+            reason: 'changed-notes',
+            action: 'refresh',
+            notesToCheck: 4,
+            notesLikelyToUpdate: 2,
+            requiresApproval: true,
+            canAnswerNow: true,
+        });
+        await view.onOpen();
+        await flushPromises();
+
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        memoryChip.click();
+        await flushPromises();
+
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        expect(memoryMenu.hidden).toBe(false);
+        expect(memoryChip.getAttribute('aria-expanded')).toBe('true');
+        expect(allText(memoryMenu)).toContain('Memory needs update');
+        getButtonByText(memoryMenu, 'Update memory').click();
+        await flushPromises();
+
+        expect(plugin.memoryManager.updateFromCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps Memory diagnostics and settings behind menu entries', async () => {
+        const { view, containerEl, plugin, app } = createView();
+        await view.onOpen();
+        await flushPromises();
+
+        getButtonByClass(containerEl, 'pa-chat-memory-chip').click();
+        await flushPromises();
+        let memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        getButtonByText(memoryMenu, 'Open settings').click();
+        expect(app.setting.open).toHaveBeenCalledTimes(1);
+        expect(app.setting.openTabById).toHaveBeenCalledWith('personal-assistant');
+
+        getButtonByClass(containerEl, 'pa-chat-memory-chip').click();
+        await flushPromises();
+        memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        getButtonByText(memoryMenu, 'Show technical Memory status').click();
         expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
     });
 
@@ -1070,5 +1484,24 @@ describe('LLMView turn lifecycle', () => {
         expect(details).toHaveLength(6);
         expect(allText(containerEl)).not.toContain('Deciding what context to use...');
         expect(allText(containerEl)).toContain('Tool step 8');
+    });
+
+    it('uses product language for Memory activity statuses', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'memory status prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onStatus?.({ type: 'memory-prefetching', query: 'project' });
+        streamCalls[0].options.onStatus?.({ type: 'memory-prefetched', query: 'project', sources: [] });
+        streamCalls[0].options.onStatus?.({ type: 'memory-skipped', reason: 'Memory search returned 0 source(s).' });
+        streamCalls[0].options.onStatus?.({ type: 'fallback', reason: 'planner failed' });
+
+        expect(allText(containerEl)).toContain('Searching notes: project');
+        expect(allText(containerEl)).toContain('No related memory');
+        expect(allText(containerEl)).toContain('I will answer normally this time.');
+        expect(allText(containerEl)).not.toContain('fallback path');
+        expect(allText(containerEl)).not.toContain('memory references');
     });
 });

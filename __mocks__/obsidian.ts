@@ -79,6 +79,7 @@ export class ItemView {
 
     async onOpen() { }
     async onClose() { }
+    registerEvent(_eventRef: unknown) { }
 }
 
 export const MarkdownRenderer = {
