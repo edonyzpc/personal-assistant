@@ -286,13 +286,13 @@ function getTextArea(root: MockElement) {
 }
 
 function getButtonByText(root: MockElement, text: string) {
-    const button = walk(root, (el) => el.tagName === 'button' && el.textContent === text);
+    const button = walk(root, (el) => el.tagName === 'button' && (el.textContent === text || allText(el) === text));
     if (!button) throw new Error(`button not found: ${text}`);
     return button;
 }
 
 function getButtonsByText(root: MockElement, text: string) {
-    return walkAll(root, (el) => el.tagName === 'button' && el.textContent === text);
+    return walkAll(root, (el) => el.tagName === 'button' && (el.textContent === text || allText(el) === text));
 }
 
 function getButtonByClass(root: MockElement, className: string) {
@@ -1135,7 +1135,8 @@ describe('LLMView turn lifecycle', () => {
         const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
         const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
 
-        expect(composerRow.children).toEqual([getTextArea(containerEl)]);
+        expect(composerRow.children).toEqual([getTextArea(containerEl), actions]);
+        expect(actions.parentElement).toBe(composerRow);
         expect(actions.children).toEqual([askButton, memoryControl, cancelButton, moreControl]);
         expect(actions.children.indexOf(memoryControl)).toBe(actions.children.indexOf(askButton) + 1);
         expect(actions.children.indexOf(moreControl)).toBe(actions.children.length - 1);
@@ -1337,7 +1338,12 @@ describe('LLMView turn lifecycle', () => {
         expect(composerMenu.hidden).toBe(false);
         expect(moreButton.getAttribute('aria-expanded')).toBe('true');
 
-        getButtonByText(containerEl, 'Show technical Memory status').click();
+        const memoryStatusButton = getButtonByText(containerEl, 'Show Memory Status');
+        const memoryStatusIcon = getElementByClass(memoryStatusButton, 'pa-chat-menu-item-icon');
+        const memoryStatusText = getElementByClass(memoryStatusButton, 'pa-chat-menu-item-text');
+        expect(memoryStatusText.textContent).toBe('Show Memory Status');
+        expect(memoryStatusButton.children).toEqual([memoryStatusIcon, memoryStatusText]);
+        memoryStatusButton.click();
         expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
     });
 
@@ -1531,7 +1537,7 @@ describe('LLMView turn lifecycle', () => {
         getButtonByClass(containerEl, 'pa-chat-memory-chip').click();
         await flushPromises();
         memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
-        getButtonByText(memoryMenu, 'Show technical Memory status').click();
+        getButtonByText(memoryMenu, 'Show Memory Status').click();
         expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
     });
 

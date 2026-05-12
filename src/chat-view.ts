@@ -110,13 +110,13 @@ function createChatMenuItem(
     { text, icon, cls = '' }: { text: string; icon: string; cls?: string },
 ): HTMLButtonElement {
     const button = parent.createEl('button', {
-        text,
         cls: `pa-chat-menu-item ${cls}`.trim(),
         attr: { type: 'button' },
     });
     const iconEl = button.createSpan({ cls: 'pa-chat-menu-item-icon' });
     iconEl.setAttribute('aria-hidden', 'true');
     setIcon(iconEl, icon);
+    button.createSpan({ cls: 'pa-chat-menu-item-text', text });
     return button;
 }
 
@@ -125,10 +125,11 @@ function createChatMenuDivider(parent: HTMLElement) {
 }
 
 function createChatMenuLabel(parent: HTMLElement, text: string, icon: string) {
-    const label = parent.createDiv({ cls: 'pa-chat-menu-label', text });
+    const label = parent.createDiv({ cls: 'pa-chat-menu-label' });
     const iconEl = label.createSpan({ cls: 'pa-chat-menu-label-icon' });
     iconEl.setAttribute('aria-hidden', 'true');
     setIcon(iconEl, icon);
+    label.createSpan({ cls: 'pa-chat-menu-label-text', text });
     return label;
 }
 
@@ -202,11 +203,7 @@ export class LLMView extends ItemView {
             syncComposerControls();
         });
 
-        const composerHint = inputDiv.createDiv({ cls: 'pa-chat-composer-hint' });
-        composerHint.hidden = true;
-        composerHint.setAttribute('aria-live', 'polite');
-
-        const buttonDiv = inputDiv.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
+        const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
         const sendButton = buttonDiv.createEl('button', {
             text: 'Ask',
             cls: 'pa-chat-icon-button send-button-visible',
@@ -266,7 +263,7 @@ export class LLMView extends ItemView {
         });
         createChatMenuDivider(composerMenu);
         const technicalMemoryButton = createChatMenuItem(composerMenu, {
-            text: 'Show technical Memory status',
+            text: 'Show Memory Status',
             icon: 'activity',
         });
         const settingsButton = createChatMenuItem(composerMenu, {
@@ -279,6 +276,10 @@ export class LLMView extends ItemView {
             icon: 'trash-2',
             cls: 'pa-chat-menu-item-danger',
         });
+
+        const composerHint = inputDiv.createDiv({ cls: 'pa-chat-composer-hint' });
+        composerHint.hidden = true;
+        composerHint.setAttribute('aria-live', 'polite');
 
         sendButton.disabled = true;
 
@@ -569,7 +570,7 @@ export class LLMView extends ItemView {
                 appWithSettings.setting?.openTabById('personal-assistant');
             };
             const technicalButton = createChatMenuItem(memoryMenu, {
-                text: 'Show technical Memory status',
+                text: 'Show Memory Status',
                 icon: 'activity',
             });
             technicalButton.onclick = () => {
