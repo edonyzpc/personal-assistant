@@ -1119,7 +1119,7 @@ describe('LLMView turn lifecycle', () => {
         expect(containerEl.classList.contains('is-compact')).toBe(true);
     });
 
-    it('places Memory after Ask and More as the rightmost composer action', async () => {
+    it('anchors Memory and More menus inside their composer action controls', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
         await flushPromises();
@@ -1129,15 +1129,21 @@ describe('LLMView turn lifecycle', () => {
         const askButton = getButtonByText(containerEl, 'Ask');
         const memoryControl = getElementByClass(containerEl, 'pa-chat-memory-control');
         const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
         const cancelButton = getButtonByClass(containerEl, 'cancel-button');
+        const moreControl = getElementByClass(containerEl, 'pa-chat-more-control');
         const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
+        const composerMenu = getElementByClass(containerEl, 'pa-chat-composer-menu');
 
         expect(composerRow.children).toEqual([getTextArea(containerEl)]);
-        expect(actions.children).toEqual([askButton, memoryControl, cancelButton, moreButton]);
+        expect(actions.children).toEqual([askButton, memoryControl, cancelButton, moreControl]);
         expect(actions.children.indexOf(memoryControl)).toBe(actions.children.indexOf(askButton) + 1);
-        expect(actions.children.indexOf(moreButton)).toBe(actions.children.length - 1);
+        expect(actions.children.indexOf(moreControl)).toBe(actions.children.length - 1);
         expect(getButtonsByText(actions, 'Add to Editor')).toHaveLength(0);
         expect(memoryControl.children).toContain(memoryChip);
+        expect(memoryControl.children).toContain(memoryMenu);
+        expect(moreControl.children).toContain(moreButton);
+        expect(moreControl.children).toContain(composerMenu);
         expect(memoryChip.classList.contains('pa-chat-icon-button')).toBe(true);
         expect(memoryChip.classList.contains('personal-assistant-ai-statusbar')).toBe(true);
         expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-ready')).toBe(true);
@@ -1354,6 +1360,30 @@ describe('LLMView turn lifecycle', () => {
         jest.advanceTimersByTime(1);
         expect(composerMenu.hidden).toBe(true);
         expect(moreButton.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('auto-closes the Memory chip menu after idle time and resets on activity', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        jest.useFakeTimers();
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+
+        memoryChip.click();
+        for (let i = 0; i < 5; i += 1) {
+            await Promise.resolve();
+        }
+        expect(memoryMenu.hidden).toBe(false);
+
+        jest.advanceTimersByTime(CHAT_MENU_IDLE_CLOSE_MS - 1);
+        memoryMenu.dispatchEvent('mousemove');
+        jest.advanceTimersByTime(CHAT_MENU_IDLE_CLOSE_MS - 1);
+        expect(memoryMenu.hidden).toBe(false);
+
+        jest.advanceTimersByTime(1);
+        expect(memoryMenu.hidden).toBe(true);
+        expect(memoryChip.getAttribute('aria-expanded')).toBe('false');
     });
 
     it('auto-closes a message action menu after idle time', async () => {

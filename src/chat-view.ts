@@ -105,6 +105,33 @@ function confirmChatAction(plugin: PluginManager, options: ChatConfirmationOptio
     });
 }
 
+function createChatMenuItem(
+    parent: HTMLElement,
+    { text, icon, cls = '' }: { text: string; icon: string; cls?: string },
+): HTMLButtonElement {
+    const button = parent.createEl('button', {
+        text,
+        cls: `pa-chat-menu-item ${cls}`.trim(),
+        attr: { type: 'button' },
+    });
+    const iconEl = button.createSpan({ cls: 'pa-chat-menu-item-icon' });
+    iconEl.setAttribute('aria-hidden', 'true');
+    setIcon(iconEl, icon);
+    return button;
+}
+
+function createChatMenuDivider(parent: HTMLElement) {
+    parent.createDiv({ cls: 'pa-chat-menu-divider' });
+}
+
+function createChatMenuLabel(parent: HTMLElement, text: string, icon: string) {
+    const label = parent.createDiv({ cls: 'pa-chat-menu-label', text });
+    const iconEl = label.createSpan({ cls: 'pa-chat-menu-label-icon' });
+    iconEl.setAttribute('aria-hidden', 'true');
+    setIcon(iconEl, icon);
+    return label;
+}
+
 export class LLMView extends ItemView {
     plugin: PluginManager;
     result: string = '';
@@ -180,28 +207,6 @@ export class LLMView extends ItemView {
         composerHint.setAttribute('aria-live', 'polite');
 
         const buttonDiv = inputDiv.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
-        const composerMenu = inputDiv.createDiv({ cls: 'pa-chat-menu pa-chat-composer-menu' });
-        composerMenu.hidden = true;
-        const copyConversationButton = composerMenu.createEl('button', {
-            text: 'Copy conversation',
-            cls: 'pa-chat-menu-item',
-            attr: { type: 'button' },
-        });
-        const clearButton = composerMenu.createEl('button', {
-            text: 'Clear Chat',
-            cls: 'pa-chat-menu-item pa-chat-menu-item-danger',
-            attr: { type: 'button' },
-        });
-        const technicalMemoryButton = composerMenu.createEl('button', {
-            text: 'Show technical Memory status',
-            cls: 'pa-chat-menu-item',
-            attr: { type: 'button' },
-        });
-        const settingsButton = composerMenu.createEl('button', {
-            text: 'Open settings',
-            cls: 'pa-chat-menu-item',
-            attr: { type: 'button' },
-        });
         const sendButton = buttonDiv.createEl('button', {
             text: 'Ask',
             cls: 'pa-chat-icon-button send-button-visible',
@@ -241,7 +246,8 @@ export class LLMView extends ItemView {
         setIcon(cancelButton, 'square');
         cancelButton.createSpan({ cls: 'pa-sr-only', text: 'Stop generation' });
         cancelButton.classList.add('cancel-button-hidden');
-        const moreButton = buttonDiv.createEl('button', {
+        const moreControl = buttonDiv.createSpan({ cls: 'pa-chat-more-control' });
+        const moreButton = moreControl.createEl('button', {
             cls: 'pa-chat-icon-button pa-chat-more-button',
             attr: {
                 type: 'button',
@@ -252,6 +258,27 @@ export class LLMView extends ItemView {
         });
         setIcon(moreButton, 'ellipsis');
         moreButton.createSpan({ cls: 'pa-sr-only', text: 'More chat actions' });
+        const composerMenu = moreControl.createDiv({ cls: 'pa-chat-menu pa-chat-composer-menu' });
+        composerMenu.hidden = true;
+        const copyConversationButton = createChatMenuItem(composerMenu, {
+            text: 'Copy conversation',
+            icon: 'copy',
+        });
+        createChatMenuDivider(composerMenu);
+        const technicalMemoryButton = createChatMenuItem(composerMenu, {
+            text: 'Show technical Memory status',
+            icon: 'activity',
+        });
+        const settingsButton = createChatMenuItem(composerMenu, {
+            text: 'Open settings',
+            icon: 'settings',
+        });
+        createChatMenuDivider(composerMenu);
+        const clearButton = createChatMenuItem(composerMenu, {
+            text: 'Clear Chat',
+            icon: 'trash-2',
+            cls: 'pa-chat-menu-item-danger',
+        });
 
         sendButton.disabled = true;
 
@@ -509,12 +536,12 @@ export class LLMView extends ItemView {
             memoryMenu.empty();
             const state = getMemoryChipState(await readMemoryPlan());
             setMemoryChipState(state);
-            memoryMenu.createDiv({ cls: 'pa-chat-menu-label', text: state.label });
+            createChatMenuLabel(memoryMenu, state.label, 'brain');
             if (state.actionLabel && state.actionKind) {
-                const actionButton = memoryMenu.createEl('button', {
+                const actionButton = createChatMenuItem(memoryMenu, {
                     text: state.actionLabel,
-                    cls: 'pa-chat-menu-item pa-chat-memory-action',
-                    attr: { type: 'button' },
+                    icon: state.actionKind === 'update' ? 'refresh-cw' : 'sparkles',
+                    cls: 'pa-chat-memory-action',
                 });
                 actionButton.onclick = () => {
                     closeMemoryMenu();
@@ -525,10 +552,10 @@ export class LLMView extends ItemView {
                     }
                 };
             }
-            const openSettingsButton = memoryMenu.createEl('button', {
+            createChatMenuDivider(memoryMenu);
+            const openSettingsButton = createChatMenuItem(memoryMenu, {
                 text: 'Open settings',
-                cls: 'pa-chat-menu-item',
-                attr: { type: 'button' },
+                icon: 'settings',
             });
             openSettingsButton.onclick = () => {
                 closeMemoryMenu();
@@ -541,10 +568,9 @@ export class LLMView extends ItemView {
                 appWithSettings.setting?.open();
                 appWithSettings.setting?.openTabById('personal-assistant');
             };
-            const technicalButton = memoryMenu.createEl('button', {
+            const technicalButton = createChatMenuItem(memoryMenu, {
                 text: 'Show technical Memory status',
-                cls: 'pa-chat-menu-item',
-                attr: { type: 'button' },
+                icon: 'activity',
             });
             technicalButton.onclick = () => {
                 closeMemoryMenu();
@@ -753,10 +779,10 @@ export class LLMView extends ItemView {
                     actionMenuAutoClose.close();
                 }
             };
-            const copyButton = actionMenu.createEl('button', {
+            const copyButton = createChatMenuItem(actionMenu, {
                 text: 'Copy',
-                cls: 'pa-chat-menu-item copy-message-button',
-                attr: { type: 'button' },
+                icon: 'copy',
+                cls: 'copy-message-button',
             });
             copyButton.onclick = () => {
                 navigator.clipboard.writeText(rendered.copyContent).then(() => {
@@ -767,10 +793,10 @@ export class LLMView extends ItemView {
             };
 
             if (message.role === 'assistant' && options.onAddToEditor) {
-                const addMessageButton = actionMenu.createEl('button', {
+                const addMessageButton = createChatMenuItem(actionMenu, {
                     text: 'Add to Editor',
-                    cls: 'pa-chat-menu-item add-to-editor-message-button',
-                    attr: { type: 'button' },
+                    icon: 'file-plus',
+                    cls: 'add-to-editor-message-button',
                 });
                 addMessageButton.onclick = () => {
                     void options.onAddToEditor?.(rendered.copyContent);
@@ -778,10 +804,10 @@ export class LLMView extends ItemView {
             }
 
             if (options.onDelete) {
-                const deleteButton = actionMenu.createEl('button', {
+                const deleteButton = createChatMenuItem(actionMenu, {
                     text: 'Delete',
-                    cls: 'pa-chat-menu-item pa-chat-menu-item-danger delete-message-button',
-                    attr: { type: 'button' },
+                    icon: 'trash-2',
+                    cls: 'pa-chat-menu-item-danger delete-message-button',
                 });
                 deleteButton.disabled = Boolean(options.disableDeleteWhileGenerating && isGenerating());
                 deleteButton.onclick = () => {
@@ -1231,11 +1257,12 @@ export class LLMView extends ItemView {
             composerMenu.hidden = true;
             moreButton.setAttribute('aria-expanded', 'false');
         });
+        const memoryMenuAutoClose = createIdleMenuAutoClose(memoryMenu, memoryChip, closeMemoryMenu);
 
         moreButton.onclick = () => {
             const willOpen = composerMenu.hidden;
             if (willOpen) {
-                closeMemoryMenu();
+                memoryMenuAutoClose.close();
                 composerMenu.hidden = false;
                 moreButton.setAttribute('aria-expanded', 'true');
                 composerMenuAutoClose.schedule();
@@ -1261,7 +1288,7 @@ export class LLMView extends ItemView {
             const willOpen = memoryMenu.hidden;
             composerMenuAutoClose.close();
             if (!willOpen) {
-                closeMemoryMenu();
+                memoryMenuAutoClose.close();
                 return;
             }
             const requestId = ++memoryMenuRequestId;
@@ -1269,6 +1296,7 @@ export class LLMView extends ItemView {
                 if (!isCurrentSession() || requestId !== memoryMenuRequestId) return;
                 memoryMenu.hidden = false;
                 memoryChip.setAttribute('aria-expanded', 'true');
+                memoryMenuAutoClose.schedule();
             });
         };
 
