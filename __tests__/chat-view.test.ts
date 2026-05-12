@@ -806,6 +806,9 @@ describe('LLMView turn lifecycle', () => {
 
         const retryButton = getButtonByClass(containerEl, 'retry-message-button');
         const deleteButton = getButtonByClass(containerEl, 'delete-message-button');
+        expect(retryButton.textContent).not.toContain('Retry');
+        expect(retryButton.getAttribute('aria-label')).toBe('Retry message');
+        expect(retryButton.getAttribute('title')).toBe('Retry message');
         expect(retryButton.disabled).toBe(false);
         expect(deleteButton.disabled).toBe(false);
         getTextArea(containerEl).value = 'new prompt';

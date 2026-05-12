@@ -900,9 +900,12 @@ export class LLMView extends ItemView {
             const actions = row.createDiv({ cls: 'message-actions turn-terminal-actions' });
             const retryButton = actions.createEl('button', {
                 cls: 'message-action-button retry-message-button',
-                attr: { 'aria-label': 'Retry message' },
+                attr: {
+                    'aria-label': 'Retry message',
+                    title: 'Retry message',
+                },
             });
-            retryButton.setText('Retry');
+            setIcon(retryButton, 'rotate-cw');
             retryButton.onclick = () => {
                 if (retryButton.disabled || isGenerating()) return;
                 removeTerminalEntry(entry);
