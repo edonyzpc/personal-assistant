@@ -472,6 +472,12 @@ body {
 	opacity: 1;
 }
 
+@media (hover: none) {
+	.llm-view .message-actions {
+		opacity: 1;
+	}
+}
+
 .llm-view .message-action-button {
 	background: var(--background-modifier-hover);
 	color: var(--text-muted);
@@ -1096,6 +1102,10 @@ body {
 
 .llm-view.is-narrow .llm-chat-container {
 	padding: 10px;
+}
+
+.llm-view.is-narrow .message-actions {
+	opacity: 1;
 }
 
 .llm-view.is-narrow .llm-message.user {

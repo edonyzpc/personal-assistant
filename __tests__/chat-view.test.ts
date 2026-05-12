@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { readFileSync } from 'node:fs';
 import { MarkdownRenderer, MarkdownView } from 'obsidian';
 import type { ChatAgentStatus, StreamLLMOptions } from '../src/ai-services/chat-service';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat-view';
@@ -1117,6 +1118,13 @@ describe('LLMView turn lifecycle', () => {
 
         expect(containerEl.classList.contains('is-narrow')).toBe(true);
         expect(containerEl.classList.contains('is-compact')).toBe(true);
+    });
+
+    it('keeps message actions discoverable on touch and narrow panes', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+
+        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
+        expect(css).toMatch(/\.llm-view\.is-narrow\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
     });
 
     it('anchors Memory and More menus inside their composer action controls', async () => {
