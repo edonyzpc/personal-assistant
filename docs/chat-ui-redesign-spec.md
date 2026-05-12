@@ -220,7 +220,7 @@ Composer More menu:
 | --- | --- | --- |
 | Session | `Copy conversation` | Copies visible successful and UI-only conversation text in display order, excluding hidden technical details unless expanded. |
 | Session | `Clear chat...` | Last item in group, danger-styled, confirmation-gated. |
-| Diagnostics / Settings | `Show technical Memory status` | Calls existing technical Memory status path; diagnostics only. |
+| Diagnostics / Settings | `Show Memory Status` | Calls existing technical Memory status path; diagnostics only. |
 | Diagnostics / Settings | `Open settings` | Opens plugin settings tab. |
 
 Per-message More menu:
@@ -285,7 +285,7 @@ These terms may appear in logs, technical status, tests, and docs, but not in or
 
 Technical diagnostics decision for v1:
 
-- `Show technical Memory status` calls the existing `plugin.showTechnicalMemoryStatus()` path.
+- `Show Memory Status` calls the existing `plugin.showTechnicalMemoryStatus()` path.
 - The result is shown through the existing diagnostic Notice behavior.
 - Do not add a new diagnostics modal or compact diagnostics panel in this redesign unless a later review explicitly reopens the decision.
 

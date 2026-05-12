@@ -102,7 +102,7 @@ Create `docs/chat-ui-redesign-spec.md` with all required tables and smoke matrix
 ## Menu IA
 Composer More menu:
 - Session: `Copy conversation`, `Clear chat...`
-- Diagnostics / Settings: `Show technical Memory status`, `Open settings`
+- Diagnostics / Settings: `Show Memory Status`, `Open settings`
 - `Clear chat...` is last in its group, danger-styled, and confirmation-gated.
 
 Per-message More menu:

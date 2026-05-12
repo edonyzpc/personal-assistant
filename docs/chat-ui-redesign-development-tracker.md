@@ -206,7 +206,7 @@ Expected commands:
 | Generation + draft next message | Phase C | [x] Passed | Real smoke confirmed draft text can be entered while generation is active; automated test covers Enter showing a muted hint instead of sending while still generating |
 | Stop during generation | Phase B/C | [x] Passed | Phase C dark smoke: Stop produced a cancelled row with Retry/Delete and recovered Ask state; Add to Editor remains a per-message action covered by automated tests |
 | Inline error + retry | Phase B/C | [x] Automated | Automated tests cover provider error + retry; Obsidian smoke covered cancelled-row Retry without forcing live AI settings into an error state |
-| Memory ready but unused | Phase D | [x] Passed | Real Obsidian smoke after deploy showed the chat chip as `Memory ready`; opening the chip menu showed only `Open settings` and `Show technical Memory status`, with no prepare/update action |
+| Memory ready but unused | Phase D | [x] Passed | Real Obsidian smoke after deploy showed the chat chip as `Memory ready`; opening the chip menu showed only `Open settings` and `Show Memory Status`, with no prepare/update action |
 | Memory used with collapsed references | Phase D | [x] Passed | Real Obsidian smoke on `Dog.md`: Memory-backed answer rendered a collapsed `Memory used (1)` source bar instead of the raw Memory references callout |
 | Memory used with expanded references | Phase D | [x] Passed | Real Obsidian smoke expanded `Memory used (1)` and showed the internal source link `0.unsorted/Dog.md` |
 | No related Memory | Phase D | [x] Passed | Real smoke ordinary arithmetic answer rendered without a source bar; automated status-copy test covers `No related memory` wording |
