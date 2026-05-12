@@ -257,6 +257,7 @@ describe('MemoryManager chat decisions', () => {
                 reason: 'auto-refresh',
             }));
             expect(plugin.vss.reconcileLocalFiles).toHaveBeenCalled();
+            expect(plugin.updateMemoryStatusBar).toHaveBeenCalled();
         } finally {
             manager.stopAutoMaintenance();
             jest.useRealTimers();

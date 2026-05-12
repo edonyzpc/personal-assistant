@@ -120,6 +120,7 @@ export class LLMView extends ItemView {
     private panelResizeObserver: ResizeObserver | null = null;
     private statusBarResizeObserver: ResizeObserver | null = null;
     private statusBarResizeHandler: (() => void) | null = null;
+    private memoryStatusUnsubscribe: (() => void) | null = null;
     private memorySourceBarId = 0;
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
@@ -1273,6 +1274,10 @@ export class LLMView extends ItemView {
 
         syncComposerControls();
         renderEmptyState();
+        this.memoryStatusUnsubscribe = this.plugin.onMemoryStatusChanged?.(async () => {
+            if (!isCurrentSession()) return;
+            await refreshMemoryChipState();
+        }) ?? null;
         void refreshMemoryChipState();
 
         // vss cache updates are now handled globally in the plugin
@@ -1285,12 +1290,19 @@ export class LLMView extends ItemView {
         this.panelResizeObserver?.disconnect();
         this.panelResizeObserver = null;
         this.disconnectStatusBarClearance();
+        this.disconnectMemoryStatusListener();
     }
 
     private startViewSession(): number {
         this.cancelScheduledScroll();
+        this.disconnectMemoryStatusListener();
         this.viewSessionId += 1;
         return this.viewSessionId;
+    }
+
+    private disconnectMemoryStatusListener() {
+        this.memoryStatusUnsubscribe?.();
+        this.memoryStatusUnsubscribe = null;
     }
 
     private observePanelDensity(containerEl: HTMLElement) {

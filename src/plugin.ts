@@ -26,15 +26,6 @@ import { MemoryManager } from './memory-manager';
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
-const MEMORY_STATUS_BAR_STATE_CLASSES = [
-    "personal-assistant-ai-statusbar-ready",
-    "personal-assistant-ai-statusbar-needs-update",
-    "personal-assistant-ai-statusbar-needs-setup",
-    "personal-assistant-ai-statusbar-unavailable",
-    "personal-assistant-ai-statusbar-done",
-] as const;
-
-type MemoryStatusBarState = "ready" | "needs-update" | "needs-setup" | "unavailable";
 
 interface ObsidianPluginRegistry {
     enabledPlugins?: Set<string>;
@@ -85,7 +76,7 @@ export class PluginManager extends Plugin {
     private isVssCached: boolean = false;
     cryptoHelper: CryptoHelper = new CryptoHelper();
     private token: string = "";
-    private aiStatusBarItemEl: HTMLElement | null = null;
+    private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private hoverPopoverObserver: MutationObserver | null = null;
 
 
@@ -140,18 +131,6 @@ export class PluginManager extends Plugin {
                 // showup setting tab of this plugin
                 (this.app as any).setting.open(); // eslint-disable-line @typescript-eslint/no-explicit-any
                 (this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
-            });
-            // status bar for ai
-            const aiStatusBarItemEl = this.addStatusBarItem();
-            aiStatusBarItemEl.addClass('personal-assistant-ai-statusbar');
-            aiStatusBarItemEl.setAttribute("id", `personal-assistant-ai-statusbar`);
-            addIcon('PLUGIN_AI_BRAIN', icons['PLUGIN_AI_BRAIN']);
-            this.aiStatusBarItemEl = aiStatusBarItemEl;
-            this.setMemoryStatusBarStatus("Memory needs setup", "needs-setup");
-            // ai status bar event handling
-            aiStatusBarItemEl.onClickEvent((e) => {
-                // prepare memory from notes
-                (this.app as any).commands.executeCommandById("personal-assistant:init-vss");// eslint-disable-line @typescript-eslint/no-explicit-any
             });
         }
 
@@ -354,6 +333,7 @@ export class PluginManager extends Plugin {
             this.app.vault.on("create", async (file) => {
                 if (file instanceof TFile && await this.vss.markDirtyIfEligible(file)) {
                     this.memoryManager.scheduleAutoFlush("vault-create");
+                    await this.updateMemoryStatusBar();
                 }
             })
         );
@@ -361,6 +341,7 @@ export class PluginManager extends Plugin {
             this.app.vault.on("modify", async (file) => {
                 if (file instanceof TFile && await this.vss.markDirtyIfEligible(file)) {
                     this.memoryManager.scheduleAutoFlush("vault-modify");
+                    await this.updateMemoryStatusBar();
                 }
             })
         );
@@ -368,6 +349,7 @@ export class PluginManager extends Plugin {
             this.app.vault.on("rename", async (file, oldPath) => {
                 if (file instanceof TFile && await this.vss.handleRename(file, oldPath)) {
                     this.memoryManager.scheduleAutoFlush("vault-rename");
+                    await this.updateMemoryStatusBar();
                 }
             })
         );
@@ -388,6 +370,7 @@ export class PluginManager extends Plugin {
             this.app.workspace.on("file-open", async (file) => {
                 if (await this.vss.handleFileOpen(file)) {
                     this.memoryManager.scheduleAutoFlush("file-open");
+                    await this.updateMemoryStatusBar();
                 }
             })
         );
@@ -683,8 +666,6 @@ export class PluginManager extends Plugin {
 
     private async cacheVectors() {
         if (this.vss) {
-            const statusBar = document.getElementById("personal-assistant-ai-statusbar");
-            statusBar?.addClass("personal-assistant-ai-breathing");
             try {
                 await this.vss.rebuildLocalIndex({ silent: true });
                 this.isVssCached = true;
@@ -693,32 +674,21 @@ export class PluginManager extends Plugin {
                 this.isVssCached = false;
                 this.log("Failed to rebuild local VSS index", error);
                 new Notice("Could not prepare memory.", 7000);
-            } finally {
-                statusBar?.removeClass("personal-assistant-ai-breathing");
             }
         }
     }
 
+    onMemoryStatusChanged(listener: () => void | Promise<void>): () => void {
+        this.memoryStatusListeners.add(listener);
+        return () => {
+            this.memoryStatusListeners.delete(listener);
+        };
+    }
+
     async updateMemoryStatusBar() {
-        if (!Platform.isDesktop || !this.aiStatusBarItemEl || !this.vss) return;
-        const stats = await this.vss.getStats();
-        if (stats.status === "ready" || stats.status === "fallback") {
-            this.setMemoryStatusBarStatus("Memory ready", "ready");
-            return;
-        }
-        if (stats.status === "stale") {
-            this.setMemoryStatusBarStatus("Memory needs update", "needs-update");
-            return;
-        }
-        if (stats.status === "missing-local-index") {
-            this.setMemoryStatusBarStatus("Memory needs setup", "needs-setup");
-            return;
-        }
-        if (stats.status === "disabled" || stats.status === "error") {
-            this.setMemoryStatusBarStatus("Memory unavailable", "unavailable");
-            return;
-        }
-        this.setMemoryStatusBarStatus("Memory needs setup", "needs-setup");
+        await Promise.allSettled(
+            Array.from(this.memoryStatusListeners, (listener) => Promise.resolve().then(listener)),
+        );
     }
 
     async showTechnicalMemoryStatus() {
@@ -740,16 +710,6 @@ export class PluginManager extends Plugin {
         const storageText = stats.storagePersisted === false ? "best-effort storage" : "persistent storage";
         const performanceText = this.getVssPerformanceNotice(stats.chunkCount);
         new Notice(`Diagnostic details: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${performanceText}`, 7000);
-    }
-
-    private setMemoryStatusBarStatus(text: string, state: MemoryStatusBarState) {
-        if (!this.aiStatusBarItemEl) return;
-        this.aiStatusBarItemEl.empty();
-        setIcon(this.aiStatusBarItemEl, 'PLUGIN_AI_BRAIN');
-        this.aiStatusBarItemEl.classList.remove(...MEMORY_STATUS_BAR_STATE_CLASSES);
-        this.aiStatusBarItemEl.addClass(`personal-assistant-ai-statusbar-${state}`);
-        this.aiStatusBarItemEl.setAttribute("title", text);
-        this.aiStatusBarItemEl.setAttribute("aria-label", text);
     }
 
     private getVssPerformanceNotice(chunkCount: number): string {

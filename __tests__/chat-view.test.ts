@@ -354,6 +354,7 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
     const containerEl = new MockElement('div');
     containerEl.clientWidth = options.panelWidth ?? 600;
     const workspaceHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
+    const memoryStatusListeners = new Set<() => void | Promise<void>>();
     const editor = {
         getCursor: jest.fn(() => ({ line: 0, ch: 0 })),
         replaceRange: jest.fn(),
@@ -402,6 +403,12 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
             updateFromCommand: jest.fn(async () => undefined),
         },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
+        onMemoryStatusChanged: jest.fn((listener: () => void | Promise<void>) => {
+            memoryStatusListeners.add(listener);
+            return () => {
+                memoryStatusListeners.delete(listener);
+            };
+        }),
         log: jest.fn(),
     };
     const leaf = { app, containerEl };
@@ -415,7 +422,22 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
             handler(...args);
         }
     };
-    return { view, containerEl, app, plugin, editor, markdownLeaf, markdownFile, emitWorkspaceEvent };
+    const emitMemoryStatusChanged = async () => {
+        await Promise.all(Array.from(memoryStatusListeners, (listener) => listener()));
+    };
+    const getMemoryStatusListenerCount = () => memoryStatusListeners.size;
+    return {
+        view,
+        containerEl,
+        app,
+        plugin,
+        editor,
+        markdownLeaf,
+        markdownFile,
+        emitWorkspaceEvent,
+        emitMemoryStatusChanged,
+        getMemoryStatusListenerCount,
+    };
 }
 
 describe('LLMView turn lifecycle', () => {
@@ -1418,6 +1440,50 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(plugin.memoryManager.updateFromCommand).toHaveBeenCalledTimes(1);
+    });
+
+    it('refreshes the Memory chip when background memory status changes', async () => {
+        const { view, containerEl, plugin, emitMemoryStatusChanged } = createView();
+        plugin.memoryManager.getMaintenancePlan
+            .mockResolvedValueOnce({
+                reason: 'changed-notes',
+                action: 'refresh',
+                notesToCheck: 4,
+                notesLikelyToUpdate: 2,
+                requiresApproval: true,
+                canAnswerNow: true,
+            })
+            .mockResolvedValue({
+                reason: 'ready',
+                action: 'none',
+                notesToCheck: 4,
+                requiresApproval: false,
+                canAnswerNow: true,
+            });
+
+        await view.onOpen();
+        await flushPromises();
+
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-needs-update')).toBe(true);
+        expect(memoryChip.getAttribute('aria-label')).toBe('Memory needs update');
+
+        await emitMemoryStatusChanged();
+        await flushPromises();
+
+        expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-needs-update')).toBe(false);
+        expect(memoryChip.classList.contains('personal-assistant-ai-statusbar-ready')).toBe(true);
+        expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
+    });
+
+    it('unsubscribes Memory chip status refresh on close', async () => {
+        const { view, getMemoryStatusListenerCount } = createView();
+
+        await view.onOpen();
+        expect(getMemoryStatusListenerCount()).toBe(1);
+
+        await view.onClose();
+        expect(getMemoryStatusListenerCount()).toBe(0);
     });
 
     it('keeps Memory diagnostics and settings behind menu entries', async () => {
