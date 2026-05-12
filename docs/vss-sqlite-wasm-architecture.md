@@ -454,7 +454,7 @@ stateDiagram-v2
 
 ## 用户交互
 
-普通状态必须在聊天或状态栏使用 Memory 文案：
+普通状态必须在聊天、设置或通知中使用 Memory 文案：
 
 - `Memory ready`
 - `Memory needs update`

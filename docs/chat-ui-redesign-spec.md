@@ -245,7 +245,7 @@ These are user-facing states. They are product labels, not backend diagnostics.
 
 | State | Meaning | Trigger / source | UI location |
 | --- | --- | --- | --- |
-| `Memory ready` | Memory is available on this device. It does not mean this answer used Memory. | `MemoryMaintenancePlan.reason === "ready"` or plugin status bar ready | Memory chip |
+| `Memory ready` | Memory is available on this device. It does not mean this answer used Memory. | `MemoryMaintenancePlan.reason === "ready"` | Memory chip |
 | `Memory needs setup` | Memory must be prepared before it can be used. | first-use / missing setup | Memory chip, approval modal |
 | `Memory needs update` | Notes changed or settings changed and Memory may need refresh/rebuild. | changed-notes / settings-changed | Memory chip |
 | `Memory unavailable` | Memory cannot be prepared or used right now. | unavailable plan or VSS error | Memory chip, notice |

@@ -31,7 +31,7 @@
 | Memory 产品层 | `src/memory-manager.ts`、`src/chat-view.ts`、`src/settings.ts` | 普通用户看到 Memory from your notes；首次成本动作确认；成功 prepare/update 后启用 `auto-refresh-after-prepare`；changed notes 在 durable ready 时后台维护且 Chat 不等待 refresh；fallback 只读并提示后台更新不可用 |
 | VectorIndex 后端 | `src/vss/*` | 新增 `VectorIndex` 类型、`SqliteVectorIndex`、SQLite worker protocol/worker、`MemoryVectorIndex` fallback、marker/manifest helper；`listFileRecords()` 批量 metadata 接口已实现；主线程不再持有全量向量 |
 | 构建与发布 | `package.json`、`package-lock.json`、`esbuild.config.mjs`、`Makefile`、`.github/workflows/release.yml` | pin `@sqliteai/sqlite-wasm`；worker/WASM 内联进 `main.js`；release 和 test vault deploy 回到 Obsidian 标准三文件安装形态 |
-| 插件命令与状态 | `src/plugin.ts`、`src/settings.ts`、`src/stats/stats-store.ts` | 普通命令保留 `Prepare Memory`；Desktop 状态栏显示 Memory 状态；高级 reset/clean/status 命令按设置动态隐藏；新安装默认 Qwen v4，旧默认 v3 只提示不静默迁移 |
+| 插件命令与状态 | `src/plugin.ts`、`src/settings.ts`、`src/stats/stats-store.ts` | 普通命令保留 `Prepare Memory`；Chat Memory chip 显示 Memory 状态，Desktop 状态栏不再重复显示 Memory 图标；高级 reset/clean/status 命令按设置动态隐藏；新安装默认 Qwen v4，旧默认 v3 只提示不静默迁移 |
 | 聊天 Memory | `src/ai-services/chat-service.ts` | Memory 有结果时使用 Memory prompt；Memory 无结果或用户选择 `Answer now` 时回到普通 chat prompt，不传空 `memory_content` |
 | 自动化测试 | `__tests__/memory-manager.test.ts`、`__tests__/vss.test.ts`、`__tests__/chat-service.test.ts`、`__tests__/plugin-record-note.test.ts`、`__tests__/memory-vector-index.test.ts`、`__tests__/sqlite-vector-index.test.ts`、`__tests__/vss-state.test.ts` | 覆盖 Memory readiness、产品文案、skip-memory 聊天、auto policy changed-notes、fallback read-only、lifecycle、fallback 双硬上限、marker/manifest 路径、missing index 恢复、旧 JSON 清理保护、迁移提示、性能提醒、worker fatal error recovery、Rebuild 跨文件 batch、embedding retry/progress、失败文件停止排队、refresh 进度事件、reconcile metadata/rolling hash/hasMore 收敛 |
 | 文档与发布说明 | `docs/vss-sqlite-wasm-*.md`、`README.md`、`README-CN.md`、`CHANGELOG.md` | 架构、实施计划、开发 tracker 已建立；README 标注 Android 待实机验证和标准三文件手动安装；CHANGELOG 增加 Unreleased 记录 |
@@ -196,7 +196,7 @@ Gate 结果：
 - [x] fallback 或非 durable 状态下不自动写入，只提示后台更新不可用。
 - [x] `Answer now` 本次跳过 Memory，并继续普通聊天。
 - [x] `Cancel` 不发送问题，不调用 LLM。
-- [x] 状态栏显示 `Memory ready`、`Memory needs update`、`Memory unavailable`。
+- [x] Chat Memory chip 显示 `Memory ready`、`Memory needs update`、`Memory unavailable`。
 - [x] 普通命令保留 `Prepare Memory`。
 - [x] Advanced memory controls 默认隐藏 reset、clean cache、technical status 等高级命令。
 - [x] 技术状态统一放入 `Diagnostic details`。

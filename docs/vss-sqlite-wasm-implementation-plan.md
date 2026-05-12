@@ -331,7 +331,7 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 - 新增 `MemoryApprovalModal`，覆盖 Data、AI provider、Cost。
 - 普通命令保留 `Prepare Memory` 和 `Open Chat in Sidebar`。
 - 高级命令默认隐藏，并按 `Advanced memory controls` 动态显示。
-- 状态栏显示 `Memory ready`、`Memory needs update`、`Memory unavailable` 等普通文案。
+- Chat Memory chip 显示 `Memory ready`、`Memory needs update`、`Memory unavailable` 等普通文案。
 - ChatService 支持 `memoryMode: "auto" | "use-memory" | "skip-memory"`。
 - `Answer now` 跳过 Memory 检索但继续普通聊天。
 - 技术状态只通过 `Diagnostic details` 暴露。
