@@ -156,25 +156,26 @@ export class PluginManager extends Plugin {
         }
 
         this.vss = this.initVss();
+        this.registerView(
+            RECORD_PREVIEW_TYPE,
+            (leaf) => { return new RecordPreview(this.app, this, leaf); }
+        );
+        this.registerView(
+            STAT_PREVIEW_TYPE,
+            (leaf) => { return new Stat(this.app, this, leaf); }
+        );
+        this.registerView(
+            VIEW_TYPE_LLM,
+            (leaf) => {
+                return new LLMView(leaf, this, this.vss);
+            }
+        );
+
         this.memoryManager = new MemoryManager(this);
         this.memoryManager.startAutoMaintenance();
         await this.updateMemoryStatusBar();
 
         this.app.workspace.onLayoutReady(() => {
-            this.registerView(
-                RECORD_PREVIEW_TYPE,
-                (leaf) => { return new RecordPreview(this.app, this, leaf); }
-            );
-            this.registerView(
-                STAT_PREVIEW_TYPE,
-                (leaf) => { return new Stat(this.app, this, leaf); }
-            );
-            this.registerView(
-                VIEW_TYPE_LLM,
-                (leaf) => {
-                    return new LLMView(leaf, this, this.vss);
-                }
-            );
             void this.initializeCalloutManager();
         });
         this.statsManager = new StatsManager(this.app, this);

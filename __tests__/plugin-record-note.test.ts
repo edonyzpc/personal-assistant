@@ -42,7 +42,13 @@ jest.mock('obsidian-callout-manager', () => ({ getApi: jest.fn() }));
 jest.mock('../src/chat-view', () => ({ VIEW_TYPE_LLM: 'llm-view', LLMView: class { } }));
 jest.mock('../src/ai', () => ({ AssistantFeaturedImageHelper: class { }, AssistantHelper: class { } }));
 jest.mock('../src/vss', () => ({ VSS: class { } }));
-jest.mock('../src/memory-manager', () => ({ MemoryManager: class { } }));
+jest.mock('../src/memory-manager', () => ({
+    MemoryManager: class {
+        startAutoMaintenance() { }
+        scheduleAutoFlush() { }
+        prepareFromCommand() { }
+    },
+}));
 jest.mock('../src/modal', () => ({ PluginControlModal: class { } }));
 jest.mock('../src/batch-modal', () => ({ BatchPluginControlModal: class { } }));
 jest.mock('../src/settings', () => ({ SettingTab: class { }, DEFAULT_SETTINGS: {} }));
@@ -56,7 +62,7 @@ jest.mock('../src/preview', () => ({ RECORD_PREVIEW_TYPE: 'record-preview', Reco
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview', Stat: class { } }));
 jest.mock('../src/stats/stats-manager', () => ({ __esModule: true, default: class { } }));
 jest.mock('../src/stats/editor-plugin', () => ({
-    pluginField: {},
+    pluginField: { init: jest.fn(() => ({})) },
     statusBarEditorPlugin: {},
     sectionWordCountEditorPlugin: {},
 }));
@@ -140,6 +146,73 @@ describe('record note creation', () => {
 
         expect(vault.create).not.toHaveBeenCalled();
         expect(openFile).toHaveBeenCalledWith(existingFile);
+    });
+});
+
+describe('plugin startup view registration', () => {
+    it('registers custom views during onload before layout-ready work runs', async () => {
+        const originalDocument = globalThis.document;
+        const originalMutationObserver = globalThis.MutationObserver;
+        const layoutCallbacks: Array<() => void> = [];
+        const registerView = jest.fn();
+        const onLayoutReady = jest.fn((callback: () => void) => {
+            layoutCallbacks.push(callback);
+        });
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        globalThis.document = {
+            body: {},
+            querySelectorAll: jest.fn(() => []),
+            getElementById: jest.fn(() => null),
+        } as unknown as Document;
+        globalThis.MutationObserver = class {
+            observe() { }
+            disconnect() { }
+        } as unknown as typeof MutationObserver;
+
+        plugin.app = {
+            vault: {
+                configDir: '.obsidian',
+                on: jest.fn(() => ({})),
+            },
+            workspace: {
+                on: jest.fn(() => ({})),
+                onLayoutReady,
+            },
+        };
+        plugin.settings = { debug: false, showAdvancedMemoryControls: false };
+        plugin.loadSettings = jest.fn(async () => undefined);
+        plugin.migrateSettings = jest.fn();
+        plugin.initVss = jest.fn(() => ({}));
+        plugin.registerView = registerView;
+        plugin.updateMemoryStatusBar = jest.fn(async () => undefined);
+        plugin.initializeCalloutManager = jest.fn(async () => undefined);
+        plugin.addRibbonIcon = jest.fn(() => ({ addClass: jest.fn() }));
+        plugin.addCommand = jest.fn();
+        plugin.registerEvent = jest.fn();
+        plugin.registerEditorExtension = jest.fn();
+        plugin.addSettingTab = jest.fn();
+        plugin.log = jest.fn();
+
+        try {
+            await plugin.onload();
+
+            expect(registerView).toHaveBeenCalledWith('record-preview', expect.any(Function));
+            expect(registerView).toHaveBeenCalledWith('stat-preview', expect.any(Function));
+            expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
+            expect(registerView).toHaveBeenCalledTimes(3);
+            expect(registerView.mock.invocationCallOrder[0]).toBeLessThan(
+                onLayoutReady.mock.invocationCallOrder[0],
+            );
+
+            layoutCallbacks.forEach((callback) => callback());
+
+            expect(plugin.initializeCalloutManager).toHaveBeenCalledTimes(1);
+            expect(registerView).toHaveBeenCalledTimes(3);
+        } finally {
+            globalThis.document = originalDocument;
+            globalThis.MutationObserver = originalMutationObserver;
+        }
     });
 });
 
