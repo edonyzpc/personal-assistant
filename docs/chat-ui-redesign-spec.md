@@ -115,7 +115,7 @@ Additional density rules:
 
 - Assistant messages are near-full-width document flow and should not be constrained like user bubbles.
 - User messages are compact, right-aligned pills.
-- Composer, source bar, message action popovers, and modal framed surfaces use border radius `<= 8px`.
+- Source bar and modal framed surfaces use border radius `<= 8px`; composer shell/textarea use `12px`, and chat menus/message action popovers use `14px`.
 - Icon buttons must have fixed width/height so hover states and icon swaps do not shift layout.
 - Text must not scale with viewport width. Letter spacing must be `0`.
 
@@ -180,16 +180,20 @@ Shared renderer stale contract:
 
 ```mermaid
 flowchart LR
-  Memory["Memory chip"]
   Text["Textarea"]
   Hint["Helper / inline hint"]
+  Actions["Bottom-right actions"]
+  Ask["Ask"]
+  Memory["Memory"]
+  Stop["Stop"]
   More["More"]
-  Send["Send or Stop"]
 
-  Memory --> Text
   Text --> Hint
-  Text --> More
-  More --> Send
+  Text --> Actions
+  Actions --> Ask
+  Ask --> Memory
+  Memory --> Stop
+  Stop --> More
 ```
 
 | State | Textarea | Send button | Stop button | Helper / hint |
@@ -205,9 +209,10 @@ flowchart LR
 
 Composer controls:
 
-- Memory chip on the left.
-- Textarea in the main row.
-- More menu near send/stop.
+- Textarea sits inside the composer shell.
+- Composer actions are anchored at the bottom-right of the shell.
+- Visual action order is `Ask` -> `Memory` -> `Stop` -> `More`; `Ask` and `Stop` swap visibility during generation.
+- More menu is anchored to the More control.
 - Send/Stop are icon-only buttons with tooltip and `aria-label`.
 - Use Obsidian `setIcon` icons. Suggested icons: `send`, `square`, `ellipsis`, `brain`, `copy`, `trash`, `settings`, `file-plus`, `refresh-cw`, `chevron-down`, `chevron-right`.
 - Do not hand-draw SVG icons.

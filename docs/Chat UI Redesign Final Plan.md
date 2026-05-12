@@ -49,7 +49,7 @@ Out of scope: settings redesign, statistics, preview, record views, Memory retri
   - spinner/pulse duration is at least 1.2s and low contrast;
   - `prefers-reduced-motion` uses static dot/text, not pulse.
 - Visual constraints:
-  - composer, source bar, and framed surfaces use radius max 8px;
+  - source bar and modal framed surfaces keep compact radius; composer shell/textarea use 12px and chat menus use 14px;
   - use Obsidian `setIcon` / built-in icons;
   - do not hand-draw SVG icons or add a new icon library.
 
@@ -69,9 +69,8 @@ Create `docs/chat-ui-redesign-spec.md` with all required tables and smoke matrix
 - Role labels: responsive text + icon; narrow mode uses icon plus visually hidden label.
 - Activity row: compact, expandable, accessible, reduced-motion safe.
 - Composer:
-  - Memory chip left;
-  - More menu;
-  - textarea;
+  - textarea inside the composer shell;
+  - bottom-right action cluster in visual order `Ask` -> `Memory` -> `Stop` -> `More`;
   - icon-only send/stop with tooltip and `aria-label`;
   - generation state shows muted composer helper text `Draft next message`;
   - Enter during generation shows an inline muted hint, not Notice;

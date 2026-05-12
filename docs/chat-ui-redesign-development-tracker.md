@@ -143,10 +143,10 @@ Goal: 在 Phase B 的状态/渲染边界上落地 compact Codex-hybrid chat pane
 
 | Step | Task | Owner Files | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| dev | Apply spec tokens and density rules | `src/custom.css`, `src/chat-view.ts` | [x] Done | Uses Obsidian variables, radius max 8px for framed surfaces, no new icon library, and panel-width classes driven by `ResizeObserver` instead of viewport media queries |
+| dev | Apply spec tokens and density rules | `src/custom.css`, `src/chat-view.ts` | [x] Done | Uses Obsidian variables, compact framed surfaces with composer/menu radius exceptions documented in the spec, no new icon library, and panel-width classes driven by `ResizeObserver` instead of viewport media queries |
 | dev | Redesign assistant/user message layout | `src/chat-view.ts`, `src/custom.css` | [x] Done | Assistant uses near-full-width document flow; user uses compact right-aligned pill; role labels follow responsive icon/text spec |
 | dev | Redesign activity row | `src/chat-view.ts`, `src/custom.css` | [x] Done | Compact expandable row, `aria-live="polite"` summary, keyboard toggle, coalesced/capped updates, reduced-motion safe |
-| dev | Redesign composer shell | `src/chat-view.ts`, `src/custom.css` | [x] Done | Memory chip left, More menu, textarea, icon-only send/stop with tooltip and `aria-label` |
+| dev | Redesign composer shell | `src/chat-view.ts`, `src/custom.css` | [x] Done | Textarea in the composer shell with bottom-right actions in order `Ask`, `Memory`, `Stop`, `More`; icon-only send/stop use tooltip and `aria-label` |
 | dev | Implement generation draft behavior | `src/chat-view.ts` | [x] Done | During generation textarea remains editable as `Draft next message`; Enter shows muted inline hint; draft is not auto-sent or cleared except by Clear chat |
 | dev | Implement composer More menu IA | `src/chat-view.ts` | [x] Done | Session group has `Copy conversation`, `Clear Chat`; diagnostics/settings group has technical Memory status and settings; clear is danger-styled and confirmation-gated |
 | dev | Implement per-message More menu | `src/chat-view.ts` | [x] Done | Assistant: Copy, Add to Editor, Delete; User: Copy, Delete; destructive delete uses modal confirmation |
@@ -223,7 +223,7 @@ Expected commands:
 | Activity/source a11y attributes | Phase C/D | [x] Passed | Activity row exposes polite summary and toggle `aria-expanded` / `aria-controls`; source bar toggle uses `aria-expanded` / `aria-controls` and was exercised in real smoke |
 | Reduced motion | Phase C/D | [x] Passed | CSS includes reduced-motion guard for chat message animation; Phase D source/notice additions do not add motion-dependent behavior |
 | Focus visibility | Phase C/D | [x] Passed | Scoped focus-visible styles exist for chat buttons and textarea; smoke showed controls remain visible and reachable |
-| Narrow width `<360px` | Phase C/D | [x] Passed | Real Obsidian smoke after splitter drag: composer stacked Memory chip above textarea/actions and messages remained readable |
+| Narrow width `<360px` | Phase C/D | [x] Passed | Real Obsidian smoke after splitter drag: bottom-right composer action cluster and messages remained readable |
 | Normal width `360-520px` | Phase C/D | [x] Passed | Real Obsidian smoke in restored normal chat pane: composer/menu/message layout readable with no overlap |
 | Wide width `>520px` | Phase C/D | [x] Passed | Real Obsidian smoke after splitter drag: wider assistant flow and composer remained readable with no overlap |
 | Dark theme quick check | Phase C/D | [x] Passed | Phase D dark smoke covered Memory ready/update menus, update approval modal, source bar collapsed/expanded, ordinary no-source answer, and menu mutual exclusion |
@@ -289,7 +289,7 @@ Expected commands:
 | 2026-05-10 | Phase C deploy | `make deploy` | [x] Passed | Full tests/lint/build passed inside deploy; copied current generated assets to `test/.obsidian/plugins/personal-assistant/` |
 | 2026-05-10 | Phase C Obsidian smoke | Real Obsidian test vault, dark theme | [x] Passed | Reloaded after deploy; validated active-note empty state, current-note chip fill, composer More menu, long answer, draft entry during generation, Stop/cancel row, Retry, danger-styled Clear modal, per-message menu, focus/readability, and restored Ask/Add to Editor state |
 | 2026-05-10 | Phase C Obsidian smoke | Real Obsidian test vault, light theme | [x] Passed | Toggled light theme and checked redesigned message cards, menu, and composer readability; restored dark theme afterward |
-| 2026-05-10 | Phase C Obsidian smoke | Real Obsidian test vault, width checks | [x] Passed | Splitter drag verified wide, normal, and narrow chat pane behavior; narrow layout stacked the Memory chip above textarea/actions without overlap |
+| 2026-05-10 | Phase C Obsidian smoke | Real Obsidian test vault, width checks | [x] Passed | Splitter drag verified wide, normal, and narrow chat pane behavior; the bottom-right composer action cluster remained readable without overlap |
 | 2026-05-11 | Phase D focused test | `npm test -- __tests__/chat-view.test.ts --runInBand` | [x] Passed | 1 suite / 34 tests passed; warning: `--localstorage-file` without valid path |
 | 2026-05-11 | Phase D focused test | `npm test -- __tests__/memory-manager.test.ts --runInBand` | [x] Passed | 1 suite / 13 tests passed; warning: `--localstorage-file` without valid path |
 | 2026-05-11 | Phase D combined focused test | `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts __tests__/memory-manager.test.ts --runInBand` | [x] Passed | 3 suites / 135 tests passed; warning: `--localstorage-file` without valid path |
