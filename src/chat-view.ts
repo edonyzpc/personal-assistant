@@ -17,6 +17,7 @@ interface ThinkingStatusView {
     summaryEl: HTMLElement;
     detailsEl: HTMLElement;
     toggleButton: HTMLButtonElement;
+    loaderEl?: HTMLElement;
     expanded: boolean;
     detailItems: HTMLElement[];
     lastDetail?: string;
@@ -48,6 +49,22 @@ const MEMORY_CHIP_STATE_CLASSES = [
     "personal-assistant-ai-statusbar-unavailable",
 ];
 export const CHAT_MENU_IDLE_CLOSE_MS = 8000;
+
+let ldrsLoadersRequested = false;
+
+function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) => void): void {
+    if (ldrsLoadersRequested) return;
+    if (typeof document === 'undefined' || typeof globalThis.customElements === 'undefined') return;
+
+    ldrsLoadersRequested = true;
+    void Promise.all([
+        import('ldrs/helix'),
+        import('ldrs/dotWave'),
+    ]).catch((error) => {
+        ldrsLoadersRequested = false;
+        log?.('Could not load chat waiting animations', error);
+    });
+}
 
 class ChatConfirmationModal extends Modal {
     private resolved = false;
@@ -172,6 +189,7 @@ export class LLMView extends ItemView {
 
     async onOpen() {
         const sessionId = this.startViewSession();
+        ensureChatLoadersRegistered((message, error) => this.plugin.log(message, error));
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
@@ -438,6 +456,51 @@ export class LLMView extends ItemView {
         const removeElement = (element?: HTMLElement | null) => {
             if (element?.parentElement) {
                 element.parentElement.removeChild(element);
+            }
+        };
+        const createRoleLoader = (
+            parent: HTMLElement,
+            kind: 'thinking' | 'assistant',
+        ): HTMLElement => {
+            const wrapper = parent.createSpan({
+                cls: `pa-chat-role-loader pa-chat-role-loader-${kind}`,
+                attr: { 'aria-hidden': 'true' },
+            });
+            const tagName = kind === 'thinking' ? 'l-helix' : 'l-dot-wave';
+            wrapper.createEl(tagName as keyof HTMLElementTagNameMap, {
+                cls: 'pa-chat-role-loader-element',
+                attr: {
+                    size: kind === 'thinking' ? '16' : '24',
+                    speed: kind === 'thinking' ? '2.4' : '1.3',
+                    color: 'currentColor',
+                },
+            });
+            const fallback = wrapper.createSpan({ cls: 'pa-chat-role-loader-fallback' });
+            fallback.createSpan({ text: '' });
+            fallback.createSpan({ text: '' });
+            fallback.createSpan({ text: '' });
+            return wrapper;
+        };
+        const createRoleLabel = (
+            parent: HTMLElement,
+            text: string,
+            options: {
+                extraClass?: string;
+                loader?: 'thinking' | 'assistant';
+            } = {},
+        ): { roleEl: HTMLElement; loaderEl?: HTMLElement } => {
+            const roleEl = parent.createDiv({
+                cls: ['message-role', options.extraClass ?? ''].filter(Boolean).join(' '),
+            });
+            roleEl.createSpan({ cls: 'pa-chat-role-text', text });
+            const loaderEl = options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
+            return { roleEl, loaderEl };
+        };
+        const stopThinkingLoader = (statusView?: ThinkingStatusView) => {
+            removeElement(statusView?.loaderEl);
+            statusView?.messageDiv.removeAttribute?.('aria-busy');
+            if (statusView) {
+                statusView.loaderEl = undefined;
             }
         };
         const isCurrentSession = () => this.viewSessionId === sessionId;
@@ -742,10 +805,17 @@ export class LLMView extends ItemView {
                 onAddToEditor?: (content: string) => void | Promise<void>;
                 disableDeleteWhileGenerating?: boolean;
                 memoryMetadata?: ChatTurnMemoryMetadata;
+                showAssistantLoader?: boolean;
+                skipInitialRender?: boolean;
             } = {},
         ): RenderedMessage => {
             const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
-            messageDiv.createDiv({ cls: 'message-role', text: message.role === 'user' ? 'You' : 'Assistant' });
+            if (options.showAssistantLoader) {
+                messageDiv.setAttribute('aria-busy', 'true');
+            }
+            createRoleLabel(messageDiv, message.role === 'user' ? 'You' : 'Assistant', {
+                loader: options.showAssistantLoader ? 'assistant' : undefined,
+            });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
             const actionDiv = messageDiv.createDiv({ cls: 'message-actions' });
             const rendered: RenderedMessage = {
@@ -820,7 +890,9 @@ export class LLMView extends ItemView {
                 }
             }
 
-            renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), options.forceScroll);
+            if (!options.skipInitialRender) {
+                renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), options.forceScroll);
+            }
             return rendered;
         };
 
@@ -895,7 +967,7 @@ export class LLMView extends ItemView {
             entry: TerminalTurnEntry,
         ) => {
             const row = this.responseDiv.createDiv({ cls: `llm-message system turn-${entry.terminalKind}` });
-            row.createDiv({ cls: 'message-role', text: entry.terminalKind === 'error' ? 'Error' : 'Cancelled' });
+            createRoleLabel(row, entry.terminalKind === 'error' ? 'Error' : 'Cancelled');
             row.createDiv({ cls: 'message-content', text: entry.content });
             const actions = row.createDiv({ cls: 'message-actions turn-terminal-actions' });
             const retryButton = actions.createEl('button', {
@@ -965,6 +1037,7 @@ export class LLMView extends ItemView {
             errorDetail?: string,
         ) => {
             removeElement(turn.assistantMessage?.messageDiv);
+            stopThinkingLoader(turn.statusView);
             const entry: TerminalTurnEntry = {
                 kind: 'terminal',
                 id: turn.id,
@@ -981,6 +1054,7 @@ export class LLMView extends ItemView {
 
         const createThinkingStatusView = (): ThinkingStatusView => {
             const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message system thinking-status' });
+            messageDiv.setAttribute('aria-busy', 'true');
             const headerDiv = messageDiv.createDiv({ cls: 'thinking-status-header' });
             const detailsId = `pa-chat-thinking-details-${sessionId}-${++thinkingStatusId}`;
             const toggleButton = headerDiv.createEl('button', {
@@ -993,7 +1067,10 @@ export class LLMView extends ItemView {
                 },
             });
             setIcon(toggleButton, 'chevron-right');
-            headerDiv.createDiv({ cls: 'message-role thinking-status-role', text: 'Thinking' });
+            const { loaderEl } = createRoleLabel(headerDiv, 'Thinking', {
+                extraClass: 'thinking-status-role',
+                loader: 'thinking',
+            });
             const summaryEl = headerDiv.createDiv({ cls: 'thinking-status-summary' });
             summaryEl.setAttribute('aria-live', 'polite');
             const detailsEl = messageDiv.createDiv({ cls: 'thinking-status-details' });
@@ -1005,6 +1082,7 @@ export class LLMView extends ItemView {
                 summaryEl,
                 detailsEl,
                 toggleButton,
+                loaderEl,
                 expanded: false,
                 detailItems: [],
             };
@@ -1118,6 +1196,14 @@ export class LLMView extends ItemView {
                 setHistoryDeleteButtonsDisabled(true);
                 syncComposerControls();
                 let responseContent = '';
+                turn.assistantMessage = createMessageElement(
+                    { role: 'assistant', content: '' },
+                    {
+                        isLive: isLiveTurn,
+                        showAssistantLoader: true,
+                        skipInitialRender: true,
+                    },
+                );
 
                 await this.chatService.streamLLM(
                     prompt,

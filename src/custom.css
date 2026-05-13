@@ -504,6 +504,11 @@ body {
 }
 
 .llm-view .message-role {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: fit-content;
+	max-width: calc(100% - 34px);
 	color: var(--text-muted);
 	font-size: 0.85em;
 	font-weight: 600;
@@ -511,6 +516,76 @@ body {
 	text-transform: uppercase;
 	letter-spacing: 0;
 	margin-right: 30px;
+}
+
+.llm-view .pa-chat-role-text {
+	line-height: 1.25;
+}
+
+.llm-view .pa-chat-role-loader {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 auto;
+	color: var(--interactive-accent);
+	opacity: 0.9;
+	transform: translateY(-1px);
+}
+
+.llm-view .pa-chat-role-loader-thinking {
+	width: 16px;
+	height: 16px;
+}
+
+.llm-view .pa-chat-role-loader-assistant {
+	width: 24px;
+	height: 14px;
+}
+
+.llm-view .pa-chat-role-loader-element {
+	display: inline-flex;
+	flex: 0 0 auto;
+}
+
+.llm-view .pa-chat-role-loader-fallback {
+	display: none;
+	align-items: center;
+	gap: 3px;
+	height: 10px;
+}
+
+.llm-view .pa-chat-role-loader-fallback span {
+	width: 3px;
+	height: 3px;
+	border-radius: 999px;
+	background: currentColor;
+	opacity: 0.55;
+	animation: pa-chat-loader-dot 1.2s ease-in-out infinite;
+}
+
+.llm-view .pa-chat-role-loader-fallback span:nth-child(2) {
+	animation-delay: 0.15s;
+}
+
+.llm-view .pa-chat-role-loader-fallback span:nth-child(3) {
+	animation-delay: 0.3s;
+}
+
+.llm-view .pa-chat-role-loader l-helix:not(:defined) + .pa-chat-role-loader-fallback,
+.llm-view .pa-chat-role-loader l-dot-wave:not(:defined) + .pa-chat-role-loader-fallback {
+	display: inline-flex;
+}
+
+@keyframes pa-chat-loader-dot {
+	0%,
+	100% {
+		opacity: 0.35;
+		transform: translateY(0);
+	}
+	50% {
+		opacity: 0.95;
+		transform: translateY(-2px);
+	}
 }
 
 .llm-view .thinking-status-header {
@@ -1097,6 +1172,20 @@ body {
 @media (prefers-reduced-motion: reduce) {
 	.llm-message {
 		animation: none;
+	}
+
+	.llm-view .pa-chat-role-loader-element {
+		display: none;
+	}
+
+	.llm-view .pa-chat-role-loader-fallback {
+		display: inline-flex;
+	}
+
+	.llm-view .pa-chat-role-loader-fallback span {
+		animation: none;
+		opacity: 0.75;
+		transform: none;
 	}
 }
 

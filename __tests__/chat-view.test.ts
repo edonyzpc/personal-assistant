@@ -639,6 +639,61 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].chatHistory?.[1]).not.toBe(view.chatHistory[1]);
     });
 
+    it('shows a live assistant loader before the first response chunk and reuses the placeholder', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'slow mobile answer';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const liveAssistantMessages = getElementsByClass(containerEl, 'assistant');
+        expect(liveAssistantMessages).toHaveLength(1);
+        expect(allText(liveAssistantMessages[0])).toContain('Assistant');
+        expect(getElementsByClass(liveAssistantMessages[0], 'pa-chat-role-loader-assistant')).toHaveLength(1);
+        expect(walk(liveAssistantMessages[0], (el) => el.tagName === 'l-dot-wave')).not.toBeNull();
+
+        streamCalls[0].onChunk('partial answer');
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+        expect(allText(containerEl)).toContain('partial answer');
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'slow mobile answer' },
+            { role: 'assistant', content: 'partial answer' },
+        ]);
+        expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+        expect(getElementsByClass(containerEl, 'pa-chat-role-loader-assistant')).toHaveLength(0);
+    });
+
+    it('shows and stops the Thinking loader for terminal turns', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'cancel during thinking';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
+
+        expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(1);
+        expect(walk(containerEl, (el) => el.tagName === 'l-helix')).not.toBeNull();
+
+        getButtonByClass(containerEl, 'cancel-button').click();
+        streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(containerEl)).toContain('Generation cancelled');
+        expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
+        expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+    });
+
     it('keeps failed turns out of model history and retries through the normal send path', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();

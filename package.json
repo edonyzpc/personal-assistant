@@ -65,6 +65,7 @@
     "@radix-ui/react-tooltip": "^1.1.2",
     "@sqliteai/sqlite-wasm": "3.50.4-sync.0.8.30-vector.0.9.23",
     "chart.js": "^4.4.4",
+    "ldrs": "^1.1.7",
     "nanoid": "^5.0.7",
     "obsidian-callout-manager": "^1.0.2-alpha1",
     "react": "^19.0.0",
