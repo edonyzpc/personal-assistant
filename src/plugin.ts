@@ -817,6 +817,14 @@ export class PluginManager extends Plugin {
                 this.settings.nativeToolPlanningSmokeEnabled = false;
                 changed = true;
             }
+            if (typeof this.settings.qwenThinkingEnabled !== "boolean") {
+                this.settings.qwenThinkingEnabled = false;
+                changed = true;
+            }
+            if (typeof this.settings.qwenWebSearchEnabled !== "boolean") {
+                this.settings.qwenWebSearchEnabled = false;
+                changed = true;
+            }
             if (
                 this.settings.aiProvider === 'qwen'
                 && this.settings.embeddingModelName === 'text-embedding-v3'

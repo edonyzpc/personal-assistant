@@ -339,6 +339,13 @@ Provider capability gate:
 | OpenAI-compatible `qwen` | `ChatOpenAI` with configured baseURL | `qwen` / `qwen-plus` / DashScope has passed the current smoke gate and is promoted to the default native context/tool planning table. |
 | `ollama` | `ChatOllama` | Deferred/unverified; stay on JSON planner fallback until the selected local model proves tool-calling support, error, abort, and fallback behavior. |
 
+Final-answer provider options:
+
+- DashScope-only Qwen thinking and web search are opt-in settings for final answer generation, not planner/tool execution.
+- `enable_thinking` reasoning text is displayed as current-session UI transcript only; it is not copied into the final answer, chat history prompt, notes, Memory, or Memory references.
+- `enable_search` lets DashScope decide whether to search the web with `forced_search=false`; it is separate from local Memory/vault search and is not represented as a Memory source.
+- If provider/baseURL is not the DashScope OpenAI-compatible endpoint, the plugin must not send Bailian-only request parameters.
+
 Native tool calling contract:
 
 - Tool schema 由 registry metadata 生成，真实执行仍由 runtime/policy/registry 负责。

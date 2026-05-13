@@ -2,7 +2,9 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 import {
     AIUtils,
+    buildQwenModelKwargs,
     DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS,
+    isDashScopeCompatibleBaseURL,
     SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
 } from '../src/ai-services/ai-utils';
 
@@ -128,5 +130,35 @@ describe('native tool calling capability', () => {
             baseURL: 'https://custom-openai-compatible.example/v1',
             reason: 'Provider/model/baseURL is not validated for native tool calling.',
         });
+    });
+});
+
+describe('Qwen DashScope request options', () => {
+    it('recognizes the DashScope OpenAI-compatible base URL with trailing slashes', () => {
+        expect(isDashScopeCompatibleBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1/')).toBe(true);
+        expect(isDashScopeCompatibleBaseURL('https://example.invalid/compatible-mode/v1')).toBe(false);
+    });
+
+    it('builds Bailian thinking and web search model kwargs only for DashScope qwen', () => {
+        expect(buildQwenModelKwargs('qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1', {
+            enableThinking: true,
+            enableWebSearch: true,
+        })).toEqual({
+            enable_thinking: true,
+            enable_search: true,
+            search_options: { forced_search: false },
+        });
+    });
+
+    it('does not send Bailian kwargs by default or for non-DashScope providers', () => {
+        expect(buildQwenModelKwargs('qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1')).toBeUndefined();
+        expect(buildQwenModelKwargs('openai', 'https://dashscope.aliyuncs.com/compatible-mode/v1', {
+            enableThinking: true,
+            enableWebSearch: true,
+        })).toBeUndefined();
+        expect(buildQwenModelKwargs('qwen', 'https://example.invalid/v1', {
+            enableThinking: true,
+            enableWebSearch: true,
+        })).toBeUndefined();
     });
 });

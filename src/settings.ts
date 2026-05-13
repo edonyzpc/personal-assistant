@@ -3,7 +3,8 @@
 import { App, Platform, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
-import { PluginManager } from "./plugin"
+import type { PluginManager } from "./plugin"
+import { isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { CryptoHelper, personalAssitant } from './utils'
@@ -61,6 +62,8 @@ export interface PluginManagerSettings {
     memoryApprovalPolicy: "always" | "auto-refresh-after-prepare";
     showAdvancedMemoryControls: boolean;
     nativeToolPlanningSmokeEnabled: boolean;
+    qwenThinkingEnabled: boolean;
+    qwenWebSearchEnabled: boolean;
     // 兼容旧版本
     modelName: string;
     featuredImagePath: string;
@@ -127,6 +130,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     memoryApprovalPolicy: "always",
     showAdvancedMemoryControls: false,
     nativeToolPlanningSmokeEnabled: false,
+    qwenThinkingEnabled: false,
+    qwenWebSearchEnabled: false,
     // 兼容旧版本
     modelName: "qwen-plus",
     featuredImagePath: "9.src",
@@ -148,6 +153,34 @@ const DEFAULT_GRAPH_COLOR: GraphColor = {
         a: 1,
         rgb: 6617700,
     }
+}
+
+const QWEN_RESPONSE_OPTIONS_DASHSCOPE_DESC =
+    "These options apply only to final chat answers through Alibaba Cloud DashScope. They do not change Memory from your notes.";
+const QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC =
+    "Qwen thinking and web search are available only with the DashScope OpenAI-compatible base URL.";
+
+interface QwenResponseOptionToggle {
+    setDisabled(disabled: boolean): unknown;
+}
+
+interface QwenResponseOptionsDescription {
+    setText(text: string): unknown;
+}
+
+export function updateQwenResponseOptionAvailability(
+    baseURL: unknown,
+    descriptionEl: QwenResponseOptionsDescription,
+    toggles: QwenResponseOptionToggle[],
+): boolean {
+    const isDashScopeCompatible = isDashScopeCompatibleBaseURL(baseURL);
+    descriptionEl.setText(
+        isDashScopeCompatible
+            ? QWEN_RESPONSE_OPTIONS_DASHSCOPE_DESC
+            : QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC
+    );
+    toggles.forEach((toggle) => toggle.setDisabled(!isDashScopeCompatible));
+    return isDashScopeCompatible;
 }
 
 
@@ -595,6 +628,7 @@ export class SettingTab extends PluginSettingTab {
         if (!Platform.isDesktop && this.plugin.settings.aiProvider === 'ollama') {
             containerEl.createEl("p", { text: 'Ollama is desktop-only. Select Qwen or OpenAI before using AI features on mobile.' }).setAttr("style", "font-size:14px");
         }
+        let refreshQwenResponseOptionAvailability: (() => void) | undefined;
 
         // AI Provider Selection
         new Setting(containerEl).setName("AI Provider")
@@ -644,6 +678,7 @@ export class SettingTab extends PluginSettingTab {
                 text.onChange(async (value: string) => {
                     this.plugin.settings.baseURL = value;
                     await this.plugin.saveSettings();
+                    refreshQwenResponseOptionAvailability?.();
                 });
             });
 
@@ -659,6 +694,47 @@ export class SettingTab extends PluginSettingTab {
                     await this.plugin.saveSettings();
                 });
             });
+
+        if (this.plugin.settings.aiProvider === 'qwen') {
+            const qwenOptionToggles: QwenResponseOptionToggle[] = [];
+            containerEl.createEl('h3', { text: 'Qwen response options' });
+            const qwenOptionsDescriptionEl = containerEl.createEl("p");
+            qwenOptionsDescriptionEl.setAttr("style", "font-size:14px");
+            refreshQwenResponseOptionAvailability = () => {
+                updateQwenResponseOptionAvailability(
+                    this.plugin.settings.baseURL,
+                    qwenOptionsDescriptionEl,
+                    qwenOptionToggles,
+                );
+            };
+
+            new Setting(containerEl)
+                .setName("Show Qwen model thinking")
+                .setDesc("Show the model thinking text returned by DashScope in this chat session. It is not added to the final answer, notes, or Memory.")
+                .addToggle((toggle) => {
+                    qwenOptionToggles.push(toggle);
+                    toggle
+                        .setValue(this.plugin.settings.qwenThinkingEnabled)
+                        .onChange(async (value) => {
+                            this.plugin.settings.qwenThinkingEnabled = value;
+                            await this.plugin.saveSettings();
+                        });
+                });
+
+            new Setting(containerEl)
+                .setName("Allow Qwen to search the web")
+                .setDesc("DashScope may use the question and final prompt context to search the web. This is separate from Memory from your notes and may increase latency, API calls, and token cost.")
+                .addToggle((toggle) => {
+                    qwenOptionToggles.push(toggle);
+                    toggle
+                        .setValue(this.plugin.settings.qwenWebSearchEnabled)
+                        .onChange(async (value) => {
+                            this.plugin.settings.qwenWebSearchEnabled = value;
+                            await this.plugin.saveSettings();
+                        });
+                });
+            refreshQwenResponseOptionAvailability();
+        }
 
         new Setting(containerEl)
             .setName("API Token")

@@ -1,7 +1,12 @@
 /* Copyright 2023 edonyzpc */
 import { ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate } from "@langchain/core/prompts";
 
-import { AIUtils, SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS } from './ai-utils';
+import {
+    AIUtils,
+    isDashScopeCompatibleBaseURL,
+    type QwenRequestOptions,
+    SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
+} from './ai-utils';
 import type { PluginManager } from '../plugin'
 import type { MemoryMode } from '../memory-manager';
 import {
@@ -15,6 +20,7 @@ export type { ChatAgentStatus, ChatMessage, ChatTurnMemoryMetadata };
 export interface StreamLLMOptions {
     memoryMode?: MemoryMode;
     onStatus?: (status: ChatAgentStatus) => void;
+    onReasoningChunk?: (chunk: string) => void;
     onTurnMetadata?: (metadata: ChatTurnMemoryMetadata) => void;
 }
 
@@ -36,6 +42,23 @@ export class ChatService {
     constructor(plugin: PluginManager) {
         this.plugin = plugin;
         this.aiUtils = new AIUtils(plugin);
+    }
+
+    private getFinalAnswerQwenRequestOptions(): QwenRequestOptions | undefined {
+        if (this.plugin.settings.aiProvider !== "qwen") return undefined;
+        if (!isDashScopeCompatibleBaseURL(this.plugin.settings.baseURL)) return undefined;
+
+        const qwenRequestOptions: QwenRequestOptions = {};
+        if (this.plugin.settings.qwenThinkingEnabled) {
+            qwenRequestOptions.enableThinking = true;
+        }
+        if (this.plugin.settings.qwenWebSearchEnabled) {
+            qwenRequestOptions.enableWebSearch = true;
+            qwenRequestOptions.searchOptions = { forced_search: false };
+        }
+        return qwenRequestOptions.enableThinking || qwenRequestOptions.enableWebSearch
+            ? qwenRequestOptions
+            : undefined;
     }
 
     /**
@@ -117,20 +140,34 @@ current note path 和 read-only tool context path 不属于用户记忆来源，
         ]);
         const activePrompt = promptPlan.hasMemoryContent ? memoryPrompt : normalPrompt;
         const chainInput = promptPlan.chainInput;
+        const qwenRequestOptions = this.getFinalAnswerQwenRequestOptions();
+        if (qwenRequestOptions?.enableWebSearch) {
+            options.onStatus?.({ type: "web-search-enabled" });
+        }
 
         let fullResponse = '';
-        let receivedAnyChunk = false;
+        let receivedAnyVisibleOutput = false;
         try {
-            const llm = await this.aiUtils.createChatModel(0.8, { transport: 'native' });
+            const llm = await this.aiUtils.createChatModel(0.8, {
+                transport: 'native',
+                qwenRequestOptions,
+            });
             const chain = activePrompt.pipe(llm);
             const response = await chain.stream(chainInput, { signal: signal });
 
             for await (const chunk of response) {
-                receivedAnyChunk = true;
                 try {
-                    const data = chunk.content.toString();
-                    fullResponse += data;
-                    onChunk(fullResponse);
+                    const reasoning = getReasoningContent(chunk);
+                    if (reasoning) {
+                        receivedAnyVisibleOutput = true;
+                        options.onReasoningChunk?.(reasoning);
+                    }
+                    const data = stringifyChunkContent(chunk);
+                    if (data) {
+                        receivedAnyVisibleOutput = true;
+                        fullResponse += data;
+                        onChunk(fullResponse);
+                    }
                     // trikcy, smooth the streaming display
                     await new Promise(f => setTimeout(f, 150));
                 } catch (e) {
@@ -139,14 +176,21 @@ current note path 和 read-only tool context path 不属于用户记忆来源，
                 }
             }
         } catch (error) {
-            if (!canFallbackToNonStreaming(error, receivedAnyChunk, signal)) {
+            if (!canFallbackToNonStreaming(error, receivedAnyVisibleOutput, signal)) {
                 throw signal?.aborted ? createAbortError() : error;
             }
 
             this.plugin.log("Streaming LLM failed before chunks; retrying without streaming.");
-            const fallbackLlm = await this.aiUtils.createChatModel(0.8, { transport: 'obsidian' });
+            const fallbackLlm = await this.aiUtils.createChatModel(0.8, {
+                transport: 'obsidian',
+                qwenRequestOptions,
+            });
             const fallbackChain = activePrompt.pipe(fallbackLlm);
             const response = await fallbackChain.invoke(chainInput, { signal: signal });
+            const reasoning = getReasoningContent(response);
+            if (reasoning) {
+                options.onReasoningChunk?.(reasoning);
+            }
             onChunk(response.content.toString());
             return;
         }
@@ -155,4 +199,20 @@ current note path 和 read-only tool context path 不属于用户记忆来源，
             throw new DOMException('Aborted', 'AbortError');
         }
     }
+}
+
+function getReasoningContent(chunk: unknown): string {
+    const additionalKwargs = chunk && typeof chunk === "object"
+        ? (chunk as { additional_kwargs?: Record<string, unknown> }).additional_kwargs
+        : undefined;
+    const reasoning = additionalKwargs?.reasoning_content;
+    return typeof reasoning === "string" ? reasoning : "";
+}
+
+function stringifyChunkContent(chunk: unknown): string {
+    const content = chunk && typeof chunk === "object"
+        ? (chunk as { content?: unknown }).content
+        : undefined;
+    if (content === undefined || content === null) return "";
+    return content.toString();
 }

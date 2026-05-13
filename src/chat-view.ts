@@ -16,8 +16,11 @@ interface ThinkingStatusView {
     messageDiv: HTMLDivElement;
     summaryEl: HTMLElement;
     detailsEl: HTMLElement;
+    activityListEl: HTMLElement;
     toggleButton: HTMLButtonElement;
     loaderEl?: HTMLElement;
+    reasoningSectionEl?: HTMLElement;
+    reasoningContentEl?: HTMLElement;
     expanded: boolean;
     detailItems: HTMLElement[];
     lastDetail?: string;
@@ -368,12 +371,14 @@ export class LLMView extends ItemView {
             assistantMessage?: RenderedMessage;
             statusView?: ThinkingStatusView;
             terminalRow?: HTMLDivElement;
+            reasoningTranscript?: string;
         };
         type HistoryTurnEntry = {
             kind: 'history';
             user: ChatMessage;
             assistant: ChatMessage;
             memoryMetadata?: ChatTurnMemoryMetadata;
+            reasoningTranscript?: string;
         };
         type TerminalTurnEntry = {
             kind: 'terminal';
@@ -975,6 +980,11 @@ export class LLMView extends ItemView {
                         onDelete: () => deleteHistoryPair(pairStart),
                         disableDeleteWhileGenerating: true,
                     });
+                    if (entry.reasoningTranscript) {
+                        const statusView = createThinkingStatusView();
+                        renderReasoningTranscript(statusView, entry.reasoningTranscript);
+                        completeThinkingStatus(statusView);
+                    }
                     createMessageElement(entry.assistant, {
                         forceScroll,
                         onDelete: () => deleteHistoryPair(pairStart + 1),
@@ -1121,11 +1131,15 @@ export class LLMView extends ItemView {
             const detailsEl = messageDiv.createDiv({ cls: 'thinking-status-details' });
             detailsEl.id = detailsId;
             detailsEl.hidden = true;
+            const activitySectionEl = detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-activity' });
+            activitySectionEl.createDiv({ cls: 'thinking-status-section-title', text: 'Assistant activity' });
+            const activityListEl = activitySectionEl.createDiv({ cls: 'thinking-status-activity-list' });
 
             const statusView: ThinkingStatusView = {
                 messageDiv,
                 summaryEl,
                 detailsEl,
+                activityListEl,
                 toggleButton,
                 loaderEl,
                 expanded: false,
@@ -1156,13 +1170,42 @@ export class LLMView extends ItemView {
             statusView.summaryEl.setText(content);
             if (statusView.lastDetail !== content) {
                 statusView.lastDetail = content;
-                const detailItem = statusView.detailsEl.createDiv({ cls: 'thinking-status-detail-item', text: content });
+                const detailItem = statusView.activityListEl.createDiv({ cls: 'thinking-status-detail-item', text: content });
                 statusView.detailItems.push(detailItem);
                 while (statusView.detailItems.length > MAX_THINKING_DETAIL_ITEMS) {
                     removeElement(statusView.detailItems.shift());
                 }
             }
             scrollToBottom();
+        };
+
+        const ensureReasoningTranscript = (statusView: ThinkingStatusView) => {
+            if (statusView.reasoningContentEl) return statusView.reasoningContentEl;
+            const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-reasoning' });
+            section.createDiv({ cls: 'thinking-status-section-title', text: 'Model thinking' });
+            const contentEl = section.createDiv({ cls: 'thinking-status-reasoning-content' });
+            statusView.reasoningSectionEl = section;
+            statusView.reasoningContentEl = contentEl;
+            return contentEl;
+        };
+
+        const renderReasoningTranscript = (statusView: ThinkingStatusView, transcript: string) => {
+            const contentEl = ensureReasoningTranscript(statusView);
+            contentEl.setText(transcript);
+        };
+
+        const appendProviderReasoning = (turn: UiTurn, delta: string) => {
+            if (!delta) return;
+            turn.reasoningTranscript = `${turn.reasoningTranscript ?? ''}${delta}`;
+            turn.statusView ??= createThinkingStatusView(turn);
+            turn.statusView.summaryEl.setText('Qwen model is thinking...');
+            renderReasoningTranscript(turn.statusView, turn.reasoningTranscript);
+            scrollToBottom();
+        };
+
+        const completeThinkingStatus = (statusView: ThinkingStatusView) => {
+            stopThinkingLoader(statusView);
+            statusView.summaryEl.setText('Thinking complete');
         };
 
         const formatAgentStatus = (status: ChatAgentStatus): string => {
@@ -1196,6 +1239,8 @@ export class LLMView extends ItemView {
                 return sources ? `${status.message}: ${sources}` : status.message;
             } else if (status.type === 'tool-skipped') {
                 return status.reason;
+            } else if (status.type === 'web-search-enabled') {
+                return 'Qwen may search the web';
             } else if (status.type === 'answering') {
                 return 'Answering...';
             } else if (status.type === 'fallback') {
@@ -1242,6 +1287,7 @@ export class LLMView extends ItemView {
                 user: userMessage,
                 assistant: assistantMessage,
                 memoryMetadata: turn.memoryMetadata,
+                reasoningTranscript: turn.reasoningTranscript,
             });
             this.result = responseContent;
 
@@ -1259,9 +1305,13 @@ export class LLMView extends ItemView {
             removeElement(assistantRendered.loaderEl);
             assistantRendered.loaderEl = undefined;
             assistantRendered.messageDiv.removeAttribute('aria-busy');
-            stopThinkingLoader(turn.statusView);
-            removeElement(turn.statusView?.messageDiv);
-            turn.statusView = undefined;
+            if (turn.reasoningTranscript && turn.statusView) {
+                completeThinkingStatus(turn.statusView);
+            } else {
+                stopThinkingLoader(turn.statusView);
+                removeElement(turn.statusView?.messageDiv);
+                turn.statusView = undefined;
+            }
             renderEmptyState();
             return true;
         };
@@ -1330,6 +1380,10 @@ export class LLMView extends ItemView {
                         onStatus: (status) => {
                             if (!isLiveTurn()) return;
                             renderAgentStatus(turn, status);
+                        },
+                        onReasoningChunk: (chunk) => {
+                            if (!isLiveTurn()) return;
+                            appendProviderReasoning(turn, chunk);
                         },
                         onTurnMetadata: (metadata) => {
                             if (!isSameTurn()) return;

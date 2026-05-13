@@ -549,6 +549,7 @@ describe('LLMView turn lifecycle', () => {
         expect(askButton.disabled).toBe(true);
         expectHidden(cancelButton, 'cancel-button-visible', 'cancel-button-hidden');
         call.options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
+        call.options.onReasoningChunk?.('late thinking');
         call.onChunk('late chunk');
         call.reject(new DOMException('Aborted', 'AbortError'));
         await flushPromises();
@@ -559,6 +560,7 @@ describe('LLMView turn lifecycle', () => {
         expect(getResponseDiv(view).scrollToCalls).toEqual([]);
         expect(allText(containerEl)).not.toContain('*Generation cancelled*');
         expect(allText(containerEl)).not.toContain('late chunk');
+        expect(allText(containerEl)).not.toContain('late thinking');
         expect(allText(containerEl)).not.toContain('Deciding what context to use');
     });
 
@@ -760,6 +762,75 @@ describe('LLMView turn lifecycle', () => {
             { role: 'user', content: 'status prompt' },
             { role: 'assistant', content: 'status answer' },
         ]);
+    });
+
+    it('keeps provider reasoning as a completed turn transcript outside the final answer', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'reason about this';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onReasoningChunk?.('first thought. ');
+        streamCalls[0].options.onReasoningChunk?.('second thought.');
+        streamCalls[0].onChunk('final answer only');
+        await flushPromises();
+        await flushPromises();
+
+        const responseDiv = getResponseDiv(view);
+        expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
+        expect(allText(responseDiv)).toContain('Model thinking');
+        expect(allText(responseDiv)).toContain('first thought. second thought.');
+        expect(allText(responseDiv)).toContain('final answer only');
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
+        expect(getElementByClass(responseDiv, 'thinking-status-summary').textContent).toBe('Thinking complete');
+        expect(getElementByClass(responseDiv, 'thinking-status').getAttribute('aria-busy')).toBeNull();
+        expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'reason about this' },
+            { role: 'assistant', content: 'final answer only' },
+        ]);
+    });
+
+    it('keeps provider reasoning when completed turns are redrawn', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'first prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onReasoningChunk?.('persisted reasoning');
+        streamCalls[0].onChunk('first answer');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        getTextArea(containerEl).value = 'second prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[1].onChunk('second answer');
+        streamCalls[1].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const deleteButtons = getButtonsByClass(containerEl, 'delete-message-button');
+        expect(deleteButtons).toHaveLength(4);
+        deleteButtons[3].click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'first prompt' },
+            { role: 'assistant', content: 'first answer' },
+        ]);
+        expect(allText(containerEl)).toContain('persisted reasoning');
+        expect(allText(containerEl)).not.toContain('second answer');
+        expect(getElementsByClass(containerEl, 'thinking-status')).toHaveLength(1);
     });
 
     it('keeps failed turns out of model history and retries through the normal send path', async () => {
@@ -1873,10 +1944,12 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].options.onStatus?.({ type: 'memory-prefetching', query: 'project' });
         streamCalls[0].options.onStatus?.({ type: 'memory-prefetched', query: 'project', sources: [] });
         streamCalls[0].options.onStatus?.({ type: 'memory-skipped', reason: 'Memory search returned 0 source(s).' });
+        streamCalls[0].options.onStatus?.({ type: 'web-search-enabled' });
         streamCalls[0].options.onStatus?.({ type: 'fallback', reason: 'planner failed' });
 
         expect(allText(containerEl)).toContain('Searching notes: project');
         expect(allText(containerEl)).toContain('No related memory');
+        expect(allText(containerEl)).toContain('Qwen may search the web');
         expect(allText(containerEl)).toContain('I will answer normally this time.');
         expect(allText(containerEl)).not.toContain('fallback path');
         expect(allText(containerEl)).not.toContain('memory references');

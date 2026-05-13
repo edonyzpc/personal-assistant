@@ -19,6 +19,7 @@ export type ChatAgentStatus =
     | { type: "tool-running"; tool: string; message: string }
     | { type: "tool-done"; tool: string; message: string; sources?: ChatAgentSource[] }
     | { type: "tool-skipped"; tool: string; reason: string }
+    | { type: "web-search-enabled" }
     | { type: "answering" }
     | { type: "fallback"; reason: string };
 

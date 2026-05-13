@@ -33,10 +33,12 @@ export interface NativeToolCallingCapabilityOptions {
     validatedModels?: readonly NativeToolCallingValidation[];
 }
 
+export const DASHSCOPE_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+
 const QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION: NativeToolCallingValidation = {
     provider: "qwen",
     model: "qwen-plus",
-    baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    baseURL: DASHSCOPE_COMPATIBLE_BASE_URL,
 };
 
 export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [
@@ -48,12 +50,25 @@ export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingVa
 
 interface CreateChatModelOptions {
     transport?: ChatTransport;
+    qwenRequestOptions?: QwenRequestOptions;
 }
 
 export interface CreateEmbeddingsOptions {
     batchSize?: number;
     maxConcurrency?: number;
     maxRetries?: number;
+}
+
+export interface QwenRequestOptions {
+    enableThinking?: boolean;
+    enableWebSearch?: boolean;
+    searchOptions?: Record<string, unknown>;
+}
+
+export interface QwenModelKwargs {
+    enable_thinking?: boolean;
+    enable_search?: boolean;
+    search_options?: Record<string, unknown>;
 }
 
 /**
@@ -144,11 +159,13 @@ export class AIUtils {
         switch (provider) {
             case 'qwen': {
                 const token = await this.getAPIToken();
+                const modelKwargs = buildQwenModelKwargs(provider, baseURL, options.qwenRequestOptions);
                 return new ChatOpenAI({
                     model: modelName,
                     apiKey: token,
                     configuration: this.createOpenAIClientOptions(baseURL, transport),
                     temperature: temperature,
+                    ...(modelKwargs ? { modelKwargs } : {}),
                 });
             }
 
@@ -346,6 +363,30 @@ function normalizeCapabilityValue(value: unknown): string {
 function normalizeBaseURL(value: unknown): string {
     const normalized = normalizeCapabilityValue(value);
     return normalized.replace(/\/+$/, "");
+}
+
+export function isDashScopeCompatibleBaseURL(value: unknown): boolean {
+    return normalizeBaseURL(value) === normalizeBaseURL(DASHSCOPE_COMPATIBLE_BASE_URL);
+}
+
+export function buildQwenModelKwargs(
+    provider: unknown,
+    baseURL: unknown,
+    options?: QwenRequestOptions,
+): QwenModelKwargs | undefined {
+    if (normalizeCapabilityValue(provider) !== "qwen") return undefined;
+    if (!isDashScopeCompatibleBaseURL(baseURL)) return undefined;
+    if (!options?.enableThinking && !options?.enableWebSearch) return undefined;
+
+    const kwargs: QwenModelKwargs = {};
+    if (options.enableThinking) {
+        kwargs.enable_thinking = true;
+    }
+    if (options.enableWebSearch) {
+        kwargs.enable_search = true;
+        kwargs.search_options = options.searchOptions ?? { forced_search: false };
+    }
+    return kwargs;
 }
 
 function isKnownNativeToolProvider(provider: string): boolean {

@@ -80,6 +80,8 @@ const memorySettings = {
     memoryAutoCheckBeforeChat: true,
     memoryApprovalPolicy: 'always',
     showAdvancedMemoryControls: false,
+    qwenThinkingEnabled: false,
+    qwenWebSearchEnabled: false,
 };
 
 const createPluginHarness = ({
@@ -280,6 +282,8 @@ describe('settings migration', () => {
         expect(plugin.settings.memoryAutoCheckBeforeChat).toBe(true);
         expect(plugin.settings.memoryApprovalPolicy).toBe('always');
         expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
+        expect(plugin.settings.qwenThinkingEnabled).toBe(false);
+        expect(plugin.settings.qwenWebSearchEnabled).toBe(false);
         expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages).toEqual([]);
@@ -296,6 +300,8 @@ describe('settings migration', () => {
             memoryAutoCheckBeforeChat: true,
             memoryApprovalPolicy: 'auto-refresh-after-prepare',
             showAdvancedMemoryControls: false,
+            qwenThinkingEnabled: false,
+            qwenWebSearchEnabled: false,
         };
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
