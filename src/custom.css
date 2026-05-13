@@ -412,16 +412,19 @@ body {
 	padding: 12px 14px;
 	border-radius: 8px;
 	max-width: 100%;
-	animation: message-fade-in 0.3s ease-out;
 	border: 1px solid var(--background-modifier-border);
 	position: relative;
 	overflow-wrap: anywhere;
 }
 
+.llm-message.llm-message-enter {
+	animation: message-fade-in 160ms ease-out;
+}
+
 @keyframes message-fade-in {
 	from {
-		opacity: 0;
-		transform: translateY(10px);
+		opacity: 0.96;
+		transform: translateY(2px);
 	}
 	to {
 		opacity: 1;
@@ -479,17 +482,27 @@ body {
 }
 
 .llm-view .message-action-button {
+	-webkit-appearance: none;
+	appearance: none;
 	background: var(--background-modifier-hover);
+	background-image: none;
 	color: var(--text-muted);
 	border: none;
 	border-radius: 4px;
+	flex: 0 0 24px;
 	width: 24px;
 	height: 24px;
+	min-width: 24px;
+	min-height: 24px;
+	max-width: 24px;
+	max-height: 24px;
 	padding: 2px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	cursor: pointer;
+	line-height: 1;
+	box-shadow: none;
 	transition: all 0.2s ease;
 }
 
@@ -499,6 +512,8 @@ body {
 }
 
 .llm-view .message-action-button svg {
+	display: block;
+	flex: 0 0 auto;
 	width: 14px;
 	height: 14px;
 }
@@ -535,11 +550,13 @@ body {
 .llm-view .pa-chat-role-loader-thinking {
 	width: 16px;
 	height: 16px;
+	animation: pa-chat-loader-color-cycle 3s linear infinite;
 }
 
 .llm-view .pa-chat-role-loader-assistant {
 	width: 24px;
 	height: 14px;
+	animation: pa-chat-loader-color-cycle 3s linear infinite;
 }
 
 .llm-view .pa-chat-role-loader-element {
@@ -571,8 +588,8 @@ body {
 	animation-delay: 0.3s;
 }
 
-.llm-view .pa-chat-role-loader l-helix:not(:defined) + .pa-chat-role-loader-fallback,
-.llm-view .pa-chat-role-loader l-dot-wave:not(:defined) + .pa-chat-role-loader-fallback {
+.llm-view .pa-chat-role-loader l-quantum:not(:defined) + .pa-chat-role-loader-fallback,
+.llm-view .pa-chat-role-loader l-bouncy-arc:not(:defined) + .pa-chat-role-loader-fallback {
 	display: inline-flex;
 }
 
@@ -585,6 +602,22 @@ body {
 	50% {
 		opacity: 0.95;
 		transform: translateY(-2px);
+	}
+}
+
+@keyframes pa-chat-loader-color-cycle {
+	0%,
+	100% {
+		color: var(--interactive-accent);
+	}
+	25% {
+		color: var(--color-cyan, #22d3ee);
+	}
+	50% {
+		color: var(--color-green, #22c55e);
+	}
+	75% {
+		color: var(--color-yellow, #facc15);
 	}
 }
 
@@ -1170,12 +1203,27 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
-	.llm-message {
+	.llm-message.llm-message-enter {
 		animation: none;
+	}
+
+	.llm-view .message-actions,
+	.llm-view .message-action-button {
+		transition: none;
 	}
 
 	.llm-view .pa-chat-role-loader-element {
 		display: none;
+	}
+
+	.llm-view .pa-chat-role-loader-thinking {
+		animation: none;
+		color: var(--interactive-accent);
+	}
+
+	.llm-view .pa-chat-role-loader-assistant {
+		animation: none;
+		color: var(--interactive-accent);
 	}
 
 	.llm-view .pa-chat-role-loader-fallback {

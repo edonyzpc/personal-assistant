@@ -187,6 +187,10 @@ class MockElement {
         return this.attributes.get(name) ?? null;
     }
 
+    removeAttribute(name: string) {
+        this.attributes.delete(name);
+    }
+
     querySelectorAll(selector: string) {
         if (selector === '.callout[data-callout="personal-assistant-ai"]') {
             return walkAll(this, (el) =>
@@ -231,6 +235,22 @@ class MockElement {
         }
         child.parentElement = this;
         this.children.push(child);
+        return child;
+    }
+
+    insertBefore(child: MockElement, referenceChild: MockElement | null) {
+        if (referenceChild === null) {
+            return this.appendChild(child);
+        }
+        if (child.parentElement) {
+            child.parentElement.removeChild(child);
+        }
+        const index = this.children.indexOf(referenceChild);
+        if (index === -1) {
+            throw new Error('Reference child not found');
+        }
+        child.parentElement = this;
+        this.children.splice(index, 0, child);
         return child;
     }
 
@@ -647,11 +667,17 @@ describe('LLMView turn lifecycle', () => {
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
 
+        const liveUserMessage = getElementByClass(containerEl, 'user');
         const liveAssistantMessages = getElementsByClass(containerEl, 'assistant');
         expect(liveAssistantMessages).toHaveLength(1);
+        const liveAssistantMessage = liveAssistantMessages[0];
         expect(allText(liveAssistantMessages[0])).toContain('Assistant');
-        expect(getElementsByClass(liveAssistantMessages[0], 'pa-chat-role-loader-assistant')).toHaveLength(1);
-        expect(walk(liveAssistantMessages[0], (el) => el.tagName === 'l-dot-wave')).not.toBeNull();
+        const assistantRole = getElementByClass(liveAssistantMessages[0], 'message-role');
+        const assistantLoader = getElementByClass(assistantRole, 'pa-chat-role-loader-assistant');
+        expect(assistantRole.children[0]).toBe(assistantLoader);
+        expect(walk(liveAssistantMessages[0], (el) => el.tagName === 'l-bouncy-arc')).not.toBeNull();
+        expect(liveUserMessage.classList.contains('llm-message-enter')).toBe(true);
+        expect(liveAssistantMessage.classList.contains('llm-message-enter')).toBe(true);
 
         streamCalls[0].onChunk('partial answer');
         await flushPromises();
@@ -669,7 +695,12 @@ describe('LLMView turn lifecycle', () => {
             { role: 'assistant', content: 'partial answer' },
         ]);
         expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+        expect(getElementByClass(containerEl, 'assistant')).toBe(liveAssistantMessage);
+        expect(getElementByClass(containerEl, 'user')).toBe(liveUserMessage);
         expect(getElementsByClass(containerEl, 'pa-chat-role-loader-assistant')).toHaveLength(0);
+        expect(liveAssistantMessage.getAttribute('aria-busy')).toBeNull();
+        expect(getButtonsByClass(containerEl, 'delete-message-button')).toHaveLength(2);
+        expect(getButtonsByClass(containerEl, 'add-to-editor-message-button')).toHaveLength(1);
     });
 
     it('shows and stops the Thinking loader for terminal turns', async () => {
@@ -681,8 +712,14 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         streamCalls[0].options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
 
-        expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(1);
-        expect(walk(containerEl, (el) => el.tagName === 'l-helix')).not.toBeNull();
+        const thinkingRole = getElementByClass(containerEl, 'thinking-status-role');
+        const thinkingLoader = getElementByClass(thinkingRole, 'pa-chat-role-loader-thinking');
+        expect(thinkingRole.children[0]).toBe(thinkingLoader);
+        expect(walk(containerEl, (el) => el.tagName === 'l-quantum')).not.toBeNull();
+        const responseDiv = getResponseDiv(view);
+        const thinkingStatus = getElementByClass(responseDiv, 'thinking-status');
+        const assistantMessage = getElementByClass(responseDiv, 'assistant');
+        expect(responseDiv.children.indexOf(thinkingStatus)).toBeLessThan(responseDiv.children.indexOf(assistantMessage));
 
         getButtonByClass(containerEl, 'cancel-button').click();
         streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
@@ -692,6 +729,37 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Generation cancelled');
         expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
         expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+    });
+
+    it('removes successful Thinking status while finalizing the live messages in place', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'status prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
+        streamCalls[0].onChunk('status answer');
+        await flushPromises();
+        await flushPromises();
+
+        const responseDiv = getResponseDiv(view);
+        const userMessage = getElementByClass(responseDiv, 'user');
+        const assistantMessage = getElementByClass(responseDiv, 'assistant');
+        expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementByClass(responseDiv, 'user')).toBe(userMessage);
+        expect(getElementByClass(responseDiv, 'assistant')).toBe(assistantMessage);
+        expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(0);
+        expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'status prompt' },
+            { role: 'assistant', content: 'status answer' },
+        ]);
     });
 
     it('keeps failed turns out of model history and retries through the normal send path', async () => {
@@ -817,6 +885,40 @@ describe('LLMView turn lifecycle', () => {
         expect(view.chatHistory).toEqual([]);
         expect(allText(containerEl)).not.toContain('first prompt');
         expect(allText(containerEl)).not.toContain('first answer');
+    });
+
+    it('does not apply enter animation when history messages are redrawn', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'first prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('first answer');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        getTextArea(containerEl).value = 'second prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[1].onChunk('second answer');
+        streamCalls[1].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'llm-message-enter')).toHaveLength(4);
+        getButtonsByClass(containerEl, 'delete-message-button')[0].click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'second prompt' },
+            { role: 'assistant', content: 'second answer' },
+        ]);
+        expect(allText(containerEl)).not.toContain('first prompt');
+        expect(allText(containerEl)).toContain('second prompt');
+        expect(getElementsByClass(containerEl, 'llm-message-enter')).toHaveLength(0);
     });
 
     it('ignores stale clear and delete confirmations after the view session changes', async () => {
@@ -1004,6 +1106,57 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('old chunk');
     });
 
+    it('waits for the final markdown render before committing a successful live turn', async () => {
+        const { view, containerEl } = createView();
+        const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockElement(tagName),
+            },
+        });
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            return new Promise<void>((resolve) => {
+                renderJobs.push({
+                    markdown,
+                    el,
+                    resolve: () => {
+                        el.setText(markdown);
+                        resolve();
+                    },
+                });
+            });
+        });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'async prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('async answer');
+        const assistantMessage = getElementByClass(containerEl, 'assistant');
+        expect(renderJobs.map((job) => job.markdown)).toEqual(['async prompt', 'async answer']);
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        expect(renderJobs.map((job) => job.markdown)).toEqual(['async prompt', 'async answer', 'async answer']);
+        expect(view.chatHistory).toEqual([]);
+
+        renderJobs[1].resolve();
+        await flushPromises();
+        expect(allText(containerEl)).not.toContain('async answer');
+
+        renderJobs[2].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementByClass(containerEl, 'assistant')).toBe(assistantMessage);
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'async prompt' },
+            { role: 'assistant', content: 'async answer' },
+        ]);
+        expect(allText(containerEl)).toContain('async answer');
+    });
+
     it('keeps the cancelled user prompt when markdown rendering resolves after cancel', async () => {
         const { view, containerEl } = createView();
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
@@ -1185,6 +1338,22 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.llm-view\.is-narrow\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
     });
 
+    it('pins message action buttons to icon size in mobile button styles', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+
+        expect(css).toMatch(/\.llm-view\s+\.message-action-button\s*{[\s\S]*?appearance:\s*none;[\s\S]*?flex:\s*0 0 24px;[\s\S]*?min-width:\s*24px;[\s\S]*?min-height:\s*24px;[\s\S]*?max-width:\s*24px;[\s\S]*?max-height:\s*24px;[\s\S]*?box-shadow:\s*none;/);
+        expect(css).toMatch(/\.llm-view\s+\.message-action-button\s+svg\s*{[\s\S]*?display:\s*block;[\s\S]*?flex:\s*0 0 auto;/);
+    });
+
+    it('keeps message bubble enter animation opt-in', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+        const messageBaseRule = css.match(/\.llm-message\s*{([\s\S]*?)\n}/);
+
+        expect(messageBaseRule?.[1]).not.toMatch(/\banimation\s*:/);
+        expect(css).toMatch(/\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*message-fade-in 160ms ease-out;/);
+        expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*none;/);
+    });
+
     it('anchors Memory and More menus inside their composer action controls', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -1302,6 +1471,46 @@ describe('LLMView turn lifecycle', () => {
 
         expect(toggle.getAttribute('aria-expanded')).toBe('true');
         expect(sourceList.hidden).toBe(false);
+    });
+
+    it('reconciles Memory source bars when metadata arrives after the final chunk', async () => {
+        mockRenderedMemoryCallout();
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const answer = [
+            'answer from late memory metadata',
+            '',
+            '---',
+            '> [!personal-assistant-ai]- Memory references',
+            '>',
+            '> 1. [[memory/late.md]]',
+        ].join('\n');
+        getTextArea(containerEl).value = 'late memory prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk(answer);
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+        expect(allText(containerEl)).toContain('Memory references');
+
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/late.md'],
+        });
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'late memory prompt' },
+            { role: 'assistant', content: answer },
+        ]);
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(1);
+        expect(allText(containerEl)).toContain('Memory used (1)');
+        expect(allText(containerEl)).not.toContain('Memory references');
     });
 
     it('keeps the rendered callout when Memory references are not from allowed sources', async () => {

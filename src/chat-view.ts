@@ -58,8 +58,8 @@ function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) =>
 
     ldrsLoadersRequested = true;
     void Promise.all([
-        import('ldrs/helix'),
-        import('ldrs/dotWave'),
+        import('ldrs/quantum'),
+        import('ldrs/bouncyArc'),
     ]).catch((error) => {
         ldrsLoadersRequested = false;
         log?.('Could not load chat waiting animations', error);
@@ -349,9 +349,15 @@ export class LLMView extends ItemView {
 
         type RenderedMessage = {
             messageDiv: HTMLDivElement;
+            roleEl: HTMLElement;
+            loaderEl?: HTMLElement;
             contentDiv: HTMLElement;
+            actionMenu: HTMLDivElement;
+            addMessageButton?: HTMLButtonElement;
+            deleteButton?: HTMLButtonElement;
             renderToken: number;
             copyContent: string;
+            renderedContent?: string;
             memoryMetadata?: ChatTurnMemoryMetadata;
         };
         type UiTurn = {
@@ -466,12 +472,12 @@ export class LLMView extends ItemView {
                 cls: `pa-chat-role-loader pa-chat-role-loader-${kind}`,
                 attr: { 'aria-hidden': 'true' },
             });
-            const tagName = kind === 'thinking' ? 'l-helix' : 'l-dot-wave';
+            const tagName = kind === 'thinking' ? 'l-quantum' : 'l-bouncy-arc';
             wrapper.createEl(tagName as keyof HTMLElementTagNameMap, {
                 cls: 'pa-chat-role-loader-element',
                 attr: {
                     size: kind === 'thinking' ? '16' : '24',
-                    speed: kind === 'thinking' ? '2.4' : '1.3',
+                    speed: kind === 'thinking' ? '1.75' : '1.65',
                     color: 'currentColor',
                 },
             });
@@ -492,8 +498,8 @@ export class LLMView extends ItemView {
             const roleEl = parent.createDiv({
                 cls: ['message-role', options.extraClass ?? ''].filter(Boolean).join(' '),
             });
-            roleEl.createSpan({ cls: 'pa-chat-role-text', text });
             const loaderEl = options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
+            roleEl.createSpan({ cls: 'pa-chat-role-text', text });
             return { roleEl, loaderEl };
         };
         const stopThinkingLoader = (statusView?: ThinkingStatusView) => {
@@ -768,37 +774,84 @@ export class LLMView extends ItemView {
             content: string,
             isLive: () => boolean,
             forceScroll = false,
-        ) => {
+        ): Promise<boolean> => {
             rendered.renderToken += 1;
             rendered.copyContent = content;
             const renderToken = rendered.renderToken;
             const buffer = createRenderBuffer();
             buffer.classList.add('message-render-buffer');
 
-            void Promise.resolve(MarkdownRenderer.render(this.plugin.app, content, buffer, '', this.plugin))
+            return Promise.resolve(MarkdownRenderer.render(this.plugin.app, content, buffer, '', this.plugin))
                 .then(() => {
                     if (rendered.renderToken !== renderToken || !isLive()) {
                         removeElement(buffer);
-                        return;
+                        return false;
                     }
                     rendered.contentDiv.empty();
                     rendered.contentDiv.appendChild(buffer);
+                    rendered.renderedContent = content;
                     this.updateClickableLink(buffer);
                     transformMemoryReferences(rendered, content, buffer);
                     scrollToBottom({ force: forceScroll, behavior: forceScroll ? 'smooth' : 'auto' });
+                    return true;
                 })
                 .catch((error) => {
-                    if (rendered.renderToken !== renderToken || !isLive()) return;
+                    if (rendered.renderToken !== renderToken || !isLive()) return false;
                     buffer.setText(`Could not render message: ${String(error)}`);
                     rendered.contentDiv.empty();
                     rendered.contentDiv.appendChild(buffer);
+                    rendered.renderedContent = content;
                     scrollToBottom({ force: forceScroll, behavior: 'auto' });
+                    return true;
                 });
+        };
+
+        const ensureCompletedMessageActions = (
+            rendered: RenderedMessage,
+            options: {
+                onDelete?: () => void | Promise<void>;
+                onAddToEditor?: (content: string) => void | Promise<void>;
+                disableDeleteWhileGenerating?: boolean;
+            },
+        ) => {
+            if (options.onAddToEditor && !rendered.addMessageButton) {
+                const addMessageButton = createChatMenuItem(rendered.actionMenu, {
+                    text: 'Add to Editor',
+                    icon: 'file-plus',
+                    cls: 'add-to-editor-message-button',
+                });
+                addMessageButton.onclick = () => {
+                    void options.onAddToEditor?.(rendered.copyContent);
+                };
+                rendered.addMessageButton = addMessageButton;
+            }
+
+            if (options.onDelete && !rendered.deleteButton) {
+                const deleteButton = createChatMenuItem(rendered.actionMenu, {
+                    text: 'Delete',
+                    icon: 'trash-2',
+                    cls: 'pa-chat-menu-item-danger delete-message-button',
+                });
+                rendered.deleteButton = deleteButton;
+            }
+
+            if (options.onDelete && rendered.deleteButton) {
+                const deleteButton = rendered.deleteButton;
+                deleteButton.disabled = Boolean(options.disableDeleteWhileGenerating && isGenerating());
+                deleteButton.onclick = () => {
+                    if (deleteButton.disabled) return;
+                    void options.onDelete?.();
+                };
+                if (options.disableDeleteWhileGenerating && !historyDeleteButtons.includes(deleteButton)) {
+                    historyDeleteButtons.push(deleteButton);
+                }
+            }
         };
 
         const createMessageElement = (
             message: ChatMessage,
             options: {
+                animate?: boolean;
                 forceScroll?: boolean;
                 isLive?: () => boolean;
                 onDelete?: () => void | Promise<void>;
@@ -810,21 +863,17 @@ export class LLMView extends ItemView {
             } = {},
         ): RenderedMessage => {
             const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
+            if (options.animate) {
+                messageDiv.classList.add('llm-message-enter');
+            }
             if (options.showAssistantLoader) {
                 messageDiv.setAttribute('aria-busy', 'true');
             }
-            createRoleLabel(messageDiv, message.role === 'user' ? 'You' : 'Assistant', {
+            const { roleEl, loaderEl } = createRoleLabel(messageDiv, message.role === 'user' ? 'You' : 'Assistant', {
                 loader: options.showAssistantLoader ? 'assistant' : undefined,
             });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
             const actionDiv = messageDiv.createDiv({ cls: 'message-actions' });
-            const rendered: RenderedMessage = {
-                messageDiv,
-                contentDiv,
-                renderToken: 0,
-                copyContent: message.content,
-                memoryMetadata: options.memoryMetadata,
-            };
             const menuButton = actionDiv.createEl('button', {
                 cls: 'message-action-button message-more-button',
                 attr: {
@@ -836,21 +885,31 @@ export class LLMView extends ItemView {
             });
             setIcon(menuButton, 'ellipsis');
             const actionMenu = actionDiv.createDiv({ cls: 'pa-chat-menu pa-chat-message-menu' });
-            actionMenu.hidden = true;
-            const actionMenuAutoClose = createIdleMenuAutoClose(actionMenu, menuButton, () => {
-                actionMenu.hidden = true;
+            const rendered: RenderedMessage = {
+                messageDiv,
+                roleEl,
+                loaderEl,
+                contentDiv,
+                actionMenu,
+                renderToken: 0,
+                copyContent: message.content,
+                memoryMetadata: options.memoryMetadata,
+            };
+            rendered.actionMenu.hidden = true;
+            const actionMenuAutoClose = createIdleMenuAutoClose(rendered.actionMenu, menuButton, () => {
+                rendered.actionMenu.hidden = true;
                 menuButton.setAttribute('aria-expanded', 'false');
             });
             menuButton.onclick = () => {
-                if (actionMenu.hidden) {
-                    actionMenu.hidden = false;
+                if (rendered.actionMenu.hidden) {
+                    rendered.actionMenu.hidden = false;
                     menuButton.setAttribute('aria-expanded', 'true');
                     actionMenuAutoClose.schedule();
                 } else {
                     actionMenuAutoClose.close();
                 }
             };
-            const copyButton = createChatMenuItem(actionMenu, {
+            const copyButton = createChatMenuItem(rendered.actionMenu, {
                 text: 'Copy',
                 icon: 'copy',
                 cls: 'copy-message-button',
@@ -863,45 +922,18 @@ export class LLMView extends ItemView {
                 });
             };
 
-            if (message.role === 'assistant' && options.onAddToEditor) {
-                const addMessageButton = createChatMenuItem(actionMenu, {
-                    text: 'Add to Editor',
-                    icon: 'file-plus',
-                    cls: 'add-to-editor-message-button',
-                });
-                addMessageButton.onclick = () => {
-                    void options.onAddToEditor?.(rendered.copyContent);
-                };
-            }
-
-            if (options.onDelete) {
-                const deleteButton = createChatMenuItem(actionMenu, {
-                    text: 'Delete',
-                    icon: 'trash-2',
-                    cls: 'pa-chat-menu-item-danger delete-message-button',
-                });
-                deleteButton.disabled = Boolean(options.disableDeleteWhileGenerating && isGenerating());
-                deleteButton.onclick = () => {
-                    if (deleteButton.disabled) return;
-                    void options.onDelete?.();
-                };
-                if (options.disableDeleteWhileGenerating) {
-                    historyDeleteButtons.push(deleteButton);
-                }
-            }
+            ensureCompletedMessageActions(rendered, options);
 
             if (!options.skipInitialRender) {
-                renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), options.forceScroll);
+                void renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), options.forceScroll);
             }
             return rendered;
         };
 
-        const deleteHistoryPair = async (messageIndex: number) => {
+        const deleteHistoryPairForMessages = async (expectedUser: ChatMessage, expectedAssistant: ChatMessage) => {
             if (isGenerating()) return;
-            const pairStart = messageIndex % 2 === 0 ? messageIndex : messageIndex - 1;
-            if (pairStart < 0 || pairStart >= this.chatHistory.length) return;
-            const expectedUser = this.chatHistory[pairStart];
-            const expectedAssistant = this.chatHistory[pairStart + 1];
+            const pairStart = this.chatHistory.indexOf(expectedUser);
+            if (pairStart < 0 || this.chatHistory[pairStart + 1] !== expectedAssistant) return;
             const confirmed = await confirmChatAction(this.plugin, {
                 title: 'Delete message?',
                 message: 'This deletes the full user and assistant turn from this chat.',
@@ -911,14 +943,23 @@ export class LLMView extends ItemView {
             if (!confirmed) return;
             if (!isCurrentSession()) return;
             if (isGenerating()) return;
-            if (pairStart < 0 || pairStart >= this.chatHistory.length) return;
-            if (this.chatHistory[pairStart] !== expectedUser || this.chatHistory[pairStart + 1] !== expectedAssistant) return;
-            this.chatHistory.splice(pairStart, 2);
+            const currentPairStart = this.chatHistory.indexOf(expectedUser);
+            if (currentPairStart < 0 || this.chatHistory[currentPairStart + 1] !== expectedAssistant) return;
+            this.chatHistory.splice(currentPairStart, 2);
             timelineEntries = timelineEntries.filter((entry) =>
                 entry.kind !== 'history' || entry.user !== expectedUser || entry.assistant !== expectedAssistant
             );
             renderTimeline();
             new Notice('Message deleted');
+        };
+
+        const deleteHistoryPair = async (messageIndex: number) => {
+            const pairStart = messageIndex % 2 === 0 ? messageIndex : messageIndex - 1;
+            if (pairStart < 0 || pairStart >= this.chatHistory.length) return;
+            const expectedUser = this.chatHistory[pairStart];
+            const expectedAssistant = this.chatHistory[pairStart + 1];
+            if (!expectedAssistant) return;
+            await deleteHistoryPairForMessages(expectedUser, expectedAssistant);
         };
 
         const renderTimeline = () => {
@@ -1052,8 +1093,12 @@ export class LLMView extends ItemView {
             createTerminalRow(entry);
         };
 
-        const createThinkingStatusView = (): ThinkingStatusView => {
+        const createThinkingStatusView = (turn?: UiTurn): ThinkingStatusView => {
             const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message system thinking-status' });
+            const assistantMessageDiv = turn?.assistantMessage?.messageDiv;
+            if (assistantMessageDiv?.parentElement === this.responseDiv) {
+                this.responseDiv.insertBefore(messageDiv, assistantMessageDiv);
+            }
             messageDiv.setAttribute('aria-busy', 'true');
             const headerDiv = messageDiv.createDiv({ cls: 'thinking-status-header' });
             const detailsId = `pa-chat-thinking-details-${sessionId}-${++thinkingStatusId}`;
@@ -1160,8 +1205,65 @@ export class LLMView extends ItemView {
         };
 
         const renderAgentStatus = (turn: UiTurn, status: ChatAgentStatus) => {
-            turn.statusView ??= createThinkingStatusView();
+            turn.statusView ??= createThinkingStatusView(turn);
             appendThinkingStatus(turn.statusView, formatAgentStatus(status));
+        };
+
+        const finalizeSuccessfulTurn = async (
+            turn: UiTurn,
+            prompt: string,
+            responseContent: string,
+            isLiveTurn: () => boolean,
+        ) => {
+            const userRendered = turn.userMessage;
+            const assistantRendered = turn.assistantMessage;
+            if (!userRendered || !assistantRendered) return false;
+
+            assistantRendered.memoryMetadata = turn.memoryMetadata;
+            const hasMemoryReferences = Boolean(parseMemoryReferences(responseContent));
+            if (
+                responseContent
+                && (
+                    assistantRendered.renderedContent !== responseContent
+                    || (hasMemoryReferences && Boolean(turn.memoryMetadata?.hasMemoryContent))
+                )
+            ) {
+                const rendered = await renderMarkdownInto(assistantRendered, responseContent, isLiveTurn);
+                if (!rendered || !isLiveTurn()) return false;
+            }
+
+            if (!isLiveTurn()) return false;
+
+            const userMessage: ChatMessage = { role: 'user', content: prompt };
+            const assistantMessage: ChatMessage = { role: 'assistant', content: responseContent };
+            this.chatHistory.push(userMessage, assistantMessage);
+            timelineEntries.push({
+                kind: 'history',
+                user: userMessage,
+                assistant: assistantMessage,
+                memoryMetadata: turn.memoryMetadata,
+            });
+            this.result = responseContent;
+
+            const deleteCompletedPair = () => deleteHistoryPairForMessages(userMessage, assistantMessage);
+            ensureCompletedMessageActions(userRendered, {
+                onDelete: deleteCompletedPair,
+                disableDeleteWhileGenerating: true,
+            });
+            ensureCompletedMessageActions(assistantRendered, {
+                onDelete: deleteCompletedPair,
+                onAddToEditor: (content) => addContentToEditor(content),
+                disableDeleteWhileGenerating: true,
+            });
+
+            removeElement(assistantRendered.loaderEl);
+            assistantRendered.loaderEl = undefined;
+            assistantRendered.messageDiv.removeAttribute('aria-busy');
+            stopThinkingLoader(turn.statusView);
+            removeElement(turn.statusView?.messageDiv);
+            turn.statusView = undefined;
+            renderEmptyState();
+            return true;
         };
 
         const sendPrompt = async (prompt: string) => {
@@ -1189,7 +1291,7 @@ export class LLMView extends ItemView {
             try {
                 turn.userMessage = createMessageElement(
                     { role: 'user', content: prompt },
-                    { forceScroll: true, isLive: isUiTurnVisible },
+                    { animate: true, forceScroll: true, isLive: isUiTurnVisible },
                 );
                 textArea.value = '';
                 hideComposerHint();
@@ -1200,6 +1302,7 @@ export class LLMView extends ItemView {
                     { role: 'assistant', content: '' },
                     {
                         isLive: isLiveTurn,
+                        animate: true,
                         showAssistantLoader: true,
                         skipInitialRender: true,
                     },
@@ -1213,7 +1316,7 @@ export class LLMView extends ItemView {
                         if (!turn.assistantMessage) {
                             turn.assistantMessage = createMessageElement(
                                 { role: 'assistant', content: responseContent },
-                                { isLive: isLiveTurn, memoryMetadata: turn.memoryMetadata },
+                                { animate: true, isLive: isLiveTurn, memoryMetadata: turn.memoryMetadata },
                             );
                         } else {
                             turn.assistantMessage.memoryMetadata = turn.memoryMetadata;
@@ -1239,17 +1342,7 @@ export class LLMView extends ItemView {
                 );
 
                 if (!isLiveTurn()) return;
-                const userMessage: ChatMessage = { role: 'user', content: prompt };
-                const assistantMessage: ChatMessage = { role: 'assistant', content: responseContent };
-                this.chatHistory.push(userMessage, assistantMessage);
-                timelineEntries.push({
-                    kind: 'history',
-                    user: userMessage,
-                    assistant: assistantMessage,
-                    memoryMetadata: turn.memoryMetadata,
-                });
-                this.result = responseContent;
-                renderTimeline();
+                await finalizeSuccessfulTurn(turn, prompt, responseContent, isLiveTurn);
 
             } catch (error) {
                 if (!isSameTurn()) return;
