@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.8.0](https://github.com/edonyzpc/personal-assistant/compare/1.7.0...1.8.0) (2026-05-13)
+
+### Features
+- chat-ui: redesign chat panel controls
+- chat-ui: polish memory-aware chat surfaces
+- chat-ui: add waiting loaders
+- chat: add Qwen thinking and web search options
+
+### Fix
+- plugin: register views before layout-ready work
+- chat-ui: refresh memory chip after background updates
+- chat-ui: align composer menu popovers
+- chat-ui: polish composer controls and menus
+- chat-ui: keep message actions visible on mobile
+- chat-ui: use icon-only retry action
+- chat-ui: stabilize streaming message completion
+- dependencies: update audit lockfile
+
+### Docs
+- add reusable refactor workflow
+- chat-ui: add redesign plan and tracker
+- chat-ui: add redesign spec
+- chat-ui: close phase c tracker
+- chat-ui: record phase d validation
+- memory: document chat chip status source
+- chat-ui: update memory status menu copy
+- chat-ui: align redesign docs with composer layout
+
 ## [1.7.0](https://github.com/edonyzpc/personal-assistant/compare/1.6.6...1.7.0) (2026-05-10)
 
 ### Features
