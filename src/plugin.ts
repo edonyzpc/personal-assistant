@@ -697,7 +697,7 @@ export class PluginManager extends Plugin {
             return;
         }
 
-        const stats = await this.vss.getStats();
+        const stats = await this.vss.getStats({ mode: "manual" });
         const statusText = (() => {
             if (stats.status === "ready" || stats.status === "fallback") {
                 return `Ready: ${stats.chunkCount} chunks across ${stats.fileCount} files`;

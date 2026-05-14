@@ -117,6 +117,8 @@ export class MemoryManager {
     private maintenanceQueue: Promise<void> = Promise.resolve();
     private backgroundFailureCount = 0;
     private readonly cleanupListeners: Array<() => void> = [];
+    private lifecycleVersion = 0;
+    private shuttingDown = false;
 
     constructor(plugin: PluginManager) {
         this.plugin = plugin;
@@ -129,6 +131,8 @@ export class MemoryManager {
     startAutoMaintenance(): void {
         if (this.started) return;
         this.started = true;
+        this.shuttingDown = false;
+        this.lifecycleVersion++;
         this.scheduleReconcile("startup", STARTUP_RECONCILE_DELAY_MS);
         this.periodicReconcileTimer = setInterval(() => {
             this.scheduleReconcile("periodic");
@@ -152,6 +156,8 @@ export class MemoryManager {
 
     stopAutoMaintenance(): void {
         this.started = false;
+        this.shuttingDown = true;
+        this.lifecycleVersion++;
         if (this.autoFlushTimer) {
             clearTimeout(this.autoFlushTimer);
             this.autoFlushTimer = null;
@@ -194,6 +200,7 @@ export class MemoryManager {
     }
 
     async ensureReadyForChat(_prompt?: string): Promise<MemoryDecisionResult> {
+        const lifecycleToken = this.lifecycleVersion;
         if (!this.plugin.settings.memoryEnabled) {
             return { decision: "answer-now" };
         }
@@ -203,6 +210,9 @@ export class MemoryManager {
         }
 
         const plan = await this.getMaintenancePlan();
+        if (!this.isLifecycleCurrent(lifecycleToken)) {
+            return { decision: "answer-now" };
+        }
         if (plan.reason === "unavailable") {
             new Notice("Memory is unavailable. I will answer normally for now.", 5000);
             return {
@@ -252,6 +262,9 @@ export class MemoryManager {
         }
 
         const result = await this.prepareMemory(plan);
+        if (!this.isLifecycleCurrent(lifecycleToken)) {
+            return { decision: "answer-now" };
+        }
         if (!result.ok) {
             new Notice(result.message ?? "Could not prepare memory. I will answer normally for now.", 7000);
             return {
@@ -267,13 +280,22 @@ export class MemoryManager {
     }
 
     async prepareMemory(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
+        const lifecycleToken = this.lifecycleVersion;
         const progress = createMemoryProgressNotice("Preparing memory...");
-        const updateProgress = createMemoryProgressUpdater(progress.notice);
+        const updateProgress = createMemoryProgressUpdater(progress.notice, () => !this.isLifecycleCurrent(lifecycleToken));
         try {
             setMemoryProgressStep(progress.notice, "Checking notes");
             const summary = plan.action === "refresh"
                 ? await this.plugin.vss.refreshLocalIndex({ silent: true, onProgress: updateProgress })
                 : await this.plugin.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgress });
+            if (!this.isLifecycleCurrent(lifecycleToken)) {
+                return {
+                    ok: false,
+                    partial: false,
+                    summary,
+                    message: "I could not prepare memory this time, so I answered normally.",
+                };
+            }
             if (summary.aborted) {
                 return {
                     ok: false,
@@ -294,10 +316,19 @@ export class MemoryManager {
             }
 
             await this.enableAutoRefreshAfterPrepare();
-            this.scheduleReconcile("prepare", PREPARE_RECONCILE_DELAY_MS);
-            await this.plugin.updateMemoryStatusBar();
+            if (this.isLifecycleCurrent(lifecycleToken)) {
+                this.scheduleReconcile("prepare", PREPARE_RECONCILE_DELAY_MS);
+                await this.plugin.updateMemoryStatusBar();
+            }
             return { ok: true, partial, summary };
         } catch (error) {
+            if (!this.isLifecycleCurrent(lifecycleToken)) {
+                return {
+                    ok: false,
+                    partial: false,
+                    message: "I could not prepare memory this time, so I answered normally.",
+                };
+            }
             this.plugin.log("Could not prepare memory", error);
             return {
                 ok: false,
@@ -358,13 +389,17 @@ export class MemoryManager {
     }
 
     private async runBackgroundTask(kind: BackgroundTaskKind, reason: string): Promise<void> {
+        const lifecycleToken = this.lifecycleVersion;
         try {
+            if (!this.isLifecycleCurrent(lifecycleToken)) return;
             if (!await this.canRunAutoMaintenance()) return;
+            if (!this.isLifecycleCurrent(lifecycleToken)) return;
             if (kind === "flush") {
                 const summary = await this.plugin.vss.flush({
                     silent: true,
                     reason: "auto-refresh",
                 });
+                if (!this.isLifecycleCurrent(lifecycleToken)) return;
                 if (summary.failed > 0) {
                     throw new Error(`Background memory update skipped ${summary.failed} note(s).`);
                 }
@@ -379,6 +414,7 @@ export class MemoryManager {
                     reason,
                     verifyHashLimit: reason === "periodic" ? 50 : 0,
                 });
+                if (!this.isLifecycleCurrent(lifecycleToken)) return;
                 if (summary.failed > 0) {
                     throw new Error(`Background memory reconcile failed for ${summary.failed} note(s).`);
                 }
@@ -394,6 +430,7 @@ export class MemoryManager {
             }
             this.backgroundFailureCount = 0;
         } catch (error) {
+            if (!this.isLifecycleCurrent(lifecycleToken)) return;
             this.plugin.log("Background memory maintenance failed", { kind, reason, error });
             const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
             this.backgroundFailureCount++;
@@ -408,6 +445,10 @@ export class MemoryManager {
     private isAutoPolicyEnabled(): boolean {
         return this.plugin.settings.memoryEnabled
             && this.plugin.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY;
+    }
+
+    private isLifecycleCurrent(token: number): boolean {
+        return !this.shuttingDown && token === this.lifecycleVersion;
     }
 
     private async canRunAutoMaintenance(): Promise<boolean> {
@@ -579,9 +620,10 @@ function setMemoryProgressStep(notice: Notice, text: string): void {
     });
 }
 
-function createMemoryProgressUpdater(notice: Notice): (event: VSSProgressEvent) => void {
+function createMemoryProgressUpdater(notice: Notice, shouldStop: () => boolean = () => false): (event: VSSProgressEvent) => void {
     let lastUpdatedAt = 0;
     return (event) => {
+        if (shouldStop()) return;
         const text = formatMemoryProgressEvent(event);
         if (!text) return;
         const now = Date.now();

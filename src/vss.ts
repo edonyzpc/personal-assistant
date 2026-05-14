@@ -52,6 +52,11 @@ const QWEN_TEXT_EMBEDDING_SAFE_TPM = 900_000;
 const VSS_RECONCILE_BATCH_SIZE = 250;
 const VSS_RECONCILE_MAX_METADATA_PER_RUN = 2_000;
 const VSS_ROLLING_HASH_VERIFY_LIMIT = 50;
+const VSS_FOREGROUND_LOCKED_WAIT_MS = 400;
+const VSS_MANUAL_LOCKED_WAIT_MS = 3_000;
+const VSS_INDEX_DISPOSE_TIMEOUT_MS = 1_000;
+const VSS_RECOVERY_COOLDOWN_MS = 5_000;
+const VSS_GLOBAL_SHUTDOWN_KEY = "__personalAssistantVssShutdownBarriers";
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'removed' | 'skipped';
 
@@ -142,6 +147,24 @@ interface RebuildChunkWorkItem {
     text: string;
 }
 
+export type VSSIndexOpenMode = "foreground" | "manual";
+
+interface VSSEnsureIndexOptions {
+    allowFallback: boolean;
+    allowMissingIndexRecovery?: boolean;
+    mode?: VSSIndexOpenMode;
+}
+
+interface VSSShutdownEntry {
+    ownerId: string;
+    promise: Promise<void>;
+    startedAt: number;
+}
+
+type VSSGlobalScope = typeof globalThis & {
+    [VSS_GLOBAL_SHUTDOWN_KEY]?: Map<string, VSSShutdownEntry>;
+};
+
 export class VSS {
     private plugin: PluginManager;
     private vssCacheDir: string;
@@ -150,6 +173,9 @@ export class VSS {
     private dirty = new Map<string, DirtyTimestamps>();
     private isFlushing = false;
     private operationQueue: Promise<void> = Promise.resolve();
+    private initializationPromise: Promise<void> | null = null;
+    private ensureIndexPromise: Promise<void> | null = null;
+    private disposePromise: Promise<void> | null = null;
     private processedWindow = { count: 0, windowStart: 0 };
     private nextEmbeddingRequestAt = 0;
     private recordReconcileCursor = 0;
@@ -166,6 +192,10 @@ export class VSS {
     private manifest: VSSIndexManifest | null = null;
     private storageStatus: StoragePersistenceStatus = { persisted: false };
     private lastMissingIndexNoticeAt = 0;
+    private readonly ownerId = createIndexId();
+    private lastErrorCode: string | undefined;
+    private sqliteRecoveryPromise: Promise<void> | null = null;
+    private nextSqliteRecoveryAt = 0;
 
     constructor(
         plugin: PluginManager,
@@ -178,13 +208,24 @@ export class VSS {
     }
 
     async initialize() {
+        if (this.disposed) return;
         if (this.initialized) return;
-        this.disposed = false;
+        this.initializationPromise ??= this.initializeUnlocked().finally(() => {
+            this.initializationPromise = null;
+        });
+        return this.initializationPromise;
+    }
+
+    private async initializeUnlocked(): Promise<void> {
+        if (this.disposed) return;
         this.deviceId = getVSSDeviceId();
         this.profile = this.createEmbeddingProfile();
         this.storageStatus = await this.getStoragePersistenceStatus();
+        if (this.disposed) return;
         await ensureVSSIndexStateDir(this.plugin.app.vault, this.deviceId);
+        if (this.disposed) return;
         await this.loadDirtyJournal();
+        if (this.disposed) return;
         this.marker = await readVSSMarker(this.plugin.app.vault, this.deviceId);
         this.manifest = await readVSSManifest(this.plugin.app.vault, this.deviceId);
 
@@ -194,19 +235,34 @@ export class VSS {
             return;
         }
 
-        await this.ensureIndex({ allowFallback: true });
+        await this.ensureIndex({ allowFallback: true, mode: "foreground" });
+        if (this.disposed) return;
         this.initialized = true;
     }
 
-    dispose() {
+    dispose(): Promise<void> {
+        if (this.disposePromise) return this.disposePromise;
         this.disposed = true;
         this.initialized = false;
-        void this.index?.dispose().catch((error) => this.plugin.log("Failed to dispose VSS index", error));
+        this.initializationPromise = null;
+        this.ensureIndexPromise = null;
+        this.disposePromise = this.disposeUnlocked();
+        this.registerShutdownBarrier(this.disposePromise);
+        return this.disposePromise;
+    }
+
+    private async disposeUnlocked(): Promise<void> {
+        const index = this.index;
         this.index = null;
         this.status = "uninitialized";
+        if (!index) return;
+        await withTimeout(index.dispose(), VSS_INDEX_DISPOSE_TIMEOUT_MS).catch((error) => {
+            this.plugin.log("Failed to dispose VSS index", error);
+        });
     }
 
     async markDirtyIfEligible(file: TAbstractFile): Promise<boolean> {
+        if (this.disposed) return false;
         if (!(file instanceof TFile)) return false;
         if (!this.isEligible(file)) return false;
         const changed = this.markDirtyPath(file.path);
@@ -217,6 +273,7 @@ export class VSS {
     }
 
     async markDirtyIfIndexedMetadataChanged(file: TFile | null): Promise<boolean> {
+        if (this.disposed) return false;
         if (!(file instanceof TFile)) return false;
         if (!this.isEligible(file)) return false;
         await this.initialize();
@@ -237,11 +294,13 @@ export class VSS {
     }
 
     async handleDelete(file: TFile): Promise<void> {
+        if (this.disposed) return;
         await this.runExclusive(() => this.deleteIndexedPath(file.path));
         this.plugin.log("delete VSS entry", file.path);
     }
 
     async handleRename(file: TFile, oldPath: string): Promise<boolean> {
+        if (this.disposed) return false;
         return this.runExclusive(async () => {
             if (oldPath && oldPath !== file.path) {
                 await this.deleteIndexedPath(oldPath);
@@ -256,10 +315,12 @@ export class VSS {
     }
 
     async handleActiveLeafChange() {
+        if (this.disposed) return;
         await this.persistDirtyJournal();
     }
 
     async handleFileOpen(file: TFile | null): Promise<boolean> {
+        if (this.disposed) return false;
         return this.markDirtyIfIndexedMetadataChanged(file);
     }
 
@@ -268,25 +329,29 @@ export class VSS {
     }
 
     async canAutoMaintain(): Promise<boolean> {
+        if (this.disposed) return false;
         await this.initialize();
         if (this.index) {
-            await this.ensureIndex({ allowFallback: true });
+            await this.ensureIndex({ allowFallback: true, mode: "foreground" });
         }
         return await this.isDurableReady();
     }
 
     async flush(options: VSSFlushOptions = {}): Promise<VSSOperationSummary> {
+        if (this.disposed) return { ...createEmptyOperationSummary(), aborted: true };
         return this.runExclusive(() => this.flushUnlocked(options));
     }
 
     private async flushUnlocked(options: VSSFlushOptions = {}): Promise<VSSOperationSummary> {
+        this.assertActive();
         const summary = createEmptyOperationSummary();
         if (this.isFlushing) {
             summary.aborted = true;
             return summary;
         }
         await this.initialize();
-        await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: options.force === true });
+        this.assertActive();
+        await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: options.force === true, mode: "manual" });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             if (!options.silent) {
                 new Notice("Memory is not ready. Prepare memory first.", 5000);
@@ -344,6 +409,7 @@ export class VSS {
             }
 
             for (const path of candidates) {
+                this.assertActive();
                 if (!options.force && this.processedWindow.count >= VSS_PARAMS.maxPerMinute) break;
 
                 const file = this.plugin.app.vault.getAbstractFileByPath(path);
@@ -395,16 +461,19 @@ export class VSS {
     }
 
     async rebuildLocalIndex(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
+        if (this.disposed) return { ...createEmptyOperationSummary(), aborted: true };
         return this.runExclusive(() => this.rebuildLocalIndexUnlocked(options));
     }
 
     private async rebuildLocalIndexUnlocked(options: VSSOperationOptions = {}): Promise<VSSOperationSummary> {
+        this.assertActive();
         await this.initialize();
+        this.assertActive();
         this.storageStatus = await this.requestPersistentStorage();
         if (!this.storageStatus.persisted && !options.silent) {
             new Notice("This device may need to prepare memory again later.", 7000);
         }
-        await this.ensureIndex({ allowFallback: false });
+        await this.ensureIndex({ allowFallback: false, mode: "manual" });
         if (!this.index || this.status === "disabled") {
             throw new Error("Memory is unavailable.");
         }
@@ -474,6 +543,7 @@ export class VSS {
         };
 
         const processBatch = async () => {
+            this.assertActive();
             if (currentBatch.length === 0) return;
             const batch = currentBatch;
             currentBatch = [];
@@ -510,6 +580,7 @@ export class VSS {
 
         emitProgress("scanning");
         for (const file of files) {
+            this.assertActive();
             filesScanned++;
             emitProgress("scanning", { currentFile: getProgressFileName(file) });
             try {
@@ -593,15 +664,17 @@ export class VSS {
     }
 
     async resetLocalIndex(): Promise<void> {
+        if (this.disposed) return;
         await this.runExclusive(() => this.resetLocalIndexUnlocked());
     }
 
     private async resetLocalIndexUnlocked(): Promise<void> {
+        this.assertActive();
         await this.initialize();
         if (this.index) {
             const index = this.index;
             await index.reset();
-            await index.dispose().catch((error) => this.plugin.log("Failed to dispose reset VSS index", error));
+            await this.disposeIndex(index, "Failed to dispose reset VSS index");
             this.index = null;
         }
         await removeVSSMarker(this.plugin.app.vault, this.deviceId);
@@ -613,10 +686,19 @@ export class VSS {
     }
 
     async reconcileLocalFiles(options: VSSReconcileOptions = {}): Promise<VSSReconcileSummary> {
+        if (this.disposed) return {
+            ...createEmptyOperationSummary(),
+            scanned: 0,
+            markedDirty: 0,
+            verified: 0,
+            hasMore: false,
+            aborted: true,
+        };
         return this.runExclusive(() => this.reconcileLocalFilesUnlocked(options));
     }
 
     private async reconcileLocalFilesUnlocked(options: VSSReconcileOptions = {}): Promise<VSSReconcileSummary> {
+        this.assertActive();
         const summary: VSSReconcileSummary = {
             ...createEmptyOperationSummary(),
             scanned: 0,
@@ -625,7 +707,8 @@ export class VSS {
             hasMore: false,
         };
         await this.initialize();
-        await this.ensureIndex({ allowFallback: false });
+        this.assertActive();
+        await this.ensureIndex({ allowFallback: false, mode: "manual" });
         if (!this.index || !await this.isDurableReady()) {
             summary.aborted = true;
             return summary;
@@ -658,6 +741,7 @@ export class VSS {
                 this.recordReconcileCursor = 0;
             }
             while (hasBudget() && this.recordReconcileCursor < records.length) {
+                this.assertActive();
                 const record = records[this.recordReconcileCursor];
                 this.recordReconcileCursor++;
                 summary.scanned++;
@@ -687,6 +771,7 @@ export class VSS {
                 this.reconcileCursor = 0;
             }
             while (hasBudget() && this.reconcileCursor < files.length) {
+                this.assertActive();
                 const file = files[this.reconcileCursor];
                 this.reconcileCursor++;
                 summary.scanned++;
@@ -733,6 +818,7 @@ export class VSS {
         if (!summary.hasMore && verifyHashLimit > 0 && summary.scanned < maxMetadataItems && files.length > 0) {
             const filesToVerify = rotateByCursor(files, this.hashVerifyCursor);
             for (let index = 0; index < filesToVerify.length && summary.verified < verifyHashLimit && summary.scanned < maxMetadataItems; index++) {
+                this.assertActive();
                 const file = filesToVerify[index];
                 this.hashVerifyCursor = (this.hashVerifyCursor + 1) % files.length;
                 const record = recordByPath.get(file.path);
@@ -762,6 +848,7 @@ export class VSS {
     }
 
     async cleanLegacyJsonCache(): Promise<void> {
+        if (this.disposed) return;
         await this.initialize();
         if (!this.index || this.status !== "ready") {
             new Notice("Old memory cache cleanup is available only after diagnostic status is ready.", 5000);
@@ -796,16 +883,19 @@ export class VSS {
     }
 
     async cacheFileVectorStore(cacheFile: TFile): Promise<boolean> {
+        if (this.disposed) return false;
         return (await this.refreshFileCache(cacheFile)) === "updated";
     }
 
     async refreshFileCache(file: TFile, getEmbeddingsModel?: EmbeddingsModelProvider): Promise<VSSRefreshStatus> {
+        if (this.disposed) return "skipped";
         return this.runExclusive(() => this.refreshFileCacheUnlocked(file, getEmbeddingsModel));
     }
 
     private async refreshFileCacheUnlocked(file: TFile, getEmbeddingsModel?: EmbeddingsModelProvider): Promise<VSSRefreshStatus> {
+        this.assertActive();
         await this.initialize();
-        await this.ensureIndex({ allowFallback: false });
+        await this.ensureIndex({ allowFallback: false, mode: "manual" });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             throw new Error("VSS index is unavailable.");
         }
@@ -848,9 +938,10 @@ export class VSS {
     }
 
     async searchSimilarity(prompt: string) {
+        if (this.disposed) return [];
         await this.initialize();
         if (this.index) {
-            await this.ensureIndex({ allowFallback: true });
+            await this.ensureIndex({ allowFallback: true, mode: "foreground" });
         }
         if (!this.index || this.status === "uninitialized") {
             return [];
@@ -870,22 +961,16 @@ export class VSS {
         return results.map(normalizeSearchResult);
     }
 
-    async getStats(): Promise<VSSIndexStats> {
+    async getStats(options: { mode?: VSSIndexOpenMode } = {}): Promise<VSSIndexStats> {
+        if (this.disposed) {
+            return this.createUnavailableStats("uninitialized");
+        }
         await this.initialize();
-        if (this.index) {
-            await this.ensureIndex({ allowFallback: true });
+        if (this.index || this.shouldEnsureStatsIndex(options.mode ?? "foreground")) {
+            await this.ensureIndex({ allowFallback: true, mode: options.mode ?? "foreground" });
         }
         if (!this.index) {
-            return {
-                status: this.status,
-                backend: "none",
-                chunkCount: 0,
-                fileCount: 0,
-                fallbackMode: false,
-                storagePersisted: this.storageStatus.persisted,
-                storageUsage: this.storageStatus.usage,
-                storageQuota: this.storageStatus.quota,
-            };
+            return this.createUnavailableStats(this.status);
         }
         const stats = await this.index.getStats();
         return {
@@ -894,13 +979,29 @@ export class VSS {
             storagePersisted: this.storageStatus.persisted,
             storageUsage: this.storageStatus.usage,
             storageQuota: this.storageStatus.quota,
+            lastErrorCode: stats.lastErrorCode ?? this.lastErrorCode,
         };
     }
 
+    private shouldEnsureStatsIndex(mode: VSSIndexOpenMode): boolean {
+        return mode === "manual"
+            && Boolean(this.marker)
+            && (this.status === "disabled" || this.status === "error");
+    }
+
     async getMemoryReadiness(): Promise<MemoryMaintenancePlan> {
+        if (this.disposed) {
+            return {
+                reason: "unavailable",
+                action: "none",
+                notesToCheck: 0,
+                requiresApproval: false,
+                canAnswerNow: true,
+            };
+        }
         await this.initialize();
         if (this.index) {
-            await this.ensureIndex({ allowFallback: true });
+            await this.ensureIndex({ allowFallback: true, mode: "foreground" });
         }
 
         const notesToCheck = this.plugin.getVSSFiles().length;
@@ -971,9 +1072,97 @@ export class VSS {
     }
 
     private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
-        const run = this.operationQueue.then(operation, operation);
+        if (this.disposed) {
+            return Promise.reject(createVssDisposedError());
+        }
+        const runOperation = () => {
+            this.assertActive();
+            return operation();
+        };
+        const run = this.operationQueue.then(runOperation, runOperation);
         this.operationQueue = run.then(() => undefined, () => undefined);
         return run;
+    }
+
+    private isShuttingDown(): boolean {
+        return this.disposed;
+    }
+
+    private assertActive(): void {
+        if (this.isShuttingDown()) {
+            throw createVssDisposedError();
+        }
+    }
+
+    private async sleepActive(ms: number): Promise<void> {
+        this.assertActive();
+        await sleep(ms);
+        this.assertActive();
+    }
+
+    private createUnavailableStats(status: VectorIndexStatus): VSSIndexStats {
+        return {
+            status,
+            backend: "none",
+            chunkCount: 0,
+            fileCount: 0,
+            fallbackMode: false,
+            storagePersisted: this.storageStatus.persisted,
+            storageUsage: this.storageStatus.usage,
+            storageQuota: this.storageStatus.quota,
+            lastErrorCode: this.lastErrorCode,
+        };
+    }
+
+    private recordIndexError(error: unknown): void {
+        const code = getErrorCode(error);
+        if (code) {
+            this.lastErrorCode = code;
+        }
+    }
+
+    private async disposeIndex(index: VectorIndex, logMessage?: string): Promise<void> {
+        await withTimeout(index.dispose(), VSS_INDEX_DISPOSE_TIMEOUT_MS).catch((error) => {
+            if (logMessage) {
+                this.plugin.log(logMessage, error);
+            }
+        });
+    }
+
+    private registerShutdownBarrier(promise: Promise<void>): void {
+        const key = this.getStorageScopeKey();
+        const barriers = getVssShutdownBarriers();
+        const entry: VSSShutdownEntry = {
+            ownerId: this.ownerId,
+            promise: promise.catch(() => undefined),
+            startedAt: Date.now(),
+        };
+        barriers.set(key, entry);
+        void entry.promise.finally(() => {
+            if (barriers.get(key) === entry) {
+                barriers.delete(key);
+            }
+        });
+    }
+
+    private async waitForScopedShutdown(timeoutMs: number): Promise<void> {
+        const entry = getVssShutdownBarriers().get(this.getStorageScopeKey());
+        if (!entry || entry.ownerId === this.ownerId) return;
+        await withTimeout(entry.promise, timeoutMs).catch(() => undefined);
+    }
+
+    private getStorageScopeKey(): string {
+        return [
+            this.getPluginId(),
+            this.getDatabaseName(),
+            this.getOpfsDirectory(),
+            this.getOpfsVfsName(),
+        ].join("|");
+    }
+
+    private getPluginId(): string {
+        const manifest = this.plugin.manifest as { id?: string } | undefined;
+        return manifest?.id ?? "personal-assistant";
     }
 
     private markDirtyPath(path: string, now = Date.now()): boolean {
@@ -1015,14 +1204,45 @@ export class VSS {
             && stats.backend === "sqlite-wasm-opfs-sahpool";
     }
 
-    private async ensureIndex(options: { allowFallback: boolean; allowMissingIndexRecovery?: boolean }): Promise<void> {
+    private async ensureIndex(options: VSSEnsureIndexOptions): Promise<void> {
+        if (this.disposed) return;
+        if (this.ensureIndexPromise) {
+            await this.ensureIndexPromise;
+            if (!this.disposed && this.shouldRetryEnsureIndex(options)) {
+                await this.ensureIndexUnlocked(options);
+            }
+            return;
+        }
+
+        const run = this.ensureIndexUnlocked(options).finally(() => {
+            if (this.ensureIndexPromise === run) {
+                this.ensureIndexPromise = null;
+            }
+        });
+        this.ensureIndexPromise = run;
+        return run;
+    }
+
+    private shouldRetryEnsureIndex(options: VSSEnsureIndexOptions): boolean {
+        if (options.mode !== "manual") return false;
+        if (this.index && this.status === "fallback" && !options.allowFallback) return true;
+        return !this.index && (this.status === "disabled" || this.status === "error");
+    }
+
+    private async ensureIndexUnlocked(options: VSSEnsureIndexOptions): Promise<void> {
+        this.assertActive();
+        const mode = options.mode ?? "foreground";
         const { profile, profileSignature } = await this.refreshEmbeddingProfile();
+        this.assertActive();
 
         if (this.index && (this.status === "ready" || this.status === "stale" || (this.status === "fallback" && options.allowFallback))) {
+            if (this.status === "fallback" && options.allowFallback) {
+                this.scheduleSqliteRecovery(profileSignature, profile);
+            }
             return;
         }
         if (this.index && this.status === "fallback" && !options.allowFallback) {
-            await this.index.dispose().catch((error) => this.plugin.log("Failed to dispose fallback VSS index", error));
+            await this.disposeIndex(this.index, "Failed to dispose fallback VSS index");
             this.index = null;
             this.status = "uninitialized";
         }
@@ -1034,21 +1254,17 @@ export class VSS {
         }
 
         const marker = this.marker ?? await readVSSMarker(this.plugin.app.vault, this.deviceId);
+        this.assertActive();
 
-        const sqliteIndex = new SqliteVectorIndex({
-            workerUrl: "inline:personal-assistant-vss-worker",
-            wasmUrl: getInlineSqliteWasmUrl(),
-            databaseName: this.getDatabaseName(),
-            opfsDirectory: this.getOpfsDirectory(),
-            legacyOpfsDirectory: VSS_LEGACY_OPFS_ROOT,
-            opfsVfsName: this.getOpfsVfsName(),
-            workerFactory: createInlineSqliteWorker,
-        });
-
+        let sqliteIndex: SqliteVectorIndex | null = null;
         try {
-            const status = await sqliteIndex.initialize(profile);
+            const opened = await this.openSqliteIndex(profile, mode);
+            sqliteIndex = opened.index;
+            const status = opened.status;
+            this.assertActive();
             this.index = sqliteIndex;
             this.status = status;
+            this.lastErrorCode = undefined;
 
             if (status === "stale") {
                 return;
@@ -1063,12 +1279,21 @@ export class VSS {
             this.status = "ready";
             return;
         } catch (error) {
-            await sqliteIndex.dispose().catch(() => undefined);
+            if (sqliteIndex) {
+                await this.disposeIndex(sqliteIndex);
+            }
+            this.recordIndexError(error);
             this.plugin.log("SQLite VSS index unavailable", error);
             if (!options.allowFallback) {
                 this.index = null;
                 this.status = "error";
                 throw error;
+            }
+            if (isOpfsSahpoolLockedError(error)) {
+                this.index = null;
+                this.status = "disabled";
+                this.scheduleSqliteRecovery(profileSignature, profile);
+                return;
             }
         }
 
@@ -1081,8 +1306,105 @@ export class VSS {
         this.status = "disabled";
     }
 
+    private async openSqliteIndex(
+        profile: EmbeddingProfile,
+        mode: VSSIndexOpenMode,
+    ): Promise<{ index: SqliteVectorIndex; status: VectorIndexStatus }> {
+        const waitMs = mode === "manual" ? VSS_MANUAL_LOCKED_WAIT_MS : VSS_FOREGROUND_LOCKED_WAIT_MS;
+        await this.waitForScopedShutdown(waitMs);
+        this.assertActive();
+
+        const deadline = Date.now() + waitMs;
+        let lastError: unknown;
+        while (true) {
+            const sqliteIndex = this.createSqliteIndex();
+            try {
+                const status = await sqliteIndex.initialize(profile);
+                return { index: sqliteIndex, status };
+            } catch (error) {
+                lastError = error;
+                await this.disposeIndex(sqliteIndex);
+                this.recordIndexError(error);
+                if (!isOpfsSahpoolLockedError(error) || mode === "foreground") {
+                    throw error;
+                }
+                const remaining = deadline - Date.now();
+                if (remaining <= 0) {
+                    throw error;
+                }
+                await this.sleepActive(Math.min(100, remaining));
+            }
+        }
+        throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    }
+
+    private createSqliteIndex(): SqliteVectorIndex {
+        return new SqliteVectorIndex({
+            workerUrl: "inline:personal-assistant-vss-worker",
+            wasmUrl: getInlineSqliteWasmUrl(),
+            databaseName: this.getDatabaseName(),
+            opfsDirectory: this.getOpfsDirectory(),
+            legacyOpfsDirectory: VSS_LEGACY_OPFS_ROOT,
+            opfsVfsName: this.getOpfsVfsName(),
+            workerFactory: createInlineSqliteWorker,
+        });
+    }
+
+    private scheduleSqliteRecovery(profileSignature: string, profile: EmbeddingProfile): void {
+        if (this.disposed || this.sqliteRecoveryPromise) return;
+        const now = Date.now();
+        if (now < this.nextSqliteRecoveryAt) return;
+        this.nextSqliteRecoveryAt = now + VSS_RECOVERY_COOLDOWN_MS;
+        this.sqliteRecoveryPromise = this.runExclusive(() => this.recoverSqliteIndex(profileSignature, profile))
+            .catch((error) => {
+                if (!this.disposed) {
+                    this.recordIndexError(error);
+                    this.plugin.log("SQLite VSS recovery failed", error);
+                }
+            })
+            .finally(() => {
+                this.sqliteRecoveryPromise = null;
+            });
+        void this.sqliteRecoveryPromise;
+    }
+
+    private async recoverSqliteIndex(profileSignature: string, profile: EmbeddingProfile): Promise<void> {
+        if (this.disposed || this.status === "ready" || this.status === "stale") return;
+        const marker = this.marker ?? await readVSSMarker(this.plugin.app.vault, this.deviceId);
+        if (!marker || marker.profileSignature !== profileSignature) return;
+
+        const previousIndex = this.index;
+        const opened = await this.openSqliteIndex(profile, "manual");
+        const sqliteIndex = opened.index;
+        try {
+            this.assertActive();
+            const stats = await sqliteIndex.getStats();
+            if (opened.status === "stale") {
+                this.index = sqliteIndex;
+                this.status = "stale";
+            } else if (marker.chunkCount > 0 && stats.chunkCount === 0) {
+                await this.disposeIndex(sqliteIndex);
+                this.index = previousIndex;
+                this.status = previousIndex ? "fallback" : "missing-local-index";
+                return;
+            } else {
+                this.index = sqliteIndex;
+                this.status = "ready";
+            }
+            this.lastErrorCode = undefined;
+            if (previousIndex && previousIndex !== sqliteIndex) {
+                await this.disposeIndex(previousIndex, "Failed to dispose recovered VSS fallback index");
+            }
+        } catch (error) {
+            await this.disposeIndex(sqliteIndex);
+            throw error;
+        }
+    }
+
     private async tryInitializeMemoryFallback(profileSignature: string, profile: EmbeddingProfile): Promise<void> {
+        if (this.disposed) return;
         const manifest = this.manifest ?? await readVSSManifest(this.plugin.app.vault, this.deviceId);
+        if (this.disposed) return;
         if (!manifest || manifest.profileSignature !== profileSignature || !shouldEnableMemoryFallback(manifest)) {
             this.index = null;
             this.status = "disabled";
@@ -1091,7 +1413,15 @@ export class VSS {
 
         const memoryIndex = new MemoryVectorIndex();
         await memoryIndex.initialize(profile);
+        if (this.disposed) {
+            await memoryIndex.dispose().catch(() => undefined);
+            return;
+        }
         await this.loadLegacyJsonIntoMemoryIndex(memoryIndex);
+        if (this.disposed) {
+            await memoryIndex.dispose().catch(() => undefined);
+            return;
+        }
         this.index = memoryIndex;
         this.status = "fallback";
     }
@@ -1099,6 +1429,7 @@ export class VSS {
     private async loadLegacyJsonIntoMemoryIndex(memoryIndex: MemoryVectorIndex): Promise<void> {
         const paths = (await this.getLegacyJsonCacheSummary()).paths;
         for (const path of paths) {
+            this.assertActive();
             try {
                 const raw = await this.plugin.app.vault.adapter.read(path);
                 const parsed = JSON.parse(raw);
@@ -1139,6 +1470,7 @@ export class VSS {
         contentHash: string,
         getEmbeddingsModel?: EmbeddingsModelProvider,
     ): Promise<{ chunks: VSSChunk[]; embeddings: number[][] }> {
+        this.assertActive();
         const chunks = await this.prepareFileChunks(file, contentHash);
         const embeddings = await this.embedTexts(
             chunks.map(chunk => chunk.content),
@@ -1148,6 +1480,7 @@ export class VSS {
     }
 
     private async prepareFileChunks(file: TFile, contentHash: string): Promise<VSSChunk[]> {
+        this.assertActive();
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
@@ -1183,8 +1516,10 @@ export class VSS {
         const embeddingsModelProvider = getEmbeddingsModel ?? this.createEmbeddingsModelProvider(policy.createOptions);
         const embeddings: number[][] = [];
         for (let i = 0; i < texts.length; i += policy.maxBatchItems) {
+            this.assertActive();
             const batch = texts.slice(i, i + policy.maxBatchItems);
             embeddings.push(...await this.embedDocumentsWithRetry(batch, embeddingsModelProvider, policy));
+            this.assertActive();
         }
         return embeddings;
     }
@@ -1197,9 +1532,12 @@ export class VSS {
     ): Promise<number[][]> {
         let lastError: unknown;
         for (let attempt = 0; attempt <= policy.retryDelaysMs.length; attempt++) {
+            this.assertActive();
             await this.waitForEmbeddingThrottle(texts, policy);
+            this.assertActive();
             try {
                 const embeddingsModel = await getEmbeddingsModel();
+                this.assertActive();
                 return await embeddingsModel.embedDocuments(texts);
             } catch (error) {
                 lastError = error;
@@ -1208,7 +1546,7 @@ export class VSS {
                 }
                 const retryDelayMs = policy.retryDelaysMs[attempt];
                 onRetry?.(retryDelayMs);
-                await sleep(retryDelayMs);
+                await this.sleepActive(retryDelayMs);
             }
         }
         throw lastError instanceof Error ? lastError : new Error(String(lastError));
@@ -1218,7 +1556,7 @@ export class VSS {
         const now = Date.now();
         const delayMs = Math.max(0, this.nextEmbeddingRequestAt - now);
         if (delayMs > 0) {
-            await sleep(delayMs);
+            await this.sleepActive(delayMs);
         }
 
         const scheduledAt = Math.max(Date.now(), this.nextEmbeddingRequestAt);
@@ -1282,11 +1620,15 @@ export class VSS {
     }
 
     private async createOperationEmbeddingsModel(options?: CreateEmbeddingsOptions): Promise<EmbeddingsModel> {
+        this.assertActive();
         const profile = this.profile ?? this.createEmbeddingProfile();
-        return await this.aiUtils.createEmbeddings(profile.dimensions, options);
+        const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions, options);
+        this.assertActive();
+        return embeddings;
     }
 
     private async computeFileHash(file: TFile): Promise<{ hash: string | null; tooLarge: boolean }> {
+        this.assertActive();
         if (file.stat.size > VSS_PARAMS.largeFileThreshold) {
             return { hash: null, tooLarge: true };
         }
@@ -1298,6 +1640,7 @@ export class VSS {
     }
 
     private async loadDirtyJournal() {
+        if (this.disposed) return;
         const path = this.plugin.join(this.vssCacheDir, VSS_PARAMS.dirtyJournal);
         try {
             const raw = await this.plugin.app.vault.adapter.read(path);
@@ -1328,6 +1671,7 @@ export class VSS {
     }
 
     private async persistDirtyJournal() {
+        if (this.disposed) return;
         const path = this.plugin.join(this.vssCacheDir, VSS_PARAMS.dirtyJournal);
         await this.ensureLegacyCacheDir();
         const record = Object.fromEntries(this.dirty);
@@ -1341,9 +1685,12 @@ export class VSS {
     }
 
     private async writeIndexStateFiles(): Promise<void> {
+        if (this.disposed) return;
         if (!this.index || !this.profile) return;
         const stats = await this.index.getStats();
+        if (this.disposed) return;
         this.storageStatus = await this.getStoragePersistenceStatus();
+        if (this.disposed) return;
         const now = new Date().toISOString();
         const profileSignature = getEmbeddingProfileSignature(this.profile);
         const legacySummary = await this.getLegacyJsonCacheSummary();
@@ -1373,7 +1720,9 @@ export class VSS {
             updatedAt: now,
         };
         await writeVSSMarker(this.plugin.app.vault, marker);
+        if (this.disposed) return;
         await writeVSSManifest(this.plugin.app.vault, manifest);
+        if (this.disposed) return;
         this.marker = marker;
         this.manifest = manifest;
         if (this.status !== "fallback") {
@@ -1428,7 +1777,7 @@ export class VSS {
 
         if (previousSignature && previousSignature !== profileSignature) {
             if (this.index) {
-                await this.index.dispose().catch((error) => this.plugin.log("Failed to dispose stale VSS index", error));
+                await this.disposeIndex(this.index, "Failed to dispose stale VSS index");
                 this.index = null;
             }
             this.status = "uninitialized";
@@ -1582,6 +1931,49 @@ function estimateEmbeddingTokensForText(text: string): number {
 
 function sleep(ms: number): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timeout = setTimeout(
+            () => reject(Object.assign(new Error(`VSS operation timed out after ${timeoutMs}ms.`), { code: "vss-timeout" })),
+            timeoutMs,
+        );
+        promise.then(
+            (value) => {
+                clearTimeout(timeout);
+                resolve(value);
+            },
+            (error) => {
+                clearTimeout(timeout);
+                reject(error);
+            },
+        );
+    });
+}
+
+function createVssDisposedError(): Error {
+    return Object.assign(new Error("VSS has been disposed."), { code: "vss-disposed" });
+}
+
+function getErrorCode(error: unknown): string | undefined {
+    if (error && typeof error === "object" && "code" in error && typeof (error as { code?: unknown }).code === "string") {
+        return (error as { code: string }).code;
+    }
+    return undefined;
+}
+
+function isOpfsSahpoolLockedError(error: unknown): boolean {
+    if (getErrorCode(error) === "opfs-sahpool-locked") {
+        return true;
+    }
+    return getErrorMessage(error).includes("Local memory storage is busy");
+}
+
+function getVssShutdownBarriers(): Map<string, VSSShutdownEntry> {
+    const scope = globalThis as VSSGlobalScope;
+    scope[VSS_GLOBAL_SHUTDOWN_KEY] ??= new Map<string, VSSShutdownEntry>();
+    return scope[VSS_GLOBAL_SHUTDOWN_KEY];
 }
 
 function isRetryableEmbeddingError(error: unknown): boolean {
