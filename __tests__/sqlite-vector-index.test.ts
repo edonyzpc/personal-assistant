@@ -122,4 +122,39 @@ describe('SqliteVectorIndex worker recovery', () => {
             }),
         }));
     });
+
+    it('terminates a worker that resolves after dispose and rejects later requests', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(true, 'ready');
+        let resolveWorker: (worker: Worker) => void = () => undefined;
+        const workerReady = new Promise<Worker>((resolve) => {
+            resolveWorker = resolve;
+        });
+        const workerFactory = jest.fn(() => workerReady);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory,
+        });
+
+        const initializing = index.initialize({
+            provider: 'openai',
+            baseURL: '',
+            model: 'model',
+            dimensions: 1024,
+            distanceMetric: 'COSINE',
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(workerFactory).toHaveBeenCalled();
+        const disposing = index.dispose();
+        resolveWorker(worker as unknown as Worker);
+
+        await disposing;
+        await expect(initializing).rejects.toMatchObject({ code: 'sqlite-vector-index-disposed' });
+        await expect(index.getStats()).rejects.toMatchObject({ code: 'sqlite-vector-index-disposed' });
+        expect(worker.terminate).toHaveBeenCalledTimes(1);
+    });
 });

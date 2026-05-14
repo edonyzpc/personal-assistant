@@ -423,6 +423,51 @@ describe('MemoryManager command decisions', () => {
             }
         }
     });
+
+    it('does not show completion UI or schedule follow-up work after stop during prepare', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        let resolveRebuild: (summary: Awaited<ReturnType<typeof plugin.vss.rebuildLocalIndex>>) => void = () => undefined;
+        plugin.vss.rebuildLocalIndex.mockImplementation(async () => new Promise((resolve) => {
+            resolveRebuild = resolve;
+        }));
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+
+        try {
+            const preparing = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await Promise.resolve();
+            manager.stopAutoMaintenance();
+            resolveRebuild({
+                aborted: false,
+                updated: 1,
+                unchanged: 0,
+                removed: 0,
+                skipped: 0,
+                failed: 0,
+            });
+            const result = await preparing;
+
+            expect(result.ok).toBe(false);
+            expect(plugin.updateMemoryStatusBar).not.toHaveBeenCalled();
+            expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
 });
 
 describe('MemoryApprovalModal', () => {

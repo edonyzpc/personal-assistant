@@ -104,6 +104,12 @@ class FailingVectorIndex extends FakeVectorIndex {
     });
 }
 
+class LockedVectorIndex extends FakeVectorIndex {
+    initialize = jest.fn<(profile: EmbeddingProfile) => Promise<VectorIndexStatus>>(async () => {
+        throw Object.assign(new Error('Local memory storage is busy'), { code: 'opfs-sahpool-locked' });
+    });
+}
+
 const createMissingFileError = (): NodeJS.ErrnoException => {
     const enoent = new Error('missing') as NodeJS.ErrnoException;
     enoent.code = 'ENOENT';
@@ -216,6 +222,65 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(stats.status).toBe('uninitialized');
         expect(stats.chunkCount).toBe(0);
         expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
+        vss.dispose();
+    });
+
+    it('does not revive a disposed VSS instance from read or rebuild paths', async () => {
+        const { plugin } = createPlugin();
+        setMockSqliteIndex(new FakeVectorIndex());
+        const vss = new VSS(plugin, 'cache');
+
+        vss.dispose();
+        const stats = await vss.getStats();
+        const results = await vss.searchSimilarity('query');
+        const canMaintain = await vss.canAutoMaintain();
+        const rebuild = await vss.rebuildLocalIndex({ silent: true });
+
+        expect(stats.status).toBe('uninitialized');
+        expect(results).toEqual([]);
+        expect(canMaintain).toBe(false);
+        expect(rebuild.aborted).toBe(true);
+        expect(MockSqliteVectorIndex).not.toHaveBeenCalled();
+    });
+
+    it('single-flights concurrent initialization across stats and search paths', async () => {
+        const { plugin, mockAdapter } = createPlugin();
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', {
+            path: 'note.md',
+            contentHash: 'hash',
+            mtime: 1,
+            size: 2,
+            status: 'ready',
+            updatedAt: 3,
+        });
+        setMockSqliteIndex(index);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path.endsWith('/marker.json')) {
+                return JSON.stringify({
+                    schemaVersion: 1,
+                    deviceId: 'device-1',
+                    indexId: 'index-1',
+                    profileSignature: 'openai||model|1024|COSINE',
+                    backend: 'sqlite-wasm-opfs-sahpool',
+                    chunkCount: 1,
+                    fileCount: 1,
+                    builtAt: '2026-05-02T00:00:00.000Z',
+                    lastVerifiedAt: '2026-05-02T00:00:00.000Z',
+                    storagePersisted: true,
+                });
+            }
+            throw createMissingFileError();
+        });
+        const vss = new VSS(plugin, 'cache');
+
+        await Promise.all([
+            vss.getStats(),
+            vss.searchSimilarity('query'),
+        ]);
+
+        expect(MockSqliteVectorIndex).toHaveBeenCalledTimes(1);
+        expect(index.initialize).toHaveBeenCalledTimes(1);
         vss.dispose();
     });
 
@@ -985,6 +1050,108 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(stats.fallbackMode).toBe(true);
         expect(stats.chunkCount).toBe(1);
         expect(results[0].doc.pageContent).toBe('legacy chunk');
+    });
+
+    it('does not embed the query or load legacy JSON on the foreground locked path', async () => {
+        const { plugin, mockAdapter } = createPlugin();
+        const lockedIndex = new LockedVectorIndex();
+        setMockSqliteIndex(lockedIndex);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path.endsWith('/marker.json')) {
+                return JSON.stringify({
+                    schemaVersion: 1,
+                    deviceId: 'device-1',
+                    indexId: 'index-1',
+                    profileSignature: 'openai||model|1024|COSINE',
+                    backend: 'sqlite-wasm-opfs-sahpool',
+                    chunkCount: 1,
+                    fileCount: 1,
+                    builtAt: '2026-05-02T00:00:00.000Z',
+                    lastVerifiedAt: '2026-05-02T00:00:00.000Z',
+                    storagePersisted: true,
+                });
+            }
+            if (path.endsWith('/manifest.json')) {
+                return JSON.stringify({
+                    schemaVersion: 1,
+                    deviceId: 'device-1',
+                    profileSignature: 'openai||model|1024|COSINE',
+                    fileCount: 1,
+                    chunkCount: 1,
+                    estimatedMemoryBytes: 4096,
+                    legacyJsonCacheBytes: 100,
+                    updatedAt: '2026-05-02T00:00:00.000Z',
+                });
+            }
+            throw createMissingFileError();
+        });
+        const vss = new VSS(plugin, 'cache');
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const results = await vss.searchSimilarity('query');
+        const stats = await vss.getStats();
+
+        expect(results).toEqual([]);
+        expect(stats.status).toBe('disabled');
+        expect(stats.lastErrorCode).toBe('opfs-sahpool-locked');
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
+        vss.dispose();
+    });
+
+    it('uses bounded manual retry for locked SQLite initialization', async () => {
+        jest.useRealTimers();
+        const { plugin } = createPlugin();
+        const lockedIndex = new LockedVectorIndex();
+        const recoveredIndex = new FakeVectorIndex();
+        const indexes = [lockedIndex, recoveredIndex];
+        (globalThis as { __mockSqliteVectorIndexFactory?: () => VectorIndex }).__mockSqliteVectorIndexFactory = () => indexes.shift() as VectorIndex;
+        const vss = new VSS(plugin, 'cache');
+
+        await vss.rebuildLocalIndex({ silent: true });
+        const stats = await vss.getStats();
+
+        expect(lockedIndex.dispose).toHaveBeenCalled();
+        expect(recoveredIndex.initialize).toHaveBeenCalled();
+        expect(stats.backend).toBe('sqlite-wasm-opfs-sahpool');
+        expect(stats.status).toBe('ready');
+        vss.dispose();
+    });
+
+    it('retries disabled foreground state from manual technical stats', async () => {
+        const { plugin } = createPlugin();
+        const recoveredIndex = new FakeVectorIndex();
+        setMockSqliteIndex(recoveredIndex);
+        const vss = new VSS(plugin, 'cache');
+        (vss as any).initialized = true; // eslint-disable-line @typescript-eslint/no-explicit-any
+        (vss as any).deviceId = 'device-1'; // eslint-disable-line @typescript-eslint/no-explicit-any
+        (vss as any).profile = { // eslint-disable-line @typescript-eslint/no-explicit-any
+            provider: 'openai',
+            baseURL: '',
+            model: 'model',
+            dimensions: 1024,
+            distanceMetric: 'COSINE',
+        };
+        (vss as any).marker = { // eslint-disable-line @typescript-eslint/no-explicit-any
+            schemaVersion: 1,
+            deviceId: 'device-1',
+            indexId: 'index-1',
+            profileSignature: 'openai||model|1024|COSINE',
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: 0,
+            fileCount: 0,
+            builtAt: '2026-05-02T00:00:00.000Z',
+            lastVerifiedAt: '2026-05-02T00:00:00.000Z',
+            storagePersisted: true,
+        };
+        (vss as any).status = 'disabled'; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const stats = await vss.getStats({ mode: 'manual' });
+
+        expect(recoveredIndex.initialize).toHaveBeenCalled();
+        expect(stats.status).toBe('ready');
+        expect(stats.backend).toBe('sqlite-wasm-opfs-sahpool');
+        vss.dispose();
     });
 
     it('disables VSS without scanning legacy JSON when SQLite is unavailable and no manifest exists', async () => {
