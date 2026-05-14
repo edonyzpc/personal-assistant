@@ -177,6 +177,21 @@ SQLite DB 存放在设备本地 OPFS 中，不进入 vault，也不参与 Obsidi
 - 串行化 DB 操作，避免多连接竞争。
 - 不把其他文件放进 `opfs-sahpool` 管理目录。
 - 不依赖复制底层 OPFS 文件作为迁移或备份方式。
+- 插件 disable/enable、升级或热重载时，旧实例进入 terminal shutdown；新实例在打开同一个 vault-scoped SQLite scope 前只短等待同 scope 的旧 shutdown barrier，避免旧 Worker 尚未释放 `opfs-sahpool` 锁时马上降级。
+- `opfs-sahpool-locked` 只作为锁竞争处理：Chat/status foreground 路径最多短等待，不同步等待完整恢复，也不 eager 加载旧 JSON fallback；manual/technical prepare 路径允许约 3 秒 bounded retry。
+
+### Lifecycle 与 Locked Recovery
+
+VSS 的生命周期是单向的：`dispose()` 后旧实例不会再通过 `initialize()` 复活，也不会继续写 marker、manifest、dirty journal 或启动新的 embedding batch/retry。`SqliteVectorIndex.dispose()` 会拒绝新请求，短等待当前 Worker 初始化或 dispose message，然后释放 pending requests、object URLs，并在超时后终止 Worker。
+
+同一 Obsidian 进程内的热重载协调通过 `globalThis` 上的 scoped shutdown barrier 完成。scope 由 plugin id、database name、OPFS directory 和 VFS name 组成；新实例只等待同 scope 且不同 owner 的旧 shutdown promise。barrier 只保存 primitive scope/id/promise，不持有 plugin/vault 对象引用，并且只有登记该 entry 的 promise completion 会清理自己。
+
+Locked 恢复策略按用户路径分层：
+
+- **Foreground chat/search/status**：短等待旧 shutdown；如果仍然 `opfs-sahpool-locked`，本轮不生成 query embedding、不加载 legacy JSON fallback，直接以无 Memory 状态继续。
+- **Manual prepare/update 和 technical diagnostics**：允许 bounded retry；retry 只重新打开 SQLite，不触发 rebuild、refresh、reconcile 或额外 embedding 调用。
+- **已有 fallback**：可继续只读使用；后台 single-flight recovery 成功后静默切回 SQLite，并释放 memory fallback。
+- **无 fallback 且 locked**：记录 `lastErrorCode=opfs-sahpool-locked`，供 technical diagnostics 展示，普通聊天和设置文案仍避免暴露 SQLite/OPFS 术语。
 
 ### SQLite Schema
 

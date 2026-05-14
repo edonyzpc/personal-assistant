@@ -14,6 +14,7 @@
 - **静默窗口 + 最长延迟**：后台 refresh 保留 `quietWindow=30s` 和 `maxDelay=10min`，避免用户连续编辑时反复计算。
 - **跨设备 reconcile**：启动、首次 prepare 后、窗口恢复和周期任务会扫描 vault 当前文件与 indexed records，发现新文件、metadata mismatch、missing indexed path 后再标脏或删除索引。
 - **串行写锁**：`flush`、`rebuildLocalIndex`、`resetLocalIndex`、delete、rename 和 reconcile 写入统一经过 VSS operation queue，避免并发写 SQLite index。
+- **Shutdown cost control**：插件 unload/热重载后，旧 VSS 实例不会继续启动新的 embedding batch、retry sleep、state file 写入、status update 或后台 retry/reconcile 调度。
 - **内容哈希去重**：清洗 Markdown 后计算 `contentHash`；hash 相同直接跳过，不调用 embedding provider。
 - **脏队列持久化**：`dirty.json` 持久化待刷新路径，异常退出后可以继续处理。
 - **大文件保护**：超过 `largeFileThreshold=1MB` 的文件跳过索引，并清理已有本地索引记录。
@@ -24,6 +25,8 @@
 ## Reconcile 与后台调度
 
 `MemoryManager.startAutoMaintenance()` 在插件加载后启动轻量调度器，并在 unload 时清理 timers 和 window/document listeners。自动任务只在 `memoryApprovalPolicy === "auto-refresh-after-prepare"` 且 VSS durable backend ready 时运行。
+
+`stopAutoMaintenance()` 会让 in-flight background task 和 prepare flow 进入 shutdown-aware 模式：已经返回的长任务不会再 schedule retry/reconcile、刷新 Memory status bar 或弹出成功/失败 Notice。这样插件升级或热重载时，不会由旧实例继续触发 UI 更新或新的 embedding 工作。
 
 默认 reconcile 时机：
 
@@ -118,6 +121,9 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 - 429 等可重试错误会退避重试并发出 retry progress；非限流错误不重试。
 - 单个文件 batch 失败后，后续 chunks 不再继续排队。
 - Rebuild 和 refresh 都能发出进度事件，Memory Notice 使用同一个 UI 更新。
+- VSS dispose 后 read/rebuild 路径不会重新 initialize；并发 stats/search 只触发一次 SQLite 初始化。
+- Foreground `opfs-sahpool-locked` 不触发 query embedding 或 eager legacy JSON fallback；manual path 可 bounded retry 恢复 SQLite。
+- `SqliteVectorIndex` 在 worker 初始化 pending 时 dispose 会释放 Worker，后续请求拒绝而不是重建。
 - auto policy + durable ready + changed notes 时 Chat 不弹确认、不等待 refresh，会调度后台 reconcile/flush。
 - fallback 或非 durable 状态下不会执行自动写入，并会提示后台更新不可用。
 - reconcile 能发现新增、metadata mismatch、deleted indexed path，以及滚动 hash 校验发现的内容变化。
