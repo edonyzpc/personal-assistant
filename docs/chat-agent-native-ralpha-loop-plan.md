@@ -2,9 +2,9 @@
 
 ## Status And Source Of Truth
 
-This document is the active design document, implementation tracker, risk register, and verification log for the next Chat Agent iteration.
+This document is the active architecture, product, runtime, UX, risk, and verification contract for the next Chat Agent iteration.
 
-This is an approved single-doc exception for this Ralpha iteration. The repository refactor workflow normally prefers separate plan and tracker documents, but this iteration keeps design, tracker, risk, and verification state together to avoid split-brain with archived vault-native plans.
+Implementation execution now follows the SPEC-driven tracker in [Chat Agent Native Ralpha SPEC-Driven Development](./chat-agent-native-ralpha-spec-driven-development.md). Use this document for product/runtime/source-boundary decisions and the SPEC tracker for phase status, spec package progress, review records, verification evidence, and implementation closeout. If the two documents conflict, this Ralpha contract wins for product, runtime, fallback, provider, and source-boundary decisions; update both docs in the same reviewed change before implementing.
 
 The previous vault-native refactor documents are historical evidence only:
 
@@ -20,7 +20,7 @@ If any archived document conflicts with this Ralpha plan, this document wins. Th
 
 | Decision | Final Choice | Implementation Meaning |
 | --- | --- | --- |
-| Active source of truth | Ralpha document only | Old `PLAN.md` and vault-native tracker are archived and no longer drive implementation. |
+| Active source of truth | Ralpha contract plus SPEC tracker | Old `PLAN.md` and vault-native tracker are archived and no longer drive implementation; Ralpha owns product/runtime/source-boundary contracts and the SPEC tracker owns implementation progress. |
 | Public entrypoint | Keep `ChatService.streamLLM(...)` | UI code keeps calling the same service API, but streaming orchestration moves into the agent runtime/core. |
 | Streaming owner | Agent owns model stream | `ChatAgentRuntime` / AgentCore owns model calls, visible chunks, tool loop, no-replay fallback state, and final metadata. |
 | Stream compatibility | External chunks remain snapshots | AgentCore may consume provider deltas internally, but the `ChatService`/UI adapter continues to receive cumulative answer snapshots. |
@@ -35,7 +35,7 @@ If any archived document conflicts with this Ralpha plan, this document wins. Th
 | Source attribution | Memory references stay Memory-only | Final Memory references include only selected Memory sources; current-note/tool/web context appears in expandable Context used details. |
 | UX | Expandable timeline | Every loop step has concise visible status and optional details; hidden model reasoning is not exposed as policy/audit. |
 | Loop cap | 6 model turns / 3 Memory searches / 180 seconds | Every model call counts; reserve one remaining model turn for the final answer; when a cap trips, answer from gathered context. |
-| Current phase | Docs-only optimization | No runtime code changes in this phase. |
+| Current phase | SPEC-driven implementation setup | No runtime code changes in this phase. The next pass should begin from the SPEC tracker rather than reopening the archived PLAN/tracker documents. |
 
 ## Product Goal
 
@@ -496,30 +496,32 @@ Initial v1 hard limits:
 
 Each model invocation counts as one model turn, including rerank, initial answer, continuation after tools, and pre-visible fallback retry. Tool executions do not count as model turns. Initial Memory presearch and `search_memory` tool executions count against the AI-cost Memory search cap. Hybrid expand counts against wall-clock and context budget only. AgentCore must reserve one model turn for the final answer; when only one model turn remains, it stops rerank/tool continuation and answers from gathered context. If visible output has already started, the agent must not replay a new answer.
 
-## Phase Tracker
+## Phase Gate Baseline
 
-Each phase follows:
+This section defines the contract-level phase gates only. Active implementation status lives in [Chat Agent Native Ralpha SPEC-Driven Development](./chat-agent-native-ralpha-spec-driven-development.md); do not treat this table as a second phase-status ledger.
+
+Each implementation phase still follows:
 
 ```text
 dev -> test -> review -> fix -> Obsidian smoke test -> fix
 ```
 
-| Phase | Goal | Owner Areas | Status | Exit Gate |
-| --- | --- | --- | --- | --- |
-| Phase 0 | Ralpha source-of-truth migration | docs | [x] Done | Ralpha doc is active; old PLAN/tracker archived; docs checks passed. |
-| Phase 1 | Agent-owned stream boundary | chat service/runtime/types | [ ] Todo | `ChatService` stays public entry; AgentCore emits typed events; adapter preserves snapshot chunks, metadata ordering, and reasoning-visible no-replay state. |
-| Phase 2 | Memory selector, rerank, and hybrid expand | chat agent, memory, VSS context | [ ] Todo | LLM rerank selects/omits Memory without executing tools; expanded sources preserve Memory references and anchored/indexed fallback boundaries. |
-| Phase 3 | Native loop and tool-disabled fallback | chat agent, tools, ai utils | [ ] Todo | `bindTools` probe drives native loop; tool calls normalize before serial execution; JSON planner is not Ralpha fallback. |
-| Phase 4 | Expandable timeline UX and cancellation | chat view, status types | [ ] Todo | Loop events render clearly; abort/clear suppress stale chunks/events. |
-| Phase 5 | Runtime smoke, review, and closeout | tests, docs, test vault | [ ] Todo | Automated tests, subagent review, `make deploy`, and Obsidian smoke pass. |
+| Phase | Goal | Owner Areas | Exit Gate |
+| --- | --- | --- | --- |
+| Phase 0 | Ralpha source-of-truth migration | docs | Ralpha doc is active contract source; old PLAN/tracker archived; docs checks passed. |
+| Phase 1 | Agent-owned stream boundary | chat service/runtime/types | `ChatService` stays public entry; AgentCore emits typed events; adapter preserves snapshot chunks, metadata ordering, and reasoning-visible no-replay state. |
+| Phase 2 | Memory selector, rerank, and hybrid expand | chat agent, memory, VSS context | LLM rerank selects/omits Memory without executing tools; expanded sources preserve Memory references and anchored/indexed fallback boundaries. |
+| Phase 3 | Native loop and tool-disabled fallback | chat agent, tools, ai utils | `bindTools` probe drives native loop; tool calls normalize before serial execution; caps/failure policies apply; JSON planner is not Ralpha fallback. |
+| Phase 4 | Expandable timeline UX and cancellation | chat view, status types | Loop events render clearly; abort/clear suppress stale chunks/events. |
+| Phase 5 | Runtime smoke, review, and closeout | tests, docs, test vault | Automated tests, subagent review, `make deploy`, and Obsidian smoke pass. |
 
-Phase tracker rules:
+Phase gate rules:
 
-- Do not create or revive a separate active tracker for this Ralpha iteration unless the user explicitly reopens that decision.
+- Do not create or revive another active tracker beyond `docs/chat-agent-native-ralpha-spec-driven-development.md` unless the user explicitly reopens that decision.
 - Each phase must preserve the `dev -> test -> review -> fix -> Obsidian smoke test -> fix` loop.
 - Runtime/UI phases require subagent review, automated tests, `make deploy`, and real Obsidian test-vault smoke before the phase is marked done.
 - Docs-only phases may skip Obsidian smoke, but the skip and residual risk must be recorded in the Verification Log.
-- Any phase status change must keep the Phase Tracker, Verification Log, Risk Register, and open decisions in sync.
+- Implementation status changes must be recorded in the SPEC tracker. Update this Ralpha document only when the contract, phase gates, risk baseline, verification baseline, or open decisions change.
 
 ### Phase Gate Detail
 
@@ -527,7 +529,7 @@ Phase tracker rules:
 | --- | --- | --- |
 | Phase 1 | `src/ai-services/chat-service.ts`, `src/ai-services/chat-types.ts`, `src/chat-view.ts`; tests for snapshot chunks, metadata ordering, typed events, stale suppression, reasoning-visible no-replay, abort hard/soft discard | `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts`; `git diff --check` |
 | Phase 2 | Memory selector/rerank/expand modules; tests for rerank select/none/context-gap diagnostic, cap accounting, `MemoryCandidateAnchor`, legacy no-anchor fuzzy fallback, hash mismatch, deleted/renamed files, indexed fallback | `npm test -- __tests__/chat-service.test.ts`; `git diff --check` |
-| Phase 3 | `src/ai-services/chat-agent.ts`, `src/ai-services/chat-tools.ts`, `src/ai-services/ai-utils.ts`; tests for full native schema binding, bindTools missing/throws, schema export failure, parse failure, no JSON planner call, no deterministic tool side path, `skip-memory`/`Answer now` removing `search_memory` | `npm test -- __tests__/chat-service.test.ts`; `git diff --check` |
+| Phase 3 | `src/ai-services/chat-agent.ts`, `src/ai-services/chat-tools.ts`, `src/ai-services/ai-utils.ts`; tests for full native schema binding, bindTools missing/throws, schema export failure, parse failure, no JSON planner call, no deterministic tool side path, `skip-memory`/`Answer now` removing `search_memory`, `search_memory` cap accounting, duplicate normalized tool-call skip, repeated tool failure stop, late tool call after answer snapshot | `npm test -- __tests__/chat-service.test.ts`; `git diff --check` |
 | Phase 4 | `src/chat-view.ts`, status types, CSS if needed; tests for timeline rows, Context used, terminal summary, cancel/clear stale suppression, source-boundary UI, provider web status | `npm test -- __tests__/chat-view.test.ts`; `git diff --check` |
 | Phase 5 | Integrated runtime/UI/docs; full regression and smoke | `npm test -- --runInBand`; `npm run lint`; `npm run build`; `git diff --check`; `make deploy`; real Obsidian smoke |
 
@@ -644,8 +646,10 @@ These items are intentionally not finalized in this document update because they
 | 2026-05-14 | Decision 2 stream/event boundary | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md` | [x] Passed | External chunks remain cumulative snapshots; provider reasoning counts as visible output; AgentCore emits typed turn events. |
 | 2026-05-14 | Decision 3 native tool protocol | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md` | [x] Passed | Tool calls normalize before serial execution; missing ids are generated; late tool calls after answer snapshot become partial errors. |
 | 2026-05-14 | Decision 4 Memory rerank and expand contract | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md` | [x] Passed | Rerank selects Memory only; all LLM calls count as turns; final-answer turn is reserved; hybrid expand uses anchors with indexed fallback. |
-| 2026-05-14 | Decision 5 attribution and tracker contract | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md` | [x] Passed | Memory references stay Memory-only; Context used separates tool/web context; Ralpha remains the single active tracker for this iteration. |
+| 2026-05-14 | Decision 5 attribution and tracker contract | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md` | [x] Passed | Memory references stay Memory-only; Context used separates tool/web context; Ralpha temporarily carried combined contract/tracker state until SPEC-driven tracking was explicitly reopened. |
 | 2026-05-14 | Post-review implementation-basis hardening | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md` | [x] Passed | Added AgentEvent union draft, tool-disabled fallback, Memory skip tool-surface rules, source-boundary tightening, phase gates, JSON planner test migration, and open decisions. |
+| 2026-05-14 | SPEC-driven tracker split | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md`; `rg -n "[[:blank:]]+$" docs/chat-agent-native-ralpha-loop-plan.md docs/chat-agent-native-ralpha-spec-driven-development.md` | [x] Passed | Ralpha stays the contract source; SPEC tracker owns implementation status, review logs, verification evidence, and smoke closeout. |
+| 2026-05-14 | SPEC review fixes | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md`; `rg -n "[[:blank:]]+$" docs/chat-agent-native-ralpha-loop-plan.md docs/chat-agent-native-ralpha-spec-driven-development.md`; targeted stale-contract scan | [x] Passed | Removed Ralpha/SPEC status split-brain, hardened SPEC approval gates, fixed rerank diagnostic boundary, expanded risk/test/UX coverage. |
 
 ## Assumptions
 
