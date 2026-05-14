@@ -1,7 +1,7 @@
 # Chat Agent 开发任务计划与进展追踪
 
 > [!IMPORTANT]
-> Archived historical record. This document is no longer a design or execution source of truth. Use [Vault-native Obsidian Assistant Refactor Plan](../PLAN.md) and [Vault-native Assistant Development Tracker](../vault-native-assistant-development-tracker.md) for current work. Any guidance below is historical evidence only; if it conflicts with the current plan or tracker, the current docs win.
+> Archived historical record. This document is no longer a design or execution source of truth. Use [Chat Agent Native Ralpha Loop Refactor Plan](../chat-agent-native-ralpha-loop-plan.md) for current work. Any guidance below is historical evidence only; if it conflicts with the Ralpha plan, the Ralpha plan wins.
 
 ## 文档目的
 

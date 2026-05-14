@@ -1,14 +1,17 @@
 # Vault-native Assistant Development Tracker
 
+> [!IMPORTANT]
+> Archived historical record. This document is no longer an active implementation tracker. Use [Chat Agent Native Ralpha Loop Refactor Plan](../chat-agent-native-ralpha-loop-plan.md) for current Chat Agent refactor design, phase tracking, risks, and verification. Any guidance below is historical evidence only; if it conflicts with the Ralpha plan, the Ralpha plan wins.
+
 ## Purpose
 
-本文档用于跟踪 `docs/PLAN.md` 中 Vault-native Obsidian Assistant 重构方案的开发任务、验证证据、review 结论、修复记录和 Obsidian smoke 结果。
+本文档曾用于跟踪旧 Vault-native Obsidian Assistant 重构方案的开发任务、验证证据、review 结论、修复记录和 Obsidian smoke 结果。它现在只作为历史记录保留。
 
 设计依据：
 
-- [Vault-native Obsidian Assistant Refactor Plan](./PLAN.md)
+- [Archived Vault-native Obsidian Assistant Refactor Plan](./vault-native-assistant-refactor-plan.md)
 
-本文档不是架构设计的替代品。涉及产品定位、架构边界、Memory workflow、ToolRegistry policy、native rollout、隐私和写入边界时，以 `docs/PLAN.md` 为准；本文档只记录执行计划和进度。
+本文档不是当前架构设计的替代品。当前 Ralpha Loop 方案的产品定位、架构边界、Memory workflow、native rollout、隐私和写入边界以 `docs/chat-agent-native-ralpha-loop-plan.md` 为准。
 
 ## Status Legend
 

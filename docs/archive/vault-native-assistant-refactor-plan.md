@@ -1,8 +1,11 @@
 # Vault-native Obsidian Assistant Refactor Plan
 
-## Status And Source Of Truth
+> [!IMPORTANT]
+> Archived historical record. This document is no longer an active design or execution source of truth. Use [Chat Agent Native Ralpha Loop Refactor Plan](../chat-agent-native-ralpha-loop-plan.md) for current Chat Agent refactor work. Any guidance below is historical evidence only; if it conflicts with the Ralpha plan, the Ralpha plan wins.
 
-本文是 Chat Agent 后续重构的唯一设计入口。后续目标架构、迁移步骤和验证标准以本文为准；历史 Chat Agent 文档只作为背景记录和验证证据保留。
+## Historical Status
+
+本文曾是 Chat Agent 后续重构的设计入口。2026-05-14 起，它被 Ralpha Loop 方案取代，仅作为旧路线、历史验证和风险背景保留。
 
 当前代码事实来源：
 

@@ -3,8 +3,8 @@
 ## Future Milestones
 
 - [ ] Review and scope write action / command execution product and security design.
-  - Context: the `PLAN.md` refactor track closed through Phase 6 with Chat still read-only. Future write actions and Obsidian command execution must not be implemented by weakening the current read-only tool boundary.
-  - Source docs: `docs/PLAN.md`; `docs/write-action-design-handoff.md`; `docs/vault-native-assistant-development-tracker.md`.
+  - Context: the archived vault-native refactor track closed through Phase 6 with Chat still read-only. The active Ralpha plan also keeps write actions and Obsidian command execution out of scope. Future write actions must not be implemented by weakening the current read-only tool boundary.
+  - Source docs: `docs/chat-agent-native-ralpha-loop-plan.md`; `docs/write-action-design-handoff.md`; archived historical docs under `docs/archive/`.
   - Entry criteria: define the first action family, allowed targets, preview / confirm UX, cancellation behavior, local-only redacted audit policy, permission settings, and rollback / failure handling.
   - Exit criteria: product/security review explicitly approves an implementation plan, creates a separate development tracker, and keeps direct note writes, arbitrary filesystem edits, shell/bash, and automatic Obsidian command execution out of scope unless separately approved.
 

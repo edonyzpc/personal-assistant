@@ -8,10 +8,11 @@ It is a design boundary, not an implementation plan for immediate runtime writes
 
 ## Source Of Truth
 
-- Main refactor plan: [PLAN.md](./PLAN.md)
-- Development tracker: [vault-native-assistant-development-tracker.md](./vault-native-assistant-development-tracker.md)
+- Active refactor plan: [Chat Agent Native Ralpha Loop Refactor Plan](./chat-agent-native-ralpha-loop-plan.md)
+- Historical refactor plan: [Archived Vault-native Obsidian Assistant Refactor Plan](./archive/vault-native-assistant-refactor-plan.md)
+- Historical tracker: [Archived Vault-native Assistant Development Tracker](./archive/vault-native-assistant-development-tracker.md)
 
-If this document conflicts with `PLAN.md`, `PLAN.md` wins until both documents are explicitly updated in the same reviewed change.
+If this document conflicts with the active Ralpha plan, the Ralpha plan wins until both documents are explicitly updated in the same reviewed change.
 
 ## Non-Goals
 
