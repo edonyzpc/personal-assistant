@@ -326,6 +326,12 @@ function getButtonsByClass(root: MockElement, className: string) {
     return walkAll(root, (el) => el.tagName === 'button' && el.classList.contains(className));
 }
 
+function getLinkByText(root: MockElement, text: string) {
+    const link = walk(root, (el) => el.tagName === 'a' && allText(el) === text);
+    if (!link) throw new Error(`link not found: ${text}`);
+    return link;
+}
+
 function getElementByClass(root: MockElement, className: string) {
     const element = walk(root, (el) => el.classList.contains(className));
     if (!element) throw new Error(`element not found: ${className}`);
@@ -367,6 +373,15 @@ function mockRenderedMemoryCallout() {
                 attr: { 'data-callout': 'personal-assistant-ai' },
             });
             callout.setText('Memory references');
+            for (const linkMatch of markdown.matchAll(/\[\[([^\]]+)\]\]/g)) {
+                const href = linkMatch[1].split('|')[0].trim();
+                const link = callout.createEl('a', {
+                    text: href,
+                    cls: 'internal-link',
+                    attr: { href },
+                });
+                link.setAttribute('data-href', href);
+            }
         }
     });
 }
@@ -391,6 +406,7 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
             getMostRecentLeaf: jest.fn(() => options.withMarkdownLeaf ? markdownLeaf : null),
             getLeavesOfType: jest.fn(() => options.withMarkdownLeaf ? [markdownLeaf] : []),
             setActiveLeaf: jest.fn(),
+            openLinkText: jest.fn(async (_linktext: string, _sourcePath: string, _newLeaf?: boolean | string) => undefined),
             on: jest.fn((eventName: string, callback: (...args: unknown[]) => void) => {
                 const handlers = workspaceHandlers.get(eventName) ?? [];
                 handlers.push(callback);
@@ -1663,7 +1679,7 @@ describe('LLMView turn lifecycle', () => {
         expect(editor.replaceRange).toHaveBeenCalledWith('first answer', { line: 0, ch: 0 });
     });
 
-    it('turns verified Memory references into a collapsed source bar', async () => {
+    it('keeps verified Memory references as a rendered callout', async () => {
         mockRenderedMemoryCallout();
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -1688,22 +1704,14 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(1);
-        expect(allText(containerEl)).toContain('Memory used (1)');
-        expect(allText(containerEl)).not.toContain('Memory references');
-        const toggle = getButtonByClass(containerEl, 'pa-chat-source-toggle');
-        const sourceList = getElementByClass(containerEl, 'pa-chat-source-list');
-        expect(toggle.getAttribute('aria-controls')).toBe(sourceList.id);
-        expect(toggle.getAttribute('aria-expanded')).toBe('false');
-        expect(sourceList.hidden).toBe(true);
-
-        toggle.click();
-
-        expect(toggle.getAttribute('aria-expanded')).toBe('true');
-        expect(sourceList.hidden).toBe(false);
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+        expect(allText(containerEl)).not.toContain('Memory used');
+        expect(allText(containerEl)).toContain('Memory references');
+        expect(getElementsByClass(containerEl, 'callout')).toHaveLength(1);
+        expect(getLinkByText(containerEl, 'memory/trusted.md').getAttribute('data-href')).toBe('memory/trusted.md');
     });
 
-    it('reconciles Memory source bars when metadata arrives after the final chunk', async () => {
+    it('keeps the rendered Memory references callout when metadata arrives after the final chunk', async () => {
         mockRenderedMemoryCallout();
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -1738,9 +1746,82 @@ describe('LLMView turn lifecycle', () => {
             { role: 'user', content: 'late memory prompt' },
             { role: 'assistant', content: answer },
         ]);
-        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(1);
-        expect(allText(containerEl)).toContain('Memory used (1)');
-        expect(allText(containerEl)).not.toContain('Memory references');
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+        expect(allText(containerEl)).not.toContain('Memory used');
+        expect(allText(containerEl)).toContain('Memory references');
+    });
+
+    it('opens Memory reference note links in a new tab even when a Markdown leaf is available', async () => {
+        mockRenderedMemoryCallout();
+        const { view, containerEl, app } = createView({ withMarkdownLeaf: true });
+        await view.onOpen();
+
+        const answer = [
+            'answer from memory',
+            '',
+            '---',
+            '> [!personal-assistant-ai]- Memory references',
+            '>',
+            '> 1. [[memory/trusted.md]]',
+        ].join('\n');
+        getTextArea(containerEl).value = 'memory prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/trusted.md'],
+        });
+        streamCalls[0].onChunk(answer);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const event = {
+            preventDefault: jest.fn(),
+            stopPropagation: jest.fn(),
+            metaKey: false,
+            ctrlKey: false,
+        };
+        getLinkByText(containerEl, 'memory/trusted.md').dispatchEvent('click', event);
+        await flushPromises();
+
+        expect(event.preventDefault).toHaveBeenCalledTimes(1);
+        expect(event.stopPropagation).toHaveBeenCalledTimes(1);
+        expect(app.workspace.setActiveLeaf).not.toHaveBeenCalled();
+        expect(app.workspace.openLinkText).toHaveBeenCalledWith('memory/trusted.md', '0.unsorted/Dog.md', 'tab');
+    });
+
+    it('opens Memory reference note links in a new tab when no Markdown leaf is available', async () => {
+        mockRenderedMemoryCallout();
+        const { view, containerEl, app } = createView();
+        await view.onOpen();
+
+        const answer = [
+            'answer from memory',
+            '',
+            '---',
+            '> [!personal-assistant-ai]- Memory references',
+            '>',
+            '> 1. [[memory/trusted.md]]',
+        ].join('\n');
+        getTextArea(containerEl).value = 'memory prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk(answer);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        getLinkByText(containerEl, 'memory/trusted.md').dispatchEvent('click', {
+            preventDefault: jest.fn(),
+            stopPropagation: jest.fn(),
+            metaKey: false,
+            ctrlKey: false,
+        });
+        await flushPromises();
+
+        expect(app.workspace.setActiveLeaf).not.toHaveBeenCalled();
+        expect(app.workspace.openLinkText).toHaveBeenCalledWith('memory/trusted.md', '', 'tab');
     });
 
     it('keeps the rendered callout when Memory references are not from allowed sources', async () => {
@@ -1772,7 +1853,7 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Memory references');
     });
 
-    it('keeps the rendered callout when Memory metadata is absent or transform cannot remove it', async () => {
+    it('keeps the rendered references content without source-bar transformation', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 

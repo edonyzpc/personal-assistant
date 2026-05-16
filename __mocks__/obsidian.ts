@@ -114,7 +114,9 @@ type MockWorkspace = {
     getMostRecentLeaf: jest.Mock;
     getLeavesOfType: jest.Mock;
     getActiveViewOfType: jest.Mock;
+    getActiveFile: jest.Mock;
     setActiveLeaf: jest.Mock;
+    openLinkText: jest.Mock;
     on: jest.Mock;
 };
 
@@ -137,7 +139,9 @@ export class App {
         getMostRecentLeaf: jest.fn(),
         getLeavesOfType: jest.fn(() => []),
         getActiveViewOfType: jest.fn(() => null),
+        getActiveFile: jest.fn(() => null),
         setActiveLeaf: jest.fn(),
+        openLinkText: jest.fn(async () => undefined),
         on: jest.fn(),
     };
 }

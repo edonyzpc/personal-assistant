@@ -1,8 +1,7 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, Vault, setIcon, Modal, Setting, type EventRef } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, setIcon, Modal, Setting, type EventRef } from 'obsidian';
 import { ChatService, type ChatAgentStatus, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
-import { isPluginEnabled } from './utils';
 import type { MemoryMaintenancePlan } from './memory-manager';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
@@ -32,10 +31,6 @@ interface ChatConfirmationOptions {
     confirmText: string;
     cancelText?: string;
     danger?: boolean;
-}
-
-interface MemoryReferenceMatch {
-    paths: string[];
 }
 
 type MemoryChipState = {
@@ -196,7 +191,6 @@ export class LLMView extends ItemView {
     private nativeKeyboardHeight = 0;
     private focusFallbackKeyboardHeight = 0;
     private memoryStatusUnsubscribe: (() => void) | null = null;
-    private memorySourceBarId = 0;
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
@@ -735,75 +729,6 @@ export class LLMView extends ItemView {
         const renderedFallbackBuffer = (): HTMLElement => {
             return this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' }) as HTMLElement;
         };
-        const parseMemoryReferences = (content: string): MemoryReferenceMatch | null => {
-            const match = content.match(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*(Memory references|RAG Referenc(?:es?)?)\b([\s\S]*)$/i);
-            if (!match) return null;
-            const block = match[2] ?? "";
-            const paths = [...block.matchAll(/\[\[([^\]]+)\]\]/g)]
-                .map((linkMatch) => linkMatch[1].split('|')[0].split('#')[0].trim())
-                .filter(Boolean);
-            return { paths: [...new Set(paths)] };
-        };
-        const removeRenderedMemoryReferenceCallout = (buffer: HTMLElement): boolean => {
-            const callouts = Array.from(buffer.querySelectorAll('.callout[data-callout="personal-assistant-ai"]')) as HTMLElement[];
-            const referenceCallout = callouts.find((callout) =>
-                /Memory references|RAG Referenc(?:es?)?/i.test(callout.textContent ?? '')
-            ) ?? (callouts.length === 1 ? callouts[0] : null);
-            if (!referenceCallout?.parentElement) return false;
-            referenceCallout.parentElement.removeChild(referenceCallout);
-            return true;
-        };
-        const createMemorySourceBar = (contentDiv: HTMLElement, paths: string[]) => {
-            const sourceBar = contentDiv.createDiv({ cls: 'pa-chat-source-bar' });
-            const detailsId = `pa-chat-memory-sources-${sessionId}-${++this.memorySourceBarId}`;
-            const toggleButton = sourceBar.createEl('button', {
-                cls: 'pa-chat-source-toggle',
-                attr: {
-                    type: 'button',
-                    'aria-expanded': 'false',
-                    'aria-controls': detailsId,
-                },
-            });
-            setIcon(toggleButton, 'chevron-right');
-            toggleButton.createSpan({ text: `Memory used (${paths.length})` });
-            const sourceList = sourceBar.createDiv({ cls: 'pa-chat-source-list' });
-            sourceList.id = detailsId;
-            sourceList.hidden = true;
-            paths.forEach((path) => {
-                const link = sourceList.createEl('a', {
-                    text: path,
-                    cls: 'pa-chat-source-link internal-link',
-                    attr: { href: path },
-                });
-                link.setAttribute('data-href', path);
-            });
-            this.updateClickableLink(sourceBar);
-            toggleButton.onclick = () => {
-                sourceList.hidden = !sourceList.hidden;
-                const expanded = !sourceList.hidden;
-                toggleButton.setAttribute('aria-expanded', String(expanded));
-                setIcon(toggleButton, expanded ? 'chevron-down' : 'chevron-right');
-            };
-        };
-        const transformMemoryReferences = (
-            rendered: RenderedMessage,
-            content: string,
-            buffer: HTMLElement,
-        ) => {
-            try {
-                const references = parseMemoryReferences(content);
-                if (!references || references.paths.length === 0) return;
-                const metadata = rendered.memoryMetadata;
-                if (!metadata?.hasMemoryContent) return;
-                const allowedPaths = new Set(metadata.allowedMemorySourcePaths);
-                if (!references.paths.every((path) => allowedPaths.has(path))) return;
-                if (!removeRenderedMemoryReferenceCallout(buffer)) return;
-                createMemorySourceBar(rendered.contentDiv, references.paths);
-            } catch (error) {
-                this.plugin.log?.("Could not transform Memory references", error);
-            }
-        };
-
         const renderMarkdownInto = (
             rendered: RenderedMessage,
             content: string,
@@ -826,7 +751,6 @@ export class LLMView extends ItemView {
                     rendered.contentDiv.appendChild(buffer);
                     rendered.renderedContent = content;
                     this.updateClickableLink(buffer);
-                    transformMemoryReferences(rendered, content, buffer);
                     scrollToBottom({ force: forceScroll, behavior: forceScroll ? 'smooth' : 'auto' });
                     return true;
                 })
@@ -1295,13 +1219,9 @@ export class LLMView extends ItemView {
             if (!userRendered || !assistantRendered) return false;
 
             assistantRendered.memoryMetadata = turn.memoryMetadata;
-            const hasMemoryReferences = Boolean(parseMemoryReferences(responseContent));
             if (
                 responseContent
-                && (
-                    assistantRendered.renderedContent !== responseContent
-                    || (hasMemoryReferences && Boolean(turn.memoryMetadata?.hasMemoryContent))
-                )
+                && assistantRendered.renderedContent !== responseContent
             ) {
                 const rendered = await renderMarkdownInto(assistantRendered, responseContent, isLiveTurn);
                 if (!rendered || !isLiveTurn()) return false;
@@ -2118,44 +2038,61 @@ export class LLMView extends ItemView {
     }
 
     private updateClickableLink(containerEl: HTMLElement) {
-        const getNoteUri = (vault: Vault, noteHref: string) => {
-            if (isPluginEnabled(this.plugin.app, "obsidian-advanced-uri")) {
-                // Use Advanced URI plugin if it is enabled.
-                // obsidian://advanced-uri?vault=<your-vault>&filepath=my-file
-                return [
-                    "obsidian://advanced-uri?vault=",
-                    encodeURIComponent(vault.getName()),
-                    "&filepath=",
-                    encodeURIComponent(noteHref),
-                    "&openmode=true",
-                ].join("");
-            } else {
-                // Use Obsidian default URI
-                return [
-                    "obsidian://open?vault=",
-                    encodeURIComponent(vault.getName()),
-                    "&file=",
-                    encodeURIComponent(noteHref)
-                ].join("");
-            }
-        };
-
         const links = containerEl.querySelectorAll("a.internal-link");
         links.forEach((node) => {
-            if (!node.getAttribute("href")) {
+            const noteHref = node.getAttribute("data-href") ?? node.getAttribute("href");
+            if (!noteHref || noteHref.startsWith("obsidian://")) {
                 return;
             }
             const link = node as HTMLLinkElement;
-            // prevents click event from parent element other than the current link element
             link.addEventListener("click", (evt) => {
+                evt.preventDefault();
                 evt.stopPropagation();
+                const openInNewLeaf = this.isMemoryReferenceLink(link) || evt.metaKey || evt.ctrlKey;
+                void this.openChatInternalLink(noteHref, openInNewLeaf).catch((error) => {
+                    this.plugin.log?.("Could not open chat internal link", error);
+                    new Notice(`Could not open note: ${noteHref}`, 4000);
+                });
             });
-            // do not change the hyperlink if it is changed
-            if (link.href.startsWith("obsidian://")) return;
-            link.href = getNoteUri(
-                this.plugin.app.vault,
-                link.getAttribute("href") as string,
-            );
         });
+    }
+
+    private isMemoryReferenceLink(link: HTMLElement): boolean {
+        let current: HTMLElement | null = link.parentElement;
+        while (current) {
+            if (
+                current.classList.contains('callout')
+                && current.getAttribute('data-callout') === 'personal-assistant-ai'
+                && /Memory references|RAG Referenc(?:es?)?/i.test(current.textContent ?? '')
+            ) {
+                return true;
+            }
+            current = current.parentElement;
+        }
+        return false;
+    }
+
+    private async openChatInternalLink(noteHref: string, openInNewLeaf: boolean) {
+        const workspace = this.app.workspace;
+        const markdownLeaf = this.getMarkdownTargetLeaf();
+        const sourcePath = workspace.getActiveFile()?.path
+            ?? (markdownLeaf?.view instanceof MarkdownView ? markdownLeaf.view.file?.path : undefined)
+            ?? "";
+
+        if (!openInNewLeaf && markdownLeaf) {
+            await workspace.setActiveLeaf(markdownLeaf, { focus: true });
+            await workspace.openLinkText(noteHref, sourcePath, false);
+            return;
+        }
+
+        await workspace.openLinkText(noteHref, sourcePath, "tab");
+    }
+
+    private getMarkdownTargetLeaf(): WorkspaceLeaf | null {
+        const mostRecentLeaf = this.app.workspace.getMostRecentLeaf();
+        if (mostRecentLeaf?.view instanceof MarkdownView) {
+            return mostRecentLeaf;
+        }
+        return this.app.workspace.getLeavesOfType('markdown')[0] ?? null;
     }
 }
