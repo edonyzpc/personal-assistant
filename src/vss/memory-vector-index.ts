@@ -40,6 +40,15 @@ export class MemoryVectorIndex implements VectorIndex {
         })));
     }
 
+    async updateFileMetadata(fileState: VSSFileState): Promise<void> {
+        const records = this.records.get(fileState.path);
+        if (!records) return;
+        this.records.set(fileState.path, records.map((record) => ({
+            ...record,
+            fileState,
+        })));
+    }
+
     async deleteFile(path: string): Promise<void> {
         this.records.delete(path);
     }

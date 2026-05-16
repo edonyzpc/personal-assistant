@@ -78,6 +78,7 @@ export interface VSSFileRecord {
 export interface VectorIndex {
     initialize(profile: EmbeddingProfile): Promise<VectorIndexStatus>;
     upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]): Promise<void>;
+    updateFileMetadata(fileState: VSSFileState): Promise<void>;
     deleteFile(path: string): Promise<void>;
     listFilePaths(): Promise<string[]>;
     listFileRecords(): Promise<VSSFileRecord[]>;

@@ -1,5 +1,5 @@
 /* Copyright 2023 edonyzpc */
-import { Notice, TAbstractFile, TFile } from 'obsidian';
+import { Notice, Platform, TAbstractFile, TFile } from 'obsidian';
 import { Document } from "@langchain/core/documents";
 import { MarkdownTextSplitter } from '@langchain/textsplitters';
 
@@ -32,6 +32,7 @@ import {
     type VectorIndexStatus,
     type VectorSearchResult,
     type VSSChunk,
+    type VSSFileRecord,
     type VSSIndexManifest,
     type VSSIndexMarker,
     type VSSIndexStats,
@@ -52,13 +53,25 @@ const QWEN_TEXT_EMBEDDING_SAFE_TPM = 900_000;
 const VSS_RECONCILE_BATCH_SIZE = 250;
 const VSS_RECONCILE_MAX_METADATA_PER_RUN = 2_000;
 const VSS_ROLLING_HASH_VERIFY_LIMIT = 50;
+const VSS_DESKTOP_VERIFY_MAX_FILES = 20;
+const VSS_DESKTOP_VERIFY_MAX_BYTES = 5 * 1024 * 1024;
+const VSS_DESKTOP_VERIFY_MAX_WALL_CLOCK_MS = 500;
+const VSS_DESKTOP_CHAT_VERIFY_MAX_FILES = 5;
+const VSS_DESKTOP_CHAT_VERIFY_MAX_BYTES = 1 * 1024 * 1024;
+const VSS_DESKTOP_CHAT_VERIFY_MAX_WALL_CLOCK_MS = 100;
+const VSS_MOBILE_VERIFY_MAX_FILES = 3;
+const VSS_MOBILE_VERIFY_MAX_BYTES = 512 * 1024;
+const VSS_MOBILE_VERIFY_MAX_WALL_CLOCK_MS = 100;
+const VSS_MOBILE_CHAT_VERIFY_MAX_FILES = 1;
+const VSS_MOBILE_CHAT_VERIFY_MAX_BYTES = 512 * 1024;
+const VSS_MOBILE_CHAT_VERIFY_MAX_WALL_CLOCK_MS = 100;
 const VSS_FOREGROUND_LOCKED_WAIT_MS = 400;
 const VSS_MANUAL_LOCKED_WAIT_MS = 3_000;
 const VSS_INDEX_DISPOSE_TIMEOUT_MS = 1_000;
 const VSS_RECOVERY_COOLDOWN_MS = 5_000;
 const VSS_GLOBAL_SHUTDOWN_KEY = "__personalAssistantVssShutdownBarriers";
 
-export type VSSRefreshStatus = 'updated' | 'unchanged' | 'removed' | 'skipped';
+export type VSSRefreshStatus = 'updated' | 'unchanged' | 'metadata-synced' | 'removed' | 'skipped';
 
 export interface VSSOperationSummary {
     aborted: boolean;
@@ -67,6 +80,10 @@ export interface VSSOperationSummary {
     removed: number;
     skipped: number;
     failed: number;
+    metadataSynced: number;
+    verificationQueued: number;
+    verificationChecked: number;
+    dirtyConfirmed: number;
     storagePersisted?: boolean;
 }
 
@@ -109,6 +126,20 @@ export interface VSSReconcileSummary extends VSSOperationSummary {
     hasMore: boolean;
 }
 
+export interface VSSVerifyOptions {
+    reason?: string;
+    maxFiles?: number;
+    maxBytes?: number;
+    maxWallClockMs?: number;
+    fastPath?: boolean;
+}
+
+export interface VSSVerifySummary extends VSSOperationSummary {
+    markedDirty: number;
+    hasMore: boolean;
+    bytesReadEstimate: number;
+}
+
 interface StoragePersistenceStatus {
     persisted: boolean;
     usage?: number;
@@ -147,6 +178,18 @@ interface RebuildChunkWorkItem {
     text: string;
 }
 
+type VerifyReason = "metadata-drift" | "file-open" | "rolling-check";
+
+interface VerifyRecord {
+    path: string;
+    first: number;
+    last: number;
+    reason: VerifyReason;
+    observedMtime: number;
+    observedSize: number;
+    contentHash: string;
+}
+
 export type VSSIndexOpenMode = "foreground" | "manual";
 
 interface VSSEnsureIndexOptions {
@@ -171,6 +214,8 @@ export class VSS {
     private aiService: AIService;
     private aiUtils: AIUtils;
     private dirty = new Map<string, DirtyTimestamps>();
+    private verifyQueue = new Map<string, VerifyRecord>();
+    private dirtyEpochCounter = 0;
     private isFlushing = false;
     private operationQueue: Promise<void> = Promise.resolve();
     private initializationPromise: Promise<void> | null = null;
@@ -286,11 +331,23 @@ export class VSS {
             return false;
         }
 
-        const changed = this.markDirtyPath(file.path);
-        if (changed) {
-            await this.persistDirtyJournal();
+        if (!record) {
+            const changed = this.markDirtyPath(file.path);
+            if (changed) {
+                await this.persistDirtyJournal();
+            }
+            return changed;
         }
-        return changed;
+
+        if (this.status === "fallback") {
+            const changed = this.markDirtyPath(file.path);
+            if (changed) {
+                await this.persistDirtyJournal();
+            }
+            return changed;
+        }
+
+        return this.enqueueVerifyPath(file, record, "file-open");
     }
 
     async handleDelete(file: TFile): Promise<void> {
@@ -326,6 +383,17 @@ export class VSS {
 
     hasDirtyChanges(): boolean {
         return this.dirty.size > 0;
+    }
+
+    hasPendingVerification(): boolean {
+        return this.verifyQueue.size > 0;
+    }
+
+    getMaintenanceState(): { dirtyCount: number; verificationPending: number } {
+        return {
+            dirtyCount: this.dirty.size,
+            verificationPending: this.verifyQueue.size,
+        };
     }
 
     async canAutoMaintain(): Promise<boolean> {
@@ -372,6 +440,7 @@ export class VSS {
             }
 
             let dirtyChanged = false;
+            let indexStateChanged = false;
             const quiet = options.force ? 0 : VSS_PARAMS.quietWindow;
             const limit = options.limit ?? VSS_PARAMS.maxPerMinute;
             const currentPaths = options.force
@@ -402,7 +471,9 @@ export class VSS {
                     if (!currentPaths.has(indexedPath)) {
                         await this.index.deleteFile(indexedPath);
                         this.dirty.delete(indexedPath);
+                        this.verifyQueue.delete(indexedPath);
                         dirtyChanged = true;
+                        indexStateChanged = true;
                         summary.removed++;
                     }
                 }
@@ -412,12 +483,16 @@ export class VSS {
                 this.assertActive();
                 if (!options.force && this.processedWindow.count >= VSS_PARAMS.maxPerMinute) break;
 
+                const dirtyStamp = this.getDirtyStamp(path);
                 const file = this.plugin.app.vault.getAbstractFileByPath(path);
                 emitProgress("scanning", { currentFile: file instanceof TFile ? getProgressFileName(file) : getProgressPathName(path) });
                 if (!file || !(file instanceof TFile)) {
-                    this.dirty.delete(path);
-                    dirtyChanged = true;
+                    if (this.clearDirtyIfStampMatches(path, dirtyStamp)) {
+                        dirtyChanged = true;
+                    }
+                    this.verifyQueue.delete(path);
                     if (this.index) await this.index.deleteFile(path);
+                    indexStateChanged = true;
                     summary.removed++;
                     filesDone++;
                     emitProgress("writing", { currentFile: getProgressPathName(path) });
@@ -436,21 +511,32 @@ export class VSS {
                 }
 
                 if (status === 'unchanged') summary.unchanged++;
-                if (status === 'removed') summary.removed++;
-                if (status === 'skipped') summary.skipped++;
+                if (status === 'metadata-synced') summary.metadataSynced++;
+                if (status === 'removed') {
+                    summary.removed++;
+                    indexStateChanged = true;
+                }
+                if (status === 'skipped') {
+                    summary.skipped++;
+                    indexStateChanged = true;
+                }
                 if (status === 'updated') {
                     summary.updated++;
                     filesUpdated++;
                     this.processedWindow.count++;
+                    indexStateChanged = true;
                 }
                 filesDone++;
                 emitProgress("writing", { currentFile: getProgressFileName(file) });
 
-                this.dirty.delete(path);
-                dirtyChanged = true;
+                if (this.clearDirtyIfStampMatches(path, dirtyStamp)) {
+                    dirtyChanged = true;
+                }
             }
             if (dirtyChanged) {
                 await this.persistDirtyJournal();
+            }
+            if (indexStateChanged) {
                 await this.writeIndexStateFiles();
             }
             emitProgress("ready", { filesDone });
@@ -482,6 +568,7 @@ export class VSS {
         await index.reset();
         this.status = "ready";
         this.dirty.clear();
+        this.verifyQueue.clear();
         this.nextEmbeddingRequestAt = 0;
         const files = this.plugin.getVSSFiles();
         const summary = createEmptyOperationSummary();
@@ -682,6 +769,9 @@ export class VSS {
         this.marker = null;
         this.manifest = null;
         this.status = "uninitialized";
+        this.dirty.clear();
+        this.verifyQueue.clear();
+        await this.persistDirtyJournal();
         new Notice("Local memory copy reset.", 3000);
     }
 
@@ -747,6 +837,7 @@ export class VSS {
                 summary.scanned++;
                 if (!fileByPath.has(record.path)) {
                     await index.deleteFile(record.path);
+                    this.verifyQueue.delete(record.path);
                     if (this.dirty.delete(record.path)) {
                         dirtyChanged = true;
                     }
@@ -776,10 +867,14 @@ export class VSS {
                 this.reconcileCursor++;
                 summary.scanned++;
                 const record = recordByPath.get(file.path);
-                if (!record || record.mtime !== file.stat.mtime || record.size !== file.stat.size) {
+                if (!record) {
                     if (this.markDirtyPath(file.path)) {
                         dirtyChanged = true;
                         summary.markedDirty++;
+                    }
+                } else if (record.mtime !== file.stat.mtime || record.size !== file.stat.size) {
+                    if (this.enqueueVerifyPath(file, record, "metadata-drift")) {
+                        summary.verificationQueued++;
                     }
                 } else {
                     summary.unchanged++;
@@ -827,12 +922,8 @@ export class VSS {
                 }
                 summary.scanned++;
                 summary.verified++;
-                const fileState = await this.computeFileHash(file);
-                if (fileState.tooLarge || !fileState.hash || fileState.hash !== record.contentHash) {
-                    if (this.markDirtyPath(file.path)) {
-                        dirtyChanged = true;
-                        summary.markedDirty++;
-                    }
+                if (this.enqueueVerifyPath(file, record, "rolling-check")) {
+                    summary.verificationQueued++;
                 }
                 await maybeYield();
             }
@@ -845,6 +936,181 @@ export class VSS {
             await this.writeIndexStateFiles();
         }
         return summary;
+    }
+
+    async verifyPendingChanges(options: VSSVerifyOptions = {}): Promise<VSSVerifySummary> {
+        const summary: VSSVerifySummary = {
+            ...createEmptyOperationSummary(),
+            markedDirty: 0,
+            hasMore: false,
+            bytesReadEstimate: 0,
+        };
+        if (this.disposed) {
+            summary.aborted = true;
+            return summary;
+        }
+
+        await this.initialize();
+        this.assertActive();
+        await this.ensureIndex({ allowFallback: false, mode: "manual" });
+        if (!this.index || !await this.isDurableReady()) {
+            summary.aborted = true;
+            return summary;
+        }
+
+        const budget = this.getVerifyBudget(options);
+        const startedAt = performance.now();
+        const candidates = Array.from(this.verifyQueue.values());
+
+        for (const candidate of candidates) {
+            this.assertActive();
+            if (summary.verificationChecked >= budget.maxFiles) {
+                summary.hasMore = true;
+                break;
+            }
+            if (
+                summary.verificationChecked > 0
+                && performance.now() - startedAt >= budget.maxWallClockMs
+            ) {
+                summary.hasMore = true;
+                break;
+            }
+
+            const file = this.plugin.app.vault.getAbstractFileByPath(candidate.path);
+            if (!file || !(file instanceof TFile) || !this.isEligible(file)) {
+                summary.verificationChecked++;
+                await this.runExclusive(async () => {
+                    if (!this.isCurrentVerifyRecord(candidate)) return;
+                    this.verifyQueue.delete(candidate.path);
+                    if (this.index) {
+                        await this.index.deleteFile(candidate.path);
+                        await this.writeIndexStateFiles();
+                    }
+                });
+                summary.removed++;
+                continue;
+            }
+
+            const estimatedBytes = Math.min(file.stat.size, VSS_PARAMS.largeFileThreshold);
+            if (
+                summary.verificationChecked > 0
+                && summary.bytesReadEstimate + estimatedBytes > budget.maxBytes
+            ) {
+                summary.hasMore = true;
+                break;
+            }
+            summary.bytesReadEstimate += estimatedBytes;
+
+            const dirtyStamp = this.getDirtyStamp(candidate.path);
+            let fileState: { hash: string | null; tooLarge: boolean };
+            summary.verificationChecked++;
+            try {
+                fileState = await this.computeFileHash(file);
+            } catch (error) {
+                summary.failed++;
+                this.plugin.log("Could not verify Memory file hash", { path: candidate.path, error });
+                continue;
+            }
+
+            if (fileState.tooLarge || !fileState.hash) {
+                await this.runExclusive(async () => {
+                    if (!this.isCurrentVerifyRecord(candidate)) return;
+                    this.verifyQueue.delete(candidate.path);
+                    if (this.index) {
+                        await this.index.deleteFile(candidate.path);
+                        await this.writeIndexStateFiles();
+                    }
+                    if (this.clearDirtyIfStampMatches(candidate.path, dirtyStamp)) {
+                        await this.persistDirtyJournal();
+                    }
+                });
+                if (fileState.tooLarge) {
+                    summary.skipped++;
+                } else {
+                    summary.removed++;
+                }
+                continue;
+            }
+
+            if (fileState.hash !== candidate.contentHash) {
+                await this.runExclusive(async () => {
+                    if (!this.isCurrentVerifyRecord(candidate)) return;
+                    if (this.markDirtyPath(candidate.path)) {
+                        summary.dirtyConfirmed++;
+                        summary.markedDirty++;
+                        await this.persistDirtyJournal();
+                    }
+                });
+                continue;
+            }
+
+            const verifiedHash = fileState.hash;
+            await this.runExclusive(async () => {
+                if (!this.isCurrentVerifyRecord(candidate)) return;
+                if (!this.index) return;
+                await this.index.updateFileMetadata({
+                    path: file.path,
+                    contentHash: verifiedHash,
+                    mtime: file.stat.mtime,
+                    size: file.stat.size,
+                });
+                this.verifyQueue.delete(candidate.path);
+                if (this.clearDirtyIfStampMatches(candidate.path, dirtyStamp)) {
+                    await this.persistDirtyJournal();
+                }
+                summary.metadataSynced++;
+            });
+
+            await sleep(0);
+        }
+
+        summary.hasMore = summary.hasMore || this.verifyQueue.size > 0;
+        return summary;
+    }
+
+    private getVerifyBudget(options: VSSVerifyOptions): Required<Pick<VSSVerifyOptions, "maxFiles" | "maxBytes" | "maxWallClockMs">> {
+        if (options.maxFiles !== undefined && options.maxBytes !== undefined && options.maxWallClockMs !== undefined) {
+            return {
+                maxFiles: Math.max(1, options.maxFiles),
+                maxBytes: Math.max(1, options.maxBytes),
+                maxWallClockMs: Math.max(1, options.maxWallClockMs),
+            };
+        }
+        if (options.fastPath) {
+            if (Platform.isMobile) {
+                return {
+                    maxFiles: VSS_MOBILE_CHAT_VERIFY_MAX_FILES,
+                    maxBytes: VSS_MOBILE_CHAT_VERIFY_MAX_BYTES,
+                    maxWallClockMs: VSS_MOBILE_CHAT_VERIFY_MAX_WALL_CLOCK_MS,
+                };
+            }
+            return {
+                maxFiles: VSS_DESKTOP_CHAT_VERIFY_MAX_FILES,
+                maxBytes: VSS_DESKTOP_CHAT_VERIFY_MAX_BYTES,
+                maxWallClockMs: VSS_DESKTOP_CHAT_VERIFY_MAX_WALL_CLOCK_MS,
+            };
+        }
+        if (Platform.isMobile) {
+            return {
+                maxFiles: VSS_MOBILE_VERIFY_MAX_FILES,
+                maxBytes: VSS_MOBILE_VERIFY_MAX_BYTES,
+                maxWallClockMs: VSS_MOBILE_VERIFY_MAX_WALL_CLOCK_MS,
+            };
+        }
+        return {
+            maxFiles: VSS_DESKTOP_VERIFY_MAX_FILES,
+            maxBytes: VSS_DESKTOP_VERIFY_MAX_BYTES,
+            maxWallClockMs: VSS_DESKTOP_VERIFY_MAX_WALL_CLOCK_MS,
+        };
+    }
+
+    private isCurrentVerifyRecord(record: VerifyRecord): boolean {
+        const current = this.verifyQueue.get(record.path);
+        return Boolean(current
+            && current.last === record.last
+            && current.contentHash === record.contentHash
+            && current.observedMtime === record.observedMtime
+            && current.observedSize === record.observedSize);
     }
 
     async cleanLegacyJsonCache(): Promise<void> {
@@ -904,23 +1170,37 @@ export class VSS {
 
         if (fileState.tooLarge) {
             await this.index.deleteFile(file.path);
+            this.verifyQueue.delete(file.path);
             this.plugin.log(`Skipped VSS index for large file ${file.path}`);
             return 'skipped';
         }
 
         if (!fileState.hash) {
             await this.index.deleteFile(file.path);
+            this.verifyQueue.delete(file.path);
             return 'removed';
         }
 
         const cached = await this.index.getFileRecord(file.path);
         if (cached && cached.contentHash === fileState.hash) {
+            if (cached.mtime !== file.stat.mtime || cached.size !== file.stat.size) {
+                await this.index.updateFileMetadata({
+                    path: file.path,
+                    contentHash: fileState.hash,
+                    mtime: file.stat.mtime,
+                    size: file.stat.size,
+                });
+                this.verifyQueue.delete(file.path);
+                return 'metadata-synced';
+            }
+            this.verifyQueue.delete(file.path);
             return 'unchanged';
         }
 
         const prepared = await this.prepareFileVectors(file, fileState.hash, getEmbeddingsModel);
         if (prepared.chunks.length === 0) {
             await this.index.deleteFile(file.path);
+            this.verifyQueue.delete(file.path);
             return 'removed';
         }
 
@@ -930,6 +1210,7 @@ export class VSS {
             mtime: file.stat.mtime,
             size: file.stat.size,
         }, prepared.chunks, prepared.embeddings);
+        this.verifyQueue.delete(file.path);
         return 'updated';
     }
 
@@ -1006,6 +1287,7 @@ export class VSS {
 
         const notesToCheck = this.plugin.getVSSFiles().length;
         const dirtyCount = this.dirty.size;
+        const verificationPending = this.verifyQueue.size;
         const status = this.status;
 
         if ((status === "ready" || status === "fallback") && dirtyCount > 0) {
@@ -1014,6 +1296,7 @@ export class VSS {
                 action: "refresh",
                 notesToCheck,
                 notesLikelyToUpdate: dirtyCount,
+                verificationPending,
                 requiresApproval: true,
                 canAnswerNow: true,
             };
@@ -1024,6 +1307,7 @@ export class VSS {
                 reason: "ready",
                 action: "none",
                 notesToCheck,
+                verificationPending,
                 requiresApproval: false,
                 canAnswerNow: true,
             };
@@ -1165,16 +1449,59 @@ export class VSS {
         return manifest?.id ?? "personal-assistant";
     }
 
+    private enqueueVerifyPath(file: TFile, record: VSSFileRecord, reason: VerifyReason, now = Date.now()): boolean {
+        if (this.dirty.has(file.path)) return false;
+        const existing = this.verifyQueue.get(file.path);
+        const updated: VerifyRecord = existing
+            ? {
+                ...existing,
+                last: now,
+                reason,
+                observedMtime: file.stat.mtime,
+                observedSize: file.stat.size,
+                contentHash: record.contentHash,
+            }
+            : {
+                path: file.path,
+                first: now,
+                last: now,
+                reason,
+                observedMtime: file.stat.mtime,
+                observedSize: file.stat.size,
+                contentHash: record.contentHash,
+            };
+        const changed = !existing
+            || existing.last !== updated.last
+            || existing.reason !== updated.reason
+            || existing.observedMtime !== updated.observedMtime
+            || existing.observedSize !== updated.observedSize
+            || existing.contentHash !== updated.contentHash;
+        this.verifyQueue.set(file.path, updated);
+        return changed;
+    }
+
     private markDirtyPath(path: string, now = Date.now()): boolean {
         const existing = this.dirty.get(path);
+        const epoch = ++this.dirtyEpochCounter;
         const updated: DirtyTimestamps = existing
-            ? { first: existing.first, last: now }
-            : { first: now, last: now };
-        if (existing && existing.last === updated.last) {
-            return false;
-        }
+            ? { first: existing.first, last: now, epoch }
+            : { first: now, last: now, epoch };
         this.dirty.set(path, updated);
+        this.verifyQueue.delete(path);
         return true;
+    }
+
+    private getDirtyStamp(path: string): number | undefined {
+        const dirty = this.dirty.get(path);
+        return dirty ? dirty.epoch ?? dirty.last : undefined;
+    }
+
+    private clearDirtyIfStampMatches(path: string, stamp: number | undefined): boolean {
+        const dirty = this.dirty.get(path);
+        if (!dirty) return false;
+        const currentStamp = dirty.epoch ?? dirty.last;
+        if (stamp === undefined || currentStamp !== stamp) return false;
+        return this.dirty.delete(path);
     }
 
     private async deleteIndexedPath(path: string): Promise<void> {
@@ -1186,6 +1513,7 @@ export class VSS {
             return;
         }
 
+        this.verifyQueue.delete(path);
         const dirtyChanged = this.dirty.delete(path);
         if (this.index) {
             await this.index.deleteFile(path);
@@ -1424,6 +1752,15 @@ export class VSS {
         }
         this.index = memoryIndex;
         this.status = "fallback";
+        let dirtyChanged = false;
+        for (const path of Array.from(this.verifyQueue.keys())) {
+            if (this.markDirtyPath(path)) {
+                dirtyChanged = true;
+            }
+        }
+        if (dirtyChanged) {
+            await this.persistDirtyJournal();
+        }
     }
 
     private async loadLegacyJsonIntoMemoryIndex(memoryIndex: MemoryVectorIndex): Promise<void> {
@@ -1647,7 +1984,7 @@ export class VSS {
             const parsed = JSON.parse(raw);
             Object.entries(parsed || {}).forEach(([p, ts]) => {
                 if (typeof ts === 'number') {
-                    this.dirty.set(p, { first: ts, last: ts });
+                    this.dirty.set(p, { first: ts, last: ts, epoch: ++this.dirtyEpochCounter });
                     return;
                 }
                 if (ts && typeof ts === 'object') {
@@ -1655,11 +1992,11 @@ export class VSS {
                     const first = typeof record.first === 'number' ? record.first : undefined;
                     const last = typeof record.last === 'number' ? record.last : undefined;
                     if (first !== undefined && last !== undefined) {
-                        this.dirty.set(p, { first, last });
+                        this.dirty.set(p, { first, last, epoch: ++this.dirtyEpochCounter });
                     } else if (first !== undefined) {
-                        this.dirty.set(p, { first, last: first });
+                        this.dirty.set(p, { first, last: first, epoch: ++this.dirtyEpochCounter });
                     } else if (last !== undefined) {
-                        this.dirty.set(p, { first: last, last });
+                        this.dirty.set(p, { first: last, last, epoch: ++this.dirtyEpochCounter });
                     }
                 }
             });
@@ -1674,7 +2011,10 @@ export class VSS {
         if (this.disposed) return;
         const path = this.plugin.join(this.vssCacheDir, VSS_PARAMS.dirtyJournal);
         await this.ensureLegacyCacheDir();
-        const record = Object.fromEntries(this.dirty);
+        const record = Object.fromEntries(Array.from(this.dirty, ([dirtyPath, timestamps]) => [
+            dirtyPath,
+            { first: timestamps.first, last: timestamps.last },
+        ]));
         await this.plugin.app.vault.adapter.write(path, JSON.stringify(record));
     }
 
@@ -1891,6 +2231,10 @@ function createEmptyOperationSummary(): VSSOperationSummary {
         removed: 0,
         skipped: 0,
         failed: 0,
+        metadataSynced: 0,
+        verificationQueued: 0,
+        verificationChecked: 0,
+        dirtyConfirmed: 0,
     };
 }
 

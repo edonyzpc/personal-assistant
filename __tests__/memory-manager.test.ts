@@ -113,6 +113,20 @@ const createPlan = (overrides: Partial<MemoryMaintenancePlan> = {}): MemoryMaint
     ...overrides,
 });
 
+const createOperationSummary = (overrides: Record<string, unknown> = {}) => ({
+    aborted: false,
+    updated: 0,
+    unchanged: 0,
+    removed: 0,
+    skipped: 0,
+    failed: 0,
+    metadataSynced: 0,
+    verificationQueued: 0,
+    verificationChecked: 0,
+    dirtyConfirmed: 0,
+    ...overrides,
+});
+
 const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unknown> = {}) => ({
     app: {},
     settings: {
@@ -125,42 +139,23 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
         getMemoryReadiness: jest.fn(async () => plan),
         canAutoMaintain: jest.fn(async () => true),
         hasDirtyChanges: jest.fn(() => false),
-        flush: jest.fn(async (_options?: unknown) => ({
-            aborted: false,
-            updated: 0,
-            unchanged: 0,
-            removed: 0,
-            skipped: 0,
-            failed: 0,
+        hasPendingVerification: jest.fn(() => false),
+        verifyPendingChanges: jest.fn(async (_options?: unknown) => ({
+            ...createOperationSummary(),
+            markedDirty: 0,
+            hasMore: false,
+            bytesReadEstimate: 0,
         })),
+        flush: jest.fn(async (_options?: unknown) => createOperationSummary()),
         reconcileLocalFiles: jest.fn(async (_options?: unknown) => ({
-            aborted: false,
-            updated: 0,
-            unchanged: 0,
-            removed: 0,
-            skipped: 0,
-            failed: 0,
+            ...createOperationSummary(),
             scanned: 0,
             markedDirty: 0,
             verified: 0,
             hasMore: false,
         })),
-        refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => ({
-            aborted: false,
-            updated: 0,
-            unchanged: 0,
-            removed: 0,
-            skipped: 0,
-            failed: 0,
-        })),
-        rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => ({
-            aborted: false,
-            updated: 0,
-            unchanged: 0,
-            removed: 0,
-            skipped: 0,
-            failed: 0,
-        })),
+        refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
+        rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
     },
     saveSettings: jest.fn(async () => undefined),
     updateMemoryStatusBar: jest.fn(async () => undefined),
@@ -188,6 +183,85 @@ describe('MemoryManager chat decisions', () => {
         expect(decision).toEqual({ decision: 'use-memory' });
         expect(plugin.vss.getMemoryReadiness).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages).toEqual([]);
+    });
+
+    it('runs a small desktop verification pass before chat when readiness is otherwise ready', async () => {
+        const plugin = createPlugin(createPlan({ verificationPending: 1 }));
+        plugin.vss.verifyPendingChanges.mockResolvedValue({
+            ...createOperationSummary({
+                metadataSynced: 1,
+                verificationChecked: 1,
+            }),
+            markedDirty: 0,
+            hasMore: false,
+            bytesReadEstimate: 128,
+        });
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+
+        const decision = await manager.ensureReadyForChat('question');
+
+        expect(decision).toEqual({ decision: 'use-memory' });
+        expect(plugin.vss.verifyPendingChanges).toHaveBeenCalledWith(expect.objectContaining({
+            reason: 'chat',
+            fastPath: true,
+        }));
+        expect(plugin.vss.flush).not.toHaveBeenCalled();
+        expect(plugin.updateMemoryStatusBar).toHaveBeenCalled();
+    });
+
+    it('runs a bounded verification pass before chat on mobile too', async () => {
+        const obsidianMock = jest.requireMock('obsidian') as { Platform: { isMobile: boolean } };
+        obsidianMock.Platform.isMobile = true;
+        try {
+            const plugin = createPlugin(createPlan({ verificationPending: 1 }));
+            const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+
+            const decision = await manager.ensureReadyForChat('question');
+
+            expect(decision).toEqual({ decision: 'use-memory' });
+            expect(plugin.vss.verifyPendingChanges).toHaveBeenCalledWith(expect.objectContaining({
+                reason: 'chat',
+                fastPath: true,
+            }));
+        } finally {
+            obsidianMock.Platform.isMobile = false;
+        }
+    });
+
+    it('rechecks readiness after chat verification confirms dirty work', async () => {
+        const readyPlan = createPlan({ verificationPending: 1 });
+        const changedPlan = createPlan({
+            reason: 'changed-notes',
+            action: 'refresh',
+            notesLikelyToUpdate: 1,
+            requiresApproval: true,
+        });
+        const plugin = createPlugin(readyPlan);
+        plugin.vss.getMemoryReadiness
+            .mockResolvedValueOnce(readyPlan)
+            .mockResolvedValueOnce(changedPlan);
+        plugin.vss.verifyPendingChanges.mockResolvedValue({
+            ...createOperationSummary({
+                dirtyConfirmed: 1,
+                verificationChecked: 1,
+            }),
+            markedDirty: 1,
+            hasMore: false,
+            bytesReadEstimate: 128,
+        });
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        (manager as any).requestApproval = jest.fn(async () => 'answer-now'); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const decision = await manager.ensureReadyForChat('question');
+
+        expect((manager as any).requestApproval).toHaveBeenCalledWith(expect.objectContaining({ // eslint-disable-line @typescript-eslint/no-explicit-any
+            reason: 'changed-notes',
+            action: 'refresh',
+        }));
+        expect(decision).toEqual({
+            decision: 'answer-now',
+            message: 'Memory was not used for this answer.',
+        });
     });
 
     it('answers normally when memory is disabled', async () => {
@@ -292,6 +366,38 @@ describe('MemoryManager chat decisions', () => {
             jest.useRealTimers();
         }
     });
+
+    it('schedules confirmed dirty flush before retrying partial verify failures', async () => {
+        jest.useFakeTimers();
+        const plugin = createPlugin(createPlan(), { memoryApprovalPolicy: 'auto-refresh-after-prepare' });
+        plugin.vss.verifyPendingChanges.mockResolvedValue({
+            ...createOperationSummary({
+                failed: 1,
+                dirtyConfirmed: 1,
+                verificationChecked: 2,
+            }),
+            markedDirty: 1,
+            hasMore: true,
+            bytesReadEstimate: 256,
+        });
+        plugin.vss.hasDirtyChanges.mockReturnValue(true);
+        plugin.vss.hasPendingVerification.mockReturnValue(true);
+        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        manager.startAutoMaintenance();
+        const flushSpy = jest.spyOn(manager, 'scheduleAutoFlush');
+        const verifySpy = jest.spyOn(manager, 'scheduleVerify');
+
+        try {
+            await (manager as any).runBackgroundTask('verify', 'unit'); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+            expect(plugin.updateMemoryStatusBar).toHaveBeenCalled();
+            expect(flushSpy).toHaveBeenCalledWith('verify', 0);
+            expect(verifySpy).toHaveBeenCalledWith('retry:unit', expect.any(Number));
+        } finally {
+            manager.stopAutoMaintenance();
+            jest.useRealTimers();
+        }
+    });
 });
 
 describe('MemoryManager command decisions', () => {
@@ -388,14 +494,9 @@ describe('MemoryManager command decisions', () => {
             options?.onProgress?.({ phase: 'retrying', retryDelayMs: 5000 });
             options?.onProgress?.({ phase: 'writing', filesDone: 2, filesTotal: 3 });
             options?.onProgress?.({ phase: 'ready' });
-            return {
-                aborted: false,
+            return createOperationSummary({
                 updated: 3,
-                unchanged: 0,
-                removed: 0,
-                skipped: 0,
-                failed: 0,
-            };
+            });
         });
         const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
 
@@ -447,14 +548,9 @@ describe('MemoryManager command decisions', () => {
             const preparing = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
             await Promise.resolve();
             manager.stopAutoMaintenance();
-            resolveRebuild({
-                aborted: false,
+            resolveRebuild(createOperationSummary({
                 updated: 1,
-                unchanged: 0,
-                removed: 0,
-                skipped: 0,
-                failed: 0,
-            });
+            }));
             const result = await preparing;
 
             expect(result.ok).toBe(false);

@@ -72,6 +72,10 @@ export class SqliteVectorIndex implements VectorIndex {
         return this.enqueue(() => this.send<null>("upsertFile", { fileState, chunks, embeddings }).then(() => undefined));
     }
 
+    updateFileMetadata(fileState: VSSFileState): Promise<void> {
+        return this.enqueue(() => this.send<null>("updateFileMetadata", { fileState }).then(() => undefined));
+    }
+
     deleteFile(path: string): Promise<void> {
         return this.enqueue(() => this.send<null>("deleteFile", { path }).then(() => undefined));
     }

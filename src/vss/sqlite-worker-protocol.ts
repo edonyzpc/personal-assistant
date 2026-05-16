@@ -22,6 +22,7 @@ export type SqliteWorkerRequest =
         };
     }
     | { id: number; type: "upsertFile"; payload: { fileState: VSSFileState; chunks: VSSChunk[]; embeddings: number[][] } }
+    | { id: number; type: "updateFileMetadata"; payload: { fileState: VSSFileState } }
     | { id: number; type: "deleteFile"; payload: { path: string } }
     | { id: number; type: "listFilePaths"; payload: Record<string, never> }
     | { id: number; type: "listFileRecords"; payload: Record<string, never> }

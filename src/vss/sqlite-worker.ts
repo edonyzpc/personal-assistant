@@ -71,6 +71,10 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
             requireDb();
             upsertFile(request.payload.fileState, request.payload.chunks, request.payload.embeddings);
             return null;
+        case "updateFileMetadata":
+            requireDb();
+            updateFileMetadata(request.payload.fileState);
+            return null;
         case "deleteFile":
             requireDb();
             deleteFile(request.payload.path);
@@ -401,6 +405,30 @@ function deleteFile(path: string): void {
         sql: "DELETE FROM vss_files WHERE path = ?",
         bind: [path],
     });
+}
+
+function updateFileMetadata(fileState: VSSFileState): void {
+    const startedAt = performance.now();
+    const database = requireDb();
+    database.exec("BEGIN");
+    try {
+        database.exec({
+            sql: `
+                UPDATE vss_files
+                SET content_hash = ?, mtime = ?, size = ?, status = 'ready', updated_at = ?
+                WHERE path = ?
+            `,
+            bind: [fileState.contentHash, fileState.mtime, fileState.size, Date.now(), fileState.path],
+        });
+
+        database.exec("COMMIT");
+        status = "ready";
+        lastRefreshDurationMs = performance.now() - startedAt;
+        lastErrorCode = undefined;
+    } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+    }
 }
 
 function listFilePaths(): string[] {

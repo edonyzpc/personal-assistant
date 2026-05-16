@@ -1,6 +1,7 @@
 export type DirtyTimestamps = {
     first: number; // first time the file was marked dirty after last flush
     last: number;  // most recent time the file was marked dirty
+    epoch?: number; // monotonic in-memory guard used to avoid clearing newer dirty work
 };
 
 export type DirtyRecord = Record<string, DirtyTimestamps>;

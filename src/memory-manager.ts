@@ -20,6 +20,7 @@ export interface MemoryMaintenancePlan {
     action: "none" | "refresh" | "rebuild";
     notesToCheck: number;
     notesLikelyToUpdate?: number;
+    verificationPending?: number;
     requiresApproval: boolean;
     canAnswerNow: boolean;
 }
@@ -51,8 +52,10 @@ const PREPARE_RECONCILE_DELAY_MS = 5_000;
 const RESUME_RECONCILE_DELAY_MS = 30_000;
 const PERIODIC_RECONCILE_INTERVAL_MS = 60 * 60_000;
 const QUIET_AUTO_FLUSH_DELAY_MS = 30_000;
+const DESKTOP_VERIFY_DELAY_MS = 1_000;
+const MOBILE_VERIFY_DELAY_MS = 5_000;
 type MemoryApprovalContext = "chat" | "command";
-type BackgroundTaskKind = "flush" | "reconcile";
+type BackgroundTaskKind = "flush" | "reconcile" | "verify";
 
 export const MEMORY_USER_FORBIDDEN_TERMS = [
     "VSS",
@@ -112,6 +115,7 @@ export class MemoryManager {
     private lastAnswerNowAt = 0;
     private started = false;
     private autoFlushTimer: ReturnType<typeof setTimeout> | null = null;
+    private verifyTimer: ReturnType<typeof setTimeout> | null = null;
     private reconcileTimer: ReturnType<typeof setTimeout> | null = null;
     private periodicReconcileTimer: ReturnType<typeof setInterval> | null = null;
     private maintenanceQueue: Promise<void> = Promise.resolve();
@@ -162,6 +166,10 @@ export class MemoryManager {
             clearTimeout(this.autoFlushTimer);
             this.autoFlushTimer = null;
         }
+        if (this.verifyTimer) {
+            clearTimeout(this.verifyTimer);
+            this.verifyTimer = null;
+        }
         if (this.reconcileTimer) {
             clearTimeout(this.reconcileTimer);
             this.reconcileTimer = null;
@@ -187,6 +195,18 @@ export class MemoryManager {
         }, Math.max(0, delayMs));
     }
 
+    scheduleVerify(reason: string, delayMs = this.getVerifyDelayMs()): void {
+        if (!this.started) return;
+        if (!this.isAutoPolicyEnabled()) return;
+        if (this.verifyTimer) {
+            clearTimeout(this.verifyTimer);
+        }
+        this.verifyTimer = setTimeout(() => {
+            this.verifyTimer = null;
+            this.enqueueBackgroundTask("verify", reason);
+        }, Math.max(0, delayMs));
+    }
+
     scheduleReconcile(reason: string, delayMs = 0): void {
         if (!this.started) return;
         if (!this.isAutoPolicyEnabled()) return;
@@ -209,7 +229,7 @@ export class MemoryManager {
             return { decision: "use-memory" };
         }
 
-        const plan = await this.getMaintenancePlan();
+        let plan = await this.getMaintenancePlan();
         if (!this.isLifecycleCurrent(lifecycleToken)) {
             return { decision: "answer-now" };
         }
@@ -220,6 +240,17 @@ export class MemoryManager {
                 message: "I could not prepare memory this time, so I answered normally.",
             };
         }
+        if (this.shouldTryChatFastVerification(plan) && await this.canRunLocalMaintenance()) {
+            await this.verifyPendingBeforeChat(lifecycleToken);
+            if (!this.isLifecycleCurrent(lifecycleToken)) {
+                return { decision: "answer-now" };
+            }
+            plan = await this.getMaintenancePlan();
+            if (!this.isLifecycleCurrent(lifecycleToken)) {
+                return { decision: "answer-now" };
+            }
+        }
+
         if (plan.reason === "ready" || plan.action === "none" && !plan.requiresApproval) {
             return { decision: "use-memory" };
         }
@@ -227,6 +258,9 @@ export class MemoryManager {
         if (plan.reason === "changed-notes" && this.isAutoPolicyEnabled()) {
             if (await this.canRunAutoMaintenance()) {
                 this.scheduleReconcile("chat", 0);
+                if (plan.verificationPending && plan.verificationPending > 0) {
+                    this.scheduleVerify("chat");
+                }
                 this.scheduleAutoFlush("chat", 0);
                 return {
                     decision: "use-memory",
@@ -409,6 +443,28 @@ export class MemoryManager {
                 if (this.plugin.vss.hasDirtyChanges()) {
                     this.scheduleAutoFlush("dirty-pending", QUIET_AUTO_FLUSH_DELAY_MS);
                 }
+            } else if (kind === "verify") {
+                const summary = await this.plugin.vss.verifyPendingChanges({ reason });
+                if (!this.isLifecycleCurrent(lifecycleToken)) return;
+                if (!summary.aborted) {
+                    await this.plugin.updateMemoryStatusBar();
+                }
+                if (summary.dirtyConfirmed > 0 || this.plugin.vss.hasDirtyChanges()) {
+                    this.scheduleAutoFlush("verify", 0);
+                }
+                const hasPendingVerification = summary.hasMore || this.plugin.vss.hasPendingVerification();
+                if (summary.failed > 0) {
+                    this.plugin.log("Background memory verification skipped some notes", { failed: summary.failed });
+                    const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
+                    this.backgroundFailureCount++;
+                    if (hasPendingVerification) {
+                        this.scheduleVerify(`retry:${reason}`, delay);
+                    }
+                    return;
+                }
+                if (hasPendingVerification) {
+                    this.scheduleVerify(reason);
+                }
             } else {
                 const summary = await this.plugin.vss.reconcileLocalFiles({
                     reason,
@@ -424,6 +480,9 @@ export class MemoryManager {
                 if (summary.hasMore) {
                     this.scheduleReconcile(reason, 1_000);
                 }
+                if (summary.verificationQueued > 0 || this.plugin.vss.hasPendingVerification()) {
+                    this.scheduleVerify("reconcile");
+                }
                 if (summary.markedDirty > 0 || this.plugin.vss.hasDirtyChanges()) {
                     this.scheduleAutoFlush("reconcile", 0);
                 }
@@ -436,9 +495,47 @@ export class MemoryManager {
             this.backgroundFailureCount++;
             if (kind === "flush") {
                 this.scheduleAutoFlush(`retry:${reason}`, delay);
+            } else if (kind === "verify") {
+                this.scheduleVerify(`retry:${reason}`, delay);
             } else {
                 this.scheduleReconcile(`retry:${reason}`, delay);
             }
+        }
+    }
+
+    private shouldTryChatFastVerification(plan: MemoryMaintenancePlan): boolean {
+        return (plan.reason === "ready" || plan.action === "none" && !plan.requiresApproval)
+            && Boolean(plan.verificationPending && plan.verificationPending > 0);
+    }
+
+    private async verifyPendingBeforeChat(lifecycleToken: number): Promise<void> {
+        try {
+            const summary = await this.plugin.vss.verifyPendingChanges({
+                reason: "chat",
+                fastPath: true,
+            });
+            if (!this.isLifecycleCurrent(lifecycleToken)) return;
+            if (!summary.aborted) {
+                await this.plugin.updateMemoryStatusBar();
+            }
+            if (summary.dirtyConfirmed > 0 || this.plugin.vss.hasDirtyChanges()) {
+                this.scheduleAutoFlush("verify", 0);
+            }
+            const hasPendingVerification = summary.hasMore || this.plugin.vss.hasPendingVerification();
+            if (summary.failed > 0) {
+                this.plugin.log("Chat memory verification skipped some notes", { failed: summary.failed });
+                const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
+                this.backgroundFailureCount++;
+                if (hasPendingVerification) {
+                    this.scheduleVerify("chat-retry", delay);
+                }
+            } else if (hasPendingVerification) {
+                this.scheduleVerify("chat");
+            }
+        } catch (error) {
+            if (!this.isLifecycleCurrent(lifecycleToken)) return;
+            this.plugin.log("Chat memory verification failed", error);
+            this.scheduleVerify("chat-retry");
         }
     }
 
@@ -453,6 +550,10 @@ export class MemoryManager {
 
     private async canRunAutoMaintenance(): Promise<boolean> {
         if (!this.isAutoPolicyEnabled()) return false;
+        return this.canRunLocalMaintenance();
+    }
+
+    private async canRunLocalMaintenance(): Promise<boolean> {
         try {
             return await this.plugin.vss.canAutoMaintain();
         } catch (error) {
@@ -465,6 +566,10 @@ export class MemoryManager {
         if (this.plugin.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) return;
         this.plugin.settings.memoryApprovalPolicy = AUTO_MEMORY_POLICY;
         await (this.plugin as { saveSettings?: () => Promise<void> }).saveSettings?.();
+    }
+
+    private getVerifyDelayMs(): number {
+        return Platform.isMobile ? MOBILE_VERIFY_DELAY_MS : DESKTOP_VERIFY_DELAY_MS;
     }
 
     private requestApproval(

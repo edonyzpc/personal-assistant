@@ -369,7 +369,13 @@ export class PluginManager extends Plugin {
         this.registerEvent(
             this.app.workspace.on("file-open", async (file) => {
                 if (await this.vss.handleFileOpen(file)) {
-                    this.memoryManager.scheduleAutoFlush("file-open");
+                    const state = this.vss.getMaintenanceState();
+                    if (state.verificationPending > 0) {
+                        this.memoryManager.scheduleVerify("file-open");
+                    }
+                    if (state.dirtyCount > 0) {
+                        this.memoryManager.scheduleAutoFlush("file-open");
+                    }
                     await this.updateMemoryStatusBar();
                 }
             })
@@ -708,8 +714,12 @@ export class PluginManager extends Plugin {
             return "VSS not initialized";
         })();
         const storageText = stats.storagePersisted === false ? "best-effort storage" : "persistent storage";
+        const maintenance = this.vss.getMaintenanceState();
+        const maintenanceText = maintenance.dirtyCount > 0 || maintenance.verificationPending > 0
+            ? ` Pending maintenance: ${maintenance.dirtyCount} dirty, ${maintenance.verificationPending} verification.`
+            : "";
         const performanceText = this.getVssPerformanceNotice(stats.chunkCount);
-        new Notice(`Diagnostic details: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${performanceText}`, 7000);
+        new Notice(`Diagnostic details: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${maintenanceText}${performanceText}`, 7000);
     }
 
     private getVssPerformanceNotice(chunkCount: number): string {
