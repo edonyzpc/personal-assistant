@@ -1416,6 +1416,26 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.llm-view\s+\.message-action-button\s+svg\s*{[\s\S]*?display:\s*block;[\s\S]*?flex:\s*0 0 auto;/);
     });
 
+    it('keeps ldrs chat loaders visible when reduced motion is enabled', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+        const reducedMotionStart = css.indexOf('@media (prefers-reduced-motion: reduce)');
+        const reducedMotionEnd = css.indexOf('.llm-view.is-narrow', reducedMotionStart);
+        const reducedMotionBlock = css.slice(reducedMotionStart, reducedMotionEnd);
+
+        expect(reducedMotionStart).toBeGreaterThanOrEqual(0);
+        expect(reducedMotionEnd).toBeGreaterThan(reducedMotionStart);
+        expect(reducedMotionBlock).not.toContain('.pa-chat-role-loader-element');
+        expect(reducedMotionBlock).not.toMatch(/\.pa-chat-role-loader-fallback\s*{[\s\S]*?display:\s*inline-flex;/);
+    });
+
+    it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+
+        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);/);
+        expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
+        expect(css).toMatch(/\.llm-input\s*{[\s\S]*?flex:\s*0 0 auto;[\s\S]*?z-index:\s*3;/);
+    });
+
     it('keeps message bubble enter animation opt-in', () => {
         const css = readFileSync('src/custom.css', 'utf8');
         const messageBaseRule = css.match(/\.llm-message\s*{([\s\S]*?)\n}/);
@@ -1472,6 +1492,91 @@ describe('LLMView turn lifecycle', () => {
         await view.onOpen();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('28px');
+    });
+
+    it('reserves keyboard clearance from the mobile visual viewport and disconnects listeners', async () => {
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const viewportState = { offsetTop: 0, height: 540 };
+        const viewportListeners = new Map<string, Array<() => void>>();
+        const visualViewport = {
+            get offsetTop() {
+                return viewportState.offsetTop;
+            },
+            get height() {
+                return viewportState.height;
+            },
+            addEventListener: jest.fn((type: string, listener: () => void) => {
+                const listeners = viewportListeners.get(type) ?? [];
+                listeners.push(listener);
+                viewportListeners.set(type, listeners);
+            }),
+            removeEventListener: jest.fn(),
+        } as unknown as VisualViewport;
+        Object.defineProperty(globalThis.window, 'visualViewport', {
+            configurable: true,
+            value: visualViewport,
+        });
+
+        await view.onOpen();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
+        expect(visualViewport.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
+        expect(visualViewport.addEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+
+        viewportState.height = 900;
+        viewportListeners.get('resize')?.forEach((listener) => listener());
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+
+        await view.onClose();
+
+        expect(visualViewport.removeEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
+        expect(visualViewport.removeEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+    });
+
+    it('uses native mobile keyboard events when the visual viewport does not report keyboard overlap', async () => {
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const windowListeners = new Map<string, Array<EventListener>>();
+        const windowWithKeyboardEvents = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+            addEventListener: jest.Mock;
+            removeEventListener: jest.Mock;
+        };
+        windowWithKeyboardEvents.innerHeight = 900;
+        windowWithKeyboardEvents.innerWidth = 430;
+        windowWithKeyboardEvents.addEventListener = jest.fn((type: string, listener: EventListener) => {
+            const listeners = windowListeners.get(type) ?? [];
+            listeners.push(listener);
+            windowListeners.set(type, listeners);
+        });
+        windowWithKeyboardEvents.removeEventListener = jest.fn();
+
+        await view.onOpen();
+
+        expect(windowWithKeyboardEvents.addEventListener).toHaveBeenCalledWith('keyboardWillShow', expect.any(Function));
+
+        windowListeners.get('keyboardWillShow')?.forEach((listener) => {
+            listener({ keyboardHeight: 336 } as Event & { keyboardHeight: number });
+        });
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+
+        windowListeners.get('keyboardWillHide')?.forEach((listener) => {
+            listener({} as Event);
+        });
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+
+        await view.onClose();
+
+        expect(windowWithKeyboardEvents.removeEventListener).toHaveBeenCalledWith('keyboardWillShow', expect.any(Function));
+        expect(windowWithKeyboardEvents.removeEventListener).toHaveBeenCalledWith('keyboardWillHide', expect.any(Function));
     });
 
     it('adds a specific assistant message to the editor from its message menu', async () => {

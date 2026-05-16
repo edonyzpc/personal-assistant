@@ -375,15 +375,20 @@ body {
 
 .llm-view {
 	--pa-chat-status-bar-clearance: 0px;
+	--pa-chat-keyboard-clearance: 0px;
+	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
 	height: 100%;
-	padding: 0;
+	min-height: 0;
+	overflow: hidden;
+	padding: 0 0 var(--pa-chat-keyboard-clearance, 0px);
 	background: var(--background-primary);
 }
 
 .llm-chat-container {
-	flex-grow: 1;
+	flex: 1 1 auto;
+	min-height: 0;
 	overflow-y: auto;
 	padding: 14px;
 	border-bottom: 1px solid var(--background-modifier-border);
@@ -757,9 +762,11 @@ body {
 
 .llm-input {
 	position: relative;
+	flex: 0 0 auto;
 	padding: 12px 12px calc(12px + var(--pa-chat-status-bar-clearance, 0px));
 	background: var(--background-primary);
 	border-top: 1px solid var(--background-modifier-border);
+	z-index: 3;
 }
 
 .pa-chat-composer-row {
@@ -1237,10 +1244,6 @@ body {
 		transition: none;
 	}
 
-	.llm-view .pa-chat-role-loader-element {
-		display: none;
-	}
-
 	.llm-view .pa-chat-role-loader-thinking {
 		animation: none;
 		color: var(--interactive-accent);
@@ -1249,10 +1252,6 @@ body {
 	.llm-view .pa-chat-role-loader-assistant {
 		animation: none;
 		color: var(--interactive-accent);
-	}
-
-	.llm-view .pa-chat-role-loader-fallback {
-		display: inline-flex;
 	}
 
 	.llm-view .pa-chat-role-loader-fallback span {

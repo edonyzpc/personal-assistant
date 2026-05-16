@@ -55,6 +55,23 @@ export const CHAT_MENU_IDLE_CLOSE_MS = 8000;
 
 let ldrsLoadersRequested = false;
 
+type KeyboardPluginEventName = 'keyboardWillShow' | 'keyboardDidShow' | 'keyboardWillHide' | 'keyboardDidHide';
+
+interface KeyboardPluginInfo {
+    keyboardHeight?: number;
+}
+
+interface KeyboardPluginListenerHandle {
+    remove?: () => Promise<void> | void;
+}
+
+interface KeyboardPluginFacade {
+    addListener?: (
+        eventName: KeyboardPluginEventName,
+        listenerFunc: (info: KeyboardPluginInfo) => void,
+    ) => Promise<KeyboardPluginListenerHandle> | KeyboardPluginListenerHandle;
+}
+
 function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) => void): void {
     if (ldrsLoadersRequested) return;
     if (typeof document === 'undefined' || typeof globalThis.customElements === 'undefined') return;
@@ -168,6 +185,15 @@ export class LLMView extends ItemView {
     private panelResizeObserver: ResizeObserver | null = null;
     private statusBarResizeObserver: ResizeObserver | null = null;
     private statusBarResizeHandler: (() => void) | null = null;
+    private keyboardVisualViewport: VisualViewport | null = null;
+    private keyboardViewportHandler: (() => void) | null = null;
+    private keyboardUpdateFrame: number | null = null;
+    private keyboardWindowListeners: Array<{ type: KeyboardPluginEventName; listener: EventListener }> = [];
+    private keyboardDocumentListeners: Array<{ type: 'focusin' | 'focusout'; listener: EventListener }> = [];
+    private keyboardPluginListenerHandles: KeyboardPluginListenerHandle[] = [];
+    private keyboardFocusFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    private nativeKeyboardHeight = 0;
+    private focusFallbackKeyboardHeight = 0;
     private memoryStatusUnsubscribe: (() => void) | null = null;
     private memorySourceBarId = 0;
 
@@ -339,6 +365,9 @@ export class LLMView extends ItemView {
             });
             this.scheduledScrollFrame = frameId;
         };
+        this.observeKeyboardClearance(containerEl, () => {
+            scrollToBottom({ behavior: 'auto' });
+        });
 
         const pauseAutoScroll = () => {
             shouldAutoScroll = false;
@@ -1555,11 +1584,13 @@ export class LLMView extends ItemView {
         this.panelResizeObserver?.disconnect();
         this.panelResizeObserver = null;
         this.disconnectStatusBarClearance();
+        this.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
     }
 
     private startViewSession(): number {
         this.cancelScheduledScroll();
+        this.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
         this.viewSessionId += 1;
         return this.viewSessionId;
@@ -1642,6 +1673,341 @@ export class LLMView extends ItemView {
             window.removeEventListener('resize', this.statusBarResizeHandler);
         }
         this.statusBarResizeHandler = null;
+    }
+
+    private observeKeyboardClearance(containerEl: HTMLElement, onClearanceChange?: () => void) {
+        this.disconnectKeyboardClearance();
+
+        let previousClearance = -1;
+        const applyClearance = (notify: boolean) => {
+            const clearance = this.calculateKeyboardClearance(containerEl);
+            if (clearance === previousClearance) return;
+            previousClearance = clearance;
+            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
+            if (notify) {
+                onClearanceChange?.();
+            }
+        };
+        const updateClearance = () => {
+            this.keyboardUpdateFrame = null;
+            applyClearance(true);
+        };
+        const scheduleUpdate = () => {
+            if (this.keyboardUpdateFrame !== null) return;
+            if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+                this.keyboardUpdateFrame = window.requestAnimationFrame(updateClearance);
+                return;
+            }
+            updateClearance();
+        };
+
+        this.keyboardViewportHandler = scheduleUpdate;
+        this.keyboardVisualViewport = this.getVisualViewport();
+        applyClearance(false);
+
+        this.keyboardVisualViewport?.addEventListener('resize', scheduleUpdate);
+        this.keyboardVisualViewport?.addEventListener('scroll', scheduleUpdate);
+
+        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+            window.addEventListener('resize', scheduleUpdate);
+            window.addEventListener('orientationchange', scheduleUpdate);
+        }
+        this.addDocumentKeyboardListener('focusin', scheduleUpdate);
+        this.addDocumentKeyboardListener('focusout', scheduleUpdate);
+        this.addDocumentKeyboardListener('focusin', () => this.scheduleKeyboardFocusFallback(containerEl, scheduleUpdate));
+        this.addDocumentKeyboardListener('focusout', () => this.scheduleKeyboardFocusFallbackClear(containerEl, scheduleUpdate));
+        this.observeNativeKeyboardEvents(scheduleUpdate);
+    }
+
+    private disconnectKeyboardClearance() {
+        if (
+            this.keyboardUpdateFrame !== null
+            && typeof window !== 'undefined'
+            && typeof window.cancelAnimationFrame === 'function'
+        ) {
+            window.cancelAnimationFrame(this.keyboardUpdateFrame);
+        }
+        this.keyboardUpdateFrame = null;
+        this.clearKeyboardFocusFallbackTimer();
+
+        if (this.keyboardViewportHandler) {
+            this.keyboardVisualViewport?.removeEventListener('resize', this.keyboardViewportHandler);
+            this.keyboardVisualViewport?.removeEventListener('scroll', this.keyboardViewportHandler);
+
+            if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+                window.removeEventListener('resize', this.keyboardViewportHandler);
+                window.removeEventListener('orientationchange', this.keyboardViewportHandler);
+            }
+            if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+                document.removeEventListener('focusin', this.keyboardViewportHandler);
+                document.removeEventListener('focusout', this.keyboardViewportHandler);
+            }
+        }
+        if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
+            for (const { type, listener } of this.keyboardWindowListeners) {
+                window.removeEventListener(type, listener);
+            }
+        }
+        this.keyboardWindowListeners = [];
+        if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
+            for (const { type, listener } of this.keyboardDocumentListeners) {
+                document.removeEventListener(type, listener);
+            }
+        }
+        this.keyboardDocumentListeners = [];
+
+        for (const handle of this.keyboardPluginListenerHandles.splice(0)) {
+            try {
+                void handle.remove?.();
+            } catch (error) {
+                this.plugin.log?.('Could not remove native keyboard listener', error);
+            }
+        }
+
+        this.keyboardVisualViewport = null;
+        this.keyboardViewportHandler = null;
+        this.nativeKeyboardHeight = 0;
+        this.focusFallbackKeyboardHeight = 0;
+    }
+
+    private getVisualViewport(): VisualViewport | null {
+        if (typeof window === 'undefined') return null;
+        return window.visualViewport ?? null;
+    }
+
+    private calculateKeyboardClearance(containerEl: HTMLElement): number {
+        const viewport = this.getVisualViewport();
+        if (!containerEl.getBoundingClientRect) return 0;
+
+        const viewRect = containerEl.getBoundingClientRect();
+        const viewportOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, viewport);
+        const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.getEffectiveNativeKeyboardHeight());
+        return Math.max(viewportOverlap, nativeOverlap);
+    }
+
+    private calculateVisualViewportKeyboardOverlap(viewRect: DOMRect, viewport: VisualViewport | null): number {
+        if (!viewport) return 0;
+
+        const viewportBottom = viewport.offsetTop + viewport.height;
+        if (!Number.isFinite(viewportBottom) || viewportBottom <= 0) return 0;
+        const overlap = viewRect.bottom - viewportBottom;
+        if (overlap <= 1) return 0;
+        return Math.ceil(Math.min(overlap, viewRect.height));
+    }
+
+    private calculateKeyboardHeightOverlap(viewRect: DOMRect, keyboardHeight: number): number {
+        if (keyboardHeight <= 0) return 0;
+
+        const layoutHeight = this.getLayoutViewportHeight();
+        if (layoutHeight <= 0) return Math.ceil(Math.min(keyboardHeight, viewRect.height));
+
+        const keyboardTop = layoutHeight - keyboardHeight;
+        const overlap = viewRect.bottom - keyboardTop;
+        if (overlap <= 1) return 0;
+        return Math.ceil(Math.min(overlap, keyboardHeight, viewRect.height));
+    }
+
+    private getEffectiveNativeKeyboardHeight(): number {
+        return Math.max(this.nativeKeyboardHeight, this.focusFallbackKeyboardHeight);
+    }
+
+    private getLayoutViewportHeight(): number {
+        if (typeof window !== 'undefined' && Number.isFinite(window.innerHeight) && window.innerHeight > 0) {
+            return window.innerHeight;
+        }
+        if (typeof document !== 'undefined') {
+            return document.documentElement?.clientHeight
+                ?? document.body?.clientHeight
+                ?? 0;
+        }
+        return 0;
+    }
+
+    private observeNativeKeyboardEvents(scheduleUpdate: () => void) {
+        const handleShow = (source: unknown) => {
+            const keyboardHeight = this.readKeyboardHeight(source);
+            if (keyboardHeight > 0) {
+                this.nativeKeyboardHeight = keyboardHeight;
+                this.focusFallbackKeyboardHeight = 0;
+            }
+            scheduleUpdate();
+        };
+        const handleHide = () => {
+            this.nativeKeyboardHeight = 0;
+            this.focusFallbackKeyboardHeight = 0;
+            scheduleUpdate();
+        };
+
+        this.addWindowKeyboardListener('keyboardWillShow', handleShow);
+        this.addWindowKeyboardListener('keyboardDidShow', handleShow);
+        this.addWindowKeyboardListener('keyboardWillHide', handleHide);
+        this.addWindowKeyboardListener('keyboardDidHide', handleHide);
+
+        const keyboardPlugin = this.getNativeKeyboardPlugin();
+        if (!keyboardPlugin?.addListener) return;
+        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardWillShow', handleShow, scheduleUpdate);
+        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardDidShow', handleShow, scheduleUpdate);
+        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardWillHide', handleHide, scheduleUpdate);
+        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardDidHide', handleHide, scheduleUpdate);
+    }
+
+    private addWindowKeyboardListener(type: KeyboardPluginEventName, listener: (source: unknown) => void) {
+        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+        const eventListener: EventListener = (event) => listener(event);
+        window.addEventListener(type, eventListener);
+        this.keyboardWindowListeners.push({ type, listener: eventListener });
+    }
+
+    private addDocumentKeyboardListener(type: 'focusin' | 'focusout', listener: (source: unknown) => void) {
+        if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
+        const eventListener: EventListener = (event) => listener(event);
+        document.addEventListener(type, eventListener);
+        this.keyboardDocumentListeners.push({ type, listener: eventListener });
+    }
+
+    private addKeyboardPluginListener(
+        keyboardPlugin: KeyboardPluginFacade,
+        type: KeyboardPluginEventName,
+        listener: (source: unknown) => void,
+        activeHandler: () => void,
+    ) {
+        try {
+            const handleOrPromise = keyboardPlugin.addListener?.(type, listener);
+            if (!handleOrPromise) return;
+            void Promise.resolve(handleOrPromise).then((handle) => {
+                if (!handle) return;
+                if (this.keyboardViewportHandler !== activeHandler) {
+                    void handle.remove?.();
+                    return;
+                }
+                this.keyboardPluginListenerHandles.push(handle);
+            }).catch((error) => {
+                this.plugin.log?.('Could not observe native keyboard events', error);
+            });
+        } catch (error) {
+            this.plugin.log?.('Could not observe native keyboard events', error);
+        }
+    }
+
+    private getNativeKeyboardPlugin(): KeyboardPluginFacade | null {
+        if (typeof window === 'undefined') return null;
+        const candidate = window as typeof window & {
+            Capacitor?: {
+                Plugins?: {
+                    Keyboard?: KeyboardPluginFacade;
+                };
+            };
+        };
+        return candidate.Capacitor?.Plugins?.Keyboard ?? null;
+    }
+
+    private scheduleKeyboardFocusFallback(containerEl: HTMLElement, scheduleUpdate: () => void) {
+        this.clearKeyboardFocusFallbackTimer();
+        if (!this.shouldUseKeyboardFocusFallback(containerEl)) return;
+
+        this.keyboardFocusFallbackTimer = setTimeout(() => {
+            this.keyboardFocusFallbackTimer = null;
+            if (!this.shouldUseKeyboardFocusFallback(containerEl)) return;
+            if (this.hasMeasuredKeyboardClearance(containerEl)) return;
+
+            const fallbackHeight = this.estimatePhoneKeyboardHeight();
+            if (fallbackHeight <= 0 || fallbackHeight === this.focusFallbackKeyboardHeight) return;
+            this.focusFallbackKeyboardHeight = fallbackHeight;
+            scheduleUpdate();
+        }, 450);
+    }
+
+    private scheduleKeyboardFocusFallbackClear(containerEl: HTMLElement, scheduleUpdate: () => void) {
+        this.clearKeyboardFocusFallbackTimer();
+        this.keyboardFocusFallbackTimer = setTimeout(() => {
+            this.keyboardFocusFallbackTimer = null;
+            if (this.isKeyboardEditableFocused(containerEl)) return;
+            if (this.focusFallbackKeyboardHeight === 0) return;
+            this.focusFallbackKeyboardHeight = 0;
+            scheduleUpdate();
+        }, 120);
+    }
+
+    private clearKeyboardFocusFallbackTimer() {
+        if (this.keyboardFocusFallbackTimer === null) return;
+        clearTimeout(this.keyboardFocusFallbackTimer);
+        this.keyboardFocusFallbackTimer = null;
+    }
+
+    private shouldUseKeyboardFocusFallback(containerEl: HTMLElement): boolean {
+        if (!this.isKeyboardEditableFocused(containerEl)) return false;
+        if (!this.isLikelyTouchPhoneViewport()) return false;
+        return this.nativeKeyboardHeight <= 0;
+    }
+
+    private isKeyboardEditableFocused(containerEl: HTMLElement): boolean {
+        if (typeof document === 'undefined') return false;
+        const activeElement = document.activeElement as HTMLElement | null;
+        if (!activeElement || !this.isElementInside(containerEl, activeElement)) return false;
+        const tagName = activeElement.tagName?.toLowerCase();
+        return tagName === 'textarea'
+            || tagName === 'input'
+            || activeElement.isContentEditable
+            || activeElement.getAttribute?.('contenteditable') === 'true';
+    }
+
+    private isElementInside(root: HTMLElement, element: HTMLElement): boolean {
+        let current: HTMLElement | null = element;
+        while (current) {
+            if (current === root) return true;
+            current = current.parentElement;
+        }
+        return false;
+    }
+
+    private isLikelyTouchPhoneViewport(): boolean {
+        if (typeof window === 'undefined') return false;
+        const width = this.getLayoutViewportWidth();
+        const height = this.getLayoutViewportHeight();
+        const shortSide = Math.min(width || Number.POSITIVE_INFINITY, height || Number.POSITIVE_INFINITY);
+        if (!Number.isFinite(shortSide) || shortSide > 520) return false;
+
+        const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+        const touchPoints = typeof navigator !== 'undefined' ? navigator.maxTouchPoints ?? 0 : 0;
+        return coarsePointer || touchPoints > 0;
+    }
+
+    private hasMeasuredKeyboardClearance(containerEl: HTMLElement): boolean {
+        if (!containerEl.getBoundingClientRect) return false;
+        const viewRect = containerEl.getBoundingClientRect();
+        const visualOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, this.getVisualViewport());
+        const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.nativeKeyboardHeight);
+        return Math.max(visualOverlap, nativeOverlap) > 0;
+    }
+
+    private estimatePhoneKeyboardHeight(): number {
+        const layoutHeight = this.getLayoutViewportHeight();
+        if (layoutHeight <= 0) return 0;
+        return Math.ceil(Math.min(Math.max(layoutHeight * 0.45, 300), layoutHeight * 0.6));
+    }
+
+    private getLayoutViewportWidth(): number {
+        if (typeof window !== 'undefined' && Number.isFinite(window.innerWidth) && window.innerWidth > 0) {
+            return window.innerWidth;
+        }
+        if (typeof document !== 'undefined') {
+            return document.documentElement?.clientWidth
+                ?? document.body?.clientWidth
+                ?? 0;
+        }
+        return 0;
+    }
+
+    private readKeyboardHeight(source: unknown): number {
+        const value = this.readKeyboardHeightValue(source)
+            ?? this.readKeyboardHeightValue((source as { detail?: unknown } | null)?.detail);
+        const keyboardHeight = typeof value === 'number' ? value : Number(value);
+        return Number.isFinite(keyboardHeight) && keyboardHeight > 0 ? keyboardHeight : 0;
+    }
+
+    private readKeyboardHeightValue(source: unknown): unknown {
+        if (!source || typeof source !== 'object') return undefined;
+        return (source as { keyboardHeight?: unknown }).keyboardHeight;
     }
 
     private getStatusBarElement(): HTMLElement | null {
