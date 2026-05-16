@@ -1431,9 +1431,13 @@ describe('LLMView turn lifecycle', () => {
     it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
         const css = readFileSync('src/custom.css', 'utf8');
 
-        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);/);
+        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
+        expect(css).not.toMatch(/\.llm-view\.is-keyboard-open\s*{[\s\S]*?padding-bottom:\s*0;/);
         expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
+        expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-chat-container\s*{[\s\S]*?padding-bottom:\s*calc\(14px \+ var\(--pa-chat-composer-height,\s*0px\)\);/);
+        expect(css).toMatch(/\.pa-chat-empty-state\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*100%;/);
         expect(css).toMatch(/\.llm-input\s*{[\s\S]*?flex:\s*0 0 auto;[\s\S]*?z-index:\s*3;/);
+        expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-input\s*{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?z-index:\s*30;/);
     });
 
     it('keeps message bubble enter animation opt-in', () => {
@@ -1577,6 +1581,56 @@ describe('LLMView turn lifecycle', () => {
 
         expect(windowWithKeyboardEvents.removeEventListener).toHaveBeenCalledWith('keyboardWillShow', expect.any(Function));
         expect(windowWithKeyboardEvents.removeEventListener).toHaveBeenCalledWith('keyboardWillHide', expect.any(Function));
+    });
+
+    it('pre-reserves keyboard clearance on mobile focus before keyboard height events arrive', async () => {
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const documentListeners = new Map<string, Array<EventListener>>();
+        const documentWithFocus = {
+            activeElement: null as MockElement | null,
+            querySelector: jest.fn(() => null),
+            addEventListener: jest.fn((type: string, listener: EventListener) => {
+                const listeners = documentListeners.get(type) ?? [];
+                listeners.push(listener);
+                documentListeners.set(type, listeners);
+            }),
+            removeEventListener: jest.fn(),
+        };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: documentWithFocus,
+        });
+        const mobileWindow = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+        };
+        mobileWindow.innerHeight = 900;
+        mobileWindow.innerWidth = 430;
+        Object.defineProperty(globalThis.window, 'matchMedia', {
+            configurable: true,
+            value: jest.fn(() => ({ matches: true } as MediaQueryList)),
+        });
+        Object.defineProperty(globalThis.navigator, 'maxTouchPoints', {
+            configurable: true,
+            value: 5,
+        });
+
+        await view.onOpen();
+
+        documentWithFocus.activeElement = getTextArea(containerEl);
+        documentListeners.get('focusin')?.forEach((listener) => {
+            listener({} as Event);
+        });
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('405px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-composer-height')).toBe('80px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+
+        await view.onClose();
+
+        expect(documentWithFocus.removeEventListener).toHaveBeenCalledWith('focusin', expect.any(Function));
+        expect(documentWithFocus.removeEventListener).toHaveBeenCalledWith('focusout', expect.any(Function));
     });
 
     it('adds a specific assistant message to the editor from its message menu', async () => {

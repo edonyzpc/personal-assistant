@@ -376,6 +376,7 @@ body {
 .llm-view {
 	--pa-chat-status-bar-clearance: 0px;
 	--pa-chat-keyboard-clearance: 0px;
+	--pa-chat-composer-height: 0px;
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
@@ -383,6 +384,7 @@ body {
 	min-height: 0;
 	overflow: hidden;
 	padding: 0 0 var(--pa-chat-keyboard-clearance, 0px);
+	position: relative;
 	background: var(--background-primary);
 }
 
@@ -392,6 +394,10 @@ body {
 	overflow-y: auto;
 	padding: 14px;
 	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.llm-view.is-keyboard-open .llm-chat-container {
+	padding-bottom: calc(14px + var(--pa-chat-composer-height, 0px));
 }
 
 .llm-chat-container::-webkit-scrollbar {
@@ -769,6 +775,14 @@ body {
 	z-index: 3;
 }
 
+.llm-view.is-keyboard-open .llm-input {
+	position: absolute;
+	left: 0;
+	right: 0;
+	bottom: var(--pa-chat-keyboard-clearance, 0px);
+	z-index: 30;
+}
+
 .pa-chat-composer-row {
 	position: relative;
 	display: block;
@@ -1122,6 +1136,7 @@ body {
 }
 
 .pa-chat-empty-state {
+	box-sizing: border-box;
 	display: flex;
 	min-height: 100%;
 	flex-direction: column;
