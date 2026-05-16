@@ -1,5 +1,5 @@
 import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, setIcon, Modal, Setting, type EventRef } from 'obsidian';
-import { ChatService, type ChatAgentStatus, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
+import { ChatService, type ChatAgentStatus, type ChatContextUsedItem, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
 import type { MemoryMaintenancePlan } from './memory-manager';
@@ -20,6 +20,8 @@ interface ThinkingStatusView {
     loaderEl?: HTMLElement;
     reasoningSectionEl?: HTMLElement;
     reasoningContentEl?: HTMLElement;
+    contextUsedSectionEl?: HTMLElement;
+    contextUsedListEl?: HTMLElement;
     expanded: boolean;
     detailItems: HTMLElement[];
     lastDetail?: string;
@@ -391,18 +393,22 @@ export class LLMView extends ItemView {
             id: number;
             prompt: string;
             memoryMetadata?: ChatTurnMemoryMetadata;
+            contextUsedItems: ChatContextUsedItem[];
+            activityDetails: string[];
             userMessage?: RenderedMessage;
             assistantMessage?: RenderedMessage;
             statusView?: ThinkingStatusView;
             terminalRow?: HTMLDivElement;
-            reasoningTranscript?: string;
+            providerReasoningObserved?: boolean;
         };
         type HistoryTurnEntry = {
             kind: 'history';
             user: ChatMessage;
             assistant: ChatMessage;
             memoryMetadata?: ChatTurnMemoryMetadata;
-            reasoningTranscript?: string;
+            contextUsedItems?: ChatContextUsedItem[];
+            activityDetails?: string[];
+            providerReasoningObserved?: boolean;
         };
         type TerminalTurnEntry = {
             kind: 'terminal';
@@ -934,9 +940,17 @@ export class LLMView extends ItemView {
                         onDelete: () => deleteHistoryPair(pairStart),
                         disableDeleteWhileGenerating: true,
                     });
-                    if (entry.reasoningTranscript) {
+                    if (
+                        entry.providerReasoningObserved
+                        || (entry.contextUsedItems?.length ?? 0) > 0
+                        || (entry.activityDetails?.length ?? 0) > 0
+                    ) {
                         const statusView = createThinkingStatusView();
-                        renderReasoningTranscript(statusView, entry.reasoningTranscript);
+                        entry.activityDetails?.forEach((detail) => appendThinkingStatus(statusView, detail));
+                        if (entry.providerReasoningObserved) {
+                            renderProviderReasoningNotice(statusView);
+                        }
+                        renderContextUsedItems(statusView, entry.contextUsedItems ?? []);
                         completeThinkingStatus(statusView);
                     }
                     createMessageElement(entry.assistant, {
@@ -1133,27 +1147,27 @@ export class LLMView extends ItemView {
             scrollToBottom();
         };
 
-        const ensureReasoningTranscript = (statusView: ThinkingStatusView) => {
+        const ensureProviderReasoningNotice = (statusView: ThinkingStatusView) => {
             if (statusView.reasoningContentEl) return statusView.reasoningContentEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-reasoning' });
-            section.createDiv({ cls: 'thinking-status-section-title', text: 'Model thinking' });
+            section.createDiv({ cls: 'thinking-status-section-title', text: 'Provider thinking' });
             const contentEl = section.createDiv({ cls: 'thinking-status-reasoning-content' });
             statusView.reasoningSectionEl = section;
             statusView.reasoningContentEl = contentEl;
             return contentEl;
         };
 
-        const renderReasoningTranscript = (statusView: ThinkingStatusView, transcript: string) => {
-            const contentEl = ensureReasoningTranscript(statusView);
-            contentEl.setText(transcript);
+        const renderProviderReasoningNotice = (statusView: ThinkingStatusView) => {
+            const contentEl = ensureProviderReasoningNotice(statusView);
+            contentEl.setText('Provider reasoning was received but is hidden. It is not a source or a Memory reference.');
         };
 
         const appendProviderReasoning = (turn: UiTurn, delta: string) => {
             if (!delta) return;
-            turn.reasoningTranscript = `${turn.reasoningTranscript ?? ''}${delta}`;
+            turn.providerReasoningObserved = true;
             turn.statusView ??= createThinkingStatusView(turn);
             turn.statusView.summaryEl.setText('Qwen model is thinking...');
-            renderReasoningTranscript(turn.statusView, turn.reasoningTranscript);
+            renderProviderReasoningNotice(turn.statusView);
             scrollToBottom();
         };
 
@@ -1162,50 +1176,255 @@ export class LLMView extends ItemView {
             statusView.summaryEl.setText('Thinking complete');
         };
 
+        const displaySourceName = (path: string): string => {
+            const cleanPath = path.trim();
+            if (!cleanPath) return 'Untitled note';
+            const lastSegment = cleanPath.split('/').filter(Boolean).pop() ?? cleanPath;
+            return lastSegment.replace(/\.md$/i, '') || 'Untitled note';
+        };
+
+        const formatSourceSummary = (sources: { path: string }[] | undefined): string => {
+            const names = [...new Set((sources ?? []).map((source) => displaySourceName(source.path)).filter(Boolean))];
+            if (names.length === 0) return '';
+            const visible = names.slice(0, 4).join(', ');
+            const remaining = names.length - 4;
+            return remaining > 0 ? `${visible}, +${remaining} more` : visible;
+        };
+
+        const getToolContextUsedInfo = (tool: string): Pick<ChatContextUsedItem, 'category' | 'label' | 'detail'> => {
+            if (tool === 'get_current_note_context') {
+                return {
+                    category: 'current-note',
+                    label: 'Current note',
+                    detail: 'Read-only current note context',
+                };
+            }
+            if (tool === 'search_vault_metadata') {
+                return {
+                    category: 'vault-metadata',
+                    label: 'Vault metadata',
+                    detail: 'Read-only metadata search results',
+                };
+            }
+            if (tool === 'list_recent_notes') {
+                return {
+                    category: 'recent-notes',
+                    label: 'Recent notes',
+                    detail: 'Read-only recent note list',
+                };
+            }
+            if (tool === 'read_note_outline') {
+                return {
+                    category: 'note-outline',
+                    label: 'Note outline',
+                    detail: 'Read-only note outline',
+                };
+            }
+            return {
+                category: 'read-only-tool',
+                label: 'Read-only tool',
+                detail: 'Read-only tool context',
+            };
+        };
+
+        const formatToolRunningStatus = (tool: string): string => {
+            if (tool === 'get_current_note_context') return 'Reading current note...';
+            if (tool === 'search_vault_metadata') return 'Searching vault metadata...';
+            if (tool === 'list_recent_notes') return 'Reading recent notes...';
+            if (tool === 'read_note_outline') return 'Reading note outline...';
+            return 'Reading vault context...';
+        };
+
+        const dedupeContextSources = (sources: ChatContextUsedItem['sources'] = []) => {
+            const seen = new Set<string>();
+            return sources.filter((source) => {
+                if (!source.path) return false;
+                const key = `${source.path}:${source.chunkIndex ?? ''}`;
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            }).slice(0, 6);
+        };
+
+        const mergeContextUsedItems = (
+            current: ChatContextUsedItem[],
+            incoming: ChatContextUsedItem[],
+        ): ChatContextUsedItem[] => {
+            const byKey = new Map<string, ChatContextUsedItem>();
+            for (const item of [...current, ...incoming]) {
+                const key = `${item.category}:${item.label}`;
+                const existing = byKey.get(key);
+                if (!existing) {
+                    byKey.set(key, {
+                        ...item,
+                        sources: dedupeContextSources(item.sources),
+                    });
+                    continue;
+                }
+                existing.sources = dedupeContextSources([
+                    ...(existing.sources ?? []),
+                    ...(item.sources ?? []),
+                ]);
+                existing.detail ??= item.detail;
+                existing.citationEligible = Boolean(existing.citationEligible || item.citationEligible);
+                existing.statusOnly = Boolean(existing.statusOnly || item.statusOnly);
+            }
+            return [...byKey.values()].slice(0, 12);
+        };
+
+        const ensureContextUsedList = (statusView: ThinkingStatusView) => {
+            if (statusView.contextUsedListEl) return statusView.contextUsedListEl;
+            const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-context-used' });
+            section.createDiv({ cls: 'thinking-status-section-title', text: 'Context Used' });
+            const listEl = section.createDiv({ cls: 'thinking-status-context-list' });
+            statusView.contextUsedSectionEl = section;
+            statusView.contextUsedListEl = listEl;
+            return listEl;
+        };
+
+        const renderContextUsedItems = (
+            statusView: ThinkingStatusView,
+            items: ChatContextUsedItem[],
+        ) => {
+            if (items.length === 0) {
+                removeElement(statusView.contextUsedSectionEl);
+                statusView.contextUsedSectionEl = undefined;
+                statusView.contextUsedListEl = undefined;
+                return;
+            }
+            const listEl = ensureContextUsedList(statusView);
+            listEl.empty();
+            items.forEach((item) => {
+                const row = listEl.createDiv({ cls: `thinking-status-context-item context-used-${item.category}` });
+                row.createDiv({ cls: 'thinking-status-context-label', text: item.label });
+                if (item.detail) {
+                    row.createDiv({ cls: 'thinking-status-context-detail', text: item.detail });
+                }
+                const sourceSummary = formatSourceSummary(item.sources);
+                if (sourceSummary) {
+                    row.createDiv({ cls: 'thinking-status-context-sources', text: sourceSummary });
+                }
+                if (item.citationEligible) {
+                    row.createDiv({ cls: 'thinking-status-context-note', text: 'Eligible for Memory references' });
+                } else if (item.statusOnly) {
+                    row.createDiv({ cls: 'thinking-status-context-note', text: 'Status only' });
+                } else {
+                    row.createDiv({ cls: 'thinking-status-context-note', text: 'Not a Memory reference' });
+                }
+            });
+        };
+
+        const addContextUsedItems = (turn: UiTurn, items: ChatContextUsedItem[]) => {
+            if (items.length === 0) return;
+            turn.contextUsedItems = mergeContextUsedItems(turn.contextUsedItems, items);
+            turn.statusView ??= createThinkingStatusView(turn);
+            renderContextUsedItems(turn.statusView, turn.contextUsedItems);
+        };
+
+        const getContextUsedItemsFromStatus = (status: ChatAgentStatus): ChatContextUsedItem[] => {
+            if (status.type === 'memory-selected' || status.type === 'memory-expanded') {
+                if (status.sources.length === 0) return [];
+                return [{
+                    category: 'memory',
+                    label: 'Selected Memory',
+                    detail: status.sources.length === 1 ? '1 selected note' : `${status.sources.length} selected notes`,
+                    sources: status.sources,
+                    citationEligible: true,
+                }];
+            }
+            if (status.type === 'tool-done') {
+                const toolInfo = getToolContextUsedInfo(status.tool);
+                return [{
+                    category: toolInfo.category,
+                    label: toolInfo.label,
+                    detail: toolInfo.detail,
+                    sources: status.sources,
+                    citationEligible: false,
+                }];
+            }
+            if (status.type === 'tool-skipped') {
+                const toolInfo = getToolContextUsedInfo(status.tool);
+                return [{
+                    category: 'tool-unavailable',
+                    label: `${toolInfo.label} unavailable`,
+                    detail: 'Vault context was unavailable for this turn.',
+                    statusOnly: true,
+                }];
+            }
+            if (status.type === 'web-search-enabled') {
+                return [{
+                    category: 'provider-web',
+                    label: 'Provider web search',
+                    detail: 'The AI provider may search the web. This is not Memory and no web citations are shown.',
+                    statusOnly: true,
+                }];
+            }
+            if (status.type === 'fallback') {
+                const isLoopCap = /cap reached|stopped before/i.test(status.reason);
+                return [{
+                    category: isLoopCap ? 'loop-cap' : 'fallback',
+                    label: isLoopCap ? 'Using gathered context' : 'Available context',
+                    detail: isLoopCap
+                        ? 'Answering from context gathered before the planning limit was reached.'
+                        : 'Answering from available context for this turn.',
+                    statusOnly: true,
+                }];
+            }
+            return [];
+        };
+
         const formatAgentStatus = (status: ChatAgentStatus): string => {
             if (status.type === 'thinking') {
                 return 'Deciding what context to use...';
             } else if (status.type === 'memory-prefetching') {
                 return `Searching notes: ${status.query}`;
             } else if (status.type === 'memory-prefetched') {
-                const sources = status.sources
-                    .slice(0, 4)
-                    .map((source) => source.path)
-                    .join(', ');
+                const sources = formatSourceSummary(status.sources);
                 return sources ? `Related notes found: ${sources}` : 'No related memory';
+            } else if (status.type === 'memory-reranking') {
+                return `Checking ${status.candidateCount} related note${status.candidateCount === 1 ? '' : 's'}...`;
+            } else if (status.type === 'memory-selected') {
+                const sources = formatSourceSummary(status.sources);
+                return sources ? `Selected memory: ${sources}` : 'No relevant memory selected';
+            } else if (status.type === 'memory-expanded') {
+                return 'Reading selected Memory...';
             } else if (status.type === 'retrieving') {
                 return `Searching notes: ${status.query}`;
             } else if (status.type === 'retrieved') {
-                const sources = status.sources
-                    .slice(0, 4)
-                    .map((source) => source.path)
-                    .join(', ');
+                const sources = formatSourceSummary(status.sources);
                 return sources ? `Related notes found: ${sources}` : 'No related memory';
             } else if (status.type === 'memory-skipped') {
                 return /returned 0 source/i.test(status.reason) ? 'No related memory' : 'Memory skipped';
             } else if (status.type === 'tool-running') {
-                return status.message;
+                return formatToolRunningStatus(status.tool);
             } else if (status.type === 'tool-done') {
-                const sources = status.sources
-                    ?.slice(0, 4)
-                    .map((source) => source.path)
-                    .join(', ');
+                const sources = formatSourceSummary(status.sources);
                 return sources ? `${status.message}: ${sources}` : status.message;
             } else if (status.type === 'tool-skipped') {
-                return status.reason;
+                return 'Vault context unavailable';
             } else if (status.type === 'web-search-enabled') {
                 return 'Qwen may search the web';
             } else if (status.type === 'answering') {
                 return 'Answering...';
             } else if (status.type === 'fallback') {
-                return 'I will answer normally this time.';
+                return /cap reached|stopped before/i.test(status.reason)
+                    ? 'Using gathered context after reaching the planning limit.'
+                    : 'Answering from available context.';
             }
             return 'Thinking...';
         };
 
         const renderAgentStatus = (turn: UiTurn, status: ChatAgentStatus) => {
             turn.statusView ??= createThinkingStatusView(turn);
-            appendThinkingStatus(turn.statusView, formatAgentStatus(status));
+            const content = formatAgentStatus(status);
+            if (turn.activityDetails[turn.activityDetails.length - 1] !== content) {
+                turn.activityDetails.push(content);
+                while (turn.activityDetails.length > 6) {
+                    turn.activityDetails.shift();
+                }
+            }
+            appendThinkingStatus(turn.statusView, content);
+            addContextUsedItems(turn, getContextUsedItemsFromStatus(status));
         };
 
         const finalizeSuccessfulTurn = async (
@@ -1237,7 +1456,9 @@ export class LLMView extends ItemView {
                 user: userMessage,
                 assistant: assistantMessage,
                 memoryMetadata: turn.memoryMetadata,
-                reasoningTranscript: turn.reasoningTranscript,
+                contextUsedItems: turn.contextUsedItems,
+                activityDetails: turn.activityDetails,
+                providerReasoningObserved: turn.providerReasoningObserved,
             });
             this.result = responseContent;
 
@@ -1255,7 +1476,14 @@ export class LLMView extends ItemView {
             removeElement(assistantRendered.loaderEl);
             assistantRendered.loaderEl = undefined;
             assistantRendered.messageDiv.removeAttribute('aria-busy');
-            if (turn.reasoningTranscript && turn.statusView) {
+            if (
+                turn.statusView
+                && (
+                    turn.providerReasoningObserved
+                    || turn.contextUsedItems.length > 0
+                    || turn.activityDetails.length > 0
+                )
+            ) {
                 completeThinkingStatus(turn.statusView);
             } else {
                 stopThinkingLoader(turn.statusView);
@@ -1283,6 +1511,8 @@ export class LLMView extends ItemView {
             const turn: UiTurn = {
                 id: ++uiTurnId,
                 prompt,
+                contextUsedItems: [],
+                activityDetails: [],
             };
             const isUiTurnVisible = () => isCurrentSession()
                 && this.activeTurnId === turnId
@@ -1308,6 +1538,23 @@ export class LLMView extends ItemView {
                     },
                 );
 
+                const handleStatus = (status: ChatAgentStatus) => {
+                    if (!isLiveTurn()) return;
+                    renderAgentStatus(turn, status);
+                };
+                const handleProviderReasoning = (chunk: string) => {
+                    if (!isLiveTurn()) return;
+                    appendProviderReasoning(turn, chunk);
+                };
+                const handleTurnMetadata = (metadata: ChatTurnMemoryMetadata) => {
+                    if (!isLiveTurn()) return;
+                    turn.memoryMetadata = metadata;
+                    addContextUsedItems(turn, metadata.contextUsed ?? []);
+                    if (turn.assistantMessage) {
+                        turn.assistantMessage.memoryMetadata = metadata;
+                    }
+                };
+
                 await this.chatService.streamLLM(
                     prompt,
                     (chunk) => {
@@ -1327,19 +1574,34 @@ export class LLMView extends ItemView {
                     modelHistory,
                     {
                         memoryMode: "auto",
-                        onStatus: (status) => {
-                            if (!isLiveTurn()) return;
-                            renderAgentStatus(turn, status);
-                        },
-                        onReasoningChunk: (chunk) => {
-                            if (!isLiveTurn()) return;
-                            appendProviderReasoning(turn, chunk);
-                        },
-                        onTurnMetadata: (metadata) => {
-                            if (!isSameTurn()) return;
-                            turn.memoryMetadata = metadata;
-                            if (turn.assistantMessage) {
-                                turn.assistantMessage.memoryMetadata = metadata;
+                        onStatus: handleStatus,
+                        onReasoningChunk: handleProviderReasoning,
+                        onTurnMetadata: handleTurnMetadata,
+                        onEvent: (event) => {
+                            if (event.kind === 'activity') {
+                                const status = event.detail?.legacyStatus as ChatAgentStatus | undefined;
+                                if (status) handleStatus(status);
+                                return;
+                            }
+                            if (event.kind === 'reasoning-chunk') {
+                                handleProviderReasoning(event.chunk);
+                                return;
+                            }
+                            if (event.kind === 'turn-metadata') {
+                                handleTurnMetadata(event.metadata);
+                                return;
+                            }
+                            if (event.kind === 'partial-output-error') {
+                                if (!isLiveTurn()) return;
+                                turn.statusView ??= createThinkingStatusView(turn);
+                                const content = 'Answer stopped early.';
+                                if (turn.activityDetails[turn.activityDetails.length - 1] !== content) {
+                                    turn.activityDetails.push(content);
+                                    while (turn.activityDetails.length > 6) {
+                                        turn.activityDetails.shift();
+                                    }
+                                }
+                                appendThinkingStatus(turn.statusView, content);
                             }
                         },
                     },

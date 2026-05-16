@@ -731,6 +731,43 @@ body {
 	line-height: 1.45;
 }
 
+.llm-view .thinking-status-context-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	min-width: 0;
+}
+
+.llm-view .thinking-status-context-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 3px;
+	padding: 7px 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+}
+
+.llm-view .thinking-status-context-label {
+	color: var(--text-normal);
+	font-size: 0.9em;
+	font-weight: 650;
+	line-height: 1.3;
+}
+
+.llm-view .thinking-status-context-detail,
+.llm-view .thinking-status-context-sources,
+.llm-view .thinking-status-context-note {
+	color: var(--text-muted);
+	font-size: 0.82em;
+	line-height: 1.35;
+	overflow-wrap: anywhere;
+}
+
+.llm-view .thinking-status-context-note {
+	color: var(--text-faint);
+}
+
 .llm-view .message-content {
 	margin-top: 6px;
 	line-height: 1.5;
