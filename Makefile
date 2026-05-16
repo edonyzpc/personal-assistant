@@ -1,4 +1,6 @@
-.PHONY: deploy clean bin install changelog release-dry-run release publish tag test
+.PHONY: deploy deploy-icloud clean bin install changelog release-dry-run release publish tag test
+
+ICLOUD_PLUGIN_DIR ?= $(HOME)/Library/Mobile Documents/iCloud~md~obsidian/Documents/test/.obsidian/plugins/personal-assistant
 
 install:
 	npm install
@@ -11,6 +13,13 @@ deploy: clean bin
 	cp dist/manifest.json test/.obsidian/plugins/personal-assistant/
 	cp dist/manifest-beta.json test/.obsidian/plugins/personal-assistant/
 	cp dist/styles.css test/.obsidian/plugins/personal-assistant/
+
+deploy-icloud: bin
+	mkdir -p "$(ICLOUD_PLUGIN_DIR)"
+	cp dist/main.js "$(ICLOUD_PLUGIN_DIR)/"
+	cp dist/manifest.json "$(ICLOUD_PLUGIN_DIR)/"
+	cp dist/manifest-beta.json "$(ICLOUD_PLUGIN_DIR)/"
+	cp dist/styles.css "$(ICLOUD_PLUGIN_DIR)/"
 
 clean:
 	rm -rf test/.obsidian/plugins/personal-assistant/main.js
