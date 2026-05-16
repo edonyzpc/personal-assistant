@@ -34,8 +34,8 @@ If any archived document conflicts with this Ralpha plan, this document wins. Th
 | Hybrid expand anchors | Anchor first, fallback indexed | Expanded live markdown windows use candidate anchors when available; old or unanchorable hits fall back to indexed chunks. |
 | Source attribution | Memory references stay Memory-only | Final Memory references include only selected Memory sources; current-note/tool/web context appears in expandable Context used details. |
 | UX | Expandable timeline | Every loop step has concise visible status and optional details; hidden model reasoning is not exposed as policy/audit. |
-| Loop cap | 6 model turns / 3 Memory searches / 180 seconds | Every model call counts; reserve one remaining model turn for the final answer; when a cap trips, answer from gathered context. |
-| Current phase | SPEC-driven implementation setup | No runtime code changes in this phase. The next pass should begin from the SPEC tracker rather than reopening the archived PLAN/tracker documents. |
+| Loop cap | 6 model turns / 3 Memory searches / 180 seconds | Every model call counts; reserve one remaining model turn for the final answer; the runtime also races the whole turn against a 180 second wall-clock deadline. When a cap trips, answer from gathered context if no visible output has started, or preserve the partial turn without replay. |
+| Current phase | SPEC-06 closeout complete; post-review wall-clock fix implemented | Final `make deploy`, focused UI/runtime tests, typecheck, whitespace, subagent review, and Computer Use smoke passed on `codex/ralpha-native-loop-refactor`. Obsidian smoke covered direct answer, cancel recovery, clear-chat, Memory-only reference, current-note Context Used boundary, and mixed Memory plus current-note attribution. The post-review `Memory references` format-instruction edge case is covered by automated regression tests; post-fix deploy smoke revalidated Memory source selection in Obsidian. The later wall-clock deadline P2 finding was fixed with automated hung-rerank and final-stream deadline tests plus `make deploy`; exact live smoke for that follow-up is blocked by the locked macOS desktop / Computer Use timeout and is not counted as passed. Unsupported-provider live smoke is explicitly deferred by user confirmation and covered by automated fallback tests. |
 
 ## Product Goal
 
@@ -45,10 +45,11 @@ The performance improvement comes from removing the old blocking `presearch -> p
 
 ## Current Code Baseline
 
-Current code still uses the older architecture:
+Current code is mid-migration:
 
-- `ChatService.streamLLM(...)` creates `ChatAgentRuntime`, waits for `planTurn(...)`, then owns final streaming and non-streaming fallback.
-- `ChatAgentRuntime` performs Memory presearch, optional native/JSON planning, read-only tool execution, and final prompt construction.
+- `ChatService.streamLLM(...)` remains the public entrypoint and adapts typed `AgentEvent` objects back to the existing UI callbacks.
+- `ChatAgentRuntime.streamTurn(...)` now owns final model streaming, cumulative answer snapshots, provider reasoning events, turn metadata emission, pre-visible non-streaming fallback, visible-output no-replay, and abort terminal events.
+- `ChatAgentRuntime.planTurn(...)` still performs Memory presearch, optional native/JSON planning, read-only tool execution, and final prompt construction.
 - `ToolRegistry` is the only executable tool boundary for `search_memory`, `get_current_note_context`, `search_vault_metadata`, `list_recent_notes`, and `read_note_outline`.
 - `PromptBuilder` keeps Memory, current note, read-only tool context, and Memory references separated.
 - Existing JSON planner tests remain useful as regression evidence, but Ralpha will replace that path instead of treating it as a fallback target.
@@ -425,7 +426,9 @@ If the user explicitly asks for current note, selected text, note outline, note 
 Final source attribution has two layers:
 
 1. Memory references are strict citations for selected Memory sources.
-2. Context used is an expandable timeline/detail view for non-Memory context that influenced the turn.
+2. Context Used is an expandable timeline/detail view for context categories and provider status signals that influenced or constrained the turn.
+
+Product rule: Context Used may summarize selected Memory, current-note/tool context, fallback/unavailable states, and provider web-search status, but it is not a citation list. Memory references remain the only strict citation surface. Provider web-search status may appear in Context Used as a provider capability/status signal only; it must not claim specific web pages were used unless a future provider integration emits separate verifiable `web_sources` metadata.
 
 ### Memory References
 
@@ -442,10 +445,10 @@ The expandable timeline may summarize context by category:
 
 | Category | Source | Attribution Rule |
 | --- | --- | --- |
-| Memory | selected VSS Memory sources | May appear in Memory references and Context used. |
+| Memory | selected VSS Memory sources | May appear in Memory references and Context Used as `Selected Memory`; only Memory references are citations. |
 | Current note | `get_current_note_context` | Context used only; not a Memory reference. |
 | Vault metadata | `search_vault_metadata`, `list_recent_notes`, `read_note_outline` | Context used only; not a Memory reference. |
-| Web | provider web-search option | Status only in v1 unless verifiable provider URLs are parsed in a future design. |
+| Web | provider web-search option | Context Used status only in v1; not evidence, not a Memory reference, and not a URL citation unless verifiable provider URLs are parsed in a future design. |
 
 Context used details must stay bounded and product-facing. They may show safe note titles or coarse categories, but must not show raw hidden reasoning, raw tool input bodies, raw provider diagnostics, or raw note paths when redaction rules require hiding them.
 
@@ -471,7 +474,7 @@ The UI should render a concise activity row by default and allow expansion for d
 | `tool-running` | Tool-specific status | tool name and safe input summary |
 | `tool-done` | Tool completed | bounded source summary |
 | `tool-skipped` | Tool skipped | recoverable reason |
-| `context-used` | Context used | Memory/current-note/metadata/web categories |
+| `context-used` | Context Used | Memory/current-note/metadata/web-status categories |
 | `web-search-enabled` | AI provider may search the web | provider-hidden search is not Memory |
 | `answering` | Answering | loop turn count |
 | `fallback-tool-disabled` | Answering with available context | fallback category and unavailable tool category |
@@ -615,24 +618,24 @@ Phase 3 must include negative assertions that the JSON planner model is not invo
 
 | Risk | Severity | Mitigation | Status |
 | --- | --- | --- | --- |
-| Agent-owned streaming breaks existing UI callback assumptions | P1 | Preserve snapshot callback semantics, define typed AgentEvents, and add metadata-ordering plus stale-event tests before migration. | Open |
-| Removing JSON planner fallback loses current-note/read-only tool behavior for unsupported providers | P1 | Make read-only context tools native-only, define tool-disabled fallback for unsupported providers, and cover `bindTools` failure tests that prove no deterministic tool side path runs or false tool-context claim appears. | Open |
-| Native tool loop misinterprets provider-specific tool-call shapes | P1 | Normalize provider fields and streamed chunks into `NormalizedToolCall[]` before execution; test ids, serial order, parse failures, and late tool-call errors. | Open |
-| LLM rerank reintroduces hidden planner latency | P2 | Rerank selects Memory only, never executes tools, shows as a visible loop step, counts as a model turn, and is skipped when only the final-answer turn remains. | Open |
-| Rerank selects unrelated Memory | P1 | Structured rerank output, source-boundary tests, and no Memory references without selected sources. | Open |
-| Hybrid expand leaks non-Memory paths into references | P1 | Expanded content must inherit VSS source metadata; current/tool paths stay separate; unanchorable live reads fall back to indexed chunks. | Open |
-| Provider web search confuses source attribution | P2 | Status says the AI provider may search web; provider web output is never `allowed_sources`, and URL citations require future verifiable `web_sources` metadata. | Open |
-| Diagnostics store sensitive content | P1 | Redacted fields only; no prompt body, note body, raw path, or transcript. | Open |
-| Loop runs too long or too expensively | P2 | 6 model turns, 3 Memory searches, 180 second cap. | Open |
+| Agent-owned streaming breaks existing UI callback assumptions | P1 | Preserve snapshot callback semantics, define typed AgentEvents, and add metadata-ordering plus stale-event tests before migration. | SPEC-01 closed on 2026-05-16. |
+| Removing JSON planner fallback loses current-note/read-only tool behavior for unsupported providers | P1 | Make read-only context tools native-only, define tool-disabled fallback for unsupported providers, and cover `bindTools` failure tests that prove no deterministic tool side path runs or false tool-context claim appears. | SPEC-04 closed on 2026-05-16; unsupported capability, `bindTools` missing/throws, schema export failure, and native parse failure now assert tool-disabled fallback and no JSON planner call. |
+| Native tool loop misinterprets provider-specific tool-call shapes | P1 | Normalize provider fields and streamed chunks into `NormalizedToolCall[]` before execution; test ids, serial order, parse failures, and late tool-call errors. | SPEC-04 closed on 2026-05-16; provider shape normalization, bind/probe fallback, and visible reasoning/answer no-replay protocol errors are covered. |
+| LLM rerank reintroduces hidden planner latency | P2 | Rerank selects Memory only, never executes tools, shows as a visible loop step, counts as a model turn, and is skipped when only the final-answer turn remains. | SPEC-02 closed on 2026-05-16. |
+| Rerank selects unrelated Memory | P1 | Structured rerank output, deterministic strong lexical selection, source-boundary tests, explicit Memory-clause presearch for mixed prompts, `Memory references` format-instruction exclusion, and no Memory references without selected sources. | Final review passed on 2026-05-16. Memory-only smoke selected `About`; mixed live smoke uses the explicit Memory clause for initial presearch, selected `About`, answered the travel Memory subquestion, and kept current-note `Dog` as `Not a Memory reference`. |
+| Hybrid expand leaks non-Memory paths into references | P1 | Expanded content must inherit VSS source metadata; current/tool paths stay separate; unanchorable live reads fall back to indexed chunks. | Final review passed on 2026-05-16; raw-path guard and safe Context Used labels passed automated and live checks. |
+| Provider web search confuses source attribution | P2 | Status says the AI provider may search web; provider web output is never `allowed_sources`, and URL citations require future verifiable `web_sources` metadata. | Final review passed on 2026-05-16; provider web-search appears as status only in Context Used. |
+| Diagnostics store sensitive content | P1 | Redacted fields only; no prompt body, note body, raw path, or transcript. | Final review passed on 2026-05-16; no new diagnostics issue found in runtime/source-boundary review. |
+| Loop runs too long or too expensively | P2 | 6 model turns, 3 Memory searches, and a turn-level 180 second wall-clock deadline that aborts the runtime signal and races planning, rerank/native-tool waits, and final streaming. | Closed by the 2026-05-17 post-review fix. Automated tests cover a hung Memory rerank and a hung final stream after visible output; `make deploy` passed. Live Obsidian smoke for this follow-up is blocked by the locked macOS desktop and is not counted as passed. |
 
-## Open Decisions
+## Closed Decisions
 
-These items are intentionally not finalized in this document update because they change runtime semantics and require explicit confirmation.
+SPEC-00 closed the runtime-affecting open decisions on 2026-05-15. These decisions are now part of the Ralpha contract and cannot be changed by an implementation SPEC without updating this document and the SPEC tracker together.
 
-| Decision | Options | Needed Confirmation |
+| Decision | Final Choice | Implementation Meaning |
 | --- | --- | --- |
-| Reasoning-only then tool call | Allow tool calls after provider reasoning chunks but before any answer snapshot; or treat any tool call after reasoning as `partial-output-error`. | Confirm whether reasoning-only should be allowed to precede valid tool calls. |
-| Tool-disabled fallback and provider web search | Preserve `qwenWebSearchEnabled` during tool-disabled fallback; or disable provider web search whenever native vault tools are unavailable. | Confirm whether fallback keeps provider web search enabled. |
+| OD-1 reasoning-only then tool failure | Reasoning counts as visible output. | A valid tool call after provider reasoning and before any answer snapshot may execute normally. After any non-empty provider reasoning chunk, later model/tool/schema/fallback failure must preserve the partial turn and emit `partial-output-error`; runtime must not replay a tool-disabled fallback answer. Tool-call-only provider chunks before answer or reasoning remain pre-visible. |
+| OD-2 tool-disabled fallback and provider web search | Preserve the current Qwen web-search setting. | Tool-disabled fallback disables native vault tools and JSON planner fallback, but may pass `qwenWebSearchEnabled` to the provider answer call. Provider web search remains separate provider/web context and never becomes a Memory source or fabricated citation. |
 
 ## Verification Log
 
@@ -650,10 +653,19 @@ These items are intentionally not finalized in this document update because they
 | 2026-05-14 | Post-review implementation-basis hardening | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md` | [x] Passed | Added AgentEvent union draft, tool-disabled fallback, Memory skip tool-surface rules, source-boundary tightening, phase gates, JSON planner test migration, and open decisions. |
 | 2026-05-14 | SPEC-driven tracker split | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md`; `rg -n "[[:blank:]]+$" docs/chat-agent-native-ralpha-loop-plan.md docs/chat-agent-native-ralpha-spec-driven-development.md` | [x] Passed | Ralpha stays the contract source; SPEC tracker owns implementation status, review logs, verification evidence, and smoke closeout. |
 | 2026-05-14 | SPEC review fixes | `git diff --check -- docs/chat-agent-native-ralpha-loop-plan.md`; `rg -n "[[:blank:]]+$" docs/chat-agent-native-ralpha-loop-plan.md docs/chat-agent-native-ralpha-spec-driven-development.md`; targeted stale-contract scan | [x] Passed | Removed Ralpha/SPEC status split-brain, hardened SPEC approval gates, fixed rerank diagnostic boundary, expanded risk/test/UX coverage. |
+| 2026-05-15 | SPEC-00 open-decision closeout | `git diff --check`; read-only runtime/test inventory | [x] Passed | OD-1 and OD-2 closed; tracker records current call path, test migration inventory, and docs-only smoke skip. |
+| 2026-05-16 | SPEC-02 automated and deploy gate | Focused Jest, lint, typecheck, `git diff --check`, review, and `make deploy` | [x] Passed | `chat-service` 112 tests passed, focused UI/runtime 165 tests passed, full deploy gate 303 tests passed, lint/build/typecheck passed, and assets were copied to the test vault. |
+| 2026-05-16 | SPEC-02 Computer Use smoke | Obsidian `test` vault after `make deploy` and app reload | [x] Passed | Long rerank path no longer terminates early, cancel works, current-note prompt answers from `Dog.md`, Console stayed at 0 errors, and fresh Memory prompt answered `西溪湿地公园` with `Memory used (1)` -> `About.md`. |
+| 2026-05-16 | SPEC-03 native loop closeout | `npm test -- __tests__/chat-service.test.ts --runInBand`; `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts --runInBand`; `npm run lint`; `npx tsc -noEmit -skipLibCheck`; `git diff --check`; `npm test -- --runInBand`; `make deploy`; Computer Use smoke in Obsidian `test` vault | [x] Passed | 122 chat-service tests, 175 focused UI/runtime tests, full 313-test suite, lint/build/typecheck/whitespace, subagent review, deploy, and Obsidian smoke passed. Coverage includes streamed tool-call chunk merge, missing-id/index and missing-id/no-index continuation, duplicate skip, repeated failure cap, disabled-Memory native surface, no JSON planner call for unsupported/schema/parse native paths, late native tool-call partial-output errors, and current-note answer from `Dog.md` with `2000km/h`. |
+| 2026-05-16 | SPEC-04 provider fallback closeout | `npm test -- __tests__/chat-service.test.ts --runInBand`; `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts --runInBand`; `npm run lint`; `npx tsc -noEmit -skipLibCheck`; `git diff --check`; `npm test -- --runInBand`; `make deploy`; Computer Use smoke in Obsidian `test` vault | [x] Passed | 128 chat-service tests, 181 focused UI/runtime tests, full 319-test suite, lint/build/typecheck/whitespace, subagent review, deploy, and Obsidian smoke passed. Coverage includes `bindTools` missing/throws, schema export failure, native parse failure, tool-disabled fallback prompt, no JSON planner fallback, Qwen web-search not entering Memory metadata, visible reasoning/answer no-replay errors, and live current-note/direct-answer smoke with Console at `0 messages in console`. |
+| 2026-05-16 | SPEC-05 timeline and Context Used closeout | `npm test -- __tests__/chat-view.test.ts --runInBand`; `npm test -- __tests__/chat-service.test.ts --runInBand`; `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts --runInBand`; `npx tsc -noEmit -skipLibCheck`; `npm run lint`; `git diff --check`; `npm test -- --runInBand`; `npm run build`; `make deploy`; Computer Use smoke in Obsidian `test` vault | [x] Passed | Timeline typed events, completed Thinking summaries, stale metadata suppression, partial-output terminal events, loop-cap copy, safe tool-running labels, Context Used metadata, Memory-only source boundary, and provider web-search status boundary passed automated checks and live Obsidian smoke. The final smoke showed `Dog` as a safe current-note label, no raw `MODEL THINKING`, no raw note path, provider thinking hidden notice, and Console at `0 messages in console`. |
+| 2026-05-16 | SPEC-06 final deploy gate | `make deploy`; Computer Use smoke in Obsidian `test` vault | [x] Passed | Final deploy gate passed after the mixed-presearch and format-instruction smoke fixes with 21 suites and 323 tests, lint, build, and plugin asset copy. Live smoke passed direct answer, cancel recovery, clear-chat, current-note Context Used boundary, Memory-only reference, and mixed Memory plus current-note attribution with Console at `0 messages in console`. Post-review deploy smoke revalidated Memory-only source selection (`About`) in Obsidian; the exact mixed `请使用 Memory references 格式输出` variant is covered by automated tests because the live provider final stream did not complete and was cancelled. Unsupported-provider live smoke is explicitly deferred by user confirmation and covered by automated fallback tests. |
+| 2026-05-16 | SPEC-06 final review and post-fix checks | Subagent runtime/source-boundary review; subagent docs/verification review; targeted P2 follow-up review; `npm test -- __tests__/chat-service.test.ts --runInBand`; `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts --runInBand`; `npx tsc -noEmit -skipLibCheck`; `npm run lint`; `git diff --check` | [x] Passed | Runtime/source-boundary review found no P0/P1/P2 issues. Docs review found one P2 plan/tracker sync gap for the unsupported-provider live-smoke deferral, fixed in this plan. Follow-up review found one P2 where `Memory references` format instructions could pollute initial Memory presearch; fixed by stripping the reference title before deciding whether a segment is only formatting. Focused `chat-service` passed with 129 tests, focused UI/runtime passed with 185 tests, and typecheck, lint, deploy lint/build, and whitespace checks passed. |
+| 2026-05-17 | SPEC-06 wall-clock deadline post-review fix | `npm test -- __tests__/chat-service.test.ts --runInBand`; `npm test -- __tests__/chat-service.test.ts __tests__/chat-view.test.ts --runInBand`; `npx tsc -noEmit -skipLibCheck`; `git diff --check`; `make deploy`; Obsidian URI / Computer Use smoke attempt | [x] Automated/deploy passed; live smoke blocked | Added the missing turn-level 180 second deadline. `chat-service` passed with 131 tests, focused UI/runtime passed with 187 tests, typecheck and whitespace passed, and `make deploy` passed with 21 suites / 325 tests, lint, build, and asset copy. Obsidian reload URI processed, but the desktop was locked; Computer Use timed out reading `Obsidian` and `md.obsidian`, so no live chat prompt was submitted and this smoke is not counted as passed. |
 
 ## Assumptions
 
-- This phase updates documents only and does not change runtime code.
+- The source-of-truth migration phase updated documents only; active implementation phases may change runtime code and must record verification in the SPEC tracker.
 - Existing JSON planner code can remain in the codebase during migration, but it is no longer part of the Ralpha fallback contract.
 - Memory prepare/update, VSS indexing, OPFS locking, and durable local index behavior stay unchanged unless a later phase explicitly reopens them.
 - Fallback `MemoryVectorIndex` remains read-only for automatic maintenance; Ralpha does not add automatic writes to fallback memory.
