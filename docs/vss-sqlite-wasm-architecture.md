@@ -56,7 +56,7 @@ flowchart TB
   Commands --> MemoryManager
   Advanced --> VSS["VSS Facade\nsearchSimilarity / refresh / rebuild"]
   MemoryManager -->|manual prepare/update| VSS
-  MemoryManager -->|auto reconcile/flush| VSS
+  MemoryManager -->|auto reconcile/verify/flush| VSS
 
   VSS --> Profile["Embedding Profile\nprovider + baseURL + model + dimensions + metric"]
   VSS --> Embedder["AIUtils Embeddings\nOpenAI-compatible\nQwen v4 / OpenAI / Ollama Desktop"]
@@ -87,7 +87,8 @@ flowchart TB
 - `ready` 时直接使用 Memory 搜索。
 - `first-use`、`changed-notes`、`local-memory-missing`、`settings-changed` 时显示专用确认弹窗。
 - 用户选择 `Prepare memory and answer` 后执行 rebuild 或 refresh，并继续原问题；成功后将 `memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`。
-- 后续 `changed-notes` 在 auto policy + durable SQLite/WASM ready 时不再弹窗，Chat 使用上一版 Memory 回答，同时后台排队 reconcile/flush。
+- 后续 `changed-notes` 在 auto policy + durable SQLite/WASM ready 时不再弹窗，Chat 使用上一版 Memory 回答，同时后台排队 reconcile/verify/flush。
+- 仅有 pending verification 时仍视为 `ready`：brain 状态不变黄，后台按预算确认是否真的有内容变化；桌面聊天前可执行一个极小 fast verify，移动端保持异步。
 - fallback 或非 durable 状态下不会执行自动写入，Chat 使用上一版 Memory 并提示后台更新暂不可用。
 - 用户选择 `Answer now` 后本次跳过 Memory，聊天内显示 `Memory was not used for this answer.`。
 - 用户选择 `Cancel` 后不发送问题，也不调用 LLM。
@@ -110,10 +111,11 @@ flowchart TB
 - `searchSimilarity(prompt)`：生成 query embedding，调用 `VectorIndex.search()`。
 - `rebuild`：重置本设备本地 index，扫描 eligible Markdown，跨文件全局 batch 生成 embeddings，再按文件写入索引。
 - `refresh`：手动或后台处理 dirty 文件，先按 `contentHash` 跳过 unchanged 文件；当前保持逐文件 refresh 路径，不共享 rebuild 的全局 batch pipeline。
-- `reconcileLocalFiles`：批量读取 indexed metadata，与 vault 当前文件对齐；发现新文件、metadata mismatch、已删除 indexed path，并按预算分批 yield。
+- `reconcileLocalFiles`：批量读取 indexed metadata，与 vault 当前文件对齐；发现新文件、metadata mismatch、已删除 indexed path，并按预算分批 yield。metadata mismatch 只进入 verify queue，避免在 reconcile 阶段读文件/hash。
+- `verifyPendingChanges`：按桌面/移动端预算读取 verify queue 中的候选文件计算 `contentHash`；hash 相同只同步文件级 metadata，hash 变化才进入 dirty queue。
 - `verify`：检查 profile、OPFS DB、marker、manifest 的一致性。
 - `reset`：重置本机索引。
-- `runExclusive`：统一串行化 flush、rebuild、reset、delete、rename 和 reconcile 写操作，避免多个入口并发写同一个 SQLite index。
+- `runExclusive`：统一串行化 flush、rebuild、reset、delete、rename、reconcile upsert/delete 和 verify 阶段索引写操作，避免多个入口并发写同一个 SQLite index。
 
 ### VectorIndex
 
@@ -123,6 +125,7 @@ flowchart TB
 interface VectorIndex {
   initialize(profile: EmbeddingProfile): Promise<VectorIndexStatus>;
   upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]): Promise<void>;
+  updateFileMetadata(fileState: VSSFileState): Promise<void>;
   deleteFile(path: string): Promise<void>;
   listFilePaths(): Promise<string[]>;
   listFileRecords(): Promise<VSSFileRecord[]>;
@@ -135,7 +138,7 @@ interface VectorIndex {
 }
 ```
 
-`listFilePaths()` 保留兼容旧 refresh 路径；`listFileRecords()` 用于 reconcile 批量读取 indexed metadata，避免逐文件 worker round-trip；`getFileRecord()` 用于按文件 `contentHash` 判断 unchanged 文件，避免无变更 refresh 继续消耗 embedding token。
+`listFilePaths()` 保留兼容旧 refresh 路径；`listFileRecords()` 用于 reconcile 批量读取 indexed metadata，避免逐文件 worker round-trip；`getFileRecord()` 用于按文件 `contentHash` 判断 unchanged 文件，避免无变更 refresh 继续消耗 embedding token；`updateFileMetadata()` 是轻量文件级 metadata 同步，只更新 `vss_files`，不重写 chunks/embeddings。
 
 ### SqliteVectorIndex
 
@@ -203,11 +206,11 @@ CREATE TABLE IF NOT EXISTS vss_meta (
 
 CREATE TABLE IF NOT EXISTS vss_files (
   path TEXT PRIMARY KEY,
-  content_hash TEXT,
-  mtime INTEGER,
-  size INTEGER,
-  status TEXT,
-  updated_at INTEGER
+  content_hash TEXT NOT NULL,
+  mtime INTEGER NOT NULL,
+  size INTEGER NOT NULL,
+  status TEXT NOT NULL,
+  updated_at INTEGER NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS vss_chunks (
@@ -215,9 +218,11 @@ CREATE TABLE IF NOT EXISTS vss_chunks (
   path TEXT NOT NULL,
   chunk_index INTEGER NOT NULL,
   content TEXT NOT NULL,
-  metadata_json TEXT NOT NULL,
+  metadata TEXT NOT NULL,
   embedding BLOB NOT NULL,
   content_hash TEXT NOT NULL,
+  created INTEGER NOT NULL,
+  last_modified INTEGER NOT NULL,
   UNIQUE(path, chunk_index)
 );
 ```
@@ -363,17 +368,19 @@ flowchart LR
 
 后台维护只在用户已成功 prepare/update Memory 并启用 `auto-refresh-after-prepare` 后运行。它不负责首次建索引，也不负责 OPFS 丢失或 profile stale 后的自动重建。
 
-发现变化的三层来源：
+发现变化的来源：
 
 1. Vault events：`create` / `modify` 标记 dirty，`rename` 删除旧 path 并标记新 path，`delete` 直接删除 indexed row。
-2. Reconcile scan：启动后 60s、prepare 后 5s、focus/visibility 恢复后 30s、每 60min 扫描一次 vault 当前文件和 indexed records。
-3. Rolling hash verify：周期 reconcile 每小时最多校验 50 个 metadata 未变化文件的 hash，按游标轮转，用于发现跨设备同步中 mtime/size 未变化但内容变化的情况。
+2. Reconcile scan：启动后 60s、prepare 后 5s、focus/visibility 恢复后 30s、每 60min 扫描一次 vault 当前文件和 indexed records；durable ready 下的 metadata mismatch 只加入 verify queue，不触发 Memory update；fallback 下无法执行 verify 的 drift 会转 dirty。
+3. Verify queue：file-open、metadata mismatch 和 rolling candidate 会按预算读取文件计算 hash；hash 相同只同步 `vss_files` metadata，hash 变化才标 dirty。verify queue 是 VSS ready/fallback 之上的内存态 overlay，不是 `VectorIndexStatus`。
+4. Rolling hash verify：周期 reconcile 每小时最多把 50 个 metadata 未变化文件加入 verify queue，按游标轮转，用于发现跨设备同步中 mtime/size 未变化但内容变化的情况。
 
 预算控制：
 
 - `listFileRecords()` 一次批量读取 indexed metadata，避免逐文件 worker round-trip。
 - reconcile 每批 250 个 metadata 项后 `sleep(0)` 让出主线程。
 - 单轮最多扫描 2000 个 metadata 项；未完成时通过 `hasMore` 继续排队，cursor 会跨轮推进并最终收敛。
+- verify 单轮预算：桌面 20 files / 5MB / 500ms，桌面聊天 fast path 5 files / 1MB / 100ms，移动端后台 3 files / 512KB / 100ms，移动端聊天 fast path 1 file / 512KB / 100ms；为了避免队头阻塞，每轮至少尝试一个候选，首个候选最多可能读取到 1MB large-file threshold。
 
 写入边界：
 
@@ -428,10 +435,16 @@ sequenceDiagram
     C-->>U: 使用 Memory 回答
   else Changed notes + auto policy + durable ready
     M-->>C: use-memory + background update message
-    M->>V: schedule reconcile/auto flush
+    M->>V: schedule reconcile/verify/auto flush
     C->>V: searchSimilarity(prompt)
     V-->>C: last prepared Memory references
     C-->>U: 使用上一版 Memory 回答
+  else Pending verification only
+    M-->>C: use-memory
+    M->>V: bounded fast verify or background verify
+    C->>V: searchSimilarity(prompt)
+    V-->>C: Memory references
+    C-->>U: 使用 Memory 回答
   else Needs prepare/update
     M-->>U: Data / AI provider / Cost 确认
     U-->>M: Prepare memory and answer / Answer now / Cancel
@@ -442,6 +455,8 @@ sequenceDiagram
 ```
 
 ## 状态机
+
+`verifyQueue` 是 `Ready` / `FallbackReady` 之上的临时维护 overlay。它不会作为持久状态写入 marker/manifest，也不是 `VectorIndexStatus`；只有 hash 确认变化后才进入 `Refreshing` 所依赖的 dirty queue。
 
 ```mermaid
 stateDiagram-v2

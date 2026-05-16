@@ -9,11 +9,12 @@
 ## 当前关键机制
 
 - **事件改造**：`vault.create` / `vault.modify` 标记脏文件，`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
-- **首次授权后的自动维护**：用户确认并成功 prepare/update Memory 后，`memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 在 durable SQLite/WASM ready 时由后台 reconcile/refresh 维护，Chat 不再等待 refresh。
+- **首次授权后的自动维护**：用户确认并成功 prepare/update Memory 后，`memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 在 durable SQLite/WASM ready 时由后台 reconcile/verify/refresh 维护，Chat 不再等待 refresh。
 - **Durable-only 写入**：后台自动维护只写 SQLite/WASM durable index；`MemoryVectorIndex` fallback 保持只读，changed notes 只显示非阻塞提示，不执行自动写入。
 - **静默窗口 + 最长延迟**：后台 refresh 保留 `quietWindow=30s` 和 `maxDelay=10min`，避免用户连续编辑时反复计算。
-- **跨设备 reconcile**：启动、首次 prepare 后、窗口恢复和周期任务会扫描 vault 当前文件与 indexed records，发现新文件、metadata mismatch、missing indexed path 后再标脏或删除索引。
-- **串行写锁**：`flush`、`rebuildLocalIndex`、`resetLocalIndex`、delete、rename 和 reconcile 写入统一经过 VSS operation queue，避免并发写 SQLite index。
+- **跨设备 reconcile**：启动、首次 prepare 后、窗口恢复和周期任务会扫描 vault 当前文件与 indexed records；新文件标脏，missing indexed path 删除索引，metadata mismatch 只进入验证队列，不会直接让 Memory 进入 changed-notes。
+- **低预算 verify queue**：file-open、reconcile metadata mismatch、rolling hash candidate 先进入 verify queue。verify 在平台预算内读取文件并计算 `contentHash`：hash 未变只同步文件级 metadata，hash 变化才标 dirty 并触发后续 refresh。
+- **串行写锁**：`flush`、`rebuildLocalIndex`、`resetLocalIndex`、delete、rename、reconcile upsert/delete 和 verify 阶段的索引写入统一经过 VSS operation queue，避免并发写 SQLite index。
 - **Shutdown cost control**：插件 unload/热重载后，旧 VSS 实例不会继续启动新的 embedding batch、retry sleep、state file 写入、status update 或后台 retry/reconcile 调度。
 - **内容哈希去重**：清洗 Markdown 后计算 `contentHash`；hash 相同直接跳过，不调用 embedding provider。
 - **脏队列持久化**：`dirty.json` 持久化待刷新路径，异常退出后可以继续处理。
@@ -34,9 +35,11 @@
 - 首次成功 prepare/update 后 5 秒。
 - window focus 或 `visibilitychange` 恢复 visible 后 30 秒。
 - 每 60 分钟一次周期 reconcile。
-- Chat 遇到 `changed-notes` 且 auto policy 可用时立即排队 reconcile 和 auto flush。
+- Chat 遇到 `changed-notes` 且 auto policy 可用时立即排队 reconcile、verify 和 auto flush；如果只是 pending verification，聊天前最多做一个小预算 fast verify，移动端使用更小的 1-file 预算。
 
-`reconcileLocalFiles()` 优先用 `VectorIndex.listFileRecords()` 批量读取 indexed metadata，减少逐文件 worker round-trip。单轮最多处理 2000 个 metadata 项，每批 250 个文件后 `sleep(0)` 让出主线程；未完成时通过 `hasMore` 继续排队。周期 reconcile 还会按游标滚动校验最多 50 个 metadata 未变化文件的 `contentHash`，用于发现跨设备同步中 mtime/size 未变化但内容变化的少数情况。
+`reconcileLocalFiles()` 优先用 `VectorIndex.listFileRecords()` 批量读取 indexed metadata，减少逐文件 worker round-trip。单轮最多处理 2000 个 metadata 项，每批 250 个文件后 `sleep(0)` 让出主线程；未完成时通过 `hasMore` 继续排队。metadata mismatch 不在 reconcile 内读文件 hash，而是进入 verify queue，所以文件只是 mtime/size 漂移时不会把 Memory status 变成 changed-notes。周期 reconcile 还会按游标把最多 50 个 metadata 未变化文件加入 verify queue，用于发现跨设备同步中 mtime/size 未变化但内容变化的少数情况。
+
+`verifyPendingChanges()` 是独立轻量阶段。默认桌面端每轮最多 20 files / 5MB / 500ms，移动端最多 3 files / 512KB / 100ms；聊天 fast path 桌面只处理 5 files / 1MB / 100ms，移动端只处理 1 file / 512KB / 100ms。verify 为了避免队头阻塞会保证每轮至少尝试一个候选，因此首个候选最多可能读取到 `largeFileThreshold=1MB`。verify hash 相同只调用 `VectorIndex.updateFileMetadata()` 更新 `vss_files` 的 `content_hash`、`mtime`、`size`，不重写 chunks，也不调用 embedding provider。verify hash 变化时才进入 dirty queue，并由后续 flush 按 quiet window / max delay / rate limit 更新 Memory。
 
 ## Embedding Batch 与限速
 
@@ -95,7 +98,11 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 | `maxPerMinute` | 5 files/min | 后台 refresh 每分钟处理文件数上限 |
 | `reconcileBatchSize` | 250 files | reconcile 批间 yield 粒度 |
 | `reconcileMaxMetadataItems` | 2000 | 单轮 reconcile metadata 预算 |
-| `rollingHashVerifyLimit` | 50/hour | 周期 reconcile 的滚动 hash 校验上限 |
+| `rollingHashVerifyLimit` | 50/hour | 周期 reconcile 的滚动 verify queue 入队上限 |
+| `desktopVerifyBudget` | 20 files / 5MB / 500ms | 桌面后台 verify 单轮预算 |
+| `desktopChatVerifyBudget` | 5 files / 1MB / 100ms | 桌面聊天前 fast verify 预算 |
+| `mobileVerifyBudget` | 3 files / 512KB / 100ms | 移动端后台 verify 单轮预算 |
+| `mobileChatVerifyBudget` | 1 file / 512KB / 100ms | 移动端聊天前 fast verify 预算 |
 | `largeFileThreshold` | 1MB | 超过该大小的文件跳过 Memory index |
 | `qwenMaxBatchItems` | 10 | Qwen v3/v4 单次 embedding 文本上限 |
 | `qwenSafeTokensPerMinute` | 900,000 | Qwen v3/v4 安全 TPM 预算 |
@@ -105,12 +112,13 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 
 1. **发现变化**：`create` / `modify` 标 dirty，`rename` 删除旧 path 并标 dirty，新旧设备同步差异由 reconcile 扫描补齐。
 2. **触发维护**：Chat auto policy、vault event quiet window、启动/prepare/resume/周期 reconcile，或手动 Update。
-3. **reconcile metadata**：批量读取 indexed records，与 vault 文件列表对比；missing indexed path 删除，metadata mismatch 或新文件标 dirty。
-4. **筛选 refresh 候选**：按静默窗口、最长延迟和每分钟处理上限挑选 dirty 文件；手动 Update 使用 force refresh。
-5. **去重判断**：读取本地文件记录，对比 `contentHash`，unchanged 直接跳过。
-6. **生成 chunks**：变化文件用 `MarkdownTextSplitter(chunkSize=4000, chunkOverlap=80)` 切块。
-7. **调用 embedding**：Rebuild 使用跨文件全局 batch；refresh 当前仍按文件内 batch。
-8. **写入 SQLite**：按文件 upsert chunks 和 embeddings，更新 marker/manifest/state。
+3. **reconcile metadata**：批量读取 indexed records，与 vault 文件列表对比；missing indexed path 删除，新文件标 dirty，metadata mismatch / rolling candidate 进入 verify queue。
+4. **verify queue**：按桌面/移动端预算读取少量文件计算 hash；hash 相同只同步 `vss_files` metadata，hash 变化才标 dirty。
+5. **筛选 refresh 候选**：按静默窗口、最长延迟和每分钟处理上限挑选 dirty 文件；手动 Update 使用 force refresh。
+6. **去重判断**：读取本地文件记录，对比 `contentHash`，unchanged 直接跳过或同步 metadata。
+7. **生成 chunks**：变化文件用 `MarkdownTextSplitter(chunkSize=4000, chunkOverlap=80)` 切块。
+8. **调用 embedding**：Rebuild 使用跨文件全局 batch；refresh 当前仍按文件内 batch。
+9. **写入 SQLite**：按文件 upsert chunks 和 embeddings，更新 marker/manifest/state。
 
 ## 验证覆盖
 
@@ -124,7 +132,8 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 - VSS dispose 后 read/rebuild 路径不会重新 initialize；并发 stats/search 只触发一次 SQLite 初始化。
 - Foreground `opfs-sahpool-locked` 不触发 query embedding 或 eager legacy JSON fallback；manual path 可 bounded retry 恢复 SQLite。
 - `SqliteVectorIndex` 在 worker 初始化 pending 时 dispose 会释放 Worker，后续请求拒绝而不是重建。
-- auto policy + durable ready + changed notes 时 Chat 不弹确认、不等待 refresh，会调度后台 reconcile/flush。
+- auto policy + durable ready + changed notes 时 Chat 不弹确认、不等待 refresh，会调度后台 reconcile/verify/flush。
 - fallback 或非 durable 状态下不会执行自动写入，并会提示后台更新不可用。
-- reconcile 能发现新增、metadata mismatch、deleted indexed path，以及滚动 hash 校验发现的内容变化。
+- reconcile 能发现新增、deleted indexed path，并把 durable ready 下的 metadata mismatch/rolling candidate 放入 verify queue；fallback 下无法执行 verify 的 metadata drift 会转为 dirty。verify 只有在 hash 真实变化时才标 dirty。metadata-only 漂移不会让 Memory 进入 needs update，也不会把聊天入口的 brain 状态变成 changed-notes。
 - 大 vault reconcile 的 `hasMore` 能在多轮扫描后收敛，避免持续每秒扫描。
+- verify budget 能限制单轮读取文件数、读取字节估算和主线程占用；dirty 清理使用 epoch/stamp 防止 verify 误清除更新的 modify 事件。
