@@ -724,16 +724,29 @@ describe('LLMView turn lifecycle', () => {
         expect(responseDiv.children.indexOf(thinkingStatus)).toBeLessThan(responseDiv.children.indexOf(assistantMessage));
 
         getButtonByClass(containerEl, 'cancel-button').click();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/cancelled.md'],
+            contextUsed: [{
+                category: 'memory',
+                label: 'Selected Memory',
+                detail: 'late cancelled metadata',
+                sources: [{ path: 'memory/cancelled.md' }],
+                citationEligible: true,
+            }],
+        });
         streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
         await flushPromises();
         await flushPromises();
 
         expect(allText(containerEl)).toContain('Generation cancelled');
+        expect(allText(containerEl)).not.toContain('late cancelled metadata');
+        expect(allText(containerEl)).not.toContain('Selected Memory');
         expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
         expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(0);
     });
 
-    it('removes successful Thinking status while finalizing the live messages in place', async () => {
+    it('keeps successful Thinking status as a completed timeline summary', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -756,7 +769,9 @@ describe('LLMView turn lifecycle', () => {
 
         expect(getElementByClass(responseDiv, 'user')).toBe(userMessage);
         expect(getElementByClass(responseDiv, 'assistant')).toBe(assistantMessage);
-        expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(0);
+        expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
+        expect(getElementByClass(responseDiv, 'thinking-status-summary').textContent).toBe('Thinking complete');
+        expect(allText(responseDiv)).toContain('Deciding what context to use...');
         expect(getElementsByClass(responseDiv, 'pa-chat-role-loader-thinking')).toHaveLength(0);
         expect(view.chatHistory).toEqual([
             { role: 'user', content: 'status prompt' },
@@ -764,7 +779,7 @@ describe('LLMView turn lifecycle', () => {
         ]);
     });
 
-    it('keeps provider reasoning as a completed turn transcript outside the final answer', async () => {
+    it('keeps provider reasoning hidden outside the final answer', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -779,8 +794,10 @@ describe('LLMView turn lifecycle', () => {
 
         const responseDiv = getResponseDiv(view);
         expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
-        expect(allText(responseDiv)).toContain('Model thinking');
-        expect(allText(responseDiv)).toContain('first thought. second thought.');
+        expect(allText(responseDiv)).toContain('Provider thinking');
+        expect(allText(responseDiv)).toContain('Provider reasoning was received but is hidden');
+        expect(allText(responseDiv)).not.toContain('first thought');
+        expect(allText(responseDiv)).not.toContain('second thought');
         expect(allText(responseDiv)).toContain('final answer only');
 
         streamCalls[0].resolve();
@@ -797,7 +814,7 @@ describe('LLMView turn lifecycle', () => {
         ]);
     });
 
-    it('keeps provider reasoning when completed turns are redrawn', async () => {
+    it('keeps hidden provider reasoning notice when completed turns are redrawn', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -828,7 +845,8 @@ describe('LLMView turn lifecycle', () => {
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
-        expect(allText(containerEl)).toContain('persisted reasoning');
+        expect(allText(containerEl)).toContain('Provider reasoning was received but is hidden');
+        expect(allText(containerEl)).not.toContain('persisted reasoning');
         expect(allText(containerEl)).not.toContain('second answer');
         expect(getElementsByClass(containerEl, 'thinking-status')).toHaveLength(1);
     });
@@ -854,6 +872,30 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].prompt).toBe('try a fragile answer');
         expect(streamCalls[1].chatHistory).toEqual([]);
         expect(streamCalls[1].options.memoryMode).toBe('auto');
+    });
+
+    it('records typed partial-output terminal events before the error row', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'partial protocol error';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        streamCalls[0].options.onEvent?.({
+            kind: 'partial-output-error',
+            turnId: 'turn-test',
+            seq: 1,
+            timestamp: 0,
+            category: 'Error',
+        } as never);
+        streamCalls[0].reject(new Error('stream interrupted'));
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([]);
+        expect(allText(containerEl)).toContain('Answer stopped early.');
+        expect(allText(containerEl)).toContain('The answer did not finish.');
     });
 
     it('keeps cancelled turns retryable through the normal send path', async () => {
@@ -1544,6 +1586,54 @@ describe('LLMView turn lifecycle', () => {
         expect(sourceList.hidden).toBe(false);
     });
 
+    it('renders Context Used separately from strict Memory references', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'context prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['0.unsorted/Dog.md'],
+            contextUsed: [
+                {
+                    category: 'memory',
+                    label: 'Selected Memory',
+                    detail: '1 selected note',
+                    sources: [{ path: '0.unsorted/Dog.md' }],
+                    citationEligible: true,
+                },
+                {
+                    category: 'current-note',
+                    label: 'Current note',
+                    detail: 'Read-only current note context',
+                    sources: [{ path: 'notes/current.md' }],
+                    citationEligible: false,
+                },
+            ],
+        });
+        streamCalls[0].options.onStatus?.({ type: 'web-search-enabled' });
+        streamCalls[0].onChunk('answer without citation block');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const text = allText(containerEl);
+        expect(text).toContain('Context Used');
+        expect(text).toContain('Selected Memory');
+        expect(text).toContain('Current note');
+        expect(text).toContain('Provider web search');
+        expect(text).toContain('Dog');
+        expect(text).toContain('current');
+        expect(text).toContain('Eligible for Memory references');
+        expect(text).toContain('Not a Memory reference');
+        expect(text).toContain('Status only');
+        expect(text).not.toContain('0.unsorted/Dog.md');
+        expect(text).not.toContain('notes/current.md');
+        expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+    });
+
     it('reconciles Memory source bars when metadata arrives after the final chunk', async () => {
         mockRenderedMemoryCallout();
         const { view, containerEl } = createView();
@@ -1923,15 +2013,15 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
         for (let index = 1; index <= 8; index += 1) {
             streamCalls[0].options.onStatus?.({
-                type: 'tool-running',
-                message: `Tool step ${index}`,
+                type: 'memory-prefetching',
+                query: `step ${index}`,
             } as ChatAgentStatus);
         }
 
         const details = getElementsByClass(containerEl, 'thinking-status-detail-item');
         expect(details).toHaveLength(6);
         expect(allText(containerEl)).not.toContain('Deciding what context to use...');
-        expect(allText(containerEl)).toContain('Tool step 8');
+        expect(allText(containerEl)).toContain('Searching notes: step 8');
     });
 
     it('uses product language for Memory activity statuses', async () => {
@@ -1941,17 +2031,54 @@ describe('LLMView turn lifecycle', () => {
         getTextArea(containerEl).value = 'memory status prompt';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
-        streamCalls[0].options.onStatus?.({ type: 'memory-prefetching', query: 'project' });
-        streamCalls[0].options.onStatus?.({ type: 'memory-prefetched', query: 'project', sources: [] });
+        streamCalls[0].options.onStatus?.({ type: 'memory-reranking', candidateCount: 2 });
+        streamCalls[0].options.onStatus?.({
+            type: 'memory-expanded',
+            sources: [{ path: 'folder/project.md' }],
+            anchoredCount: 1,
+            indexedFallbackCount: 1,
+        });
         streamCalls[0].options.onStatus?.({ type: 'memory-skipped', reason: 'Memory search returned 0 source(s).' });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-running',
+            tool: 'read_note_outline',
+            message: 'Reading outline for 0.unsorted/Dog.md',
+        });
+        streamCalls[0].options.onStatus?.({ type: 'tool-skipped', tool: 'read_note_outline', reason: 'technical tool failure' });
         streamCalls[0].options.onStatus?.({ type: 'web-search-enabled' });
-        streamCalls[0].options.onStatus?.({ type: 'fallback', reason: 'planner failed' });
 
-        expect(allText(containerEl)).toContain('Searching notes: project');
         expect(allText(containerEl)).toContain('No related memory');
+        expect(allText(containerEl)).toContain('Checking 2 related notes...');
+        expect(allText(containerEl)).toContain('Reading selected Memory...');
+        expect(allText(containerEl)).toContain('Vault context unavailable');
+        expect(allText(containerEl)).toContain('Reading note outline...');
         expect(allText(containerEl)).toContain('Qwen may search the web');
-        expect(allText(containerEl)).toContain('I will answer normally this time.');
+        expect(allText(containerEl)).toContain('Context Used');
+        expect(allText(containerEl)).toContain('Provider web search');
         expect(allText(containerEl)).not.toContain('fallback path');
         expect(allText(containerEl)).not.toContain('memory references');
+        expect(allText(containerEl)).not.toContain('candidate');
+        expect(allText(containerEl)).not.toContain('indexed fallback');
+        expect(allText(containerEl)).not.toContain('Fallback');
+        expect(allText(containerEl)).not.toContain('Read-only tool');
+        expect(allText(containerEl)).not.toContain('0.unsorted/Dog.md');
+    });
+
+    it('shows gathered-context wording when the planning limit is reached', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'loop cap prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onStatus?.({
+            type: 'fallback',
+            reason: 'Model turn cap reached; answering from gathered context.',
+        });
+
+        expect(allText(containerEl)).toContain('Using gathered context after reaching the planning limit.');
+        expect(allText(containerEl)).toContain('Context Used');
+        expect(allText(containerEl)).toContain('Using gathered context');
+        expect(allText(containerEl)).toContain('planning limit');
     });
 });
