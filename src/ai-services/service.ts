@@ -1,19 +1,23 @@
 /* Copyright 2023 edonyzpc */
-import { App, Editor, MarkdownView, Notice, requestUrl } from 'obsidian'
+import { App, Editor, MarkdownView, Notice, requestUrl, type RequestUrlResponse } from 'obsidian'
 import { StateEffect } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
-import { AIUtils, getDashScopeImageSynthesisUrl, getDashScopeTasksUrl } from './ai-utils';
+import { AIUtils, getDashScopeImageGenerationEndpoint } from './ai-utils';
 import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from './featured-image-path';
 import type { PluginManager } from '../plugin'
+import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from '../settings';
 import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
-import { setPlatformTimeout } from '../platform-dom';
 
 const isOkStatus = (status: number): boolean => status >= 200 && status < 300;
-const failedImageTaskStatuses = new Set(['FAILED', 'CANCELED']);
+const redactProviderMessage = (message: unknown): string | undefined => {
+    return typeof message === "string" && message.trim().length > 0
+        ? "[provider message omitted]"
+        : undefined;
+};
 
 interface SummaryResponse {
     summary: string;
@@ -149,37 +153,26 @@ export const parseSummaryResponse = (raw: string): SummaryResponse | null => {
     return { summary, keywords };
 };
 
-interface ImageGenerationResult {
-    output: {
-        task_status: string;
-        task_id: string;
-    };
-    request_id: string;
-    code: string;
-    message: string;
+interface FeaturedImageUrl {
+    url: string;
 }
 
-interface TaskData {
-    request_id: string;
-    output: {
-        task_id: string;
-        task_status: string;
-        task_metrics: {
-            TOTAL: number;
-            SUCCEEDED: number;
-            FAILED: number;
-        };
-        results: Array<{
-            url: string;
-            code: string;
-            message: string;
+interface FeaturedImageGenerationResponse {
+    request_id?: string;
+    status_code?: number | string;
+    code?: string;
+    message?: string;
+    output?: {
+        choices?: Array<{
+            finish_reason?: string;
+            finished?: boolean;
+            message?: {
+                content?: Array<{
+                    image?: string;
+                }>;
+            };
         }>;
     };
-    usage: {
-        image_count: number;
-    };
-    code: string;
-    message: string;
 }
 
 /**
@@ -285,7 +278,7 @@ export class AIService {
      * 生成特色图片
      */
     async generateFeaturedImage(editor: Editor, view: MarkdownView): Promise<void> {
-        if (this.plugin.settings.aiProvider !== 'qwen' || !getDashScopeImageSynthesisUrl(this.plugin.settings.baseURL)) {
+        if (this.plugin.settings.aiProvider !== 'qwen' || !getDashScopeImageGenerationEndpoint(this.plugin.settings.baseURL)) {
             new Notice(this.t("plugin.ai.notice.featuredUnsupported"), 3000);
             return;
         }
@@ -321,8 +314,8 @@ export class AIService {
                 "ai-featured-image-progress-2",
                 this.t("plugin.ai.progress.images"),
             );
-            const imagesGen = await this.generateImage(imageDesc);
-            if (!imagesGen) {
+            const imageUrls = await this.generateFeaturedImageUrls(imageDesc);
+            if (!imageUrls || imageUrls.length === 0) {
                 new Notice(this.t("plugin.ai.notice.featuredFailed"));
                 return;
             }
@@ -335,11 +328,6 @@ export class AIService {
                 "ai-featured-image-progress-3",
                 this.t("plugin.ai.progress.downloading"),
             );
-            const imageUrls = await this.getImage(imagesGen);
-            if (!imageUrls || imageUrls.length === 0) {
-                return;
-            }
-
             const addAI = StateEffect.define<{
                 id: string
                 from: number
@@ -536,118 +524,117 @@ export class AIService {
     }
 
     /**
-     * 生成图片
+     * 生成特色图片 URL
      */
-    private async generateImage(genMsg: string) {
-        const token = await this.plugin.getAPIToken();
-        const imageUrl = getDashScopeImageSynthesisUrl(this.plugin.settings.baseURL);
-        if (!imageUrl) {
+    private async generateFeaturedImageUrls(genMsg: string): Promise<FeaturedImageUrl[] | null> {
+        const endpoint = getDashScopeImageGenerationEndpoint(this.plugin.settings.baseURL);
+        const model = normalizeFeaturedImageModel(this.plugin.settings.featuredImageModel);
+        const imageCount = normalizeFeaturedImageCount(this.plugin.settings.numFeaturedImages);
+
+        if (!endpoint) {
+            this.plugin.log("Image generation endpoint is not supported", { model });
             new Notice(this.t("plugin.ai.notice.featuredUnsupported"), 3000);
             return null;
         }
-        const resp = await requestUrl({
-            url: imageUrl,
-            method: "POST",
-            contentType: "application/json",
-            headers: {
-                "X-DashScope-Async": "enable",
-                "Authorization": "Bearer " + token,
-            },
-            body: JSON.stringify({
-                "model": "wanx2.1-t2i-plus",
-                "input": {
-                    "prompt": genMsg,
+
+        const endpointRegion = endpoint.includes("dashscope-intl") ? "international" : "domestic";
+        let resp: RequestUrlResponse;
+        try {
+            const token = await this.plugin.getAPIToken();
+            resp = await requestUrl({
+                url: endpoint,
+                method: "POST",
+                contentType: "application/json",
+                headers: {
+                    "Authorization": "Bearer " + token,
                 },
-                "parameters": {
-                    "size": "1024*1024",
-                    "n": this.plugin.settings.numFeaturedImages,
-                    "seed": 42,
-                    "prompt_extend": true,
-                    "watermark": false,
-                }
-            }),
-            throw: false,
+                body: JSON.stringify({
+                    model,
+                    input: {
+                        messages: [
+                            {
+                                role: "user",
+                                content: [{ text: genMsg }],
+                            },
+                        ],
+                    },
+                    parameters: {
+                        size: "2K",
+                        n: imageCount,
+                        thinking_mode: true,
+                        watermark: false,
+                    },
+                }),
+                throw: false,
+            });
+        } catch (error) {
+            this.plugin.log("Image generation request failed before provider response", {
+                model,
+                endpointRegion,
+                errorName: error instanceof Error ? error.name : typeof error,
+            });
+            new Notice(this.t("plugin.ai.notice.featuredFailed"), 5000);
+            return null;
+        }
+
+        const response = (resp.json ?? {}) as FeaturedImageGenerationResponse;
+        const diagnostic = {
+            status: resp.status,
+            requestId: response?.request_id,
+            code: response?.code,
+            message: redactProviderMessage(response?.message),
+            model,
+            endpointRegion,
+        };
+
+        if (!isOkStatus(resp.status)) {
+            this.plugin.log("Image generation request failed", diagnostic);
+            new Notice(this.t("plugin.ai.notice.featuredFailed"), 5000);
+            return null;
+        }
+
+        if (response.status_code !== undefined && Number(response.status_code) !== 200) {
+            this.plugin.log("Image generation provider returned an error", diagnostic);
+            new Notice(this.t("plugin.ai.notice.featuredFailed"), 5000);
+            return null;
+        }
+
+        const choices = response.output?.choices;
+        if (!Array.isArray(choices)) {
+            this.plugin.log("Image generation response did not include choices", diagnostic);
+            new Notice(this.t("plugin.ai.notice.featuredFailed"), 5000);
+            return null;
+        }
+
+        const hasIncompleteChoice = choices.some((choice) => {
+            if (choice.finished === false) return true;
+            if (choice.finish_reason === undefined) return false;
+            return choice.finish_reason !== "stop";
         });
-
-        if (isOkStatus(resp.status)) {
-            const result = resp.json as ImageGenerationResult;
-            this.plugin.log("Image generation task submitted", {
-                taskId: result.output?.task_id,
-                status: result.output?.task_status,
-            });
-            return result;
-        } else {
-            this.plugin.log("Image generation request failed", { status: resp.status });
-            return null;
-        }
-    }
-
-    /** 
-     * 获取图片
-     */
-    private async getImage(generateResult: ImageGenerationResult) {
-        const token = await this.plugin.getAPIToken();
-
-        const taskID = generateResult.output.task_id;
-
-        const pollTaskStatus = async (taskId: string, baseUrl: string, timeoutMs = 300000) => {
-            const startTime = Date.now();
-
-            while (Date.now() - startTime <= timeoutMs) {
-                // 检查是否超时
-                try {
-                    const response = await requestUrl({
-                        url: `${baseUrl}/${taskId}`,
-                        method: "GET",
-                        headers: { "Authorization": "Bearer " + token },
-                        throw: false,
-                    });
-                    if (!isOkStatus(response.status)) {
-                        throw new Error(`Image task polling failed: HTTP ${response.status}`);
-                    }
-
-                    const data = response.json as TaskData;
-                    const taskStatus = data.output.task_status;
-                    if (taskStatus === 'SUCCEEDED') {
-                        return data;
-                    }
-                    if (failedImageTaskStatuses.has(taskStatus)) {
-                        const resultMessage = data.output.results?.find((result) => result.message)?.message;
-                        throw new Error(resultMessage || data.message || `Image generation task ${taskStatus}`);
-                    }
-
-                    // 等待10秒
-                    await new Promise(resolve => setPlatformTimeout(resolve, 10000));
-
-                } catch (error) {
-                    console.error('Error polling task:', error);
-                    throw error;
-                }
-            }
-
+        if (hasIncompleteChoice) {
+            this.plugin.log("Image generation did not finish successfully", diagnostic);
+            new Notice(this.t("plugin.ai.notice.imageTaskFailed"), 5000);
             return null;
         }
 
-        const baseUrl = getDashScopeTasksUrl(this.plugin.settings.baseURL);
-        if (!baseUrl) {
-            throw new Error("Unsupported DashScope image task endpoint.");
-        }
-        const taskId = taskID;
-        const timeout = 10 * 60 * 1000; // 10分钟超时
+        const imageUrls = choices.flatMap((choice) => choice.message?.content ?? [])
+            .map((content) => content.image)
+            .filter((image): image is string => typeof image === "string" && image.trim().length > 0)
+            .map((url) => ({ url }));
 
-        const imagesTaskData = await pollTaskStatus(taskId, baseUrl, timeout);
-
-        if (imagesTaskData && imagesTaskData.output.task_status === 'SUCCEEDED') {
-            // 处理成功的情况
-            this.plugin.log("Image generation task succeeded", {
-                taskId: imagesTaskData.output.task_id,
-                imageCount: imagesTaskData.usage?.image_count,
-            });
-            return imagesTaskData.output.results; // 假设返回的结果在 output.result 中
-        } else {
-            new Notice(this.t("plugin.ai.notice.imageTaskFailed"), 3000);
+        if (imageUrls.length === 0) {
+            this.plugin.log("Image generation response did not include image URLs", diagnostic);
+            new Notice(this.t("plugin.ai.notice.featuredFailed"), 5000);
             return null;
         }
+
+        this.plugin.log("Image generation succeeded", {
+            requestId: response.request_id,
+            model,
+            endpointRegion,
+            imageCount: imageUrls.length,
+        });
+        return imageUrls;
     }
 
     /**
