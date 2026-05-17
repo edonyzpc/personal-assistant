@@ -4,6 +4,35 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.9.0](https://github.com/edonyzpc/personal-assistant/compare/1.8.0...1.9.0) (2026-05-17)
+
+### Features
+- chat: implement Ralpha native agent runtime
+- chat-ui: render agent context timeline
+
+### Fix
+- vss: harden sqlite shutdown and locked recovery
+- update vulnerable dependency lockfile
+- chat: improve mobile chat viewport behavior
+- stabilize iOS chat keyboard layout
+- memory: verify note changes before refreshing memory
+- chat: open memory references in tabs
+
+### Improvements
+- add iCloud deploy target
+- Merge branch 'codex/ralpha-native-loop-refactor'
+
+### Docs
+- vss: document sqlite locked recovery
+- chat: add native agent loop refactor plan
+- chat: promote ralpha loop plan
+- chat-agent: add ralpha spec tracker
+- memory: document verify queue maintenance
+- chat: record Ralpha native loop closeout
+
+### Tests
+- vss: cover sqlite shutdown recovery
+
 ## [1.8.0](https://github.com/edonyzpc/personal-assistant/compare/1.7.0...1.8.0) (2026-05-13)
 
 ### Features
