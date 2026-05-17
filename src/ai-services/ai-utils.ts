@@ -34,19 +34,75 @@ export interface NativeToolCallingCapabilityOptions {
 }
 
 export const DASHSCOPE_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-
-const QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION: NativeToolCallingValidation = {
-    provider: "qwen",
-    model: "qwen-plus",
-    baseURL: DASHSCOPE_COMPATIBLE_BASE_URL,
-};
-
-export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [
-    QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION,
+export const DASHSCOPE_INTL_COMPATIBLE_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+export const DASHSCOPE_COMPATIBLE_BASE_URLS: readonly string[] = [
+    DASHSCOPE_COMPATIBLE_BASE_URL,
+    DASHSCOPE_INTL_COMPATIBLE_BASE_URL,
 ];
-export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] = [
-    QWEN_PLUS_DASHSCOPE_NATIVE_TOOL_CALLING_VALIDATION,
+
+export const DASHSCOPE_NATIVE_TOOL_CALLING_MODELS: readonly string[] = [
+    "qwen3.6-*",
+    "qwen3.5-*",
+    "qwen3-*",
+    "qwen2.5-*",
+    "qwen-max*",
+    "qwen-plus*",
+    "qwen-flash*",
+    "qwen-coder*",
+    "qwen-turbo*",
+    "deepseek-v4-pro",
+    "deepseek-v4-flash",
+    "deepseek-v3.2",
+    "deepseek-v3.2-exp",
+    "deepseek-v3.1",
+    "deepseek-r1",
+    "deepseek-r1-0528",
+    "deepseek-v3",
+    "siliconflow/deepseek-v3.2",
+    "siliconflow/deepseek-v3.1-terminus",
+    "siliconflow/deepseek-r1-0528",
+    "siliconflow/deepseek-v3-0324",
+    "vanchin/deepseek-v3.2-think",
+    "vanchin/deepseek-v3.1-terminus",
+    "vanchin/deepseek-r1",
+    "vanchin/deepseek-v3",
+    "glm-5.1",
+    "glm-5",
+    "glm-4.7",
+    "glm-4.6",
+    "glm-4.5",
+    "glm-4.5-air",
+    "kimi-k2.6",
+    "kimi-k2.5",
+    "kimi-k2-thinking",
+    "moonshot-kimi-k2-instruct",
+    "kimi/kimi-k2.6",
+    "kimi/kimi-k2.5",
+    "minimax-m2.5",
+    "minimax-m2.1",
+    "minimax/minimax-m2.7",
+    "minimax/minimax-m2.5",
+    "minimax/minimax-m2.1",
 ];
+
+const DASH_SCOPE_NATIVE_TOOL_CALLING_UNSUPPORTED_MODEL_SIGNALS = [
+    "character",
+    "embedding",
+    "qwen-long",
+    "qwen-mt",
+    "qwen-omni-turbo",
+    "qwen2.5-omni",
+    "qwen2.5-vl",
+    "rerank",
+    "asr",
+    "ocr",
+    "tts",
+];
+
+export const DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
+    buildDashScopeNativeToolCallingValidations(DASHSCOPE_NATIVE_TOOL_CALLING_MODELS);
+export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingValidation[] =
+    DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS;
 
 interface CreateChatModelOptions {
     transport?: ChatTransport;
@@ -236,9 +292,9 @@ export class AIUtils {
         }
 
         const validatedModels = options.validatedModels ?? DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS;
-        const validated = validatedModels.some((entry) => {
+        const validated = !hasUnsupportedNativeToolModelSignal(model) && validatedModels.some((entry) => {
             return normalizeCapabilityValue(entry.provider) === provider
-                && normalizeCapabilityValue(entry.model) === model
+                && matchesNativeToolValidationModel(entry.model, model)
                 && normalizeBaseURL(entry.baseURL) === baseURL;
         });
 
@@ -366,7 +422,31 @@ function normalizeBaseURL(value: unknown): string {
 }
 
 export function isDashScopeCompatibleBaseURL(value: unknown): boolean {
-    return normalizeBaseURL(value) === normalizeBaseURL(DASHSCOPE_COMPATIBLE_BASE_URL);
+    const normalized = normalizeBaseURL(value);
+    return DASHSCOPE_COMPATIBLE_BASE_URLS.some((baseURL) => normalizeBaseURL(baseURL) === normalized);
+}
+
+function buildDashScopeNativeToolCallingValidations(
+    models: readonly string[],
+): NativeToolCallingValidation[] {
+    return DASHSCOPE_COMPATIBLE_BASE_URLS.flatMap((baseURL) => models.map((model) => ({
+        provider: "qwen",
+        model,
+        baseURL,
+    })));
+}
+
+function matchesNativeToolValidationModel(validationModel: string, model: string): boolean {
+    const normalizedValidationModel = normalizeCapabilityValue(validationModel);
+    if (!normalizedValidationModel.endsWith("*")) {
+        return normalizedValidationModel === model;
+    }
+    const prefix = normalizedValidationModel.slice(0, -1);
+    return Boolean(prefix) && model.startsWith(prefix);
+}
+
+function hasUnsupportedNativeToolModelSignal(model: string): boolean {
+    return DASH_SCOPE_NATIVE_TOOL_CALLING_UNSUPPORTED_MODEL_SIGNALS.some((signal) => model.includes(signal));
 }
 
 export function buildQwenModelKwargs(

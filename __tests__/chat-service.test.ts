@@ -20,7 +20,11 @@ jest.mock('../src/ai-services/ai-utils', () => ({
         createChatModel: mockCreateChatModel,
         getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
     })),
-    isDashScopeCompatibleBaseURL: (baseURL: string) => baseURL.replace(/\/+$/, '').toLowerCase() === 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    isDashScopeCompatibleBaseURL: (baseURL: string) => {
+        const normalized = baseURL.replace(/\/+$/, '').toLowerCase();
+        return normalized === 'https://dashscope.aliyuncs.com/compatible-mode/v1'
+            || normalized === 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
+    },
     SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: [{
         provider: 'qwen',
         model: 'qwen-plus',
@@ -151,6 +155,7 @@ function createPlugin(overrides: {
     }>;
     nativeToolPlanningSmokeEnabled?: boolean;
     aiProvider?: string;
+    chatModelName?: string;
     baseURL?: string;
     qwenThinkingEnabled?: boolean;
     qwenWebSearchEnabled?: boolean;
@@ -160,7 +165,7 @@ function createPlugin(overrides: {
         settings: {
             nativeToolPlanningSmokeEnabled: overrides.nativeToolPlanningSmokeEnabled ?? false,
             aiProvider: overrides.aiProvider ?? 'qwen',
-            chatModelName: 'qwen-plus',
+            chatModelName: overrides.chatModelName ?? 'qwen-plus',
             baseURL: overrides.baseURL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             apiToken: 'sk-SECRET_TOKEN_SENTINEL',
             qwenThinkingEnabled: overrides.qwenThinkingEnabled ?? false,
@@ -1878,6 +1883,33 @@ describe('ChatService memory behavior', () => {
         )).toBe(true);
     });
 
+    it('passes Bailian final answer options for the Singapore DashScope endpoint', async () => {
+        const planner = createInvokeModel('{"action":"answer","reason":"no memory needed"}');
+        const final = createStreamModel('intl final answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            baseURL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1/',
+            qwenThinkingEnabled: true,
+            qwenWebSearchEnabled: true,
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('hello', jest.fn());
+
+        expect(mockCreateChatModel).toHaveBeenCalledTimes(2);
+        expect(mockCreateChatModel.mock.calls[1]?.[1]).toEqual({
+            transport: 'native',
+            qwenRequestOptions: {
+                enableThinking: true,
+                enableWebSearch: true,
+                searchOptions: { forced_search: false },
+            },
+        });
+    });
+
     it('keeps provider web search out of Memory metadata', async () => {
         const planner = createInvokeModel('{"action":"answer","reason":"provider web only","use_memory":false}');
         const final = createStreamModel('provider web answer');
@@ -2147,6 +2179,62 @@ describe('ChatService memory behavior', () => {
         expect(serializedLogs).not.toContain('PRIVATE_PROMPT_SENTINEL');
         expect(serializedLogs).not.toContain('SECRET_PATH.md');
         expect(serializedLogs).not.toContain('sk-SECRET_TOKEN_SENTINEL');
+    });
+
+    it('keeps current-note tools enabled for validated DashScope deepseek-v4-pro', async () => {
+        mockGetNativeToolCallingCapability.mockReturnValue({
+            supported: true,
+            status: 'supported',
+            provider: 'qwen',
+            model: 'deepseek-v4-pro',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            reason: 'Provider/model/baseURL is validated for native tool calling.',
+        });
+        const nativeToolCall = createNativeToolPlanningModel({
+            additional_kwargs: {
+                tool_calls: [{
+                    id: 'call_current_note',
+                    function: {
+                        name: 'get_current_note_context',
+                        arguments: '{"mode":"selection-or-nearby"}',
+                    },
+                }],
+            },
+        });
+        const nativeAnswer = createNativeToolPlanningModel({
+            content: '{"action":"answer","reason":"current note gathered","use_memory":false}',
+        });
+        let chainInput: Record<string, string> | undefined;
+        const final = createStreamModel('current note summary', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(nativeToolCall)
+            .mockResolvedValueOnce(nativeAnswer)
+            .mockResolvedValueOnce(final);
+
+        const activeMarkdownView = createMarkdownView({
+            path: 'notes/current.md',
+            basename: 'current',
+            value: '# Current\nDeepSeek should be able to summarize this current note.',
+            cursorLine: 1,
+        });
+        const plugin = createPlugin({
+            chatModelName: 'deepseek-v4-pro',
+            activeMarkdownView,
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('Summarize the current note.', jest.fn());
+
+        expect(mockGetNativeToolCallingCapability).toHaveBeenCalledWith({
+            internalGate: true,
+        });
+        expect(nativeToolCall.bindTools).toHaveBeenCalledTimes(1);
+        expect(chainInput?.input).toContain('<current_note_context>');
+        expect(chainInput?.input).toContain('"path": "notes/current.md"');
+        expect(chainInput?.input).toContain('DeepSeek should be able to summarize this current note.');
+        expect(JSON.stringify((plugin.log as jest.Mock).mock.calls)).not.toContain('gate-rejected');
     });
 
     it('keeps smoke-enabled unsupported capabilities on the tool-disabled answer path', async () => {
