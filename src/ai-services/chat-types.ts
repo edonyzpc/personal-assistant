@@ -20,7 +20,7 @@ export type ChatAgentStatus =
     | { type: "retrieved"; query: string; sources: ChatAgentSource[] }
     | { type: "memory-skipped"; reason: string }
     | { type: "tool-running"; tool: string; message: string }
-    | { type: "tool-done"; tool: string; message: string; sources?: ChatAgentSource[] }
+    | { type: "tool-done"; tool: string; message: string; sources?: ChatAgentSource[]; availability?: "available" | "partial" | "unavailable" }
     | { type: "tool-skipped"; tool: string; reason: string }
     | { type: "web-search-enabled" }
     | { type: "answering" }
@@ -203,7 +203,11 @@ export type ChatToolName =
     | "get_current_note_context"
     | "search_vault_metadata"
     | "list_recent_notes"
-    | "read_note_outline";
+    | "read_note_outline"
+    | "inspect_obsidian_note"
+    | "read_canvas_summary"
+    | "search_vault_snippets"
+    | "list_vault_tags";
 
 export interface ChatToolResult<Output> {
     ok: boolean;

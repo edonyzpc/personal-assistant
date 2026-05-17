@@ -1,0 +1,13 @@
+{
+	"nodes":[
+		{"id":"text-a","type":"text","text":"Canvas smoke primary node with bounded text snippet."},
+		{"id":"group-a","type":"group","label":"Smoke Group","color":"2"},
+		{"id":"duplicate-node","type":"text","text":"First duplicate id node."},
+		{"id":"duplicate-node","type":"text","text":"Second duplicate id node."},
+		{"id":"isolated-node","type":"file","file":"obsidian-operations/note-structure-smoke.md"}
+	],
+	"edges":[
+		{"id":"edge-ok","fromNode":"text-a","toNode":"group-a","fromSide":"right","toSide":"right"},
+		{"id":"edge-dangling","fromNode":"group-a","toNode":"missing-node"}
+	]
+}

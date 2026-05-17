@@ -31,6 +31,16 @@ export class Modal {
     onClose() { }
 }
 
+export class Component {
+    load() { }
+    onload() { }
+    unload() { }
+    onunload() { }
+    addChild<T extends Component>(component: T) { return component; }
+    removeChild<T extends Component>(component: T) { return component; }
+    register(_cb: () => unknown) { }
+}
+
 export class Setting {
     constructor(_containerEl: unknown) { }
     setName(_name: string) { return this; }

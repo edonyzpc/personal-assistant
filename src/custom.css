@@ -780,6 +780,8 @@ body {
 	margin-top: 6px;
 	line-height: 1.5;
 	color: var(--text-normal);
+	min-width: 0;
+	max-width: 100%;
 }
 
 .llm-view .message-content p:first-child {
@@ -809,6 +811,122 @@ body {
 	background: var(--background-primary);
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 4px;
+}
+
+.llm-view .message-render-buffer {
+	min-width: 0;
+	max-width: 100%;
+}
+
+.llm-view .pa-chat-mermaid-shell {
+	display: flex;
+	flex-direction: column;
+	max-width: 100%;
+	margin: 10px 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+	overflow: hidden;
+}
+
+.llm-view .pa-chat-mermaid-toolbar {
+	display: flex;
+	justify-content: flex-end;
+	padding: 6px 6px 0;
+}
+
+.llm-view .pa-chat-mermaid-viewport {
+	max-width: 100%;
+	max-height: min(58vh, 460px);
+	overflow: auto;
+	padding: 8px 12px 12px;
+}
+
+.llm-view .pa-chat-mermaid-viewport > .mermaid,
+.llm-view .pa-chat-mermaid-viewport > .block-language-mermaid {
+	width: max-content;
+	max-width: none;
+	min-width: 100%;
+}
+
+.llm-view .pa-chat-mermaid-viewport svg {
+	display: block;
+	max-width: none;
+}
+
+.llm-view .pa-chat-mermaid-open-button {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-primary);
+	color: var(--text-muted);
+	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+	cursor: pointer;
+}
+
+.llm-view .pa-chat-mermaid-open-button:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.llm-view .pa-chat-mermaid-open-button svg {
+	width: 15px;
+	height: 15px;
+}
+
+.llm-view .pa-chat-render-warning {
+	margin-top: 8px;
+	padding: 7px 9px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-size: 0.85em;
+	line-height: 1.35;
+}
+
+.pa-chat-mermaid-modal {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	width: min(92vw, 1200px);
+	max-width: 92vw;
+}
+
+.pa-chat-mermaid-modal-shell {
+	width: min(94vw, 1280px);
+	max-width: 94vw;
+}
+
+.pa-chat-mermaid-modal h2 {
+	margin: 0;
+	font-size: 1.1em;
+}
+
+.pa-chat-mermaid-modal-viewport {
+	max-width: 100%;
+	max-height: min(72vh, calc(100vh - 180px));
+	overflow: auto;
+	padding: 14px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+}
+
+.pa-chat-mermaid-modal-diagram {
+	width: max-content;
+	max-width: none;
+	min-width: 100%;
+}
+
+.pa-chat-mermaid-modal-diagram svg {
+	display: block;
+	max-width: none;
 }
 
 .llm-input {

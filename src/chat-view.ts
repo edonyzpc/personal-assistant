@@ -1,4 +1,4 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, setIcon, Modal, Setting, type EventRef } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, setIcon, Modal, Setting, Component, type EventRef } from 'obsidian';
 import { ChatService, type ChatAgentStatus, type ChatContextUsedItem, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
 import type PluginManager from "./main";
 import { VSS } from './vss'
@@ -35,6 +35,17 @@ interface ChatConfirmationOptions {
     danger?: boolean;
 }
 
+type MarkdownRenderOptions = {
+    forceScroll?: boolean;
+    deferMermaid?: boolean;
+};
+
+type MermaidFenceTransform = {
+    markdown: string;
+    deferred: boolean;
+    sources: string[];
+};
+
 type MemoryChipState = {
     label: string;
     visualState: "ready" | "needs-update" | "needs-setup" | "unavailable";
@@ -51,6 +62,7 @@ const MEMORY_CHIP_STATE_CLASSES = [
 export const CHAT_MENU_IDLE_CLOSE_MS = 8000;
 
 let ldrsLoadersRequested = false;
+let mermaidPreviewModalId = 0;
 
 type KeyboardPluginEventName = 'keyboardWillShow' | 'keyboardDidShow' | 'keyboardWillHide' | 'keyboardDidHide';
 type KeyboardDocumentEventName = 'focusin' | 'focusout';
@@ -130,6 +142,52 @@ class ChatConfirmationModal extends Modal {
     }
 }
 
+class MermaidPreviewModal extends Modal {
+    private renderOwner: Component | null = null;
+
+    constructor(
+        private readonly plugin: PluginManager,
+        private readonly mermaidSource: string,
+    ) {
+        super(plugin.app);
+    }
+
+    onOpen() {
+        const { contentEl } = this;
+        const titleId = `pa-chat-mermaid-modal-title-${++mermaidPreviewModalId}`;
+        this.modalEl.classList.add('pa-chat-mermaid-modal-shell');
+        contentEl.empty();
+        contentEl.classList.add('pa-chat-mermaid-modal');
+        contentEl.createEl('h2', {
+            text: 'Mermaid diagram',
+            attr: { id: titleId },
+        });
+        this.modalEl.setAttribute('aria-labelledby', titleId);
+        const viewport = contentEl.createDiv({ cls: 'pa-chat-mermaid-modal-viewport' });
+        this.renderOwner = new Component();
+        void renderMarkdownWithOwner(
+            this.plugin,
+            createFencedCodeBlock('mermaid', this.mermaidSource),
+            viewport,
+            this.renderOwner,
+        ).then(() => {
+            const diagrams = Array.from(
+                viewport.querySelectorAll('.mermaid, .block-language-mermaid'),
+            ) as HTMLElement[];
+            for (const diagram of diagrams) {
+                diagram.classList.add('pa-chat-mermaid-modal-diagram');
+            }
+        }).catch((error) => {
+            viewport.setText(`Could not render Mermaid diagram: ${String(error)}`);
+        });
+    }
+
+    onClose() {
+        this.renderOwner?.unload();
+        this.renderOwner = null;
+    }
+}
+
 function confirmChatAction(plugin: PluginManager, options: ChatConfirmationOptions): Promise<boolean> {
     if (typeof document === 'undefined') {
         return Promise.resolve(true);
@@ -168,6 +226,204 @@ function createChatMenuLabel(parent: HTMLElement, text: string, icon: string) {
     return label;
 }
 
+function renderMarkdownWithOwner(
+    plugin: PluginManager,
+    markdown: string,
+    target: HTMLElement,
+    owner: Component,
+): Promise<void> {
+    try {
+        return Promise.resolve(MarkdownRenderer.render(plugin.app, markdown, target, '', owner));
+    } catch (error) {
+        return Promise.reject(error);
+    }
+}
+
+function createFencedCodeBlock(language: string, source: string): string {
+    const fence = source.includes('```') ? '~~~~' : '```';
+    const normalizedSource = source.endsWith('\n') ? source : `${source}\n`;
+    return `${fence}${language}\n${normalizedSource}${fence}`;
+}
+
+function transformMermaidFences(markdown: string, defer: boolean): MermaidFenceTransform {
+    const lines = markdown.match(/[^\n]*(?:\n|$)/g)?.filter((line, index, all) =>
+        index < all.length - 1 || line.length > 0
+    ) ?? [];
+    const output: string[] = [];
+    const sources: string[] = [];
+    let deferred = false;
+    let activeFence: {
+        marker: '`' | '~';
+        length: number;
+        mermaid: boolean;
+        sourceLines: string[];
+    } | null = null;
+
+    for (const rawLine of lines) {
+        const newlineMatch = rawLine.match(/(\r?\n)$/);
+        const newline = newlineMatch?.[1] ?? '';
+        const line = newline ? rawLine.slice(0, -newline.length) : rawLine;
+
+        if (activeFence) {
+            const close = parseFenceClose(line);
+            if (
+                close
+                && close.marker === activeFence.marker
+                && close.length >= activeFence.length
+            ) {
+                if (activeFence.mermaid) {
+                    sources.push(activeFence.sourceLines.join(''));
+                }
+                activeFence = null;
+                output.push(rawLine);
+                continue;
+            }
+
+            if (activeFence.mermaid) {
+                activeFence.sourceLines.push(rawLine);
+            }
+            output.push(rawLine);
+            continue;
+        }
+
+        const open = parseFenceOpen(line);
+        if (!open) {
+            output.push(rawLine);
+            continue;
+        }
+
+        const language = open.info.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+        const mermaid = language === 'mermaid';
+        activeFence = {
+            marker: open.marker,
+            length: open.length,
+            mermaid,
+            sourceLines: [],
+        };
+
+        if (mermaid && defer) {
+            deferred = true;
+            output.push(`${open.prefix}${open.fence}${open.spacing}${open.info.replace(/^mermaid\b/i, 'text')}${newline}`);
+        } else {
+            output.push(rawLine);
+        }
+    }
+
+    return {
+        markdown: output.join(''),
+        deferred,
+        sources,
+    };
+}
+
+function containsMermaidFence(markdown: string): boolean {
+    return transformMermaidFences(markdown, true).deferred;
+}
+
+function deferMermaidFences(markdown: string): MermaidFenceTransform {
+    return transformMermaidFences(markdown, true);
+}
+
+function getMermaidFenceSources(markdown: string): string[] {
+    return transformMermaidFences(markdown, false).sources;
+}
+
+function parseFenceOpen(line: string): {
+    prefix: string;
+    fence: string;
+    marker: '`' | '~';
+    length: number;
+    spacing: string;
+    info: string;
+} | null {
+    const match = line.match(/^((?:[ \t]{0,3}>[ \t]?)*[ \t]{0,3})(`{3,}|~{3,})([ \t]*)([^\r\n]*)$/);
+    if (!match) return null;
+    const fence = match[2];
+    return {
+        prefix: match[1],
+        fence,
+        marker: fence[0] as '`' | '~',
+        length: fence.length,
+        spacing: match[3],
+        info: match[4],
+    };
+}
+
+function parseFenceClose(line: string): { marker: '`' | '~'; length: number } | null {
+    const match = line.match(/^(?:[ \t]{0,3}>[ \t]?)*[ \t]{0,3}(`{3,}|~{3,})[ \t]*$/);
+    if (!match) return null;
+    return {
+        marker: match[1][0] as '`' | '~',
+        length: match[1].length,
+    };
+}
+
+function hasAncestorWithClass(element: HTMLElement, className: string): boolean {
+    let current = element.parentElement;
+    while (current) {
+        if (current.classList.contains(className)) return true;
+        current = current.parentElement;
+    }
+    return false;
+}
+
+function createElement<K extends keyof HTMLElementTagNameMap>(tagName: K): HTMLElementTagNameMap[K] | null {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
+    return document.createElement(tagName);
+}
+
+function renderMermaidSourceWarning(buffer: HTMLElement) {
+    buffer.createDiv({
+        cls: 'pa-chat-render-warning',
+        text: 'Mermaid diagram could not be rendered; showing source.',
+    });
+}
+
+function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager, mermaidSources: string[]) {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+
+    const diagrams = Array.from(
+        root.querySelectorAll('.mermaid, .block-language-mermaid'),
+    ) as HTMLElement[];
+
+    let sourceIndex = 0;
+    diagrams.forEach((diagram) => {
+        if (!diagram.parentElement || hasAncestorWithClass(diagram, 'pa-chat-mermaid-shell')) return;
+        if (diagram.querySelectorAll('svg').length === 0) return;
+        const mermaidSource = mermaidSources[sourceIndex];
+        if (!mermaidSource?.trim()) return;
+        sourceIndex += 1;
+
+        const shell = createElement('div');
+        const toolbar = createElement('div');
+        const viewport = createElement('div');
+        const button = createElement('button');
+        const label = createElement('span');
+        if (!shell || !toolbar || !viewport || !button || !label) return;
+
+        shell.classList.add('pa-chat-mermaid-shell');
+        toolbar.classList.add('pa-chat-mermaid-toolbar');
+        viewport.classList.add('pa-chat-mermaid-viewport');
+        button.classList.add('pa-chat-mermaid-open-button');
+        button.type = 'button';
+        button.setAttribute('aria-label', 'Open Mermaid diagram');
+        button.setAttribute('title', 'Open Mermaid diagram');
+        setIcon(button, 'zoom-in');
+        label.classList.add('pa-sr-only');
+        label.textContent = 'Open Mermaid diagram';
+        button.appendChild(label);
+        button.onclick = () => {
+            new MermaidPreviewModal(plugin, mermaidSource).open();
+        };
+
+        diagram.parentElement.insertBefore(shell, diagram);
+        viewport.appendChild(diagram);
+        toolbar.appendChild(button);
+        shell.appendChild(toolbar);
+        shell.appendChild(viewport);
+    });
+}
+
 export class LLMView extends ItemView {
     plugin: PluginManager;
     result: string = '';
@@ -193,12 +449,31 @@ export class LLMView extends ItemView {
     private nativeKeyboardHeight = 0;
     private focusFallbackKeyboardHeight = 0;
     private memoryStatusUnsubscribe: (() => void) | null = null;
+    private markdownRenderOwners = new Set<Component>();
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
         this.plugin = plugin;
         this.vss = vss;
         this.chatService = new ChatService(plugin);
+    }
+
+    private createMarkdownRenderOwner(): Component {
+        const owner = new Component();
+        this.markdownRenderOwners.add(owner);
+        return owner;
+    }
+
+    private unloadMarkdownRenderOwner(owner?: Component | null) {
+        if (!owner || !this.markdownRenderOwners.delete(owner)) return;
+        owner.unload();
+    }
+
+    private unloadAllMarkdownRenderOwners() {
+        for (const owner of this.markdownRenderOwners) {
+            owner.unload();
+        }
+        this.markdownRenderOwners.clear();
     }
 
     getViewType(): string {
@@ -386,7 +661,9 @@ export class LLMView extends ItemView {
             deleteButton?: HTMLButtonElement;
             renderToken: number;
             copyContent: string;
+            renderOwner?: Component;
             renderedContent?: string;
+            renderedContentMode?: 'full' | 'deferred-mermaid';
             memoryMetadata?: ChatTurnMemoryMetadata;
         };
         type UiTurn = {
@@ -739,34 +1016,89 @@ export class LLMView extends ItemView {
             rendered: RenderedMessage,
             content: string,
             isLive: () => boolean,
-            forceScroll = false,
+            options: MarkdownRenderOptions = {},
         ): Promise<boolean> => {
             rendered.renderToken += 1;
             rendered.copyContent = content;
             const renderToken = rendered.renderToken;
             const buffer = createRenderBuffer();
             buffer.classList.add('message-render-buffer');
+            const mermaidTransform = options.deferMermaid
+                ? deferMermaidFences(content)
+                : { markdown: content, deferred: false, sources: getMermaidFenceSources(content) };
+            const renderOwner = this.createMarkdownRenderOwner();
 
-            return Promise.resolve(MarkdownRenderer.render(this.plugin.app, content, buffer, '', this.plugin))
+            return renderMarkdownWithOwner(this.plugin, mermaidTransform.markdown, buffer, renderOwner)
                 .then(() => {
                     if (rendered.renderToken !== renderToken || !isLive()) {
+                        this.unloadMarkdownRenderOwner(renderOwner);
                         removeElement(buffer);
                         return false;
                     }
+                    if (!options.deferMermaid) {
+                        enhanceMermaidDiagrams(buffer, this.plugin, mermaidTransform.sources);
+                    }
+                    this.unloadMarkdownRenderOwner(rendered.renderOwner);
                     rendered.contentDiv.empty();
                     rendered.contentDiv.appendChild(buffer);
+                    rendered.renderOwner = renderOwner;
                     rendered.renderedContent = content;
+                    rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
                     this.updateClickableLink(buffer);
-                    scrollToBottom({ force: forceScroll, behavior: forceScroll ? 'smooth' : 'auto' });
+                    scrollToBottom({
+                        force: options.forceScroll,
+                        behavior: options.forceScroll ? 'smooth' : 'auto',
+                    });
                     return true;
                 })
-                .catch((error) => {
+                .catch(async (error) => {
+                    this.unloadMarkdownRenderOwner(renderOwner);
                     if (rendered.renderToken !== renderToken || !isLive()) return false;
+                    if (!options.deferMermaid && containsMermaidFence(content)) {
+                        removeElement(buffer);
+                        const fallbackBuffer = createRenderBuffer();
+                        fallbackBuffer.classList.add('message-render-buffer');
+                        const fallbackOwner = this.createMarkdownRenderOwner();
+                        try {
+                            const fallbackTransform = deferMermaidFences(content);
+                            await renderMarkdownWithOwner(
+                                this.plugin,
+                                fallbackTransform.markdown,
+                                fallbackBuffer,
+                                fallbackOwner,
+                            );
+                            if (rendered.renderToken !== renderToken || !isLive()) {
+                                this.unloadMarkdownRenderOwner(fallbackOwner);
+                                removeElement(fallbackBuffer);
+                                return false;
+                            }
+                            renderMermaidSourceWarning(fallbackBuffer);
+                            this.unloadMarkdownRenderOwner(rendered.renderOwner);
+                            rendered.contentDiv.empty();
+                            rendered.contentDiv.appendChild(fallbackBuffer);
+                            rendered.renderOwner = fallbackOwner;
+                            rendered.renderedContent = content;
+                            rendered.renderedContentMode = 'deferred-mermaid';
+                            this.updateClickableLink(fallbackBuffer);
+                            scrollToBottom({
+                                force: options.forceScroll,
+                                behavior: options.forceScroll ? 'smooth' : 'auto',
+                            });
+                            return true;
+                        } catch (fallbackError) {
+                            this.unloadMarkdownRenderOwner(fallbackOwner);
+                            removeElement(fallbackBuffer);
+                            error = fallbackError;
+                        }
+                    }
+                    this.unloadMarkdownRenderOwner(rendered.renderOwner);
                     buffer.setText(`Could not render message: ${String(error)}`);
                     rendered.contentDiv.empty();
                     rendered.contentDiv.appendChild(buffer);
+                    rendered.renderOwner = undefined;
                     rendered.renderedContent = content;
-                    scrollToBottom({ force: forceScroll, behavior: 'auto' });
+                    rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
+                    scrollToBottom({ force: options.forceScroll, behavior: 'auto' });
                     return true;
                 });
         };
@@ -890,7 +1222,9 @@ export class LLMView extends ItemView {
             ensureCompletedMessageActions(rendered, options);
 
             if (!options.skipInitialRender) {
-                void renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), options.forceScroll);
+                void renderMarkdownInto(rendered, message.content, options.isLive ?? (() => true), {
+                    forceScroll: options.forceScroll,
+                });
             }
             return rendered;
         };
@@ -929,6 +1263,7 @@ export class LLMView extends ItemView {
 
         const renderTimeline = () => {
             this.cancelScheduledScroll();
+            this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             historyDeleteButtons = [];
             timelineEntries.forEach((entry, entryIndex) => {
@@ -976,6 +1311,7 @@ export class LLMView extends ItemView {
 
         const removeTerminalEntry = (entry: TerminalTurnEntry) => {
             timelineEntries = timelineEntries.filter((candidate) => candidate !== entry);
+            this.unloadMarkdownRenderOwner(entry.userMessage?.renderOwner);
             removeElement(entry.userMessage?.messageDiv);
             removeElement(entry.statusView?.messageDiv);
             removeElement(entry.terminalRow);
@@ -1192,6 +1528,34 @@ export class LLMView extends ItemView {
         };
 
         const getToolContextUsedInfo = (tool: string): Pick<ChatContextUsedItem, 'category' | 'label' | 'detail'> => {
+            if (tool === 'inspect_obsidian_note') {
+                return {
+                    category: 'read-only-tool',
+                    label: 'Note structure',
+                    detail: 'Read-only note structure, links/backlinks, tasks, and properties',
+                };
+            }
+            if (tool === 'read_canvas_summary') {
+                return {
+                    category: 'read-only-tool',
+                    label: 'Canvas structure',
+                    detail: 'Read-only canvas structure',
+                };
+            }
+            if (tool === 'search_vault_snippets') {
+                return {
+                    category: 'read-only-tool',
+                    label: 'Note snippets',
+                    detail: 'Bounded note snippet search results',
+                };
+            }
+            if (tool === 'list_vault_tags') {
+                return {
+                    category: 'read-only-tool',
+                    label: 'Vault tags',
+                    detail: 'Read-only vault tag counts',
+                };
+            }
             if (tool === 'get_current_note_context') {
                 return {
                     category: 'current-note',
@@ -1229,6 +1593,10 @@ export class LLMView extends ItemView {
 
         const formatToolRunningStatus = (tool: string): string => {
             if (tool === 'get_current_note_context') return 'Reading current note...';
+            if (tool === 'inspect_obsidian_note') return 'Reading note structure...';
+            if (tool === 'read_canvas_summary') return 'Checking canvas structure...';
+            if (tool === 'search_vault_snippets') return 'Searching note snippets...';
+            if (tool === 'list_vault_tags') return 'Reading vault tags...';
             if (tool === 'search_vault_metadata') return 'Searching vault metadata...';
             if (tool === 'list_recent_notes') return 'Reading recent notes...';
             if (tool === 'read_note_outline') return 'Reading note outline...';
@@ -1321,6 +1689,11 @@ export class LLMView extends ItemView {
             renderContextUsedItems(turn.statusView, turn.contextUsedItems);
         };
 
+        const isDuplicateReadOnlyToolSkip = (status: ChatAgentStatus): boolean => (
+            status.type === 'tool-skipped'
+            && status.reason === 'Duplicate read-only tool call skipped.'
+        );
+
         const getContextUsedItemsFromStatus = (status: ChatAgentStatus): ChatContextUsedItem[] => {
             if (status.type === 'memory-selected' || status.type === 'memory-expanded') {
                 if (status.sources.length === 0) return [];
@@ -1334,15 +1707,26 @@ export class LLMView extends ItemView {
             }
             if (status.type === 'tool-done') {
                 const toolInfo = getToolContextUsedInfo(status.tool);
+                if (status.availability === 'unavailable') {
+                    return [{
+                        category: 'tool-unavailable',
+                        label: `${toolInfo.label} unavailable`,
+                        detail: 'Vault context was unavailable for this turn.',
+                        sources: status.sources,
+                        citationEligible: false,
+                        statusOnly: true,
+                    }];
+                }
                 return [{
                     category: toolInfo.category,
                     label: toolInfo.label,
-                    detail: toolInfo.detail,
+                    detail: status.availability === 'partial' ? `Partial ${toolInfo.detail}` : toolInfo.detail,
                     sources: status.sources,
                     citationEligible: false,
                 }];
             }
             if (status.type === 'tool-skipped') {
+                if (isDuplicateReadOnlyToolSkip(status)) return [];
                 const toolInfo = getToolContextUsedInfo(status.tool);
                 return [{
                     category: 'tool-unavailable',
@@ -1401,6 +1785,7 @@ export class LLMView extends ItemView {
                 const sources = formatSourceSummary(status.sources);
                 return sources ? `${status.message}: ${sources}` : status.message;
             } else if (status.type === 'tool-skipped') {
+                if (isDuplicateReadOnlyToolSkip(status)) return 'Vault context already gathered';
                 return 'Vault context unavailable';
             } else if (status.type === 'web-search-enabled') {
                 return 'Qwen may search the web';
@@ -1440,7 +1825,10 @@ export class LLMView extends ItemView {
             assistantRendered.memoryMetadata = turn.memoryMetadata;
             if (
                 responseContent
-                && assistantRendered.renderedContent !== responseContent
+                && (
+                    assistantRendered.renderedContent !== responseContent
+                    || assistantRendered.renderedContentMode !== 'full'
+                )
             ) {
                 const rendered = await renderMarkdownInto(assistantRendered, responseContent, isLiveTurn);
                 if (!rendered || !isLiveTurn()) return false;
@@ -1567,7 +1955,9 @@ export class LLMView extends ItemView {
                             );
                         } else {
                             turn.assistantMessage.memoryMetadata = turn.memoryMetadata;
-                            renderMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn);
+                            renderMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn, {
+                                deferMermaid: true,
+                            });
                         }
                     },
                     controller.signal,
@@ -1657,6 +2047,7 @@ export class LLMView extends ItemView {
             this.cancelScheduledScroll();
             this.chatHistory = [];
             timelineEntries = [];
+            this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
             this.result = '';
@@ -1764,6 +2155,7 @@ export class LLMView extends ItemView {
         this.viewSessionId += 1;
         this.invalidateActiveTurn();
         this.cancelScheduledScroll();
+        this.unloadAllMarkdownRenderOwners();
         this.panelResizeObserver?.disconnect();
         this.panelResizeObserver = null;
         this.disconnectStatusBarClearance();

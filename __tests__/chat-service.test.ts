@@ -3,6 +3,9 @@ import { SystemMessagePromptTemplate } from '@langchain/core/prompts';
 import { ChatService, canFallbackToNonStreaming } from '../src/ai-services/chat-service';
 import {
     ChatAgentRuntime,
+    MAX_READ_ONLY_TOOL_CONTEXT_CHARS,
+    getReadOnlyToolObservationMessage,
+    isReadOnlyContextToolResult,
     parseNativeToolCallsFromModelResponse,
     parsePlannerAction,
     stripReferenceBlock,
@@ -147,12 +150,23 @@ function createPlugin(overrides: {
         name?: string;
         stat?: { mtime?: number; ctime?: number; size?: number };
     }>;
+    abstractFiles?: Array<{
+        path: string;
+        basename?: string;
+        name?: string;
+        extension?: string;
+        stat?: { mtime?: number; ctime?: number; size?: number };
+    }>;
     fileContents?: Record<string, string>;
     metadataByPath?: Record<string, {
         tags?: Array<{ tag?: string }>;
         frontmatter?: Record<string, unknown>;
         headings?: Array<{ heading?: string; level?: number }>;
+        links?: Array<{ link?: string; original?: string; displayText?: string }>;
+        embeds?: Array<{ link?: string; original?: string; displayText?: string }>;
     }>;
+    resolvedLinks?: Record<string, Record<string, number>>;
+    unresolvedLinks?: Record<string, Record<string, number>>;
     nativeToolPlanningSmokeEnabled?: boolean;
     aiProvider?: string;
     chatModelName?: string;
@@ -161,6 +175,7 @@ function createPlugin(overrides: {
     qwenWebSearchEnabled?: boolean;
 } = {}) {
     const markdownFiles = overrides.markdownFiles ?? [];
+    const abstractFiles = [...markdownFiles, ...(overrides.abstractFiles ?? [])];
     return {
         settings: {
             nativeToolPlanningSmokeEnabled: overrides.nativeToolPlanningSmokeEnabled ?? false,
@@ -181,11 +196,13 @@ function createPlugin(overrides: {
             },
             vault: {
                 getMarkdownFiles: jest.fn(() => markdownFiles),
-                getAbstractFileByPath: jest.fn((path: string) => markdownFiles.find((file) => file.path === path) ?? null),
+                getAbstractFileByPath: jest.fn((path: string) => abstractFiles.find((file) => file.path === path) ?? null),
                 cachedRead: jest.fn(async (file: { path: string }) => overrides.fileContents?.[file.path] ?? ''),
             },
             metadataCache: {
                 getFileCache: jest.fn((file: { path: string }) => overrides.metadataByPath?.[file.path] ?? null),
+                resolvedLinks: overrides.resolvedLinks,
+                unresolvedLinks: overrides.unresolvedLinks,
             },
         },
         vss: {
@@ -256,6 +273,11 @@ function extractToolContextPayload(input: string | undefined, tool: string): Rec
         throw new Error(`${tool} context block was not found.`);
     }
     return JSON.parse(match[1]) as Record<string, unknown>;
+}
+
+function extractSerializedToolContextBlocks(input: string | undefined): string[] {
+    return [...(input ?? '').matchAll(/<tool_context tool="[^"]+">\n[\s\S]*?\n<\/tool_context>/g)]
+        .map((match) => match[0]);
 }
 
 function extractPlannerRegistryDefinitions(input: unknown): Array<Record<string, unknown>> {
@@ -1281,6 +1303,30 @@ describe('native tool planning loop', () => {
         expect(mockCreateChatModel).not.toHaveBeenCalled();
     });
 
+    it('marks v1A Obsidian Operations requests as vault-context requests when native tools are unavailable', async () => {
+        mockGetNativeToolCallingCapability.mockReturnValue({
+            supported: false,
+            status: 'unsupported',
+            provider: 'openai',
+            model: 'gpt-test',
+            baseURL: 'https://api.openai.com/v1',
+            reason: 'Provider/model/baseURL is not validated for native tool calling.',
+        });
+
+        const plugin = createPlugin();
+        const runtime = createRuntime(plugin);
+
+        const plan = await runtime.planTurn({
+            prompt: '检查这个 Canvas 有没有断边，并列出相关 tags 和 backlinks',
+            memoryMode: 'auto',
+        });
+
+        expect(plan.finalAnswer.chainInput.input).toContain('<tool_disabled_fallback>');
+        expect(plan.finalAnswer.chainInput.input).toContain('"requested_native_vault_context": true');
+        expect(plan.finalAnswer.chainInput.input).toContain('this vault context is unavailable for this turn');
+        expect(mockCreateChatModel).not.toHaveBeenCalled();
+    });
+
     it('uses tool-disabled gathered-context planning when bindTools is missing', async () => {
         enableNativeCapability();
         const nativePlannerWithoutBindTools = {
@@ -1788,6 +1834,10 @@ describe('native tool planning loop', () => {
             'search_vault_metadata',
             'list_recent_notes',
             'read_note_outline',
+            'inspect_obsidian_note',
+            'read_canvas_summary',
+            'search_vault_snippets',
+            'list_vault_tags',
         ]);
         expect(plugin.memoryManager.ensureReadyForChat).not.toHaveBeenCalled();
         expect(plugin.vss.searchSimilarity).not.toHaveBeenCalled();
@@ -1880,6 +1930,27 @@ describe('ChatService memory behavior', () => {
         expect(promptTemplates.some((template) =>
             template.includes('Provider web search 只是 provider 状态')
             && template.includes('不要把网页、URL 或 provider web search 结果当作可引用来源')
+        )).toBe(true);
+    });
+
+    it('prompts final answers to treat Obsidian Operations context as bounded and non-executable', async () => {
+        const planner = createInvokeModel('{"action":"answer","reason":"no memory needed"}');
+        const final = createStreamModel('answer');
+        mockCreateChatModel
+            .mockResolvedValueOnce(planner)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin();
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('summarize broad vault context', jest.fn());
+
+        const promptTemplates = (SystemMessagePromptTemplate.fromTemplate as unknown as jest.Mock).mock.calls
+            .map((call) => String(call[0]));
+        expect(promptTemplates.some((template) =>
+            template.includes('有上限的结构/片段资料')
+            && template.includes('不要声称已读取完整笔记、完整 vault 或所有结果')
+            && template.includes('或声称已经完成这些动作')
         )).toBe(true);
     });
 
@@ -2078,6 +2149,10 @@ describe('ChatService memory behavior', () => {
             'search_vault_metadata',
             'list_recent_notes',
             'read_note_outline',
+            'inspect_obsidian_note',
+            'read_canvas_summary',
+            'search_vault_snippets',
+            'list_vault_tags',
         ]);
         expect(toolDefinitions).toEqual(expect.arrayContaining([
             expect.objectContaining({
@@ -3957,6 +4032,372 @@ describe('ChatService memory behavior', () => {
         expect(chainInput?.allowed_sources).toBe('memory/trusted.md');
     });
 
+    it('recognizes v1A Obsidian Operations outputs as read-only context only through guarded shapes', () => {
+        expect(isReadOnlyContextToolResult('inspect_obsidian_note', {
+            kind: 'note-structure',
+            path: 'notes/current.md',
+            headings: [{ level: 1, text: 'Overview' }],
+            tasks: ['- [ ] Follow up'],
+            tags: ['#project'],
+        })).toBe(true);
+        expect(isReadOnlyContextToolResult('read_canvas_summary', {
+            kind: 'canvas-structure',
+            path: 'maps/project.canvas',
+            nodeCount: 2,
+            edgeCount: 1,
+        })).toBe(true);
+        expect(isReadOnlyContextToolResult('search_vault_snippets', {
+            kind: 'vault-snippets',
+            query: 'roadmap',
+            matches: [{ path: 'notes/roadmap.md', snippet: 'short match' }],
+        })).toBe(true);
+        expect(isReadOnlyContextToolResult('list_vault_tags', {
+            kind: 'vault-tags',
+            tags: [{ tag: '#project', count: 2 }],
+        })).toBe(true);
+        expect(isReadOnlyContextToolResult('inspect_obsidian_note', {
+            path: 'notes/current.md',
+        })).toBe(false);
+    });
+
+    it('uses product-safe observation messages for v1A Obsidian Operations outputs', () => {
+        expect(getReadOnlyToolObservationMessage('inspect_obsidian_note', {
+            kind: 'note-structure',
+            path: 'notes/current.md',
+            headings: [{ level: 1, text: 'Overview' }],
+            tasks: ['- [ ] Follow up'],
+            tags: ['#project'],
+        })).toBe('Read note structure: 1 heading(s), 1 task(s), 1 tag(s).');
+        expect(getReadOnlyToolObservationMessage('read_canvas_summary', {
+            kind: 'canvas-structure',
+            path: 'maps/project.canvas',
+            nodeCount: 2,
+            edgeCount: 1,
+        })).toBe('Read canvas structure: 2 node(s), 1 edge(s).');
+        expect(getReadOnlyToolObservationMessage('search_vault_snippets', {
+            kind: 'vault-snippets',
+            query: 'roadmap',
+            matches: [{ path: 'notes/roadmap.md', snippet: 'short match' }],
+        })).toBe('Found 1 bounded snippet match(es).');
+        expect(getReadOnlyToolObservationMessage('list_vault_tags', {
+            kind: 'vault-tags',
+            tags: [{ tag: '#project', count: 2 }],
+        })).toBe('Listed 1 vault tag(s).');
+        expect(getReadOnlyToolObservationMessage('search_vault_snippets', {
+            kind: 'vault-snippets',
+            query: 'roadmap',
+            matches: [],
+            missingScope: true,
+            unavailableSources: ['snippet scope not found'],
+        })).toBe('Snippet scope was not found.');
+        expect(getReadOnlyToolObservationMessage('list_vault_tags', {
+            kind: 'vault-tags',
+            tags: [],
+            unavailableSources: ['metadata cache'],
+        })).toBe('Vault tags unavailable.');
+    });
+
+    it('executes inspect_obsidian_note as read-only tool context', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"inspect_obsidian_note","input":{"path":"notes/project.md"},"reason":"needs note structure"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"note structure gathered"}');
+        const final = createStreamModel('answer with note structure', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [{ path: 'notes/project.md', basename: 'project' }],
+            fileContents: {
+                'notes/project.md': '# Overview\n- [ ] Draft migration\n> [!note] Link review\n[[notes/related.md]]',
+            },
+            metadataByPath: {
+                'notes/project.md': {
+                    tags: [{ tag: '#project' }],
+                    frontmatter: { owner: 'Eddie' },
+                    links: [{ link: 'notes/related.md' }],
+                },
+            },
+            resolvedLinks: {
+                'notes/backlink.md': { 'notes/project.md': 1 },
+            },
+        });
+        const statuses: Array<{ type: string; tool?: string; message?: string }> = [];
+        const turnMetadata: unknown[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('inspect project note', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status),
+            onTurnMetadata: (metadata) => turnMetadata.push(metadata),
+        });
+
+        const payload = extractToolContextPayload(chainInput?.input, 'inspect_obsidian_note');
+        expect(payload).toMatchObject({
+            source_type: 'read_only_tool_not_memory_source',
+            tool: 'inspect_obsidian_note',
+        });
+        expect(payload.content).toMatchObject({
+            kind: 'note-structure',
+            path: 'notes/project.md',
+            properties: { owner: 'Eddie' },
+            backlinks: ['notes/backlink.md'],
+        });
+        expect(chainInput).not.toHaveProperty('memory_content');
+        expect(chainInput).not.toHaveProperty('allowed_sources');
+        expect(JSON.stringify(payload.content)).toContain('Draft migration');
+        expect(JSON.stringify(payload.content)).not.toContain('source_type":"memory');
+        expect(turnMetadata).toEqual([{
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            contextUsed: [{
+                category: 'read-only-tool',
+                label: 'Note structure',
+                detail: 'Read-only note structure, links/backlinks, tasks, and properties',
+                sources: [{ path: 'notes/project.md' }],
+                citationEligible: false,
+            }],
+        }]);
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-done',
+                tool: 'inspect_obsidian_note',
+                message: expect.stringContaining('Read note structure'),
+            }),
+        ]));
+    });
+
+    it('keeps recoverable read-only tool failures visible to the final answer', async () => {
+        let chainInput: Record<string, string> | undefined;
+        let secondPlannerInput: unknown;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"inspect_obsidian_note","input":{"path":"notes/missing.md"},"reason":"needs note structure"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"missing note observed"}', (input) => {
+            secondPlannerInput = input;
+        });
+        const final = createStreamModel('answer with unavailable note context', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [{ path: 'notes/existing.md', basename: 'existing' }],
+        });
+        const statuses: Array<{ type: string; tool?: string; reason?: string }> = [];
+        const turnMetadata: unknown[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('inspect missing note', jest.fn(), undefined, undefined, {
+            onStatus: (status) => statuses.push(status),
+            onTurnMetadata: (metadata) => turnMetadata.push(metadata),
+        });
+
+        const payload = extractToolContextPayload(chainInput?.input, 'inspect_obsidian_note');
+        expect(payload).toMatchObject({
+            kind: 'read_only_tool_unavailable',
+            source_type: 'read_only_tool_not_memory_source',
+            tool: 'inspect_obsidian_note',
+            input: 'notes/missing.md',
+            error: 'Requested Markdown note was not found.',
+        });
+        expect(chainInput?.input).toContain('Read-only tool context blocks');
+        expect(turnMetadata).toEqual([{
+            hasMemoryContent: false,
+            allowedMemorySourcePaths: [],
+            contextUsed: [{
+                category: 'tool-unavailable',
+                label: 'Note structure unavailable',
+                detail: 'Vault context was unavailable for this turn.',
+                sources: [],
+                citationEligible: false,
+                statusOnly: true,
+            }],
+        }]);
+        expect(JSON.stringify(secondPlannerInput)).toContain('Requested Markdown note was not found.');
+        expect(JSON.stringify(secondPlannerInput)).not.toContain('Read Obsidian context.');
+        expect(statuses).toEqual(expect.arrayContaining([
+            expect.objectContaining({
+                type: 'tool-skipped',
+                tool: 'inspect_obsidian_note',
+                reason: 'Requested Markdown note was not found.',
+            }),
+        ]));
+    });
+
+    it('keeps v1A tool paths citation-ineligible when selected Memory is present', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"inspect_obsidian_note","input":{"path":"notes/project.md"},"reason":"needs note structure"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"memory and note structure gathered","use_memory":true}');
+        const final = createStreamModel('answer with memory and note structure', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            searchSimilarity: async () => [{
+                score: 0.96,
+                doc: {
+                    pageContent: 'trusted project memory context for the requested project answer',
+                    metadata: { path: 'memory/trusted.md', chunkIndex: 0 },
+                },
+            }],
+            markdownFiles: [{ path: 'notes/project.md', basename: 'project' }],
+            fileContents: {
+                'notes/project.md': '# Project\n[[notes/related.md]]',
+            },
+            metadataByPath: {
+                'notes/project.md': {
+                    links: [{ link: 'notes/related.md' }],
+                },
+            },
+        });
+        const turnMetadata: unknown[] = [];
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('trusted project memory context and inspect project note', jest.fn(), undefined, undefined, {
+            onTurnMetadata: (metadata) => turnMetadata.push(metadata),
+        });
+
+        expect(chainInput?.memory_content).toContain('trusted project memory context');
+        expect(chainInput?.allowed_sources).toBe('memory/trusted.md');
+        expect(chainInput?.input).toContain('<tool_context tool="inspect_obsidian_note">');
+        expect(chainInput?.input).toContain('"path": "notes/project.md"');
+        expect(chainInput?.allowed_sources).not.toContain('notes/project.md');
+        expect(turnMetadata).toEqual([{
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: ['memory/trusted.md'],
+            contextUsed: expect.arrayContaining([
+                expect.objectContaining({
+                    category: 'memory',
+                    label: 'Selected Memory',
+                    sources: [expect.objectContaining({ path: 'memory/trusted.md', chunkIndex: 0, score: 0.96 })],
+                    citationEligible: true,
+                }),
+                expect.objectContaining({
+                    category: 'read-only-tool',
+                    label: 'Note structure',
+                    sources: [{ path: 'notes/project.md' }],
+                    citationEligible: false,
+                }),
+            ]),
+        }]);
+    });
+
+    it('executes read_canvas_summary as read-only tool context', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"read_canvas_summary","input":{"path":"maps/project.canvas"},"reason":"needs canvas structure"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"canvas gathered"}');
+        const final = createStreamModel('answer with canvas structure', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            abstractFiles: [{ path: 'maps/project.canvas', basename: 'project', extension: 'canvas' }],
+            fileContents: {
+                'maps/project.canvas': JSON.stringify({
+                    nodes: [
+                        { id: 'a', type: 'text', text: 'Project map' },
+                        { id: 'b', type: 'group', label: 'Group B' },
+                    ],
+                    edges: [{ id: 'e1', fromNode: 'a', toNode: 'missing' }],
+                }),
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('inspect canvas', jest.fn());
+
+        const payload = extractToolContextPayload(chainInput?.input, 'read_canvas_summary');
+        expect(payload.content).toMatchObject({
+            kind: 'canvas-structure',
+            path: 'maps/project.canvas',
+            nodeCount: 2,
+            edgeCount: 1,
+        });
+        expect(JSON.stringify(payload.content)).toContain('missing');
+    });
+
+    it('executes search_vault_snippets as bounded read-only tool context', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"search_vault_snippets","input":{"query":"pa-positive-snippet-token-1701","scope":"notes","limit":3},"reason":"needs snippets"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"snippets gathered"}');
+        const final = createStreamModel('answer with snippets', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'notes/snippet.md', basename: 'snippet' },
+                { path: 'archive/ignored.md', basename: 'ignored' },
+            ],
+            fileContents: {
+                'notes/snippet.md': `before ${'a'.repeat(200)} pa-positive-snippet-token-1701 after`,
+                'archive/ignored.md': 'pa-positive-snippet-token-1701 outside scope',
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('find snippet', jest.fn());
+
+        const payload = extractToolContextPayload(chainInput?.input, 'search_vault_snippets');
+        const content = payload.content as { matches: Array<{ path: string; snippet: string }> };
+        expect(content.matches).toHaveLength(1);
+        expect(content.matches[0].path).toBe('notes/snippet.md');
+        expect(content.matches[0].snippet).toContain('pa-positive-snippet-token-1701');
+        expect(content.matches[0].snippet).not.toContain('a'.repeat(120));
+    });
+
+    it('executes list_vault_tags as metadata-only read-only tool context', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerTool = createInvokeModel('{"action":"tool","tool":"list_vault_tags","input":{"limit":2},"reason":"needs tags"}');
+        const plannerAnswer = createInvokeModel('{"action":"answer","reason":"tags gathered"}');
+        const final = createStreamModel('answer with tags', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerTool)
+            .mockResolvedValueOnce(plannerAnswer)
+            .mockResolvedValueOnce(final);
+
+        const plugin = createPlugin({
+            markdownFiles: [
+                { path: 'notes/a.md', basename: 'a' },
+                { path: 'notes/b.md', basename: 'b' },
+            ],
+            metadataByPath: {
+                'notes/a.md': { tags: [{ tag: '#project' }, { tag: '#inbox' }] },
+                'notes/b.md': { tags: [{ tag: '#project' }] },
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('list tags', jest.fn());
+
+        const payload = extractToolContextPayload(chainInput?.input, 'list_vault_tags');
+        expect(payload.content).toMatchObject({
+            kind: 'vault-tags',
+            tags: [
+                { tag: '#project', count: 2, representativePaths: ['notes/a.md', 'notes/b.md'] },
+                { tag: '#inbox', count: 1, representativePaths: ['notes/a.md'] },
+            ],
+        });
+    });
+
     it('executes search_vault_metadata as read-only tool context', async () => {
         let chainInput: Record<string, string> | undefined;
         let secondPlannerInput: unknown;
@@ -4135,6 +4576,52 @@ describe('ChatService memory behavior', () => {
         expect(toolBlock.length).toBeLessThanOrEqual(4000);
         expect(payload.content_truncated).toBe(true);
         expect(payload.preview).toContain('projects/roadmap-0.md');
+    });
+
+    it('caps aggregate serialized read-only tool context blocks', async () => {
+        let chainInput: Record<string, string> | undefined;
+        const plannerMetadata = createInvokeModel('{"action":"tool","tool":"search_vault_metadata","input":{"query":"roadmap","limit":12},"reason":"find matching notes"}');
+        const plannerRecent = createInvokeModel('{"action":"tool","tool":"list_recent_notes","input":{"order":"modified","limit":20},"reason":"needs recent notes"}');
+        const plannerOutline = createInvokeModel('{"action":"tool","tool":"read_note_outline","input":{"path":"projects/roadmap-0.md","max_headings":50},"reason":"needs outline"}');
+        const final = createStreamModel('answer with capped tool context', (input) => {
+            chainInput = input;
+        });
+        mockCreateChatModel
+            .mockResolvedValueOnce(plannerMetadata)
+            .mockResolvedValueOnce(plannerRecent)
+            .mockResolvedValueOnce(plannerOutline)
+            .mockResolvedValueOnce(final);
+
+        const markdownFiles = Array.from({ length: 20 }, (_, index) => ({
+            path: `projects/roadmap-${index}.md`,
+            basename: `roadmap-${index}`,
+            stat: { mtime: 100 - index, ctime: 50 - index, size: 1000 + index },
+        }));
+        const metadataByPath = Object.fromEntries(markdownFiles.map((file, index) => [
+            file.path,
+            {
+                tags: [{ tag: '#project' }],
+                frontmatter: {
+                    topic: 'roadmap',
+                    detail: `${index}-${'x'.repeat(500)}`,
+                },
+                headings: Array.from({ length: 60 }, (_, headingIndex) => ({
+                    heading: `Heading ${headingIndex} ${'y'.repeat(80)}`,
+                    level: (headingIndex % 3) + 1,
+                })),
+            },
+        ]));
+        const plugin = createPlugin({ markdownFiles, metadataByPath });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('gather bounded vault context', jest.fn());
+
+        const blocks = extractSerializedToolContextBlocks(chainInput?.input);
+        expect(blocks).toHaveLength(3);
+        expect(blocks.join('\n').length).toBeLessThanOrEqual(MAX_READ_ONLY_TOOL_CONTEXT_CHARS);
+        expect(chainInput?.input).toContain('<tool_context tool="search_vault_metadata">');
+        expect(chainInput?.input).toContain('<tool_context tool="list_recent_notes">');
+        expect(chainInput?.input).toContain('<tool_context tool="read_note_outline">');
     });
 
     it('keeps read-only tool paths out of memory references when memory is also used', async () => {
@@ -4558,6 +5045,10 @@ describe('ChatService memory behavior', () => {
             'search_vault_metadata',
             'list_recent_notes',
             'read_note_outline',
+            'inspect_obsidian_note',
+            'read_canvas_summary',
+            'search_vault_snippets',
+            'list_vault_tags',
         ]);
         expect(chainInput).toMatchObject({
             input: 'Human: hello\nAssistant:',

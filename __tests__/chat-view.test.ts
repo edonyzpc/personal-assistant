@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { MarkdownRenderer, MarkdownView } from 'obsidian';
+import { MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, StreamLLMOptions } from '../src/ai-services/chat-service';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat-view';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
@@ -192,6 +192,14 @@ class MockElement {
     }
 
     querySelectorAll(selector: string) {
+        if (selector === '.mermaid, .block-language-mermaid') {
+            return walkAll(this, (el) =>
+                el.classList.contains('mermaid') || el.classList.contains('block-language-mermaid')
+            );
+        }
+        if (selector === 'svg') {
+            return walkAll(this, (el) => el.tagName === 'svg');
+        }
         if (selector === '.callout[data-callout="personal-assistant-ai"]') {
             return walkAll(this, (el) =>
                 el.classList.contains('callout') && el.getAttribute('data-callout') === 'personal-assistant-ai'
@@ -719,6 +727,141 @@ describe('LLMView turn lifecycle', () => {
         expect(liveAssistantMessage.getAttribute('aria-busy')).toBeNull();
         expect(getButtonsByClass(containerEl, 'delete-message-button')).toHaveLength(2);
         expect(getButtonsByClass(containerEl, 'add-to-editor-message-button')).toHaveLength(1);
+    });
+
+    it('defers live Mermaid rendering and wraps the final diagram with a viewer button', async () => {
+        const renderedMarkdown: string[] = [];
+        let openedModal: { modalEl: MockElement; contentEl: MockElement } | null = null;
+        const modalOpenSpy = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+            const modal = this as unknown as { modalEl: MockElement; contentEl: MockElement; onOpen: () => void };
+            modal.modalEl = new MockElement('div');
+            modal.contentEl = new MockElement('div');
+            openedModal = { modalEl: modal.modalEl, contentEl: modal.contentEl };
+            modal.onOpen();
+        });
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockElement(tagName),
+            },
+        });
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            renderedMarkdown.push(markdown);
+            if (markdown.includes('```mermaid') && !markdown.includes('A --> B')) {
+                throw new Error('incomplete Mermaid');
+            }
+            el.setText(markdown);
+            if (markdown.includes('```mermaid')) {
+                const wrapper = el.createDiv({ cls: 'block-language-mermaid' });
+                const diagram = wrapper.createDiv({ cls: 'mermaid' });
+                diagram.createEl('svg');
+            }
+        });
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'draw a graph';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        streamCalls[0].onChunk('```mermaid\ngraph TD\nA -->');
+        await flushPromises();
+        await flushPromises();
+
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```text');
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).not.toContain('```mermaid');
+        expect(allText(containerEl)).not.toContain('Could not render message');
+
+        streamCalls[0].onChunk('```mermaid\ngraph TD\nA --> B\n```');
+        await flushPromises();
+        await flushPromises();
+
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```text');
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```mermaid');
+        expect(getElementByClass(containerEl, 'pa-chat-mermaid-shell')).toBeTruthy();
+        expect(getElementByClass(containerEl, 'pa-chat-mermaid-viewport')).toBeTruthy();
+        const openButtons = getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button');
+        expect(openButtons).toHaveLength(1);
+        openButtons[0].click();
+        await flushPromises();
+
+        expect(modalOpenSpy).toHaveBeenCalled();
+        expect(openedModal).not.toBeNull();
+        const modal = openedModal as unknown as { modalEl: MockElement; contentEl: MockElement };
+        expect(modal.modalEl.getAttribute('aria-labelledby')).toMatch(/^pa-chat-mermaid-modal-title-/);
+        expect(getElementByClass(modal.contentEl, 'pa-chat-mermaid-modal-viewport')).toBeTruthy();
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```mermaid');
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'draw a graph' },
+            { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
+        ]);
+        modalOpenSpy.mockRestore();
+    });
+
+    it('does not rerender completed non-Mermaid answers after streaming', async () => {
+        const renderedMarkdown: string[] = [];
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            renderedMarkdown.push(markdown);
+            el.setText(markdown);
+        });
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'plain answer prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('plain answer');
+        await flushPromises();
+        await flushPromises();
+        const renderCountAfterChunk = renderedMarkdown.length;
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(renderedMarkdown).toHaveLength(renderCountAfterChunk);
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'plain answer prompt' },
+            { role: 'assistant', content: 'plain answer' },
+        ]);
+    });
+
+    it('falls back to Mermaid source when final Mermaid rendering throws synchronously', async () => {
+        const renderedMarkdown: string[] = [];
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            renderedMarkdown.push(markdown);
+            if (markdown.includes('```mermaid')) {
+                throw new Error('Mermaid render failed');
+            }
+            el.setText(markdown);
+        });
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const content = '```mermaid\ngraph TD\nA --> B\n```';
+        getTextArea(containerEl).value = 'broken graph';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk(content);
+        await flushPromises();
+        await flushPromises();
+
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(renderedMarkdown.some((markdown) => markdown.includes('```mermaid'))).toBe(true);
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```text');
+        expect(allText(containerEl)).toContain('Mermaid diagram could not be rendered; showing source.');
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'broken graph' },
+            { role: 'assistant', content },
+        ]);
     });
 
     it('shows and stops the Thinking loader for terminal turns', async () => {
@@ -2321,6 +2464,140 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('Fallback');
         expect(allText(containerEl)).not.toContain('Read-only tool');
         expect(allText(containerEl)).not.toContain('0.unsorted/Dog.md');
+    });
+
+    it('uses product language for Obsidian Operations read-only tool statuses', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'operations status prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-running',
+            tool: 'inspect_obsidian_note',
+            message: 'Reading note structure for notes/current.md',
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-running',
+            tool: 'read_canvas_summary',
+            message: 'Checking canvas structure for maps/project.canvas',
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-running',
+            tool: 'search_vault_snippets',
+            message: 'Searching note snippets for roadmap',
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-running',
+            tool: 'list_vault_tags',
+            message: 'Reading vault tags',
+        });
+
+        const runningText = allText(containerEl);
+        expect(runningText).toContain('Reading note structure...');
+        expect(runningText).toContain('Checking canvas structure...');
+        expect(runningText).toContain('Searching note snippets...');
+        expect(runningText).toContain('Reading vault tags...');
+
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-done',
+            tool: 'inspect_obsidian_note',
+            message: 'Read note structure: 1 heading(s), 0 task(s), 0 tag(s).',
+            sources: [{ path: 'notes/current.md' }],
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-done',
+            tool: 'read_canvas_summary',
+            message: 'Read canvas structure: 2 node(s), 1 edge(s).',
+            sources: [{ path: 'maps/project.canvas' }],
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-done',
+            tool: 'search_vault_snippets',
+            message: 'Found 1 bounded snippet match(es).',
+            sources: [{ path: 'notes/roadmap.md' }],
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-done',
+            tool: 'list_vault_tags',
+            message: 'Listed 2 vault tag(s).',
+            sources: [],
+        });
+
+        const text = allText(containerEl);
+        expect(text).toContain('Context Used');
+        expect(text).toContain('Note structure');
+        expect(text).toContain('links/backlinks');
+        expect(text).toContain('Canvas structure');
+        expect(text).toContain('Note snippets');
+        expect(text).toContain('Vault tags');
+        expect(text).toContain('Not a Memory reference');
+        expect(text).not.toContain('inspect_obsidian_note');
+        expect(text).not.toContain('read_canvas_summary');
+        expect(text).not.toContain('search_vault_snippets');
+        expect(text).not.toContain('list_vault_tags');
+        expect(text).not.toContain('VSS');
+        expect(text).not.toContain('RAG');
+    });
+
+    it('shows unavailable Obsidian Operations tool results as status-only context', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'operations unavailable prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-done',
+            tool: 'list_vault_tags',
+            message: 'Vault tags unavailable.',
+            sources: [],
+            availability: 'unavailable',
+        });
+
+        const text = allText(containerEl);
+        expect(text).toContain('Vault tags unavailable.');
+        expect(text).toContain('Context Used');
+        expect(text).toContain('Vault tags unavailable');
+        expect(text).toContain('Vault context was unavailable for this turn.');
+        expect(text).toContain('Status only');
+        expect(text).not.toContain('list_vault_tags');
+    });
+
+    it('does not mark duplicate read-only tool calls as unavailable context', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'duplicate read-only tool prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-done',
+            tool: 'inspect_obsidian_note',
+            message: 'Read note structure: 2 heading(s), 2 task(s), 2 tag(s).',
+            sources: [{ path: 'obsidian-operations/note-structure-smoke.md' }],
+            availability: 'available',
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'tool-skipped',
+            tool: 'inspect_obsidian_note',
+            reason: 'Duplicate read-only tool call skipped.',
+        });
+        streamCalls[0].options.onStatus?.({
+            type: 'fallback',
+            reason: 'Native tool planning stopped before a final planner action.',
+        });
+
+        const text = allText(containerEl);
+        expect(text).toContain('Read note structure: 2 heading(s), 2 task(s), 2 tag(s).');
+        expect(text).toContain('Vault context already gathered');
+        expect(text).toContain('Using gathered context after reaching the planning limit.');
+        expect(text).toContain('Context Used');
+        expect(text).toContain('Note structure');
+        expect(text).not.toContain('Note structure unavailable');
+        expect(text).not.toContain('Vault context was unavailable for this turn.');
+        expect(text).not.toContain('Vault context unavailable');
     });
 
     it('shows gathered-context wording when the planning limit is reached', async () => {
