@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.9.2](https://github.com/edonyzpc/personal-assistant/compare/1.9.1...1.9.2) (2026-05-17)
+
+### Features
+- chat: brighten loader color cycle
+- chat: add read-only Obsidian operations context
+
+### Fix
+- memory: polish diagnostic status notice
+- chat: stabilize Mermaid previews
+
+### Docs
+- obsidian: add copilot comparison notes
+- obsidian: add operations agent spec
+- obsidian: record operations spec closeout
+
 ## [1.9.1](https://github.com/edonyzpc/personal-assistant/compare/1.9.0...1.9.1) (2026-05-17)
 
 ### Fix
