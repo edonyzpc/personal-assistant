@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.9.1](https://github.com/edonyzpc/personal-assistant/compare/1.9.0...1.9.1) (2026-05-17)
+
+### Fix
+- chat: allow documented DashScope tool models
+
 ## [1.9.0](https://github.com/edonyzpc/personal-assistant/compare/1.8.0...1.9.0) (2026-05-17)
 
 ### Features
