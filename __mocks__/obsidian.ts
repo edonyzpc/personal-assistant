@@ -8,8 +8,14 @@ interface MockNoticeEl {
     querySelector: () => MockNoticeEl | null;
 }
 
+export const noticeMessages: Array<{ message?: unknown; timeout?: number }> = [];
+
 export class Notice {
-    constructor(_msg?: unknown, _timeout?: number) { }
+    static messages = noticeMessages;
+
+    constructor(message?: unknown, timeout?: number) {
+        noticeMessages.push({ message, timeout });
+    }
     hide() { }
     noticeEl: MockNoticeEl = {
         addClass: () => { },
@@ -69,6 +75,25 @@ export class Setting {
         setButtonText: (text: string) => unknown;
         onClick: (callback: () => void) => unknown;
     }) => void) { return this; }
+}
+
+export class PluginSettingTab {
+    app: App;
+    plugin: unknown;
+    containerEl = {
+        empty: jest.fn(),
+        createEl: jest.fn(() => ({
+            appendChild: jest.fn(),
+            setAttr: jest.fn(),
+        })),
+    };
+
+    constructor(app: App, plugin: unknown) {
+        this.app = app;
+        this.plugin = plugin;
+    }
+
+    display() { }
 }
 
 export class MarkdownView {

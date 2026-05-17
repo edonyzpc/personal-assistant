@@ -5,12 +5,12 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
-import { AIUtils, getDashScopeImageSynthesisUrl } from "./ai-services/ai-utils";
+import { AIUtils, getDashScopeImageGenerationEndpoint } from "./ai-services/ai-utils";
 import { ChatService } from "./ai-services/chat-service";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel } from './settings'
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
@@ -503,7 +503,7 @@ export class PluginManager extends Plugin {
             id: 'ai-assistant-featured-images',
             name: this.t("plugin.command.aiFeaturedImages"),
             editorCheckCallback: (checking, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-                if (this.settings.aiProvider !== 'qwen' || !getDashScopeImageSynthesisUrl(this.settings.baseURL)) return false;
+                if (this.settings.aiProvider !== 'qwen' || !getDashScopeImageGenerationEndpoint(this.settings.baseURL)) return false;
                 if (checking) return true;
                 if (!this.ensureAIConfigured()) return;
                 const sel = editor.getSelection();
@@ -2368,6 +2368,11 @@ export class PluginManager extends Plugin {
             }
             if (typeof this.settings.policyModelName !== "string") {
                 this.settings.policyModelName = "";
+                changed = true;
+            }
+            const normalizedFeaturedImageModel = normalizeFeaturedImageModel(this.settings.featuredImageModel);
+            if (this.settings.featuredImageModel !== normalizedFeaturedImageModel) {
+                this.settings.featuredImageModel = normalizedFeaturedImageModel;
                 changed = true;
             }
             if ("qwenWebSearchEnabled" in this.settings) {

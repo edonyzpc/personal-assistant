@@ -343,6 +343,8 @@ import {
     isLegacyV1Install,
     mergeLoadedSettings,
     normalizeEnabledSkillIds,
+    normalizeFeaturedImageCount,
+    normalizeFeaturedImageModel,
     safeParseInt,
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
@@ -2203,6 +2205,73 @@ describe('Phase 4 P1 UX', () => {
             });
             expect(merged.vssCacheExcludePath).toEqual(['my/private', 'tmp/']);
             expect(merged.featuredImagePath).toBe('attachments/ai');
+        });
+    });
+
+    describe('4g: featured image settings', () => {
+        it('uses Wan 2.7 Image and one image as new defaults', () => {
+            expect(DEFAULT_SETTINGS.featuredImageModel).toBe('wan2.7-image');
+            expect(DEFAULT_SETTINGS.numFeaturedImages).toBe(1);
+        });
+
+        it('normalizes featured image model settings', () => {
+            expect(normalizeFeaturedImageModel(undefined)).toBe('wan2.7-image');
+            expect(normalizeFeaturedImageModel('wan2.7-image')).toBe('wan2.7-image');
+            expect(normalizeFeaturedImageModel('wan2.7-image-pro')).toBe('wan2.7-image-pro');
+            expect(normalizeFeaturedImageModel('wanx2.1-t2i-plus')).toBe('wan2.7-image');
+        });
+
+        it.each([
+            [undefined, 1],
+            ['', 1],
+            ['2', 2],
+            ['4.9', 4],
+            ['0', 1],
+            ['99', 4],
+            [-2, 1],
+        ])('normalizes featured image count %p to %p', (input, expected) => {
+            expect(normalizeFeaturedImageCount(input)).toBe(expected);
+        });
+
+        it('preserves saved image count while old data is merged with defaults', () => {
+            const settings = mergeLoadedSettings({ numFeaturedImages: 3 });
+            expect(settings.numFeaturedImages).toBe(3);
+        });
+
+        it('fills missing featured image model when old data is merged with defaults', () => {
+            const settings = mergeLoadedSettings({});
+            expect(settings.featuredImageModel).toBe('wan2.7-image');
+        });
+
+        it('wires the featured image model dropdown and image count save clamp', async () => {
+            const plugin = makePlugin({
+                aiProvider: 'qwen',
+                baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+                featuredImageModel: 'wan2.7-image-pro',
+                numFeaturedImages: 9,
+            });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+
+            tab.display();
+
+            const records = getMockSettingRecords();
+            const modelRow = records.find((row) => row.name === 'Featured image model');
+            expect(modelRow?.dropdowns[0].options).toEqual([
+                { value: 'wan2.7-image', text: 'Balanced - Wan 2.7 Image' },
+                { value: 'wan2.7-image-pro', text: 'Quality - Wan 2.7 Image Pro' },
+            ]);
+            expect(modelRow?.dropdowns[0].value).toBe('wan2.7-image-pro');
+
+            await modelRow?.dropdowns[0].onChange?.('wanx2.1-t2i-plus');
+            expect(plugin.settings.featuredImageModel).toBe('wan2.7-image');
+
+            const countRow = records.find((row) => row.name === 'AI Featured Images Generating Number');
+            expect(countRow?.texts[0].placeholder).toBe('1');
+            expect(countRow?.texts[0].value).toBe('4');
+
+            await countRow?.texts[0].onChange?.('99');
+            expect(plugin.settings.numFeaturedImages).toBe(4);
         });
     });
 });

@@ -4,7 +4,7 @@ import { App, Modal, Notice, PluginSettingTab, SecretComponent, Setting, debounc
 
 import type { PluginManager } from "./plugin"
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
-import { getDashScopeImageSynthesisUrl, isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
+import { getDashScopeImageGenerationEndpoint, isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { confirmUserAction } from "./confirm";
@@ -26,6 +26,34 @@ import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from "./ai-services/capab
 export interface ResizeStyle {
     width: number,
     height: number,
+}
+
+export type FeaturedImageModel = "wan2.7-image" | "wan2.7-image-pro";
+
+const FEATURED_IMAGE_MODELS: readonly FeaturedImageModel[] = [
+    "wan2.7-image",
+    "wan2.7-image-pro",
+];
+const FEATURED_IMAGE_COUNT_MAX = 4;
+
+export function normalizeFeaturedImageModel(value: unknown): FeaturedImageModel {
+    return FEATURED_IMAGE_MODELS.includes(value as FeaturedImageModel)
+        ? value as FeaturedImageModel
+        : "wan2.7-image";
+}
+
+export function normalizeFeaturedImageCount(value: unknown): number {
+    const numericValue = typeof value === "number"
+        ? value
+        : typeof value === "string" && value.trim() !== ""
+            ? Number(value)
+            : Number.NaN;
+
+    if (!Number.isFinite(numericValue)) {
+        return 1;
+    }
+
+    return Math.min(Math.max(Math.floor(numericValue), 1), FEATURED_IMAGE_COUNT_MAX);
 }
 
 export interface PluginManagerSettings {
@@ -84,6 +112,7 @@ export interface PluginManagerSettings {
     skillContextEnabled: boolean;
     enabledSkillIds: string[];
     featuredImagePath: string;
+    featuredImageModel: FeaturedImageModel;
     numFeaturedImages: number;
     memoryExtractionEnabled: boolean;
     memoryExtractionNoticeDismissed: boolean;
@@ -165,7 +194,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     skillContextEnabled: true,
     enabledSkillIds: [...BUNDLED_SKILL_IDS],
     featuredImagePath: "",
-    numFeaturedImages: 2,
+    featuredImageModel: "wan2.7-image",
+    numFeaturedImages: 1,
     memoryExtractionEnabled: true,
     memoryExtractionNoticeDismissed: false,
     memoryExtractionIncludeVaultInsights: true,
@@ -205,7 +235,6 @@ export const STATISTICS_SYNC_SETTING_DESC =
 const PREVIEW_LIMITS_MAX = 100;
 const LOCAL_GRAPH_DEPTH_MAX = 6;
 const LOCAL_GRAPH_DIMENSION_MAX = 2000;
-const FEATURED_IMAGE_COUNT_MAX = 4;
 const PA_LEGAL_REPO_URL = "https://github.com/edonyzpc/personal-assistant";
 
 export function buildPaLegalLinks(releaseTag: string) {
@@ -275,6 +304,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
+    merged.featuredImageModel = normalizeFeaturedImageModel(loadedObject.featuredImageModel);
     // Current builds use a mock paid entitlement so all paid-capability
     // architecture stays enabled until a real authorization source is wired in.
     // Do not trust persisted data.json for this field.
@@ -2165,7 +2195,7 @@ export class SettingTab extends PluginSettingTab {
         this.featuredImageContainer.empty();
         const plugin = this.plugin;
         if (plugin.settings.aiProvider !== 'qwen') return;
-        if (!getDashScopeImageSynthesisUrl(plugin.settings.baseURL)) return;
+        if (!getDashScopeImageGenerationEndpoint(plugin.settings.baseURL)) return;
 
         const container = this.featuredImageContainer;
 
@@ -2180,13 +2210,26 @@ export class SettingTab extends PluginSettingTab {
                     this.debouncedSave();
                 });
             });
+        new Setting(container)
+            .setName(this.t("plugin.settings.featuredImage.model.name"))
+            .setDesc(this.t("plugin.settings.featuredImage.model.desc"))
+            .addDropdown((dropdown) => {
+                dropdown
+                    .addOption("wan2.7-image", this.t("plugin.settings.featuredImage.model.balanced"))
+                    .addOption("wan2.7-image-pro", this.t("plugin.settings.featuredImage.model.quality"))
+                    .setValue(normalizeFeaturedImageModel(plugin.settings.featuredImageModel))
+                    .onChange((value) => {
+                        plugin.settings.featuredImageModel = normalizeFeaturedImageModel(value);
+                        this.debouncedSave();
+                    });
+            });
         new Setting(container).setName(this.t("plugin.settings.featuredImage.count.name"))
             .setDesc(this.t("plugin.settings.featuredImage.count.desc"))
             .addText(text => {
-                text.setPlaceholder('2')
-                    .setValue(plugin.settings.numFeaturedImages.toString())
+                text.setPlaceholder('1')
+                    .setValue(normalizeFeaturedImageCount(plugin.settings.numFeaturedImages).toString())
                     .onChange((value) => {
-                        plugin.settings.numFeaturedImages = safeParseInt(value, plugin.settings.numFeaturedImages, 1, FEATURED_IMAGE_COUNT_MAX);
+                        plugin.settings.numFeaturedImages = normalizeFeaturedImageCount(value);
                         this.debouncedSave();
                     })
             });

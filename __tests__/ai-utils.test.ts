@@ -4,12 +4,15 @@ import {
     AIUtils,
     buildQwenModelKwargs,
     DASHSCOPE_COMPATIBLE_BASE_URLS,
+    DASHSCOPE_IMAGE_GENERATION_ENDPOINT,
     DASHSCOPE_IMAGE_SYNTHESIS_URL,
+    DASHSCOPE_INTL_IMAGE_GENERATION_ENDPOINT,
     DASHSCOPE_INTL_IMAGE_SYNTHESIS_URL,
     DASHSCOPE_INTL_TASKS_URL,
     DASHSCOPE_NATIVE_TOOL_CALLING_MODELS,
     DASHSCOPE_TASKS_URL,
     DEFAULT_NATIVE_TOOL_CALLING_VALIDATIONS,
+    getDashScopeImageGenerationEndpoint,
     getDashScopeImageSynthesisUrl,
     getDashScopeTasksUrl,
     isDashScopeCompatibleBaseURL,
@@ -306,6 +309,16 @@ describe('Qwen DashScope request options', () => {
         expect(getDashScopeTasksUrl('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/')).toBe(DASHSCOPE_INTL_TASKS_URL);
         expect(getDashScopeImageSynthesisUrl('https://example.invalid/v1')).toBeNull();
         expect(getDashScopeTasksUrl('https://example.invalid/v1')).toBeNull();
+    });
+
+    it('maps DashScope base URLs to Wan 2.7 image generation endpoints', () => {
+        expect(getDashScopeImageGenerationEndpoint('https://dashscope.aliyuncs.com/compatible-mode/v1/')).toBe(
+            DASHSCOPE_IMAGE_GENERATION_ENDPOINT,
+        );
+        expect(getDashScopeImageGenerationEndpoint('HTTPS://DASHSCOPE-INTL.ALIYUNCS.COM/COMPATIBLE-MODE/V1/')).toBe(
+            DASHSCOPE_INTL_IMAGE_GENERATION_ENDPOINT,
+        );
+        expect(getDashScopeImageGenerationEndpoint('https://example.invalid/compatible-mode/v1')).toBeNull();
     });
 
     it('builds Bailian thinking model kwargs only for DashScope qwen', () => {

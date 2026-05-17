@@ -132,6 +132,7 @@ jest.mock('../src/settings', () => ({
     SettingTab: class { },
     DEFAULT_SETTINGS: {
         chatModelName: 'qwen3.6-plus',
+        featuredImageModel: 'wan2.7-image',
         enabledSkillIds: mockBundledSkillIds,
     },
     normalizeEnabledSkillIds: (value: unknown) => {
@@ -140,6 +141,9 @@ jest.mock('../src/settings', () => ({
             typeof entry === 'string' && mockBundledSkillIds.includes(entry)
         )))];
     },
+    normalizeFeaturedImageModel: (value: unknown) => (
+        value === 'wan2.7-image' || value === 'wan2.7-image-pro' ? value : 'wan2.7-image'
+    ),
 }));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
@@ -253,6 +257,7 @@ const memorySettings = {
     qwenThinkingEnabled: false,
     webSearchEnabled: false,
     policyModelName: '',
+    featuredImageModel: 'wan2.7-image',
     shareAnonymousCapabilityUsage: false,
     skillContextEnabled: true,
     enabledSkillIds: mockBundledSkillIds,
@@ -1043,6 +1048,7 @@ describe('settings migration', () => {
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
             policyModelName: '',
+            featuredImageModel: 'wan2.7-image',
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
@@ -1074,6 +1080,7 @@ describe('settings migration', () => {
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
             policyModelName: '',
+            featuredImageModel: 'wan2.7-image',
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
@@ -1103,6 +1110,7 @@ describe('settings migration', () => {
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
             policyModelName: '',
+            featuredImageModel: 'wan2.7-image',
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,

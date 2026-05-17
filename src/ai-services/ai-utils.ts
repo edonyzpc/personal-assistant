@@ -50,6 +50,10 @@ export const DASHSCOPE_IMAGE_SYNTHESIS_URL = "https://dashscope.aliyuncs.com/api
 export const DASHSCOPE_INTL_IMAGE_SYNTHESIS_URL = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
 export const DASHSCOPE_TASKS_URL = "https://dashscope.aliyuncs.com/api/v1/tasks";
 export const DASHSCOPE_INTL_TASKS_URL = "https://dashscope-intl.aliyuncs.com/api/v1/tasks";
+export const DASHSCOPE_IMAGE_GENERATION_ENDPOINT =
+    "https://dashscope.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
+export const DASHSCOPE_INTL_IMAGE_GENERATION_ENDPOINT =
+    "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/multimodal-generation/generation";
 export const DASHSCOPE_COMPATIBLE_BASE_URLS: readonly string[] = [
     DASHSCOPE_COMPATIBLE_BASE_URL,
     DASHSCOPE_INTL_COMPATIBLE_BASE_URL,
@@ -426,6 +430,13 @@ export function getDashScopeTasksUrl(value: unknown): string | null {
     const normalized = normalizeBaseURL(value);
     if (normalized === normalizeBaseURL(DASHSCOPE_COMPATIBLE_BASE_URL)) return DASHSCOPE_TASKS_URL;
     if (normalized === normalizeBaseURL(DASHSCOPE_INTL_COMPATIBLE_BASE_URL)) return DASHSCOPE_INTL_TASKS_URL;
+    return null;
+}
+
+export function getDashScopeImageGenerationEndpoint(value: unknown): string | null {
+    const normalized = normalizeBaseURL(value);
+    if (normalized === normalizeBaseURL(DASHSCOPE_COMPATIBLE_BASE_URL)) return DASHSCOPE_IMAGE_GENERATION_ENDPOINT;
+    if (normalized === normalizeBaseURL(DASHSCOPE_INTL_COMPATIBLE_BASE_URL)) return DASHSCOPE_INTL_IMAGE_GENERATION_ENDPOINT;
     return null;
 }
 
