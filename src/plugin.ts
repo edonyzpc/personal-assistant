@@ -27,6 +27,23 @@ const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
 
+interface TechnicalMemoryDetail {
+    label: string;
+    value: string;
+    tone?: "warning" | "danger";
+}
+
+interface TechnicalMemoryNoticeModel {
+    title: string;
+    summary: string;
+    summaryTone?: TechnicalMemoryDetail["tone"];
+    details: TechnicalMemoryDetail[];
+    notes: string[];
+}
+
+type TechnicalMemoryStats = Awaited<ReturnType<VSS["getStats"]>>;
+type TechnicalMemoryMaintenance = ReturnType<VSS["getMaintenanceState"]>;
+
 interface ObsidianPluginRegistry {
     enabledPlugins?: Set<string>;
     plugins?: Record<string, unknown>;
@@ -699,27 +716,19 @@ export class PluginManager extends Plugin {
 
     async showTechnicalMemoryStatus() {
         if (!this.vss) {
-            new Notice("Diagnostic details: memory service is not initialized.", 5000);
+            this.showTechnicalMemoryNotice({
+                title: "Memory diagnostics",
+                summary: "Memory service is not initialized.",
+                summaryTone: "warning",
+                details: [],
+                notes: [],
+            }, 5000);
             return;
         }
 
         const stats = await this.vss.getStats({ mode: "manual" });
-        const statusText = (() => {
-            if (stats.status === "ready" || stats.status === "fallback") {
-                return `Ready: ${stats.chunkCount} chunks across ${stats.fileCount} files`;
-            }
-            if (stats.status === "stale") return "Index stale";
-            if (stats.status === "missing-local-index") return "VSS index missing";
-            if (stats.status === "disabled" || stats.status === "error") return "VSS disabled";
-            return "VSS not initialized";
-        })();
-        const storageText = stats.storagePersisted === false ? "best-effort storage" : "persistent storage";
         const maintenance = this.vss.getMaintenanceState();
-        const maintenanceText = maintenance.dirtyCount > 0 || maintenance.verificationPending > 0
-            ? ` Pending maintenance: ${maintenance.dirtyCount} dirty, ${maintenance.verificationPending} verification.`
-            : "";
-        const performanceText = this.getVssPerformanceNotice(stats.chunkCount);
-        new Notice(`Diagnostic details: ${statusText}. Backend: ${stats.backend}. Storage: ${storageText}.${maintenanceText}${performanceText}`, 7000);
+        this.showTechnicalMemoryNotice(this.buildTechnicalMemoryStatusModel(stats, maintenance), 7000);
     }
 
     private getVssPerformanceNotice(chunkCount: number): string {
@@ -730,6 +739,126 @@ export class PluginManager extends Plugin {
             return " Performance note: exact search may be slower above 50k chunks.";
         }
         return "";
+    }
+
+    private buildTechnicalMemoryStatusModel(stats: TechnicalMemoryStats, maintenance: TechnicalMemoryMaintenance): TechnicalMemoryNoticeModel {
+        const status = this.formatTechnicalMemoryStatus(stats);
+        const maintenanceText = this.formatTechnicalMaintenanceState(maintenance);
+        const details: TechnicalMemoryDetail[] = [
+            { label: "Indexed", value: `${stats.chunkCount} chunks across ${stats.fileCount} files` },
+            { label: "Backend", value: stats.backend },
+            {
+                label: "Storage",
+                value: stats.storagePersisted === false ? "Best-effort storage" : "Persistent storage",
+                tone: stats.storagePersisted === false ? "warning" : undefined,
+            },
+            {
+                label: "Maintenance",
+                value: maintenanceText,
+                tone: maintenanceText === "Up to date" ? undefined : "warning",
+            },
+        ];
+
+        if (stats.lastVerifiedAt) {
+            details.push({ label: "Last verified", value: stats.lastVerifiedAt });
+        }
+
+        if (stats.lastErrorCode) {
+            details.push({ label: "Last error", value: stats.lastErrorCode, tone: "danger" });
+        }
+
+        const performanceText = this.getVssPerformanceNotice(stats.chunkCount).trim();
+
+        return {
+            title: "Memory diagnostics",
+            summary: status.text,
+            summaryTone: status.tone,
+            details,
+            notes: performanceText ? [performanceText] : [],
+        };
+    }
+
+    private formatTechnicalMemoryStatus(stats: TechnicalMemoryStats): { text: string; tone?: TechnicalMemoryDetail["tone"] } {
+        if (stats.status === "ready") {
+            return { text: stats.fallbackMode ? "Ready (fallback)" : "Ready" };
+        }
+        if (stats.status === "fallback") {
+            return { text: "Ready (fallback)" };
+        }
+        if (stats.status === "stale") {
+            return { text: "Index stale", tone: "warning" };
+        }
+        if (stats.status === "missing-local-index") {
+            return { text: "Local index missing", tone: "warning" };
+        }
+        if (stats.status === "disabled" || stats.status === "error") {
+            return { text: "Memory diagnostics unavailable", tone: "danger" };
+        }
+        return { text: "Memory diagnostics not initialized", tone: "warning" };
+    }
+
+    private formatTechnicalMaintenanceState(maintenance: TechnicalMemoryMaintenance): string {
+        if (maintenance.dirtyCount <= 0 && maintenance.verificationPending <= 0) {
+            return "Up to date";
+        }
+
+        const parts: string[] = [];
+        if (maintenance.dirtyCount > 0) {
+            parts.push(`${maintenance.dirtyCount} dirty`);
+        }
+        if (maintenance.verificationPending > 0) {
+            parts.push(`${maintenance.verificationPending} verification pending`);
+        }
+        return parts.join(", ");
+    }
+
+    private showTechnicalMemoryNotice(model: TechnicalMemoryNoticeModel, timeout: number): void {
+        const fragment = document.createDocumentFragment();
+        const wrapper = fragment.createEl("div", { attr: { class: "pa-notice pa-notice--diagnostic" } });
+        const header = wrapper.createDiv({ cls: "pa-notice__header" });
+        const icon = header.createDiv({ cls: "pa-notice__icon" });
+        setIcon(icon, "activity");
+        header.createSpan({ text: model.title, attr: { class: "pa-notice__text" } });
+
+        const summaryClasses = ["pa-notice__summary"];
+        if (model.summaryTone) {
+            summaryClasses.push(`pa-notice__summary--${model.summaryTone}`);
+        }
+        wrapper.createDiv({ cls: summaryClasses.join(" "), text: model.summary });
+
+        if (model.details.length > 0) {
+            const details = wrapper.createDiv({ cls: "pa-notice__details" });
+            for (const item of model.details) {
+                const rowClasses = ["pa-notice__detail"];
+                if (item.tone) {
+                    rowClasses.push(`pa-notice__detail--${item.tone}`);
+                }
+                const row = details.createDiv({ cls: rowClasses.join(" ") });
+                row.createSpan({ cls: "pa-notice__detail-label", text: item.label });
+                row.createSpan({ cls: "pa-notice__detail-value", text: item.value });
+            }
+        }
+
+        if (model.notes.length > 0) {
+            const body = wrapper.createDiv({ cls: "pa-notice__body pa-notice__body--compact" });
+            for (const note of model.notes) {
+                body.createDiv({ cls: "pa-notice__item pa-notice__item--note", text: note });
+            }
+        }
+
+        const notice = new Notice(fragment, timeout);
+        this.tuneStructuredNoticeShell(notice);
+    }
+
+    private tuneStructuredNoticeShell(notice: Notice): void {
+        notice.noticeEl.addClass("pa-notice-shell");
+        notice.noticeEl.parentElement?.addClass("pa-notice-shell");
+        notice.noticeEl.setCssStyles({
+            background: "transparent",
+            boxShadow: "none",
+            border: "none",
+            padding: "0",
+        });
     }
 
     private registerAdvancedMemoryCommands() {

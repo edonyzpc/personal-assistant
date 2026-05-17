@@ -1312,6 +1312,21 @@ body {
 	white-space: nowrap;
 }
 
+.pa-notice__icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 16px;
+	height: 16px;
+	flex: 0 0 16px;
+	color: var(--interactive-accent);
+}
+
+.pa-notice__icon svg {
+	width: 16px;
+	height: 16px;
+}
+
 .pa-notice__header {
 	display: inline-flex;
 	align-items: center;
@@ -1327,6 +1342,71 @@ body {
 	margin-top: 4px;
 }
 
+.pa-notice__body--compact {
+	gap: 4px;
+	margin-top: 0;
+}
+
+.pa-notice__summary {
+	width: 100%;
+	padding: 6px 8px;
+	border-radius: 8px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-size: 12px;
+	font-weight: 700;
+	line-height: 1.35;
+}
+
+.pa-notice__summary--warning {
+	color: var(--text-warning, var(--text-accent));
+}
+
+.pa-notice__summary--danger {
+	color: var(--text-error, var(--text-accent));
+}
+
+.pa-notice__details {
+	display: flex;
+	flex-direction: column;
+	gap: 4px;
+	width: 100%;
+}
+
+.pa-notice__detail {
+	display: grid;
+	grid-template-columns: minmax(86px, max-content) minmax(0, 1fr);
+	gap: 10px;
+	align-items: start;
+	width: 100%;
+}
+
+.pa-notice__detail-label,
+.pa-notice__detail-value {
+	font-size: 12px;
+	line-height: 1.35;
+}
+
+.pa-notice__detail-label {
+	color: var(--text-muted);
+	font-weight: 600;
+	white-space: nowrap;
+}
+
+.pa-notice__detail-value {
+	color: var(--text-normal);
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.pa-notice__detail--warning .pa-notice__detail-value {
+	color: var(--text-warning, var(--text-accent));
+}
+
+.pa-notice__detail--danger .pa-notice__detail-value {
+	color: var(--text-error, var(--text-accent));
+}
+
 .pa-notice__item {
 	display: inline-flex;
 	align-items: center;
@@ -1337,6 +1417,15 @@ body {
 	color: var(--text-normal);
 	font-size: 12px;
 	font-weight: 600;
+}
+
+.pa-notice__item--note {
+	align-items: flex-start;
+	background: var(--background-modifier-hover);
+	color: var(--text-muted);
+	font-weight: 500;
+	line-height: 1.35;
+	white-space: normal;
 }
 
 .pa-notice__item-dot {
@@ -1409,6 +1498,16 @@ body {
 
 .pa-notice-shell .notice-body {
 	padding: 0 !important;
+}
+
+.pa-notice--diagnostic {
+	align-items: stretch;
+	width: min(360px, calc(100vw - 32px));
+	max-width: calc(100vw - 32px);
+}
+
+.pa-notice--diagnostic .pa-notice__text {
+	white-space: normal;
 }
 
 .pa-memory-modal {

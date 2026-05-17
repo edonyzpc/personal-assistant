@@ -321,4 +321,60 @@ describe('VSS status performance notices', () => {
         expect(plugin.getVssPerformanceNotice(50_001)).toContain('above 50k chunks');
         expect(plugin.getVssPerformanceNotice(100_001)).toContain('not enabled automatically');
     });
+
+    it('formats technical memory status as structured diagnostic details', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const model = plugin.buildTechnicalMemoryStatusModel({
+            status: 'ready',
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: 6,
+            fileCount: 5,
+            storagePersisted: true,
+            fallbackMode: false,
+        }, {
+            dirtyCount: 0,
+            verificationPending: 0,
+        });
+
+        expect(model).toEqual({
+            title: 'Memory diagnostics',
+            summary: 'Ready',
+            summaryTone: undefined,
+            details: [
+                { label: 'Indexed', value: '6 chunks across 5 files' },
+                { label: 'Backend', value: 'sqlite-wasm-opfs-sahpool' },
+                { label: 'Storage', value: 'Persistent storage', tone: undefined },
+                { label: 'Maintenance', value: 'Up to date', tone: undefined },
+            ],
+            notes: [],
+        });
+    });
+
+    it('keeps pending maintenance and performance notes readable', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const model = plugin.buildTechnicalMemoryStatusModel({
+            status: 'stale',
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: 50_001,
+            fileCount: 500,
+            storagePersisted: false,
+            fallbackMode: false,
+            lastErrorCode: 'opfs-sahpool-locked',
+        }, {
+            dirtyCount: 2,
+            verificationPending: 1,
+        });
+
+        expect(model.summary).toBe('Index stale');
+        expect(model.summaryTone).toBe('warning');
+        expect(model.details).toEqual(expect.arrayContaining([
+            { label: 'Storage', value: 'Best-effort storage', tone: 'warning' },
+            { label: 'Maintenance', value: '2 dirty, 1 verification pending', tone: 'warning' },
+            { label: 'Last error', value: 'opfs-sahpool-locked', tone: 'danger' },
+        ]));
+        expect(model.notes).toHaveLength(1);
+        expect(model.notes[0]).toContain('above 50k chunks');
+    });
 });
