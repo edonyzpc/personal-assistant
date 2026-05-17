@@ -8,14 +8,14 @@ Implementation status is tracked in [Obsidian Operations SPEC-Driven Development
 
 | Field | Value |
 | --- | --- |
-| Status | Draft contract for SPEC-driven implementation |
-| Current implementation | Not implemented; current Chat Agent tool execution remains the existing read-only tool surface |
+| Status | SPEC-06 v1A implementation, post-review hardening, automated verification, deploy, and post-fix targeted Obsidian smoke are complete; SPEC-05 CLI adapter remains future/deferred and unimplemented |
+| Current implementation | SPEC-01 catalog artifact, SPEC-02 ToolRegistry/chokepoint scaffolding, SPEC-03 v1A App API read tools, SPEC-04 Context Used/source-boundary UX, and SPEC-06 v1A closeout/hardening are implemented. The latest post-finding hardening covers malformed note inputs, tag metadata, unavailable context status, fallback intent detection, unsupported snippet scopes, fenced-code structure parsing, and duplicate read-only tool skip presentation; post-fix targeted live Obsidian smoke passed for note-structure/context UX plus missing, unsupported, unsafe, and unsupported-scope validation paths. CLI adapter work remains design-only and unimplemented in SPEC-05. |
 | Contract owner | Obsidian Operations Agent feature family |
 | Execution tracker | `docs/obsidian-operations-spec-driven-development.md` |
 
 This follows the Ralpha docs split: this plan is the stable product/architecture contract, while the SPEC tracker is the mutable execution ledger.
 
-SPEC-00 remains Draft until the 2026-05-17 subagent review findings are addressed in both this plan and the tracker. Runtime implementation remains blocked until the owning SPEC is reviewed and approved.
+SPEC-00 request-changes findings and the explicit post-closeout subagent review findings have been addressed in both this plan and the tracker. Runtime implementation proceeds only through reviewed owning SPECs; v1A runtime work is closed in SPEC-06 with automated, deploy, and targeted live-smoke evidence, and any v1B CLI work must proceed through SPEC-05 before implementation.
 
 ## Source Relationship
 
@@ -38,7 +38,7 @@ flowchart TD
   Planner["Planner model"]
   Registry["ToolRegistry"]
   AppApi["v1A App API read tools"]
-  CliAdapter["v1B CLI read adapter (blocked)"]
+  CliAdapter["v1B CLI read adapter (deferred)"]
   ToolContext["<tool_context>"]
   MemoryRefs["Memory references"]
   FinalPrompt["Final answer prompt"]
@@ -85,9 +85,11 @@ Initial v1A tools:
 
 Existing tools such as Memory search, current note context, metadata search, recent notes, and note outline remain available under their existing contracts.
 
+v1A tools that accept a target path must treat it as an Obsidian vault-relative path for the active vault. Absolute paths, `..` traversal, tilde expansion, environment-variable expansion, and unsupported file types should return recoverable unavailable or unsupported results rather than reading outside the active vault. Symlink realpath confinement and external executable target resolution belong to the deferred v1B CLI adapter contract.
+
 ### v1B: Optional CLI Read Adapter
 
-v1B documents an optional Obsidian CLI read adapter. It is blocked until v1A is implemented, reviewed, deployed, and smoke-tested.
+v1B documents an optional Obsidian CLI read adapter. It remains deferred after v1A closeout and must proceed through SPEC-05 review before implementation.
 
 When implemented, the CLI adapter must be:
 
@@ -209,6 +211,12 @@ Every v1A tool result must be budgeted twice:
 
 This applies to note inspection, Canvas summaries, snippet search, and tag listing. Truncated outputs must carry an explicit truncated/omitted-count signal so the assistant does not imply it saw complete note or Canvas content.
 
+Mobile and constrained-device behavior must also be protected before prompt serialization:
+
+- note and Canvas reads should check known file size before `cachedRead` and return bounded metadata-only or unavailable structure when a target exceeds the read budget,
+- snippet search should skip individual files that exceed the per-file or remaining aggregate read budget and continue searching smaller eligible files,
+- metadata-only vault scans should have a file-count cap and report truncated/skipped scan facts.
+
 `search_vault_snippets` requires additional hard limits:
 
 - snippet-only output,
@@ -242,7 +250,7 @@ Read-risk UX requirements:
 
 ## Acceptance Scenarios
 
-v1A must be validated against these product scenarios:
+v1A must validate these App API read-only product scenarios:
 
 1. Ask what tasks, properties, and related links exist in the current or specified note.
 2. Ask whether a Canvas has broken edges, isolated nodes, or suspicious structure.
@@ -253,9 +261,13 @@ v1A must be validated against these product scenarios:
 7. Ask for a missing note, missing Canvas, or non-Markdown target; the assistant should report unavailable/unsupported context without fabricating content.
 8. Ask about an oversized note or Canvas; the assistant should use bounded output and disclose truncation when relevant.
 9. Ask for a vault snippet search with no matches; the assistant should report no bounded matches instead of broadening into full-body reads.
-10. Ask while metadata cache or a read adapter is unavailable; the assistant should answer from available context and explain the unavailable source.
-11. Ask for unresolved links, orphan/dead-end notes, or broken Canvas edges; the assistant should use structure facts only.
-12. Ask for a read-only operation that would escape the active vault through path traversal or symlink; the adapter must reject it as unavailable/unsafe.
+10. Ask while metadata cache or an App API read source is unavailable; the assistant should answer from available context and explain the unavailable source.
+11. Ask for unresolved links or broken Canvas edges; the assistant should use structure facts only.
+
+Future v1B/CLI-only scenarios remain deferred until SPEC-05 is reviewed and approved:
+
+1. Ask for vault-wide orphan or dead-end note reports; the assistant should not claim this v1A tool surface can produce those reports unless a later approved tool adds that capability.
+2. Ask for a read-only adapter operation that would escape the active vault through path traversal, absolute paths, tilde or environment expansion, or symlink escape; the adapter must reject it as unavailable or unsafe.
 
 ## Phase Gates
 
@@ -266,7 +278,7 @@ v1A must be validated against these product scenarios:
 | SPEC-02 | Harden read-only registry policy and runtime chokepoints. | Tool policy assertions and chokepoint updates are specified, implemented, and tested. |
 | SPEC-03 | Implement v1A App API read tools. | Tools pass focused tests, integration tests, and source-boundary checks. |
 | SPEC-04 | Polish Context Used and user-visible statuses. | UI copy and attribution pass automated and smoke checks. |
-| SPEC-05 | Define v1B CLI read adapter contract. | CLI requirements are documented; implementation remains blocked until v1A closeout. |
+| SPEC-05 | Define v1B CLI read adapter contract. | CLI requirements are documented; implementation remains deferred until SPEC-05 is reviewed for code changes. |
 | SPEC-06 | Integration closeout. | Focused tests, full gates, subagent review, deploy, and Obsidian smoke are recorded. |
 
 ## Non-Goals
