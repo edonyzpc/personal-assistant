@@ -367,6 +367,43 @@ function hasAncestorWithClass(element: HTMLElement, className: string): boolean 
     return false;
 }
 
+function isMermaidDiagramCandidate(element: HTMLElement): boolean {
+    return element.classList.contains('mermaid') || element.classList.contains('block-language-mermaid');
+}
+
+function hasAncestorMermaidDiagramCandidate(element: HTMLElement, root: HTMLElement): boolean {
+    let current = element.parentElement;
+    while (current && current !== root) {
+        if (isMermaidDiagramCandidate(current)) return true;
+        current = current.parentElement;
+    }
+    return false;
+}
+
+function getTopLevelMermaidDiagramCandidates(root: HTMLElement): HTMLElement[] {
+    return (Array.from(
+        root.querySelectorAll('.mermaid, .block-language-mermaid'),
+    ) as HTMLElement[]).filter((diagram) => !hasAncestorMermaidDiagramCandidate(diagram, root));
+}
+
+function nodeContainsMermaidDiagramCandidate(node: Node): boolean {
+    const element = node as HTMLElement;
+    if (!element?.classList) return false;
+    if (isMermaidDiagramCandidate(element)) return true;
+    return typeof element.querySelectorAll === 'function'
+        && element.querySelectorAll('.mermaid, .block-language-mermaid').length > 0;
+}
+
+function mutationMayAffectMermaidDiagrams(records: MutationRecord[]): boolean {
+    return records.some((record) => {
+        if (record.type === 'attributes') {
+            return nodeContainsMermaidDiagramCandidate(record.target);
+        }
+        if (record.type !== 'childList') return false;
+        return Array.from(record.addedNodes).some(nodeContainsMermaidDiagramCandidate);
+    });
+}
+
 function createElement<K extends keyof HTMLElementTagNameMap>(tagName: K): HTMLElementTagNameMap[K] | null {
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
     return document.createElement(tagName);
@@ -379,20 +416,23 @@ function renderMermaidSourceWarning(buffer: HTMLElement) {
     });
 }
 
-function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager, mermaidSources: string[]) {
-    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager, mermaidSources: string[]): boolean {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return true;
 
-    const diagrams = Array.from(
-        root.querySelectorAll('.mermaid, .block-language-mermaid'),
-    ) as HTMLElement[];
+    const diagrams = getTopLevelMermaidDiagramCandidates(root);
+    const expectedCount = mermaidSources.filter((source) => source.trim()).length;
+    if (expectedCount > 1 && diagrams.length < expectedCount) {
+        // Source-specific preview buttons are positional, so wait until all rendered
+        // Mermaid candidates are present before binding sources to buttons.
+        return false;
+    }
 
     let sourceIndex = 0;
     diagrams.forEach((diagram) => {
-        if (!diagram.parentElement || hasAncestorWithClass(diagram, 'pa-chat-mermaid-shell')) return;
-        if (diagram.querySelectorAll('svg').length === 0) return;
-        const mermaidSource = mermaidSources[sourceIndex];
-        if (!mermaidSource?.trim()) return;
         sourceIndex += 1;
+        const mermaidSource = mermaidSources[sourceIndex - 1];
+        if (!diagram.parentElement || hasAncestorWithClass(diagram, 'pa-chat-mermaid-shell')) return;
+        if (!mermaidSource?.trim()) return;
 
         const shell = createElement('div');
         const toolbar = createElement('div');
@@ -422,6 +462,110 @@ function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager, mermai
         shell.appendChild(toolbar);
         shell.appendChild(viewport);
     });
+
+    return expectedCount === 0
+        || root.querySelectorAll('.pa-chat-mermaid-shell').length >= expectedCount;
+}
+
+function scheduleMermaidEnhancement(
+    root: HTMLElement,
+    plugin: PluginManager,
+    mermaidSources: string[],
+    isCurrent: () => boolean,
+    owner?: Component,
+) {
+    if (mermaidSources.length === 0) return;
+
+    let stopped = false;
+    let observer: MutationObserver | null = null;
+    let fallbackFrameCount = 0;
+    let fallbackFrameId: number | null = null;
+    let observerFrameId: number | null = null;
+    let timeoutId: number | null = null;
+
+    const stop = () => {
+        stopped = true;
+        observer?.disconnect();
+        observer = null;
+        if (
+            fallbackFrameId !== null
+            && typeof window !== 'undefined'
+            && typeof window.cancelAnimationFrame === 'function'
+        ) {
+            window.cancelAnimationFrame(fallbackFrameId);
+        }
+        fallbackFrameId = null;
+        if (
+            observerFrameId !== null
+            && typeof window !== 'undefined'
+            && typeof window.cancelAnimationFrame === 'function'
+        ) {
+            window.cancelAnimationFrame(observerFrameId);
+        }
+        observerFrameId = null;
+        if (
+            timeoutId !== null
+            && typeof window !== 'undefined'
+            && typeof window.clearTimeout === 'function'
+        ) {
+            window.clearTimeout(timeoutId);
+        }
+        timeoutId = null;
+    };
+
+    owner?.register(stop);
+
+    const enhanceIfCurrent = (): boolean => {
+        if (stopped) return true;
+        if (!isCurrent()) {
+            stop();
+            return true;
+        }
+        const complete = enhanceMermaidDiagrams(root, plugin, mermaidSources);
+        if (complete) stop();
+        return complete;
+    };
+
+    const scheduleObservedEnhancement = () => {
+        if (stopped || observerFrameId !== null) return;
+        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+            observerFrameId = window.requestAnimationFrame(() => {
+                observerFrameId = null;
+                enhanceIfCurrent();
+            });
+            return;
+        }
+        enhanceIfCurrent();
+    };
+
+    if (enhanceIfCurrent()) return;
+
+    if (typeof MutationObserver === 'function') {
+        observer = new MutationObserver((records) => {
+            if (!mutationMayAffectMermaidDiagrams(records)) return;
+            scheduleObservedEnhancement();
+        });
+        observer.observe(root, {
+            attributes: true,
+            attributeFilter: ['class'],
+            childList: true,
+            subtree: true,
+        });
+    } else if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+        const retryWithAnimationFrame = () => {
+            fallbackFrameCount += 1;
+            if (enhanceIfCurrent() || fallbackFrameCount >= 60) {
+                stop();
+                return;
+            }
+            fallbackFrameId = window.requestAnimationFrame(retryWithAnimationFrame);
+        };
+        fallbackFrameId = window.requestAnimationFrame(retryWithAnimationFrame);
+    }
+
+    if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
+        timeoutId = window.setTimeout(stop, 15000);
+    }
 }
 
 export class LLMView extends ItemView {
@@ -1035,9 +1179,6 @@ export class LLMView extends ItemView {
                         removeElement(buffer);
                         return false;
                     }
-                    if (!options.deferMermaid) {
-                        enhanceMermaidDiagrams(buffer, this.plugin, mermaidTransform.sources);
-                    }
                     this.unloadMarkdownRenderOwner(rendered.renderOwner);
                     rendered.contentDiv.empty();
                     rendered.contentDiv.appendChild(buffer);
@@ -1045,6 +1186,16 @@ export class LLMView extends ItemView {
                     rendered.renderedContent = content;
                     rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
                     this.updateClickableLink(buffer);
+                    if (!options.deferMermaid) {
+                        scheduleMermaidEnhancement(
+                            buffer,
+                            this.plugin,
+                            mermaidTransform.sources,
+                            () => rendered.renderToken === renderToken
+                                && buffer.parentElement === rendered.contentDiv,
+                            renderOwner,
+                        );
+                    }
                     scrollToBottom({
                         force: options.forceScroll,
                         behavior: options.forceScroll ? 'smooth' : 'auto',

@@ -545,6 +545,10 @@ describe('LLMView turn lifecycle', () => {
             configurable: true,
             value: undefined,
         });
+        Object.defineProperty(globalThis, 'MutationObserver', {
+            configurable: true,
+            value: undefined,
+        });
     });
 
     afterEach(() => {
@@ -752,9 +756,7 @@ describe('LLMView turn lifecycle', () => {
             }
             el.setText(markdown);
             if (markdown.includes('```mermaid')) {
-                const wrapper = el.createDiv({ cls: 'block-language-mermaid' });
-                const diagram = wrapper.createDiv({ cls: 'mermaid' });
-                diagram.createEl('svg');
+                el.createDiv({ cls: 'block-language-mermaid' });
             }
         });
         const { view, containerEl } = createView();
@@ -801,6 +803,188 @@ describe('LLMView turn lifecycle', () => {
             { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
         ]);
         modalOpenSpy.mockRestore();
+    });
+
+    it('wraps Mermaid containers that appear after the rendered buffer is attached', async () => {
+        const mermaidBuffer: { current: MockElement | null } = { current: null };
+        const mutationCallbacks: MutationCallback[] = [];
+        class MockMutationObserver {
+            readonly observe = jest.fn();
+            readonly disconnect = jest.fn();
+
+            constructor(callback: MutationCallback) {
+                mutationCallbacks.push(callback);
+            }
+        }
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockElement(tagName),
+            },
+        });
+        Object.defineProperty(globalThis, 'MutationObserver', {
+            configurable: true,
+            value: MockMutationObserver,
+        });
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            el.setText(markdown);
+            if (markdown.includes('```mermaid')) {
+                mermaidBuffer.current = el;
+            }
+        });
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'draw a graph';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        streamCalls[0].onChunk('```mermaid\ngraph TD\nA --> B\n```');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(0);
+        expect(mutationCallbacks).toHaveLength(1);
+        runAnimationFrames();
+        runAnimationFrames();
+        runAnimationFrames();
+        await flushPromises();
+        expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(0);
+
+        expect(mermaidBuffer.current).not.toBeNull();
+        const attachedMermaidBuffer = mermaidBuffer.current;
+        if (!attachedMermaidBuffer) throw new Error('Mermaid buffer was not captured');
+        const mermaidDiagram = attachedMermaidBuffer.createDiv({ cls: 'block-language-mermaid' });
+        mutationCallbacks[0]([
+            {
+                type: 'childList',
+                target: attachedMermaidBuffer,
+                addedNodes: [mermaidDiagram],
+            } as unknown as MutationRecord,
+        ], {} as MutationObserver);
+        await flushPromises();
+        expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(0);
+        runAnimationFrames();
+        await flushPromises();
+
+        expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(1);
+        expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(1);
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'draw a graph' },
+            { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
+        ]);
+    });
+
+    it('maps multiple Mermaid viewer buttons to the matching source', async () => {
+        const renderedMarkdown: string[] = [];
+        let openedModal: { modalEl: MockElement; contentEl: MockElement } | null = null;
+        const modalOpenSpy = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
+            const modal = this as unknown as { modalEl: MockElement; contentEl: MockElement; onOpen: () => void };
+            modal.modalEl = new MockElement('div');
+            modal.contentEl = new MockElement('div');
+            openedModal = { modalEl: modal.modalEl, contentEl: modal.contentEl };
+            modal.onOpen();
+        });
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockElement(tagName),
+            },
+        });
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            renderedMarkdown.push(markdown);
+            el.setText(markdown);
+            const mermaidFenceCount = markdown.match(/```mermaid/g)?.length ?? 0;
+            for (let index = 0; index < mermaidFenceCount; index += 1) {
+                const wrapper = el.createDiv({ cls: 'block-language-mermaid' });
+                wrapper.createDiv({ cls: 'mermaid' });
+            }
+        });
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const response = [
+            '```mermaid',
+            'graph TD',
+            'A --> B',
+            '```',
+            '',
+            '```mermaid',
+            'graph TD',
+            'B --> C',
+            '```',
+        ].join('\n');
+        getTextArea(containerEl).value = 'draw two graphs';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        streamCalls[0].onChunk(response);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const openButtons = getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button');
+        expect(openButtons).toHaveLength(2);
+        openButtons[1].click();
+        await flushPromises();
+
+        expect(modalOpenSpy).toHaveBeenCalledTimes(1);
+        expect(openedModal).not.toBeNull();
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('B --> C');
+        expect(renderedMarkdown[renderedMarkdown.length - 1]).not.toContain('A --> B');
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'draw two graphs' },
+            { role: 'assistant', content: response },
+        ]);
+        modalOpenSpy.mockRestore();
+    });
+
+    it('waits for all Mermaid candidates before binding multiple preview sources', async () => {
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockElement(tagName),
+            },
+        });
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            el.setText(markdown);
+            if (markdown.includes('```mermaid')) {
+                el.createDiv({ cls: 'block-language-mermaid' });
+            }
+        });
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const response = [
+            '```mermaid',
+            'graph TD',
+            'A --> B',
+            '```',
+            '',
+            '```mermaid',
+            'graph TD',
+            'B --> C',
+            '```',
+        ].join('\n');
+        getTextArea(containerEl).value = 'draw two graphs';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        streamCalls[0].onChunk(response);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(0);
+        runAnimationFrames();
+        runAnimationFrames();
+        await flushPromises();
+        expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(0);
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'draw two graphs' },
+            { role: 'assistant', content: response },
+        ]);
     });
 
     it('does not rerender completed non-Mermaid answers after streaming', async () => {
@@ -1658,6 +1842,14 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.pa-chat-empty-state\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*100%;/);
         expect(css).toMatch(/\.llm-input\s*{[\s\S]*?flex:\s*0 0 auto;[\s\S]*?z-index:\s*3;/);
         expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-input\s*{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?z-index:\s*30;/);
+    });
+
+    it('keeps Mermaid preview controls usable on narrow mobile panes', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+
+        expect(css).toMatch(/\.llm-view\s+\.pa-chat-mermaid-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
+        expect(css).toMatch(/\.llm-view\.is-narrow\s+\.pa-chat-mermaid-open-button\s*{[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;[\s\S]*?min-width:\s*40px;[\s\S]*?min-height:\s*40px;/);
+        expect(css).toMatch(/\.pa-chat-mermaid-modal-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
     });
 
     it('keeps message bubble enter animation opt-in', () => {

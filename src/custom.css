@@ -419,6 +419,7 @@ body {
 }
 
 .llm-message {
+	box-sizing: border-box;
 	margin-bottom: 12px;
 	padding: 12px 14px;
 	border-radius: 8px;
@@ -839,6 +840,8 @@ body {
 	max-width: 100%;
 	max-height: min(58vh, 460px);
 	overflow: auto;
+	-webkit-overflow-scrolling: touch;
+	overscroll-behavior: contain;
 	padding: 8px 12px 12px;
 }
 
@@ -858,11 +861,13 @@ body {
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
-	width: 28px;
-	height: 28px;
+	width: 32px;
+	height: 32px;
+	min-width: 32px;
+	min-height: 32px;
 	padding: 0;
 	border: 1px solid var(--background-modifier-border);
-	border-radius: 6px;
+	border-radius: 8px;
 	background: var(--background-primary);
 	color: var(--text-muted);
 	box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
@@ -877,6 +882,13 @@ body {
 .llm-view .pa-chat-mermaid-open-button svg {
 	width: 15px;
 	height: 15px;
+}
+
+.llm-view.is-narrow .pa-chat-mermaid-open-button {
+	width: 40px;
+	height: 40px;
+	min-width: 40px;
+	min-height: 40px;
 }
 
 .llm-view .pa-chat-render-warning {
@@ -912,6 +924,8 @@ body {
 	max-width: 100%;
 	max-height: min(72vh, calc(100vh - 180px));
 	overflow: auto;
+	-webkit-overflow-scrolling: touch;
+	overscroll-behavior: contain;
 	padding: 14px;
 	border: 1px solid var(--background-modifier-border);
 	border-radius: 8px;
