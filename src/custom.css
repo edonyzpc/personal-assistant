@@ -549,11 +549,16 @@ body {
 }
 
 .llm-view .pa-chat-role-loader {
+	--pa-chat-loader-color-rose: #ff2d55;
+	--pa-chat-loader-color-orange: #ff9500;
+	--pa-chat-loader-color-lime: #32d74b;
+	--pa-chat-loader-color-cyan: #00c7ff;
+	--pa-chat-loader-color-violet: #bf5af2;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
 	flex: 0 0 auto;
-	color: var(--interactive-accent);
+	color: var(--pa-chat-loader-color-rose);
 	opacity: 0.9;
 	transform: translateY(-1px);
 }
@@ -619,16 +624,19 @@ body {
 @keyframes pa-chat-loader-color-cycle {
 	0%,
 	100% {
-		color: var(--interactive-accent);
+		color: var(--pa-chat-loader-color-rose);
 	}
-	25% {
-		color: var(--color-cyan, #22d3ee);
+	20% {
+		color: var(--pa-chat-loader-color-orange);
 	}
-	50% {
-		color: var(--color-green, #22c55e);
+	40% {
+		color: var(--pa-chat-loader-color-lime);
 	}
-	75% {
-		color: var(--color-yellow, #facc15);
+	60% {
+		color: var(--pa-chat-loader-color-cyan);
+	}
+	80% {
+		color: var(--pa-chat-loader-color-violet);
 	}
 }
 
@@ -1241,12 +1249,12 @@ body {
 
 	.llm-view .pa-chat-role-loader-thinking {
 		animation: none;
-		color: var(--interactive-accent);
+		color: var(--pa-chat-loader-color-rose);
 	}
 
 	.llm-view .pa-chat-role-loader-assistant {
 		animation: none;
-		color: var(--interactive-accent);
+		color: var(--pa-chat-loader-color-rose);
 	}
 
 	.llm-view .pa-chat-role-loader-fallback span {

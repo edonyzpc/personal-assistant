@@ -1486,6 +1486,25 @@ describe('LLMView turn lifecycle', () => {
         expect(reducedMotionBlock).not.toMatch(/\.pa-chat-role-loader-fallback\s*{[\s\S]*?display:\s*inline-flex;/);
     });
 
+    it('uses a bright vivid color cycle for ldrs chat loaders', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+        const colorCycleStart = css.indexOf('@keyframes pa-chat-loader-color-cycle');
+        const colorCycleEnd = css.indexOf('.llm-view .thinking-status-header', colorCycleStart);
+        const colorCycleBlock = css.slice(colorCycleStart, colorCycleEnd);
+
+        expect(colorCycleStart).toBeGreaterThanOrEqual(0);
+        expect(colorCycleEnd).toBeGreaterThan(colorCycleStart);
+        expect(css).toContain('--pa-chat-loader-color-rose: #ff2d55;');
+        expect(css).toContain('--pa-chat-loader-color-orange: #ff9500;');
+        expect(css).toContain('--pa-chat-loader-color-lime: #32d74b;');
+        expect(css).toContain('--pa-chat-loader-color-cyan: #00c7ff;');
+        expect(css).toContain('--pa-chat-loader-color-violet: #bf5af2;');
+        expect(colorCycleBlock).not.toContain('--interactive-accent');
+        expect(colorCycleBlock).not.toContain('--color-cyan');
+        expect(colorCycleBlock).not.toContain('--color-green');
+        expect(colorCycleBlock).not.toContain('--color-yellow');
+    });
+
     it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
         const css = readFileSync('src/custom.css', 'utf8');
 
