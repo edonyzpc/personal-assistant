@@ -438,7 +438,7 @@ function listFilePaths(): string[] {
         rowMode: "object",
         resultRows: rows,
     });
-    return rows.map((row) => String(row.path));
+    return rows.map((row) => primitiveString(row.path));
 }
 
 function listFileRecords(): VSSFileRecord[] {
@@ -483,10 +483,10 @@ function search(queryEmbedding: number[], k: number): unknown[] {
             score: scoreFromDistance(distance, profile.distanceMetric),
             distance,
             doc: {
-                pageContent: String(row.content ?? ""),
+                pageContent: primitiveString(row.content),
                 metadata: {
                     ...metadata,
-                    path: String(row.path ?? metadata.path ?? ""),
+                    path: primitiveString(row.path, primitiveString(metadata.path)),
                     chunkIndex: Number(row.chunk_index ?? metadata.chunkIndex ?? 0),
                 },
             },
@@ -514,11 +514,11 @@ function getFileRecord(path: string): VSSFileRecord | null {
 
 function rowToFileRecord(row: Record<string, unknown>): VSSFileRecord {
     return {
-        path: String(row.path),
-        contentHash: String(row.contentHash),
+        path: primitiveString(row.path),
+        contentHash: primitiveString(row.contentHash),
         mtime: Number(row.mtime),
         size: Number(row.size),
-        status: String(row.status),
+        status: primitiveString(row.status),
         updatedAt: Number(row.updatedAt),
     };
 }
@@ -611,7 +611,7 @@ function getMeta(key: string): string | null {
         rowMode: "object",
         resultRows: rows,
     });
-    return rows.length > 0 ? String(rows[0].value) : null;
+    return rows.length > 0 ? primitiveString(rows[0].value) : null;
 }
 
 function setMeta(key: string, value: string): void {
@@ -660,4 +660,12 @@ function getErrorCode(error: unknown): string {
         return (error as { code: string }).code;
     }
     return "sqlite-worker-error";
+}
+
+function primitiveString(value: unknown, fallback = ""): string {
+    if (typeof value === "string") return value;
+    if (typeof value === "number" || typeof value === "boolean" || typeof value === "bigint") {
+        return value.toString();
+    }
+    return fallback;
 }

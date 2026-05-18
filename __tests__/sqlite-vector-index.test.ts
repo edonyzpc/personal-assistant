@@ -4,6 +4,9 @@ import type { SqliteWorkerRequest, SqliteWorkerResponse } from '../src/vss/sqlit
 import type { VSSIndexStats } from '../src/vss/types';
 
 const originalWorker = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
+const originalFetch = Object.getOwnPropertyDescriptor(globalThis, 'fetch');
+const originalCreateObjectURL = URL.createObjectURL;
+const originalRevokeObjectURL = URL.revokeObjectURL;
 
 const readyStats: VSSIndexStats = {
     status: 'ready',
@@ -60,6 +63,13 @@ describe('SqliteVectorIndex worker recovery', () => {
         } else {
             delete (globalThis as { Worker?: unknown }).Worker;
         }
+        if (originalFetch) {
+            Object.defineProperty(globalThis, 'fetch', originalFetch);
+        } else {
+            delete (globalThis as { fetch?: unknown }).fetch;
+        }
+        URL.createObjectURL = originalCreateObjectURL;
+        URL.revokeObjectURL = originalRevokeObjectURL;
     });
 
     it('terminates and recreates the worker after a fatal worker error', async () => {
@@ -121,6 +131,63 @@ describe('SqliteVectorIndex worker recovery', () => {
                 opfsVfsName: 'opfs-sahpool-work-scope',
             }),
         }));
+    });
+
+    it('decodes inline WASM data URLs without fetch', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const fetchMock = jest.fn(() => {
+            throw new Error('fetch should not be used for inline wasm');
+        });
+        Object.defineProperty(globalThis, 'fetch', {
+            configurable: true,
+            value: fetchMock,
+        });
+        URL.createObjectURL = jest.fn(() => 'blob:sqlite-wasm');
+        URL.revokeObjectURL = jest.fn();
+        const worker = new MockWorker(true, 'ready');
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            wasmUrl: 'data:application/wasm;base64,AQID',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        await expect(index.initialize({
+            provider: 'openai',
+            baseURL: '',
+            model: 'model',
+            dimensions: 1024,
+            distanceMetric: 'COSINE',
+        })).resolves.toBe('ready');
+
+        expect(fetchMock).not.toHaveBeenCalled();
+        expect(URL.createObjectURL).toHaveBeenCalledWith(expect.any(Blob));
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'initialize',
+            payload: expect.objectContaining({
+                wasmUrl: 'blob:sqlite-wasm',
+            }),
+        }));
+    });
+
+    it('reports unsupported worker fallback URLs when direct worker creation is blocked', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class {
+                constructor() {
+                    throw new DOMException('blocked', 'SecurityError');
+                }
+            },
+        });
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+        });
+
+        await expect(index.getStats()).rejects.toMatchObject({
+            code: 'sqlite-worker-url-unsupported',
+        });
     });
 
     it('terminates a worker that resolves after dispose and rejects later requests', async () => {

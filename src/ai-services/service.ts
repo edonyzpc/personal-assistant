@@ -494,8 +494,9 @@ export class AIService {
 
         const res = await llm.invoke(messages);
 
-        this.plugin.log("LLM response received", { contentLength: res.content.toString().length });
-        return res.content.toString();
+        const content = stringifyMessageContent(res.content);
+        this.plugin.log("LLM response received", { contentLength: content.length });
+        return content;
     }
 
 
@@ -767,4 +768,27 @@ export class AIService {
             throw error;
         }
     }
-} 
+}
+
+function stringifyMessageContent(content: unknown): string {
+    if (typeof content === "string") return content;
+    if (Array.isArray(content)) {
+        return content.map((part) => {
+            if (typeof part === "string") return part;
+            if (part && typeof part === "object" && "text" in part && typeof part.text === "string") {
+                return part.text;
+            }
+            try {
+                return JSON.stringify(part);
+            } catch {
+                return "[unserializable content]";
+            }
+        }).join("\n").trim();
+    }
+    if (content === null || content === undefined) return "";
+    try {
+        return JSON.stringify(content);
+    } catch {
+        return "[unserializable content]";
+    }
+}

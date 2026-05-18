@@ -83,7 +83,10 @@ const getRequest = (input: string | URL | Request): Request | undefined => {
 const getUrl = (input: string | URL | Request): string => {
     const request = getRequest(input);
     if (request) return request.url;
-    return input.toString();
+    if (typeof Request !== 'undefined' && input instanceof Request) return input.url;
+    if (typeof input === 'string') return input;
+    if (typeof URL !== 'undefined' && input instanceof URL) return input.href;
+    throw new TypeError('Unsupported request URL input.');
 };
 
 const normalizeStatus = (status: number | undefined): number => {

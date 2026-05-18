@@ -936,7 +936,7 @@ export class ChatAgentRuntime {
                 const fallbackChain = activePrompt.pipe(fallbackLlm);
                 const response = await deadline.race(fallbackChain.invoke(promptPlan.chainInput, { signal }));
                 emitReasoning(getReasoningContent(response));
-                fullResponse = response.content.toString();
+                fullResponse = stringifyModelContent(response.content);
                 emitAnswerSnapshot(fullResponse);
             }
 
@@ -2047,7 +2047,7 @@ function normalizeSearchCandidates(results: RawSearchResult[]): MemoryCandidate[
                 ? Number(metadata.chunkIndex)
                 : undefined;
         return {
-            content: truncate(String(result.doc?.pageContent ?? ""), MAX_MEMORY_CHARS),
+            content: truncate(stringifyModelContent(result.doc?.pageContent), MAX_MEMORY_CHARS),
             score: typeof result.score === "number" ? result.score : Number(result.score ?? 0),
             source: {
                 path,
@@ -3758,8 +3758,7 @@ function stringifyChunkContent(chunk: unknown): string {
     const content = chunk && typeof chunk === "object"
         ? (chunk as { content?: unknown }).content
         : undefined;
-    if (content === undefined || content === null) return "";
-    return content.toString();
+    return stringifyModelContent(content);
 }
 
 class RegisteredNativeToolCallSignalTracker {
@@ -3875,7 +3874,11 @@ function stringifyModelContent(content: unknown): string {
     if (content === null || content === undefined) {
         return "";
     }
-    return String(content);
+    try {
+        return JSON.stringify(content);
+    } catch {
+        return "[unserializable content]";
+    }
 }
 
 function stringifyModelContentPart(part: ModelContentPart): string {

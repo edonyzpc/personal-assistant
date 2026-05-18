@@ -290,7 +290,14 @@ export class SqliteVectorIndex implements VectorIndex {
             }
         }
 
-        const blobUrl = await this.createBlobUrlFromAsset(url, "text/javascript");
+        if (!isDataUrl(url)) {
+            throw createVectorIndexError(
+                "sqlite-worker-url-unsupported",
+                "SQLite worker fallback requires a local data URL when direct worker creation is blocked.",
+            );
+        }
+        const blobUrl = this.createBlobUrlFromDataUrl(url, "text/javascript");
+        this.trackObjectUrl(blobUrl);
         return new Worker(blobUrl, {
             type: "module",
             name: "personal-assistant-vss",
@@ -301,23 +308,28 @@ export class SqliteVectorIndex implements VectorIndex {
         this.assertActive();
         if (!this.wasmUrl) return undefined;
         if (isSameOriginUrl(this.wasmUrl)) return this.wasmUrl;
-        return await this.createBlobUrlFromAsset(this.wasmUrl, "application/wasm");
+        if (!isDataUrl(this.wasmUrl)) {
+            throw createVectorIndexError(
+                "sqlite-asset-url-unsupported",
+                "SQLite WASM loading only supports local data URLs when a blob URL is required.",
+            );
+        }
+        const blobUrl = this.createBlobUrlFromDataUrl(this.wasmUrl, "application/wasm");
+        this.trackObjectUrl(blobUrl);
+        return blobUrl;
     }
 
-    private async createBlobUrlFromAsset(url: string, type: string): Promise<string> {
-        this.assertActive();
-        const response = await fetch(url);
-        if (!response.ok) {
-            throw createVectorIndexError("sqlite-asset-fetch-failed", `Failed to fetch SQLite asset ${url}: ${response.status}`);
-        }
-        const blob = await response.blob();
-        const objectUrl = URL.createObjectURL(new Blob([blob], { type }));
+    private createBlobUrlFromDataUrl(url: string, type: string): string {
+        const blob = dataUrlToBlob(url, type);
+        return URL.createObjectURL(blob);
+    }
+
+    private trackObjectUrl(objectUrl: string): void {
         if (this.disposed) {
             URL.revokeObjectURL(objectUrl);
             throw createDisposedError();
         }
         this.objectUrls.push(objectUrl);
-        return objectUrl;
     }
 }
 
@@ -360,4 +372,32 @@ function isSameOriginUrl(url: string): boolean {
     } catch {
         return false;
     }
+}
+
+function isDataUrl(url: string): boolean {
+    return url.startsWith("data:");
+}
+
+function dataUrlToBlob(url: string, fallbackType: string): Blob {
+    const commaIndex = url.indexOf(",");
+    if (commaIndex < 0) {
+        throw createVectorIndexError("sqlite-asset-url-invalid", "SQLite asset data URL is missing a payload.");
+    }
+    const metadata = url.slice(5, commaIndex);
+    const payload = url.slice(commaIndex + 1);
+    const parts = metadata.split(";").filter(Boolean);
+    const explicitType = parts.find((part) => part.includes("/"));
+    const mimeType = explicitType || fallbackType;
+    const isBase64 = parts.includes("base64");
+    const bytes = isBase64 ? decodeBase64(payload) : new TextEncoder().encode(decodeURIComponent(payload));
+    return new Blob([bytes], { type: mimeType });
+}
+
+function decodeBase64(payload: string): Uint8Array {
+    const binary = globalThis.atob(payload);
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) {
+        bytes[index] = binary.charCodeAt(index);
+    }
+    return bytes;
 }
