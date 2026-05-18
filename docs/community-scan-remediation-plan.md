@@ -16,6 +16,31 @@
 | P2 | `manifest-beta.json`, shared confirmation helper, selected stringification fixes, docs sync | 风险较低，但值得在同一轮或紧随其后处理。 |
 | P3 | popout/timer/activeDocument 全量兼容、CSS lint、类型告警清理 | 面广且容易产生 UI 或测试回归，适合单独批次。 |
 
+## Current Resolution Status
+
+Status date: 2026-05-18.
+
+| Scope | Status | Evidence |
+| --- | --- | --- |
+| P0 blockers | Resolved | Current review found no release-blocking issue. |
+| Release assets and attestations | Resolved | `.github/workflows/release.yml` stages `main.js`, `manifest.json`, and `styles.css` in `release-assets/`, attests the same staged files, and uploads that same three-file set. |
+| Manifest scanner copy | Resolved | `manifest.json` and `manifest-beta.json` descriptions no longer include the flagged `Obsidian` wording. |
+| Privacy/network disclosure | Resolved | `README.md`, `README-CN.md`, and this plan include the network matrix. The Chat row now explicitly covers prompt, selected note/tool context, Memory search query, and selected Memory excerpts or note snippets used in the final answer prompt. |
+| Memory confirmation copy | Resolved | Prepare/update confirmation copy explains notes are not changed or deleted, note text may be sent to the configured AI provider, Memory search may use the question, background changed-note updates may send changed note text, and AI credits/API calls may be used. |
+| `vault.configDir` local state compatibility | Resolved | VSS state and Stats shards write under `vault.configDir`, keep legacy `.obsidian` reads, and tests cover custom config directory and duplicate shard behavior. |
+| `fetch(data:)`, `moment`, and high-signal stringification | Resolved | SQLite inline assets decode local `data:` URLs without `fetch`, `moment` imports come from `obsidian`, and AI/model content coercion avoids silent `[object Object]` output on reviewed paths. |
+| Shared destructive confirmation helper | Resolved for current high-risk paths | `globalThis.confirm` usage was replaced with `confirmUserAction`; no `globalThis.confirm` references remain in `src/`. |
+| Full popout/timer/CSS/type warning cleanup | Deferred | These are intentionally P3 follow-up batches and are not considered current release blockers. See Deferred Items. |
+
+Verification completed for this remediation pass:
+
+- `npm test -- --runInBand`
+- `npm run lint`
+- `npm run build`
+- `git diff --check`
+- `make deploy`
+- Obsidian test-vault smoke for Personal Assistant command execution, Records Preview, Vault Statistics Preview, Statistics tab interaction, and visible chat panel.
+
 ## Phase 1: Release And Manifest
 
 ### Changes
@@ -55,7 +80,7 @@
 
 | Feature | Trigger | Data Sent | Destination | Background | User Control |
 | --- | --- | --- | --- | --- | --- |
-| Chat | User sends a message | Prompt, selected note/context content when enabled | Configured AI provider | No | Provider/settings |
+| Chat | User sends a message | Prompt; selected note/tool context when enabled; Memory search query and selected Memory excerpts or note snippets used in the final answer prompt when Memory is enabled | Configured AI provider | No | Provider/chat/Memory settings |
 | AI note tools | User runs summary or note AI actions | Current note content and generated prompt | Configured AI provider | No | User action/settings |
 | Memory prepare/update | User confirms prepare/update | Note text and Memory search/query data | Configured AI provider | No for manual path; changed notes may update in background after success | Memory settings/background toggle |
 | Memory changed-note maintenance | After successful approval and durable Memory ready | Changed note text | Configured AI provider | Yes | Memory settings/background toggle |

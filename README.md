@@ -105,7 +105,7 @@ Personal Assistant does not include telemetry or analytics. Local statistics are
 
 | Feature | Trigger | Data sent | Destination | Background? | User control |
 | --- | --- | --- | --- | --- | --- |
-| Chat | You send a message | Prompt and selected note/context content when enabled | Configured AI provider | No | Provider and chat settings |
+| Chat | You send a message | Prompt; when enabled, selected note/tool context, Memory search query, and selected Memory excerpts or note snippets used in the final answer prompt | Configured AI provider | No | Provider, chat, and Memory settings |
 | AI note tools | You run summary or note AI actions | Current note content and the generated prompt | Configured AI provider | No | User action and AI settings |
 | Memory prepare/update | You approve prepare or update | Note text and Memory search data | Configured AI provider | The manual action is not background; after success, changed notes may update in background | Memory settings and background toggle |
 | Memory changed-note maintenance | Memory has been prepared and background updates are enabled | Changed note text | Configured AI provider | Yes | Memory background setting |
