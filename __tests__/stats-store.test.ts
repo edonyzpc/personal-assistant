@@ -4,6 +4,7 @@ import {
     STATS_DAILY_ROOT,
     StatsStore,
     createStatsShard,
+    getStatsDailyRoot,
     normalizeStatisticsView,
 } from "../src/stats/stats-store";
 import type { VaultStatistics } from "../src/stats/stats-types";
@@ -76,9 +77,10 @@ class MemoryAdapter {
     }
 }
 
-function createVault(adapter: MemoryAdapter): Vault {
+function createVault(adapter: MemoryAdapter, configDir = ".obsidian"): Vault {
     return {
         adapter,
+        configDir,
         getMarkdownFiles: () => [],
     } as unknown as Vault;
 }
@@ -155,6 +157,109 @@ describe("StatsStore", () => {
         expect(first.days).toHaveLength(Object.keys(legacy.history).length);
         expect(second.days).toHaveLength(first.days.length);
         expect(Array.from(adapter.files.keys()).filter((path) => path.endsWith("/legacy.json"))).toHaveLength(first.days.length);
+    });
+
+    it("uses the vault config directory for new shards while reading legacy stats", async () => {
+        const legacy = readLegacyFixture();
+        const adapter = new MemoryAdapter({
+            ".obsidian/stats.json": JSON.stringify(legacy),
+        });
+        const store = new StatsStore(createVault(adapter, ".vault-config"), ".vault-config/stats.json");
+
+        const data = await store.readDashboardData();
+        await store.writeOwnShard(createStatsShard(
+            "2026-05-01",
+            store.getDeviceId(),
+            { words: 1, characters: 1, sentences: 1, pages: 0, footnotes: 0, citations: 0 },
+            { totalWords: 1, totalCharacters: 1, totalSentences: 1, totalFootnotes: 0, totalCitations: 0, totalPages: 0, files: 1 },
+        ));
+
+        expect(data.errors).toEqual([]);
+        expect(data.days).toHaveLength(Object.keys(legacy.history).length);
+        expect(adapter.files.has(`${getStatsDailyRoot(".vault-config")}/2026-05-01/${store.getDeviceId()}.json`)).toBe(true);
+        expect(adapter.files.has(`${STATS_DAILY_ROOT}/2026-05-01/${store.getDeviceId()}.json`)).toBe(false);
+    });
+
+    it("reads legacy daily shards when the vault config directory changes", async () => {
+        const legacyShard = createStatsShard(
+            "2026-04-30",
+            "device-legacy",
+            { words: 4, characters: 10, sentences: 1, pages: 0, footnotes: 0, citations: 0 },
+            { totalWords: 4, totalCharacters: 10, totalSentences: 1, totalFootnotes: 0, totalCitations: 0, totalPages: 0, files: 1 },
+        );
+        const adapter = new MemoryAdapter({
+            [`${STATS_DAILY_ROOT}/2026-04-30/device-legacy.json`]: JSON.stringify(legacyShard),
+        });
+        const store = new StatsStore(createVault(adapter, ".vault-config"), ".vault-config/stats.json");
+
+        const data = await store.readDashboardData();
+
+        expect(data.days.map((day) => day.date)).toEqual(["2026-04-30"]);
+        expect(data.days[0].words).toBe(4);
+    });
+
+    it("does not double count legacy daily shards after moving to a custom config directory", async () => {
+        const legacyShard = createStatsShard(
+            "2026-04-30",
+            "legacy",
+            { words: 4, characters: 10, sentences: 1, pages: 0, footnotes: 0, citations: 0 },
+            { totalWords: 4, totalCharacters: 10, totalSentences: 1, totalFootnotes: 0, totalCitations: 0, totalPages: 0, files: 1 },
+        );
+        const adapter = new MemoryAdapter({
+            ".obsidian/stats.json": JSON.stringify({
+                history: {
+                    "2026-04-30": {
+                        words: 4,
+                        characters: 10,
+                        sentences: 1,
+                        pages: 0,
+                        footnotes: 0,
+                        citations: 0,
+                        totalWords: 4,
+                        totalCharacters: 10,
+                        totalSentences: 1,
+                        totalFootnotes: 0,
+                        totalCitations: 0,
+                        totalPages: 0,
+                        files: 1,
+                    },
+                },
+                modifiedFiles: {},
+            } satisfies VaultStatistics),
+            [`${STATS_DAILY_ROOT}/2026-04-30/legacy.json`]: JSON.stringify(legacyShard),
+        });
+        const store = new StatsStore(createVault(adapter, ".vault-config"), ".vault-config/stats.json");
+
+        const data = await store.readDashboardData();
+
+        expect(data.days).toHaveLength(1);
+        expect(data.days[0].words).toBe(4);
+        expect(data.days[0].characters).toBe(10);
+    });
+
+    it("prefers the current config directory shard over a legacy shard for the same date and device", async () => {
+        const adapter = new MemoryAdapter({
+            [`${STATS_DAILY_ROOT}/2026-04-30/device-a.json`]: JSON.stringify(createStatsShard(
+                "2026-04-30",
+                "device-a",
+                { words: 4, characters: 10, sentences: 1, pages: 0, footnotes: 0, citations: 0 },
+                { totalWords: 4, totalCharacters: 10, totalSentences: 1, totalFootnotes: 0, totalCitations: 0, totalPages: 0, files: 1 },
+            )),
+            [`${getStatsDailyRoot(".vault-config")}/2026-04-30/device-a.json`]: JSON.stringify(createStatsShard(
+                "2026-04-30",
+                "device-a",
+                { words: 6, characters: 20, sentences: 2, pages: 0, footnotes: 0, citations: 0 },
+                { totalWords: 6, totalCharacters: 20, totalSentences: 2, totalFootnotes: 0, totalCitations: 0, totalPages: 0, files: 1 },
+            )),
+        });
+        const store = new StatsStore(createVault(adapter, ".vault-config"), ".vault-config/stats.json");
+
+        const data = await store.readDashboardData();
+
+        expect(data.days).toHaveLength(1);
+        expect(data.days[0].words).toBe(6);
+        expect(data.days[0].characters).toBe(20);
+        expect(data.days[0].deviceIds).toEqual(["device-a"]);
     });
 
     it("preserves legacy activity and latest snapshot values", async () => {
@@ -234,6 +339,17 @@ describe("StatsStore", () => {
         await store.writeOwnShard({ ...shard, activity: { ...shard.activity, words: 2 } });
 
         expect(adapter.existsCalls.get(`${STATS_DAILY_ROOT}/2026-05-01`)).toBe(1);
+    });
+
+    it("matches only exact stats store roots and descendants", () => {
+        const adapter = new MemoryAdapter();
+        const store = new StatsStore(createVault(adapter, ".vault-config"), ".vault-config/stats.json");
+
+        expect(store.isStatsStorePath(".vault-config/personal-assistant-stats/v2")).toBe(true);
+        expect(store.isStatsStorePath(".vault-config/personal-assistant-stats/v2/daily/2026-05-01/device.json")).toBe(true);
+        expect(store.isStatsStorePath(".obsidian/personal-assistant-stats/v2/daily/2026-05-01/legacy.json")).toBe(true);
+        expect(store.isStatsStorePath(".vault-config/personal-assistant-stats/v20/daily/2026-05-01/device.json")).toBe(false);
+        expect(store.isStatsStorePath(".obsidian/personal-assistant-stats/v20/daily/2026-05-01/legacy.json")).toBe(false);
     });
 
     it("caches dashboard reads until a shard write changes the data", async () => {

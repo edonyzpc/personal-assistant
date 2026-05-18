@@ -38,6 +38,7 @@ import {
     type VSSIndexStats,
 } from './vss/types';
 import type { MemoryMaintenancePlan } from './memory-manager';
+import { confirmUserAction } from './confirm';
 
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
@@ -1137,8 +1138,11 @@ export class VSS {
             return;
         }
 
-        const message = `Delete ${summary.fileCount} old memory cache files (${formatBytes(summary.bytes)})? Notes will not be deleted.`;
-        const confirmed = typeof globalThis.confirm === "function" ? globalThis.confirm(message) : true;
+        const confirmed = await confirmUserAction(this.plugin.app, {
+            title: "Delete old memory cache?",
+            message: `Delete ${summary.fileCount} old memory cache files (${formatBytes(summary.bytes)})? Notes will not be changed or deleted.`,
+            confirmText: "Delete",
+        });
         if (!confirmed) return;
 
         for (const path of summary.paths) {

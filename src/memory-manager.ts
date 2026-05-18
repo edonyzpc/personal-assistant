@@ -84,6 +84,10 @@ export const MEMORY_APPROVAL_SECTIONS = [
         body: "When Memory is ready, your question may be sent to your configured AI provider to search Memory. This does not send all note text.",
     },
     {
+        title: "Background updates",
+        body: "After Memory is prepared, changed note text may be sent to your configured AI provider while updates continue in the background. You can turn this off in Advanced memory controls.",
+    },
+    {
         title: "Cost",
         body: "This may use AI credits or API calls. Unchanged notes will be skipped when possible.",
     },

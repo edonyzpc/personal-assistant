@@ -311,6 +311,36 @@ describe('settings migration', () => {
         expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
         expect(plugin.saveSettings).not.toHaveBeenCalled();
     });
+
+    it('preserves an intentionally empty memory exclude path during migration', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            vault: {
+                configDir: '.vault-config',
+            },
+        };
+        plugin.settings = {
+            aiProvider: 'openai',
+            embeddingModelName: 'custom-embedding-model',
+            embeddingV4MigrationNoticeDismissed: true,
+            statisticsType: 'overview',
+            memoryEnabled: true,
+            memoryAutoCheckBeforeChat: true,
+            memoryApprovalPolicy: 'always',
+            showAdvancedMemoryControls: false,
+            qwenThinkingEnabled: false,
+            qwenWebSearchEnabled: false,
+            statsPath: '.vault-config/stats.json',
+            vssCacheExcludePath: [],
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        plugin.migrateSettings();
+
+        expect(plugin.settings.vssCacheExcludePath).toEqual([]);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
 });
 
 describe('VSS status performance notices', () => {

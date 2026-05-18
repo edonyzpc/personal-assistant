@@ -239,13 +239,13 @@ CREATE TABLE IF NOT EXISTS vss_chunks (
 
 OPFS 可能被系统或 WebView 清理。为了检测“本机曾有索引但 OPFS DB 丢失”，需要在 OPFS 外保存轻量 marker。
 
-marker 写入 vault 中按设备分片的路径：
+marker 写入 vault 配置目录中按设备分片的路径：
 
 ```text
-.obsidian/plugins/personal-assistant/vss-index-state/<deviceId>/marker.json
+<vault.configDir>/plugins/personal-assistant/vss-index-state/<deviceId>/marker.json
 ```
 
-`deviceId` 复用现有 stats 的 `localStorage` device ID 机制。该文件随 vault 同步时只代表对应设备曾经建立过本机索引，不表示其他设备的 OPFS 索引可用。marker 包含：
+旧版本写入的 `.obsidian/plugins/personal-assistant/vss-index-state/<deviceId>/marker.json` 会作为 legacy 路径读取兼容；新写入使用 `Vault#configDir`。`deviceId` 复用现有 stats 的 `localStorage` device ID 机制。该文件随 vault 同步时只代表对应设备曾经建立过本机索引，不表示其他设备的 OPFS 索引可用。marker 包含：
 
 - `deviceId`
 - `indexId`
@@ -265,10 +265,10 @@ marker 写入 vault 中按设备分片的路径：
 manifest 是 fallback 的轻量统计来源，避免 SQLite 不可用时扫描旧 JSON 向量。它与 marker 位于同一个设备子目录：
 
 ```text
-.obsidian/plugins/personal-assistant/vss-index-state/<deviceId>/manifest.json
+<vault.configDir>/plugins/personal-assistant/vss-index-state/<deviceId>/manifest.json
 ```
 
-manifest 同样按设备分片；随 vault 同步后，只能用于该 `deviceId` 对应设备的 fallback 判断，不能代表其他设备的 OPFS 索引状态。manifest 记录：
+旧版本 `.obsidian/.../manifest.json` 也会作为 legacy 路径读取兼容；新写入使用 `Vault#configDir`。manifest 同样按设备分片；随 vault 同步后，只能用于该 `deviceId` 对应设备的 fallback 判断，不能代表其他设备的 OPFS 索引状态。manifest 记录：
 
 - `fileCount`
 - `chunkCount`

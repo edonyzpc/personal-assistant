@@ -8,9 +8,12 @@ import type {
     StatsStoreError,
     VaultStatistics,
 } from "./stats-types";
+import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from "../obsidian-paths";
 
 export const STATS_STORE_VERSION = 2;
-export const STATS_STORE_ROOT = ".obsidian/personal-assistant-stats/v2";
+const STATS_STORE_CHILD_PATH = "personal-assistant-stats/v2";
+export const LEGACY_STATS_PATH = joinVaultConfigPath(LEGACY_CONFIG_DIR, "stats.json");
+export const STATS_STORE_ROOT = joinVaultConfigPath(LEGACY_CONFIG_DIR, STATS_STORE_CHILD_PATH);
 export const STATS_DAILY_ROOT = `${STATS_STORE_ROOT}/daily`;
 const LEGACY_DEVICE_ID = "legacy";
 export const DEVICE_STORAGE_KEY = "personal-assistant.stats.deviceId.v2";
@@ -22,6 +25,14 @@ export function normalizeStatisticsView(value: string | undefined): StatisticsVi
     if (value === "total" || value === "growth") return "growth";
     if (value === "composition") return "composition";
     return "overview";
+}
+
+export function getStatsStoreRoot(configDir = LEGACY_CONFIG_DIR): string {
+    return joinVaultConfigPath(configDir, STATS_STORE_CHILD_PATH);
+}
+
+export function getStatsDailyRoot(configDir = LEGACY_CONFIG_DIR): string {
+    return normalizePath(`${getStatsStoreRoot(configDir)}/daily`);
 }
 
 export function emptyActivityCounts(): ActivityCounts {
@@ -158,6 +169,14 @@ function dayToLegacyShard(date: string, day: unknown): StatsDeviceShard {
     );
 }
 
+function getDateFromStatsFolder(path: string): string {
+    return normalizePath(path).split("/").pop() ?? "";
+}
+
+function isPathInsideRoot(path: string, root: string): boolean {
+    return path === root || path.startsWith(`${root}/`);
+}
+
 export function getDeviceId(): string {
     try {
         const storage = globalThis.localStorage;
@@ -181,7 +200,10 @@ export function createDeviceId(): string {
 
 export class StatsStore {
     private readonly vault: Vault;
-    private readonly legacyStatsPath: string;
+    private readonly legacyStatsPaths: string[];
+    private readonly storeRoot: string;
+    private readonly dailyRoot: string;
+    private readonly dailyReadRoots: string[];
     private readonly deviceId: string;
     private initialized = false;
     private initializing: Promise<void> | null = null;
@@ -191,9 +213,19 @@ export class StatsStore {
     private dashboardCache: StatsDashboardData | null = null;
     private dashboardDirty = true;
 
-    constructor(vault: Vault, legacyStatsPath: string) {
+    constructor(vault: Vault, legacyStatsPath: string, configDir = getVaultConfigDir(vault)) {
         this.vault = vault;
-        this.legacyStatsPath = normalizePath(legacyStatsPath);
+        const normalizedConfigDir = normalizePath(configDir || LEGACY_CONFIG_DIR);
+        this.legacyStatsPaths = uniqueNormalizedPaths([
+            legacyStatsPath || joinVaultConfigPath(normalizedConfigDir, "stats.json"),
+            LEGACY_STATS_PATH,
+        ]);
+        this.storeRoot = getStatsStoreRoot(normalizedConfigDir);
+        this.dailyRoot = getStatsDailyRoot(normalizedConfigDir);
+        this.dailyReadRoots = uniqueNormalizedPaths([
+            this.dailyRoot,
+            STATS_DAILY_ROOT,
+        ]);
         this.deviceId = getDeviceId();
     }
 
@@ -211,7 +243,7 @@ export class StatsStore {
 
         this.initializing = (async () => {
             this.migrationErrors = [];
-            await this.ensureFolder(STATS_DAILY_ROOT);
+            await this.ensureFolder(this.dailyRoot);
             await this.migrateLegacyStats();
             this.initialized = true;
         })();
@@ -234,39 +266,33 @@ export class StatsStore {
             deviceIds: Set<string>;
         }>();
 
-        const dailyExists = await this.safeExists(STATS_DAILY_ROOT);
-        if (!dailyExists) {
+        const shards = await this.readDailyShards(errors);
+        if (shards.length === 0) {
             return this.cacheDashboardData({
                 ...createEmptyDashboardData(this.deviceId),
                 errors,
             });
         }
 
-        const dailyList = await this.safeList(STATS_DAILY_ROOT, errors);
-        for (const dateFolder of dailyList.folders) {
-            const fileList = await this.safeList(dateFolder, errors);
-            for (const file of fileList.files.filter((path) => path.endsWith(".json"))) {
-                const shard = await this.readShard(file, errors);
-                if (!shard) continue;
-                const entry = byDate.get(shard.date) ?? {
-                    activity: emptyActivityCounts(),
-                    snapshot: emptySnapshotCounts(),
-                    updatedAt: "",
-                    deviceIds: new Set<string>(),
-                };
-                entry.activity.words += shard.activity.words;
-                entry.activity.characters += shard.activity.characters;
-                entry.activity.sentences += shard.activity.sentences;
-                entry.activity.pages += shard.activity.pages;
-                entry.activity.footnotes += shard.activity.footnotes;
-                entry.activity.citations += shard.activity.citations;
-                entry.deviceIds.add(shard.deviceId);
-                if (!entry.updatedAt || shard.updatedAt >= entry.updatedAt) {
-                    entry.updatedAt = shard.updatedAt;
-                    entry.snapshot = shard.snapshot;
-                }
-                byDate.set(shard.date, entry);
+        for (const shard of shards) {
+            const entry = byDate.get(shard.date) ?? {
+                activity: emptyActivityCounts(),
+                snapshot: emptySnapshotCounts(),
+                updatedAt: "",
+                deviceIds: new Set<string>(),
+            };
+            entry.activity.words += shard.activity.words;
+            entry.activity.characters += shard.activity.characters;
+            entry.activity.sentences += shard.activity.sentences;
+            entry.activity.pages += shard.activity.pages;
+            entry.activity.footnotes += shard.activity.footnotes;
+            entry.activity.citations += shard.activity.citations;
+            entry.deviceIds.add(shard.deviceId);
+            if (!entry.updatedAt || shard.updatedAt >= entry.updatedAt) {
+                entry.updatedAt = shard.updatedAt;
+                entry.snapshot = shard.snapshot;
             }
+            byDate.set(shard.date, entry);
         }
 
         const days: StatsDashboardDay[] = Array.from(byDate.entries())
@@ -297,30 +323,18 @@ export class StatsStore {
             return this.snapshotFromDashboardDay(this.dashboardCache.days[this.dashboardCache.days.length - 1]);
         }
 
-        if (!(await this.safeExists(STATS_DAILY_ROOT))) return null;
-
         const errors: StatsStoreError[] = [];
-        const dailyList = await this.safeList(STATS_DAILY_ROOT, errors);
-        const folders = [...dailyList.folders].sort().reverse();
-
-        for (const folder of folders) {
-            const fileList = await this.safeList(folder, errors);
-            let latest: StatsDeviceShard | null = null;
-            for (const file of fileList.files.filter((path) => path.endsWith(".json"))) {
-                const shard = await this.readShard(file, errors);
-                if (shard && (!latest || shard.updatedAt >= latest.updatedAt)) {
-                    latest = shard;
-                }
-            }
-            if (latest) return latest.snapshot;
-        }
-
-        return null;
+        const shards = await this.readDailyShards(errors);
+        const latest = shards
+            .sort((left, right) =>
+                right.date.localeCompare(left.date) || right.updatedAt.localeCompare(left.updatedAt)
+            )[0];
+        return latest?.snapshot ?? null;
     }
 
     async readOwnShard(date: string): Promise<StatsDeviceShard | null> {
         await this.initialize();
-        const path = this.getShardPath(date, this.deviceId);
+        const path = await this.getExistingOwnShardPath(date) ?? this.getShardPath(date, this.deviceId);
         const errors: StatsStoreError[] = [];
         if (!(await this.safeExists(path))) return null;
         const shard = await this.readShard(path, errors);
@@ -350,7 +364,7 @@ export class StatsStore {
     }
 
     private getDateFolder(date: string): string {
-        return normalizePath(`${STATS_DAILY_ROOT}/${date}`);
+        return normalizePath(`${this.dailyRoot}/${date}`);
     }
 
     private getShardPath(date: string, deviceId: string): string {
@@ -387,14 +401,15 @@ export class StatsStore {
     }
 
     private async migrateLegacyStats(): Promise<void> {
-        if (!(await this.safeExists(this.legacyStatsPath))) return;
+        const legacyStatsPath = await this.getExistingLegacyStatsPath();
+        if (!legacyStatsPath) return;
 
         let legacy: VaultStatistics;
         try {
-            legacy = JSON.parse(await this.vault.adapter.read(this.legacyStatsPath));
+            legacy = JSON.parse(await this.vault.adapter.read(legacyStatsPath));
         } catch (error) {
             this.migrationErrors.push({
-                path: this.legacyStatsPath,
+                path: legacyStatsPath,
                 message: error instanceof Error ? error.message : String(error),
             });
             return;
@@ -402,7 +417,7 @@ export class StatsStore {
 
         if (!legacy || !isObject(legacy) || !isObject(legacy.history)) {
             this.migrationErrors.push({
-                path: this.legacyStatsPath,
+                path: legacyStatsPath,
                 message: "Legacy statistics file does not contain a valid history object.",
             });
             return;
@@ -415,6 +430,54 @@ export class StatsStore {
             if (await this.safeExists(path)) continue;
             await this.vault.adapter.write(path, JSON.stringify(dayToLegacyShard(date, day), null, 2));
         }
+    }
+
+    private async getExistingLegacyStatsPath(): Promise<string | null> {
+        for (const path of this.legacyStatsPaths) {
+            if (await this.safeExists(path)) return path;
+        }
+        return null;
+    }
+
+    private async getExistingDailyRoots(): Promise<string[]> {
+        const roots: string[] = [];
+        for (const root of this.dailyReadRoots) {
+            if (await this.safeExists(root)) {
+                roots.push(root);
+            }
+        }
+        return roots;
+    }
+
+    private async readDailyShards(errors: StatsStoreError[]): Promise<StatsDeviceShard[]> {
+        const byDateAndDevice = new Map<string, StatsDeviceShard>();
+        for (const dailyRoot of await this.getExistingDailyRoots()) {
+            const dailyList = await this.safeList(dailyRoot, errors);
+            const dateFolders = [...dailyList.folders]
+                .sort((left, right) => getDateFromStatsFolder(left).localeCompare(getDateFromStatsFolder(right)));
+            for (const dateFolder of dateFolders) {
+                const fileList = await this.safeList(dateFolder, errors);
+                for (const file of fileList.files.filter((path) => path.endsWith(".json"))) {
+                    const shard = await this.readShard(file, errors);
+                    if (!shard) continue;
+                    const key = `${shard.date}\0${shard.deviceId}`;
+                    if (!byDateAndDevice.has(key)) {
+                        byDateAndDevice.set(key, shard);
+                    }
+                }
+            }
+        }
+        return Array.from(byDateAndDevice.values());
+    }
+
+    private async getExistingOwnShardPath(date: string): Promise<string | null> {
+        const paths = uniqueNormalizedPaths(
+            this.dailyReadRoots.map((root) => `${root}/${date}/${this.deviceId}.json`),
+        );
+        for (const path of paths) {
+            if (await this.safeExists(path)) return path;
+        }
+        return null;
     }
 
     private async readShard(path: string, errors: StatsStoreError[]): Promise<StatsDeviceShard | null> {
@@ -470,5 +533,12 @@ export class StatsStore {
             });
             return { files: [], folders: [] };
         }
+    }
+
+    isStatsStorePath(path: string): boolean {
+        const normalized = normalizePath(path);
+        return uniqueNormalizedPaths([this.storeRoot, STATS_STORE_ROOT]).some((root) =>
+            isPathInsideRoot(normalized, root)
+        );
     }
 }

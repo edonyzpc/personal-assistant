@@ -62,7 +62,12 @@ jest.mock('../src/vss/sqlite-vector-index', () => ({
     }),
 }));
 
+jest.mock('../src/confirm', () => ({
+    confirmUserAction: jest.fn(async () => true),
+}));
+
 const MockSqliteVectorIndex = (jest.requireMock('../src/vss/sqlite-vector-index') as { SqliteVectorIndex: jest.Mock }).SqliteVectorIndex;
+const mockConfirmUserAction = (jest.requireMock('../src/confirm') as { confirmUserAction: jest.Mock }).confirmUserAction;
 
 class FakeVectorIndex implements VectorIndex {
     status: VectorIndexStatus = 'ready';
@@ -203,6 +208,8 @@ describe('VSS SQLite/WASM lifecycle', () => {
         mockNoticeMessages.length = 0;
         clearMockSqliteIndex();
         MockSqliteVectorIndex.mockClear();
+        mockConfirmUserAction.mockClear();
+        mockConfirmUserAction.mockImplementation(() => Promise.resolve(true));
         Object.defineProperty(globalThis, 'confirm', {
             configurable: true,
             value: undefined,
@@ -1632,18 +1639,18 @@ describe('VSS SQLite/WASM lifecycle', () => {
             if (path === 'cache/other.md.json') return '1234567';
             throw createMissingFileError();
         });
-        const confirm = jest.fn<(message?: string) => boolean>(() => true);
-        Object.defineProperty(globalThis, 'confirm', {
-            configurable: true,
-            value: confirm,
-        });
         const vss = new VSS(plugin, 'cache');
         attachReadyIndex(vss, index);
 
         await vss.cleanLegacyJsonCache();
 
-        expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Delete 2 old memory cache files'));
-        expect(confirm).toHaveBeenCalledWith(expect.stringContaining('Notes will not be deleted'));
+        expect(mockConfirmUserAction).toHaveBeenCalledWith(plugin.app, expect.objectContaining({
+            title: 'Delete old memory cache?',
+            message: expect.stringContaining('Delete 2 old memory cache files'),
+        }));
+        expect(mockConfirmUserAction).toHaveBeenCalledWith(plugin.app, expect.objectContaining({
+            message: expect.stringContaining('Notes will not be changed or deleted'),
+        }));
         expect(mockAdapter.remove).toHaveBeenCalledWith('cache/note.md.json');
         expect(mockAdapter.remove).toHaveBeenCalledWith('cache/other.md.json');
         expect(mockAdapter.remove).not.toHaveBeenCalledWith('cache/dirty.json');
@@ -1652,17 +1659,12 @@ describe('VSS SQLite/WASM lifecycle', () => {
     it('does not clean legacy JSON when SQLite stats are not safely ready', async () => {
         const { plugin, mockAdapter } = createPlugin();
         const index = new FakeVectorIndex();
-        const confirm = jest.fn<(message?: string) => boolean>(() => true);
-        Object.defineProperty(globalThis, 'confirm', {
-            configurable: true,
-            value: confirm,
-        });
         const vss = new VSS(plugin, 'cache');
         attachReadyIndex(vss, index);
 
         await vss.cleanLegacyJsonCache();
 
-        expect(confirm).not.toHaveBeenCalled();
+        expect(mockConfirmUserAction).not.toHaveBeenCalled();
         expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
         expect(mockAdapter.remove).not.toHaveBeenCalled();
     });

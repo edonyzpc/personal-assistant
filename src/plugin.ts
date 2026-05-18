@@ -1,7 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Platform, Plugin, TFile, addIcon, debounce, normalizePath, setIcon } from 'obsidian';
-import moment from 'moment';
+import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Platform, Plugin, TFile, addIcon, debounce, moment as obsidianMoment, normalizePath, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { VIEW_TYPE_LLM, LLMView } from "./chat-view";
@@ -22,6 +21,8 @@ import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
 import { normalizeStatisticsView } from './stats/stats-store';
 import { MemoryManager } from './memory-manager';
+import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
+import { confirmUserAction } from './confirm';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -79,6 +80,12 @@ const redactForLog = (value: unknown, seen = new WeakSet<object>()): unknown => 
 const debug = (enabled: boolean, ...msg: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
     if (enabled) console.log(...msg.map((item: unknown) => redactForLog(item)));
 };
+
+const moment = obsidianMoment as unknown as (...args: unknown[]) => { format: (format: string) => string };
+
+function arraysEqual(left: string[], right: string[]): boolean {
+    return left.length === right.length && left.every((value, index) => value === right[index]);
+}
 
 export class PluginManager extends Plugin {
     settings!: PluginManagerSettings
@@ -875,9 +882,11 @@ export class PluginManager extends Plugin {
             id: "reset-vss-index",
             name: "Reset local memory copy",
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
-                const confirmed = typeof globalThis.confirm === "function"
-                    ? globalThis.confirm("Reset the local memory copy? Your notes will not be deleted.")
-                    : true;
+                const confirmed = await confirmUserAction(this.app, {
+                    title: "Reset local memory copy?",
+                    message: "Your notes will not be changed or deleted. This device may need to prepare Memory again before using it.",
+                    confirmText: "Reset",
+                });
                 if (!confirmed) return;
                 await this.vss.resetLocalIndex();
                 await this.updateMemoryStatusBar();
@@ -963,6 +972,42 @@ export class PluginManager extends Plugin {
             if (typeof this.settings.qwenWebSearchEnabled !== "boolean") {
                 this.settings.qwenWebSearchEnabled = false;
                 changed = true;
+            }
+            const vault = (this as { app?: { vault?: Parameters<typeof getVaultConfigDir>[0] } }).app?.vault;
+            if (vault) {
+                const configDir = getVaultConfigDir(vault);
+                const defaultStatsPath = joinVaultConfigPath(configDir, "stats.json");
+                if (!this.settings.statsPath || this.settings.statsPath === joinVaultConfigPath(LEGACY_CONFIG_DIR, "stats.json")) {
+                    if (this.settings.statsPath !== defaultStatsPath) {
+                        this.settings.statsPath = defaultStatsPath;
+                        changed = true;
+                    }
+                }
+                const hasConfiguredExcludes = Array.isArray(this.settings.vssCacheExcludePath);
+                const currentExcludes = hasConfiguredExcludes
+                    ? uniqueNormalizedPaths(this.settings.vssCacheExcludePath.map((path) => path.trim()).filter(Boolean))
+                    : [];
+                const configuredDefaultExcludes = Array.isArray(DEFAULT_SETTINGS.vssCacheExcludePath)
+                    ? DEFAULT_SETTINGS.vssCacheExcludePath
+                    : [];
+                const legacyDefaultExcludes = uniqueNormalizedPaths([
+                    LEGACY_CONFIG_DIR,
+                    ...configuredDefaultExcludes,
+                ]);
+                if (
+                    !hasConfiguredExcludes
+                    || (configuredDefaultExcludes.length > 0 && arraysEqual(currentExcludes, configuredDefaultExcludes))
+                    || arraysEqual(currentExcludes, legacyDefaultExcludes)
+                ) {
+                    const nextExcludes = uniqueNormalizedPaths([
+                        configDir,
+                        ...configuredDefaultExcludes,
+                    ]);
+                    if (!arraysEqual(currentExcludes, nextExcludes)) {
+                        this.settings.vssCacheExcludePath = nextExcludes;
+                        changed = true;
+                    }
+                }
             }
             if (
                 this.settings.aiProvider === 'qwen'

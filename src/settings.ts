@@ -8,6 +8,8 @@ import { isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { CryptoHelper, personalAssitant } from './utils'
+import { getVaultConfigDir, joinVaultConfigPath } from "./obsidian-paths";
+import { confirmUserAction } from "./confirm";
 
 export interface ResizeStyle {
     width: number,
@@ -114,7 +116,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         "Minimal": "kepano/obsidian-minimal",
     },
     statisticsType: "overview",
-    statsPath: ".obsidian/stats.json",
+    statsPath: "",
     displaySectionCounts: false,
     countComments: false,
     animation: false,
@@ -436,7 +438,7 @@ export class SettingTab extends PluginSettingTab {
                         btn.setIcon("trash").setTooltip("Remove").onClick(async () => {
                             //this.plugin.settings.colorGroups.remove(colorGroup);
                             if (index > -1) {
-                                this.log(`removing  ${this.plugin.settings.colorGroups[index]}`);
+                                this.log("removing color group", this.plugin.settings.colorGroups[index]);
                                 this.plugin.settings.colorGroups.splice(index, 1);
                             }
 
@@ -447,7 +449,7 @@ export class SettingTab extends PluginSettingTab {
                     .addExtraButton(btn => {
                         btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
                             if (index > -1) {
-                                this.log(`resetting ${this.plugin.settings.colorGroups[index]}`);
+                                this.log("resetting color group", this.plugin.settings.colorGroups[index]);
                                 this.plugin.settings.colorGroups[index] = JSON.parse(JSON.stringify(DEFAULT_GRAPH_COLOR));
                             }
                             await this.plugin.saveSettings();
@@ -511,7 +513,7 @@ export class SettingTab extends PluginSettingTab {
                         btn.setIcon("trash").setTooltip("Remove").onClick(async () => {
                             //this.plugin.settings.colorGroups.remove(colorGroup);
                             if (index > -1) {
-                                this.log(`removing  ${this.plugin.settings.metadatas[index]}`);
+                                this.log("removing metadata rule", this.plugin.settings.metadatas[index]);
                                 this.plugin.settings.metadatas.splice(index, 1);
                             }
 
@@ -599,12 +601,14 @@ export class SettingTab extends PluginSettingTab {
                     this.app.workspace.revealLeaf(leaf);
                 });
             });
+        const configDir = getVaultConfigDir(this.app.vault);
+        const defaultLegacyStatsPath = joinVaultConfigPath(configDir, "stats.json");
         new Setting(containerEl)
             .setName("Legacy Vault Stats File Path")
-            .setDesc("Used to migrate existing statistics. New statistics are stored as daily device shards under .obsidian/personal-assistant-stats/v2/.")
+            .setDesc(`Used to migrate existing statistics. New statistics are stored as daily device shards under ${joinVaultConfigPath(configDir, "personal-assistant-stats/v2")}/.`)
             .addText((text) => {
-                text.setPlaceholder(".obsidian/stats.json");
-                text.setValue(this.plugin.settings.statsPath.toString());
+                text.setPlaceholder(defaultLegacyStatsPath);
+                text.setValue(this.plugin.settings.statsPath.toString() || defaultLegacyStatsPath);
                 text.onChange(async (value: string) => {
                     this.plugin.settings.statsPath = value;
                     await this.plugin.saveSettings();
@@ -756,7 +760,7 @@ export class SettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName("Use memory from my notes")
-            .setDesc("The assistant can prepare a local memory copy from your notes. It will ask before any AI cost.")
+            .setDesc("The assistant asks before preparing Memory. After you approve and Memory is ready, changed notes may update in the background while the app is open.")
             .addToggle((toggle) => {
                 toggle
                     .setValue(this.plugin.settings.memoryEnabled)
@@ -795,7 +799,7 @@ export class SettingTab extends PluginSettingTab {
         if (this.plugin.settings.showAdvancedMemoryControls) {
             new Setting(containerEl)
                 .setName("Keep memory updated in background")
-                .setDesc("After memory has been prepared, update changed notes automatically while Obsidian is open.")
+                .setDesc("After memory has been prepared, update changed notes automatically while the app is open. Changed note text may be sent to your configured AI provider.")
                 .addToggle((toggle) => {
                     toggle
                         .setValue(this.plugin.settings.memoryApprovalPolicy === "auto-refresh-after-prepare")
@@ -845,6 +849,12 @@ export class SettingTab extends PluginSettingTab {
                 .setDesc("Remove this device's local memory copy. Your notes will not be deleted.")
                 .addButton((button) => {
                     button.setButtonText("Reset").onClick(async () => {
+                        const confirmed = await confirmUserAction(this.app, {
+                            title: "Reset local memory copy?",
+                            message: "Your notes will not be changed or deleted. This device may need to prepare Memory again before using it.",
+                            confirmText: "Reset",
+                        });
+                        if (!confirmed) return;
                         await this.plugin.vss.resetLocalIndex();
                         await this.plugin.updateMemoryStatusBar();
                     });

@@ -1,5 +1,4 @@
-import { Platform, debounce, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
-import moment from "moment";
+import { Platform, debounce, moment as obsidianMoment, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
 import type PluginManager from "../main";
 import type {
     ActivityCounts,
@@ -14,7 +13,6 @@ import {
     createStatsShard,
     emptyActivityCounts,
     emptySnapshotCounts,
-    STATS_STORE_ROOT,
     StatsStore,
 } from "./stats-store";
 import {
@@ -25,6 +23,8 @@ import {
     getCitationCount,
     getFootnoteCount,
 } from "./stats-utils";
+
+const moment = obsidianMoment as unknown as () => { format: (format: string) => string };
 
 type TextProvider = () => string;
 
@@ -342,7 +342,7 @@ export default class StatsManager {
     }
 
     private invalidateDashboardCacheForPath(path: string): void {
-        if (path.startsWith(STATS_STORE_ROOT)) {
+        if (this.store.isStatsStorePath(path)) {
             this.store.invalidateDashboardCache();
         }
     }

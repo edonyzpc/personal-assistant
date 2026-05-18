@@ -158,6 +158,9 @@ export class App {
 
 export const requestUrl: jest.Mock = jest.fn(async () => ({ arrayBuffer: new ArrayBuffer(0) }));
 export const normalizePath = (p: string) => p;
+export const moment = () => ({
+    format: (format: string) => format === 'YYYY-MM-DD' ? '2026-05-18' : '',
+});
 export const getFrontMatterInfo = () => ({ exists: false, contentStart: 0, frontmatter: '', from: 0, to: 0 });
 export const Platform = { isDesktop: true, isMobile: false };
 export function debounce<T extends unknown[], V>(cb: (...args: [...T]) => V, timeout = 0, resetTimer = true) {
