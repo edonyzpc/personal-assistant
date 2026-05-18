@@ -99,6 +99,21 @@ After you approve and successfully prepare Memory once on a device, changed note
 
 Automatic maintenance only writes to the durable SQLite/WASM backend. If the plugin is running from the in-memory fallback path, Memory remains read-only and the assistant tells you background updates are unavailable until Memory is prepared again on this device.
 
+### Network and privacy note
+
+Personal Assistant does not include telemetry or analytics. Local statistics are written in your vault configuration folder and are not uploaded by the plugin.
+
+| Feature | Trigger | Data sent | Destination | Background? | User control |
+| --- | --- | --- | --- | --- | --- |
+| Chat | You send a message | Prompt and selected note/context content when enabled | Configured AI provider | No | Provider and chat settings |
+| AI note tools | You run summary or note AI actions | Current note content and the generated prompt | Configured AI provider | No | User action and AI settings |
+| Memory prepare/update | You approve prepare or update | Note text and Memory search data | Configured AI provider | The manual action is not background; after success, changed notes may update in background | Memory settings and background toggle |
+| Memory changed-note maintenance | Memory has been prepared and background updates are enabled | Changed note text | Configured AI provider | Yes | Memory background setting |
+| Qwen web search | You enable web search for Qwen responses | Question and final prompt context | DashScope/Bailian | No | Qwen response setting |
+| Featured image generation | You run image generation | Current note content for prompt generation, then image prompt and task requests | Configured AI provider and DashScope/Bailian | Polls task status after your request | User action and AI settings |
+| Plugin/theme updater | You run the updater/install flow | Plugin or theme IDs and download requests | GitHub and jsDelivr | No | User action |
+| Ollama | You select the local provider | Prompt or Memory text | Local Ollama endpoint | Depends on the feature | Provider setting |
+
 ### VSS SQLite/WASM dependency note
 
 The local VSS SQLite backend uses `@sqliteai/sqlite-wasm` pinned to `3.50.4-sync.0.8.30-vector.0.9.23`. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
@@ -127,7 +142,7 @@ Now Personal Assistant plugin is available in [plugin market](https://obsidian.m
 ### Manually Install
 
 - Build with commandline: `npm install && npm run build` or download from [release page](https://github.com/edonyzpc/personal-assistant/releases)
-- Copy over `main.js`, `styles.css`, and `manifest.json` to your vault `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
+- Copy over `main.js`, `styles.css`, and `manifest.json` to your vault config folder, usually `{VaultFolder}/.obsidian/plugins/personal-assistant/`. If your vault uses a custom config folder, use that folder instead of `.obsidian`.
 
 ## Use
 

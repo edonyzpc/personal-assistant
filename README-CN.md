@@ -83,6 +83,21 @@
 
 自动维护只写入 durable SQLite/WASM 后端。如果插件当前处于内存 fallback 路径，Memory 会保持只读，助手会提示后台更新不可用，需要在本设备重新准备 Memory 后才能恢复自动维护。
 
+### 网络与隐私说明
+
+Personal Assistant 不包含 telemetry 或 analytics。Local stats 只写入你的 vault 配置目录，插件不会上传这些统计数据。
+
+| 功能 | 触发条件 | 发送的数据 | 目标位置 | 是否后台 | 用户控制 |
+| --- | --- | --- | --- | --- | --- |
+| Chat | 你发送消息 | Prompt，以及启用上下文时选中的 note/context 内容 | 配置的 AI provider | 否 | Provider 和 chat 设置 |
+| AI note tools | 你运行 summary 或 note AI 操作 | 当前 note content 和生成的 prompt | 配置的 AI provider | 否 | 用户操作和 AI 设置 |
+| Memory prepare/update | 你确认 prepare 或 update | Note text 和 Memory search 数据 | 配置的 AI provider | 手动操作本身不是后台；成功后 changed notes 可能后台更新 | Memory 设置和后台开关 |
+| Memory changed-note maintenance | Memory 已准备且后台更新开启 | Changed note text | 配置的 AI provider | 是 | Memory 后台设置 |
+| Qwen web search | 你开启 Qwen web search | 问题和最终 prompt context | DashScope/Bailian | 否 | Qwen response 设置 |
+| Featured image generation | 你运行图片生成 | 用于生成图片 prompt 的当前 note content，以及图片 prompt 和 task 请求 | 配置的 AI provider 和 DashScope/Bailian | 请求后会轮询 task 状态 | 用户操作和 AI 设置 |
+| Plugin/theme updater | 你运行 updater/install 流程 | Plugin 或 theme ID 以及下载请求 | GitHub 和 jsDelivr | 否 | 用户操作 |
+| Ollama | 你选择 local provider | Prompt 或 Memory text | 本地 Ollama endpoint | 取决于具体功能 | Provider 设置 |
+
 ### VSS SQLite/WASM 依赖说明
 
 本地 VSS SQLite 后端使用固定版本 `@sqliteai/sqlite-wasm@3.50.4-sync.0.8.30-vector.0.9.23`。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。
@@ -109,7 +124,7 @@
 ### 手动安装
 
 - 通过源码编译: `npm install && npm run build` 或者直接从 [release page](https://github.com/edonyzpc/personal-assistant/releases) 下载
-- 将这些文件 `main.js`, `styles.css`, `manifest.json` 拷贝到 Obsidian 的插件目录 `{VaultFolder}/.obsidian/plugins/personal-assistant/`.
+- 将这些文件 `main.js`, `styles.css`, `manifest.json` 拷贝到 vault 配置目录下的插件目录，通常是 `{VaultFolder}/.obsidian/plugins/personal-assistant/`。如果你的 vault 使用自定义配置目录，请使用对应配置目录而不是 `.obsidian`。
 
 ## 使用
 
