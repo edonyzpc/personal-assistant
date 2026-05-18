@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.9.3](https://github.com/edonyzpc/personal-assistant/compare/1.9.2...1.9.3) (2026-05-18)
+
+### Fix
+- memory: respect vault config dir for local state
+- ai: avoid unsafe fetch and object stringification
+
+### Improvements
+- release: attest supported plugin assets
+
+### Docs
+- scan: document network disclosure and remediation
+- scan: record remediation completion status
+
 ## [1.9.2](https://github.com/edonyzpc/personal-assistant/compare/1.9.1...1.9.2) (2026-05-17)
 
 ### Features
