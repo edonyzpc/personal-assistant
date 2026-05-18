@@ -7,6 +7,8 @@ on:
 
 permissions:
   contents: write
+  id-token: write
+  attestations: write
 
 jobs:
   build:
@@ -27,6 +29,19 @@ jobs:
         run: npm run lint
       - name: Build
         run: npm run build --if-present
+      - name: Stage release assets
+        run: |
+          mkdir -p release-assets
+          cp dist/main.js release-assets/main.js
+          cp dist/manifest.json release-assets/manifest.json
+          cp dist/styles.css release-assets/styles.css
+      - name: Generate artifact attestations
+        uses: actions/attest@v4
+        with:
+          subject-path: |
+            release-assets/main.js
+            release-assets/manifest.json
+            release-assets/styles.css
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -35,7 +50,6 @@ jobs:
             --title "${GITHUB_REF_NAME}" \
             --notes-from-tag \
             --verify-tag \
-            ./dist/main.js#main.js \
-            ./manifest.json#manifest.json \
-            ./manifest-beta.json#manifest-beta.json \
-            ./styles.css#styles.css
+            ./release-assets/main.js \
+            ./release-assets/manifest.json \
+            ./release-assets/styles.css
