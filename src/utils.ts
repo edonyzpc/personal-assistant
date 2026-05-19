@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 import { App, requestUrl, normalizePath } from 'obsidian';
-import JSZip from 'jszip';
+import { strFromU8, unzipSync } from 'fflate';
 
 export const TEST_TOKEN = "personal-assistant";
 
@@ -29,30 +29,103 @@ export const downloadZipFile = async (url: string) => {
     return bytes;
 };
 
+const getSafeZipEntryPath = (targetPath: string, entryName: string): string | null => {
+    const entryPath = entryName.replace(/\\/g, "/");
+    if (!entryPath ||
+        entryPath.includes("\0") ||
+        entryPath.startsWith("/") ||
+        /^[A-Za-z]:/.test(entryPath)) {
+        return null;
+    }
+
+    const entryParts = entryPath.split("/");
+    if (entryParts.some((part) => part === "..")) {
+        return null;
+    }
+
+    const safeEntryPath = normalizePath(entryPath);
+    if (!safeEntryPath) {
+        return null;
+    }
+
+    const normalizedTarget = normalizePath(targetPath);
+    const destinationPath = normalizePath(`${normalizedTarget}/${safeEntryPath}`);
+    if (normalizedTarget && destinationPath !== normalizedTarget && !destinationPath.startsWith(`${normalizedTarget}/`)) {
+        return null;
+    }
+
+    return destinationPath;
+};
+
+const matchesZipFileName = (zipPath: string, fileName: string) => {
+    if (!fileName) {
+        return false;
+    }
+
+    const normalizedZipPath = zipPath.replace(/\\/g, "/");
+    const normalizedFileName = fileName.replace(/\\/g, "/");
+    return normalizedZipPath === normalizedFileName || normalizedZipPath.endsWith(`/${normalizedFileName}`);
+};
+
 export const extractToFold = async (writer: App, zipBytes: ArrayBuffer, targetPath: string) => {
-    const zip = new JSZip();
-    zip.loadAsync(zipBytes);
-    zip.forEach(async (_, file) => {
-        const data = await zip.file(file.name)?.async("string");
-        if (data) {
-            const path2Write = normalizePath(targetPath + '/' + file.name);
-            writer.vault.adapter.write(path2Write, data);
+    const writablePaths = new Map<string, string>();
+    const files = unzipSync(new Uint8Array(zipBytes), {
+        filter: (file) => {
+            if (file.originalSize === 0) {
+                return false;
+            }
+
+            const path2Write = getSafeZipEntryPath(targetPath, file.name);
+            if (!path2Write) {
+                throw new Error(`Unsafe ZIP entry path: ${file.name}`);
+            }
+
+            writablePaths.set(file.name, path2Write);
+            return true;
+        },
+    });
+    const writableEntries = Object.entries(files).flatMap(([fileName, bytes]) => {
+        const path2Write = writablePaths.get(fileName);
+        if (!path2Write) {
+            return [];
+        }
+
+        return [{ path2Write, data: strFromU8(bytes) }];
+    });
+
+    await Promise.all(writableEntries.map(async ({ path2Write, data }) => {
+        await writer.vault.adapter.write(path2Write, data);
+    }));
+}
+
+export const extractFiles = async (zipBytes: ArrayBuffer, fileNames: string[]): Promise<Record<string, string | null>> => {
+    const requestedFileNames = Array.from(new Set(fileNames));
+    const files = unzipSync(new Uint8Array(zipBytes), {
+        filter: (file) => requestedFileNames.some((fileName) => matchesZipFileName(file.name, fileName)),
+    });
+    const extractedFiles = new Map<string, string>();
+
+    // the downloaded zip file might have root directory which is defined by github actions,
+    // filter the file path with the given file name which is unique in release.
+    Object.entries(files).forEach(([path, bytes]) => {
+        const matchedFileName = requestedFileNames.find((fileName) => matchesZipFileName(path, fileName));
+        if (matchedFileName && !extractedFiles.has(matchedFileName)) {
+            extractedFiles.set(matchedFileName, strFromU8(bytes));
         }
     });
+
+    return Object.fromEntries(requestedFileNames.map((fileName) => [
+        fileName,
+        extractedFiles.get(fileName) ?? null,
+    ]));
 }
 
 export const extractFile = async (zipBytes: ArrayBuffer, fileName: string) => {
-    let zip = new JSZip();
-    zip = await zip.loadAsync(zipBytes);
-    // the downloaded zip file might have root directory which is defined by github actions,
-    // filter the file path with the given file name which is unique in release.
-    const escapedFileName = fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const fileReg = new RegExp(`.*${escapedFileName}$`);
-    const file = zip.file(fileReg);
+    const files = await extractFiles(zipBytes, [fileName]);
+    const file = files[fileName];
 
-    if (file.length > 0) {
-        // the result of RegExp matching must be one item
-        return await file[0].async("string");
+    if (file !== null && file !== undefined) {
+        return file;
     } else {
         return null;
     }

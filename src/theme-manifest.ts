@@ -5,7 +5,7 @@ import { gt, prerelease, valid } from "semver";
 import type { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from "./types/manifest";
 import { ProgressBar } from "./progress-bar";
-import { downloadZipFile, extractFile } from "./utils";
+import { downloadZipFile, extractFiles } from "./utils";
 
 interface ThemeReleaseAsset {
     name?: string;
@@ -275,9 +275,10 @@ export class ThemeUpdater implements ObsidianManifest {
         };
 
         const extractThemeFilesFromZip = async (zipBytes: ArrayBuffer): Promise<ThemeReleaseFiles> => {
+            const files = await extractFiles(zipBytes, ["theme.css", "manifest.json"]);
             return {
-                theme: await extractFile(zipBytes, "theme.css"),
-                manifest: await extractFile(zipBytes, "manifest.json"),
+                theme: files["theme.css"],
+                manifest: files["manifest.json"],
             };
         };
 

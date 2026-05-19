@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { strToU8, zipSync } from 'fflate';
 import { Notice, request, requestUrl } from 'obsidian';
-import JSZip from 'jszip';
 import { ThemeUpdater } from '../src/theme-manifest';
 
 const mockProgressBarInstance = {
@@ -44,12 +44,11 @@ let setTimeoutSpy: jest.SpiedFunction<typeof setTimeout>;
 const themeManifest = (name: string, version: string) => JSON.stringify({ name, version });
 
 const createZip = async (files: Record<string, string>) => {
-    const zip = new JSZip();
-    Object.entries(files).forEach(([path, content]) => {
-        zip.file(path, content);
-    });
+    const zip = zipSync(Object.fromEntries(
+        Object.entries(files).map(([path, content]) => [path, strToU8(content)])
+    ));
 
-    return await zip.generateAsync({ type: 'arraybuffer' });
+    return zip.buffer.slice(zip.byteOffset, zip.byteOffset + zip.byteLength);
 };
 
 const getUrl = (requestParam: Parameters<typeof request>[0] | Parameters<typeof requestUrl>[0]) => {
