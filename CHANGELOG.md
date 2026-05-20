@@ -4,6 +4,21 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.11.0](https://github.com/edonyzpc/personal-assistant/compare/1.10.0...1.11.0) (2026-05-20)
+
+### Features
+- vss: keep local index state out of vault
+- memory: keep VSS state resilient in app storage
+
+### Fix
+- statistics: deduplicate equivalent legacy history
+
+### Docs
+- statistics: clarify duplicate migration metadata
+- vss: document local state storage
+- memory: clarify VSS local state storage
+- statistics: document local history storage
+
 ## [1.10.0](https://github.com/edonyzpc/personal-assistant/compare/1.9.3...1.10.0) (2026-05-20)
 
 ### Features
