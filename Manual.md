@@ -179,14 +179,16 @@ The Preview Record function of the Personal Assistant plugin provides one config
 
 ### 1. Description
 
-To encourage daily thought recording, the Personal Assistant provides a word count display feature for daily records. The statistics mainly include the total number of files in the Vault (markdown files), the number of words recorded each day, and the total page count, assuming 300 words per page. This both showcases Obsidian's statistics and serves as self-motivation to develop a daily recording and thinking habit.
+To encourage daily thought recording, the Personal Assistant provides a statistics dashboard for writing activity and vault composition. It includes overview totals, daily writing activity, growth trends, and composition metrics. By default, Statistics history is stored in local Obsidian app storage on the current device; optional sync can create vault-visible history files for your normal vault sync workflow.
 
 ### 2. Demo
 
-As shown in the video below, entering `statistics` in the Command Palette automates the display of the current Obsidian Vault's statistics. It currently includes two statistics:
+As shown in the video below, entering `statistics` in the Command Palette opens the Statistics dashboard. The current dashboard has four views:
 
-1. Daily word count and page count;
-2. Total note count and page count in the vault;
+1. Overview;
+2. Daily;
+3. Growth;
+4. Composition;
 
 
 https://github.com/user-attachments/assets/4fedeff6-6e81-45ae-8cd8-55cf0781d4fd
@@ -195,11 +197,11 @@ https://github.com/user-attachments/assets/4fedeff6-6e81-45ae-8cd8-55cf0781d4fd
 
 ### 3. Configuration
 
-The Show Statistics function of the Personal Assistant plugin offers 3 configuration items:
+The Show Statistics function of the Personal Assistant plugin exposes these settings:
 
-1. show statistics: type of statistics to display, optional daily and total;
-2. vault statistics file path: the path for the statistics file;
-3. Number of words per page: the word count used for calculating page numbers.
+1. Show Statistics: the default dashboard view;
+2. Sync statistics history across devices: optional vault-visible history files for cross-device sync;
+3. Animation: enable or disable animated dashboard rendering.
 ![image](https://github.com/user-attachments/assets/97deae5d-e30f-44b6-a0b8-f59c1fca1de7)
 
 ## Update Metadatas

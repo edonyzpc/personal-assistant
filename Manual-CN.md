@@ -147,12 +147,14 @@ Personal Assistant 插件的 Preview Record 功能提供了一个配置项：配
 
 ## 统计状态显示功能
 ### 1. description
-为了督促每天记录思考，Personal Assistant 提供了每天记录字数展示的功能，统计状态主要包括 Vault 总文件数（markdown 文件）、每天记录的字数（words）、按照300 words 为一个 page 统计总共的 page 数。一方面展示一下 Obsidian 的统计状态，另外一方面也顺便鞭策一下自己养成每天记录和思考的习惯。
+为了督促每天记录思考，Personal Assistant 提供了 Statistics dashboard，用于展示写作活动和 vault composition。当前包括 Overview、Daily、Growth 和 Composition 四个视图。默认情况下，Statistics history 存储在当前设备的本地 Obsidian app storage 中；如果开启同步，会创建 vault-visible 的 history 文件，让你已有的 vault sync 机制同步这些文件。
 
 ### 2. demo
-如下视频所示，演示了通过面板（Command Palette）输入 `statistics` 即可自动化展示当前 Obsidian Vault 的统计状态，目前包括两个统计状态：
-1. 每天记录的字数（word）和页数（page）；
-2. vault 总共的笔记数量和页数；
+如下视频所示，通过命令面板（Command Palette）输入 `statistics` 即可打开当前 Obsidian Vault 的 Statistics dashboard。当前 dashboard 包括：
+1. Overview；
+2. Daily；
+3. Growth；
+4. Composition；
 
 
 https://github.com/user-attachments/assets/4fedeff6-6e81-45ae-8cd8-55cf0781d4fd
@@ -160,9 +162,10 @@ https://github.com/user-attachments/assets/4fedeff6-6e81-45ae-8cd8-55cf0781d4fd
 
 
 ### 3. configuration
-Personal Assistant 插件的 Show Statistics 功能提供了3个配置项：
-1. show statistics，展示统计状态的类型，可选 daily 和 total；
-2. vault statistics file path，statistics 统计文件的路径；
+Personal Assistant 插件的 Show Statistics 功能提供这些设置项：
+1. Show Statistics，选择默认 dashboard 视图；
+2. Sync statistics history across devices，按需创建 vault-visible 的 history 文件用于跨设备同步；
+3. Animation，开启或关闭 dashboard 动画；
 ![image](https://github.com/user-attachments/assets/97deae5d-e30f-44b6-a0b8-f59c1fca1de7)
 
 

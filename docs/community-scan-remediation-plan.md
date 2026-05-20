@@ -74,7 +74,7 @@ Verification completed for this remediation pass:
   - 后台更新可能把变更笔记内容发送到用户配置的 AI provider。
   - 笔记不会被修改或删除。
   - 可能产生 AI credits/API calls。
-- 明确插件没有 telemetry 或 analytics。Local stats 只写入 vault/config 目录，不上传。
+- 明确插件没有 telemetry 或 analytics。默认 Statistics history 存储在当前设备的本地 Obsidian app storage；只有用户启用跨设备 Statistics sync 时才写入 vault-visible history 文件。
 
 ### Disclosure Matrix
 
