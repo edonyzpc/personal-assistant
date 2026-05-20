@@ -7,22 +7,11 @@ import { AIService } from './ai-services/service';
 import { AIUtils, type CreateEmbeddingsOptions } from './ai-services/ai-utils';
 import { PluginManager } from './plugin';
 import { computeContentHash, selectFlushCandidates, DirtyTimestamps } from './vss-helpers';
-import { MemoryVectorIndex } from './vss/memory-vector-index';
 import { createInlineSqliteWorker, getInlineSqliteWasmUrl } from './vss/sqlite-inline-assets';
 import { SqliteVectorIndex } from './vss/sqlite-vector-index';
+import { getVSSDeviceId } from './vss/state';
+import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 import {
-    ensureVSSIndexStateDir,
-    getVSSDeviceId,
-    readVSSManifest,
-    readVSSMarker,
-    removeVSSManifest,
-    removeVSSMarker,
-    shouldEnableMemoryFallback,
-    writeVSSManifest,
-    writeVSSMarker,
-} from './vss/state';
-import {
-    estimateVectorMemoryBytes,
     getEmbeddingProfileSignature,
     VSS_DEFAULT_DIMENSIONS,
     VSS_DEFAULT_DISTANCE_METRIC,
@@ -33,7 +22,6 @@ import {
     type VectorSearchResult,
     type VSSChunk,
     type VSSFileRecord,
-    type VSSIndexManifest,
     type VSSIndexMarker,
     type VSSIndexStats,
 } from './vss/types';
@@ -71,6 +59,7 @@ const VSS_MANUAL_LOCKED_WAIT_MS = 3_000;
 const VSS_INDEX_DISPOSE_TIMEOUT_MS = 1_000;
 const VSS_RECOVERY_COOLDOWN_MS = 5_000;
 const VSS_GLOBAL_SHUTDOWN_KEY = "__personalAssistantVssShutdownBarriers";
+const VSS_LOCAL_STATE_UNAVAILABLE_CODE = "vss-local-state-unavailable";
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'metadata-synced' | 'removed' | 'skipped';
 
@@ -219,6 +208,7 @@ export class VSS {
     private dirtyEpochCounter = 0;
     private isFlushing = false;
     private operationQueue: Promise<void> = Promise.resolve();
+    private stateWriteChain: Promise<void> = Promise.resolve();
     private initializationPromise: Promise<void> | null = null;
     private ensureIndexPromise: Promise<void> | null = null;
     private disposePromise: Promise<void> | null = null;
@@ -235,8 +225,9 @@ export class VSS {
     private deviceId = "";
     private profile: EmbeddingProfile | null = null;
     private marker: VSSIndexMarker | null = null;
-    private manifest: VSSIndexManifest | null = null;
     private storageStatus: StoragePersistenceStatus = { persisted: false };
+    private localStateReady = false;
+    private stateGeneration = 0;
     private lastMissingIndexNoticeAt = 0;
     private readonly ownerId = createIndexId();
     private lastErrorCode: string | undefined;
@@ -246,6 +237,7 @@ export class VSS {
     constructor(
         plugin: PluginManager,
         vssCacheDir: string,
+        private readonly stateStore: VSSIndexStateStore = createDefaultVSSIndexStateStore(plugin),
     ) {
         this.plugin = plugin;
         this.vssCacheDir = vssCacheDir;
@@ -266,24 +258,40 @@ export class VSS {
         if (this.disposed) return;
         this.deviceId = getVSSDeviceId();
         this.profile = this.createEmbeddingProfile();
+        if (!await this.ensureLocalStateStoreReady()) {
+            this.initialized = true;
+            return;
+        }
         this.storageStatus = await this.getStoragePersistenceStatus();
-        if (this.disposed) return;
-        await ensureVSSIndexStateDir(this.plugin.app.vault, this.deviceId);
         if (this.disposed) return;
         await this.loadDirtyJournal();
         if (this.disposed) return;
-        this.marker = await readVSSMarker(this.plugin.app.vault, this.deviceId);
-        this.manifest = await readVSSManifest(this.plugin.app.vault, this.deviceId);
+        this.marker = await this.readLocalMarker();
 
         if (!this.marker) {
-            this.status = "uninitialized";
+            await this.tryRecoverMarkerFromSqlite();
             this.initialized = true;
             return;
         }
 
-        await this.ensureIndex({ allowFallback: true, mode: "foreground" });
+        await this.ensureIndex({ allowFallback: false, mode: "foreground" });
         if (this.disposed) return;
         this.initialized = true;
+    }
+
+    private async ensureLocalStateStoreReady(): Promise<boolean> {
+        if (this.localStateReady) return true;
+        try {
+            await this.stateStore.initialize();
+            this.localStateReady = true;
+        } catch (error) {
+            this.localStateReady = false;
+            this.lastErrorCode = VSS_LOCAL_STATE_UNAVAILABLE_CODE;
+            this.status = "disabled";
+            this.plugin.log("Memory local state store unavailable", error);
+            return false;
+        }
+        return true;
     }
 
     dispose(): Promise<void> {
@@ -301,10 +309,59 @@ export class VSS {
         const index = this.index;
         this.index = null;
         this.status = "uninitialized";
-        if (!index) return;
-        await withTimeout(index.dispose(), VSS_INDEX_DISPOSE_TIMEOUT_MS).catch((error) => {
-            this.plugin.log("Failed to dispose VSS index", error);
+        if (index) {
+            await withTimeout(index.dispose(), VSS_INDEX_DISPOSE_TIMEOUT_MS).catch((error) => {
+                this.plugin.log("Failed to dispose VSS index", error);
+            });
+        }
+        await this.stateWriteChain.catch(() => undefined);
+        await this.stateStore.dispose().catch((error) => {
+            this.plugin.log("Failed to dispose Memory local state store", error);
         });
+    }
+
+    private async readLocalMarker(): Promise<VSSIndexMarker | null> {
+        const marker = await this.stateStore.getMarker();
+        if (!marker) return null;
+        if (marker.deviceId !== this.deviceId) return null;
+        const opfsScope = this.getVaultStorageScope().safeName;
+        if (marker.opfsScope && marker.opfsScope !== opfsScope) return null;
+        const profile = this.profile ?? this.createEmbeddingProfile();
+        if (marker.profileSignature !== getEmbeddingProfileSignature(profile)) return null;
+        return marker;
+    }
+
+    private async tryRecoverMarkerFromSqlite(): Promise<void> {
+        if (!this.profile || !this.localStateReady || this.disposed) {
+            this.status = "uninitialized";
+            return;
+        }
+        let sqliteIndex: SqliteVectorIndex | null = null;
+        try {
+            const opened = await this.openSqliteIndex(this.profile, "foreground");
+            sqliteIndex = opened.index;
+            if (opened.status === "stale") {
+                this.index = sqliteIndex;
+                this.status = "stale";
+                return;
+            }
+            const stats = await sqliteIndex.getStats();
+            if (stats.status === "ready" && stats.chunkCount > 0) {
+                this.index = sqliteIndex;
+                this.status = "ready";
+                await this.writeLocalIndexState();
+                return;
+            }
+            await this.disposeIndex(sqliteIndex);
+            this.status = "uninitialized";
+        } catch (error) {
+            if (sqliteIndex) {
+                await this.disposeIndex(sqliteIndex);
+            }
+            this.recordIndexError(error);
+            this.status = "disabled";
+            this.plugin.log("Could not recover Memory state from local index", error);
+        }
     }
 
     async markDirtyIfEligible(file: TAbstractFile): Promise<boolean> {
@@ -313,7 +370,9 @@ export class VSS {
         if (!this.isEligible(file)) return false;
         const changed = this.markDirtyPath(file.path);
         if (changed) {
-            await this.persistDirtyJournal();
+            if (await this.ensureLocalStateStoreReady()) {
+                await this.persistDirtyJournal();
+            }
         }
         return changed;
     }
@@ -323,7 +382,7 @@ export class VSS {
         if (!(file instanceof TFile)) return false;
         if (!this.isEligible(file)) return false;
         await this.initialize();
-        if (!this.index || (this.status !== "ready" && this.status !== "fallback")) {
+        if (!this.index || this.status !== "ready") {
             return false;
         }
 
@@ -333,14 +392,6 @@ export class VSS {
         }
 
         if (!record) {
-            const changed = this.markDirtyPath(file.path);
-            if (changed) {
-                await this.persistDirtyJournal();
-            }
-            return changed;
-        }
-
-        if (this.status === "fallback") {
             const changed = this.markDirtyPath(file.path);
             if (changed) {
                 await this.persistDirtyJournal();
@@ -366,7 +417,9 @@ export class VSS {
             if (!this.isEligible(file)) return false;
             const changed = this.markDirtyPath(file.path);
             if (changed) {
-                await this.persistDirtyJournal();
+                if (await this.ensureLocalStateStoreReady()) {
+                    await this.persistDirtyJournal();
+                }
             }
             return changed;
         });
@@ -401,7 +454,7 @@ export class VSS {
         if (this.disposed) return false;
         await this.initialize();
         if (this.index) {
-            await this.ensureIndex({ allowFallback: true, mode: "foreground" });
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
         }
         return await this.isDurableReady();
     }
@@ -420,6 +473,10 @@ export class VSS {
         }
         await this.initialize();
         this.assertActive();
+        if (!this.localStateReady) {
+            summary.aborted = true;
+            return summary;
+        }
         await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: options.force === true, mode: "manual" });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             if (!options.silent) {
@@ -538,7 +595,7 @@ export class VSS {
                 await this.persistDirtyJournal();
             }
             if (indexStateChanged) {
-                await this.writeIndexStateFiles();
+                await this.writeLocalIndexState();
             }
             emitProgress("ready", { filesDone });
         } finally {
@@ -556,6 +613,9 @@ export class VSS {
         this.assertActive();
         await this.initialize();
         this.assertActive();
+        if (!this.localStateReady) {
+            throw createVectorStateUnavailableError();
+        }
         this.storageStatus = await this.requestPersistentStorage();
         if (!this.storageStatus.persisted && !options.silent) {
             new Notice("This device may need to prepare memory again later.", 7000);
@@ -729,7 +789,7 @@ export class VSS {
         await processBatch();
         emitProgress("writing");
         await this.persistDirtyJournal();
-        await this.writeIndexStateFiles();
+        await this.writeLocalIndexState();
         emitProgress("ready", { filesDone: filesFinalized });
         if (!options.silent) {
             new Notice(summary.failed > 0 ? "Memory is ready, but some notes were skipped." : "Memory is ready. Your notes were not changed.", 5000);
@@ -759,20 +819,24 @@ export class VSS {
     private async resetLocalIndexUnlocked(): Promise<void> {
         this.assertActive();
         await this.initialize();
+        if (!this.localStateReady) {
+            new Notice("Memory local state is unavailable. You can still ask normally.", 5000);
+            return;
+        }
         if (this.index) {
             const index = this.index;
             await index.reset();
             await this.disposeIndex(index, "Failed to dispose reset VSS index");
             this.index = null;
         }
-        await removeVSSMarker(this.plugin.app.vault, this.deviceId);
-        await removeVSSManifest(this.plugin.app.vault, this.deviceId);
+        await this.stateWriteChain.catch(() => undefined);
+        this.stateGeneration++;
+        await this.stateStore.removeMarker();
+        await this.stateStore.clearDirtyJournal();
         this.marker = null;
-        this.manifest = null;
         this.status = "uninitialized";
         this.dirty.clear();
         this.verifyQueue.clear();
-        await this.persistDirtyJournal();
         new Notice("Local memory copy reset.", 3000);
     }
 
@@ -934,7 +998,7 @@ export class VSS {
             await this.persistDirtyJournal();
         }
         if (indexChanged) {
-            await this.writeIndexStateFiles();
+            await this.writeLocalIndexState();
         }
         return summary;
     }
@@ -985,7 +1049,7 @@ export class VSS {
                     this.verifyQueue.delete(candidate.path);
                     if (this.index) {
                         await this.index.deleteFile(candidate.path);
-                        await this.writeIndexStateFiles();
+                        await this.writeLocalIndexState();
                     }
                 });
                 summary.removed++;
@@ -1019,7 +1083,7 @@ export class VSS {
                     this.verifyQueue.delete(candidate.path);
                     if (this.index) {
                         await this.index.deleteFile(candidate.path);
-                        await this.writeIndexStateFiles();
+                        await this.writeLocalIndexState();
                     }
                     if (this.clearDirtyIfStampMatches(candidate.path, dirtyStamp)) {
                         await this.persistDirtyJournal();
@@ -1126,7 +1190,7 @@ export class VSS {
             new Notice("Old memory cache was not cleaned because diagnostic status is not safely ready.", 5000);
             return;
         }
-        const marker = await readVSSMarker(this.plugin.app.vault, this.deviceId);
+        const marker = this.marker;
         const profileSignature = this.profile ? getEmbeddingProfileSignature(this.profile) : "";
         if (!marker || marker.profileSignature !== profileSignature) {
             new Notice("Old memory cache was not cleaned because diagnostic state is not safely ready.", 5000);
@@ -1139,7 +1203,7 @@ export class VSS {
         }
 
         const confirmed = await confirmUserAction(this.plugin.app, {
-            title: "Delete old memory cache?",
+            title: "Delete old Memory cache files?",
             message: `Delete ${summary.fileCount} old memory cache files (${formatBytes(summary.bytes)})? Notes will not be changed or deleted.`,
             confirmText: "Delete",
         });
@@ -1148,8 +1212,8 @@ export class VSS {
         for (const path of summary.paths) {
             await this.plugin.app.vault.adapter.remove(path);
         }
-        await this.writeIndexStateFiles();
-        new Notice(`Deleted ${summary.fileCount} old memory cache files.`, 5000);
+        await this.writeLocalIndexState();
+        new Notice(`Deleted ${summary.fileCount} old Memory cache files.`, 5000);
     }
 
     async cacheFileVectorStore(cacheFile: TFile): Promise<boolean> {
@@ -1226,7 +1290,7 @@ export class VSS {
         if (this.disposed) return [];
         await this.initialize();
         if (this.index) {
-            await this.ensureIndex({ allowFallback: true, mode: "foreground" });
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
         }
         if (!this.index || this.status === "uninitialized") {
             return [];
@@ -1235,7 +1299,7 @@ export class VSS {
             this.showMissingIndexNotice();
             return [];
         }
-        if (this.status !== "ready" && this.status !== "fallback") {
+        if (this.status !== "ready") {
             return [];
         }
 
@@ -1252,7 +1316,7 @@ export class VSS {
         }
         await this.initialize();
         if (this.index || this.shouldEnsureStatsIndex(options.mode ?? "foreground")) {
-            await this.ensureIndex({ allowFallback: true, mode: options.mode ?? "foreground" });
+            await this.ensureIndex({ allowFallback: false, mode: options.mode ?? "foreground" });
         }
         if (!this.index) {
             return this.createUnavailableStats(this.status);
@@ -1260,7 +1324,7 @@ export class VSS {
         const stats = await this.index.getStats();
         return {
             ...stats,
-            status: this.status === "ready" || this.status === "fallback" ? stats.status : this.status,
+            status: this.status === "ready" ? stats.status : this.status,
             storagePersisted: this.storageStatus.persisted,
             storageUsage: this.storageStatus.usage,
             storageQuota: this.storageStatus.quota,
@@ -1286,7 +1350,17 @@ export class VSS {
         }
         await this.initialize();
         if (this.index) {
-            await this.ensureIndex({ allowFallback: true, mode: "foreground" });
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+        }
+
+        if (!this.localStateReady) {
+            return {
+                reason: "unavailable",
+                action: "none",
+                notesToCheck: 0,
+                requiresApproval: false,
+                canAnswerNow: true,
+            };
         }
 
         const notesToCheck = this.plugin.getVSSFiles().length;
@@ -1294,7 +1368,7 @@ export class VSS {
         const verificationPending = this.verifyQueue.size;
         const status = this.status;
 
-        if ((status === "ready" || status === "fallback") && dirtyCount > 0) {
+        if (status === "ready" && dirtyCount > 0) {
             return {
                 reason: "changed-notes",
                 action: "refresh",
@@ -1306,7 +1380,7 @@ export class VSS {
             };
         }
 
-        if (status === "ready" || status === "fallback") {
+        if (status === "ready") {
             return {
                 reason: "ready",
                 action: "none",
@@ -1521,7 +1595,7 @@ export class VSS {
         const dirtyChanged = this.dirty.delete(path);
         if (this.index) {
             await this.index.deleteFile(path);
-            await this.writeIndexStateFiles();
+            await this.writeLocalIndexState();
         }
         if (dirtyChanged) {
             await this.persistDirtyJournal();
@@ -1557,7 +1631,6 @@ export class VSS {
 
     private shouldRetryEnsureIndex(options: VSSEnsureIndexOptions): boolean {
         if (options.mode !== "manual") return false;
-        if (this.index && this.status === "fallback" && !options.allowFallback) return true;
         return !this.index && (this.status === "disabled" || this.status === "error");
     }
 
@@ -1567,16 +1640,13 @@ export class VSS {
         const { profile, profileSignature } = await this.refreshEmbeddingProfile();
         this.assertActive();
 
-        if (this.index && (this.status === "ready" || this.status === "stale" || (this.status === "fallback" && options.allowFallback))) {
-            if (this.status === "fallback" && options.allowFallback) {
-                this.scheduleSqliteRecovery(profileSignature, profile);
-            }
+        if (!this.localStateReady) {
+            this.status = "disabled";
             return;
         }
-        if (this.index && this.status === "fallback" && !options.allowFallback) {
-            await this.disposeIndex(this.index, "Failed to dispose fallback VSS index");
-            this.index = null;
-            this.status = "uninitialized";
+
+        if (this.index && (this.status === "ready" || this.status === "stale")) {
+            return;
         }
         if (this.index && this.status === "missing-local-index") {
             if (options.allowMissingIndexRecovery) {
@@ -1585,7 +1655,7 @@ export class VSS {
             return;
         }
 
-        const marker = this.marker ?? await readVSSMarker(this.plugin.app.vault, this.deviceId);
+        const marker = this.marker;
         this.assertActive();
 
         let sqliteIndex: SqliteVectorIndex | null = null;
@@ -1616,7 +1686,7 @@ export class VSS {
             }
             this.recordIndexError(error);
             this.plugin.log("SQLite VSS index unavailable", error);
-            if (!options.allowFallback) {
+            if (mode === "manual" && !options.allowFallback) {
                 this.index = null;
                 this.status = "error";
                 throw error;
@@ -1627,11 +1697,6 @@ export class VSS {
                 this.scheduleSqliteRecovery(profileSignature, profile);
                 return;
             }
-        }
-
-        if (options.allowFallback) {
-            await this.tryInitializeMemoryFallback(profileSignature, profile);
-            return;
         }
 
         this.index = null;
@@ -1702,7 +1767,7 @@ export class VSS {
 
     private async recoverSqliteIndex(profileSignature: string, profile: EmbeddingProfile): Promise<void> {
         if (this.disposed || this.status === "ready" || this.status === "stale") return;
-        const marker = this.marker ?? await readVSSMarker(this.plugin.app.vault, this.deviceId);
+        const marker = this.marker;
         if (!marker || marker.profileSignature !== profileSignature) return;
 
         const previousIndex = this.index;
@@ -1717,7 +1782,7 @@ export class VSS {
             } else if (marker.chunkCount > 0 && stats.chunkCount === 0) {
                 await this.disposeIndex(sqliteIndex);
                 this.index = previousIndex;
-                this.status = previousIndex ? "fallback" : "missing-local-index";
+                this.status = "missing-local-index";
                 return;
             } else {
                 this.index = sqliteIndex;
@@ -1725,84 +1790,11 @@ export class VSS {
             }
             this.lastErrorCode = undefined;
             if (previousIndex && previousIndex !== sqliteIndex) {
-                await this.disposeIndex(previousIndex, "Failed to dispose recovered VSS fallback index");
+                await this.disposeIndex(previousIndex, "Failed to dispose recovered VSS index");
             }
         } catch (error) {
             await this.disposeIndex(sqliteIndex);
             throw error;
-        }
-    }
-
-    private async tryInitializeMemoryFallback(profileSignature: string, profile: EmbeddingProfile): Promise<void> {
-        if (this.disposed) return;
-        const manifest = this.manifest ?? await readVSSManifest(this.plugin.app.vault, this.deviceId);
-        if (this.disposed) return;
-        if (!manifest || manifest.profileSignature !== profileSignature || !shouldEnableMemoryFallback(manifest)) {
-            this.index = null;
-            this.status = "disabled";
-            return;
-        }
-
-        const memoryIndex = new MemoryVectorIndex();
-        await memoryIndex.initialize(profile);
-        if (this.disposed) {
-            await memoryIndex.dispose().catch(() => undefined);
-            return;
-        }
-        await this.loadLegacyJsonIntoMemoryIndex(memoryIndex);
-        if (this.disposed) {
-            await memoryIndex.dispose().catch(() => undefined);
-            return;
-        }
-        this.index = memoryIndex;
-        this.status = "fallback";
-        let dirtyChanged = false;
-        for (const path of Array.from(this.verifyQueue.keys())) {
-            if (this.markDirtyPath(path)) {
-                dirtyChanged = true;
-            }
-        }
-        if (dirtyChanged) {
-            await this.persistDirtyJournal();
-        }
-    }
-
-    private async loadLegacyJsonIntoMemoryIndex(memoryIndex: MemoryVectorIndex): Promise<void> {
-        const paths = (await this.getLegacyJsonCacheSummary()).paths;
-        for (const path of paths) {
-            this.assertActive();
-            try {
-                const raw = await this.plugin.app.vault.adapter.read(path);
-                const parsed = JSON.parse(raw);
-                if (!Array.isArray(parsed) || parsed.length === 0) continue;
-                const chunks: VSSChunk[] = [];
-                const embeddings: number[][] = [];
-                for (let i = 0; i < parsed.length; i++) {
-                    const entry = parsed[i];
-                    if (!entry || typeof entry !== "object" || !Array.isArray(entry.embedding)) continue;
-                    const metadata = isObject(entry.metadata) ? entry.metadata : {};
-                    const filePath = typeof metadata.path === "string" ? metadata.path : path.replace(`${this.vssCacheDir}/`, "").replace(/\.json$/, "");
-                    chunks.push({
-                        path: filePath,
-                        chunkIndex: i,
-                        content: typeof entry.content === "string" ? entry.content : "",
-                        contentHash: typeof metadata.contentHash === "string" ? metadata.contentHash : "",
-                        created: numberValue(metadata.created),
-                        lastModified: numberValue(metadata.lastModified),
-                        metadata,
-                    });
-                    embeddings.push(entry.embedding);
-                }
-                if (chunks.length === 0) continue;
-                await memoryIndex.upsertFile({
-                    path: chunks[0].path,
-                    contentHash: chunks[0].contentHash,
-                    mtime: chunks[0].lastModified,
-                    size: 0,
-                }, chunks, embeddings);
-            } catch (error) {
-                this.plugin.log("Failed to load legacy VSS JSON fallback", { path, error });
-            }
         }
     }
 
@@ -1982,54 +1974,41 @@ export class VSS {
 
     private async loadDirtyJournal() {
         if (this.disposed) return;
-        const path = this.plugin.join(this.vssCacheDir, VSS_PARAMS.dirtyJournal);
         try {
-            const raw = await this.plugin.app.vault.adapter.read(path);
-            const parsed = JSON.parse(raw);
-            Object.entries(parsed || {}).forEach(([p, ts]) => {
-                if (typeof ts === 'number') {
-                    this.dirty.set(p, { first: ts, last: ts, epoch: ++this.dirtyEpochCounter });
-                    return;
-                }
-                if (ts && typeof ts === 'object') {
-                    const record = ts as Partial<DirtyTimestamps>;
-                    const first = typeof record.first === 'number' ? record.first : undefined;
-                    const last = typeof record.last === 'number' ? record.last : undefined;
-                    if (first !== undefined && last !== undefined) {
-                        this.dirty.set(p, { first, last, epoch: ++this.dirtyEpochCounter });
-                    } else if (first !== undefined) {
-                        this.dirty.set(p, { first, last: first, epoch: ++this.dirtyEpochCounter });
-                    } else if (last !== undefined) {
-                        this.dirty.set(p, { first: last, last, epoch: ++this.dirtyEpochCounter });
-                    }
-                }
-            });
-        } catch (e) {
-            if (!isMissingFileError(e)) {
-                this.plugin.log("Error loading VSS dirty journal:", e);
+            const dirty = await this.stateStore.getDirtyJournal();
+            const pending = new Map(this.dirty);
+            this.dirty.clear();
+            for (const [path, timestamps] of dirty) {
+                this.dirty.set(path, {
+                    first: timestamps.first,
+                    last: timestamps.last,
+                    epoch: ++this.dirtyEpochCounter,
+                });
             }
+            for (const [path, timestamps] of pending) {
+                this.dirty.set(path, timestamps);
+            }
+        } catch (e) {
+            this.plugin.log("Error loading Memory dirty journal:", e);
         }
     }
 
     private async persistDirtyJournal() {
         if (this.disposed) return;
-        const path = this.plugin.join(this.vssCacheDir, VSS_PARAMS.dirtyJournal);
-        await this.ensureLegacyCacheDir();
-        const record = Object.fromEntries(Array.from(this.dirty, ([dirtyPath, timestamps]) => [
-            dirtyPath,
-            { first: timestamps.first, last: timestamps.last },
-        ]));
-        await this.plugin.app.vault.adapter.write(path, JSON.stringify(record));
+        if (!this.localStateReady) return;
+        const generation = this.stateGeneration;
+        const snapshot = new Map(this.dirty);
+        const write = this.stateWriteChain.catch(() => undefined).then(async () => {
+            if (this.disposed || generation !== this.stateGeneration) return;
+            await this.stateStore.setDirtyJournal(snapshot);
+        });
+        this.stateWriteChain = write.then(() => undefined, () => undefined);
+        await write;
     }
 
-    private async ensureLegacyCacheDir(): Promise<void> {
-        if (!await this.plugin.app.vault.adapter.exists(this.vssCacheDir)) {
-            await this.plugin.app.vault.adapter.mkdir(this.vssCacheDir);
-        }
-    }
-
-    private async writeIndexStateFiles(): Promise<void> {
+    private async writeLocalIndexState(): Promise<void> {
         if (this.disposed) return;
+        if (!this.localStateReady) return;
         if (!this.index || !this.profile) return;
         const stats = await this.index.getStats();
         if (this.disposed) return;
@@ -2037,13 +2016,13 @@ export class VSS {
         if (this.disposed) return;
         const now = new Date().toISOString();
         const profileSignature = getEmbeddingProfileSignature(this.profile);
-        const legacySummary = await this.getLegacyJsonCacheSummary();
         const previousMarker = this.marker?.profileSignature === profileSignature ? this.marker : null;
         const marker: VSSIndexMarker = {
             schemaVersion: VSS_SCHEMA_VERSION,
             deviceId: this.deviceId,
             indexId: previousMarker?.indexId ?? createIndexId(),
             profileSignature,
+            opfsScope: this.getVaultStorageScope().safeName,
             backend: stats.backend,
             chunkCount: stats.chunkCount,
             fileCount: stats.fileCount,
@@ -2053,25 +2032,10 @@ export class VSS {
             estimatedDbBytes: stats.estimatedDbBytes,
             estimatedEmbeddingTokens: estimateEmbeddingTokens(stats.chunkCount),
         };
-        const manifest: VSSIndexManifest = {
-            schemaVersion: VSS_SCHEMA_VERSION,
-            deviceId: this.deviceId,
-            profileSignature,
-            fileCount: stats.fileCount,
-            chunkCount: stats.chunkCount,
-            estimatedMemoryBytes: estimateVectorMemoryBytes(stats.chunkCount, this.profile.dimensions),
-            legacyJsonCacheBytes: legacySummary.bytes,
-            updatedAt: now,
-        };
-        await writeVSSMarker(this.plugin.app.vault, marker);
-        if (this.disposed) return;
-        await writeVSSManifest(this.plugin.app.vault, manifest);
+        await this.stateStore.setMarker(marker);
         if (this.disposed) return;
         this.marker = marker;
-        this.manifest = manifest;
-        if (this.status !== "fallback") {
-            this.status = stats.status === "stale" ? "stale" : "ready";
-        }
+        this.status = stats.status === "stale" ? "stale" : "ready";
     }
 
     private async getLegacyJsonCacheSummary(): Promise<LegacyJsonSummary> {
@@ -2225,6 +2189,29 @@ function normalizeSearchResult(result: VectorSearchResult): { score: number; doc
                 metadata: rawDoc.metadata,
             }),
     };
+}
+
+function createDefaultVSSIndexStateStore(plugin: PluginManager): VSSIndexStateStore {
+    const pluginLike = plugin as PluginManager & {
+        createVSSIndexStateStore?: () => VSSIndexStateStore;
+    };
+    if (typeof pluginLike.createVSSIndexStateStore === "function") {
+        return pluginLike.createVSSIndexStateStore();
+    }
+    const manifest = plugin.manifest as { id?: string } | undefined;
+    const settings = plugin.settings as { statisticsVaultId?: string } | undefined;
+    return createVSSIndexStateStore(
+        plugin.app.vault,
+        settings?.statisticsVaultId || "default-vault",
+        manifest?.id ?? "personal-assistant",
+    );
+}
+
+function createVectorStateUnavailableError(): Error {
+    return Object.assign(
+        new Error("Memory local state is unavailable because local app storage is not available."),
+        { code: VSS_LOCAL_STATE_UNAVAILABLE_CODE },
+    );
 }
 
 function createEmptyOperationSummary(): VSSOperationSummary {
@@ -2416,8 +2403,4 @@ function isMissingFileError(error: unknown): boolean {
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function numberValue(value: unknown): number {
-    return typeof value === "number" ? value : Number(value ?? 0);
 }

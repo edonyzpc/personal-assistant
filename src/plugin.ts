@@ -23,6 +23,7 @@ import { normalizeStatisticsView } from './stats/stats-store';
 import { MemoryManager } from './memory-manager';
 import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
 import { confirmUserAction } from './confirm';
+import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -685,13 +686,16 @@ export class PluginManager extends Plugin {
             return this.vss;
         }
 
-        return new VSS(this, this.vssCacheDir);
+        return new VSS(this, this.vssCacheDir, this.createVSSIndexStateStore());
     }
 
-    private async ensureVssCacheDir() {
-        if (!await this.app.vault.adapter.exists(this.vssCacheDir)) {
-            await this.app.vault.adapter.mkdir(this.vssCacheDir);
-        }
+    createVSSIndexStateStore(): VSSIndexStateStore {
+        const manifest = this.manifest as { id?: string } | undefined;
+        return createVSSIndexStateStore(
+            this.app.vault,
+            this.settings.statisticsVaultId || "default-vault",
+            manifest?.id ?? "personal-assistant",
+        );
     }
 
     private async cacheVectors() {
@@ -787,10 +791,7 @@ export class PluginManager extends Plugin {
 
     private formatTechnicalMemoryStatus(stats: TechnicalMemoryStats): { text: string; tone?: TechnicalMemoryDetail["tone"] } {
         if (stats.status === "ready") {
-            return { text: stats.fallbackMode ? "Ready (fallback)" : "Ready" };
-        }
-        if (stats.status === "fallback") {
-            return { text: "Ready (fallback)" };
+            return { text: "Ready" };
         }
         if (stats.status === "stale") {
             return { text: "Index stale", tone: "warning" };
@@ -895,7 +896,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "clean-legacy-vss-json-cache",
-            name: "Clean old memory cache",
+            name: "Delete old Memory cache files",
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
                 await this.vss.cleanLegacyJsonCache();
                 await this.updateMemoryStatusBar();

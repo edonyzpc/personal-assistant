@@ -2,7 +2,9 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { VSS } from '../src/vss';
 import { computeContentHash, DirtyTimestamps } from '../src/vss-helpers';
 import { TFile } from 'obsidian';
-import type { EmbeddingProfile, VectorIndex, VectorIndexStatus, VectorSearchResult, VSSChunk, VSSFileRecord, VSSFileState, VSSIndexStats } from '../src/vss/types';
+import type { EmbeddingProfile, VectorIndex, VectorIndexStatus, VectorSearchResult, VSSChunk, VSSFileRecord, VSSFileState, VSSIndexMarker, VSSIndexStats } from '../src/vss/types';
+import { MemoryVSSIndexStateStore, UnavailableVSSIndexStateStore } from '../src/vss/local-state-store';
+import { getVSSDeviceId } from '../src/vss/state';
 
 const mockNoticeMessages: string[] = [];
 
@@ -127,6 +129,34 @@ class LockedVectorIndex extends FakeVectorIndex {
     });
 }
 
+class DelayedDirtyStateStore extends MemoryVSSIndexStateStore {
+    private releaseWrite: (() => void) | null = null;
+    private writeScheduled: Promise<void> | null = null;
+    private resolveWriteScheduled: (() => void) | null = null;
+
+    async setDirtyJournal(dirty: Map<string, DirtyTimestamps>): Promise<void> {
+        this.writeScheduled = new Promise((resolve) => {
+            this.resolveWriteScheduled = resolve;
+        });
+        this.resolveWriteScheduled?.();
+        await new Promise<void>((resolve) => {
+            this.releaseWrite = resolve;
+        });
+        await super.setDirtyJournal(dirty);
+    }
+
+    async waitForWriteScheduled(): Promise<void> {
+        while (!this.writeScheduled) {
+            await Promise.resolve();
+        }
+        await this.writeScheduled;
+    }
+
+    release(): void {
+        this.releaseWrite?.();
+    }
+}
+
 const createMissingFileError = (): NodeJS.ErrnoException => {
     const enoent = new Error('missing') as NodeJS.ErrnoException;
     enoent.code = 'ENOENT';
@@ -134,6 +164,7 @@ const createMissingFileError = (): NodeJS.ErrnoException => {
 };
 
 const createPlugin = (overrides: Record<string, unknown> = {}) => {
+    const vssStateStore = new MemoryVSSIndexStateStore();
     const mockAdapter = {
         write: jest.fn<(path: string, data: string) => Promise<void>>(),
         read: jest.fn<(path: string) => Promise<string>>(async () => { throw createMissingFileError(); }),
@@ -160,16 +191,18 @@ const createPlugin = (overrides: Record<string, unknown> = {}) => {
             embeddingModelName: 'model',
             baseURL: '',
             chatModelName: '',
+            statisticsVaultId: 'vault-id',
         },
         manifest: { dir: '.obsidian/plugins/personal-assistant' },
         app: { vault: mockVault },
         join: (...parts: string[]) => parts.join('/'),
         getVSSFiles: jest.fn(() => []),
+        createVSSIndexStateStore: jest.fn(() => vssStateStore),
         log: jest.fn(),
         ...overrides,
     };
 
-    return { plugin, mockAdapter, mockVault };
+    return { plugin, mockAdapter, mockVault, vssStateStore };
 };
 
 const setMockSqliteIndex = (index: VectorIndex): void => {
@@ -185,6 +218,22 @@ const createTFile = (path: string, stat: any = {}, extension: string = 'md', nam
     return new FileCtor(path, stat, extension, name);
 };
 
+function createReadyMarker(overrides: Partial<VSSIndexMarker> = {}): VSSIndexMarker {
+    return {
+        schemaVersion: 1,
+        deviceId: getVSSDeviceId(),
+        indexId: 'index-1',
+        profileSignature: 'openai||model|1024|COSINE',
+        backend: 'sqlite-wasm-opfs-sahpool',
+        chunkCount: 1,
+        fileCount: 1,
+        builtAt: '2026-05-02T00:00:00.000Z',
+        lastVerifiedAt: '2026-05-02T00:00:00.000Z',
+        storagePersisted: true,
+        ...overrides,
+    };
+}
+
 function attachReadyIndex(vss: VSS, index: FakeVectorIndex): void {
     (vss as any).initialized = true; // eslint-disable-line @typescript-eslint/no-explicit-any
     (vss as any).deviceId = 'device-1'; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -197,11 +246,18 @@ function attachReadyIndex(vss: VSS, index: FakeVectorIndex): void {
     };
     (vss as any).index = index; // eslint-disable-line @typescript-eslint/no-explicit-any
     (vss as any).status = 'ready'; // eslint-disable-line @typescript-eslint/no-explicit-any
+    (vss as any).localStateReady = true; // eslint-disable-line @typescript-eslint/no-explicit-any
+    (vss as any).marker = createReadyMarker({ // eslint-disable-line @typescript-eslint/no-explicit-any
+        deviceId: 'device-1',
+        chunkCount: index.records.size,
+        fileCount: index.records.size,
+    });
 }
 
 describe('VSS SQLite/WASM lifecycle', () => {
     const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
     const originalConfirm = Object.getOwnPropertyDescriptor(globalThis, 'confirm');
+    const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 
     beforeEach(() => {
         jest.useFakeTimers();
@@ -213,6 +269,13 @@ describe('VSS SQLite/WASM lifecycle', () => {
         Object.defineProperty(globalThis, 'confirm', {
             configurable: true,
             value: undefined,
+        });
+        Object.defineProperty(globalThis, 'localStorage', {
+            configurable: true,
+            value: {
+                getItem: jest.fn(() => 'device-1'),
+                setItem: jest.fn(),
+            },
         });
     });
 
@@ -229,10 +292,16 @@ describe('VSS SQLite/WASM lifecycle', () => {
         } else {
             delete (globalThis as { confirm?: (message?: string) => boolean }).confirm;
         }
+        if (originalLocalStorage) {
+            Object.defineProperty(globalThis, 'localStorage', originalLocalStorage);
+        } else {
+            delete (globalThis as { localStorage?: Storage }).localStorage;
+        }
     });
 
     it('does not load legacy JSON vectors into memory during initialization without a marker', async () => {
         const { plugin, mockAdapter } = createPlugin();
+        setMockSqliteIndex(new FakeVectorIndex());
         const vss = new VSS(plugin, 'cache');
 
         await vss.initialize();
@@ -241,6 +310,81 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(stats.status).toBe('uninitialized');
         expect(stats.chunkCount).toBe(0);
         expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
+        vss.dispose();
+    });
+
+    it('reconstructs the local marker when OPFS has a valid index but IndexedDB marker is missing', async () => {
+        const { plugin, vssStateStore } = createPlugin();
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', {
+            path: 'note.md',
+            contentHash: 'hash',
+            mtime: 1,
+            size: 2,
+            status: 'ready',
+            updatedAt: 3,
+        });
+        setMockSqliteIndex(index);
+        const vss = new VSS(plugin, 'cache');
+
+        await vss.initialize();
+        const stats = await vss.getStats();
+        const marker = await vssStateStore.getMarker();
+
+        expect(stats.status).toBe('ready');
+        expect(marker).toMatchObject({
+            deviceId: 'device-1',
+            profileSignature: 'openai||model|1024|COSINE',
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: 1,
+            fileCount: 1,
+        });
+        expect(marker?.opfsScope).toEqual(expect.any(String));
+        expect(index.reset).not.toHaveBeenCalled();
+        expect(index.upsertFile).not.toHaveBeenCalled();
+        expect(plugin.getVSSFiles).not.toHaveBeenCalled();
+        vss.dispose();
+    });
+
+    it('stops before note reads or embeddings when local VSS state is unavailable', async () => {
+        const file = createTFile('note.md', { size: 4, mtime: 1, ctime: 1 }, 'md', 'note.md');
+        const { plugin, mockAdapter } = createPlugin({
+            createVSSIndexStateStore: jest.fn(() => new UnavailableVSSIndexStateStore()),
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        await expect(vss.rebuildLocalIndex({ silent: true })).rejects.toMatchObject({
+            code: 'vss-local-state-unavailable',
+        });
+        const readiness = await vss.getMemoryReadiness();
+
+        expect(readiness.reason).toBe('unavailable');
+        expect(plugin.getVSSFiles).not.toHaveBeenCalled();
+        expect(mockAdapter.read).not.toHaveBeenCalledWith('note.md');
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(MockSqliteVectorIndex).not.toHaveBeenCalled();
+        vss.dispose();
+    });
+
+    it('does not let a stale dirty write resurrect state after reset', async () => {
+        const stateStore = new DelayedDirtyStateStore();
+        const { plugin } = createPlugin({
+            createVSSIndexStateStore: jest.fn(() => stateStore),
+        });
+        const file = createTFile('note.md', { size: 4, mtime: 1, ctime: 1 }, 'md', 'note.md');
+        const vss = new VSS(plugin, 'cache');
+
+        const dirtyWrite = vss.markDirtyIfEligible(file);
+        await stateStore.waitForWriteScheduled();
+        const reset = vss.resetLocalIndex();
+        stateStore.release();
+        await dirtyWrite;
+        await reset;
+
+        await expect(stateStore.getDirtyJournal()).resolves.toEqual(new Map());
+        expect(((vss as any).dirty as Map<string, DirtyTimestamps>).size).toBe(0); // eslint-disable-line @typescript-eslint/no-explicit-any
         vss.dispose();
     });
 
@@ -263,7 +407,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 
     it('single-flights concurrent initialization across stats and search paths', async () => {
-        const { plugin, mockAdapter } = createPlugin();
+        const { plugin, vssStateStore } = createPlugin();
         const index = new FakeVectorIndex();
         index.records.set('note.md', {
             path: 'note.md',
@@ -274,23 +418,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
             updatedAt: 3,
         });
         setMockSqliteIndex(index);
-        mockAdapter.read.mockImplementation(async (path) => {
-            if (path.endsWith('/marker.json')) {
-                return JSON.stringify({
-                    schemaVersion: 1,
-                    deviceId: 'device-1',
-                    indexId: 'index-1',
-                    profileSignature: 'openai||model|1024|COSINE',
-                    backend: 'sqlite-wasm-opfs-sahpool',
-                    chunkCount: 1,
-                    fileCount: 1,
-                    builtAt: '2026-05-02T00:00:00.000Z',
-                    lastVerifiedAt: '2026-05-02T00:00:00.000Z',
-                    storagePersisted: true,
-                });
-            }
-            throw createMissingFileError();
-        });
+        await vssStateStore.setMarker(createReadyMarker({ chunkCount: 1, fileCount: 1 }));
         const vss = new VSS(plugin, 'cache');
 
         await Promise.all([
@@ -304,7 +432,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 
     it('uses a vault-scoped SQLite database and OPFS pool', async () => {
-        const { plugin, mockAdapter, mockVault } = createPlugin();
+        const { plugin, mockAdapter, mockVault, vssStateStore } = createPlugin();
         const index = new FakeVectorIndex();
         setMockSqliteIndex(index);
         mockVault.getName.mockReturnValue('Work Vault');
@@ -339,11 +467,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const secondVss = new VSS(second.plugin, 'cache');
         await secondVss.rebuildLocalIndex({ silent: true });
 
-        const firstOptions = MockSqliteVectorIndex.mock.calls[0][0] as { databaseName: string; opfsDirectory: string; opfsVfsName: string };
-        const secondOptions = MockSqliteVectorIndex.mock.calls[1][0] as { databaseName: string; opfsDirectory: string; opfsVfsName: string };
-        expect(firstOptions.databaseName).not.toBe(secondOptions.databaseName);
-        expect(firstOptions.opfsDirectory).not.toBe(secondOptions.opfsDirectory);
-        expect(firstOptions.opfsVfsName).not.toBe(secondOptions.opfsVfsName);
+        const calls = MockSqliteVectorIndex.mock.calls.map((call) => call[0] as { databaseName: string; opfsDirectory: string; opfsVfsName: string });
+        expect(new Set(calls.map((options) => options.databaseName)).size).toBeGreaterThan(1);
+        expect(new Set(calls.map((options) => options.opfsDirectory)).size).toBeGreaterThan(1);
+        expect(new Set(calls.map((options) => options.opfsVfsName)).size).toBeGreaterThan(1);
         firstVss.dispose();
         secondVss.dispose();
     });
@@ -587,7 +714,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const baseTime = new Date('2025-01-01T00:00:00.000Z');
         jest.setSystemTime(baseTime);
 
-        const { plugin, mockAdapter, mockVault } = createPlugin();
+        const { plugin, mockAdapter, mockVault, vssStateStore } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         const index = new FakeVectorIndex();
         attachReadyIndex(vss, index);
@@ -603,7 +730,8 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
         expect(dirtyMap.has(largeFile.path)).toBe(false);
         expect(index.deleteFile).toHaveBeenCalledWith('large.md');
-        expect(mockAdapter.write).toHaveBeenCalledWith('cache/dirty.json', '{}');
+        expect(await vssStateStore.getDirtyJournal()).toEqual(new Map());
+        expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
 
     it('removes indexed rows for files that disappeared before a force refresh', async () => {
@@ -636,7 +764,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 
     it('removes stale index entries when cleaned markdown content is empty', async () => {
-        const { plugin, mockAdapter } = createPlugin();
+        const { plugin, mockAdapter, vssStateStore } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         const index = new FakeVectorIndex();
         attachReadyIndex(vss, index);
@@ -650,7 +778,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 
     it('does not treat blank exclude paths as matching every file', async () => {
-        const { plugin, mockAdapter } = createPlugin();
+        const { plugin, mockAdapter, vssStateStore } = createPlugin();
         plugin.settings.vssCacheExcludePath = [''];
         const vss = new VSS(plugin, 'cache');
         const file = createTFile('note.md', { size: 5, mtime: Date.now(), ctime: Date.now() }, 'md', 'note.md');
@@ -658,7 +786,8 @@ describe('VSS SQLite/WASM lifecycle', () => {
         await vss.markDirtyIfEligible(file);
 
         expect(((vss as any).dirty as Map<string, DirtyTimestamps>).has('note.md')).toBe(true); // eslint-disable-line @typescript-eslint/no-explicit-any
-        expect(mockAdapter.write).toHaveBeenCalledWith('cache/dirty.json', expect.stringContaining('note.md'));
+        expect((await vssStateStore.getDirtyJournal()).has('note.md')).toBe(true);
+        expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
 
     it('skips RAG search when VSS has never been initialized', async () => {
@@ -675,6 +804,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const { plugin } = createPlugin({
             getVSSFiles: jest.fn(() => [note]),
         });
+        setMockSqliteIndex(new FakeVectorIndex());
         const vss = new VSS(plugin, 'cache');
 
         const plan = await vss.getMemoryReadiness();
@@ -716,7 +846,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const now = Date.now();
         const changed = createTFile('changed.md', { size: 10, mtime: now + 5, ctime: now }, 'md', 'changed.md');
         const created = createTFile('created.md', { size: 11, mtime: now + 6, ctime: now }, 'md', 'created.md');
-        const { plugin, mockAdapter } = createPlugin({
+        const { plugin, mockAdapter, vssStateStore } = createPlugin({
             getVSSFiles: jest.fn(() => [changed, created]),
         });
         const vss = new VSS(plugin, 'cache');
@@ -750,8 +880,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(dirtyMap.has('created.md')).toBe(true);
         expect(verifyQueue.has('changed.md')).toBe(true);
         expect(index.deleteFile).toHaveBeenCalledWith('deleted.md');
-        expect(mockAdapter.write).toHaveBeenCalledWith('cache/dirty.json', expect.stringContaining('created.md'));
-        expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.stringContaining('changed.md'));
+        const persistedDirty = await vssStateStore.getDirtyJournal();
+        expect(persistedDirty.has('created.md')).toBe(true);
+        expect(persistedDirty.has('changed.md')).toBe(false);
+        expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
 
     it('does not mark metadata-only reconcile drift dirty when content is unchanged', async () => {
@@ -843,18 +975,18 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
 
-    it('marks fallback metadata drift dirty instead of queuing unverifiable work', async () => {
+    it('ignores file-open metadata drift when Memory is not ready', async () => {
         const now = Date.now();
-        const file = createTFile('fallback.md', { size: 50, mtime: now + 5, ctime: now }, 'md', 'fallback.md');
+        const file = createTFile('not-ready.md', { size: 50, mtime: now + 5, ctime: now }, 'md', 'not-ready.md');
         const { plugin, mockAdapter } = createPlugin({
             getVSSFiles: jest.fn(() => [file]),
         });
         const vss = new VSS(plugin, 'cache');
         const index = new FakeVectorIndex();
         attachReadyIndex(vss, index);
-        (vss as any).status = 'fallback'; // eslint-disable-line @typescript-eslint/no-explicit-any
-        index.records.set('fallback.md', {
-            path: 'fallback.md',
+        (vss as any).status = 'disabled'; // eslint-disable-line @typescript-eslint/no-explicit-any
+        index.records.set('not-ready.md', {
+            path: 'not-ready.md',
             contentHash: 'old-hash',
             mtime: now,
             size: 10,
@@ -867,11 +999,11 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
         const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
         const verifyQueue = (vss as any).verifyQueue as Map<string, unknown>; // eslint-disable-line @typescript-eslint/no-explicit-any
-        expect(changed).toBe(true);
-        expect(dirtyMap.has('fallback.md')).toBe(true);
-        expect(verifyQueue.has('fallback.md')).toBe(false);
-        expect(plan.reason).toBe('changed-notes');
-        expect(mockAdapter.write).toHaveBeenCalledWith('cache/dirty.json', expect.not.stringContaining('epoch'));
+        expect(changed).toBe(false);
+        expect(dirtyMap.has('not-ready.md')).toBe(false);
+        expect(verifyQueue.has('not-ready.md')).toBe(false);
+        expect(plan.reason).toBe('unavailable');
+        expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
 
     it('honors verify budgets and leaves remaining candidates queued', async () => {
@@ -998,7 +1130,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const content = 'unchanged memory content';
         const contentHash = await computeContentHash(content);
         const file = createTFile('same.md', { size: 88, mtime: Date.now() + 5, ctime: Date.now() }, 'md', 'same.md');
-        const { plugin, mockAdapter, mockVault } = createPlugin();
+        const { plugin, mockAdapter, mockVault, vssStateStore } = createPlugin();
         mockVault.getAbstractFileByPath.mockReturnValue(file);
         mockAdapter.read.mockImplementation(async (path) => {
             if (path === 'same.md') return content;
@@ -1034,7 +1166,8 @@ describe('VSS SQLite/WASM lifecycle', () => {
         }));
         expect(index.upsertFile).not.toHaveBeenCalled();
         expect(createEmbeddings).not.toHaveBeenCalled();
-        expect(mockAdapter.write).toHaveBeenCalledWith('cache/dirty.json', '{}');
+        expect(await vssStateStore.getDirtyJournal()).toEqual(new Map());
+        expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
     });
 
     it('does not clear a newer dirty event while verifying an older metadata candidate', async () => {
@@ -1289,27 +1422,11 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 
     it('reports missing-local-index when marker exists but local SQLite chunks are gone', async () => {
-        const { plugin, mockAdapter } = createPlugin();
+        const { plugin, vssStateStore } = createPlugin();
         const emptyIndex = new FakeVectorIndex();
         emptyIndex.status = 'ready';
         setMockSqliteIndex(emptyIndex);
-        mockAdapter.read.mockImplementation(async (path) => {
-            if (path.endsWith('/marker.json')) {
-                return JSON.stringify({
-                    schemaVersion: 1,
-                    deviceId: 'device-1',
-                    indexId: 'index-1',
-                    profileSignature: 'openai||model|1024|COSINE',
-                    backend: 'sqlite-wasm-opfs-sahpool',
-                    chunkCount: 8,
-                    fileCount: 3,
-                    builtAt: '2026-05-02T00:00:00.000Z',
-                    lastVerifiedAt: '2026-05-02T00:00:00.000Z',
-                    storagePersisted: true,
-                });
-            }
-            throw createMissingFileError();
-        });
+        await vssStateStore.setMarker(createReadyMarker({ chunkCount: 8, fileCount: 3 }));
         const vss = new VSS(plugin, 'cache');
 
         await vss.initialize();
@@ -1338,7 +1455,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(plugin.getVSSFiles).toHaveBeenCalled();
     });
 
-    it('loads legacy JSON into Memory fallback when SQLite is unavailable and manifest is under both caps', async () => {
+    it('does not load legacy JSON fallback when SQLite is unavailable with old manifest/cache files', async () => {
         const { plugin, mockAdapter } = createPlugin();
         const failingIndex = new FailingVectorIndex();
         setMockSqliteIndex(failingIndex);
@@ -1396,10 +1513,11 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const results = await vss.searchSimilarity('query');
 
         expect(failingIndex.dispose).toHaveBeenCalled();
-        expect(stats.status).toBe('fallback');
-        expect(stats.fallbackMode).toBe(true);
-        expect(stats.chunkCount).toBe(1);
-        expect(results[0].doc.pageContent).toBe('legacy chunk');
+        expect(stats.status).toBe('disabled');
+        expect(stats.fallbackMode).toBe(false);
+        expect(stats.chunkCount).toBe(0);
+        expect(results).toEqual([]);
+        expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
     });
 
     it('does not embed the query or load legacy JSON on the foreground locked path', async () => {
@@ -1474,6 +1592,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         setMockSqliteIndex(recoveredIndex);
         const vss = new VSS(plugin, 'cache');
         (vss as any).initialized = true; // eslint-disable-line @typescript-eslint/no-explicit-any
+        (vss as any).localStateReady = true; // eslint-disable-line @typescript-eslint/no-explicit-any
         (vss as any).deviceId = 'device-1'; // eslint-disable-line @typescript-eslint/no-explicit-any
         (vss as any).profile = { // eslint-disable-line @typescript-eslint/no-explicit-any
             provider: 'openai',
@@ -1550,7 +1669,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 
     it('continues rebuild in best-effort storage when persistent storage is denied', async () => {
-        const { plugin, mockAdapter } = createPlugin();
+        const { plugin, mockAdapter, vssStateStore } = createPlugin();
         const index = new FakeVectorIndex();
         Object.defineProperty(globalThis, 'navigator', {
             configurable: true,
@@ -1572,11 +1691,12 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(stats.storagePersisted).toBe(false);
         expect(stats.storageUsage).toBe(4096);
         expect(stats.storageQuota).toBe(8192);
-        expect(mockAdapter.write).toHaveBeenCalledWith(expect.stringContaining('/marker.json'), expect.stringContaining('"storagePersisted": false'));
+        await expect(vssStateStore.getMarker()).resolves.toMatchObject({ storagePersisted: false });
+        expect(mockAdapter.write).not.toHaveBeenCalledWith(expect.stringContaining('/marker.json'), expect.any(String));
     });
 
     it('resets the local index, removes device state files, and releases the active backend', async () => {
-        const { plugin, mockAdapter } = createPlugin();
+        const { plugin, mockAdapter, vssStateStore } = createPlugin();
         const index = new FakeVectorIndex();
         index.records.set('note.md', {
             path: 'note.md',
@@ -1588,14 +1708,18 @@ describe('VSS SQLite/WASM lifecycle', () => {
         });
         const vss = new VSS(plugin, 'cache');
         attachReadyIndex(vss, index);
+        await vssStateStore.setMarker(createReadyMarker({ chunkCount: 1, fileCount: 1 }));
+        await vssStateStore.setDirtyJournal(new Map([['note.md', { first: 1, last: 2, epoch: 1 }]]));
 
         await vss.resetLocalIndex();
         const stats = await vss.getStats();
 
         expect(index.reset).toHaveBeenCalled();
         expect(index.dispose).toHaveBeenCalled();
-        expect(mockAdapter.remove).toHaveBeenCalledWith(expect.stringContaining('/marker.json'));
-        expect(mockAdapter.remove).toHaveBeenCalledWith(expect.stringContaining('/manifest.json'));
+        await expect(vssStateStore.getMarker()).resolves.toBeNull();
+        await expect(vssStateStore.getDirtyJournal()).resolves.toEqual(new Map());
+        expect(mockAdapter.remove).not.toHaveBeenCalledWith(expect.stringContaining('/marker.json'));
+        expect(mockAdapter.remove).not.toHaveBeenCalledWith(expect.stringContaining('/manifest.json'));
         expect(stats.status).toBe('uninitialized');
         expect(stats.chunkCount).toBe(0);
     });
@@ -1645,7 +1769,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         await vss.cleanLegacyJsonCache();
 
         expect(mockConfirmUserAction).toHaveBeenCalledWith(plugin.app, expect.objectContaining({
-            title: 'Delete old memory cache?',
+            title: 'Delete old Memory cache files?',
             message: expect.stringContaining('Delete 2 old memory cache files'),
         }));
         expect(mockConfirmUserAction).toHaveBeenCalledWith(plugin.app, expect.objectContaining({

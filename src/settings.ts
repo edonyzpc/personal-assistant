@@ -872,10 +872,10 @@ export class SettingTab extends PluginSettingTab {
                 });
 
             new Setting(containerEl)
-                .setName("Clean old memory cache")
-                .setDesc("Remove old cache files after memory is ready.")
+                .setName("Delete old Memory cache files")
+                .setDesc("Delete old Memory cache files after Memory is ready. Your notes will not be deleted.")
                 .addButton((button) => {
-                    button.setButtonText("Clean").onClick(async () => {
+                    button.setButtonText("Delete").onClick(async () => {
                         await this.plugin.vss.cleanLegacyJsonCache();
                         await this.plugin.updateMemoryStatusBar();
                     });

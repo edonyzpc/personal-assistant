@@ -5,16 +5,8 @@ import {
     getVSSManifestPath,
     getVSSMarkerPath,
     readVSSMarker,
-    removeVSSMarker,
-    shouldEnableMemoryFallback,
-    writeVSSMarker,
 } from '../src/vss/state';
-import {
-    VSS_FALLBACK_MAX_CHUNKS,
-    VSS_FALLBACK_MAX_MEMORY_BYTES,
-    type VSSIndexManifest,
-    type VSSIndexMarker,
-} from '../src/vss/types';
+import { type VSSIndexMarker } from '../src/vss/types';
 
 class MemoryAdapter {
     files = new Map<string, string>();
@@ -60,16 +52,6 @@ function createVault(adapter: MemoryAdapter, configDir = '.obsidian'): Vault {
 }
 
 describe('VSS index state helpers', () => {
-    const baseManifest: VSSIndexManifest = {
-        schemaVersion: 1,
-        deviceId: 'device-a',
-        profileSignature: 'provider|url|model|1024|COSINE',
-        fileCount: 10,
-        chunkCount: 100,
-        estimatedMemoryBytes: 1024,
-        legacyJsonCacheBytes: 2048,
-        updatedAt: '2026-05-02T00:00:00.000Z',
-    };
     const baseMarker: VSSIndexMarker = {
         schemaVersion: 1,
         deviceId: 'device-a',
@@ -83,23 +65,24 @@ describe('VSS index state helpers', () => {
         storagePersisted: true,
     };
 
-    it('stores marker and manifest in a device-scoped vault directory', () => {
+    it('keeps legacy marker and manifest paths device-scoped for read-only migration', () => {
         expect(getVSSIndexStateDir('device-a')).toBe('.obsidian/plugins/personal-assistant/vss-index-state/device-a');
         expect(getVSSMarkerPath('device-a')).toBe('.obsidian/plugins/personal-assistant/vss-index-state/device-a/marker.json');
         expect(getVSSManifestPath('device-a')).toBe('.obsidian/plugins/personal-assistant/vss-index-state/device-a/manifest.json');
     });
 
-    it('uses custom vault config directories for new VSS state writes', async () => {
+    it('reads marker from the current vault config directory', async () => {
         const adapter = new MemoryAdapter();
         const vault = createVault(adapter, '.vault-config');
+        await adapter.write(
+            '.vault-config/plugins/personal-assistant/vss-index-state/device-a/marker.json',
+            JSON.stringify(baseMarker),
+        );
 
-        await writeVSSMarker(vault, baseMarker);
-
-        expect(adapter.files.has('.vault-config/plugins/personal-assistant/vss-index-state/device-a/marker.json')).toBe(true);
-        expect(adapter.files.has('.obsidian/plugins/personal-assistant/vss-index-state/device-a/marker.json')).toBe(false);
+        await expect(readVSSMarker(vault, 'device-a')).resolves.toMatchObject({ indexId: 'index-a' });
     });
 
-    it('reads and removes legacy VSS state when a custom config directory is used', async () => {
+    it('falls back to legacy .obsidian marker reads when a custom config directory is used', async () => {
         const adapter = new MemoryAdapter();
         const vault = createVault(adapter, '.vault-config');
         await adapter.write(
@@ -108,30 +91,5 @@ describe('VSS index state helpers', () => {
         );
 
         await expect(readVSSMarker(vault, 'device-a')).resolves.toMatchObject({ indexId: 'index-a' });
-        await removeVSSMarker(vault, 'device-a');
-
-        expect(adapter.files.has('.obsidian/plugins/personal-assistant/vss-index-state/device-a/marker.json')).toBe(false);
-    });
-
-    it('enables Memory fallback only when both hard caps are satisfied', () => {
-        expect(shouldEnableMemoryFallback({
-            ...baseManifest,
-            chunkCount: VSS_FALLBACK_MAX_CHUNKS,
-            estimatedMemoryBytes: VSS_FALLBACK_MAX_MEMORY_BYTES,
-        })).toBe(true);
-
-        expect(shouldEnableMemoryFallback({
-            ...baseManifest,
-            chunkCount: VSS_FALLBACK_MAX_CHUNKS + 1,
-            estimatedMemoryBytes: 1024,
-        })).toBe(false);
-
-        expect(shouldEnableMemoryFallback({
-            ...baseManifest,
-            chunkCount: 100,
-            estimatedMemoryBytes: VSS_FALLBACK_MAX_MEMORY_BYTES + 1,
-        })).toBe(false);
-
-        expect(shouldEnableMemoryFallback(null)).toBe(false);
     });
 });

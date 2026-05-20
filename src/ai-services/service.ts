@@ -1,12 +1,9 @@
 /* Copyright 2023 edonyzpc */
-import { App, Editor, MarkdownView, Notice, TFile, requestUrl } from 'obsidian'
+import { App, Editor, MarkdownView, Notice, requestUrl } from 'obsidian'
 import { StateEffect } from '@codemirror/state'
 import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
-import { Document } from "@langchain/core/documents";
-import { MemoryVectorStore } from "@langchain/classic/vectorstores/memory";
-import { MarkdownTextSplitter } from '@langchain/textsplitters';
 
 import { AIUtils } from './ai-utils';
 import type { PluginManager } from '../plugin'
@@ -396,91 +393,6 @@ export class AIService {
         } finally {
             notice.hide();
         }
-    }
-
-    /**
-     * 向量化文档
-     */
-    async vectorizeDocument(file: TFile, cacheDir: string): Promise<boolean> {
-        const embeddings = await this.aiUtils.createEmbeddings();
-        const mdSplitter = new MarkdownTextSplitter({ chunkSize: 4000, chunkOverlap: 80 });
-
-        const markdown = await this.plugin.app.vault.adapter.read(file.path);
-        const { content } = this.aiUtils.getDocumentContent(markdown);
-        const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
-        const contentHash = await this.aiUtils.hashContent(cleanedContent);
-
-        if (cleanedContent.length === 0) {
-            return false;
-        }
-
-        const subStrList = await mdSplitter.splitText(cleanedContent);
-        const documents = subStrList.map(subStr => new Document({
-            pageContent: subStr,
-            metadata: {
-                path: file.path,
-                created: file.stat.ctime,
-                lastModified: file.stat.mtime,
-                contentHash: contentHash,
-            },
-        }));
-
-        const childDir = this.plugin.join(cacheDir, file.path.split(file.name)[0]);
-        if (!await this.plugin.app.vault.adapter.exists(childDir)) {
-            await this.plugin.app.vault.adapter.mkdir(childDir);
-        }
-        const vssFile = this.plugin.join(cacheDir, file.path + ".json");
-
-        const vectorStore = new MemoryVectorStore(embeddings);
-
-        if (documents.length > 3) {
-            // 每3个document做一次addDocument
-            for (let i = 0; i < documents.length; i += 3) {
-                const chunk = documents.slice(i, i + 3);
-                await vectorStore.addDocuments(chunk);
-                // stop 3s for rate limit
-                await new Promise(f => setTimeout(f, 3000));
-            }
-        } else {
-            await vectorStore.addDocuments(documents);
-        }
-
-        const objStr = JSON.stringify(vectorStore.memoryVectors, null, 0);
-        await this.plugin.app.vault.adapter.write(vssFile, objStr);
-
-        return true;
-    }
-
-    /**
-     * 搜索相似文档
-     */
-    async searchSimilarDocuments(prompt: string, vectorStore: MemoryVectorStore): Promise<Array<{ score: number; doc: Document }>> {
-        if (!vectorStore) {
-            new Notice("Please wait for memory to be ready.");
-            return [];
-        }
-
-        /*
-        // MMR search to increase diversity and relevance
-        const retriver = this.vectorStore.asRetriever({
-            k: 2,
-            //filter: filter,
-            //tags: ['example', 'test'],
-            verbose: true,
-            searchType: 'mmr',
-            searchKwargs: { fetchK: 4, lambda: 0.8 },
-        });
-        const doc = await retriver.invoke("cat"); // eslint-disable-line @typescript-eslint/no-unused-vars
-        */
-        const similaritySearchWithScoreResults = await vectorStore.similaritySearchWithScore(prompt, 8);
-
-        const content = [];
-        for (const [doc, score] of similaritySearchWithScoreResults) {
-            this.plugin.log(`* [SIM=${score.toFixed(3)}] [${JSON.stringify(doc.metadata)}]`);
-            content.push({ "score": score, "doc": doc });
-        }
-
-        return content;
     }
 
     /**

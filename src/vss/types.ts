@@ -3,8 +3,6 @@ import { Document } from "@langchain/core/documents";
 export const VSS_SCHEMA_VERSION = 1;
 export const VSS_DEFAULT_DIMENSIONS = 1024;
 export const VSS_DEFAULT_DISTANCE_METRIC: VSSDistanceMetric = "COSINE";
-export const VSS_FALLBACK_MAX_CHUNKS = 5_000;
-export const VSS_FALLBACK_MAX_MEMORY_BYTES = 128 * 1024 * 1024;
 
 export type VSSDistanceMetric = "COSINE" | "L2";
 
@@ -14,7 +12,6 @@ export type VectorIndexStatus =
     | "ready"
     | "stale"
     | "missing-local-index"
-    | "fallback"
     | "disabled"
     | "error";
 
@@ -95,6 +92,7 @@ export interface VSSIndexMarker {
     deviceId: string;
     indexId: string;
     profileSignature: string;
+    opfsScope?: string;
     backend: string;
     chunkCount: number;
     fileCount: number;
@@ -103,17 +101,6 @@ export interface VSSIndexMarker {
     storagePersisted: boolean;
     estimatedDbBytes?: number;
     estimatedEmbeddingTokens?: number;
-}
-
-export interface VSSIndexManifest {
-    schemaVersion: number;
-    deviceId: string;
-    profileSignature: string;
-    fileCount: number;
-    chunkCount: number;
-    estimatedMemoryBytes: number;
-    legacyJsonCacheBytes: number;
-    updatedAt: string;
 }
 
 export function getEmbeddingProfileSignature(profile: EmbeddingProfile): string {
