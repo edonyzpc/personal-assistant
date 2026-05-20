@@ -1,5 +1,7 @@
 # VSS SQLite/WASM 重构开发测试进展
 
+> 2026-05-20 superseded note: rows below are historical status for the SQLite/WASM refactor. Marker/manifest vault writes and `MemoryVectorIndex` fallback were removed by [VSS Local State Plan](./vss-local-state-plan.md); current progress is tracked in [VSS Local State Development Tracker](./vss-local-state-development-tracker.md).
+
 ## 文档目的
 
 本文档用于记录 VSS SQLite/WASM 重构从 PoC 到上线验证的开发进展、测试结果、风险处理和关键决策。

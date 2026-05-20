@@ -1,5 +1,7 @@
 # VSS SQLite/WASM 实施计划
 
+> 2026-05-20 superseded note: this historical implementation plan describes the original marker/manifest and `MemoryVectorIndex` fallback design. The current VSS local state behavior is defined by [VSS Local State Plan](./vss-local-state-plan.md): runtime marker/dirty state is stored in local IndexedDB, manifest generation and JSON fallback are removed, and old vault files are not auto-deleted.
+
 ## Summary
 
 - 主路径从 `MemoryVectorStore` 改为 `sqlite-vector/@sqliteai/sqlite-wasm` + `opfs-sahpool` 本机 SQLite 索引，避免启动时全量向量进入 JS 内存。
