@@ -227,6 +227,11 @@ export class VSS {
     private marker: VSSIndexMarker | null = null;
     private storageStatus: StoragePersistenceStatus = { persisted: false };
     private localStateReady = false;
+    private localStateHydrated = false;
+    private localStateClearPending = false;
+    private dirtyJournalWritePending = false;
+    private markerWritePending = false;
+    private markerRecoverySuppressed = false;
     private stateGeneration = 0;
     private lastMissingIndexNoticeAt = 0;
     private readonly ownerId = createIndexId();
@@ -247,7 +252,10 @@ export class VSS {
 
     async initialize() {
         if (this.disposed) return;
-        if (this.initialized) return;
+        if (this.initialized) {
+            await this.retryLocalStateStore();
+            return;
+        }
         this.initializationPromise ??= this.initializeUnlocked().finally(() => {
             this.initializationPromise = null;
         });
@@ -258,17 +266,13 @@ export class VSS {
         if (this.disposed) return;
         this.deviceId = getVSSDeviceId();
         this.profile = this.createEmbeddingProfile();
-        if (!await this.ensureLocalStateStoreReady()) {
-            this.initialized = true;
-            return;
+        if (await this.ensureLocalStateStoreReady()) {
+            await this.hydrateLocalStateFromStore();
         }
         this.storageStatus = await this.getStoragePersistenceStatus();
         if (this.disposed) return;
-        await this.loadDirtyJournal();
-        if (this.disposed) return;
-        this.marker = await this.readLocalMarker();
 
-        if (!this.marker) {
+        if (!this.marker && !this.markerRecoverySuppressed) {
             await this.tryRecoverMarkerFromSqlite();
             this.initialized = true;
             return;
@@ -284,14 +288,67 @@ export class VSS {
         try {
             await this.stateStore.initialize();
             this.localStateReady = true;
+            if (this.lastErrorCode === VSS_LOCAL_STATE_UNAVAILABLE_CODE) {
+                this.lastErrorCode = undefined;
+            }
         } catch (error) {
             this.localStateReady = false;
             this.lastErrorCode = VSS_LOCAL_STATE_UNAVAILABLE_CODE;
-            this.status = "disabled";
             this.plugin.log("Memory local state store unavailable", error);
             return false;
         }
         return true;
+    }
+
+    private async retryLocalStateStore(): Promise<void> {
+        if (this.disposed) return;
+        if (!this.localStateReady) {
+            if (!await this.ensureLocalStateStoreReady()) return;
+        }
+        if (this.localStateClearPending) {
+            await this.clearLocalStateStore(this.stateGeneration);
+        }
+        if (!this.localStateHydrated && !this.hasPendingLocalStateWrites()) {
+            await this.hydrateLocalStateFromStore();
+        }
+        if (!this.marker && !this.markerRecoverySuppressed) {
+            await this.tryRecoverMarkerFromSqlite();
+        }
+        await this.flushPendingLocalStateWrites();
+        if (this.marker && !this.index && this.status === "uninitialized") {
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+        }
+    }
+
+    private hasPendingLocalStateWrites(): boolean {
+        return this.localStateClearPending || this.dirtyJournalWritePending || this.markerWritePending;
+    }
+
+    private async hydrateLocalStateFromStore(): Promise<void> {
+        if (this.disposed || !this.localStateReady || this.localStateHydrated) return;
+        await this.loadDirtyJournal();
+        if (this.disposed) return;
+        const marker = await this.readLocalMarker();
+        if (!this.marker) {
+            this.marker = marker;
+        }
+        if (this.marker) {
+            this.markerRecoverySuppressed = false;
+        }
+        this.localStateHydrated = true;
+    }
+
+    private async flushPendingLocalStateWrites(): Promise<void> {
+        if (this.disposed || !this.localStateReady) return;
+        if (this.localStateClearPending) {
+            await this.clearLocalStateStore(this.stateGeneration);
+        }
+        if (this.dirtyJournalWritePending) {
+            await this.persistDirtyJournal();
+        }
+        if (this.markerWritePending && this.marker) {
+            await this.persistMarkerSnapshot(this.marker, this.stateGeneration);
+        }
     }
 
     dispose(): Promise<void> {
@@ -332,7 +389,7 @@ export class VSS {
     }
 
     private async tryRecoverMarkerFromSqlite(): Promise<void> {
-        if (!this.profile || !this.localStateReady || this.disposed) {
+        if (!this.profile || this.disposed) {
             this.status = "uninitialized";
             return;
         }
@@ -370,9 +427,7 @@ export class VSS {
         if (!this.isEligible(file)) return false;
         const changed = this.markDirtyPath(file.path);
         if (changed) {
-            if (await this.ensureLocalStateStoreReady()) {
-                await this.persistDirtyJournal();
-            }
+            await this.persistDirtyJournal();
         }
         return changed;
     }
@@ -417,9 +472,7 @@ export class VSS {
             if (!this.isEligible(file)) return false;
             const changed = this.markDirtyPath(file.path);
             if (changed) {
-                if (await this.ensureLocalStateStoreReady()) {
-                    await this.persistDirtyJournal();
-                }
+                await this.persistDirtyJournal();
             }
             return changed;
         });
@@ -473,10 +526,6 @@ export class VSS {
         }
         await this.initialize();
         this.assertActive();
-        if (!this.localStateReady) {
-            summary.aborted = true;
-            return summary;
-        }
         await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: options.force === true, mode: "manual" });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             if (!options.silent) {
@@ -613,9 +662,6 @@ export class VSS {
         this.assertActive();
         await this.initialize();
         this.assertActive();
-        if (!this.localStateReady) {
-            throw createVectorStateUnavailableError();
-        }
         this.storageStatus = await this.requestPersistentStorage();
         if (!this.storageStatus.persisted && !options.silent) {
             new Notice("This device may need to prepare memory again later.", 7000);
@@ -819,10 +865,6 @@ export class VSS {
     private async resetLocalIndexUnlocked(): Promise<void> {
         this.assertActive();
         await this.initialize();
-        if (!this.localStateReady) {
-            new Notice("Memory local state is unavailable. You can still ask normally.", 5000);
-            return;
-        }
         if (this.index) {
             const index = this.index;
             await index.reset();
@@ -831,12 +873,15 @@ export class VSS {
         }
         await this.stateWriteChain.catch(() => undefined);
         this.stateGeneration++;
-        await this.stateStore.removeMarker();
-        await this.stateStore.clearDirtyJournal();
+        this.localStateClearPending = true;
+        this.markerWritePending = false;
+        this.dirtyJournalWritePending = false;
+        this.markerRecoverySuppressed = true;
         this.marker = null;
         this.status = "uninitialized";
         this.dirty.clear();
         this.verifyQueue.clear();
+        await this.clearLocalStateStore(this.stateGeneration);
         new Notice("Local memory copy reset.", 3000);
     }
 
@@ -933,9 +978,28 @@ export class VSS {
                 summary.scanned++;
                 const record = recordByPath.get(file.path);
                 if (!record) {
-                    if (this.markDirtyPath(file.path)) {
-                        dirtyChanged = true;
-                        summary.markedDirty++;
+                    try {
+                        const fileState = await this.computeFileHash(file);
+                        if (fileState.tooLarge || !fileState.hash) {
+                            this.verifyQueue.delete(file.path);
+                            if (this.dirty.delete(file.path)) {
+                                dirtyChanged = true;
+                            }
+                            if (fileState.tooLarge) {
+                                summary.skipped++;
+                            } else {
+                                summary.removed++;
+                            }
+                        } else if (this.markDirtyPath(file.path)) {
+                            dirtyChanged = true;
+                            summary.markedDirty++;
+                        }
+                    } catch (error) {
+                        this.plugin.log("Failed to inspect missing Memory index record", { path: file.path, error });
+                        if (this.markDirtyPath(file.path)) {
+                            dirtyChanged = true;
+                            summary.markedDirty++;
+                        }
                     }
                 } else if (record.mtime !== file.stat.mtime || record.size !== file.stat.size) {
                     if (this.enqueueVerifyPath(file, record, "metadata-drift")) {
@@ -1202,17 +1266,22 @@ export class VSS {
             return;
         }
 
+        const cleanupGeneration = this.stateGeneration;
         const confirmed = await confirmUserAction(this.plugin.app, {
             title: "Delete old Memory cache files?",
             message: `Delete ${summary.fileCount} old memory cache files (${formatBytes(summary.bytes)})? Notes will not be changed or deleted.`,
             confirmText: "Delete",
         });
         if (!confirmed) return;
+        if (this.disposed || cleanupGeneration !== this.stateGeneration || !this.index || this.status !== "ready") {
+            new Notice("Old memory cache was not cleaned because diagnostic state changed.", 5000);
+            return;
+        }
 
         for (const path of summary.paths) {
             await this.plugin.app.vault.adapter.remove(path);
         }
-        await this.writeLocalIndexState();
+        await this.writeLocalIndexState(cleanupGeneration);
         new Notice(`Deleted ${summary.fileCount} old Memory cache files.`, 5000);
     }
 
@@ -1351,16 +1420,6 @@ export class VSS {
         await this.initialize();
         if (this.index) {
             await this.ensureIndex({ allowFallback: false, mode: "foreground" });
-        }
-
-        if (!this.localStateReady) {
-            return {
-                reason: "unavailable",
-                action: "none",
-                notesToCheck: 0,
-                requiresApproval: false,
-                canAnswerNow: true,
-            };
         }
 
         const notesToCheck = this.plugin.getVSSFiles().length;
@@ -1640,11 +1699,6 @@ export class VSS {
         const { profile, profileSignature } = await this.refreshEmbeddingProfile();
         this.assertActive();
 
-        if (!this.localStateReady) {
-            this.status = "disabled";
-            return;
-        }
-
         if (this.index && (this.status === "ready" || this.status === "stale")) {
             return;
         }
@@ -1818,7 +1872,7 @@ export class VSS {
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
 
-        if (cleanedContent.length === 0) {
+        if (cleanedContent.trim().length === 0) {
             return [];
         }
 
@@ -1968,7 +2022,7 @@ export class VSS {
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
         const { content } = this.aiUtils.getDocumentContent(markdown);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
-        if (!cleanedContent) return { hash: null, tooLarge: false };
+        if (!cleanedContent.trim()) return { hash: null, tooLarge: false };
         return { hash: await computeContentHash(cleanedContent), tooLarge: false };
     }
 
@@ -1995,25 +2049,47 @@ export class VSS {
 
     private async persistDirtyJournal() {
         if (this.disposed) return;
-        if (!this.localStateReady) return;
+        if (!await this.ensureLocalStateStoreReady()) {
+            this.dirtyJournalWritePending = true;
+            return;
+        }
         const generation = this.stateGeneration;
-        const snapshot = new Map(this.dirty);
         const write = this.stateWriteChain.catch(() => undefined).then(async () => {
             if (this.disposed || generation !== this.stateGeneration) return;
+            const snapshot = await this.createDirtyJournalSnapshotForWrite();
             await this.stateStore.setDirtyJournal(snapshot);
         });
         this.stateWriteChain = write.then(() => undefined, () => undefined);
-        await write;
+        try {
+            await write;
+            if (!this.disposed && generation === this.stateGeneration) {
+                this.dirtyJournalWritePending = false;
+            }
+        } catch (error) {
+            this.dirtyJournalWritePending = true;
+            this.localStateReady = false;
+            this.plugin.log("Error persisting Memory dirty journal:", error);
+        }
     }
 
-    private async writeLocalIndexState(): Promise<void> {
+    private async createDirtyJournalSnapshotForWrite(): Promise<Map<string, DirtyTimestamps>> {
+        if (this.localStateHydrated || this.localStateClearPending) {
+            return new Map(this.dirty);
+        }
+        const persisted = await this.stateStore.getDirtyJournal();
+        for (const [path, timestamps] of this.dirty) {
+            persisted.set(path, timestamps);
+        }
+        return persisted;
+    }
+
+    private async writeLocalIndexState(generation = this.stateGeneration): Promise<void> {
         if (this.disposed) return;
-        if (!this.localStateReady) return;
         if (!this.index || !this.profile) return;
         const stats = await this.index.getStats();
-        if (this.disposed) return;
+        if (this.disposed || generation !== this.stateGeneration) return;
         this.storageStatus = await this.getStoragePersistenceStatus();
-        if (this.disposed) return;
+        if (this.disposed || generation !== this.stateGeneration) return;
         const now = new Date().toISOString();
         const profileSignature = getEmbeddingProfileSignature(this.profile);
         const previousMarker = this.marker?.profileSignature === profileSignature ? this.marker : null;
@@ -2032,10 +2108,61 @@ export class VSS {
             estimatedDbBytes: stats.estimatedDbBytes,
             estimatedEmbeddingTokens: estimateEmbeddingTokens(stats.chunkCount),
         };
-        await this.stateStore.setMarker(marker);
-        if (this.disposed) return;
         this.marker = marker;
+        this.markerRecoverySuppressed = false;
         this.status = stats.status === "stale" ? "stale" : "ready";
+        await this.persistMarkerSnapshot(marker, generation);
+    }
+
+    private async persistMarkerSnapshot(marker: VSSIndexMarker, generation: number): Promise<void> {
+        if (this.disposed) return;
+        if (!await this.ensureLocalStateStoreReady()) {
+            this.markerWritePending = true;
+            return;
+        }
+        const snapshot = { ...marker };
+        const write = this.stateWriteChain.catch(() => undefined).then(async () => {
+            if (this.disposed || generation !== this.stateGeneration) return;
+            await this.stateStore.setMarker(snapshot);
+        });
+        this.stateWriteChain = write.then(() => undefined, () => undefined);
+        try {
+            await write;
+            if (!this.disposed && generation === this.stateGeneration) {
+                this.markerWritePending = false;
+            }
+        } catch (error) {
+            this.markerWritePending = true;
+            this.localStateReady = false;
+            this.plugin.log("Error persisting Memory local marker:", error);
+        }
+    }
+
+    private async clearLocalStateStore(generation: number): Promise<void> {
+        if (this.disposed || generation !== this.stateGeneration) return;
+        if (!await this.ensureLocalStateStoreReady()) {
+            this.localStateClearPending = true;
+            return;
+        }
+        const write = this.stateWriteChain.catch(() => undefined).then(async () => {
+            if (this.disposed || generation !== this.stateGeneration) return;
+            await this.stateStore.removeMarker();
+            await this.stateStore.clearDirtyJournal();
+        });
+        this.stateWriteChain = write.then(() => undefined, () => undefined);
+        try {
+            await write;
+            if (!this.disposed && generation === this.stateGeneration) {
+                this.localStateClearPending = false;
+                this.localStateHydrated = true;
+                this.dirtyJournalWritePending = false;
+                this.markerWritePending = false;
+            }
+        } catch (error) {
+            this.localStateClearPending = true;
+            this.localStateReady = false;
+            this.plugin.log("Failed to clear Memory local state during reset", error);
+        }
     }
 
     private async getLegacyJsonCacheSummary(): Promise<LegacyJsonSummary> {
@@ -2204,13 +2331,6 @@ function createDefaultVSSIndexStateStore(plugin: PluginManager): VSSIndexStateSt
         plugin.app.vault,
         settings?.statisticsVaultId || "default-vault",
         manifest?.id ?? "personal-assistant",
-    );
-}
-
-function createVectorStateUnavailableError(): Error {
-    return Object.assign(
-        new Error("Memory local state is unavailable because local app storage is not available."),
-        { code: VSS_LOCAL_STATE_UNAVAILABLE_CODE },
     );
 }
 

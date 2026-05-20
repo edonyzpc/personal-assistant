@@ -3,7 +3,7 @@ import { VSS } from '../src/vss';
 import { computeContentHash, DirtyTimestamps } from '../src/vss-helpers';
 import { TFile } from 'obsidian';
 import type { EmbeddingProfile, VectorIndex, VectorIndexStatus, VectorSearchResult, VSSChunk, VSSFileRecord, VSSFileState, VSSIndexMarker, VSSIndexStats } from '../src/vss/types';
-import { MemoryVSSIndexStateStore, UnavailableVSSIndexStateStore } from '../src/vss/local-state-store';
+import { MemoryVSSIndexStateStore } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
 
 const mockNoticeMessages: string[] = [];
@@ -155,6 +155,92 @@ class DelayedDirtyStateStore extends MemoryVSSIndexStateStore {
     release(): void {
         this.releaseWrite?.();
     }
+}
+
+class FailingClearStateStore extends MemoryVSSIndexStateStore {
+    failNextClear = true;
+
+    async removeMarker(): Promise<void> {
+        if (this.failNextClear) {
+            this.failNextClear = false;
+            throw new Error('clear blocked once');
+        }
+        await super.removeMarker();
+    }
+}
+
+class FailingDirtyWriteOnceStateStore extends MemoryVSSIndexStateStore {
+    initializeCalls = 0;
+    failNextDirtyWrite = true;
+
+    async initialize(): Promise<void> {
+        this.initializeCalls++;
+        await super.initialize();
+    }
+
+    async setDirtyJournal(dirty: Map<string, DirtyTimestamps>): Promise<void> {
+        if (this.failNextDirtyWrite) {
+            this.failNextDirtyWrite = false;
+            throw new Error('dirty write failed once');
+        }
+        await super.setDirtyJournal(dirty);
+    }
+}
+
+class FailingOnceStateStore extends MemoryVSSIndexStateStore {
+    initializeCalls = 0;
+
+    async initialize(): Promise<void> {
+        this.initializeCalls++;
+        if (this.initializeCalls === 1) {
+            throw new Error('indexeddb blocked once');
+        }
+        await super.initialize();
+    }
+}
+
+class BlockingStatsVectorIndex extends FakeVectorIndex {
+    private releaseStats: (() => void) | null = null;
+    private statsStarted: Promise<void> | null = null;
+    private resolveStatsStarted: (() => void) | null = null;
+
+    getStats = jest.fn<() => Promise<VSSIndexStats>>(async () => {
+        this.statsStarted = new Promise((resolve) => {
+            this.resolveStatsStarted = resolve;
+        });
+        this.resolveStatsStarted?.();
+        await new Promise<void>((resolve) => {
+            this.releaseStats = resolve;
+        });
+        return {
+            status: this.status,
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: this.records.size,
+            fileCount: this.records.size,
+            fallbackMode: false,
+        };
+    });
+
+    async waitForStatsStarted(): Promise<void> {
+        while (!this.statsStarted) {
+            await Promise.resolve();
+        }
+        await this.statsStarted;
+    }
+
+    release(): void {
+        this.releaseStats?.();
+    }
+}
+
+function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void; reject: (reason?: unknown) => void } {
+    let resolve!: (value: T) => void;
+    let reject!: (reason?: unknown) => void;
+    const promise = new Promise<T>((res, rej) => {
+        resolve = res;
+        reject = rej;
+    });
+    return { promise, resolve, reject };
 }
 
 const createMissingFileError = (): NodeJS.ErrnoException => {
@@ -346,25 +432,73 @@ describe('VSS SQLite/WASM lifecycle', () => {
         vss.dispose();
     });
 
-    it('stops before note reads or embeddings when local VSS state is unavailable', async () => {
+    it('keeps VSS updates running in memory and persists local state after an IndexedDB retry', async () => {
+        const stateStore = new FailingOnceStateStore();
         const file = createTFile('note.md', { size: 4, mtime: 1, ctime: 1 }, 'md', 'note.md');
         const { plugin, mockAdapter } = createPlugin({
-            createVSSIndexStateStore: jest.fn(() => new UnavailableVSSIndexStateStore()),
+            createVSSIndexStateStore: jest.fn(() => stateStore),
             getVSSFiles: jest.fn(() => [file]),
+        });
+        const index = new FakeVectorIndex();
+        setMockSqliteIndex(index);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'note.md') return 'hello memory';
+            throw createMissingFileError();
         });
         const vss = new VSS(plugin, 'cache');
         const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
-        await expect(vss.rebuildLocalIndex({ silent: true })).rejects.toMatchObject({
-            code: 'vss-local-state-unavailable',
-        });
+        const summary = await vss.rebuildLocalIndex({ silent: true });
         const readiness = await vss.getMemoryReadiness();
 
-        expect(readiness.reason).toBe('unavailable');
-        expect(plugin.getVSSFiles).not.toHaveBeenCalled();
-        expect(mockAdapter.read).not.toHaveBeenCalledWith('note.md');
-        expect(createEmbeddings).not.toHaveBeenCalled();
-        expect(MockSqliteVectorIndex).not.toHaveBeenCalled();
+        expect(summary.updated).toBe(1);
+        expect(readiness.reason).toBe('ready');
+        expect(stateStore.initializeCalls).toBeGreaterThanOrEqual(2);
+        expect(mockAdapter.read).toHaveBeenCalledWith('note.md');
+        expect(createEmbeddings).toHaveBeenCalled();
+        await expect(stateStore.getMarker()).resolves.toMatchObject({
+            backend: 'sqlite-wasm-opfs-sahpool',
+            chunkCount: 1,
+            fileCount: 1,
+        });
+        vss.dispose();
+    });
+
+    it('merges persisted dirty journal entries when IndexedDB opens after an unhydrated dirty write', async () => {
+        const stateStore = new FailingOnceStateStore();
+        await stateStore.setDirtyJournal(new Map([['old.md', { first: 1, last: 2, epoch: 3 }]]));
+        const { plugin } = createPlugin({
+            createVSSIndexStateStore: jest.fn(() => stateStore),
+        });
+        setMockSqliteIndex(new FakeVectorIndex());
+        const vss = new VSS(plugin, 'cache');
+        const file = createTFile('new.md', { size: 4, mtime: 1, ctime: 1 }, 'md', 'new.md');
+
+        await vss.initialize();
+        await vss.markDirtyIfEligible(file);
+
+        const dirty = await stateStore.getDirtyJournal();
+        expect(dirty.has('old.md')).toBe(true);
+        expect(dirty.has('new.md')).toBe(true);
+        vss.dispose();
+    });
+
+    it('reopens local state after a dirty journal transaction failure', async () => {
+        const stateStore = new FailingDirtyWriteOnceStateStore();
+        const { plugin } = createPlugin({
+            createVSSIndexStateStore: jest.fn(() => stateStore),
+        });
+        const firstFile = createTFile('first.md', { size: 4, mtime: 1, ctime: 1 }, 'md', 'first.md');
+        const secondFile = createTFile('second.md', { size: 4, mtime: 1, ctime: 1 }, 'md', 'second.md');
+        const vss = new VSS(plugin, 'cache');
+
+        await vss.markDirtyIfEligible(firstFile);
+        await vss.markDirtyIfEligible(secondFile);
+
+        const dirty = await stateStore.getDirtyJournal();
+        expect(stateStore.initializeCalls).toBeGreaterThanOrEqual(2);
+        expect(dirty.has('first.md')).toBe(true);
+        expect(dirty.has('second.md')).toBe(true);
         vss.dispose();
     });
 
@@ -385,6 +519,61 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
         await expect(stateStore.getDirtyJournal()).resolves.toEqual(new Map());
         expect(((vss as any).dirty as Map<string, DirtyTimestamps>).size).toBe(0); // eslint-disable-line @typescript-eslint/no-explicit-any
+        vss.dispose();
+    });
+
+    it('retries reset state clearing without resurrecting old marker or dirty state', async () => {
+        const stateStore = new FailingClearStateStore();
+        await stateStore.setMarker(createReadyMarker({ chunkCount: 1, fileCount: 1 }));
+        await stateStore.setDirtyJournal(new Map([['old.md', { first: 1, last: 2, epoch: 3 }]]));
+        const { plugin } = createPlugin({
+            createVSSIndexStateStore: jest.fn(() => stateStore),
+        });
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', {
+            path: 'note.md',
+            contentHash: 'hash',
+            mtime: 1,
+            size: 2,
+            status: 'ready',
+            updatedAt: 3,
+        });
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, index);
+
+        await vss.resetLocalIndex();
+        await vss.getStats();
+
+        await expect(stateStore.getMarker()).resolves.toBeNull();
+        await expect(stateStore.getDirtyJournal()).resolves.toEqual(new Map());
+        expect((vss as any).marker).toBeNull(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(((vss as any).dirty as Map<string, DirtyTimestamps>).size).toBe(0); // eslint-disable-line @typescript-eslint/no-explicit-any
+        vss.dispose();
+    });
+
+    it('does not let an in-flight marker write resurrect state after reset', async () => {
+        const { plugin, vssStateStore } = createPlugin();
+        const index = new BlockingStatsVectorIndex();
+        index.records.set('note.md', {
+            path: 'note.md',
+            contentHash: 'hash',
+            mtime: 1,
+            size: 2,
+            status: 'ready',
+            updatedAt: 3,
+        });
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, index);
+
+        const markerWrite = (vss as any).writeLocalIndexState(); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await index.waitForStatsStarted();
+        const reset = vss.resetLocalIndex();
+        index.release();
+        await markerWrite;
+        await reset;
+
+        await expect(vssStateStore.getMarker()).resolves.toBeNull();
+        expect((vss as any).marker).toBeNull(); // eslint-disable-line @typescript-eslint/no-explicit-any
         vss.dispose();
     });
 
@@ -763,13 +952,13 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(index.upsertFile).toHaveBeenCalledWith(expect.objectContaining({ path: 'keep.md' }), expect.any(Array), expect.any(Array));
     });
 
-    it('removes stale index entries when cleaned markdown content is empty', async () => {
+    it('removes stale index entries when cleaned markdown content is empty or blank', async () => {
         const { plugin, mockAdapter, vssStateStore } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         const index = new FakeVectorIndex();
         attachReadyIndex(vss, index);
-        mockAdapter.read.mockResolvedValue('');
-        const emptyFile = createTFile('empty.md', { size: 0, mtime: Date.now(), ctime: Date.now() }, 'md', 'empty.md');
+        mockAdapter.read.mockResolvedValue('\n\n');
+        const emptyFile = createTFile('empty.md', { size: 2, mtime: Date.now(), ctime: Date.now() }, 'md', 'empty.md');
 
         const status = await vss.refreshFileCache(emptyFile);
 
@@ -884,6 +1073,31 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(persistedDirty.has('created.md')).toBe(true);
         expect(persistedDirty.has('changed.md')).toBe(false);
         expect(mockAdapter.write).not.toHaveBeenCalledWith('cache/dirty.json', expect.any(String));
+    });
+
+    it('does not keep empty or blank missing records dirty during reconcile', async () => {
+        const now = Date.now();
+        const emptyFile = createTFile('empty.md', { size: 2, mtime: now, ctime: now }, 'md', 'empty.md');
+        const { plugin, mockAdapter, vssStateStore } = createPlugin({
+            getVSSFiles: jest.fn(() => [emptyFile]),
+        });
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'empty.md') return '\n\n';
+            throw createMissingFileError();
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+
+        await vss.markDirtyIfEligible(emptyFile);
+        const summary = await vss.reconcileLocalFiles({ verifyHashLimit: 0 });
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const persistedDirty = await vssStateStore.getDirtyJournal();
+        expect(summary.markedDirty).toBe(0);
+        expect(summary.removed).toBe(1);
+        expect(dirtyMap.has('empty.md')).toBe(false);
+        expect(persistedDirty.has('empty.md')).toBe(false);
     });
 
     it('does not mark metadata-only reconcile drift dirty when content is unchanged', async () => {
@@ -1778,6 +1992,47 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(mockAdapter.remove).toHaveBeenCalledWith('cache/note.md.json');
         expect(mockAdapter.remove).toHaveBeenCalledWith('cache/other.md.json');
         expect(mockAdapter.remove).not.toHaveBeenCalledWith('cache/dirty.json');
+    });
+
+    it('does not clean legacy JSON if state changes while confirmation is open', async () => {
+        const { plugin, mockAdapter } = createPlugin();
+        const index = new FakeVectorIndex();
+        index.records.set('note.md', {
+            path: 'note.md',
+            contentHash: 'hash',
+            mtime: 1,
+            size: 2,
+            status: 'ready',
+            updatedAt: 3,
+        });
+        mockAdapter.list.mockImplementation(async (path) => {
+            if (path === 'cache') {
+                return {
+                    files: ['cache/note.md.json', 'cache/other.md.json'],
+                    folders: [],
+                };
+            }
+            return { files: [], folders: [] };
+        });
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'cache/note.md.json') return '12345';
+            if (path === 'cache/other.md.json') return '1234567';
+            throw createMissingFileError();
+        });
+        const confirmation = createDeferred<boolean>();
+        mockConfirmUserAction.mockImplementation(() => confirmation.promise);
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, index);
+
+        const cleanup = vss.cleanLegacyJsonCache();
+        await Promise.resolve();
+        await vss.resetLocalIndex();
+        confirmation.resolve(true);
+        await cleanup;
+
+        expect(mockAdapter.remove).not.toHaveBeenCalledWith('cache/note.md.json');
+        expect(mockAdapter.remove).not.toHaveBeenCalledWith('cache/other.md.json');
+        expect(mockNoticeMessages).toContain('Old memory cache was not cleaned because diagnostic state changed.');
     });
 
     it('does not clean legacy JSON when SQLite stats are not safely ready', async () => {
