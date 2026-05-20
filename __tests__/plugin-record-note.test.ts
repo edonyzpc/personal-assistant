@@ -82,6 +82,7 @@ const memorySettings = {
     showAdvancedMemoryControls: false,
     qwenThinkingEnabled: false,
     qwenWebSearchEnabled: false,
+    statisticsVaultId: 'vault-id',
 };
 
 const createPluginHarness = ({
@@ -155,6 +156,7 @@ describe('plugin startup view registration', () => {
     it('registers custom views during onload before layout-ready work runs', async () => {
         const originalDocument = globalThis.document;
         const originalMutationObserver = globalThis.MutationObserver;
+        const startupOrder: string[] = [];
         const layoutCallbacks: Array<() => void> = [];
         const registerView = jest.fn();
         const onLayoutReady = jest.fn((callback: () => void) => {
@@ -184,8 +186,15 @@ describe('plugin startup view registration', () => {
         };
         plugin.settings = { debug: false, showAdvancedMemoryControls: false };
         plugin.loadSettings = jest.fn(async () => undefined);
-        plugin.migrateSettings = jest.fn();
-        plugin.initVss = jest.fn(() => ({}));
+        plugin.migrateSettings = jest.fn(async () => {
+            startupOrder.push('migrate-start');
+            await Promise.resolve();
+            startupOrder.push('migrate-saved');
+        });
+        plugin.initVss = jest.fn(() => {
+            startupOrder.push('init-vss');
+            return {};
+        });
         plugin.registerView = registerView;
         plugin.updateMemoryStatusBar = jest.fn(async () => undefined);
         plugin.initializeCalloutManager = jest.fn(async () => undefined);
@@ -199,6 +208,7 @@ describe('plugin startup view registration', () => {
         try {
             await plugin.onload();
 
+            expect(startupOrder).toEqual(['migrate-start', 'migrate-saved', 'init-vss']);
             expect(registerView).toHaveBeenCalledWith('record-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('stat-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
@@ -219,7 +229,7 @@ describe('plugin startup view registration', () => {
 });
 
 describe('settings migration', () => {
-    it('preserves the old default Qwen v3 embedding model and only shows a migration notice', () => {
+    it('preserves the old default Qwen v3 embedding model and only shows a migration notice', async () => {
         mockNoticeMessages.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
@@ -232,7 +242,7 @@ describe('settings migration', () => {
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
 
-        plugin.migrateSettings();
+        await plugin.migrateSettings();
 
         expect(plugin.settings.embeddingModelName).toBe('text-embedding-v3');
         expect(plugin.settings.embeddingV4MigrationNoticeDismissed).toBe(true);
@@ -243,7 +253,7 @@ describe('settings migration', () => {
         expect(plugin.vss).toBeUndefined();
     });
 
-    it('does not bother custom embedding models during migration', () => {
+    it('does not bother custom embedding models during migration', async () => {
         mockNoticeMessages.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
@@ -256,7 +266,7 @@ describe('settings migration', () => {
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
 
-        plugin.migrateSettings();
+        await plugin.migrateSettings();
 
         expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');
         expect(plugin.settings.embeddingV4MigrationNoticeDismissed).toBe(false);
@@ -264,7 +274,7 @@ describe('settings migration', () => {
         expect(mockNoticeMessages).toEqual([]);
     });
 
-    it('enables memory defaults for older settings without changing AI model settings', () => {
+    it('enables memory defaults for older settings without changing AI model settings', async () => {
         mockNoticeMessages.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
@@ -276,7 +286,7 @@ describe('settings migration', () => {
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
 
-        plugin.migrateSettings();
+        await plugin.migrateSettings();
 
         expect(plugin.settings.memoryEnabled).toBe(true);
         expect(plugin.settings.memoryAutoCheckBeforeChat).toBe(true);
@@ -284,12 +294,14 @@ describe('settings migration', () => {
         expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
         expect(plugin.settings.qwenThinkingEnabled).toBe(false);
         expect(plugin.settings.qwenWebSearchEnabled).toBe(false);
+        expect(plugin.settings.statisticsVaultId).toEqual(expect.any(String));
+        expect(plugin.settings.statisticsVaultId.length).toBeGreaterThan(0);
         expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages).toEqual([]);
     });
 
-    it('preserves the background memory approval policy during migration', () => {
+    it('preserves the background memory approval policy during migration', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
             aiProvider: 'openai',
@@ -302,17 +314,18 @@ describe('settings migration', () => {
             showAdvancedMemoryControls: false,
             qwenThinkingEnabled: false,
             qwenWebSearchEnabled: false,
+            statisticsVaultId: 'vault-id',
         };
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
 
-        plugin.migrateSettings();
+        await plugin.migrateSettings();
 
         expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
         expect(plugin.saveSettings).not.toHaveBeenCalled();
     });
 
-    it('preserves an intentionally empty memory exclude path during migration', () => {
+    it('preserves an intentionally empty memory exclude path during migration', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.app = {
             vault: {
@@ -330,13 +343,14 @@ describe('settings migration', () => {
             showAdvancedMemoryControls: false,
             qwenThinkingEnabled: false,
             qwenWebSearchEnabled: false,
+            statisticsVaultId: 'vault-id',
             statsPath: '.vault-config/stats.json',
             vssCacheExcludePath: [],
         };
         plugin.saveSettings = jest.fn();
         plugin.log = jest.fn();
 
-        plugin.migrateSettings();
+        await plugin.migrateSettings();
 
         expect(plugin.settings.vssCacheExcludePath).toEqual([]);
         expect(plugin.saveSettings).not.toHaveBeenCalled();

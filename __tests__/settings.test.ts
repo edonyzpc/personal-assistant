@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from '@jest/globals';
 
 jest.mock('obsidian', () => ({
     App: class { },
+    Notice: class { },
     Platform: { isDesktop: true, isMobile: false },
     PluginSettingTab: class {
         containerEl = { empty: jest.fn() };
@@ -22,7 +23,7 @@ jest.mock('../src/utils', () => ({
     personalAssitant: 'personal-assistant',
 }));
 
-import { updateQwenResponseOptionAvailability } from '../src/settings';
+import { STATISTICS_SYNC_SETTING_DESC, updateQwenResponseOptionAvailability } from '../src/settings';
 
 class MockDescription {
     text = '';
@@ -69,5 +70,13 @@ describe('Qwen response option settings', () => {
             toggles,
         )).toBe(true);
         expect(toggles.map((toggle) => toggle.disabled)).toEqual([false, false]);
+    });
+});
+
+describe('Statistics settings copy', () => {
+    it('explains sync without exposing storage internals', () => {
+        expect(STATISTICS_SYNC_SETTING_DESC).toContain('writing history can sync across devices');
+        expect(STATISTICS_SYNC_SETTING_DESC).toContain('ongoing Git changes from synced history');
+        expect(STATISTICS_SYNC_SETTING_DESC).not.toMatch(/jsonl|v2|shard|indexeddb|deviceid/i);
     });
 });
