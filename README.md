@@ -101,7 +101,7 @@ Automatic maintenance only writes to the durable SQLite/WASM backend. If the plu
 
 ### Network and privacy note
 
-Personal Assistant does not include telemetry or analytics. Local statistics are written in your vault configuration folder and are not uploaded by the plugin.
+Personal Assistant does not include telemetry or analytics. By default, Statistics history is stored in local Obsidian app storage on the current device and is not uploaded by the plugin. If you enable cross-device Statistics history, the plugin creates vault-visible Statistics history files so your normal vault sync can carry them; Git users will see those files change.
 
 | Feature | Trigger | Data sent | Destination | Background? | User control |
 | --- | --- | --- | --- | --- | --- |
