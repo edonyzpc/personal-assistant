@@ -72,6 +72,7 @@ interface StatsMigrationMetadata {
   v2ImportFingerprint: string;
   validShardCount: number;
   corruptShardCount: number;
+  duplicateEquivalentShardCount?: number;
   importedRecordKeyCount: number;
   aggregateHash: string;
   cleanupStatus: "not-started" | "complete" | "blocked" | "failed";
@@ -87,6 +88,8 @@ interface StatsSyncState {
   }>;
 }
 ```
+
+`validShardCount` counts valid source records seen during import, including equivalent duplicates that are safely deduplicated. `importedRecordKeyCount` counts unique records written to the local store.
 
 `vaultId` is generated once in plugin settings and reused. The local IndexedDB scope must include plugin id, `vaultId`, and a config-dir or base-path hash so copied vaults on the same machine do not accidentally share local Statistics storage. Do not derive the scope solely from vault name because users can rename vaults.
 
