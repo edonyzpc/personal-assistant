@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Platform, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, Platform, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
@@ -8,7 +8,6 @@ import { isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { CryptoHelper, personalAssitant } from './utils'
-import { getVaultConfigDir, joinVaultConfigPath } from "./obsidian-paths";
 import { confirmUserAction } from "./confirm";
 
 export interface ResizeStyle {
@@ -49,6 +48,8 @@ export interface PluginManagerSettings {
     cacheThemeRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
     statisticsType: string;
     statsPath: string;
+    statisticsVaultId: string;
+    statisticsSyncEnabled: boolean;
     displaySectionCounts: boolean;
     countComments: boolean;
     animation: boolean;
@@ -117,6 +118,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     },
     statisticsType: "overview",
     statsPath: "",
+    statisticsVaultId: "",
+    statisticsSyncEnabled: false,
     displaySectionCounts: false,
     countComments: false,
     animation: false,
@@ -161,6 +164,8 @@ const QWEN_RESPONSE_OPTIONS_DASHSCOPE_DESC =
     "These options apply only to final chat answers through Alibaba Cloud DashScope. They do not change Memory from your notes.";
 const QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC =
     "Qwen thinking and web search are available only with the DashScope OpenAI-compatible base URL.";
+export const STATISTICS_SYNC_SETTING_DESC =
+    "Creates Statistics history files inside this plugin's vault folder so writing history can sync across devices. Leave off to avoid ongoing Git changes from synced history.";
 
 interface QwenResponseOptionToggle {
     setDisabled(disabled: boolean): unknown;
@@ -601,18 +606,24 @@ export class SettingTab extends PluginSettingTab {
                     this.app.workspace.revealLeaf(leaf);
                 });
             });
-        const configDir = getVaultConfigDir(this.app.vault);
-        const defaultLegacyStatsPath = joinVaultConfigPath(configDir, "stats.json");
-        new Setting(containerEl)
-            .setName("Legacy Vault Stats File Path")
-            .setDesc(`Used to migrate existing statistics. New statistics are stored as daily device shards under ${joinVaultConfigPath(configDir, "personal-assistant-stats/v2")}/.`)
-            .addText((text) => {
-                text.setPlaceholder(defaultLegacyStatsPath);
-                text.setValue(this.plugin.settings.statsPath.toString() || defaultLegacyStatsPath);
-                text.onChange(async (value: string) => {
-                    this.plugin.settings.statsPath = value;
-                    await this.plugin.saveSettings();
-                });
+        new Setting(containerEl).setName("Sync statistics history across devices")
+            .setDesc(STATISTICS_SYNC_SETTING_DESC)
+            .addToggle((toggle) => {
+                toggle.setValue(Boolean(this.plugin.settings.statisticsSyncEnabled))
+                    .onChange(async (value) => {
+                        const previousValue = Boolean(this.plugin.settings.statisticsSyncEnabled);
+                        this.plugin.settings.statisticsSyncEnabled = value;
+                        try {
+                            await this.plugin.statsManager?.setStatisticsSyncEnabled(value);
+                            await this.plugin.saveSettings();
+                        } catch (error) {
+                            this.plugin.settings.statisticsSyncEnabled = previousValue;
+                            toggle.setValue(previousValue);
+                            await this.plugin.saveSettings();
+                            this.plugin.log("Failed to change Statistics sync setting", error);
+                            new Notice("Could not change Statistics sync setting. Your notes are not affected.", 5000);
+                        }
+                    });
             });
         new Setting(containerEl).setName("Animation").addToggle((cb) =>
             cb.setValue(this.plugin.settings.animation)

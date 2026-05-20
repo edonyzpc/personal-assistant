@@ -15,7 +15,7 @@ const STATS_STORE_CHILD_PATH = "personal-assistant-stats/v2";
 export const LEGACY_STATS_PATH = joinVaultConfigPath(LEGACY_CONFIG_DIR, "stats.json");
 export const STATS_STORE_ROOT = joinVaultConfigPath(LEGACY_CONFIG_DIR, STATS_STORE_CHILD_PATH);
 export const STATS_DAILY_ROOT = `${STATS_STORE_ROOT}/daily`;
-const LEGACY_DEVICE_ID = "legacy";
+export const LEGACY_DEVICE_ID = "legacy";
 export const DEVICE_STORAGE_KEY = "personal-assistant.stats.deviceId.v2";
 
 export type StatisticsView = "overview" | "daily" | "growth" | "composition";
@@ -128,7 +128,7 @@ function normalizeSnapshot(value: unknown): SnapshotCounts {
     };
 }
 
-function parseShard(value: unknown): StatsDeviceShard | null {
+export function parseStatsShard(value: unknown): StatsDeviceShard | null {
     if (!isObject(value)) return null;
     if (value.version !== STATS_STORE_VERSION) return null;
     if (typeof value.date !== "string" || typeof value.deviceId !== "string") {
@@ -143,7 +143,7 @@ function parseShard(value: unknown): StatsDeviceShard | null {
     );
 }
 
-function dayToLegacyShard(date: string, day: unknown): StatsDeviceShard {
+export function legacyStatsDayToShard(date: string, day: unknown): StatsDeviceShard {
     const source = isObject(day) ? day : {};
     return createStatsShard(
         date,
@@ -428,7 +428,7 @@ export class StatsStore {
             const path = this.getShardPath(date, LEGACY_DEVICE_ID);
             await this.ensureFolder(folder);
             if (await this.safeExists(path)) continue;
-            await this.vault.adapter.write(path, JSON.stringify(dayToLegacyShard(date, day), null, 2));
+            await this.vault.adapter.write(path, JSON.stringify(legacyStatsDayToShard(date, day), null, 2));
         }
     }
 
@@ -484,7 +484,7 @@ export class StatsStore {
         if (!(await this.safeExists(path))) return null;
         try {
             const parsed = JSON.parse(await this.vault.adapter.read(path));
-            const shard = parseShard(parsed);
+            const shard = parseStatsShard(parsed);
             if (!shard) {
                 errors.push({ path, message: "Invalid statistics shard shape." });
                 return null;

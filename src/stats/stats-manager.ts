@@ -13,8 +13,8 @@ import {
     createStatsShard,
     emptyActivityCounts,
     emptySnapshotCounts,
-    StatsStore,
 } from "./stats-store";
+import { createStatsRepository, type StatsRepository } from "./stats-repository";
 import {
     getCharacterCount,
     getSentenceCount,
@@ -55,7 +55,7 @@ export default class StatsManager {
     private vault: Vault;
     private workspace: Workspace;
     private plugin: PluginManager;
-    private store: StatsStore;
+    private store: StatsRepository;
     private modifiedFiles: ModifiedFiles = {};
     private baseActivity: ActivityCounts = emptyActivityCounts();
     private today: string;
@@ -63,7 +63,9 @@ export default class StatsManager {
     private initialized = false;
     private pendingChanges: PendingTextChange[] = [];
     private pendingWrite: Promise<void> | null = null;
-    private hasPendingWrite = false;
+    private writeGeneration = 0;
+    private persistedWriteGeneration = 0;
+    private stateGeneration = 0;
     private snapshotRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     private isDisposed = false;
     private ready: Promise<void>;
@@ -75,7 +77,7 @@ export default class StatsManager {
         this.workspace = app.workspace;
         this.plugin = plugin;
         this.today = moment().format("YYYY-MM-DD");
-        this.store = new StatsStore(this.vault, this.plugin.settings.statsPath);
+        this.store = this.createStore(this.plugin.settings.statisticsSyncEnabled);
         this.debounceChange = debounce(
             (filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider) =>
                 this.change(filePath, currentText, previousText),
@@ -87,7 +89,6 @@ export default class StatsManager {
             getStatsWriteDelayMs(Platform.isMobile),
             true
         );
-
         this.plugin.registerEvent(
             this.vault.on("rename", (newFile, oldPath) => {
                 this.invalidateDashboardCacheForPath(newFile.path);
@@ -143,12 +144,42 @@ export default class StatsManager {
         await this.flush();
     }
 
+    async setStatisticsSyncEnabled(enabled: boolean): Promise<void> {
+        await this.flushLocalOnly();
+        const previousStore = this.store;
+        const previousInitialized = this.initialized;
+        const previousCurrentShard = this.currentShard;
+        const previousBaseActivity = { ...this.baseActivity };
+        const previousReady = this.ready;
+        this.stateGeneration += 1;
+        this.store = this.createStore(enabled);
+        this.initialized = false;
+        this.currentShard = null;
+        this.baseActivity = emptyActivityCounts();
+        this.ready = this.initialize();
+        try {
+            await this.ready;
+            if (enabled) {
+                await this.store.checkpointSync();
+            }
+        } catch (error) {
+            this.stateGeneration += 1;
+            this.store = previousStore;
+            this.initialized = previousInitialized;
+            this.currentShard = previousCurrentShard;
+            this.baseActivity = previousBaseActivity;
+            this.ready = previousReady;
+            throw error;
+        }
+    }
+
     async updateToday(): Promise<void> {
         await this.ensureToday();
         if (!this.currentShard) return;
         this.currentShard.snapshot = await this.calcSnapshot();
         this.currentShard.updatedAt = new Date().toISOString();
         await this.writeCurrentShardNow();
+        await this.checkpointSync();
     }
 
     public async change(filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider): Promise<void> {
@@ -214,9 +245,15 @@ export default class StatsManager {
         this.currentShard.snapshot = await this.calcSnapshot();
         this.currentShard.updatedAt = new Date().toISOString();
         await this.writeCurrentShardNow();
+        await this.checkpointSync();
     }
 
     public async flush(): Promise<void> {
+        await this.flushLocalOnly();
+        await this.checkpointSync();
+    }
+
+    private async flushLocalOnly(): Promise<void> {
         const pendingChange = this.debounceChange.run();
         if (pendingChange) await pendingChange;
 
@@ -225,7 +262,7 @@ export default class StatsManager {
         const pendingWrite = this.debounceWrite.run();
         if (pendingWrite) await pendingWrite;
         if (this.pendingWrite) await this.pendingWrite;
-        if (this.hasPendingWrite) await this.writeCurrentShard();
+        if (this.hasUnpersistedWrite()) await this.writeCurrentShard();
     }
 
     public dispose(): void {
@@ -301,6 +338,7 @@ export default class StatsManager {
     private async ensureToday(): Promise<void> {
         const currentDate = moment().format("YYYY-MM-DD");
         if (this.today !== currentDate) {
+            await this.flushCurrentShardBeforeRollover();
             this.today = currentDate;
             this.modifiedFiles = {};
             this.baseActivity = emptyActivityCounts();
@@ -387,7 +425,7 @@ export default class StatsManager {
     }
 
     private scheduleWrite(): void {
-        this.hasPendingWrite = true;
+        this.writeGeneration += 1;
         if (this.isDisposed) return;
         this.debounceWrite();
     }
@@ -399,16 +437,47 @@ export default class StatsManager {
 
     private async writeCurrentShard(): Promise<void> {
         if (!this.currentShard) return;
+        const generation = this.writeGeneration;
         const write = this.store.writeOwnShard(this.currentShard);
         this.pendingWrite = write;
         try {
             await write;
-            this.hasPendingWrite = false;
+            this.persistedWriteGeneration = Math.max(this.persistedWriteGeneration, generation);
+            await this.checkpointSync();
         } finally {
             if (this.pendingWrite === write) {
                 this.pendingWrite = null;
             }
         }
+    }
+
+    private async flushCurrentShardBeforeRollover(): Promise<void> {
+        this.debounceWrite.cancel();
+        if (this.pendingWrite) await this.pendingWrite;
+        if (this.hasUnpersistedWrite()) {
+            await this.writeCurrentShard();
+        }
+    }
+
+    private hasUnpersistedWrite(): boolean {
+        return this.writeGeneration > this.persistedWriteGeneration;
+    }
+
+    private async checkpointSync(): Promise<void> {
+        if (!this.plugin.settings.statisticsSyncEnabled) return;
+        try {
+            await this.store.checkpointSync();
+        } catch (error) {
+            this.plugin.log("Failed to sync statistics history", error);
+        }
+    }
+
+    private createStore(syncEnabled: boolean): StatsRepository {
+        return createStatsRepository(this.vault, {
+            legacyStatsPath: this.plugin.settings.statsPath,
+            vaultId: this.plugin.settings.statisticsVaultId,
+            syncEnabled,
+        });
     }
 
     private scheduleSnapshotRefresh(): void {
@@ -422,14 +491,16 @@ export default class StatsManager {
 
     private async refreshSnapshotInBackground(): Promise<void> {
         try {
+            const generation = this.stateGeneration;
             if (this.isDisposed) return;
             await this.ensureToday();
-            if (!this.currentShard) return;
-            const snapshot = await this.calcSnapshot(() => this.isDisposed);
+            if (this.isDisposed || generation !== this.stateGeneration || !this.currentShard) return;
+            const shard = this.currentShard;
+            const snapshot = await this.calcSnapshot(() => this.isDisposed || generation !== this.stateGeneration);
             if (!snapshot) return;
-            this.currentShard.snapshot = snapshot;
-            if (this.isDisposed) return;
-            this.currentShard.updatedAt = new Date().toISOString();
+            if (this.isDisposed || generation !== this.stateGeneration || this.currentShard !== shard) return;
+            shard.snapshot = snapshot;
+            shard.updatedAt = new Date().toISOString();
             this.scheduleWrite();
         } catch (error) {
             if (!this.isDisposed) {

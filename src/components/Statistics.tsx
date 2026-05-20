@@ -100,6 +100,22 @@ function uniqueDeviceCount(days: StatsDashboardDay[]): number {
 	return new Set(days.flatMap((day) => day.deviceIds)).size;
 }
 
+export function shouldShowDevicesMetric(syncEnabled: boolean, deviceCount: number): boolean {
+	return syncEnabled && deviceCount > 1;
+}
+
+export function getStatisticsIssueMessage(errorCount: number): string | null {
+	if (errorCount <= 0) return null;
+	const issueText = errorCount === 1 ? "issue needs" : "issues need";
+	return `${formatNumber(errorCount)} Statistics history ${issueText} attention. Some writing history could not be loaded, so this view may be incomplete. Your notes are not affected.`;
+}
+
+export function getStatisticsEmptyStateMessage(errorCount: number): string {
+	return errorCount > 0
+		? "Statistics history is unavailable right now. Your notes are not affected."
+		: "No statistics yet.";
+}
+
 function getUpdatedAt(days: StatsDashboardDay[]): string {
 	const latest = days
 		.map((day) => day.updatedAt)
@@ -107,11 +123,6 @@ function getUpdatedAt(days: StatsDashboardDay[]): string {
 		.sort()
 		.pop();
 	return latest ? latest.replace("T", " ").replace(/\.\d{3}Z$/, " UTC") : "No data";
-}
-
-function shortDeviceId(deviceId: string): string {
-	if (!deviceId || deviceId.length <= 14) return deviceId;
-	return `${deviceId.slice(0, 8)}...${deviceId.slice(-4)}`;
 }
 
 function metricCard(label: string, value: string, compact: boolean, detail?: string) {
@@ -178,6 +189,10 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const activeWritingDays30 = recentDays.filter((day) => day.words > 0).length;
 	const writtenWordsAll = days.reduce((sum, day) => sum + day.words, 0);
 	const writtenPagesAll = days.reduce((sum, day) => sum + day.pages, 0);
+	const deviceCount = uniqueDeviceCount(days);
+	const showDevicesMetric = shouldShowDevicesMetric(Boolean(plugin.settings.statisticsSyncEnabled), deviceCount);
+	const issueMessage = getStatisticsIssueMessage(dashboardData.errors.length);
+	const emptyStateMessage = getStatisticsEmptyStateMessage(dashboardData.errors.length);
 
 	const chartAnimation = compact ? false : plugin.settings.animation ? { duration: medium ? 250 : 500 } : false;
 	const pointRadius = compact ? 0 : medium ? 1 : 3;
@@ -389,17 +404,16 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 						))}
 					</div>
 				</div>
-				{dashboardData.errors.length > 0 ? (
+				{issueMessage ? (
 					<div className="pa-mt-3 pa-rounded-md pa-border pa-border-amber-200 pa-bg-amber-50 pa-p-2 pa-text-xs pa-text-amber-900">
-						{dashboardData.errors.length} statistics file issue
-						{dashboardData.errors.length === 1 ? "" : "s"} found. The chart skipped invalid data.
+						{issueMessage}
 					</div>
 				) : null}
 			</div>
 
 			{!hasData ? (
 				<div className="pa-m-4 pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-6 pa-text-sm pa-text-slate-500">
-					No statistics yet.
+					{emptyStateMessage}
 				</div>
 			) : (
 				<div className={`pa-flex pa-flex-1 pa-flex-col pa-gap-4 ${compact ? "pa-p-3" : "pa-p-4"}`}>
@@ -429,7 +443,9 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 								{metricCard("Markdown Files", formatNumber(latest?.files ?? 0), compact)}
 								{metricCard("30d Writing", formatNumber(writtenWords30), compact, `${activeWritingDays30} active days`)}
 								{metricCard("All Writing", formatNumber(writtenWordsAll), compact, formatPages(writtenPagesAll))}
-								{metricCard("Devices", formatNumber(uniqueDeviceCount(days)), compact, shortDeviceId(dashboardData.deviceId))}
+								{showDevicesMetric
+									? metricCard("Devices", formatNumber(deviceCount), compact)
+									: null}
 							</div>
 							<div className={`${overviewChartHeight} pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3`}>
 								<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">Loading chart...</div>}>

@@ -108,7 +108,7 @@ export class PluginManager extends Plugin {
         await this.loadSettings();
 
         // 迁移旧版本设置
-        this.migrateSettings();
+        await this.migrateSettings();
 
         // showup notification of plugin starting when it is in debug mode
         if (this.settings.debug) {
@@ -925,7 +925,7 @@ export class PluginManager extends Plugin {
     /**
      * 迁移旧版本设置到新版本
      */
-    private migrateSettings() {
+    private async migrateSettings(): Promise<void> {
         try {
             let changed = false;
             // 如果aiProvider未设置，说明是旧版本，进行迁移
@@ -971,6 +971,10 @@ export class PluginManager extends Plugin {
             }
             if (typeof this.settings.qwenWebSearchEnabled !== "boolean") {
                 this.settings.qwenWebSearchEnabled = false;
+                changed = true;
+            }
+            if (!this.settings.statisticsVaultId) {
+                this.settings.statisticsVaultId = createStatisticsVaultId();
                 changed = true;
             }
             const vault = (this as { app?: { vault?: Parameters<typeof getVaultConfigDir>[0] } }).app?.vault;
@@ -1022,11 +1026,12 @@ export class PluginManager extends Plugin {
                 changed = true;
             }
             if (changed) {
-                this.saveSettings();
+                await this.saveSettings();
                 this.log("Settings migration completed");
             }
         } catch (error) {
             this.log("Error during settings migration:", error);
+            throw error;
         }
     }
 
@@ -1049,4 +1054,12 @@ export class PluginManager extends Plugin {
 
         return token;
     }
+}
+
+function createStatisticsVaultId(): string {
+    const cryptoApi = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
+    if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
+        return cryptoApi.randomUUID();
+    }
+    return `statistics-vault-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
