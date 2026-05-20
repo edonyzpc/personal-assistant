@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [1.10.0](https://github.com/edonyzpc/personal-assistant/compare/1.9.3...1.10.0) (2026-05-20)
+
+### Features
+- statistics: store history locally with optional sync
+
+### Fix
+- harden theme zip extraction
+
+### Docs
+- statistics: document v3 storage plan
+
+### Tests
+- statistics: cover local history and sync
+
 ## [1.9.3](https://github.com/edonyzpc/personal-assistant/compare/1.9.2...1.9.3) (2026-05-18)
 
 ### Fix
