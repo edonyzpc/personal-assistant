@@ -77,6 +77,13 @@ flowchart TB
 
 新架构把具体索引实现收敛到 `VectorIndex` 接口。主实现为 `SqliteVectorIndex`，在 dedicated Worker 中加载 `@sqliteai/sqlite-wasm` 和 `sqlite-vector`，通过 OPFS `opfs-sahpool` 保存 SQLite DB。VSS runtime state 由 `VSSIndexStateStore` 保存在本地 IndexedDB；旧 JSON cache 不再作为检索 fallback。
 
+OPFS 与 IndexedDB 是两个职责不同的本地存储层：
+
+- OPFS SQLite 保存 Memory embedding/index 数据，包括 file records、chunks、vectors 和检索元数据。
+- IndexedDB 保存本地 app state。Statistics v3 使用独立 IndexedDB 数据库保存本机 Statistics history；VSS 使用另一个 IndexedDB 数据库保存 marker、dirty journal 和迁移诊断。
+- VSS marker 只描述“本机某个 OPFS scope 中曾准备过 Memory”，不是 embedding 数据本身。
+- 清理或重建 IndexedDB state 不能删除 OPFS embedding 数据。用户显式执行 Memory reset 时，产品语义是重置本机 Memory copy，因此会清理 OPFS Memory index，并尽力清理对应的 VSS marker/dirty state。
+
 ## Memory 产品层
 
 `MemoryManager` 是普通用户体验的入口，包在 VSS 之上：
@@ -157,7 +164,7 @@ interface VectorIndex {
 - 生产实现为 IndexedDB，DB 名使用独立前缀 `personal-assistant-vss-state`。
 - scope 包含 plugin id、`statisticsVaultId`、vault config dir 和本机 vault base path hash；复制 vault 后不会共享同一份本地 VSS state。
 - 测试使用 `MemoryVSSIndexStateStore`。
-- IndexedDB 不可用时使用 explicit unavailable store；不会退回 volatile memory store，也不会开始读 notes、reset SQLite、请求 persistence、调用 embedding 或写 vault state。
+- IndexedDB 不可用时不会写 vault state，也不会把测试用 memory store 当作 durable backend。VSS 可以继续使用进程内 marker/dirty 状态完成已获用户确认的 Memory update，并在后续 update/status 路径重试 IndexedDB open，成功后把内存状态写回本地 app storage。
 
 dirty journal 写入通过 VSS exclusive queue 或有序 state-write chain 串行化。reset/dispose 使用 generation guard，避免 late vault event write 在 reset 后复活旧 dirty state。
 
@@ -235,7 +242,7 @@ CREATE TABLE IF NOT EXISTS vss_chunks (
 
 ### Local Index Marker
 
-OPFS 可能被系统或 WebView 清理。为了检测“本机曾有索引但 OPFS DB 丢失”，VSS 在 IndexedDB local state store 中保存轻量 marker。marker 只在同一 device id、embedding profile signature 和 OPFS scope 下有效；复制 vault 或更换本地路径后，IndexedDB scope 不共享，旧 marker 不会影响新位置的 Memory 行为。
+OPFS 可能被系统或 WebView 清理。为了检测“本机曾有索引但 OPFS DB 丢失”，VSS 在 IndexedDB local state store 中保存轻量 marker。marker 只在同一 device id、embedding profile signature 和 OPFS scope 下有效；复制 vault 或更换本地路径后，IndexedDB scope 不共享，旧 marker 不会影响新位置的 Memory 行为。marker 不是 OPFS 数据的备份；IndexedDB 被清理或暂时打不开时，VSS 可通过 cheap OPFS verify 重建 marker，或在本次进程内先保留内存 marker，稍后再持久化。
 
 marker 包含：
 
@@ -323,7 +330,7 @@ flowchart TD
   Confirm -->|否| Skip["Answer now\n不读取 Memory"]
 ```
 
-检测到 local memory missing 时，只在 Memory 入口或聊天需要读取 Memory 时提示，不在插件启动时弹窗。若 IndexedDB state store 不可用，VSS 不读 notes、不请求 persistent storage、不 reset SQLite、不调用 embedding，也不写 vault state；Memory 报 unavailable，Chat 正常回答。
+检测到 local memory missing 时，只在 Memory 入口或聊天需要读取 Memory 时提示，不在插件启动时弹窗。若 IndexedDB state store 暂时不可用，VSS 不写 vault state，并把 marker/dirty state 暂存在进程内；用户已确认的 Prepare/Update memory 可以继续写 OPFS Memory index。后续 update/status 路径会重试 IndexedDB open，成功后更新 marker 和 dirty journal。
 
 ## 手动重建/刷新流程
 
@@ -448,13 +455,14 @@ sequenceDiagram
 stateDiagram-v2
   [*] --> NotInitialized
 
-  NotInitialized --> Disabled: IndexedDB state store不可用
+  NotInitialized --> NotInitialized: IndexedDB暂不可用；保留进程内state并重试
   NotInitialized --> Ready: 用户确认 Prepare memory 成功
   NotInitialized --> Disabled: SQLite失败或locked
 
   Ready --> Stale: profile/schema mismatch
   Ready --> MissingLocalIndex: local marker存在但OPFS DB缺失
   Ready --> Refreshing: 用户确认 Update memory 或 auto policy flush
+  Ready --> Ready: IndexedDB写入失败；保留进程内marker/dirty并重试
 
   Refreshing --> Ready: 刷新完成
   Refreshing --> Disabled: fatal error
@@ -516,7 +524,7 @@ VSS stats 作为产品状态保存和展示，不只写 debug log：
 | --- | --- |
 | `opfs-sahpool` 在 Obsidian WebView 不稳定 | Phase 0 PoC Gate 中 Desktop 是进入主实现的硬门槛；iOS/Android 是 Mobile 支持级别门槛，未通过只降级 Mobile 支持 |
 | OPFS 被清理后重建产生 token 成本 | IndexedDB marker 检测 missing index，重建前必须确认 |
-| IndexedDB 不可用导致状态不可靠 | 使用 explicit unavailable store；不执行 costly Memory work，不退回 volatile memory |
+| IndexedDB 不可用导致状态不可靠 | 不把测试用 memory store 当 durable backend；VSS 仅使用进程内临时 marker/dirty state，并在后续 update/status 路径重试 IndexedDB 持久化 |
 | Qwen v4 迁移静默消耗 token | 旧用户不自动改设置，profile mismatch 只标记 stale |
 | 旧 JSON 被误删 | 启动、迁移和 reset 不自动删除；只有显式高级清理并经用户确认才删除旧 cache JSON |
 | `sqlite-vector` 许可证和包稳定性 | pin 精确版本，在 README/release notes 披露许可证边界，保持 `VectorIndex` 抽象干净 |

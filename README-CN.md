@@ -81,11 +81,11 @@
 
 在某台设备上首次确认并成功准备 Memory 后，后续 changed notes 可以在 Obsidian 打开期间由后台自动维护。只要本地 SQLite/WASM Memory index 已 ready，Chat 不再等待 refresh；它会先使用上一版已准备好的 Memory 回答，同时后台 reconcile/refresh 会更新 changed notes。
 
-自动维护只写入 durable SQLite/WASM 后端。如果插件当前处于内存 fallback 路径，Memory 会保持只读，助手会提示后台更新不可用，需要在本设备重新准备 Memory 后才能恢复自动维护。
+自动维护把 Memory embedding 数据写入设备本地 SQLite/WASM OPFS 后端，并把 VSS 维护状态写入本地 Obsidian app storage。它不会在 vault 中创建新的 `vss-index-state/`、`vss-index-state/<deviceId>/manifest.json` 或 `vss-cache/dirty.json` 文件。如果本地 Memory 暂时不可用或未准备好，助手会提示后台更新不可用，需要在本设备重新准备 Memory 后才能恢复自动维护。
 
 ### 网络与隐私说明
 
-Personal Assistant 不包含 telemetry 或 analytics。Local stats 只写入你的 vault 配置目录，插件不会上传这些统计数据。
+Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statistics history 存储在当前设备的本地 Obsidian app storage 中，插件不会上传这些统计数据。如果你开启跨设备同步 Statistics history，插件会创建 vault-visible 的 Statistics history 文件，让你已有的 vault sync 机制同步这些文件；Git 用户会看到这些文件变化。
 
 | 功能 | 触发条件 | 发送的数据 | 目标位置 | 是否后台 | 用户控制 |
 | --- | --- | --- | --- | --- | --- |

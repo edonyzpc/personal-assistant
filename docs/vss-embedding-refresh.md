@@ -10,7 +10,7 @@
 
 - **事件改造**：`vault.create` / `vault.modify` 标记脏文件，`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
 - **首次授权后的自动维护**：用户确认并成功 prepare/update Memory 后，`memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 在 durable SQLite/WASM ready 时由后台 reconcile/verify/refresh 维护，Chat 不再等待 refresh。
-- **本地静默状态**：后台自动维护只写设备本地 SQLite/WASM index，并把 marker 与 dirty journal 写入本地 IndexedDB state store；默认不在 vault 中创建 `vss-index-state/`、`manifest.json` 或 `vss-cache/dirty.json`。
+- **本地静默状态**：后台自动维护只写设备本地 SQLite/WASM OPFS Memory index，并把 marker 与 dirty journal 写入本地 IndexedDB state store；默认不在 vault 中创建 `vss-index-state/`、`manifest.json` 或 `vss-cache/dirty.json`。如果 IndexedDB 暂时打不开，VSS 先把 marker/dirty state 保留在进程内，后续 update/status 路径重试并落盘。
 - **静默窗口 + 最长延迟**：后台 refresh 保留 `quietWindow=30s` 和 `maxDelay=10min`，避免用户连续编辑时反复计算。
 - **跨设备 reconcile**：启动、首次 prepare 后、窗口恢复和周期任务会扫描 vault 当前文件与 indexed records；新文件标脏，missing indexed path 删除索引，metadata mismatch 只进入验证队列，不会直接让 Memory 进入 changed-notes。
 - **低预算 verify queue**：file-open、reconcile metadata mismatch、rolling hash candidate 先进入 verify queue。verify 在平台预算内读取文件并计算 `contentHash`：hash 未变只同步文件级 metadata，hash 变化才标 dirty 并触发后续 refresh。

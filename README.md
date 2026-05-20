@@ -97,7 +97,7 @@ Manual "Update memory" keeps the safer per-file refresh path for now, but it als
 
 After you approve and successfully prepare Memory once on a device, changed notes can be maintained automatically while Obsidian is open. Chat no longer waits for a refresh when the local SQLite/WASM Memory index is ready; it can answer with the last prepared Memory while a background reconcile/refresh updates changed notes.
 
-Automatic maintenance writes Memory data to the device-local SQLite/WASM backend and keeps VSS runtime state in local Obsidian app storage. It does not create new `vss-index-state/`, `manifest.json`, or `vss-cache/dirty.json` files in the vault.
+Automatic maintenance writes Memory embedding data to the device-local SQLite/WASM OPFS backend and keeps VSS maintenance state in local Obsidian app storage. It does not create new `vss-index-state/`, `vss-index-state/<deviceId>/manifest.json`, or `vss-cache/dirty.json` files in the vault.
 
 ### Network and privacy note
 

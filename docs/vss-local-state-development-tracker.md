@@ -10,11 +10,13 @@ This tracker records implementation status for [VSS Local State Plan](./vss-loca
 | SPEC-01 | Local state store | Done | IndexedDB, memory test store, unavailable production store |
 | SPEC-02 | VSS integration | Done | Store injected, vault state writes removed, dirty state serialized |
 | SPEC-03 | Remove JSON fallback | Done | Removed `MemoryVectorIndex`, manifest threshold logic, and old JSON vector write helpers |
-| SPEC-04 | Tests and docs closeout | Done | Focused Jest, full Jest, lint, type check, and whitespace passed; Obsidian smoke still needs manual app run |
+| SPEC-04 | Tests and docs closeout | Done | Focused Jest, full Jest, lint, build, whitespace, and real Obsidian update/reset/prepare smoke passed |
 
 ## Decisions
 
 - VSS runtime state is local IndexedDB by default.
+- OPFS stores Memory embedding/index data; IndexedDB stores VSS maintenance state and Statistics v3 local history in separate databases.
+- A transient IndexedDB open failure does not block VSS. Marker/dirty state may remain in process memory until a later update/status path retries IndexedDB and persists it.
 - Legacy vault state is read-only and never auto-deleted.
 - Legacy JSON vector fallback is removed.
 - `statisticsVaultId` is reused only as one part of the local database scope.
@@ -24,18 +26,18 @@ This tracker records implementation status for [VSS Local State Plan](./vss-loca
 
 | Date | Check | Result | Notes |
 | --- | --- | --- | --- |
-| 2026-05-20 | Focused VSS/store tests | Passed | `npm test -- __tests__/vss-local-state-store.test.ts __tests__/vss.test.ts __tests__/vss-state.test.ts --runInBand`: 60 tests passed |
-| 2026-05-20 | Full Jest regression | Passed | `npm test -- --runInBand`: 28 suites, 494 tests passed |
+| 2026-05-20 | Focused VSS/store tests | Passed | `npm test -- --runInBand __tests__/vss.test.ts __tests__/vss-local-state-store.test.ts __tests__/vss-state.test.ts`: 3 suites, 66 tests passed |
+| 2026-05-20 | Full Jest regression | Passed | `npm test`: 28 suites, 500 tests passed |
 | 2026-05-20 | Lint | Passed | `npm run lint` |
-| 2026-05-20 | Type check | Passed | `npx tsc -noEmit -skipLibCheck` |
+| 2026-05-20 | Build | Passed | `npm run build` (`tsc -noEmit -skipLibCheck`, Tailwind, production bundle) |
 | 2026-05-20 | Whitespace check | Passed | `git diff --check` |
-| 2026-05-20 | Obsidian smoke | Not run | Requires deploying/reloading the plugin in the test vault |
+| 2026-05-20 | Obsidian smoke | Passed | `make deploy`, reloaded the `test` vault in Obsidian, then ran real `Update memory`, `Reset local memory copy`, and `Prepare memory` after explicit approval. Final Memory diagnostics reported `Ready`, `21 chunks across 20 files`, `sqlite-wasm-opfs-sahpool`, persistent storage, and `Maintenance Up to date`. Legacy `vss-cache` and `vss-index-state` JSON hashes/mtimes were unchanged and no tracked vault state files changed. |
 
 ## Open Risks
 
 | Risk | Mitigation |
 | --- | --- |
-| IndexedDB unavailable after user approves prepare | Initialize local state store before note reads or embedding calls |
-| Late dirty writes after reset/dispose | Serialize dirty state writes and guard by lifecycle/epoch |
+| IndexedDB unavailable after user approves prepare | Continue with in-memory marker/dirty state, retry IndexedDB on update/status paths, and persist when available |
+| Late dirty/marker writes after reset/dispose | Serialize state writes and guard by lifecycle/generation |
 | Copied vault state collision | Scope DB by plugin id, vault id, config dir, and local path |
 | Marker missing while OPFS index exists | Cheap SQLite verify reconstructs local marker |
