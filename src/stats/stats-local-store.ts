@@ -37,6 +37,7 @@ export interface StatsMigrationMetadata {
     v2ImportFingerprint: string;
     validShardCount: number;
     corruptShardCount: number;
+    duplicateEquivalentShardCount?: number;
     importedRecordKeyCount: number;
     aggregateHash: string;
     cleanupStatus: "not-started" | "complete" | "blocked" | "failed";

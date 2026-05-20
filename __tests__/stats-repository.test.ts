@@ -186,6 +186,10 @@ describe("LocalStatsRepository", () => {
         expect(adapter.files.has(`${getStatsDailyRoot(".obsidian")}/2026-01-05/device-b.json`)).toBe(true);
         expect(dashboard.errors).toEqual([
             expect.objectContaining({
+                path: ".vault-config/stats.json#2026-01-01",
+                message: "Duplicate statistics shard was not imported.",
+            }),
+            expect.objectContaining({
                 path: `${getStatsDailyRoot(".obsidian")}/2026-01-04/device-a.json`,
                 message: "Duplicate statistics shard was not imported.",
             }),
@@ -194,11 +198,65 @@ describe("LocalStatsRepository", () => {
         expect(adapter.files.has(".vault-config/stats.json")).toBe(true);
         expect(adapter.files.has(".obsidian/stats.json")).toBe(true);
         await expect(localStore.getMigrationMetadata()).resolves.toEqual(expect.objectContaining({
-            validShardCount: 6,
-            corruptShardCount: 1,
+            validShardCount: 5,
+            corruptShardCount: 2,
             importedRecordKeyCount: 5,
             cleanupStatus: "blocked",
         }));
+    });
+
+    it("deduplicates equivalent legacy stats and daily legacy shards without surfacing an issue", async () => {
+        const legacyDay = createLegacyDay(2);
+        const adapter = new RepositoryMemoryAdapter({
+            ".vault-config/stats.json": JSON.stringify({
+                history: {
+                    "2026-01-01": legacyDay,
+                },
+                modifiedFiles: {},
+            }),
+            [`${getStatsDailyRoot(".vault-config")}/2026-01-01/legacy.json`]: JSON.stringify(createStatsShard(
+                "2026-01-01",
+                "legacy",
+                {
+                    words: legacyDay.words,
+                    characters: legacyDay.characters,
+                    sentences: legacyDay.sentences,
+                    pages: legacyDay.pages,
+                    footnotes: legacyDay.footnotes,
+                    citations: legacyDay.citations,
+                },
+                {
+                    totalWords: legacyDay.totalWords,
+                    totalCharacters: legacyDay.totalCharacters,
+                    totalSentences: legacyDay.totalSentences,
+                    totalFootnotes: legacyDay.totalFootnotes,
+                    totalCitations: legacyDay.totalCitations,
+                    totalPages: legacyDay.totalPages,
+                    files: legacyDay.files,
+                },
+                "2026-01-01T12:00:00.000Z",
+            )),
+        });
+        const localStore = new MemoryStatsLocalStore();
+        const repository = new LocalStatsRepository(createVault(adapter), "vault-id", localStore, "missing/stats.json");
+
+        const dashboard = await repository.readDashboardData();
+        const metadata = await localStore.getMigrationMetadata();
+
+        expect(dashboard.errors).toEqual([]);
+        expect(dashboard.days.map((day) => [day.date, day.words, day.totalWords, day.deviceIds])).toEqual([
+            ["2026-01-01", 2, 20, ["legacy"]],
+        ]);
+        expect(dashboard.days[0].updatedAt).toBe("2026-01-01T12:00:00.000Z");
+        expect(metadata).toEqual(expect.objectContaining({
+            validShardCount: 2,
+            corruptShardCount: 0,
+            duplicateEquivalentShardCount: 1,
+            importedRecordKeyCount: 1,
+            cleanupStatus: "not-started",
+        }));
+        expect(adapter.files.has(".vault-config/stats.json")).toBe(true);
+        expect(adapter.files.has(`${getStatsDailyRoot(".vault-config")}/2026-01-01/legacy.json`)).toBe(true);
     });
 
     it("records damaged v2 data as a migration issue while importing valid records", async () => {

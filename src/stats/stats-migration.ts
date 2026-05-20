@@ -46,6 +46,7 @@ export async function importV2StatsHistory(
     const sourceFingerprints: SourceFingerprint[] = [];
     let validShardCount = 0;
     let corruptShardCount = 0;
+    let duplicateEquivalentShardCount = 0;
 
     for (const path of legacyStatsPaths) {
         const exists = await safeExists(vault, path, errors);
@@ -83,7 +84,20 @@ export async function importV2StatsHistory(
                 corruptShardCount += 1;
                 continue;
             }
-            addRecord(records, shardToRecord(shard, options.vaultId));
+            const importStatus = addRecord(records, shardToRecord(shard, options.vaultId));
+            if (importStatus === "duplicate-same") {
+                duplicateEquivalentShardCount += 1;
+                validShardCount += 1;
+                continue;
+            }
+            if (importStatus === "duplicate-conflict") {
+                errors.push({
+                    path: `${path}#${date}`,
+                    message: "Duplicate statistics shard was not imported.",
+                });
+                corruptShardCount += 1;
+                continue;
+            }
             validShardCount += 1;
         }
     }
@@ -125,8 +139,13 @@ export async function importV2StatsHistory(
                     corruptShardCount += 1;
                     continue;
                 }
-                const imported = addRecord(records, shardToRecord(shard, options.vaultId));
-                if (!imported) {
+                const importStatus = addRecord(records, shardToRecord(shard, options.vaultId));
+                if (importStatus === "duplicate-same") {
+                    duplicateEquivalentShardCount += 1;
+                    validShardCount += 1;
+                    continue;
+                }
+                if (importStatus === "duplicate-conflict") {
                     errors.push({
                         path: file,
                         message: "Duplicate statistics shard was not imported.",
@@ -152,9 +171,11 @@ export async function importV2StatsHistory(
                 sources: sourceFingerprints.sort((left, right) => left.path.localeCompare(right.path)),
                 validShardCount,
                 corruptShardCount,
+                duplicateEquivalentShardCount,
             }),
             validShardCount,
             corruptShardCount,
+            duplicateEquivalentShardCount,
             importedRecordKeyCount: importedRecords.length,
             aggregateHash: hashRecords(importedRecords),
             cleanupStatus: corruptShardCount > 0 ? "blocked" : "not-started",
@@ -164,12 +185,30 @@ export async function importV2StatsHistory(
     };
 }
 
-function addRecord(records: Map<string, StatsDailyDeviceRecord>, record: StatsDailyDeviceRecord): boolean {
-    if (!records.has(record.recordKey)) {
+type AddRecordResult = "added" | "duplicate-same" | "duplicate-conflict";
+
+function addRecord(records: Map<string, StatsDailyDeviceRecord>, record: StatsDailyDeviceRecord): AddRecordResult {
+    const existing = records.get(record.recordKey);
+    if (!existing) {
         records.set(record.recordKey, record);
-        return true;
+        return "added";
     }
-    return false;
+    if (!hasSameCounts(existing, record)) {
+        return "duplicate-conflict";
+    }
+    if (isNewerRecord(record, existing)) {
+        records.set(record.recordKey, record);
+    }
+    return "duplicate-same";
+}
+
+function hasSameCounts(left: StatsDailyDeviceRecord, right: StatsDailyDeviceRecord): boolean {
+    return JSON.stringify(left.activity) === JSON.stringify(right.activity)
+        && JSON.stringify(left.snapshot) === JSON.stringify(right.snapshot);
+}
+
+function isNewerRecord(left: StatsDailyDeviceRecord, right: StatsDailyDeviceRecord): boolean {
+    return left.updatedAt.localeCompare(right.updatedAt) > 0;
 }
 
 function shardToRecord(shard: StatsDeviceShard, vaultId: string): StatsDailyDeviceRecord {
