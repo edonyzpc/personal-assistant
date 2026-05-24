@@ -1,14 +1,53 @@
 # Project TODO
 
+## Active Release Gates
+
+- [x] Fix structured vault tool argument extraction exposed by broad PA Agent desktop smoke.
+  - Context: 2026-05-24 Computer Use smoke in the Obsidian `test` vault passed core PA Agent paths but found that several structured read tools can be selected while required model-provided arguments are lost before execution.
+  - Result: host tool normalization now repairs omitted `query` / `path` inputs for `search_vault_snippets`, `search_vault_metadata`, `read_note_outline`, `read_canvas_summary`, and path-specific `inspect_obsidian_note`; successful `inspect_obsidian_note` also satisfies current-note required-capability policy to avoid the false warning.
+  - Evidence: focused host/policy tests passed 34 tests; adjacent runtime/operation tests passed 98 tests; `npx tsc -noEmit -skipLibCheck`; `npm run lint`; `make deploy` passed 44 suites / 723 tests plus lint/build and copied assets into the local `test` vault. Targeted Computer Use smoke in Obsidian passed snippets, metadata, outline, canvas, path-specific note inspection, and current-note warning re-check.
+  - Source docs: `docs/pa-agent-development-tracker.md`.
+  - Exit criteria: schema-aware argument extraction/repair coverage exists for required string tool fields, live path/query propagation is fixed, and targeted Obsidian smoke passed for snippets, metadata, outline, canvas, path-specific note inspection, and current-note inspect warning.
+
+- [x] Close PA Agent v1 development release gates.
+  - Context: the runtime lifecycle tracker is complete, and the broader PA Agent development tracker owns mobile platform evidence, independent review, and telemetry baseline closeout.
+  - Result: desktop Obsidian smoke evidence is complete for direct answer, current-note tool, Memory, builtin WebSearch, unsupported warning UI, bundled skills, cancel/recovery, and DevTools console no-error inspection. Desktop Obsidian mobile-emulation smoke is complete for PA Chat load, direct answer, and the historical mobile WebSearch-unavailable warning path. Real iPhone smoke recorded a cold-start sample plus core chat/direct answer, current-note retry success, current-note-only full-context exact token lookup, historical mobile WebSearch-unavailable behavior, mobile WebSearch success after API-key entitlement fix, mobile WebSearch no-memory warning re-smoke, mobile WebSearch ordinary recovery, mobile WebSearch cancel/recovery, and general cancel/recovery. The iPhone-found false WebSearch-required warning, non-current-note tool drift, insufficient current-note context, duplicate-tool empty-answer, mobile WebSearch 403 diagnostic, and no-memory false-warning issues now have code-level regression coverage and passed real-device re-smoke where applicable. Builtin WebSearch is now enabled on mobile behind the existing DashScope/settings gates, with focused provider/ChatService tests, answer-stream runtime platform-policy tests, full serialized Jest, typecheck, lint, build, and whitespace checks passing. The later structured vault tool argument extraction gate above is fixed and smoke-clean for snippets, metadata, outline, canvas, path-specific note inspection, and current-note warning re-check.
+  - Release scope: desktop mobile-emulation smoke is claimed; real iPhone core/current-note smoke is claimed for the covered paths; positive mobile WebSearch `requestUrl` auth evidence and cancel/recovery evidence are claimed after the API-key entitlement fix. `requestUrl` hard timeout/deadline behavior remains covered by adapter automated tests rather than a separate real-device timeout smoke. The telemetry baseline gate is closed as instrumentation/runbook readiness only; real post-ship aggregate collection remains future work because v1 has local/default-off events and no upload pipeline.
+  - Source docs: `docs/pa-agent-development-tracker.md`; `docs/pa-agent-architecture-plan.md`; `docs/pa-agent-product-safety-review.md`; `docs/pa-agent-runtime-lifecycle-development-tracker.md`; `docs/pa-agent-telemetry-baseline.md`.
+  - Exit criteria: PA Agent development tracker SPEC-03/05/07/08 are completed or explicitly re-scoped, risk register has no open v1 blocker, verification log contains final evidence, and release readiness is not inferred from desktop-only smoke.
+
 ## Future Milestones
 
 - [ ] Review and scope write action / command execution product and security design.
   - Context: the archived vault-native refactor track closed through Phase 6 with Chat still read-only. The active Ralpha plan also keeps write actions and Obsidian command execution out of scope. Future write actions must not be implemented by weakening the current read-only tool boundary.
-  - Source docs: `docs/chat-agent-native-ralpha-loop-plan.md`; `docs/write-action-design-handoff.md`; archived historical docs under `docs/archive/`.
+  - Source docs: `docs/operations-agent-plan.md`; `docs/chat-agent-native-ralpha-loop-plan.md`; `docs/write-action-design-handoff.md`; archived historical docs under `docs/archive/`.
   - Entry criteria: define the first action family, allowed targets, preview / confirm UX, cancellation behavior, local-only redacted audit policy, permission settings, and rollback / failure handling.
   - Exit criteria: product/security review explicitly approves an implementation plan, creates a separate development tracker, and keeps direct note writes, arbitrary filesystem edits, shell/bash, and automatic Obsidian command execution out of scope unless separately approved.
 
+- [ ] Collect post-ship PA Agent v1 telemetry baseline before using usage data for Operations Agent prioritization.
+  - Context: PA Agent v1 telemetry is local/default-off and content-free; the current release gate only proves instrumentation and the collection runbook.
+  - Source docs: `docs/pa-agent-telemetry-baseline.md`; `docs/pa-agent-development-tracker.md`.
+  - Entry criteria: release candidate or released build with opt-in testers and at least seven days of aggregate capability usage events.
+  - Exit criteria: aggregate counts, status distribution, and p50/p95 duration summaries are recorded without raw prompts, note text, observations, source snippets, URLs, vault paths, or file paths.
+
+- [x] Complete real iPhone mobile WebSearch cancellation/recovery validation after enabling mobile export.
+  - Context: PA Agent v1 desktop smoke and desktop mobile-emulation smoke passed. 2026-05-24 real iPhone smoke recorded a cold-start sample and validated PA Chat load, direct answer, current-note answer after retry, current-note-only full-context exact token lookup, historical mobile WebSearch-unavailable behavior, mobile WebSearch success after API-key entitlement fix, no-memory warning suppression, ordinary recovery after WebSearch, WebSearch cancel/recovery, and general cancel/recovery. The false WebSearch-required warning, non-current-note tool drift, exact-token lookup failure caused by bounded nearby current-note context, duplicate current-note tool-call empty-answer, mobile WebSearch 403 diagnostic, and no-memory false-warning issues were fixed with regression coverage.
+  - Source docs: `docs/pa-agent-development-tracker.md`; `docs/pa-agent-architecture-plan.md`.
+  - Entry criteria: mobile device or mobile runtime emulator with the Obsidian test vault and the deployed plugin assets.
+  - Exit criteria: platform-unsupported capabilities remain unavailable, mobile WebSearch returns real web sources on iPhone when auth succeeds, no-memory prompts do not raise Memory warnings, and cancel recovery remains recoverable without provider-search fallback. Hard timeout/deadline handling stays covered by adapter automated tests unless a separate manual timeout fixture is introduced.
+
 ## Completed Priority Items
+
+- [x] Implement generic PA Agent answer-completion controller.
+  - Context: mobile and desktop smoke exposed repeated `Answer incomplete` paths caused by the same runtime gap: tool execution outcomes, required-capability policy, duplicate/no-op results, and empty assistant turns did not share one answer-readiness contract.
+  - Result: `pa-agent-answer-completion-policy.ts` now derives turn facts, tracks a run evidence ledger, and returns generic finalization decisions. Required-capability HostPolicy uses that controller for failed required tools, duplicate/no-op tool results, and empty assistant turns after observations. `PaAgentLoop` carries `toolMode: final_answer_only`, and PA answer-stream finalization turns export no tool schemas while keeping existing observations available to the model.
+  - Evidence: focused answer-completion/runtime tests passed 4 suites / 106 tests, including schema-invalid and missing-required-tool-input finalization coverage; `npx tsc -noEmit -skipLibCheck`; `npm run lint`; `npm run build`; `git diff --check`; `make deploy` passed 44 suites / 721 tests plus lint/build and copied assets into the local `test/` vault.
+  - In-app validation: user-provided real iPhone smoke covers direct answer, current-note-only full-context exact token lookup, WebSearch success/unavailable handling, no-memory warning suppression, ordinary WebSearch recovery, WebSearch cancel/recovery, and general cancel/recovery. Desktop Obsidian policy re-smoke was rerun with Computer Use in the local `test` vault after `make deploy`: direct answer, current-note-only, and WebSearch success paths completed without visible `Answer incomplete`.
+
+- [x] Close PA Agent v1 runtime lifecycle external verification gates.
+  - Context: PA Agent v1 runtime lifecycle closeout required stricter evidence than older desktop smoke and could not infer live gates from app-log scans or automated tests alone.
+  - Result: 2026-05-24 lifecycle tracker SPEC-01 through SPEC-08 are complete. The canonical audit/query identity contract is documented around mandatory `runId + turnId` on every event and exact `runId + turnId + seq` record lookup. Obsidian test-vault smoke evidence is recorded for direct answer, current-note tool, Memory, builtin WebSearch, unsupported warning UI, all 7 bundled-skill prompts, cancel/recovery, and direct DevTools console no-error inspection.
+  - Evidence: `docs/pa-agent-runtime-lifecycle-plan.md`; `docs/pa-agent-runtime-lifecycle-development-tracker.md`; final closeout checks `npm test -- --runInBand`, `npm run lint`, `npm run build`, and `git diff --check`.
 
 - [x] Run Obsidian smoke for Thinking status and streaming scroll regression.
   - Context: latest Chat UI renders one collapsible `Thinking` status block and pauses auto-scroll when the user expands details or scrolls up during streaming.
