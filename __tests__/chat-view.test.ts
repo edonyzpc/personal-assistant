@@ -2468,13 +2468,18 @@ describe('LLMView turn lifecycle', () => {
     it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
         const css = readFileSync('src/custom.css', 'utf8');
 
-        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
+        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-offset:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?--pa-chat-keyboard-motion:\s*180ms cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
+        expect(css).not.toMatch(/\.llm-view\s*{[^}]*transition:\s*padding-bottom/);
         expect(css).not.toMatch(/\.llm-view\.is-keyboard-open\s*{[\s\S]*?padding-bottom:\s*0;/);
         expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
+        expect(css).not.toMatch(/\.llm-chat-container\s*{[^}]*transition:\s*padding-bottom/);
         expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-chat-container\s*{[\s\S]*?padding-bottom:\s*calc\(14px \+ var\(--pa-chat-composer-height,\s*0px\)\);/);
         expect(css).toMatch(/\.pa-chat-empty-state\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*100%;/);
-        expect(css).toMatch(/\.llm-input\s*{[\s\S]*?flex:\s*0 0 auto;[\s\S]*?z-index:\s*3;/);
-        expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-input\s*{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?z-index:\s*30;/);
+        expect(css).toMatch(/\.llm-input\s*{[\s\S]*?flex:\s*0 0 auto;[\s\S]*?transform:\s*translate3d\(0,\s*0,\s*0\);[\s\S]*?transition:\s*transform var\(--pa-chat-keyboard-motion\);[\s\S]*?z-index:\s*3;/);
+        const baseInputBlock = css.match(/(?:^|\n)\.llm-input\s*{[^}]*}/)?.[0] ?? '';
+        expect(baseInputBlock).not.toContain('will-change: transform');
+        expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-input\s*{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*0;[\s\S]*?transform:\s*translate3d\(0,\s*var\(--pa-chat-keyboard-offset,\s*0px\),\s*0\);[\s\S]*?will-change:\s*transform;[\s\S]*?z-index:\s*30;/);
+        expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-input\s*{[\s\S]*?transition:\s*none;/);
     });
 
     it('keeps Mermaid preview controls usable on narrow mobile panes', () => {
@@ -2612,6 +2617,7 @@ describe('LLMView turn lifecycle', () => {
         await view.onOpen();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-360px');
         expect(visualViewport.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
         expect(visualViewport.addEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
 
@@ -2620,6 +2626,7 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('0px');
 
         await view.onClose();
 
@@ -2656,6 +2663,7 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-336px');
 
         windowListeners.get('keyboardWillHide')?.forEach((listener) => {
             listener({} as Event);
@@ -2663,6 +2671,7 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('0px');
 
         await view.onClose();
 
@@ -2728,6 +2737,7 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('405px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-405px');
         expect(containerEl.style.getPropertyValue('--pa-chat-composer-height')).toBe('80px');
         expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
 
@@ -2931,12 +2941,14 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('405px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-405px');
 
         viewportState.height = 540;
         viewportListeners.get('resize')?.forEach((listener) => listener());
         runAnimationFrames();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-360px');
 
         await view.onClose();
     });

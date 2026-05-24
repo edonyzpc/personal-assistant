@@ -376,7 +376,9 @@ body {
 .llm-view {
 	--pa-chat-status-bar-clearance: 0px;
 	--pa-chat-keyboard-clearance: 0px;
+	--pa-chat-keyboard-offset: 0px;
 	--pa-chat-composer-height: 0px;
+	--pa-chat-keyboard-motion: 180ms cubic-bezier(0.22, 1, 0.36, 1);
 	box-sizing: border-box;
 	display: flex;
 	flex-direction: column;
@@ -949,6 +951,8 @@ body {
 	padding: 12px 12px calc(12px + var(--pa-chat-status-bar-clearance, 0px));
 	background: var(--background-primary);
 	border-top: 1px solid var(--background-modifier-border);
+	transform: translate3d(0, 0, 0);
+	transition: transform var(--pa-chat-keyboard-motion);
 	z-index: 3;
 }
 
@@ -956,7 +960,9 @@ body {
 	position: absolute;
 	left: 0;
 	right: 0;
-	bottom: var(--pa-chat-keyboard-clearance, 0px);
+	bottom: 0;
+	transform: translate3d(0, var(--pa-chat-keyboard-offset, 0px), 0);
+	will-change: transform;
 	z-index: 30;
 }
 
@@ -1418,6 +1424,10 @@ body {
 }
 
 @media (prefers-reduced-motion: reduce) {
+	.llm-input {
+		transition: none;
+	}
+
 	.llm-message.llm-message-enter {
 		animation: none;
 	}

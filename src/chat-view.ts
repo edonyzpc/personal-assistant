@@ -3002,7 +3002,7 @@ export class LLMView extends ItemView {
                 : measurement.fallbackClearance;
             if (clearance === previousClearance) return;
             previousClearance = clearance;
-            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
+            this.setKeyboardClearanceStyles(containerEl, clearance);
             this.syncKeyboardComposerOverlay(containerEl, clearance, measurement.composerHeight);
             if (notify) {
                 onClearanceChange?.();
@@ -3080,6 +3080,7 @@ export class LLMView extends ItemView {
         this.keyboardUpdateHandler = null;
         this.nativeKeyboardHeight = 0;
         this.focusFallbackKeyboardHeight = 0;
+        this.setKeyboardClearanceStyles(this.containerEl, 0);
         this.clearKeyboardComposerOverlay(this.containerEl);
     }
 
@@ -3160,6 +3161,11 @@ export class LLMView extends ItemView {
     private clearKeyboardComposerOverlay(containerEl: HTMLElement) {
         containerEl.classList.remove('is-keyboard-open');
         containerEl.style?.setProperty('--pa-chat-composer-height', '0px');
+    }
+
+    private setKeyboardClearanceStyles(containerEl: HTMLElement, clearance: number) {
+        containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
+        containerEl.style?.setProperty('--pa-chat-keyboard-offset', clearance > 0 ? `-${clearance}px` : '0px');
     }
 
     private getLayoutViewportHeight(): number {
