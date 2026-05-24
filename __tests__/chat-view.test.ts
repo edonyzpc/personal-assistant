@@ -2998,7 +2998,7 @@ describe('LLMView turn lifecycle', () => {
         await view.onClose();
     });
 
-    it('focuses the textarea from composer empty space without stealing button clicks', async () => {
+    it('primes textarea focus from touch input without stealing button clicks', async () => {
         const { view, containerEl } = createView();
         const documentWithFocus = { activeElement: null as MockElement | null };
         Object.defineProperty(globalThis, 'document', {
@@ -3012,7 +3012,7 @@ describe('LLMView turn lifecycle', () => {
         const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
         const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
 
-        composerRow.dispatchEvent('click', {
+        composerRow.dispatchEvent('pointerdown', {
             target: memoryChip,
             defaultPrevented: false,
         });
@@ -3026,6 +3026,22 @@ describe('LLMView turn lifecycle', () => {
 
         expect(documentWithFocus.activeElement).toBeNull();
 
+        composerRow.dispatchEvent('pointerdown', {
+            target: textArea,
+            defaultPrevented: false,
+        });
+
+        expect(documentWithFocus.activeElement).toBe(textArea);
+
+        documentWithFocus.activeElement = null;
+        composerRow.dispatchEvent('touchstart', {
+            target: textArea,
+            defaultPrevented: false,
+        });
+
+        expect(documentWithFocus.activeElement).toBe(textArea);
+
+        documentWithFocus.activeElement = null;
         composerRow.dispatchEvent('click', {
             target: composerRow,
             defaultPrevented: false,

@@ -691,10 +691,17 @@ export class LLMView extends ItemView {
             renderSkillTypeahead();
             syncComposerControls();
         });
+        const primeComposerTextAreaFocus = (event: Event) => {
+            if (event.defaultPrevented) return;
+            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea, true)) return;
+            this.focusComposerTextArea(textArea);
+        };
+        composerRow.addEventListener('pointerdown', primeComposerTextAreaFocus, { passive: true });
+        composerRow.addEventListener('touchstart', primeComposerTextAreaFocus, { passive: true });
         composerRow.addEventListener('click', (event) => {
             if (event.defaultPrevented) return;
-            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea)) return;
-            textArea.focus();
+            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea, false)) return;
+            this.focusComposerTextArea(textArea);
         });
 
         const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
@@ -3346,19 +3353,28 @@ export class LLMView extends ItemView {
         target: EventTarget | null,
         composerRow: HTMLElement,
         textArea: HTMLTextAreaElement,
+        allowTextAreaTarget: boolean,
     ): boolean {
         const targetElement = target as HTMLElement | null;
         if (!targetElement || typeof targetElement.tagName !== 'string') return false;
 
         let current: HTMLElement | null = targetElement;
         while (current) {
-            if (current === textArea) return false;
+            if (current === textArea) return allowTextAreaTarget;
             if (current !== composerRow && this.isComposerInteractiveElement(current)) return false;
             if (current === composerRow) return true;
             current = current.parentElement;
         }
 
         return false;
+    }
+
+    private focusComposerTextArea(textArea: HTMLTextAreaElement) {
+        try {
+            textArea.focus({ preventScroll: true });
+        } catch {
+            textArea.focus();
+        }
     }
 
     private isComposerInteractiveElement(element: HTMLElement): boolean {
