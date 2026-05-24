@@ -103,6 +103,7 @@ class MockElement {
         getPropertyValue: (name: string) => this.style.values.get(name) ?? '',
     };
     parentElement: MockElement | null = null;
+    isConnected = true;
     textContent = '';
     private _value = '';
     disabled = false;
@@ -158,14 +159,25 @@ class MockElement {
         }
     }
 
-    focus() { }
+    focus() {
+        const documentLike = globalThis.document as unknown as { activeElement?: MockElement } | undefined;
+        if (documentLike && typeof documentLike === 'object') {
+            documentLike.activeElement = this;
+        }
+    }
 
     click() {
-        if (this.disabled || !this.onclick) return undefined;
-        return this.onclick({
+        if (this.disabled) return undefined;
+        const event = {
+            target: this,
+            currentTarget: this,
             stopPropagation: () => { },
             preventDefault: () => { },
-        });
+            defaultPrevented: false,
+        };
+        this.dispatchEvent('click', event);
+        if (!this.onclick) return undefined;
+        return this.onclick(event);
     }
 
     empty() {
@@ -2658,7 +2670,8 @@ describe('LLMView turn lifecycle', () => {
         expect(windowWithKeyboardEvents.removeEventListener).toHaveBeenCalledWith('keyboardWillHide', expect.any(Function));
     });
 
-    it('pre-reserves keyboard clearance on mobile focus before keyboard height events arrive', async () => {
+    it('delays mobile focus fallback until after the first tap can open the keyboard', async () => {
+        jest.useFakeTimers();
         const { view, containerEl } = createView({ panelWidth: 430 });
         containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
         const documentListeners = new Map<string, Array<EventListener>>();
@@ -2698,6 +2711,22 @@ describe('LLMView turn lifecycle', () => {
             listener({} as Event);
         });
 
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-composer-height')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+
+        jest.advanceTimersByTime(299);
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+
+        jest.advanceTimersByTime(1);
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+
+        runAnimationFrames();
+
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('405px');
         expect(containerEl.style.getPropertyValue('--pa-chat-composer-height')).toBe('80px');
         expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
@@ -2706,6 +2735,303 @@ describe('LLMView turn lifecycle', () => {
 
         expect(documentWithFocus.removeEventListener).toHaveBeenCalledWith('focusin', expect.any(Function));
         expect(documentWithFocus.removeEventListener).toHaveBeenCalledWith('focusout', expect.any(Function));
+    });
+
+    it('cancels delayed focus fallback when native keyboard height arrives first', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const documentListeners = new Map<string, Array<EventListener>>();
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                activeElement: null as MockElement | null,
+                querySelector: jest.fn(() => null),
+                addEventListener: jest.fn((type: string, listener: EventListener) => {
+                    const listeners = documentListeners.get(type) ?? [];
+                    listeners.push(listener);
+                    documentListeners.set(type, listeners);
+                }),
+                removeEventListener: jest.fn(),
+            },
+        });
+        const windowListeners = new Map<string, Array<EventListener>>();
+        const mobileWindow = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+            addEventListener: jest.Mock;
+            removeEventListener: jest.Mock;
+        };
+        mobileWindow.innerHeight = 900;
+        mobileWindow.innerWidth = 430;
+        mobileWindow.addEventListener = jest.fn((type: string, listener: EventListener) => {
+            const listeners = windowListeners.get(type) ?? [];
+            listeners.push(listener);
+            windowListeners.set(type, listeners);
+        });
+        mobileWindow.removeEventListener = jest.fn();
+        Object.defineProperty(globalThis.window, 'matchMedia', {
+            configurable: true,
+            value: jest.fn(() => ({ matches: true } as MediaQueryList)),
+        });
+        Object.defineProperty(globalThis.navigator, 'maxTouchPoints', {
+            configurable: true,
+            value: 5,
+        });
+
+        await view.onOpen();
+
+        (globalThis.document as { activeElement: MockElement | null }).activeElement = getTextArea(containerEl);
+        documentListeners.get('focusin')?.forEach((listener) => listener({} as Event));
+        windowListeners.get('keyboardWillShow')?.forEach((listener) => {
+            listener({ keyboardHeight: 336 } as Event & { keyboardHeight: number });
+        });
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+
+        jest.advanceTimersByTime(300);
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+
+        await view.onClose();
+    });
+
+    it('cancels delayed focus fallback when visual viewport overlap arrives first', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const documentListeners = new Map<string, Array<EventListener>>();
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                activeElement: null as MockElement | null,
+                querySelector: jest.fn(() => null),
+                addEventListener: jest.fn((type: string, listener: EventListener) => {
+                    const listeners = documentListeners.get(type) ?? [];
+                    listeners.push(listener);
+                    documentListeners.set(type, listeners);
+                }),
+                removeEventListener: jest.fn(),
+            },
+        });
+        const viewportState = { offsetTop: 0, height: 900 };
+        const viewportListeners = new Map<string, Array<() => void>>();
+        const visualViewport = {
+            get offsetTop() {
+                return viewportState.offsetTop;
+            },
+            get height() {
+                return viewportState.height;
+            },
+            addEventListener: jest.fn((type: string, listener: () => void) => {
+                const listeners = viewportListeners.get(type) ?? [];
+                listeners.push(listener);
+                viewportListeners.set(type, listeners);
+            }),
+            removeEventListener: jest.fn(),
+        } as unknown as VisualViewport;
+        Object.defineProperty(globalThis.window, 'visualViewport', {
+            configurable: true,
+            value: visualViewport,
+        });
+        const mobileWindow = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+        };
+        mobileWindow.innerHeight = 900;
+        mobileWindow.innerWidth = 430;
+        Object.defineProperty(globalThis.window, 'matchMedia', {
+            configurable: true,
+            value: jest.fn(() => ({ matches: true } as MediaQueryList)),
+        });
+        Object.defineProperty(globalThis.navigator, 'maxTouchPoints', {
+            configurable: true,
+            value: 5,
+        });
+
+        await view.onOpen();
+
+        (globalThis.document as { activeElement: MockElement | null }).activeElement = getTextArea(containerEl);
+        documentListeners.get('focusin')?.forEach((listener) => listener({} as Event));
+
+        viewportState.height = 540;
+        viewportListeners.get('resize')?.forEach((listener) => listener());
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
+
+        jest.advanceTimersByTime(300);
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
+
+        await view.onClose();
+    });
+
+    it('replaces an applied focus fallback when real visual viewport clearance arrives later', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const documentListeners = new Map<string, Array<EventListener>>();
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                activeElement: null as MockElement | null,
+                querySelector: jest.fn(() => null),
+                addEventListener: jest.fn((type: string, listener: EventListener) => {
+                    const listeners = documentListeners.get(type) ?? [];
+                    listeners.push(listener);
+                    documentListeners.set(type, listeners);
+                }),
+                removeEventListener: jest.fn(),
+            },
+        });
+        const viewportState = { offsetTop: 0, height: 900 };
+        const viewportListeners = new Map<string, Array<() => void>>();
+        const visualViewport = {
+            get offsetTop() {
+                return viewportState.offsetTop;
+            },
+            get height() {
+                return viewportState.height;
+            },
+            addEventListener: jest.fn((type: string, listener: () => void) => {
+                const listeners = viewportListeners.get(type) ?? [];
+                listeners.push(listener);
+                viewportListeners.set(type, listeners);
+            }),
+            removeEventListener: jest.fn(),
+        } as unknown as VisualViewport;
+        Object.defineProperty(globalThis.window, 'visualViewport', {
+            configurable: true,
+            value: visualViewport,
+        });
+        const mobileWindow = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+        };
+        mobileWindow.innerHeight = 900;
+        mobileWindow.innerWidth = 430;
+        Object.defineProperty(globalThis.window, 'matchMedia', {
+            configurable: true,
+            value: jest.fn(() => ({ matches: true } as MediaQueryList)),
+        });
+        Object.defineProperty(globalThis.navigator, 'maxTouchPoints', {
+            configurable: true,
+            value: 5,
+        });
+
+        await view.onOpen();
+
+        (globalThis.document as { activeElement: MockElement | null }).activeElement = getTextArea(containerEl);
+        documentListeners.get('focusin')?.forEach((listener) => listener({} as Event));
+        jest.advanceTimersByTime(300);
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('405px');
+
+        viewportState.height = 540;
+        viewportListeners.get('resize')?.forEach((listener) => listener());
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
+
+        await view.onClose();
+    });
+
+    it('does not run delayed focus fallback after focus changes or the container disconnects', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const documentListeners = new Map<string, Array<EventListener>>();
+        const documentWithFocus = {
+            activeElement: null as MockElement | null,
+            querySelector: jest.fn(() => null),
+            addEventListener: jest.fn((type: string, listener: EventListener) => {
+                const listeners = documentListeners.get(type) ?? [];
+                listeners.push(listener);
+                documentListeners.set(type, listeners);
+            }),
+            removeEventListener: jest.fn(),
+        };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: documentWithFocus,
+        });
+        const mobileWindow = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+        };
+        mobileWindow.innerHeight = 900;
+        mobileWindow.innerWidth = 430;
+        Object.defineProperty(globalThis.window, 'matchMedia', {
+            configurable: true,
+            value: jest.fn(() => ({ matches: true } as MediaQueryList)),
+        });
+        Object.defineProperty(globalThis.navigator, 'maxTouchPoints', {
+            configurable: true,
+            value: 5,
+        });
+
+        await view.onOpen();
+
+        documentWithFocus.activeElement = getTextArea(containerEl);
+        documentListeners.get('focusin')?.forEach((listener) => listener({} as Event));
+        documentWithFocus.activeElement = new MockElement('input');
+        jest.advanceTimersByTime(300);
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+
+        documentWithFocus.activeElement = getTextArea(containerEl);
+        documentListeners.get('focusin')?.forEach((listener) => listener({} as Event));
+        containerEl.isConnected = false;
+        jest.advanceTimersByTime(300);
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+
+        await view.onClose();
+    });
+
+    it('focuses the textarea from composer empty space without stealing button clicks', async () => {
+        const { view, containerEl } = createView();
+        const documentWithFocus = { activeElement: null as MockElement | null };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: documentWithFocus,
+        });
+        await view.onOpen();
+
+        const composerRow = getElementByClass(containerEl, 'pa-chat-composer-row');
+        const textArea = getTextArea(containerEl);
+        const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
+        const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
+
+        composerRow.dispatchEvent('click', {
+            target: memoryChip,
+            defaultPrevented: false,
+        });
+
+        expect(documentWithFocus.activeElement).toBeNull();
+
+        composerRow.dispatchEvent('click', {
+            target: moreButton,
+            defaultPrevented: false,
+        });
+
+        expect(documentWithFocus.activeElement).toBeNull();
+
+        composerRow.dispatchEvent('click', {
+            target: composerRow,
+            defaultPrevented: false,
+        });
+
+        expect(documentWithFocus.activeElement).toBe(textArea);
     });
 
     it('adds a specific assistant message to the editor from its message menu', async () => {

@@ -68,12 +68,14 @@ const MEMORY_CHIP_STATE_CLASSES = [
     "personal-assistant-ai-statusbar-unavailable",
 ];
 export const CHAT_MENU_IDLE_CLOSE_MS = 8000;
+const KEYBOARD_FOCUS_FALLBACK_DELAY_MS = 300;
 
 let ldrsLoadersRequested = false;
 let mermaidPreviewModalId = 0;
 
 type KeyboardPluginEventName = 'keyboardWillShow' | 'keyboardDidShow' | 'keyboardWillHide' | 'keyboardDidHide';
 type KeyboardDocumentEventName = 'focusin' | 'focusout';
+type KeyboardWindowEventName = KeyboardPluginEventName | 'resize' | 'orientationchange';
 
 interface KeyboardPluginInfo {
     keyboardHeight?: number;
@@ -592,12 +594,14 @@ export class LLMView extends ItemView {
     private statusBarResizeObserver: ResizeObserver | null = null;
     private statusBarResizeHandler: (() => void) | null = null;
     private keyboardVisualViewport: VisualViewport | null = null;
-    private keyboardViewportHandler: (() => void) | null = null;
+    private keyboardUpdateHandler: (() => void) | null = null;
     private keyboardUpdateFrame: number | null = null;
-    private keyboardWindowListeners: Array<{ type: KeyboardPluginEventName; listener: EventListener }> = [];
+    private keyboardWindowListeners: Array<{ type: KeyboardWindowEventName; listener: EventListener }> = [];
     private keyboardDocumentListeners: Array<{ type: KeyboardDocumentEventName; listener: EventListener }> = [];
     private keyboardPluginListenerHandles: KeyboardPluginListenerHandle[] = [];
     private keyboardFocusFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    private keyboardFocusFallbackToken = 0;
+    private keyboardFocusFallbackElement: HTMLElement | null = null;
     private nativeKeyboardHeight = 0;
     private focusFallbackKeyboardHeight = 0;
     private memoryStatusUnsubscribe: (() => void) | null = null;
@@ -686,6 +690,11 @@ export class LLMView extends ItemView {
             hideComposerHint();
             renderSkillTypeahead();
             syncComposerControls();
+        });
+        composerRow.addEventListener('click', (event) => {
+            if (event.defaultPrevented) return;
+            if (!this.shouldFocusComposerTextArea(event.target, composerRow, textArea)) return;
+            textArea.focus();
         });
 
         const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
@@ -2976,29 +2985,24 @@ export class LLMView extends ItemView {
 
         let previousClearance = -1;
         const applyClearance = (notify: boolean) => {
-            this.clearKeyboardFocusFallbackIfMeasured(containerEl);
-            const clearance = this.calculateKeyboardClearance(containerEl);
+            const measurement = this.measureKeyboardClearance(containerEl, inputEl);
+            if (measurement.hasRealKeyboardClearance) {
+                this.cancelKeyboardFocusFallback();
+                this.focusFallbackKeyboardHeight = 0;
+            }
+            const clearance = measurement.realClearance > 0
+                ? measurement.realClearance
+                : measurement.fallbackClearance;
             if (clearance === previousClearance) return;
             previousClearance = clearance;
             containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
-            this.syncKeyboardComposerOverlay(containerEl, inputEl, clearance);
+            this.syncKeyboardComposerOverlay(containerEl, clearance, measurement.composerHeight);
             if (notify) {
                 onClearanceChange?.();
             }
         };
         const updateClearance = () => {
             this.keyboardUpdateFrame = null;
-            applyClearance(true);
-        };
-        const updateClearanceNow = () => {
-            if (
-                this.keyboardUpdateFrame !== null
-                && typeof window !== 'undefined'
-                && typeof window.cancelAnimationFrame === 'function'
-            ) {
-                window.cancelAnimationFrame(this.keyboardUpdateFrame);
-                this.keyboardUpdateFrame = null;
-            }
             applyClearance(true);
         };
         const scheduleUpdate = () => {
@@ -3010,7 +3014,7 @@ export class LLMView extends ItemView {
             updateClearance();
         };
 
-        this.keyboardViewportHandler = scheduleUpdate;
+        this.keyboardUpdateHandler = scheduleUpdate;
         this.keyboardVisualViewport = this.getVisualViewport();
         applyClearance(false);
 
@@ -3018,12 +3022,13 @@ export class LLMView extends ItemView {
         this.keyboardVisualViewport?.addEventListener('scroll', scheduleUpdate);
 
         if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-            window.addEventListener('resize', scheduleUpdate);
-            window.addEventListener('orientationchange', scheduleUpdate);
+            this.addWindowKeyboardListener('resize', scheduleUpdate);
+            this.addWindowKeyboardListener('orientationchange', () => {
+                this.cancelKeyboardFocusFallback();
+                scheduleUpdate();
+            });
         }
-        this.addDocumentKeyboardListener('focusin', scheduleUpdate);
-        this.addDocumentKeyboardListener('focusout', scheduleUpdate);
-        this.addDocumentKeyboardListener('focusin', () => this.scheduleKeyboardFocusFallback(containerEl, updateClearanceNow));
+        this.addDocumentKeyboardListener('focusin', () => this.scheduleKeyboardFocusFallback(containerEl, scheduleUpdate));
         this.addDocumentKeyboardListener('focusout', () => this.scheduleKeyboardFocusFallbackClear(containerEl, scheduleUpdate));
         this.observeNativeKeyboardEvents(scheduleUpdate);
     }
@@ -3037,20 +3042,11 @@ export class LLMView extends ItemView {
             window.cancelAnimationFrame(this.keyboardUpdateFrame);
         }
         this.keyboardUpdateFrame = null;
-        this.clearKeyboardFocusFallbackTimer();
+        this.cancelKeyboardFocusFallback();
 
-        if (this.keyboardViewportHandler) {
-            this.keyboardVisualViewport?.removeEventListener('resize', this.keyboardViewportHandler);
-            this.keyboardVisualViewport?.removeEventListener('scroll', this.keyboardViewportHandler);
-
-            if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-                window.removeEventListener('resize', this.keyboardViewportHandler);
-                window.removeEventListener('orientationchange', this.keyboardViewportHandler);
-            }
-            if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
-                document.removeEventListener('focusin', this.keyboardViewportHandler);
-                document.removeEventListener('focusout', this.keyboardViewportHandler);
-            }
+        if (this.keyboardUpdateHandler) {
+            this.keyboardVisualViewport?.removeEventListener('resize', this.keyboardUpdateHandler);
+            this.keyboardVisualViewport?.removeEventListener('scroll', this.keyboardUpdateHandler);
         }
         if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
             for (const { type, listener } of this.keyboardWindowListeners) {
@@ -3074,7 +3070,7 @@ export class LLMView extends ItemView {
         }
 
         this.keyboardVisualViewport = null;
-        this.keyboardViewportHandler = null;
+        this.keyboardUpdateHandler = null;
         this.nativeKeyboardHeight = 0;
         this.focusFallbackKeyboardHeight = 0;
         this.clearKeyboardComposerOverlay(this.containerEl);
@@ -3085,14 +3081,41 @@ export class LLMView extends ItemView {
         return window.visualViewport ?? null;
     }
 
-    private calculateKeyboardClearance(containerEl: HTMLElement): number {
-        const viewport = this.getVisualViewport();
-        if (!containerEl.getBoundingClientRect) return 0;
+    private measureKeyboardClearance(containerEl: HTMLElement, inputEl: HTMLElement): {
+        realClearance: number;
+        fallbackClearance: number;
+        composerHeight: number;
+        hasRealKeyboardClearance: boolean;
+    } {
+        if (!containerEl.getBoundingClientRect) {
+            return {
+                realClearance: 0,
+                fallbackClearance: 0,
+                composerHeight: 0,
+                hasRealKeyboardClearance: false,
+            };
+        }
 
         const viewRect = containerEl.getBoundingClientRect();
-        const viewportOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, viewport);
-        const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.getEffectiveNativeKeyboardHeight());
-        return Math.max(viewportOverlap, nativeOverlap);
+        const viewportOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, this.getVisualViewport());
+        const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.nativeKeyboardHeight);
+        const fallbackOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.focusFallbackKeyboardHeight);
+        const realClearance = Math.max(viewportOverlap, nativeOverlap);
+        const clearance = realClearance > 0 ? realClearance : fallbackOverlap;
+        let composerHeight = 0;
+        if (clearance > 0) {
+            const composerRect = inputEl.getBoundingClientRect?.();
+            composerHeight = composerRect?.height && Number.isFinite(composerRect.height)
+                ? Math.ceil(composerRect.height)
+                : 0;
+        }
+
+        return {
+            realClearance,
+            fallbackClearance: fallbackOverlap,
+            composerHeight,
+            hasRealKeyboardClearance: realClearance > 0,
+        };
     }
 
     private calculateVisualViewportKeyboardOverlap(viewRect: DOMRect, viewport: VisualViewport | null): number {
@@ -3117,16 +3140,12 @@ export class LLMView extends ItemView {
         return Math.ceil(Math.min(overlap, keyboardHeight, viewRect.height));
     }
 
-    private syncKeyboardComposerOverlay(containerEl: HTMLElement, inputEl: HTMLElement, clearance: number) {
+    private syncKeyboardComposerOverlay(containerEl: HTMLElement, clearance: number, composerHeight: number) {
         if (clearance <= 0) {
             this.clearKeyboardComposerOverlay(containerEl);
             return;
         }
 
-        const composerRect = inputEl.getBoundingClientRect?.();
-        const composerHeight = composerRect?.height && Number.isFinite(composerRect.height)
-            ? Math.ceil(composerRect.height)
-            : 0;
         containerEl.style?.setProperty('--pa-chat-composer-height', `${composerHeight}px`);
         containerEl.classList.add('is-keyboard-open');
     }
@@ -3134,10 +3153,6 @@ export class LLMView extends ItemView {
     private clearKeyboardComposerOverlay(containerEl: HTMLElement) {
         containerEl.classList.remove('is-keyboard-open');
         containerEl.style?.setProperty('--pa-chat-composer-height', '0px');
-    }
-
-    private getEffectiveNativeKeyboardHeight(): number {
-        return Math.max(this.nativeKeyboardHeight, this.focusFallbackKeyboardHeight);
     }
 
     private getLayoutViewportHeight(): number {
@@ -3156,12 +3171,14 @@ export class LLMView extends ItemView {
         const handleShow = (source: unknown) => {
             const keyboardHeight = this.readKeyboardHeight(source);
             if (keyboardHeight > 0) {
+                this.cancelKeyboardFocusFallback();
                 this.nativeKeyboardHeight = keyboardHeight;
                 this.focusFallbackKeyboardHeight = 0;
             }
             scheduleUpdate();
         };
         const handleHide = () => {
+            this.cancelKeyboardFocusFallback();
             this.nativeKeyboardHeight = 0;
             this.focusFallbackKeyboardHeight = 0;
             scheduleUpdate();
@@ -3180,7 +3197,7 @@ export class LLMView extends ItemView {
         this.addKeyboardPluginListener(keyboardPlugin, 'keyboardDidHide', handleHide, scheduleUpdate);
     }
 
-    private addWindowKeyboardListener(type: KeyboardPluginEventName, listener: (source: unknown) => void) {
+    private addWindowKeyboardListener(type: KeyboardWindowEventName, listener: (source: unknown) => void) {
         if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
         const eventListener: EventListener = (event) => listener(event);
         window.addEventListener(type, eventListener);
@@ -3205,7 +3222,7 @@ export class LLMView extends ItemView {
             if (!handleOrPromise) return;
             void Promise.resolve(handleOrPromise).then((handle) => {
                 if (!handle) return;
-                if (this.keyboardViewportHandler !== activeHandler) {
+                if (this.keyboardUpdateHandler !== activeHandler) {
                     void handle.remove?.();
                     return;
                 }
@@ -3231,17 +3248,23 @@ export class LLMView extends ItemView {
     }
 
     private scheduleKeyboardFocusFallback(containerEl: HTMLElement, scheduleUpdate: () => void) {
-        this.clearKeyboardFocusFallbackTimer();
-        this.applyKeyboardFocusFallback(containerEl, scheduleUpdate);
+        this.cancelKeyboardFocusFallback();
+        const focusedElement = this.getKeyboardEditableFocusedElement(containerEl);
+        if (!focusedElement) return;
+        if (!this.isLikelyTouchPhoneViewport()) return;
+        if (this.nativeKeyboardHeight > 0) return;
+        if (this.hasMeasuredKeyboardClearance(containerEl)) return;
 
+        const token = ++this.keyboardFocusFallbackToken;
+        this.keyboardFocusFallbackElement = focusedElement;
         this.keyboardFocusFallbackTimer = setTimeout(() => {
             this.keyboardFocusFallbackTimer = null;
-            this.applyKeyboardFocusFallback(containerEl, scheduleUpdate);
-        }, 120);
+            this.applyKeyboardFocusFallback(containerEl, focusedElement, token, scheduleUpdate);
+        }, KEYBOARD_FOCUS_FALLBACK_DELAY_MS);
     }
 
     private scheduleKeyboardFocusFallbackClear(containerEl: HTMLElement, scheduleUpdate: () => void) {
-        this.clearKeyboardFocusFallbackTimer();
+        this.cancelKeyboardFocusFallback();
         this.keyboardFocusFallbackTimer = setTimeout(() => {
             this.keyboardFocusFallbackTimer = null;
             if (this.isKeyboardEditableFocused(containerEl)) return;
@@ -3257,13 +3280,28 @@ export class LLMView extends ItemView {
         this.keyboardFocusFallbackTimer = null;
     }
 
+    private cancelKeyboardFocusFallback() {
+        this.clearKeyboardFocusFallbackTimer();
+        this.keyboardFocusFallbackToken += 1;
+        this.keyboardFocusFallbackElement = null;
+    }
+
     private shouldUseKeyboardFocusFallback(containerEl: HTMLElement): boolean {
         if (!this.isKeyboardEditableFocused(containerEl)) return false;
         if (!this.isLikelyTouchPhoneViewport()) return false;
         return this.nativeKeyboardHeight <= 0;
     }
 
-    private applyKeyboardFocusFallback(containerEl: HTMLElement, scheduleUpdate: () => void) {
+    private applyKeyboardFocusFallback(
+        containerEl: HTMLElement,
+        focusedElement: HTMLElement,
+        token: number,
+        scheduleUpdate: () => void,
+    ) {
+        if (token !== this.keyboardFocusFallbackToken) return;
+        if (this.keyboardFocusFallbackElement !== focusedElement) return;
+        if (!this.isKeyboardContainerConnected(containerEl)) return;
+        if (!this.isKeyboardEditableFocusedElement(containerEl, focusedElement)) return;
         if (!this.shouldUseKeyboardFocusFallback(containerEl)) return;
         if (this.hasMeasuredKeyboardClearance(containerEl)) return;
 
@@ -3273,17 +3311,22 @@ export class LLMView extends ItemView {
         scheduleUpdate();
     }
 
-    private clearKeyboardFocusFallbackIfMeasured(containerEl: HTMLElement) {
-        if (this.focusFallbackKeyboardHeight === 0) return;
-        if (!this.hasMeasuredKeyboardClearance(containerEl)) return;
-        this.focusFallbackKeyboardHeight = 0;
+    private isKeyboardEditableFocused(containerEl: HTMLElement): boolean {
+        return this.getKeyboardEditableFocusedElement(containerEl) !== null;
     }
 
-    private isKeyboardEditableFocused(containerEl: HTMLElement): boolean {
-        if (typeof document === 'undefined') return false;
+    private getKeyboardEditableFocusedElement(containerEl: HTMLElement): HTMLElement | null {
+        if (typeof document === 'undefined') return null;
         const activeElement = document.activeElement as HTMLElement | null;
-        if (!activeElement || !this.isElementInside(containerEl, activeElement)) return false;
-        return this.isKeyboardEditableElement(activeElement);
+        if (!activeElement || !this.isKeyboardEditableFocusedElement(containerEl, activeElement)) return null;
+        return activeElement;
+    }
+
+    private isKeyboardEditableFocusedElement(containerEl: HTMLElement, element: HTMLElement): boolean {
+        if (!this.isElementInside(containerEl, element)) return false;
+        if (!this.isKeyboardEditableElement(element)) return false;
+        if (typeof document !== 'undefined' && document.activeElement !== element) return false;
+        return true;
     }
 
     private isKeyboardEditableElement(element: HTMLElement): boolean {
@@ -3292,6 +3335,59 @@ export class LLMView extends ItemView {
             || tagName === 'input'
             || element.isContentEditable
             || element.getAttribute?.('contenteditable') === 'true';
+    }
+
+    private isKeyboardContainerConnected(containerEl: HTMLElement): boolean {
+        const maybeConnected = (containerEl as HTMLElement & { isConnected?: boolean }).isConnected;
+        return maybeConnected !== false;
+    }
+
+    private shouldFocusComposerTextArea(
+        target: EventTarget | null,
+        composerRow: HTMLElement,
+        textArea: HTMLTextAreaElement,
+    ): boolean {
+        const targetElement = target as HTMLElement | null;
+        if (!targetElement || typeof targetElement.tagName !== 'string') return false;
+
+        let current: HTMLElement | null = targetElement;
+        while (current) {
+            if (current === textArea) return false;
+            if (current !== composerRow && this.isComposerInteractiveElement(current)) return false;
+            if (current === composerRow) return true;
+            current = current.parentElement;
+        }
+
+        return false;
+    }
+
+    private isComposerInteractiveElement(element: HTMLElement): boolean {
+        const tagName = element.tagName?.toLowerCase();
+        if (tagName && ['a', 'button', 'input', 'select', 'textarea', 'option', 'summary'].includes(tagName)) {
+            return true;
+        }
+        if (
+            element.classList?.contains('llm-buttons')
+            || element.classList?.contains('pa-chat-menu')
+            || element.classList?.contains('pa-chat-skill-typeahead')
+        ) {
+            return true;
+        }
+        if (element.isContentEditable || element.getAttribute?.('contenteditable') === 'true') return true;
+
+        const role = element.getAttribute?.('role');
+        return Boolean(role && [
+            'button',
+            'checkbox',
+            'link',
+            'listbox',
+            'menu',
+            'menuitem',
+            'option',
+            'radio',
+            'switch',
+            'textbox',
+        ].includes(role));
     }
 
     private isElementInside(root: HTMLElement, element: HTMLElement): boolean {
