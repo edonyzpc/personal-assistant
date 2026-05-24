@@ -2,11 +2,15 @@
 
 ## Status And Source Of Truth
 
+> Last revised: 2026-05-24 — see [PA Agent v1 Plan Revisions](./pa-agent-v1-plan-revisions.md) for the 14-decision revision history.
+
 This document is the product, architecture, runtime, capability, source-boundary, platform, and migration contract for evolving Personal Assistant Chat into PA Agent.
 
 PA Agent is the next architecture step after the current Chat Agent and Ralpha native-tool loop work. The goal is not to add a few isolated tools to chat. The goal is to evolve chat into a transparent, cancellable, read-only assistant for understanding, auditing, organizing, and drafting safe next steps for the user's Obsidian vault, with a long-term path toward a more general personal agent while keeping the v1 boundary safe, understandable, and shippable.
 
 Implementation progress is tracked in [PA Agent Development Tracker](./pa-agent-development-tracker.md). Architecture comparison diagrams remain in [PA Agent Architecture Comparison](./pa-agent-architecture-comparison.md), but this document is the implementation contract.
+
+The deeper canonical runtime lifecycle refactor is tracked separately in [PA Agent Runtime Lifecycle Plan](./pa-agent-runtime-lifecycle-plan.md) and [PA Agent Runtime Lifecycle Development Tracker](./pa-agent-runtime-lifecycle-development-tracker.md). That track defines the intended next runtime event model for the PA answer-stream path.
 
 If this document conflicts with `docs/pa-agent-architecture-comparison.md`, this document wins. If this document conflicts with existing Ralpha runtime behavior, the current code remains the factual baseline until a PA Agent implementation SPEC changes it and updates the tracker.
 
@@ -22,6 +26,11 @@ For v1, the assistant's vault scope means it can reason across:
 - builtin web search with explicit web sources,
 - selected skills that provide instructions, resources, and workflow guidance.
 
+PA Agent v1 还要满足两个非功能性约束：
+
+- v1 通过 `CapabilityRegistry` 暴露 opt-in usage event hook（`capability invoked / failed / skipped`），settings 默认关闭，不上传个人内容。目的是为 v1 ship 后的 Operations Agent 决策提供数据依据，避免重蹈 v1.6–v1.11 "在黑盒里做产品" 的覆辙。
+- v1 ship 后立刻启动 Operations Agent 设计；v1 不分心做 write action，但 plan 的 `kind: "action"` 占位、`requiresConfirmation` 字段、`networkPolicy` 9 字段、独立 `PolicyEngine` 类等"过早抽象" 有意识为后续 action mode 预留。
+
 For v1, "vault assistant" means understanding, auditing, explaining, summarizing, finding, and drafting plans or suggested edits. It does not mean executing changes.
 
 PA Agent v1 remains a read and network-read assistant. It must not write notes, run commands, execute scripts, install plugins, call arbitrary endpoints, or invoke local executables.
@@ -30,16 +39,17 @@ The long-term direction is closer to a general agent. Future write actions, scri
 
 ## Current Implementation Baseline
 
-The current code is not yet PA Agent:
+The current code now has a PA Agent default path plus a legacy fallback path:
 
 - `ChatService.streamLLM(...)` is the stable public chat entrypoint.
-- `ChatAgentRuntime` owns turn orchestration, Memory selection, tool planning, final prompt construction, final answer streaming, abort, fallback, and metadata emission.
-- Existing tools are registered directly in the `ChatAgentRuntime` constructor through `ToolRegistry`.
-- Native tools currently run in a planning/tool-collection phase before the final answer stream. The final answer stream is not yet the target answer-stream tool loop.
-- Provider web search, such as Qwen `enable_search`, is a model request option and does not produce normalized web sources today.
-- Memory references are strict Memory sources. Current-note, read-only tool, and provider-web context belong in Context Used, not Memory references.
+- `ChatAgentRuntime` owns turn orchestration, capability registration, answer-stream tool calls, final prompt construction, abort, fallback, and metadata emission.
+- Existing read-only tools are exposed through `CoreToolProvider` and execute through `CapabilityRegistry` on the PA path.
+- `paAgentAnswerStreamEnabled` defaults to `true` for providers with an approved PA streaming protocol path: OpenAI-compatible providers and DashScope-compatible Qwen. Setting it to `false`, or using a declined provider such as Ollama, preserves the previous Ralpha planning/tool-collection path for rollback and regression coverage.
+- Builtin Bailian WebSearch is registered as an optional desktop/mobile `network-read` provider when the builtin WebSearch setting is enabled and DashScope-compatible settings are present.
+- Provider built-in web search, such as Qwen `enable_search`, is not supported. PA Agent WebSearch must go through the builtin WebSearch tool.
+- Memory references are strict Memory sources. Current-note and read-only tool context belong in Context Used, not Memory references.
 
-PA Agent will replace the old planning/tool-collection shape with an answer-stream tool loop as the target architecture.
+PA Agent v1 replaces the old planning/tool-collection shape in the default ChatService path while keeping the old path available behind the rollback flag until live smoke coverage is complete.
 
 ## Decision Record
 
@@ -55,13 +65,19 @@ PA Agent will replace the old planning/tool-collection shape with an answer-stre
 | Capability kinds | `tool`, `context`, `action` | v1 supports tool and context. Action is a reserved future kind and must not export or execute. |
 | Skills | Skill v1 is Context Capability, not a tool by default | Skill runtime means discovery, selection, bounded context loading, and answer guidance. No scripts or custom tool execution. |
 | Skill selection | Automatic plus user-explicit selection | User-explicit skill selection wins. Automatic selection uses metadata and small budgets. |
-| Source model | Four separate buckets | Memory references, Context Used, Web sources, and Provider web status stay separate. |
-| Web search | Builtin MCP WebSearch is preferred; provider search is fallback/status only | Prefer MCP WebSearch. For explicit search requests, provider web search may be used as fallback when MCP WebSearch is unavailable, not called, or recoverably fails, but provider search still does not create Web sources. |
+| Source model | Three separate buckets | Memory references, Context Used, and Web sources stay separate. |
+| Web search | Builtin MCP WebSearch only | Web search must use the builtin WebSearch tool. Provider built-in web search is not passed to final answer model calls and does not appear as fallback/status. |
 | MCP v1 scope | Builtin remote MCP only, first Bailian WebSearch | No user-configured MCP, local stdio MCP, shell bridge, arbitrary endpoint, or MCP self-expansion. |
 | MCP trigger | Model-called tool in answer-stream loop | No keyword trigger. Tool description and policy guide use. |
-| Desktop/mobile | Core, existing tools, and skill context target both platforms | WebSearch MCP targets both with mobile fallback. stdio MCP, CLI, shell, scripts are future desktop-only. |
+| Desktop/mobile | Core, existing tools, skill context, and builtin WebSearch target both platforms | Desktop mobile-emulation smoke covers core PA Chat and the historical WebSearch-unavailable path. Real iPhone smoke covers core chat/direct answer, current-note answer after retry, current-note-only full-context exact token lookup, historical mobile WebSearch-unavailable behavior, positive mobile WebSearch after API-key entitlement fix, no-memory warning suppression, WebSearch ordinary recovery, WebSearch cancel/recovery, and general cancel/recovery. stdio MCP, CLI, shell, scripts are future desktop-only. |
 | Provider lifecycle | Providers load independently | CoreToolProvider is required. BuiltinMcpProvider and SkillContextProvider are optional/recoverable. |
 | Policy strictness | Practical safety, not hostile UX | Builtin web search should feel usable by default while protecting endpoints, keys, budgets, and source boundaries. |
+| v1 telemetry | opt-in usage events through `CapabilityRegistry` | settings 默认关闭、不上传内容；事件覆盖 capability invoked / failed / skipped；为后续 Operations Agent 决策提供数据。 |
+| Operations Agent 时间表 | v1 ship 后立刻启动 | v1 期间不做 write action 设计，但 ship 同周开始 `docs/operations-agent-plan.md`。 |
+| Skill 内容方向 | Obsidian 运维向 + 减负向 | v1 ship 7 个 skill：3 个从 kepano/obsidian-skills 改写（read-only 措辞）+ 4 个 PA 独有运维向；不做与 Copilot Custom Commands 重叠的通用写作 skill。 |
+| Skill 格式 | 采用 agentskills.io 规范 | SKILL.md (YAML frontmatter + Markdown body) + `references/` 子目录；与 Claude Code / Codex CLI 兼容；可直接消费 kepano 仓库 skill。 |
+| Source UI 呈现 | 引用列表 + 折叠详情 | 3 个 source bucket 在数据层保留；UI 主区只展示 Citations (Memory refs + Web sources)，Context Used 默认折叠到二级面板。 |
+| PA Agent runtime 拆分 | 内改 + feature flag | 先在 `ChatAgentRuntime` 内加 feature flag 路径；先抽 `PromptBuilder` / `AgentEventEmitter` / `TurnExecutionDeadline` 为独立类（行为不变）；SPEC-03 落地后再 rename 为 `PaAgentRuntime`。 |
 
 ## Target Architecture
 
@@ -155,6 +171,27 @@ Rules:
 - Abort remains the strongest stop condition and must cancel model stream, tool execution, MCP requests when possible, skill loading, and queued UI events.
 - Loop caps must cover model turns, tool executions, per-tool calls, wall-clock time, output size, and source record budgets.
 
+### Segment State Machine
+
+`PaAgentRuntime` 在 answer-stream loop 内维护一个 `currentSegment` 状态：
+
+- `thinking` — 模型尚未输出任何 visible content；
+- `answering` — 模型正在输出 answer chunk；
+- `tool-calling` — 模型正在发出 tool call（含 incremental `tool_call_chunks`）。
+
+合法转移：`thinking → answering`、`thinking → tool-calling`、`answering → tool-calling`（answer 分段后调工具）、`tool-calling → answering`（tool 结果回灌后继续 answer）。
+
+错误条件（替换现有 `chat-agent.ts:899-911` 中 "visible-output started 后再有 tool call = 协议错误"）：
+
+- 同一 answer segment 关闭前出现新的 tool call delta = 协议错误。
+- segment 边界必须 emit `AgentSegmentBoundary` 事件供 UI 区分 "新一段 answer" vs "tool 调用打断"。
+
+`no-replay fallback` 重写为三档：
+
+- `before-visible-output`：可全量降级到非流式 transport。
+- `mid-tool`：可重试单个 tool（保留已有 observation）。
+- `post-visible-output`：只能 graceful close + 写 Context Used 状态行。
+
 ## Capability Model
 
 `AgentCapability` is the PA Agent execution contract. It is a superset of the existing `ChatToolRegistryDefinition`, not only an LLM function schema.
@@ -178,7 +215,6 @@ type AgentSourceRecordKind =
   | "memory-reference"
   | "context-used"
   | "web-source"
-  | "provider-web-status"
   | "skill-guide";
 
 interface AgentCapability {
@@ -340,6 +376,12 @@ Migration rules:
 
 ## Skill Model
 
+PA Agent v1 SKILL 格式采用 [Agent Skills specification](https://agentskills.io/specification)，与 Claude Code、Codex CLI、`kepano/obsidian-skills` 等工具兼容。这意味着：
+
+- PA 用户已有的 Claude Skills 可被 PA 直接消费（待 v1.x 启用 vault-local skill scan）。
+- PA 编写的 skill 可放回 kepano-style 仓库供其它 agent 复用。
+- 不重新发明 metadata / 加载 / 触发机制。
+
 Skill v1 is Context Capability and is implemented by `SkillContextProvider`.
 
 A skill is a bounded, inspectable package of:
@@ -395,13 +437,15 @@ Selection rules:
 
 Initial implementation uses plugin-bundled skill metadata and Markdown resources that ship with the plugin. Vault-local skill folders, skill marketplaces, and custom skill tools require a later SPEC unless explicitly approved.
 
-Plugin-bundled skill rules:
+Plugin-bundled skill 规则：
 
-- Skill metadata and resources are reviewed and versioned with the plugin.
-- Metadata describes name, description, triggers/applicability, budgets, and optional recommended existing tools.
-- Markdown resources describe workflow guidance, output format, examples, and constraints.
-- Bundled skills must still be treated as untrusted context when injected into a model turn.
-- Users cannot add arbitrary vault-local `SKILL.md` files in v1.
+- 目录结构：`skills/<skill-name>/SKILL.md` (必需) + `references/*.md` (可选，按需加载)。
+- `SKILL.md` 必须含 YAML frontmatter，必需字段 `name` (kebab-case, ≤64 chars) + `description` (含 "Use when ..." 触发提示)。可选字段：`version` / `author` / `allowed-tools`。
+- `allowed-tools` 字段在 v1 仅作 prompt hint，不改 `CapabilityRegistry` allowlist；模型仍只能调用 Registry 已 export 的 capability。
+- 三层渐进加载：L1 frontmatter 始终进 system prompt；L2 `SKILL.md` body 在 SkillRouter 选中后加载；L3 `references/*.md` 在 body 显式引用时按需加载。
+- 描述应聚焦 read-only：v1 ship 的 skill body 用 "draft / suggest / inspect" 措辞，不用 "create / edit / write"。
+- Bundled skill 仍是 untrusted context；frontmatter + body + references 全部进入 PromptBuilder 现有的 `<untrusted>` 包裹。
+- v1 仅扫描 plugin-bundled skill；settings 预留 `.pa/skills/` vault-local 扫描开关（默认关），由 v1.x 启用后兼容 kepano 安装路径。
 
 ## MCP WebSearch Model
 
@@ -409,7 +453,7 @@ PA Agent v1 supports builtin remote MCP only.
 
 Initial builtin MCP:
 
-- Bailian WebSearch MCP.
+- Bailian WebSearch MCP at `https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp`.
 
 Explicitly out of scope for v1:
 
@@ -430,14 +474,20 @@ Network policy:
 - Tool description should guide use for latest information, community discussion, official docs, external facts, or explicit search requests.
 - Obsidian `requestUrl` transports may not provide hard network cancellation or streaming byte caps. MCP adapters must treat abort as "ignore future results and stop updating the turn", use conservative deadlines, enforce maximum serialized response size, and return a recoverable unavailable/failed result on over-budget responses.
 
-Provider web search interop:
+Provider built-in web search policy:
 
-- MCP WebSearch and Qwen provider built-in search are mutually exclusive per turn.
-- If MCP WebSearch is available and exported, provider built-in search is disabled for that turn.
-- If MCP WebSearch is unavailable and the user setting allows provider search, provider search can be used as fallback/status only.
-- Provider search does not create Web sources unless the provider returns verifiable source metadata and PA Agent explicitly parses it in a future SPEC.
-- For explicit search requests, provider search fallback is allowed when MCP WebSearch is unavailable, when the model did not call exported MCP WebSearch, or when MCP WebSearch returned a recoverable failure. Fallback provider search remains status-only and must not create Web sources.
-- The implementation must avoid simultaneous MCP and provider search inside the same model stream. If provider fallback is used after MCP non-use/failure, it should be a controlled fallback path with clear Provider web status.
+- Provider built-in web search is not supported.
+- Qwen `enable_search` / provider `search_options` must not be sent by PA Agent runtime.
+- If builtin WebSearch is unavailable, not called, or fails recoverably, the turn should continue with an unavailable/skipped tool observation or required-capability diagnostic; it must not fall back to provider search.
+
+### MCP Abort Semantics
+
+由于 Obsidian `requestUrl` 不提供真硬网络取消和真流式字节上限，MCP adapter 必须明确以下行为：
+
+- 维护 `inflightRequests: Set<string>`，abort 触发后立即从 set 移除并丢弃后续 resolve。
+- 整响应缓冲式回调，超 `maxResponseBytes` 时整体丢弃 + 返回 recoverable `unavailable`，不假装节省流量。
+- UI 文案必须明示 "请求已发出，结果已丢"（user-facing message：例如 "Web search cancelled — request was already sent to the provider"），避免用户误以为请求被网络层截断。
+- v1 不承诺移动端 MCP 的硬取消；mobile builtin WebSearch 通过同一 `requestUrl` adapter、inflight 丢弃、timeout、response-size budget 和 recoverable failure path 处理。真实 iPhone `requestUrl` auth smoke 已在 API-key entitlement fix 后通过；cancel/recovery 真机 smoke 已通过。硬 timeout/deadline 行为由 adapter 自动化测试覆盖，除非后续引入专门的手动 timeout fixture。
 
 ## Untrusted Context And Prompt Injection
 
@@ -460,7 +510,6 @@ PA Agent v1 keeps four source buckets separate:
 | Memory references | Selected Memory sources from vault notes | Yes, as Memory references | Yes |
 | Context Used | Current note, vault tools, skill guides, non-citation context | No | No |
 | Web sources | Verifiable URL/title/source records from MCP WebSearch | Yes, as web sources | No |
-| Provider web status | Provider-level web search status without normalized sources | No | No |
 
 Rules:
 
@@ -468,7 +517,6 @@ Rules:
 - Core tool outputs go to Context Used unless a Memory result explicitly selects that same source through Memory rules.
 - Skill context goes to Context Used as skill guide context.
 - MCP WebSearch results with URLs can become Web sources.
-- Provider built-in search status can only say that provider web search was enabled or may have been used. It must not claim specific URLs.
 - Source records must support truncation, redaction, provider id, capability name, and turn id.
 
 ```ts
@@ -476,7 +524,6 @@ type SourceRecordKind =
   | "memory-reference"
   | "context-used"
   | "web-source"
-  | "provider-web-status"
   | "skill-guide";
 
 interface SourceRecord {
@@ -503,11 +550,12 @@ Web source rules:
 - Titles and snippets must be plain text, HTML-stripped, length-bounded, and redacted.
 - URLs should be canonicalized and deduplicated before UI display.
 
-User-facing attribution:
+User-facing attribution UI 规则：
 
-- `Citations` are Memory references and Web sources.
-- `Context Used` is evidence used in the turn but not a citation list.
-- Context Used entries should still show useful provenance such as note path, context type, truncation status, and whether the entry is citation-capable.
+- 主区显示 `Citations`（Memory references + Web sources），是唯一的引用列表。
+- `Context Used` 默认折叠为二级面板，可展开查看 current note / 各 vault tool / skill guide / fallback。
+- bucket 元数据在 `SourceRecord` 层完整保留，UI 折叠仅影响呈现，不影响数据。
+- Context Used 折叠面板每条仍显示 provenance：note path、context kind、truncated、citation-eligible。
 
 ## Permission And Transparency UX
 
@@ -517,10 +565,12 @@ Rules:
 
 - First-use or settings copy should explain that read-only context may be sent to the configured AI provider when it is used in an answer.
 - Network-read settings should explain that web search sends search queries to the configured/builtin web provider.
-- Context Used should show which categories were used in a turn: Memory, current note, note structure, snippets, web search, provider web status, and skill guide.
-- Broad vault searches, truncated results, unavailable mobile capabilities, and provider fallback without URL sources should be visible in Context Used or a concise status row.
+- Context Used should show which categories were used in a turn: Memory, current note, note structure, snippets, web search, and skill guide.
+- Broad vault searches, truncated results, unavailable mobile capabilities, and unavailable WebSearch should be visible in Context Used or a concise status row.
 - Normal successful read-only use should avoid noisy confirmation prompts.
 - When a request is broad, sensitive, or materially incomplete because of budgets/platform fallback, the answer should briefly state that it used bounded context.
+- Skill 选择对用户暴露两路径：(a) 自动选择基于 SkillRouter + skill `description`，默认开启 (b) chat 输入区 typeahead 显式选择，显式优先。settings 提供全局 "禁用所有 skill" 开关与 per-skill enable/disable 列表。
+- v1 提供 opt-in usage telemetry：settings "Share anonymous capability usage" 开关，默认关闭。事件仅含 capability/skill 名 + ok/failed/skipped + 耗时，不含 prompt / observation / note 内容。
 
 ## Desktop And Mobile Strategy
 
@@ -530,8 +580,8 @@ Rules:
 | CapabilityRegistry and PolicyEngine | Supported | Supported | No Node/Electron top-level imports. |
 | CoreToolProvider | Supported | Supported | Use Obsidian App/Vault/MetadataCache APIs. |
 | Skill context | Supported | Supported | Bounded metadata/resource reads only. |
-| Bailian WebSearch MCP | Supported | Target supported with fallback | Use mobile-safe HTTP adapter; do not assume Node or streaming SDK support. |
-| Provider built-in web search | Supported | Supported if provider request works | Fallback/status only when MCP WebSearch is unavailable. |
+| Bailian WebSearch MCP | Supported | Enabled | Uses the same Obsidian `requestUrl` adapter on mobile. Real iPhone positive auth smoke and cancel/recovery smoke passed after API-key entitlement fix; hard timeout/deadline behavior remains adapter-test coverage unless a manual timeout fixture is added. |
+| Provider built-in web search | Not supported | Not supported | All PA web search goes through the builtin WebSearch tool. |
 | Local stdio MCP | Future desktop-only | Not supported | Not in v1. |
 | CLI/shell/external executable | Future desktop-only | Not supported | Not in v1. |
 | Script execution | Future desktop-only or sandboxed | Not supported | Not in v1. |
@@ -541,10 +591,12 @@ Platform rules:
 
 - Unsupported capabilities are not registered or not exported to the model.
 - Mobile unavailable states should not interrupt ordinary chat, but consequential missing capabilities should be visible in Context Used or a concise status row.
-- Mobile WebSearch MCP failure can fall back to provider search status if settings allow it.
-- Bundle size and mobile smoke are gates for MCP and skill phases.
+- Mobile WebSearch MCP is exported when the builtin WebSearch setting is enabled and DashScope-compatible settings are present. Failure must remain recoverable, must not fall back to provider search, and must surface incomplete/unavailable state without fabricating web-source claims.
+- Bundle size, desktop mobile-emulation smoke, real mobile cold-start/core smoke, real mobile `requestUrl` auth smoke, and real mobile WebSearch cancel/recovery smoke are separate gates for MCP and skill phases.
 
 ## Future Action Mode
+
+**时间表**：PA Agent v1 ship 后立刻启动 Operations Agent 设计；不在 v1 期间并行调研。v1 期间所有 action mode 字段保持占位，不实际 export 或 execute。
 
 PA Agent v1 reserves but does not implement action capabilities.
 
@@ -575,9 +627,15 @@ Every implementation phase must prove:
 - policy enforcement before execution,
 - source bucket separation,
 - untrusted context wrapping and prompt-injection resistance,
-- MCP/provider web search mutual exclusion,
+- provider built-in web search disabled,
 - URL sanitization for Web sources,
 - mobile unsupported capability non-export,
 - output and source budget enforcement,
 - redacted diagnostics,
-- Obsidian smoke for runtime/UI behavior changes.
+- Obsidian smoke for runtime/UI behavior changes,
+- segment 状态机的所有合法/非法转移测试覆盖,
+- MCP abort 后 inflight 丢弃 + UI 文案断言,
+- skill frontmatter 解析（含缺字段 / 长度超限 / 非 kebab-case）测试,
+- skill `references/` 按需加载预算测试,
+- telemetry 事件不含 prompt / observation / note 内容的负样本测试,
+- segment 边界事件（`AgentSegmentBoundary`）在 UI dual-emit 期间的兼容性测试.

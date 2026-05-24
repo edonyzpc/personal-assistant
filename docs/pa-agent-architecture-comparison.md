@@ -22,14 +22,14 @@ flowchart TD
   Memory["MemoryManager + VSS<br/>Memory search and expansion"]
   Registry["ToolRegistry<br/>single executable tool boundary"]
   CoreTools["Registered read-only tools<br/>Memory, current note, metadata,<br/>recent notes, outline, Obsidian structure"]
-  PromptBuilder["PromptBuilder<br/>separate Memory, tool context,<br/>current note, provider-web status"]
-  ProviderWeb["Provider web search setting<br/>Qwen enable_search option"]
+  PromptBuilder["PromptBuilder<br/>separate Memory, tool context,<br/>current note, web sources"]
+  WebSearchSetting["Builtin WebSearch tool setting"]
   FinalAnswer["Final streamed answer<br/>cumulative chunks"]
   ContextUsed["Context used UI details"]
   MemoryRefs["Memory references only"]
 
   User --> ChatView --> ChatService --> Runtime
-  ChatService --> ProviderWeb
+  ChatService --> WebSearchSetting
   Runtime --> Deadline
   Runtime --> Events
   Runtime --> Memory
@@ -45,7 +45,7 @@ flowchart TD
   FinalAnswer --> ChatView
   PromptBuilder --> ContextUsed
   PromptBuilder --> MemoryRefs
-  ContextUsed -. "tool/current-note/provider-web context" .-> ChatView
+  ContextUsed -. "tool/current-note/web context" .-> ChatView
   MemoryRefs -. "selected Memory sources only" .-> ChatView
 ```
 
@@ -103,7 +103,6 @@ flowchart TD
   SkillProvider["SkillContextProvider<br/>discover/load skill packs"]
   SkillRuntime["Skill context runtime<br/>instructions and resources only"]
   Memory["MemoryManager + VSS"]
-  ProviderSearch["Provider built-in search<br/>optional model request knob"]
 
   ToolResultStore["ObservationStore<br/>bounded results + source records"]
   Sources["SourceAttribution<br/>Memory refs + web/tool/skill context"]
@@ -199,7 +198,7 @@ classDiagram
 | Main boundary | `ChatAgentRuntime` plus `ToolRegistry` | `PaAgentRuntime` plus `CapabilityRegistry` and providers |
 | Tools | Built-in read-only tools registered directly in runtime constructor | Core tools become one provider; MCP adds tool capabilities; skills add context capabilities only |
 | MCP | Not supported as a runtime capability source | Builtin MCP clients, fixed allowlist, no user-configured servers initially |
-| Web search | Provider setting such as Qwen `enable_search`; source metadata is not normalized | Prefer WebSearch MCP for visible tool calls and normalized web source attribution; provider search can remain optional legacy behavior |
+| Web search | Builtin WebSearch tool only after provider-search cleanup | Builtin WebSearch MCP only for PA Agent; provider built-in search is not supported |
 | Skills | Only archived design notes; not a runtime primitive | Skill discovery, selection, and bounded context resources become first-class; skills are context capabilities in v1, not executable tools or exported tool schemas |
 | Policy | Mostly embedded in tool definitions and registry checks | Central policy layer filters capabilities and enforces permission, budget, and source boundaries |
 | Attribution | Memory references are strict; tool/current-note/web status goes to Context Used | Memory references stay strict; Web sources are a separate citation bucket; tool/current-note/skill context goes to Context Used |
@@ -219,7 +218,7 @@ The core PA Agent architecture can support both desktop and mobile if capability
 | Local stdio MCP servers | Supported only with strict desktop gates | Not supported | stdio requires launching a subprocess, which is not available on mobile. |
 | User-configured MCP servers | Deferred | Deferred | This remains higher risk on both platforms because it adds arbitrary network endpoints, auth, trust, and schema bloat. |
 | Bailian WebSearch MCP | Supported if network/auth works | Likely supportable if CORS/mobile request behavior works | Treat as a builtin remote MCP. Store API key with existing plugin settings rules and disclose network use. |
-| Provider built-in search | Supported as today | Supported as today if provider call works | Keep as optional provider request behavior, but do not treat it as normalized source attribution. |
+| Provider built-in search | Legacy-only historical behavior | Not supported | All PA Agent web search goes through the builtin WebSearch tool. |
 | Skill metadata and instruction packs | Supported | Supported | Loading `SKILL.md`-style metadata/resources from the vault or plugin bundle can be cross-platform. |
 | Skill resource reads | Supported | Supported | Use vault-relative paths and Obsidian Vault APIs; keep output bounded. |
 | Skill script execution | Desktop-only at best, high risk | Not supported for v1 | Defer or require a separate sandbox design. Do not execute arbitrary local scripts on mobile. |
