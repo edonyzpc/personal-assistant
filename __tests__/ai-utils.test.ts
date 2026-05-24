@@ -262,14 +262,11 @@ describe('Qwen DashScope request options', () => {
         expect(isDashScopeCompatibleBaseURL('https://example.invalid/compatible-mode/v1')).toBe(false);
     });
 
-    it('builds Bailian thinking and web search model kwargs only for DashScope qwen', () => {
+    it('builds Bailian thinking model kwargs only for DashScope qwen', () => {
         expect(buildQwenModelKwargs('qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1', {
             enableThinking: true,
-            enableWebSearch: true,
         })).toEqual({
             enable_thinking: true,
-            enable_search: true,
-            search_options: { forced_search: false },
         });
     });
 
@@ -277,11 +274,9 @@ describe('Qwen DashScope request options', () => {
         expect(buildQwenModelKwargs('qwen', 'https://dashscope.aliyuncs.com/compatible-mode/v1')).toBeUndefined();
         expect(buildQwenModelKwargs('openai', 'https://dashscope.aliyuncs.com/compatible-mode/v1', {
             enableThinking: true,
-            enableWebSearch: true,
         })).toBeUndefined();
         expect(buildQwenModelKwargs('qwen', 'https://example.invalid/v1', {
             enableThinking: true,
-            enableWebSearch: true,
         })).toBeUndefined();
     });
 });

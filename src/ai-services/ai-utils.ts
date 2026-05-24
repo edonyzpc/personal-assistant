@@ -107,6 +107,7 @@ export const SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: readonly NativeToolCallingVa
 interface CreateChatModelOptions {
     transport?: ChatTransport;
     qwenRequestOptions?: QwenRequestOptions;
+    modelName?: string;
 }
 
 export interface CreateEmbeddingsOptions {
@@ -117,14 +118,10 @@ export interface CreateEmbeddingsOptions {
 
 export interface QwenRequestOptions {
     enableThinking?: boolean;
-    enableWebSearch?: boolean;
-    searchOptions?: Record<string, unknown>;
 }
 
 export interface QwenModelKwargs {
     enable_thinking?: boolean;
-    enable_search?: boolean;
-    search_options?: Record<string, unknown>;
 }
 
 /**
@@ -208,7 +205,7 @@ export class AIUtils {
         options: CreateChatModelOptions = {},
     ): Promise<ChatOpenAI<ChatOpenAICallOptions> | ChatOllama> {
         const provider = this.plugin.settings.aiProvider;
-        const modelName = this.plugin.settings.chatModelName;
+        const modelName = options.modelName || this.plugin.settings.chatModelName;
         const baseURL = this.plugin.settings.baseURL;
         const transport = options.transport ?? 'obsidian';
 
@@ -456,15 +453,11 @@ export function buildQwenModelKwargs(
 ): QwenModelKwargs | undefined {
     if (normalizeCapabilityValue(provider) !== "qwen") return undefined;
     if (!isDashScopeCompatibleBaseURL(baseURL)) return undefined;
-    if (!options?.enableThinking && !options?.enableWebSearch) return undefined;
+    if (!options?.enableThinking) return undefined;
 
     const kwargs: QwenModelKwargs = {};
     if (options.enableThinking) {
         kwargs.enable_thinking = true;
-    }
-    if (options.enableWebSearch) {
-        kwargs.enable_search = true;
-        kwargs.search_options = options.searchOptions ?? { forced_search: false };
     }
     return kwargs;
 }

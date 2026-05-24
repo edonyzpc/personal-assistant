@@ -90,6 +90,7 @@ const mainContext = await context({
 		'.tsx': 'tsx',
 		'.js': 'js',
 		'.jsx': 'jsx',
+		'.md': 'text',
 		'.wasm': 'dataurl',
 	},
 	define: {

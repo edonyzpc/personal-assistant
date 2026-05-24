@@ -8,7 +8,7 @@ import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds } from './settings'
 import { LocalGraph } from './local-graph';
 import { CryptoHelper, icons, personalAssitant } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
@@ -970,8 +970,33 @@ export class PluginManager extends Plugin {
                 this.settings.qwenThinkingEnabled = false;
                 changed = true;
             }
-            if (typeof this.settings.qwenWebSearchEnabled !== "boolean") {
-                this.settings.qwenWebSearchEnabled = false;
+            if (typeof this.settings.webSearchEnabled !== "boolean") {
+                this.settings.webSearchEnabled = false;
+                changed = true;
+            }
+            if (typeof this.settings.policyModelName !== "string") {
+                this.settings.policyModelName = "";
+                changed = true;
+            }
+            if ("qwenWebSearchEnabled" in this.settings) {
+                delete (this.settings as Partial<PluginManagerSettings> & { qwenWebSearchEnabled?: unknown }).qwenWebSearchEnabled;
+                changed = true;
+            }
+            if (typeof this.settings.paAgentAnswerStreamEnabled !== "boolean") {
+                this.settings.paAgentAnswerStreamEnabled = true;
+                changed = true;
+            }
+            if (typeof this.settings.shareAnonymousCapabilityUsage !== "boolean") {
+                this.settings.shareAnonymousCapabilityUsage = false;
+                changed = true;
+            }
+            if (typeof this.settings.skillContextEnabled !== "boolean") {
+                this.settings.skillContextEnabled = true;
+                changed = true;
+            }
+            const normalizedEnabledSkillIds = normalizeEnabledSkillIds(this.settings.enabledSkillIds);
+            if (!Array.isArray(this.settings.enabledSkillIds) || !arraysEqual(this.settings.enabledSkillIds, normalizedEnabledSkillIds)) {
+                this.settings.enabledSkillIds = normalizedEnabledSkillIds;
                 changed = true;
             }
             if (!this.settings.statisticsVaultId) {

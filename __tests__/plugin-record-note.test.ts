@@ -2,6 +2,15 @@ import { describe, expect, it, jest } from '@jest/globals';
 import { TFile } from 'obsidian';
 
 const mockNoticeMessages: string[] = [];
+const mockBundledSkillIds = [
+    'obsidian-markdown',
+    'obsidian-bases',
+    'json-canvas',
+    'pa-frontmatter-audit',
+    'pa-callout-cleanup',
+    'pa-vault-link-health',
+    'pa-plugin-config-review',
+];
 
 jest.mock('obsidian', () => {
     class MockPlugin { }
@@ -51,7 +60,16 @@ jest.mock('../src/memory-manager', () => ({
 }));
 jest.mock('../src/modal', () => ({ PluginControlModal: class { } }));
 jest.mock('../src/batch-modal', () => ({ BatchPluginControlModal: class { } }));
-jest.mock('../src/settings', () => ({ SettingTab: class { }, DEFAULT_SETTINGS: {} }));
+jest.mock('../src/settings', () => ({
+    SettingTab: class { },
+    DEFAULT_SETTINGS: { enabledSkillIds: mockBundledSkillIds },
+    normalizeEnabledSkillIds: (value: unknown) => {
+        if (!Array.isArray(value)) return [...mockBundledSkillIds];
+        return [...new Set(value.filter((entry): entry is string => (
+            typeof entry === 'string' && mockBundledSkillIds.includes(entry)
+        )))];
+    },
+}));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({ CryptoHelper: class { }, icons: {}, personalAssitant: '' }));
 jest.mock('../src/plugin-manifest', () => ({ PluginsUpdater: class { } }));
@@ -81,7 +99,12 @@ const memorySettings = {
     memoryApprovalPolicy: 'always',
     showAdvancedMemoryControls: false,
     qwenThinkingEnabled: false,
-    qwenWebSearchEnabled: false,
+    webSearchEnabled: false,
+    policyModelName: '',
+    paAgentAnswerStreamEnabled: true,
+    shareAnonymousCapabilityUsage: false,
+    skillContextEnabled: true,
+    enabledSkillIds: mockBundledSkillIds,
     statisticsVaultId: 'vault-id',
 };
 
@@ -293,12 +316,36 @@ describe('settings migration', () => {
         expect(plugin.settings.memoryApprovalPolicy).toBe('always');
         expect(plugin.settings.showAdvancedMemoryControls).toBe(false);
         expect(plugin.settings.qwenThinkingEnabled).toBe(false);
-        expect(plugin.settings.qwenWebSearchEnabled).toBe(false);
+        expect(plugin.settings.webSearchEnabled).toBe(false);
+        expect(plugin.settings.policyModelName).toBe('');
+        expect(plugin.settings.paAgentAnswerStreamEnabled).toBe(true);
+        expect(plugin.settings.shareAnonymousCapabilityUsage).toBe(false);
+        expect(plugin.settings.skillContextEnabled).toBe(true);
+        expect(plugin.settings.enabledSkillIds).toEqual(mockBundledSkillIds);
         expect(plugin.settings.statisticsVaultId).toEqual(expect.any(String));
         expect(plugin.settings.statisticsVaultId.length).toBeGreaterThan(0);
         expect(plugin.settings.embeddingModelName).toBe('custom-embedding-model');
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         expect(mockNoticeMessages).toEqual([]);
+    });
+
+    it('deletes the legacy provider web search setting without enabling builtin WebSearch', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'qwen',
+            embeddingModelName: 'custom-embedding-model',
+            embeddingV4MigrationNoticeDismissed: true,
+            statisticsType: 'overview',
+            qwenWebSearchEnabled: true,
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        await plugin.migrateSettings();
+
+        expect(plugin.settings.webSearchEnabled).toBe(false);
+        expect(plugin.settings).not.toHaveProperty('qwenWebSearchEnabled');
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
     });
 
     it('preserves the background memory approval policy during migration', async () => {
@@ -313,7 +360,12 @@ describe('settings migration', () => {
             memoryApprovalPolicy: 'auto-refresh-after-prepare',
             showAdvancedMemoryControls: false,
             qwenThinkingEnabled: false,
-            qwenWebSearchEnabled: false,
+            webSearchEnabled: false,
+            policyModelName: '',
+            paAgentAnswerStreamEnabled: true,
+            shareAnonymousCapabilityUsage: false,
+            skillContextEnabled: true,
+            enabledSkillIds: mockBundledSkillIds,
             statisticsVaultId: 'vault-id',
         };
         plugin.saveSettings = jest.fn();
@@ -342,7 +394,12 @@ describe('settings migration', () => {
             memoryApprovalPolicy: 'always',
             showAdvancedMemoryControls: false,
             qwenThinkingEnabled: false,
-            qwenWebSearchEnabled: false,
+            webSearchEnabled: false,
+            policyModelName: '',
+            paAgentAnswerStreamEnabled: true,
+            shareAnonymousCapabilityUsage: false,
+            skillContextEnabled: true,
+            enabledSkillIds: mockBundledSkillIds,
             statisticsVaultId: 'vault-id',
             statsPath: '.vault-config/stats.json',
             vssCacheExcludePath: [],

@@ -1,5 +1,8 @@
 import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, setIcon, Modal, Setting, Component, type EventRef } from 'obsidian';
-import { ChatService, type ChatAgentStatus, type ChatContextUsedItem, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
+import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
+import { BUNDLED_SKILL_CATALOG } from './ai-services/bundled-skill-catalog';
+import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from './ai-services/pa-agent-history';
+import type { ChatRuntimeWarning, PaAgentMessage, PaAgentPersistedTurn, SourceRecord, TurnEndStatus } from './ai-services/chat-types';
 import type PluginManager from "./main";
 import { VSS } from './vss'
 import type { MemoryMaintenancePlan } from './memory-manager';
@@ -9,6 +12,9 @@ export const VIEW_TYPE_LLM = "sidellm-view";
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
+    memoryMetadata?: ChatTurnMemoryMetadata;
+    canonicalTurn?: PaAgentPersistedTurn;
+    runtimeWarnings?: ChatRuntimeWarning[];
 }
 
 interface ThinkingStatusView {
@@ -22,6 +28,8 @@ interface ThinkingStatusView {
     reasoningContentEl?: HTMLElement;
     contextUsedSectionEl?: HTMLElement;
     contextUsedListEl?: HTMLElement;
+    warningSectionEl?: HTMLElement;
+    warningListEl?: HTMLElement;
     expanded: boolean;
     detailItems: HTMLElement[];
     lastDetail?: string;
@@ -648,8 +656,21 @@ export class LLMView extends ItemView {
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: 'Ask about your notes...' }
         });
+        const skillTypeahead = inputDiv.createDiv({
+            cls: 'pa-chat-skill-typeahead',
+            attr: {
+                role: 'listbox',
+                'aria-label': 'Skill guides',
+            },
+        });
+        skillTypeahead.hidden = true;
 
         textArea.addEventListener('keydown', (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !skillTypeahead.hidden) {
+                e.preventDefault();
+                hideSkillTypeahead();
+                return;
+            }
             if (e.key !== 'Enter' || e.shiftKey) return;
             if (isGenerating()) {
                 e.preventDefault();
@@ -663,6 +684,7 @@ export class LLMView extends ItemView {
         });
         textArea.addEventListener('input', () => {
             hideComposerHint();
+            renderSkillTypeahead();
             syncComposerControls();
         });
 
@@ -809,6 +831,23 @@ export class LLMView extends ItemView {
             renderedContent?: string;
             renderedContentMode?: 'full' | 'deferred-mermaid';
             memoryMetadata?: ChatTurnMemoryMetadata;
+            canonicalTurn?: PaAgentPersistedTurn;
+        };
+        type RuntimeWarningViewItem = ChatRuntimeWarning;
+        type CanonicalLifecycleUiState = {
+            active: boolean;
+            runId?: string;
+            finalTurnId?: string;
+            currentTurnId?: string;
+            messages: PaAgentMessage[];
+            messagesById: Map<string, PaAgentMessage>;
+            turnStatuses: Map<string, string>;
+            hostContextUsedItems: ChatContextUsedItem[];
+            hostSourceRecords: SourceRecord[];
+            sawToolCallInAssistantMessage: boolean;
+            pendingAnswerReclassified: boolean;
+            warnings: RuntimeWarningViewItem[];
+            terminalStatus?: string;
         };
         type UiTurn = {
             id: number;
@@ -816,6 +855,7 @@ export class LLMView extends ItemView {
             memoryMetadata?: ChatTurnMemoryMetadata;
             contextUsedItems: ChatContextUsedItem[];
             activityDetails: string[];
+            canonicalLifecycle: CanonicalLifecycleUiState;
             userMessage?: RenderedMessage;
             assistantMessage?: RenderedMessage;
             statusView?: ThinkingStatusView;
@@ -852,6 +892,17 @@ export class LLMView extends ItemView {
         let isStopping = false;
 
         const isGenerating = () => this.abortController !== null;
+        const createCanonicalLifecycleState = (): CanonicalLifecycleUiState => ({
+            active: false,
+            messages: [],
+            messagesById: new Map(),
+            turnStatuses: new Map(),
+            hostContextUsedItems: [],
+            hostSourceRecords: [],
+            sawToolCallInAssistantMessage: false,
+            pendingAnswerReclassified: false,
+            warnings: [],
+        });
         const hideComposerHint = () => {
             composerHint.empty();
             composerHint.hidden = true;
@@ -859,6 +910,66 @@ export class LLMView extends ItemView {
         const showComposerHint = (message: string) => {
             composerHint.setText(message);
             composerHint.hidden = false;
+        };
+        const hideSkillTypeahead = () => {
+            skillTypeahead.empty();
+            skillTypeahead.hidden = true;
+        };
+        const getEnabledSkillTypeaheadEntries = () => {
+            if (this.plugin.settings?.skillContextEnabled === false) return [];
+            const enabledSkillIds = new Set(
+                Array.isArray(this.plugin.settings?.enabledSkillIds)
+                    ? this.plugin.settings.enabledSkillIds
+                    : BUNDLED_SKILL_CATALOG.map((skill) => skill.id),
+            );
+            return BUNDLED_SKILL_CATALOG.filter((skill) => enabledSkillIds.has(skill.id));
+        };
+        const getSkillTriggerMatch = () => {
+            const value = textArea.value;
+            return /(?:^|\s)#([a-z0-9-]*)$/i.exec(value);
+        };
+        const renderSkillTypeahead = () => {
+            const match = getSkillTriggerMatch();
+            if (!match) {
+                hideSkillTypeahead();
+                return;
+            }
+            const query = match[1].toLowerCase();
+            const entries = getEnabledSkillTypeaheadEntries()
+                .filter((skill) =>
+                    skill.id.includes(query)
+                    || skill.label.toLowerCase().includes(query)
+                    || skill.description.toLowerCase().includes(query))
+                .slice(0, 7);
+            skillTypeahead.empty();
+            if (entries.length === 0) {
+                skillTypeahead.hidden = true;
+                return;
+            }
+            for (const skill of entries) {
+                const button = skillTypeahead.createEl('button', {
+                    cls: 'pa-chat-skill-typeahead-item',
+                    attr: {
+                        type: 'button',
+                        role: 'option',
+                        'data-skill-id': skill.id,
+                        title: skill.description,
+                    },
+                });
+                button.createSpan({ cls: 'pa-chat-skill-typeahead-name', text: skill.label });
+                button.createSpan({ cls: 'pa-chat-skill-typeahead-id', text: `#${skill.id}` });
+                button.onclick = () => {
+                    const currentValue = textArea.value;
+                    const currentMatch = getSkillTriggerMatch();
+                    if (!currentMatch || typeof currentMatch.index !== 'number') return;
+                    const triggerStart = currentValue.lastIndexOf('#');
+                    textArea.value = `${currentValue.slice(0, triggerStart)}#${skill.id} `;
+                    hideSkillTypeahead();
+                    syncComposerControls();
+                    textArea.focus();
+                };
+            }
+            skillTypeahead.hidden = false;
         };
         const createIdleMenuAutoClose = (
             menu: HTMLElement,
@@ -1341,7 +1452,8 @@ export class LLMView extends ItemView {
                 actionMenu,
                 renderToken: 0,
                 copyContent: message.content,
-                memoryMetadata: options.memoryMetadata,
+                memoryMetadata: options.memoryMetadata ?? message.memoryMetadata,
+                canonicalTurn: message.canonicalTurn,
             };
             rendered.actionMenu.hidden = true;
             const actionMenuAutoClose = createIdleMenuAutoClose(rendered.actionMenu, menuButton, () => {
@@ -1422,29 +1534,37 @@ export class LLMView extends ItemView {
                 if (entry.kind === 'history') {
                     const pairStart = this.chatHistory.indexOf(entry.user);
                     if (pairStart === -1 || this.chatHistory[pairStart + 1] !== entry.assistant) return;
+                    const metadata = readChatHistoryTurnMetadata(entry.assistant, entry.memoryMetadata);
+                    const contextUsedItems = metadata?.contextUsed ?? entry.contextUsedItems ?? [];
+                    const runtimeWarnings = entry.assistant.runtimeWarnings ?? [];
                     createMessageElement(entry.user, {
                         onDelete: () => deleteHistoryPair(pairStart),
                         disableDeleteWhileGenerating: true,
                     });
                     if (
                         entry.providerReasoningObserved
-                        || (entry.contextUsedItems?.length ?? 0) > 0
+                        || contextUsedItems.length > 0
                         || (entry.activityDetails?.length ?? 0) > 0
+                        || runtimeWarnings.length > 0
                     ) {
                         const statusView = createThinkingStatusView();
                         entry.activityDetails?.forEach((detail) => appendThinkingStatus(statusView, detail));
                         if (entry.providerReasoningObserved) {
                             renderProviderReasoningNotice(statusView);
                         }
-                        renderContextUsedItems(statusView, entry.contextUsedItems ?? []);
-                        completeThinkingStatus(statusView);
+                        renderContextUsedItems(statusView, contextUsedItems);
+                        renderRuntimeWarnings(statusView, runtimeWarnings);
+                        completeThinkingStatus(
+                            statusView,
+                            formatCanonicalTerminalSummary(entry.assistant.canonicalTurn?.status, runtimeWarnings),
+                        );
                     }
                     createMessageElement(entry.assistant, {
                         forceScroll,
                         onDelete: () => deleteHistoryPair(pairStart + 1),
                         onAddToEditor: (content) => addContentToEditor(content),
                         disableDeleteWhileGenerating: true,
-                        memoryMetadata: entry.memoryMetadata,
+                        memoryMetadata: metadata,
                     });
                     return;
                 }
@@ -1634,6 +1754,18 @@ export class LLMView extends ItemView {
             scrollToBottom();
         };
 
+        const appendThinkingDetail = (statusView: ThinkingStatusView, content: string) => {
+            const MAX_THINKING_DETAIL_ITEMS = 6;
+            if (statusView.lastDetail === content) return;
+            statusView.lastDetail = content;
+            const detailItem = statusView.activityListEl.createDiv({ cls: 'thinking-status-detail-item', text: content });
+            statusView.detailItems.push(detailItem);
+            while (statusView.detailItems.length > MAX_THINKING_DETAIL_ITEMS) {
+                removeElement(statusView.detailItems.shift());
+            }
+            scrollToBottom();
+        };
+
         const ensureProviderReasoningNotice = (statusView: ThinkingStatusView) => {
             if (statusView.reasoningContentEl) return statusView.reasoningContentEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-reasoning' });
@@ -1658,9 +1790,44 @@ export class LLMView extends ItemView {
             scrollToBottom();
         };
 
-        const completeThinkingStatus = (statusView: ThinkingStatusView) => {
+        const ensureWarningList = (statusView: ThinkingStatusView) => {
+            if (statusView.warningListEl) return statusView.warningListEl;
+            const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-warnings' });
+            section.createDiv({ cls: 'thinking-status-section-title', text: 'Warnings' });
+            const listEl = section.createDiv({ cls: 'thinking-status-warning-list' });
+            statusView.warningSectionEl = section;
+            statusView.warningListEl = listEl;
+            return listEl;
+        };
+
+        const renderRuntimeWarnings = (
+            statusView: ThinkingStatusView,
+            warnings: RuntimeWarningViewItem[],
+        ) => {
+            if (warnings.length === 0) {
+                removeElement(statusView.warningSectionEl);
+                statusView.warningSectionEl = undefined;
+                statusView.warningListEl = undefined;
+                return;
+            }
+            const listEl = ensureWarningList(statusView);
+            listEl.empty();
+            warnings.forEach((warning) => {
+                const row = listEl.createDiv({ cls: `thinking-status-warning-item warning-${warning.type}` });
+                row.createDiv({
+                    cls: 'thinking-status-warning-label',
+                    text: formatRuntimeWarningLabel(warning),
+                });
+                const detail = formatRuntimeWarningDetail(warning);
+                if (detail) {
+                    row.createDiv({ cls: 'thinking-status-warning-detail', text: detail });
+                }
+            });
+        };
+
+        const completeThinkingStatus = (statusView: ThinkingStatusView, summary = 'Thinking complete') => {
             stopThinkingLoader(statusView);
-            statusView.summaryEl.setText('Thinking complete');
+            statusView.summaryEl.setText(summary);
         };
 
         const displaySourceName = (path: string): string => {
@@ -1791,6 +1958,93 @@ export class LLMView extends ItemView {
             return [...byKey.values()].slice(0, 12);
         };
 
+        const normalizeContextUsedItems = (value: unknown): ChatContextUsedItem[] => {
+            if (!Array.isArray(value)) return [];
+            return value
+                .map((item): ChatContextUsedItem | null => {
+                    if (!item || typeof item !== 'object') return null;
+                    const record = item as Record<string, unknown>;
+                    if (typeof record.category !== 'string' || typeof record.label !== 'string') return null;
+                    return {
+                        category: record.category as ChatContextUsedItem['category'],
+                        label: record.label,
+                        detail: typeof record.detail === 'string' ? record.detail : undefined,
+                        sources: Array.isArray(record.sources)
+                            ? record.sources
+                                .map((source): NonNullable<ChatContextUsedItem['sources']>[number] | null => {
+                                    if (!source || typeof source !== 'object') return null;
+                                    const sourceRecord = source as Record<string, unknown>;
+                                    if (typeof sourceRecord.path !== 'string') return null;
+                                    return {
+                                        path: sourceRecord.path,
+                                        chunkIndex: typeof sourceRecord.chunkIndex === 'number'
+                                            ? sourceRecord.chunkIndex
+                                            : undefined,
+                                        score: typeof sourceRecord.score === 'number'
+                                            ? sourceRecord.score
+                                            : undefined,
+                                    };
+                                })
+                                .filter((source): source is NonNullable<ChatContextUsedItem['sources']>[number] => Boolean(source))
+                            : undefined,
+                        citationEligible: record.citationEligible === true,
+                        statusOnly: record.statusOnly === true,
+                    };
+                })
+                .filter((item): item is ChatContextUsedItem => Boolean(item));
+        };
+
+        const normalizeSourceRecords = (value: unknown): SourceRecord[] => {
+            if (!Array.isArray(value)) return [];
+            return value
+                .map((item): SourceRecord | null => {
+                    if (!item || typeof item !== 'object') return null;
+                    const record = item as Record<string, unknown>;
+                    if (typeof record.kind !== 'string' || typeof record.dedupKey !== 'string') return null;
+                    return {
+                        kind: record.kind as SourceRecord['kind'],
+                        dedupKey: record.dedupKey,
+                        turnId: typeof record.turnId === 'string' ? record.turnId : undefined,
+                        providerId: typeof record.providerId === 'string' ? record.providerId : undefined,
+                        capabilityName: typeof record.capabilityName === 'string' ? record.capabilityName : undefined,
+                        sourceBoundary: typeof record.sourceBoundary === 'string'
+                            ? record.sourceBoundary as SourceRecord['sourceBoundary']
+                            : undefined,
+                        title: typeof record.title === 'string' ? record.title : undefined,
+                        path: typeof record.path === 'string' ? record.path : undefined,
+                        url: typeof record.url === 'string' ? record.url : undefined,
+                        snippet: typeof record.snippet === 'string' ? record.snippet : undefined,
+                        score: typeof record.score === 'number' ? record.score : undefined,
+                        chunkIndex: typeof record.chunkIndex === 'number' ? record.chunkIndex : undefined,
+                        truncated: record.truncated === true,
+                        redacted: record.redacted === true,
+                        citationEligible: record.citationEligible === true,
+                        statusOnly: record.statusOnly === true,
+                        metadata: record.metadata && typeof record.metadata === 'object'
+                            ? record.metadata as Record<string, unknown>
+                            : undefined,
+                    };
+                })
+                .filter((item): item is SourceRecord => Boolean(item));
+        };
+
+        const mergeSourceRecords = (current: SourceRecord[], incoming: SourceRecord[]): SourceRecord[] => {
+            const byKey = new Map<string, SourceRecord>();
+            for (const record of [...current, ...incoming]) {
+                const key = [
+                    record.dedupKey,
+                    record.sourceBoundary ?? '',
+                    record.path ?? '',
+                    record.url ?? '',
+                    record.title ?? '',
+                ].join('\u0000');
+                if (!byKey.has(key)) {
+                    byKey.set(key, record);
+                }
+            }
+            return [...byKey.values()];
+        };
+
         const ensureContextUsedList = (statusView: ThinkingStatusView) => {
             if (statusView.contextUsedListEl) return statusView.contextUsedListEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-context-used' });
@@ -1886,14 +2140,6 @@ export class LLMView extends ItemView {
                     statusOnly: true,
                 }];
             }
-            if (status.type === 'web-search-enabled') {
-                return [{
-                    category: 'provider-web',
-                    label: 'Provider web search',
-                    detail: 'The AI provider may search the web. This is not Memory and no web citations are shown.',
-                    statusOnly: true,
-                }];
-            }
             if (status.type === 'fallback') {
                 const isLoopCap = /cap reached|stopped before/i.test(status.reason);
                 return [{
@@ -1938,8 +2184,6 @@ export class LLMView extends ItemView {
             } else if (status.type === 'tool-skipped') {
                 if (isDuplicateReadOnlyToolSkip(status)) return 'Vault context already gathered';
                 return 'Vault context unavailable';
-            } else if (status.type === 'web-search-enabled') {
-                return 'Qwen may search the web';
             } else if (status.type === 'answering') {
                 return 'Answering...';
             } else if (status.type === 'fallback') {
@@ -1948,6 +2192,57 @@ export class LLMView extends ItemView {
                     : 'Answering from available context.';
             }
             return 'Thinking...';
+        };
+
+        const formatCanonicalToolStatus = (toolName: string): string => {
+            if (toolName === 'search_memory') return 'Searching Memory...';
+            if (toolName === 'webSearch') return 'Searching the web...';
+            return formatToolRunningStatus(toolName);
+        };
+
+        const formatCanonicalToolCompletedStatus = (toolName: string, outcome: string): string => {
+            const label = toolName === 'search_memory'
+                ? 'Memory search'
+                : toolName === 'webSearch'
+                    ? 'WebSearch'
+                    : getToolContextUsedInfo(toolName).label;
+            if (outcome === 'success') return `${label} complete`;
+            if (outcome === 'budget_exceeded') return `${label} skipped: budget reached`;
+            if (outcome === 'duplicate_skipped') return `${label} already gathered`;
+            if (outcome === 'aborted' || outcome === 'abort_timeout') return `${label} stopped`;
+            return `${label} unavailable`;
+        };
+
+        const formatRuntimeWarningType = (type: string): string => {
+            if (type === 'required_capability_missing') return 'Answer may be incomplete';
+            if (type === 'provider_partial_error') return 'Answer stopped early';
+            if (type === 'assistant_idle_timeout') return 'Assistant stopped responding';
+            if (type === 'assistant_empty_response') return 'Answer incomplete';
+            if (type === 'wall_clock_exceeded') return 'Runtime limit reached';
+            return 'Answer warning';
+        };
+
+        const formatRuntimeWarningLabel = (warning: RuntimeWarningViewItem): string => {
+            if (warning.type === 'assistant_empty_response') return formatRuntimeWarningType(warning.type);
+            return warning.message ?? formatRuntimeWarningType(warning.type);
+        };
+
+        const formatRuntimeWarningDetail = (warning: RuntimeWarningViewItem): string | undefined => {
+            if (warning.type === 'assistant_empty_response') return 'No final answer was produced.';
+            return warning.detail ?? warning.capability;
+        };
+
+        const formatCanonicalTerminalSummary = (
+            status: string | undefined,
+            warnings: RuntimeWarningViewItem[] = [],
+        ): string => {
+            if (status === 'incomplete' || warnings.some((warning) => warning.type === 'assistant_empty_response')) {
+                return 'Answer incomplete';
+            }
+            if (status === 'aborted') return 'Generation cancelled';
+            if (status === 'error') return 'Answer failed';
+            if (status === 'completed_with_warning' || warnings.length > 0) return 'Answer completed with warning';
+            return 'Thinking complete';
         };
 
         const renderAgentStatus = (turn: UiTurn, status: ChatAgentStatus) => {
@@ -1963,6 +2258,247 @@ export class LLMView extends ItemView {
             addContextUsedItems(turn, getContextUsedItemsFromStatus(status));
         };
 
+        const addCanonicalActivity = (turn: UiTurn, content: string) => {
+            turn.statusView ??= createThinkingStatusView(turn);
+            if (turn.activityDetails[turn.activityDetails.length - 1] !== content) {
+                turn.activityDetails.push(content);
+                while (turn.activityDetails.length > 6) {
+                    turn.activityDetails.shift();
+                }
+            }
+            appendThinkingStatus(turn.statusView, content);
+        };
+
+        const upsertCanonicalMessage = (turn: UiTurn, message: PaAgentMessage) => {
+            turn.canonicalLifecycle.messagesById.set(message.id, message);
+            const index = turn.canonicalLifecycle.messages.findIndex((candidate) => candidate.id === message.id);
+            if (index >= 0) {
+                turn.canonicalLifecycle.messages[index] = message;
+            } else {
+                turn.canonicalLifecycle.messages.push(message);
+            }
+        };
+
+        const addCanonicalRuntimeWarnings = (turn: UiTurn, warnings: unknown) => {
+            if (!Array.isArray(warnings)) return;
+            const normalized = warnings
+                .map((warning): RuntimeWarningViewItem | null => {
+                    if (!warning || typeof warning !== 'object') return null;
+                    const record = warning as Record<string, unknown>;
+                    const type = typeof record.type === 'string'
+                        ? record.type
+                        : (typeof record.kind === 'string' ? record.kind : 'runtime_warning');
+                    return {
+                        type,
+                        message: typeof record.message === 'string' ? record.message : undefined,
+                        detail: typeof record.detail === 'string' ? record.detail : undefined,
+                        capability: typeof record.capability === 'string' ? record.capability : undefined,
+                        metadata: record.metadata && typeof record.metadata === 'object'
+                            ? record.metadata as Record<string, unknown>
+                            : undefined,
+                    };
+                })
+                .filter((warning): warning is RuntimeWarningViewItem => Boolean(warning));
+            if (normalized.length === 0) return;
+            const existingKeys = new Set(turn.canonicalLifecycle.warnings.map(runtimeWarningKey));
+            const nextWarnings = normalized.filter((warning) => {
+                const key = runtimeWarningKey(warning);
+                if (existingKeys.has(key)) return false;
+                existingKeys.add(key);
+                return true;
+            });
+            if (nextWarnings.length === 0) return;
+            turn.canonicalLifecycle.warnings = [...turn.canonicalLifecycle.warnings, ...nextWarnings];
+            turn.statusView ??= createThinkingStatusView(turn);
+            renderRuntimeWarnings(turn.statusView, turn.canonicalLifecycle.warnings);
+        };
+
+        const runtimeWarningKey = (warning: RuntimeWarningViewItem): string => JSON.stringify([
+            warning.type,
+            warning.message ?? '',
+            warning.detail ?? '',
+            warning.capability ?? '',
+        ]);
+
+        const addCanonicalHostContextMetadata = (turn: UiTurn, hostContext: unknown, turnId: string) => {
+            if (!hostContext || typeof hostContext !== 'object') return;
+            const record = hostContext as Record<string, unknown>;
+            const contextUsed = normalizeContextUsedItems(record.contextUsed);
+            const sourceRecords = normalizeSourceRecords(record.sourceRecords)
+                .map((sourceRecord) => ({
+                    ...sourceRecord,
+                    turnId: sourceRecord.turnId ?? turnId,
+                }));
+            if (contextUsed.length > 0) {
+                turn.canonicalLifecycle.hostContextUsedItems = mergeContextUsedItems(
+                    turn.canonicalLifecycle.hostContextUsedItems,
+                    contextUsed,
+                );
+                addContextUsedItems(turn, contextUsed);
+            }
+            if (sourceRecords.length > 0) {
+                turn.canonicalLifecycle.hostSourceRecords = mergeSourceRecords(
+                    turn.canonicalLifecycle.hostSourceRecords,
+                    sourceRecords,
+                );
+            }
+        };
+
+        const persistCanonicalTurnFromLifecycle = (turn: UiTurn, responseContent: string) => {
+            const canonical = turn.canonicalLifecycle;
+            if (!canonical.active || !canonical.runId) return undefined;
+            const turnId = canonical.finalTurnId
+                ?? [...canonical.turnStatuses.keys()].at(-1)
+                ?? canonical.currentTurnId;
+            if (!turnId) return undefined;
+            return createPaAgentPersistedTurn({
+                runId: canonical.runId,
+                turnId,
+                status: canonical.turnStatuses.get(turnId) as TurnEndStatus | undefined,
+                committedFinalText: responseContent,
+                sourceRecords: canonical.hostSourceRecords,
+                contextUsed: canonical.hostContextUsedItems,
+                messages: canonical.messages,
+            });
+        };
+
+        const refreshTurnMetadataFromCanonical = (turn: UiTurn, canonicalTurn: PaAgentPersistedTurn | undefined) => {
+            if (!canonicalTurn) return;
+            const assistantForMetadata: ChatMessage = {
+                role: 'assistant',
+                content: canonicalTurn.committedFinalText ?? '',
+                canonicalTurn,
+            };
+            const metadata = readChatHistoryTurnMetadata(assistantForMetadata, turn.memoryMetadata);
+            if (!metadata) return;
+            turn.memoryMetadata = metadata;
+            turn.contextUsedItems = mergeContextUsedItems(turn.contextUsedItems, metadata.contextUsed ?? []);
+            if (turn.assistantMessage) {
+                turn.assistantMessage.memoryMetadata = metadata;
+                turn.assistantMessage.canonicalTurn = canonicalTurn;
+            }
+            if (turn.statusView) {
+                renderContextUsedItems(turn.statusView, turn.contextUsedItems);
+            }
+        };
+
+        const handleCanonicalLifecycleEvent = (
+            turn: UiTurn,
+            event: AgentEvent,
+            setResponseContent: (content: string) => void,
+            isLiveTurn: () => boolean,
+        ) => {
+            if (!isLiveTurn()) return;
+            const canonical = turn.canonicalLifecycle;
+            if (canonical.terminalStatus) return;
+
+            if (event.type === 'agent_start') {
+                canonical.active = true;
+                canonical.runId = event.runId;
+                addCanonicalActivity(turn, 'Starting assistant run...');
+                return;
+            }
+            if (canonical.runId && event.runId !== canonical.runId) return;
+
+            switch (event.type) {
+                case 'turn_start':
+                    canonical.active = true;
+                    canonical.runId ??= event.runId;
+                    canonical.currentTurnId = event.turnId;
+                    addCanonicalHostContextMetadata(turn, event.metadata?.hostContext, event.turnId);
+                    addCanonicalActivity(turn, event.metadata?.runtimeInstruction
+                        ? 'Continuing with tool results...'
+                        : 'Deciding what context to use...');
+                    return;
+                case 'message_start':
+                    upsertCanonicalMessage(turn, event.message);
+                    if (event.message.role === 'assistant') {
+                        canonical.sawToolCallInAssistantMessage = false;
+                    }
+                    return;
+                case 'message_update':
+                    if (event.update.kind === 'thinking_delta') {
+                        turn.providerReasoningObserved = true;
+                        turn.statusView ??= createThinkingStatusView(turn);
+                        renderProviderReasoningNotice(turn.statusView);
+                        addCanonicalActivity(turn, 'Reading model progress...');
+                    } else if (event.update.kind === 'text_delta') {
+                        setResponseContent((turn.assistantMessage?.copyContent ?? '') + event.update.text);
+                    } else if (event.update.kind === 'toolcall_start') {
+                        canonical.sawToolCallInAssistantMessage = true;
+                        if (typeof event.metadata?.reclassifiedPendingText === 'string') {
+                            canonical.pendingAnswerReclassified = true;
+                            setResponseContent('');
+                            const reclassified = event.metadata.reclassifiedPendingText.trim();
+                            if (reclassified) {
+                                addCanonicalActivity(turn, `Draft before tool use: ${reclassified.slice(0, 240)}`);
+                            }
+                            addCanonicalActivity(turn, 'Moving draft text to progress before using tools...');
+                        }
+                        addCanonicalActivity(turn, event.update.name
+                            ? `Preparing ${event.update.name}...`
+                            : 'Preparing tool call...');
+                    } else if (event.update.kind === 'toolcall_delta') {
+                        canonical.sawToolCallInAssistantMessage = true;
+                    }
+                    return;
+                case 'message_end':
+                    upsertCanonicalMessage(turn, event.message);
+                    if (event.message.role === 'assistant') {
+                        if (event.message.content.some((part) => part.type === 'toolCall')) {
+                            setResponseContent('');
+                            return;
+                        }
+                        const finalText = event.message.content
+                            .filter((part) => part.type === 'text')
+                            .map((part) => part.text)
+                            .join('');
+                        if (finalText) setResponseContent(finalText);
+                    } else if (event.message.role === 'toolResult') {
+                        addContextUsedItems(turn, event.message.content.contextUsed ?? []);
+                        addCanonicalActivity(turn, `${event.message.toolName} result received`);
+                        if (event.message.content.previewText) {
+                            turn.statusView ??= createThinkingStatusView(turn);
+                            appendThinkingDetail(turn.statusView, event.message.content.previewText);
+                        }
+                    }
+                    return;
+                case 'tool_execution_start':
+                    addCanonicalActivity(turn, formatCanonicalToolStatus(event.toolName));
+                    return;
+                case 'tool_execution_update':
+                    addCanonicalActivity(turn, event.toolName);
+                    return;
+                case 'tool_execution_end':
+                    addCanonicalActivity(turn, formatCanonicalToolCompletedStatus(event.toolName, event.outcome));
+                    return;
+                case 'turn_end':
+                    canonical.turnStatuses.set(event.turnId, event.status);
+                    for (const toolResult of event.toolResults ?? []) {
+                        upsertCanonicalMessage(turn, toolResult);
+                        addContextUsedItems(turn, toolResult.content.contextUsed ?? []);
+                    }
+                    if (event.metadata?.diagnostics) {
+                        addCanonicalRuntimeWarnings(turn, event.metadata.diagnostics);
+                    }
+                    return;
+                case 'agent_end':
+                    canonical.terminalStatus = event.status;
+                    canonical.finalTurnId = typeof event.metadata?.finalTurnId === 'string'
+                        ? event.metadata.finalTurnId
+                        : canonical.finalTurnId;
+                    addCanonicalRuntimeWarnings(turn, event.metadata?.warnings);
+                    addCanonicalRuntimeWarnings(turn, event.metadata?.diagnostics);
+                    if (turn.statusView) {
+                        completeThinkingStatus(
+                            turn.statusView,
+                            formatCanonicalTerminalSummary(event.status, turn.canonicalLifecycle.warnings),
+                        );
+                    }
+                    return;
+            }
+        };
+
         const finalizeSuccessfulTurn = async (
             turn: UiTurn,
             prompt: string,
@@ -1972,8 +2508,11 @@ export class LLMView extends ItemView {
             const userRendered = turn.userMessage;
             const assistantRendered = turn.assistantMessage;
             if (!userRendered || !assistantRendered) return false;
+            const canonicalTurn = persistCanonicalTurnFromLifecycle(turn, responseContent);
+            refreshTurnMetadataFromCanonical(turn, canonicalTurn);
 
             assistantRendered.memoryMetadata = turn.memoryMetadata;
+            assistantRendered.canonicalTurn = canonicalTurn;
             if (
                 responseContent
                 && (
@@ -1988,7 +2527,15 @@ export class LLMView extends ItemView {
             if (!isLiveTurn()) return false;
 
             const userMessage: ChatMessage = { role: 'user', content: prompt };
-            const assistantMessage: ChatMessage = { role: 'assistant', content: responseContent };
+            const assistantMessage: ChatMessage = {
+                role: 'assistant',
+                content: responseContent,
+                ...(canonicalTurn ? { canonicalTurn } : {}),
+                ...(canonicalTurn && turn.memoryMetadata ? { memoryMetadata: turn.memoryMetadata } : {}),
+                ...(turn.canonicalLifecycle.warnings.length > 0
+                    ? { runtimeWarnings: turn.canonicalLifecycle.warnings.map((warning) => ({ ...warning })) }
+                    : {}),
+            };
             this.chatHistory.push(userMessage, assistantMessage);
             timelineEntries.push({
                 kind: 'history',
@@ -2016,14 +2563,25 @@ export class LLMView extends ItemView {
             assistantRendered.loaderEl = undefined;
             assistantRendered.messageDiv.removeAttribute('aria-busy');
             if (
-                turn.statusView
-                && (
-                    turn.providerReasoningObserved
-                    || turn.contextUsedItems.length > 0
-                    || turn.activityDetails.length > 0
-                )
-            ) {
-                completeThinkingStatus(turn.statusView);
+                    turn.statusView
+                    && (
+                        turn.providerReasoningObserved
+                        || turn.contextUsedItems.length > 0
+                        || turn.activityDetails.length > 0
+                        || turn.canonicalLifecycle.warnings.length > 0
+                        || (
+                            turn.canonicalLifecycle.terminalStatus !== undefined
+                            && turn.canonicalLifecycle.terminalStatus !== 'completed'
+                        )
+                    )
+                ) {
+                completeThinkingStatus(
+                    turn.statusView,
+                    formatCanonicalTerminalSummary(
+                        turn.canonicalLifecycle.terminalStatus,
+                        turn.canonicalLifecycle.warnings,
+                    ),
+                );
             } else {
                 stopThinkingLoader(turn.statusView);
                 removeElement(turn.statusView?.messageDiv);
@@ -2052,6 +2610,7 @@ export class LLMView extends ItemView {
                 prompt,
                 contextUsedItems: [],
                 activityDetails: [],
+                canonicalLifecycle: createCanonicalLifecycleState(),
             };
             const isUiTurnVisible = () => isCurrentSession()
                 && this.activeTurnId === turnId
@@ -2079,18 +2638,35 @@ export class LLMView extends ItemView {
 
                 const handleStatus = (status: ChatAgentStatus) => {
                     if (!isLiveTurn()) return;
+                    if (turn.canonicalLifecycle.active) return;
                     renderAgentStatus(turn, status);
                 };
                 const handleProviderReasoning = (chunk: string) => {
                     if (!isLiveTurn()) return;
+                    if (turn.canonicalLifecycle.active) return;
                     appendProviderReasoning(turn, chunk);
                 };
                 const handleTurnMetadata = (metadata: ChatTurnMemoryMetadata) => {
                     if (!isLiveTurn()) return;
+                    if (turn.canonicalLifecycle.active) return;
                     turn.memoryMetadata = metadata;
                     addContextUsedItems(turn, metadata.contextUsed ?? []);
                     if (turn.assistantMessage) {
                         turn.assistantMessage.memoryMetadata = metadata;
+                    }
+                };
+                const updateResponseContent = (content: string) => {
+                    responseContent = content;
+                    if (!turn.assistantMessage) {
+                        turn.assistantMessage = createMessageElement(
+                            { role: 'assistant', content: responseContent },
+                            { animate: true, isLive: isLiveTurn, memoryMetadata: turn.memoryMetadata },
+                        );
+                    } else {
+                        turn.assistantMessage.memoryMetadata = turn.memoryMetadata;
+                        void renderMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn, {
+                            deferMermaid: true,
+                        });
                     }
                 };
 
@@ -2098,27 +2674,21 @@ export class LLMView extends ItemView {
                     prompt,
                     (chunk) => {
                         if (!isLiveTurn()) return;
-                        responseContent = chunk;
-                        if (!turn.assistantMessage) {
-                            turn.assistantMessage = createMessageElement(
-                                { role: 'assistant', content: responseContent },
-                                { animate: true, isLive: isLiveTurn, memoryMetadata: turn.memoryMetadata },
-                            );
-                        } else {
-                            turn.assistantMessage.memoryMetadata = turn.memoryMetadata;
-                            renderMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn, {
-                                deferMermaid: true,
-                            });
-                        }
+                        if (turn.canonicalLifecycle.active) return;
+                        updateResponseContent(chunk);
                     },
                     controller.signal,
                     modelHistory,
                     {
                         memoryMode: "auto",
+                        onLifecycleEvent: (event) => {
+                            handleCanonicalLifecycleEvent(turn, event, updateResponseContent, isLiveTurn);
+                        },
                         onStatus: handleStatus,
                         onReasoningChunk: handleProviderReasoning,
                         onTurnMetadata: handleTurnMetadata,
                         onEvent: (event) => {
+                            if (turn.canonicalLifecycle.active) return;
                             if (event.kind === 'activity') {
                                 const status = event.detail?.legacyStatus as ChatAgentStatus | undefined;
                                 if (status) handleStatus(status);

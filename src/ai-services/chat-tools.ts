@@ -22,10 +22,10 @@ export interface ChatToolContext {
     onToolRunning?: (tool: string, message: string) => void;
 }
 
-export type ChatToolPermission = "read-only";
-export type ChatToolCost = "free" | "ai-calls";
+export type ChatToolPermission = "read-only" | "network-read";
+export type ChatToolCost = "free" | "ai-calls" | "network-calls";
 export type ChatToolFailureBehavior = "recoverable";
-export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool";
+export type ChatToolSourceBoundary = "memory" | "current-note" | "read-only-tool" | "web" | "skill-context";
 
 export const OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS = 6000;
 
@@ -113,7 +113,7 @@ export interface SearchMemoryInput {
     query: string;
 }
 
-export type CurrentNoteContextMode = "selection-or-nearby" | "outline" | "metadata";
+export type CurrentNoteContextMode = "selection-or-nearby" | "outline" | "metadata" | "full";
 
 export interface CurrentNoteContextInput {
     mode: CurrentNoteContextMode;
@@ -125,6 +125,8 @@ export interface CurrentNoteContextOutput {
     mode: CurrentNoteContextMode;
     selection?: string;
     nearbyText?: string;
+    fullText?: string;
+    fullTextTruncated?: boolean;
     headings?: string[];
     outlineTruncated?: boolean;
     scannedLineLimit?: number;
@@ -365,6 +367,7 @@ interface FileCacheLike {
 }
 
 const CURRENT_NOTE_CONTENT_BUDGET_CHARS = 3000;
+const CURRENT_NOTE_FULL_CONTENT_BUDGET_CHARS = 8000;
 const CURRENT_NOTE_MAX_HEADINGS = 30;
 const CURRENT_NOTE_NEARBY_RADIUS_LINES = 12;
 const CURRENT_NOTE_HEADING_SCAN_LINES = 200;
@@ -811,8 +814,9 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
         name: "get_current_note_context",
         description: "Read the active Markdown note title, path, selection, nearby text, or outline.",
         plannerGuidance: [
-            "Use when the user refers to the current note, selected text, this paragraph, nearby content, outline, or current note metadata.",
+            "Use when the user refers to the current note, selected text, this paragraph, nearby content, outline, full current note text, or current note metadata.",
             "Prefer selection-or-nearby for summary, explanation, rewrite, or local context questions.",
+            "Use full when the user asks to find an exact token, prefix, phrase, or identifier anywhere in the current note.",
         ],
         inputSchema: {
             type: "object",
@@ -820,7 +824,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
                 mode: {
                     type: "string",
                     description: "Current note context mode.",
-                    enum: ["selection-or-nearby", "outline", "metadata"],
+                    enum: ["selection-or-nearby", "outline", "metadata", "full"],
                 },
             },
             required: ["mode"],
@@ -828,7 +832,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
         },
         permission: "read-only",
         cost: "free",
-        outputBudgetChars: CURRENT_NOTE_CONTENT_BUDGET_CHARS,
+        outputBudgetChars: CURRENT_NOTE_FULL_CONTENT_BUDGET_CHARS,
         requiresConfirmation: false,
         failureBehavior: "recoverable",
         statusMessageText: "Reading current note",
@@ -860,6 +864,19 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
             }
 
             if (input.mode === "outline") {
+                applyOutline(output, extractHeadingsFromEditor(editor));
+                return createCurrentNoteResult(input.mode, output, source);
+            }
+
+            if (input.mode === "full") {
+                const fullText = editor.getValue?.() ?? collectLinesWithinBudget(
+                    editor,
+                    0,
+                    getLineCount(editor) ?? 0,
+                    CURRENT_NOTE_FULL_CONTENT_BUDGET_CHARS,
+                );
+                output.fullText = truncate(fullText, CURRENT_NOTE_FULL_CONTENT_BUDGET_CHARS);
+                output.fullTextTruncated = output.fullText.length < fullText.length;
                 applyOutline(output, extractHeadingsFromEditor(editor));
                 return createCurrentNoteResult(input.mode, output, source);
             }
@@ -1343,7 +1360,7 @@ export function isCurrentNoteContextResult(content: unknown): content is Current
         && typeof (content as Record<string, unknown>).path === "string"
         && "title" in content
         && typeof (content as Record<string, unknown>).title === "string"
-        && (mode === "selection-or-nearby" || mode === "outline" || mode === "metadata"),
+        && (mode === "selection-or-nearby" || mode === "outline" || mode === "metadata" || mode === "full"),
     );
 }
 
@@ -1432,7 +1449,7 @@ function validateCurrentNoteContextInput(input: unknown): CurrentNoteContextInpu
         throw new Error("get_current_note_context input must be an object.");
     }
     const mode = (input as Record<string, unknown>).mode;
-    if (mode === "selection-or-nearby" || mode === "outline" || mode === "metadata") {
+    if (mode === "selection-or-nearby" || mode === "outline" || mode === "metadata" || mode === "full") {
         return { mode };
     }
     throw new Error("get_current_note_context input.mode is invalid.");
@@ -1547,6 +1564,7 @@ export function isChatToolName(name: string): name is ChatToolName {
         || name === "search_vault_metadata"
         || name === "list_recent_notes"
         || name === "read_note_outline"
+        || name === "webSearch"
         || isObsidianOperationsV1AToolName(name);
 }
 
@@ -2643,7 +2661,7 @@ function getHeadingSectionOrNearbyText(editor: EditorLike): string {
 
     const start = Math.max(0, currentLine - CURRENT_NOTE_NEARBY_RADIUS_LINES);
     const end = Math.min(lineCount, currentLine + CURRENT_NOTE_NEARBY_RADIUS_LINES + 1);
-    return collectLinesWithinBudget(editor, start, end).trim();
+    return collectLinesWithinBudget(editor, start, end, CURRENT_NOTE_CONTENT_BUDGET_CHARS).trim();
 }
 
 function getCurrentHeadingSection(editor: EditorLike, cursorLine: number, lineCount: number): string | null {
@@ -2670,18 +2688,23 @@ function getCurrentHeadingSection(editor: EditorLike, cursorLine: number, lineCo
             break;
         }
     }
-    return collectLinesWithinBudget(editor, start, end).trim();
+    return collectLinesWithinBudget(editor, start, end, CURRENT_NOTE_CONTENT_BUDGET_CHARS).trim();
 }
 
-function collectLinesWithinBudget(editor: EditorLike, start: number, end: number): string {
+function collectLinesWithinBudget(
+    editor: EditorLike,
+    start: number,
+    end: number,
+    maxChars = CURRENT_NOTE_CONTENT_BUDGET_CHARS,
+): string {
     if (!editor.getLine) return "";
     const lines: string[] = [];
     let used = 0;
     for (let index = start; index < end; index++) {
         const line = editor.getLine(index);
         const nextUsed = used + line.length + (lines.length > 0 ? 1 : 0);
-        if (nextUsed > CURRENT_NOTE_CONTENT_BUDGET_CHARS) {
-            const remaining = CURRENT_NOTE_CONTENT_BUDGET_CHARS - used;
+        if (nextUsed > maxChars) {
+            const remaining = maxChars - used;
             if (remaining > 0) {
                 lines.push(line.slice(0, remaining));
             }

@@ -4,6 +4,7 @@ import { App, Notice, Platform, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
+import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
 import { isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
@@ -58,6 +59,7 @@ export interface PluginManagerSettings {
     apiToken: string;
     baseURL: string;
     chatModelName: string;
+    policyModelName: string;
     embeddingModelName: string;
     embeddingV4MigrationNoticeDismissed: boolean;
     memoryEnabled: boolean;
@@ -66,7 +68,11 @@ export interface PluginManagerSettings {
     showAdvancedMemoryControls: boolean;
     nativeToolPlanningSmokeEnabled: boolean;
     qwenThinkingEnabled: boolean;
-    qwenWebSearchEnabled: boolean;
+    webSearchEnabled: boolean;
+    paAgentAnswerStreamEnabled: boolean;
+    shareAnonymousCapabilityUsage: boolean;
+    skillContextEnabled: boolean;
+    enabledSkillIds: string[];
     // 兼容旧版本
     modelName: string;
     featuredImagePath: string;
@@ -128,6 +134,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     apiToken: "sk-xxx",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     chatModelName: "qwen-plus",
+    policyModelName: "",
     embeddingModelName: "text-embedding-v4",
     embeddingV4MigrationNoticeDismissed: false,
     memoryEnabled: true,
@@ -136,7 +143,11 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     showAdvancedMemoryControls: false,
     nativeToolPlanningSmokeEnabled: false,
     qwenThinkingEnabled: false,
-    qwenWebSearchEnabled: false,
+    webSearchEnabled: false,
+    paAgentAnswerStreamEnabled: true,
+    shareAnonymousCapabilityUsage: false,
+    skillContextEnabled: true,
+    enabledSkillIds: [...BUNDLED_SKILL_IDS],
     // 兼容旧版本
     modelName: "qwen-plus",
     featuredImagePath: "9.src",
@@ -161,11 +172,20 @@ const DEFAULT_GRAPH_COLOR: GraphColor = {
 }
 
 const QWEN_RESPONSE_OPTIONS_DASHSCOPE_DESC =
-    "These options apply only to final chat answers through Alibaba Cloud DashScope. They do not change Memory from your notes.";
+    "Qwen thinking and builtin WebSearch require Alibaba Cloud DashScope. They do not change Memory from your notes.";
 const QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC =
-    "Qwen thinking and web search are available only with the DashScope OpenAI-compatible base URL.";
+    "Qwen thinking and builtin WebSearch are available only with the DashScope OpenAI-compatible base URL.";
 export const STATISTICS_SYNC_SETTING_DESC =
     "Creates Statistics history files inside this plugin's vault folder so writing history can sync across devices. Leave off to avoid ongoing Git changes from synced history.";
+
+export function normalizeEnabledSkillIds(value: unknown): string[] {
+    const knownSkillIds = new Set(BUNDLED_SKILL_IDS);
+    if (!Array.isArray(value)) return [...BUNDLED_SKILL_IDS];
+    const normalized = value
+        .filter((entry): entry is string => typeof entry === "string")
+        .filter((entry) => knownSkillIds.has(entry));
+    return [...new Set(normalized)];
+}
 
 interface QwenResponseOptionToggle {
     setDisabled(disabled: boolean): unknown;
@@ -710,6 +730,18 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
 
+        new Setting(containerEl)
+            .setName("Policy model name")
+            .setDesc("Optional lightweight model used to classify whether Memory, current note context, or builtin WebSearch is needed. Your chat request and explicitly sent context may be sent to your configured AI provider; hidden vault content is not sent. Leave blank to use local fallback rules.")
+            .addText((text) => {
+                text.setPlaceholder(this.plugin.settings.chatModelName || "optional");
+                text.setValue(this.plugin.settings.policyModelName);
+                text.onChange(async (value: string) => {
+                    this.plugin.settings.policyModelName = value.trim();
+                    await this.plugin.saveSettings();
+                });
+            });
+
         if (this.plugin.settings.aiProvider === 'qwen') {
             const qwenOptionToggles: QwenResponseOptionToggle[] = [];
             containerEl.createEl('h3', { text: 'Qwen response options' });
@@ -737,18 +769,71 @@ export class SettingTab extends PluginSettingTab {
                 });
 
             new Setting(containerEl)
-                .setName("Allow Qwen to search the web")
-                .setDesc("DashScope may use the question and final prompt context to search the web. This is separate from Memory from your notes and may increase latency, API calls, and token cost.")
+                .setName("Enable builtin WebSearch tool")
+                .setDesc("Allow PA Agent to call the read-only builtin WebSearch tool. Search queries may be sent to DashScope WebSearch MCP and can produce web sources.")
                 .addToggle((toggle) => {
                     qwenOptionToggles.push(toggle);
                     toggle
-                        .setValue(this.plugin.settings.qwenWebSearchEnabled)
+                        .setValue(this.plugin.settings.webSearchEnabled)
                         .onChange(async (value) => {
-                            this.plugin.settings.qwenWebSearchEnabled = value;
+                            this.plugin.settings.webSearchEnabled = value;
                             await this.plugin.saveSettings();
                         });
                 });
+
             refreshQwenResponseOptionAvailability();
+        }
+
+        new Setting(containerEl)
+            .setName("Share anonymous capability usage")
+            .setDesc("Share local PA Agent usage events for capability invoked, failed, skipped, or unavailable states. Events do not include prompts, note text, observations, or vault paths.")
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(this.plugin.settings.shareAnonymousCapabilityUsage)
+                    .onChange(async (value) => {
+                        this.plugin.settings.shareAnonymousCapabilityUsage = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        containerEl.createEl('h3', { text: 'Skill guides' });
+        containerEl.createEl("p", {
+            text: "Let the assistant use bundled read-only skill guides for Obsidian formats and vault review tasks.",
+        }).setAttr("style", "font-size:14px");
+
+        new Setting(containerEl)
+            .setName("Use skill guides")
+            .setDesc("Skill guides add bounded reference context to chat answers. They do not add tools, write notes, run commands, or change Memory.")
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(this.plugin.settings.skillContextEnabled)
+                    .onChange(async (value) => {
+                        this.plugin.settings.skillContextEnabled = value;
+                        await this.plugin.saveSettings();
+                        this.display();
+                    });
+            });
+
+        const enabledSkillIds = new Set(this.plugin.settings.enabledSkillIds);
+        for (const skill of BUNDLED_SKILL_CATALOG) {
+            new Setting(containerEl)
+                .setName(skill.label)
+                .setDesc(skill.description)
+                .addToggle((toggle) => {
+                    toggle
+                        .setValue(this.plugin.settings.skillContextEnabled && enabledSkillIds.has(skill.id))
+                        .setDisabled(!this.plugin.settings.skillContextEnabled)
+                        .onChange(async (value) => {
+                            const nextEnabledSkillIds = new Set(this.plugin.settings.enabledSkillIds);
+                            if (value) {
+                                nextEnabledSkillIds.add(skill.id);
+                            } else {
+                                nextEnabledSkillIds.delete(skill.id);
+                            }
+                            this.plugin.settings.enabledSkillIds = normalizeEnabledSkillIds([...nextEnabledSkillIds]);
+                            await this.plugin.saveSettings();
+                        });
+                });
         }
 
         new Setting(containerEl)

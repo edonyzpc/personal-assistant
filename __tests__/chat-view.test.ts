@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals
 import { readFileSync } from 'node:fs';
 import { MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, StreamLLMOptions } from '../src/ai-services/chat-service';
+import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat-view';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 
@@ -372,6 +373,68 @@ function flushPromises() {
     return new Promise<void>((resolve) => setImmediate(resolve));
 }
 
+function emitCanonical(call: StreamCall, event: AgentEvent) {
+    call.options.onLifecycleEvent?.(event);
+}
+
+function canonicalEvent(overrides: Partial<AgentEvent> & { type: AgentEvent['type'] }): AgentEvent {
+    return {
+        version: 2,
+        runId: 'run_ui_1',
+        turnId: overrides.type === 'agent_start' || overrides.type === 'agent_end' ? '__run__' : 'turn_1',
+        scope: overrides.type === 'agent_start' || overrides.type === 'agent_end' ? 'run' : 'turn',
+        seq: 1,
+        timestamp: 100,
+        ...overrides,
+    } as AgentEvent;
+}
+
+function assistantMessage(
+    id: string,
+    content: Extract<PaAgentMessage, { role: 'assistant' }>['content'],
+): Extract<PaAgentMessage, { role: 'assistant' }> {
+    return {
+        role: 'assistant',
+        id,
+        content,
+        timestamp: 100,
+    };
+}
+
+function toolResultMessage(
+    id: string,
+    overrides: Partial<Extract<PaAgentMessage, { role: 'toolResult' }>> = {},
+): Extract<PaAgentMessage, { role: 'toolResult' }> {
+    return {
+        role: 'toolResult',
+        id,
+        toolCallId: 'call_memory',
+        toolName: 'search_memory',
+        isError: false,
+        timestamp: 100,
+        content: {
+            promptText: '{"tool":"search_memory","status":"ok"}',
+            previewText: 'Selected Memory: launch.md',
+            includeInNextPrompt: true,
+            sourceRecords: [{
+                kind: 'memory-reference',
+                dedupKey: 'memory:launch.md',
+                path: 'memory/launch.md',
+                sourceBoundary: 'memory',
+                citationEligible: true,
+            }],
+            contextUsed: [{
+                category: 'memory',
+                label: 'Selected Memory',
+                detail: '1 selected note',
+                sources: [{ path: 'memory/launch.md' }],
+                citationEligible: true,
+            }],
+        },
+        ...overrides,
+    };
+}
+
 function mockRenderedMemoryCallout() {
     (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
         el.setText(markdown.replace(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*Memory references\b[\s\S]*$/i, ''));
@@ -435,6 +498,16 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
         settings: {
             memoryEnabled: true,
             memoryApprovalPolicy: 'always',
+            skillContextEnabled: true,
+            enabledSkillIds: [
+                'obsidian-markdown',
+                'obsidian-bases',
+                'json-canvas',
+                'pa-frontmatter-audit',
+                'pa-callout-cleanup',
+                'pa-vault-link-health',
+                'pa-plugin-config-review',
+            ],
         },
         memoryManager: {
             getMaintenancePlan: jest.fn(async (): Promise<MemoryMaintenancePlan> => ({
@@ -650,6 +723,46 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Generation cancelled');
         expect(allText(containerEl)).not.toContain('late chunk');
         expect(allText(containerEl)).not.toContain('Deciding what context to use');
+    });
+
+    it('recovers through the normal send path after a cancelled turn settles', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'cancel smoke prompt';
+        const askButton = getButtonByText(containerEl, 'Ask');
+        void askButton.click();
+        await flushPromises();
+
+        expect(streamCalls).toHaveLength(1);
+        getButtonByClass(containerEl, 'cancel-button').click();
+        streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([]);
+        expect(allText(containerEl)).toContain('Generation cancelled');
+        textArea.value = 'after cancel recovery prompt';
+        expect(askButton.disabled).toBe(false);
+        void askButton.click();
+        await flushPromises();
+
+        expect(streamCalls).toHaveLength(2);
+        expect(streamCalls[1].prompt).toBe('after cancel recovery prompt');
+        expect(streamCalls[1].chatHistory).toEqual([]);
+        streamCalls[1].onChunk('PA_CANCEL_RECOVERY_OK');
+        streamCalls[1].resolve();
+        await flushPromises();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'after cancel recovery prompt' },
+            { role: 'assistant', content: 'PA_CANCEL_RECOVERY_OK' },
+        ]);
+        expect(allText(containerEl)).toContain('after cancel recovery prompt');
+        expect(allText(containerEl)).toContain('PA_CANCEL_RECOVERY_OK');
     });
 
     it('commits successful user and assistant messages as one model-history pair', async () => {
@@ -1192,6 +1305,514 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('persisted reasoning');
         expect(allText(containerEl)).not.toContain('second answer');
         expect(getElementsByClass(containerEl, 'thinking-status')).toHaveLength(1);
+    });
+
+    it('renders canonical lifecycle phases without duplicate legacy chunks', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'use memory before answering';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const call = streamCalls[0];
+        const responseDiv = getResponseDiv(view);
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_1', scope: 'turn' }));
+        const userMessage: Extract<PaAgentMessage, { role: 'user' }> = {
+            role: 'user',
+            id: 'user_1',
+            content: 'use memory before answering',
+            timestamp: 100,
+        };
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_1', scope: 'turn', message: userMessage }));
+        emitCanonical(call, canonicalEvent({ type: 'message_end', turnId: 'turn_1', scope: 'turn', message: userMessage }));
+        const firstAssistant = assistantMessage('assistant_1', []);
+        emitCanonical(call, canonicalEvent({ type: 'message_start', turnId: 'turn_1', scope: 'turn', message: firstAssistant }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            turnId: 'turn_1',
+            scope: 'turn',
+            messageId: 'assistant_1',
+            update: { kind: 'text_delta', text: 'Draft answer before tools.' },
+        }));
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(getElementByClass(responseDiv, 'assistant'))).toContain('Draft answer before tools.');
+        call.onChunk('legacy duplicate snapshot');
+        await flushPromises();
+        await flushPromises();
+        expect(allText(responseDiv)).not.toContain('legacy duplicate snapshot');
+
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            turnId: 'turn_1',
+            scope: 'turn',
+            messageId: 'assistant_1',
+            update: { kind: 'toolcall_start', toolCallId: 'call_memory', name: 'search_memory', index: 0 },
+            metadata: { reclassifiedPendingText: 'Draft answer before tools.' },
+        }));
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(getElementByClass(responseDiv, 'assistant'))).not.toContain('Draft answer before tools.');
+        expect(allText(responseDiv)).toContain('Draft before tool use: Draft answer before tools.');
+
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            message: assistantMessage('assistant_1', [
+                { type: 'thinking', text: 'Draft answer before tools.' },
+                { type: 'toolCall', id: 'call_memory', name: 'search_memory', input: { query: 'launch' }, index: 0 },
+            ]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_start',
+            turnId: 'turn_1',
+            scope: 'turn',
+            toolCallId: 'call_memory',
+            toolName: 'search_memory',
+            input: { query: 'launch' },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            toolCallId: 'call_memory',
+            toolName: 'search_memory',
+            outcome: 'success',
+        }));
+        const toolResult = toolResultMessage('tool_result_1');
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start',
+            turnId: 'turn_1',
+            scope: 'turn',
+            message: toolResult,
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            message: toolResult,
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            turnId: 'turn_1',
+            scope: 'turn',
+            status: 'tool_results_ready',
+            toolResults: [toolResult],
+        }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', turnId: 'turn_2', scope: 'turn' }));
+        const finalAssistant = assistantMessage('assistant_2', []);
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start',
+            turnId: 'turn_2',
+            scope: 'turn',
+            message: finalAssistant,
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_update',
+            turnId: 'turn_2',
+            scope: 'turn',
+            messageId: 'assistant_2',
+            update: { kind: 'text_delta', text: 'Final answer from Memory.' },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            turnId: 'turn_2',
+            scope: 'turn',
+            message: assistantMessage('assistant_2', [{ type: 'text', text: 'Final answer from Memory.' }]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            turnId: 'turn_2',
+            scope: 'turn',
+            status: 'completed',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_end',
+            scope: 'run',
+            turnId: '__run__',
+            status: 'completed',
+            metadata: { finalTurnId: 'turn_2' },
+        }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toHaveLength(2);
+        expect(view.chatHistory[1]).toMatchObject({
+            role: 'assistant',
+            content: 'Final answer from Memory.',
+            memoryMetadata: {
+                hasMemoryContent: true,
+                allowedMemorySourcePaths: ['memory/launch.md'],
+            },
+        });
+        expect(view.chatHistory[1].canonicalTurn?.runId).toBe('run_ui_1');
+        expect(view.chatHistory[1].canonicalTurn?.turnId).toBe('turn_2');
+        expect(allText(responseDiv)).toContain('Context Used');
+        expect(allText(responseDiv)).toContain('Selected Memory');
+        expect(allText(getElementByClass(responseDiv, 'assistant'))).toContain('Final answer from Memory.');
+        expect(allText(getElementByClass(responseDiv, 'assistant'))).not.toContain('legacy duplicate snapshot');
+    });
+
+    it('renders canonical host pre-context as Context Used and persists it with history', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'check unresolved wikilinks';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const call = streamCalls[0];
+        const responseDiv = getResponseDiv(view);
+        const hostContext = {
+            skills: [{
+                id: 'pa-vault-link-health',
+                content: 'Use bounded read-only vault link checks.',
+            }],
+            contextUsed: [{
+                category: 'skill-guide',
+                label: 'pa-vault-link-health',
+                sources: [{ path: 'skills/pa-vault-link-health/SKILL.md' }],
+                citationEligible: false,
+            }],
+            sourceRecords: [{
+                kind: 'skill-guide',
+                dedupKey: 'skill:pa-vault-link-health',
+                providerId: 'skill-context',
+                capabilityName: 'skill-context',
+                sourceBoundary: 'skill-context',
+                title: 'pa-vault-link-health',
+                citationEligible: false,
+                statusOnly: true,
+            }],
+        };
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', runId: 'run_skill_1', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_start',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            metadata: { hostContext },
+        }));
+        const userMessage: Extract<PaAgentMessage, { role: 'user' }> = {
+            role: 'user',
+            id: 'user_skill_1',
+            content: 'check unresolved wikilinks',
+            timestamp: 100,
+        };
+        emitCanonical(call, canonicalEvent({
+            type: 'message_start',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            message: userMessage,
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            message: userMessage,
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            message: assistantMessage('assistant_skill_1', [
+                { type: 'toolCall', id: 'call_memory_skill', name: 'search_memory', input: { query: 'wikilinks' }, index: 0 },
+            ]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_start',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            toolCallId: 'call_memory_skill',
+            toolName: 'search_memory',
+            input: { query: 'wikilinks' },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'tool_execution_end',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            toolCallId: 'call_memory_skill',
+            toolName: 'search_memory',
+            outcome: 'success',
+        }));
+        const memoryToolResult = toolResultMessage('tool_result_skill_memory');
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            message: memoryToolResult,
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_1',
+            scope: 'turn',
+            status: 'tool_results_ready',
+            toolResults: [memoryToolResult],
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_start',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_2',
+            scope: 'turn',
+            metadata: { hostContext },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_2',
+            scope: 'turn',
+            message: assistantMessage('assistant_skill_2', [{ type: 'text', text: 'Use the link-health workflow.' }]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_2',
+            scope: 'turn',
+            status: 'completed',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_end',
+            runId: 'run_skill_1',
+            scope: 'run',
+            turnId: '__run__',
+            status: 'completed',
+            metadata: { finalTurnId: 'turn_skill_2' },
+        }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(responseDiv)).toContain('Context Used');
+        expect(allText(responseDiv)).toContain('pa-vault-link-health');
+        const canonicalTurn = view.chatHistory[1].canonicalTurn;
+        expect(canonicalTurn).toMatchObject({
+            runId: 'run_skill_1',
+            turnId: 'turn_skill_2',
+            contextUsed: [expect.objectContaining({ category: 'skill-guide' })],
+            sourceRecords: [expect.objectContaining({ kind: 'skill-guide' })],
+        });
+        const skillSourceRecords = canonicalTurn?.sourceRecords?.filter((record) => record.kind === 'skill-guide') ?? [];
+        expect(skillSourceRecords).toHaveLength(1);
+        expect(skillSourceRecords[0]).toMatchObject({ turnId: 'turn_skill_1' });
+        expect(canonicalTurn?.messages.map((message) => message.role)).toEqual([
+            'user',
+            'assistant',
+            'toolResult',
+            'assistant',
+        ]);
+        expect(canonicalTurn?.messages.some((message) =>
+            message.role === 'toolResult' && message.toolName === 'skill-context')).toBe(false);
+        expect(view.chatHistory[1].memoryMetadata).toEqual(expect.objectContaining({
+            hasMemoryContent: true,
+            sourceRecords: expect.arrayContaining([expect.objectContaining({ kind: 'skill-guide' })]),
+            contextUsed: expect.arrayContaining([expect.objectContaining({ category: 'skill-guide' })]),
+        }));
+
+        getTextArea(containerEl).value = 'second prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[1].onChunk('second answer');
+        streamCalls[1].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        getButtonsByClass(containerEl, 'delete-message-button')[3].click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(containerEl)).toContain('Context Used');
+        expect(allText(containerEl)).toContain('pa-vault-link-health');
+        expect(allText(containerEl)).toContain('Selected Memory');
+    });
+
+    it('renders canonical warning metadata outside the answer body and preserves it on redraw', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'answer with warning';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const firstCall = streamCalls[0];
+        emitCanonical(firstCall, canonicalEvent({ type: 'agent_start', runId: 'run_warn_1', scope: 'run', turnId: '__run__' }));
+        emitCanonical(firstCall, canonicalEvent({ type: 'turn_start', runId: 'run_warn_1', turnId: 'turn_warn_1', scope: 'turn' }));
+        emitCanonical(firstCall, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_warn_1',
+            turnId: 'turn_warn_1',
+            scope: 'turn',
+            message: assistantMessage('assistant_warn_1', [{ type: 'text', text: 'Answer from available context.' }]),
+        }));
+        emitCanonical(firstCall, canonicalEvent({
+            type: 'turn_end',
+            runId: 'run_warn_1',
+            turnId: 'turn_warn_1',
+            scope: 'turn',
+            status: 'completed_with_warning',
+        }));
+        emitCanonical(firstCall, canonicalEvent({
+            type: 'agent_end',
+            runId: 'run_warn_1',
+            scope: 'run',
+            turnId: '__run__',
+            status: 'completed_with_warning',
+            metadata: {
+                finalTurnId: 'turn_warn_1',
+                warnings: [{
+                    type: 'required_capability_missing',
+                    message: 'Answer may be incomplete',
+                    capability: 'webSearch',
+                }],
+            },
+        }));
+        firstCall.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(containerEl)).toContain('Answer may be incomplete');
+        expect(allText(getElementByClass(getResponseDiv(view), 'assistant'))).not.toContain('Answer may be incomplete');
+        expect(view.chatHistory[1].runtimeWarnings).toEqual([expect.objectContaining({
+            type: 'required_capability_missing',
+            capability: 'webSearch',
+        })]);
+
+        getTextArea(containerEl).value = 'second answer';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[1].onChunk('second answer body');
+        streamCalls[1].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const deleteButtons = getButtonsByClass(containerEl, 'delete-message-button');
+        deleteButtons[3].click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toHaveLength(2);
+        expect(allText(containerEl)).toContain('Answer may be incomplete');
+        expect(allText(containerEl)).not.toContain('second answer body');
+    });
+
+    it('renders canonical incomplete diagnostics without writing them into the answer body', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'answer with no final text';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const call = streamCalls[0];
+        const diagnostics = [{
+            type: 'assistant_empty_response',
+            message: 'Assistant stream ended after thinking without final answer text.',
+        }];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', runId: 'run_empty_1', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({ type: 'turn_start', runId: 'run_empty_1', turnId: 'turn_empty_1', scope: 'turn' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_empty_1',
+            turnId: 'turn_empty_1',
+            scope: 'turn',
+            message: assistantMessage('assistant_empty_1', [{ type: 'thinking', text: 'working' }]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            runId: 'run_empty_1',
+            turnId: 'turn_empty_1',
+            scope: 'turn',
+            status: 'incomplete',
+            metadata: { diagnostics },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_end',
+            runId: 'run_empty_1',
+            scope: 'run',
+            turnId: '__run__',
+            status: 'incomplete',
+            metadata: {
+                finalTurnId: 'turn_empty_1',
+                diagnostics,
+            },
+        }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(getElementByClass(containerEl, 'thinking-status-summary').textContent).toBe('Answer incomplete');
+        expect(getElementsByClass(containerEl, 'thinking-status-warning-item')).toHaveLength(1);
+        expect(allText(containerEl)).toContain('No final answer was produced.');
+        expect(allText(containerEl)).not.toContain('Assistant stream ended after thinking without final answer text.');
+        expect(allText(getElementByClass(getResponseDiv(view), 'assistant'))).not.toContain('No final answer was produced.');
+        expect(view.chatHistory[1]).toMatchObject({
+            role: 'assistant',
+            content: '',
+            canonicalTurn: expect.objectContaining({ status: 'incomplete' }),
+            runtimeWarnings: [expect.objectContaining({ type: 'assistant_empty_response' })],
+        });
+    });
+
+    it('does not render canonical runtime instructions verbatim', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'answer with runtime instruction';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const call = streamCalls[0];
+        emitCanonical(call, canonicalEvent({ type: 'agent_start', runId: 'run_runtime_1', scope: 'run', turnId: '__run__' }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_start',
+            runId: 'run_runtime_1',
+            turnId: 'turn_runtime_1',
+            scope: 'turn',
+            metadata: {
+                runtimeInstruction: 'SECRET_CORRECTIVE_RUNTIME_INSTRUCTION',
+            },
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'message_end',
+            runId: 'run_runtime_1',
+            turnId: 'turn_runtime_1',
+            scope: 'turn',
+            message: assistantMessage('assistant_runtime_1', [{ type: 'text', text: 'Final answer.' }]),
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'turn_end',
+            runId: 'run_runtime_1',
+            turnId: 'turn_runtime_1',
+            scope: 'turn',
+            status: 'completed',
+        }));
+        emitCanonical(call, canonicalEvent({
+            type: 'agent_end',
+            runId: 'run_runtime_1',
+            scope: 'run',
+            turnId: '__run__',
+            status: 'completed',
+            metadata: { finalTurnId: 'turn_runtime_1' },
+        }));
+        call.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(getResponseDiv(view))).toContain('Continuing with tool results...');
+        expect(allText(getResponseDiv(view))).not.toContain('SECRET_CORRECTIVE_RUNTIME_INSTRUCTION');
+        expect(allText(getElementByClass(getResponseDiv(view), 'assistant'))).toContain('Final answer.');
     });
 
     it('keeps failed turns out of model history and retries through the normal send path', async () => {
@@ -1893,6 +2514,48 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
     });
 
+    it('shows enabled skill typeahead candidates from the composer trigger', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+        await flushPromises();
+
+        getTextArea(containerEl).value = '#';
+
+        const typeahead = getElementByClass(containerEl, 'pa-chat-skill-typeahead');
+        expect(typeahead.hidden).toBe(false);
+        expect(getElementsByClass(typeahead, 'pa-chat-skill-typeahead-item')).toHaveLength(7);
+        expect(allText(typeahead)).toContain('Vault Link Health');
+        expect(allText(typeahead)).toContain('#pa-vault-link-health');
+    });
+
+    it('filters skill typeahead candidates by per-skill settings and inserts the selected skill token', async () => {
+        const { view, containerEl, plugin } = createView();
+        plugin.settings.enabledSkillIds = ['pa-vault-link-health'];
+        await view.onOpen();
+        await flushPromises();
+
+        const textArea = getTextArea(containerEl);
+        textArea.value = 'Use #pa-';
+        const typeahead = getElementByClass(containerEl, 'pa-chat-skill-typeahead');
+
+        expect(getElementsByClass(typeahead, 'pa-chat-skill-typeahead-item')).toHaveLength(1);
+        getElementsByClass(typeahead, 'pa-chat-skill-typeahead-item')[0].click();
+
+        expect(textArea.value).toBe('Use #pa-vault-link-health ');
+        expect(typeahead.hidden).toBe(true);
+    });
+
+    it('hides skill typeahead when skill guides are globally disabled', async () => {
+        const { view, containerEl, plugin } = createView();
+        plugin.settings.skillContextEnabled = false;
+        await view.onOpen();
+        await flushPromises();
+
+        getTextArea(containerEl).value = '#';
+
+        expect(getElementByClass(containerEl, 'pa-chat-skill-typeahead').hidden).toBe(true);
+    });
+
     it('reserves bottom clearance when the Obsidian status bar overlaps the chat view', async () => {
         const { view, containerEl } = createView({ panelWidth: 900 });
         const statusBar = new MockElement('div');
@@ -2134,7 +2797,6 @@ describe('LLMView turn lifecycle', () => {
                 },
             ],
         });
-        streamCalls[0].options.onStatus?.({ type: 'web-search-enabled' });
         streamCalls[0].onChunk('answer without citation block');
         streamCalls[0].resolve();
         await flushPromises();
@@ -2144,12 +2806,10 @@ describe('LLMView turn lifecycle', () => {
         expect(text).toContain('Context Used');
         expect(text).toContain('Selected Memory');
         expect(text).toContain('Current note');
-        expect(text).toContain('Provider web search');
         expect(text).toContain('Dog');
         expect(text).toContain('current');
         expect(text).toContain('Eligible for Memory references');
         expect(text).toContain('Not a Memory reference');
-        expect(text).toContain('Status only');
         expect(text).not.toContain('0.unsorted/Dog.md');
         expect(text).not.toContain('notes/current.md');
         expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
@@ -2639,16 +3299,13 @@ describe('LLMView turn lifecycle', () => {
             message: 'Reading outline for 0.unsorted/Dog.md',
         });
         streamCalls[0].options.onStatus?.({ type: 'tool-skipped', tool: 'read_note_outline', reason: 'technical tool failure' });
-        streamCalls[0].options.onStatus?.({ type: 'web-search-enabled' });
 
         expect(allText(containerEl)).toContain('No related memory');
         expect(allText(containerEl)).toContain('Checking 2 related notes...');
         expect(allText(containerEl)).toContain('Reading selected Memory...');
         expect(allText(containerEl)).toContain('Vault context unavailable');
         expect(allText(containerEl)).toContain('Reading note outline...');
-        expect(allText(containerEl)).toContain('Qwen may search the web');
         expect(allText(containerEl)).toContain('Context Used');
-        expect(allText(containerEl)).toContain('Provider web search');
         expect(allText(containerEl)).not.toContain('fallback path');
         expect(allText(containerEl)).not.toContain('memory references');
         expect(allText(containerEl)).not.toContain('candidate');
