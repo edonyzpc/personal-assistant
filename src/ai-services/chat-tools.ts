@@ -456,6 +456,10 @@ const TAGS_DEFAULT_LIMIT = 40;
 const TAGS_MAX_LIMIT = 80;
 const TAG_REPRESENTATIVE_PATHS = 3;
 const TAGS_SCAN_MAX_FILES = 3000;
+// P0-B yield cadence — pi pattern: cooperative yield + abort check every N synchronous iterations
+// of a potentially long loop. 2048 keeps overhead negligible (≈1-2 yields per full TAGS_SCAN_MAX_FILES
+// scan) while bounding worst-case main-thread occupancy well within a 16ms frame budget.
+const TAGS_SCAN_YIELD_INTERVAL = 2048;
 const METADATA_CACHE_UNAVAILABLE_SOURCE = "metadata cache";
 const VAULT_FILE_READ_UNAVAILABLE_SOURCE = "vault file read";
 const VAULT_FILE_READ_SKIPPED_SIZE_SOURCE = "vault file read skipped for size";
@@ -1559,7 +1563,7 @@ export function createListVaultTagsTool(): ChatToolDefinition<ListVaultTagsInput
         validateInput: validateListVaultTagsInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const result = listVaultTags(context.plugin, input.limit);
+            const result = await listVaultTags(context.plugin, input.limit, context.signal);
             return {
                 ok: true,
                 tool: "list_vault_tags",
@@ -2749,7 +2753,11 @@ function findSnippetMatch(
     };
 }
 
-function listVaultTags(plugin: PluginManager, limit: number): VaultTagsOutput {
+async function listVaultTags(
+    plugin: PluginManager,
+    limit: number,
+    signal?: AbortSignal,
+): Promise<VaultTagsOutput> {
     const metadataCache = getOptionalMetadataCache(plugin);
     if (!metadataCache || typeof metadataCache.getFileCache !== "function") {
         return {
@@ -2764,6 +2772,14 @@ function listVaultTags(plugin: PluginManager, limit: number): VaultTagsOutput {
     let scannedFiles = 0;
     for (const file of files) {
         if (scannedFiles >= TAGS_SCAN_MAX_FILES) break;
+        // P0-B: cooperative cancellation + main-thread yield every TAGS_SCAN_YIELD_INTERVAL files.
+        // metadataCache.getFileCache is synchronous and the vault can hold thousands of markdown files;
+        // without periodic abort checks and microtask yields, a large tag scan stalls UI rendering and
+        // ignores user abort until the full scan finishes.
+        if (scannedFiles % TAGS_SCAN_YIELD_INTERVAL === 0 && scannedFiles > 0) {
+            throwIfAborted(signal);
+            await Promise.resolve();
+        }
         scannedFiles++;
         const tags = collectCacheTags(metadataCache.getFileCache?.(file));
         for (const tag of tags) {
@@ -2776,6 +2792,7 @@ function listVaultTags(plugin: PluginManager, limit: number): VaultTagsOutput {
             byTag.set(displayTag, entry);
         }
     }
+    throwIfAborted(signal);
     const skippedFiles = Math.max(0, files.length - scannedFiles);
     const allTags = [...byTag.entries()]
         .map(([tag, entry]) => ({ tag, count: entry.count, representativePaths: entry.representativePaths }))

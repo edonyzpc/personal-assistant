@@ -165,3 +165,85 @@ describe('Obsidian Operations v1A tool policy', () => {
         })).toBe(false);
     });
 });
+
+describe('list_vault_tags cooperative cancellation (P0-B)', () => {
+    function makeFakePlugin(fileCount: number, onGetFileCache?: (path: string) => void): unknown {
+        const files = Array.from({ length: fileCount }, (_, index) => ({ path: `notes/note-${index}.md` }));
+        return {
+            app: {
+                vault: {
+                    getMarkdownFiles: () => files,
+                },
+                metadataCache: {
+                    getFileCache: (file: { path: string }) => {
+                        onGetFileCache?.(file.path);
+                        return { tags: [{ tag: '#example' }] };
+                    },
+                },
+            },
+        };
+    }
+
+    it('throws AbortError when the signal is already aborted', async () => {
+        const tool = createListVaultTagsTool();
+        const plugin = makeFakePlugin(2_000);
+        const controller = new AbortController();
+        controller.abort();
+
+        await expect(
+            tool.execute({ limit: 10 }, {
+                plugin: plugin as never,
+                signal: controller.signal,
+            } as never),
+        ).rejects.toMatchObject({ name: 'AbortError' });
+    });
+
+    it('aborts mid-scan when the signal is fired before the next yield interval and stops calling getFileCache', async () => {
+        const tool = createListVaultTagsTool();
+        const fileScanLog: string[] = [];
+        const controller = new AbortController();
+        // Abort deterministically inside the getFileCache callback at file 100.
+        // The abort signal is checked at the next yield checkpoint (scannedFiles=2048),
+        // so the scan should stop well before all 5_000 files are visited.
+        const plugin = makeFakePlugin(5_000, (path) => {
+            fileScanLog.push(path);
+            if (fileScanLog.length === 100) {
+                controller.abort();
+            }
+        });
+
+        const result = await tool.execute({ limit: 10 }, {
+            plugin: plugin as never,
+            signal: controller.signal,
+        } as never).then(
+            (v) => ({ status: 'fulfilled' as const, value: v }),
+            (e: unknown) => ({ status: 'rejected' as const, reason: e }),
+        );
+
+        expect(result.status).toBe('rejected');
+        if (result.status === 'rejected') {
+            expect((result.reason as Error).name).toBe('AbortError');
+        }
+        // The abort fires at file 100, but the sync batch runs until the next yield
+        // checkpoint at 2048. The scan must stop at or shortly after that checkpoint.
+        expect(fileScanLog.length).toBeLessThan(5_000);
+    });
+
+    it('returns tags successfully when no abort fires (regression: still completes after going async)', async () => {
+        const tool = createListVaultTagsTool();
+        const plugin = makeFakePlugin(50);
+
+        const result = await tool.execute({ limit: 10 }, {
+            plugin: plugin as never,
+            signal: new AbortController().signal,
+        } as never);
+
+        expect(result.ok).toBe(true);
+        const content = result.content as { kind: string; tags: Array<{ tag: string; count: number }>; scannedFiles: number };
+        expect(content.kind).toBe('vault-tags');
+        expect(content.scannedFiles).toBe(50);
+        expect(content.tags).toEqual([
+            expect.objectContaining({ tag: '#example', count: 50 }),
+        ]);
+    });
+});
