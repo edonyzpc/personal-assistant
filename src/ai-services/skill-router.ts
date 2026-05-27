@@ -48,6 +48,26 @@ export interface SkillContextResult {
     sourceRecords: SourceRecord[];
 }
 
+export interface SkillCatalogEntry {
+    name: string;
+    description: string;
+    sourcePath: string;
+}
+
+export interface SkillCatalog {
+    entries: SkillCatalogEntry[];
+}
+
+export interface SkillBody {
+    name: string;
+    description: string;
+    body: string;
+    selectedReferences: string[];
+    sourcePath: string;
+    contextItem: ChatContextItem;
+    sourceRecords: SourceRecord[];
+}
+
 export class SkillParseError extends Error {
     constructor(message: string) {
         super(message);
@@ -82,6 +102,10 @@ export class SkillRouter {
         }
         return selectedScore > 0 ? selected : null;
     }
+}
+
+export function scoreSkillForPrompt(prompt: string, skill: AgentSkill): number {
+    return scoreSkill(prompt, skill);
 }
 
 export function buildSkillContext(
@@ -304,7 +328,7 @@ function findReferencedPaths(body: string): string[] {
     return [...paths];
 }
 
-function createSkillSourceRecord(skill: AgentSkill, selectedReferences: string[]): SourceRecord {
+export function createSkillSourceRecord(skill: AgentSkill, selectedReferences: string[]): SourceRecord {
     return {
         kind: "skill-guide",
         dedupKey: createSourceDedupKey(`skill:${skill.metadata.name}`),

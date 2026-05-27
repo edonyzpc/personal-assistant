@@ -1767,6 +1767,7 @@ export class VSS {
 
         const deadline = Date.now() + waitMs;
         let lastError: unknown;
+        // eslint-disable-next-line no-constant-condition
         while (true) {
             const sqliteIndex = this.createSqliteIndex();
             try {
@@ -1968,18 +1969,6 @@ export class VSS {
                 retryDelaysMs,
                 createOptions: {
                     batchSize: 10,
-                    maxConcurrency: 1,
-                    maxRetries: 0,
-                },
-            };
-        }
-
-        if (provider === "ollama") {
-            return {
-                maxBatchItems: 3,
-                minRequestGapMs: 0,
-                retryDelaysMs,
-                createOptions: {
                     maxConcurrency: 1,
                     maxRetries: 0,
                 },

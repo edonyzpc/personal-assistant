@@ -9,17 +9,16 @@ import {
 import type { PluginManager } from '../plugin'
 import type { MemoryMode } from '../memory-manager';
 import {
-    ChatAgentRuntime,
+    PaAgentRuntime,
     canFallbackToNonStreaming,
-} from './chat-agent';
+} from './pa-agent-runtime';
 import {
     BuiltinWebSearchProvider,
     createBailianWebSearchNetworkPolicy,
     requestBailianWebSearchMcp,
 } from './builtin-web-search-provider';
 import type { CapabilityProvider } from './capability-types';
-import { extractCanonicalTurnMetadata } from './pa-agent-history';
-import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent, PaAgentMessage } from './chat-types';
+import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent } from './chat-types';
 
 export type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent };
 export { canFallbackToNonStreaming };
@@ -31,74 +30,6 @@ export interface StreamLLMOptions {
     onStatus?: (status: ChatAgentStatus) => void;
     onReasoningChunk?: (chunk: string) => void;
     onTurnMetadata?: (metadata: ChatTurnMemoryMetadata) => void;
-}
-
-export interface PaAgentLifecycleLegacyAdapterCallbacks {
-    onChunk: (snapshot: string) => void;
-    onReasoningChunk?: (chunk: string) => void;
-    onTurnMetadata?: (metadata: ChatTurnMemoryMetadata) => void;
-}
-
-export function createPaAgentLifecycleLegacyAdapter(
-    callbacks: PaAgentLifecycleLegacyAdapterCallbacks,
-): (event: AgentEvent) => void {
-    let committedSnapshot = "";
-    const canonicalMessages = new Map<string, PaAgentMessage>();
-    let metadataEmitted = false;
-
-    return (event: AgentEvent) => {
-        switch (event.type) {
-            case "message_start":
-            case "message_end":
-                canonicalMessages.set(event.message.id, event.message);
-                if (event.type === "message_start") return;
-                if (event.message.role === "toolResult") return;
-                if (event.message.role !== "assistant") return;
-                if (event.message.content.some((part) => part.type === "toolCall")) return;
-
-                {
-                    const finalText = event.message.content
-                        .filter((part) => part.type === "text")
-                        .map((part) => part.text)
-                        .join("");
-                    if (!finalText) return;
-
-                    committedSnapshot += finalText;
-                    callbacks.onChunk(committedSnapshot);
-                    return;
-                }
-            case "message_update":
-                if (event.update.kind === "thinking_delta") {
-                    callbacks.onReasoningChunk?.(event.update.text);
-                }
-                return;
-            case "turn_end": {
-                for (const toolResult of event.toolResults ?? []) {
-                    canonicalMessages.set(toolResult.id, toolResult);
-                }
-                return;
-            }
-            case "agent_end": {
-                if (metadataEmitted) return;
-                metadataEmitted = true;
-                const metadata = extractCanonicalTurnMetadata({ messages: [...canonicalMessages.values()] });
-                if (
-                    metadata.hasMemoryContent
-                    || (metadata.contextUsed?.length ?? 0) > 0
-                    || (metadata.sourceRecords?.length ?? 0) > 0
-                ) {
-                    callbacks.onTurnMetadata?.(metadata);
-                }
-                return;
-            }
-            case "agent_start":
-            case "turn_start":
-            case "tool_execution_start":
-            case "tool_execution_update":
-            case "tool_execution_end":
-                return;
-        }
-    };
 }
 
 /**
@@ -142,12 +73,6 @@ export class ChatService {
         })];
     }
 
-    private shouldUsePaAgentAnswerStream(): boolean {
-        if (this.plugin.settings.paAgentAnswerStreamEnabled === false) return false;
-        if (this.plugin.settings.aiProvider === "openai") return true;
-        return this.plugin.settings.aiProvider === "qwen"
-            && isDashScopeCompatibleBaseURL(this.plugin.settings.baseURL);
-    }
 
     /**
      * 流式LLM调用
@@ -169,12 +94,11 @@ export class ChatService {
                 nativeToolPlanningInternalGate: true,
             };
         const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
-        const runtime = new ChatAgentRuntime(
+        const runtime = new PaAgentRuntime(
             this.plugin,
             this.aiUtils,
             {
                 ...nativeToolPlanningOptions,
-                paAgentAnswerStreamEnabled: this.shouldUsePaAgentAnswerStream(),
                 runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
                 additionalCapabilityProviders,
             },
@@ -215,7 +139,6 @@ function adaptAgentEvent(
             options.onTurnMetadata?.(event.metadata);
             return;
         case "answer-started":
-        case "segment-boundary":
         case "answer-complete":
         case "partial-output-error":
         case "aborted":

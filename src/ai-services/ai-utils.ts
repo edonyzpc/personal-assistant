@@ -1,9 +1,7 @@
 /* Copyright 2023 edonyzpc */
-import { Notice, Platform, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
-import { ChatOllama } from "@langchain/ollama";
+import { Notice, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
 import { ChatOpenAI, type ChatOpenAICallOptions, type ClientOptions } from '@langchain/openai';
 import { OpenAIEmbeddings } from '@langchain/openai';
-import { OllamaEmbeddings } from "@langchain/ollama";
 
 import type { PluginManager } from '../plugin'
 import { computeContentHash } from '../vss-helpers';
@@ -203,7 +201,7 @@ export class AIUtils {
     async createChatModel(
         temperature: number = 0.8,
         options: CreateChatModelOptions = {},
-    ): Promise<ChatOpenAI<ChatOpenAICallOptions> | ChatOllama> {
+    ): Promise<ChatOpenAI<ChatOpenAICallOptions>> {
         const provider = this.plugin.settings.aiProvider;
         const modelName = options.modelName || this.plugin.settings.chatModelName;
         const baseURL = this.plugin.settings.baseURL;
@@ -228,17 +226,6 @@ export class AIUtils {
                     model: modelName,
                     apiKey: openaiToken,
                     configuration: this.createOpenAIClientOptions(baseURL, transport),
-                    temperature: temperature,
-                });
-            }
-
-            case 'ollama': {
-                if (!Platform.isDesktop) {
-                    throw new Error('Ollama provider is only available on Obsidian Desktop.');
-                }
-                return new ChatOllama({
-                    model: modelName,
-                    baseUrl: baseURL,
                     temperature: temperature,
                 });
             }
@@ -319,7 +306,7 @@ export class AIUtils {
     /**
      * 创建嵌入模型实例
      */
-    async createEmbeddings(dimensions?: number, options: CreateEmbeddingsOptions = {}): Promise<OpenAIEmbeddings | OllamaEmbeddings> {
+    async createEmbeddings(dimensions?: number, options: CreateEmbeddingsOptions = {}): Promise<OpenAIEmbeddings> {
         const provider = this.plugin.settings.aiProvider;
         const modelName = this.plugin.settings.embeddingModelName;
         const baseURL = this.plugin.settings.baseURL;
@@ -334,18 +321,6 @@ export class AIUtils {
                     apiKey: token,
                     configuration: this.createOpenAIClientOptions(baseURL, 'obsidian'),
                     batchSize: options.batchSize,
-                    maxConcurrency: options.maxConcurrency,
-                    maxRetries: options.maxRetries,
-                });
-            }
-
-            case 'ollama': {
-                if (!Platform.isDesktop) {
-                    throw new Error('Ollama embeddings are only available on Obsidian Desktop.');
-                }
-                return new OllamaEmbeddings({
-                    model: modelName,
-                    baseUrl: baseURL,
                     maxConcurrency: options.maxConcurrency,
                     maxRetries: options.maxRetries,
                 });
@@ -463,5 +438,5 @@ export function buildQwenModelKwargs(
 }
 
 function isKnownNativeToolProvider(provider: string): boolean {
-    return provider === "openai" || provider === "qwen" || provider === "ollama";
+    return provider === "openai" || provider === "qwen";
 }

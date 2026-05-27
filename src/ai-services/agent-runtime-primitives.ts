@@ -6,7 +6,6 @@ import type {
     AgentMessageUpdate,
     LegacyAgentEvent,
     PaAgentMessage,
-    AgentSegmentBoundary,
     ChatTurnMemoryMetadata,
     ToolExecutionOutcome,
     TurnEndStatus,
@@ -138,10 +137,6 @@ export class AgentEventEmitter {
 
     turnMetadata(metadata: ChatTurnMemoryMetadata): void {
         this.emit({ ...this.baseEvent(), kind: "turn-metadata", metadata });
-    }
-
-    segmentBoundary(boundary: AgentSegmentBoundary): void {
-        this.emit({ ...this.baseEvent(), kind: "segment-boundary", boundary });
     }
 
     answerComplete(): void {

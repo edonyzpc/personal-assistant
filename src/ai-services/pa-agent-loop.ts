@@ -1,6 +1,7 @@
 import {
     AgentLifecycleEventEmitter,
 } from "./agent-runtime-primitives";
+import { errorMessage, stableStringify } from "./agent-utils";
 import type {
     AgentEndStatus,
     AgentEvent,
@@ -1030,10 +1031,6 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
     };
 }
 
-function errorMessage(error: unknown): string {
-    return error instanceof Error ? error.message : String(error);
-}
-
 function appendTextPart(parts: AssistantMessagePart[], type: "thinking" | "text", text: string): void {
     const last = parts.at(-1);
     if (last?.type === type) {
@@ -1210,17 +1207,6 @@ function isPlaceholderParsedToolCall(toolCall: ParsedBufferedToolCall): boolean 
 
 function normalizeToolCallKey(toolCall: ParsedBufferedToolCall): string {
     return `${toolCall.name}:${stableStringify(toolCall.input)}`;
-}
-
-function stableStringify(value: unknown): string {
-    if (value === null || typeof value !== "object") {
-        return JSON.stringify(value);
-    }
-    if (Array.isArray(value)) {
-        return `[${value.map((item) => stableStringify(item)).join(",")}]`;
-    }
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
 }
 
 function normalizeToolExecutionResult(result: PaAgentToolExecutionResult): PaAgentToolExecutionResult {

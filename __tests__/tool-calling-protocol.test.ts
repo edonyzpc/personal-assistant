@@ -1,12 +1,11 @@
 import { describe, expect, it } from "@jest/globals";
 
 import {
-    getLateToolCallPolicy,
     getToolCallingProtocolSpec,
     TOOL_CALLING_PROTOCOL_MATRIX,
     type ToolCallingProtocolProvider,
 } from "../src/ai-services/tool-calling-protocol";
-import { parseNativeToolCallsFromModelResponse } from "../src/ai-services/chat-agent";
+import { parseNativeToolCallsFromModelResponse } from "../src/ai-services/pa-agent-runtime";
 import {
     directAnswerFixture,
     multiToolCallPartialJsonFixture,
@@ -17,11 +16,10 @@ import {
 } from "../src/tests/fixtures/llm-stream";
 
 describe("PA Agent tool-call protocol matrix", () => {
-    it("documents OpenAI, Qwen, and Ollama provider protocol decisions", () => {
+    it("documents OpenAI and Qwen provider protocol decisions", () => {
         expect(TOOL_CALLING_PROTOCOL_MATRIX.map((entry) => entry.provider)).toEqual([
             "openai",
             "qwen",
-            "ollama",
         ]);
         expect(getToolCallingProtocolSpec("openai")).toMatchObject({
             streamingToolCalls: true,
@@ -32,11 +30,6 @@ describe("PA Agent tool-call protocol matrix", () => {
             streamingToolCalls: true,
             preservesToolCallId: true,
             fallbackPath: "none",
-        });
-        expect(getToolCallingProtocolSpec("ollama")).toMatchObject({
-            streamingToolCalls: false,
-            preservesToolCallId: false,
-            fallbackPath: "json-planning-loop",
         });
     });
 
@@ -77,19 +70,6 @@ describe("PA Agent tool-call protocol matrix", () => {
             });
         },
     );
-
-    it("keeps Ollama streamed tool calls declined with JSON planning fallback", () => {
-        const ollama = getToolCallingProtocolSpec("ollama");
-
-        expect(ollama.streamingToolCalls).toBe(false);
-        expect(ollama.fallbackPath).toBe("json-planning-loop");
-        expect(ollama.earliestObservableTurnShape).toContain("No validated streamed tool-call chunk shape");
-    });
-
-    it("keeps late tool-call errors on the current path and segment boundaries on the PA Agent path", () => {
-        expect(getLateToolCallPolicy("current-ralpha")).toBe("partial-output-error");
-        expect(getLateToolCallPolicy("pa-agent-answer-stream")).toBe("segment-boundary");
-    });
 
     it("aborts stream fixture replay before yielding more chunks", async () => {
         const controller = new AbortController();

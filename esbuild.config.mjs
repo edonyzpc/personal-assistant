@@ -12,6 +12,19 @@ if you want to view the source, please visit the github repository of this plugi
 
 const prod = (process.argv[2] === "production");
 
+// Mark every Node builtin import as external so Obsidian Mobile WebView never tries
+// to require missing builtins at runtime. Catches both `node:*` (modern) and bare names
+// like `worker_threads`/`crypto` (legacy) from transitive `@langchain/community` etc.
+// Maintained list mirrors `NODE_BUILTIN_NAMES` in scripts/audit-bundle.mjs.
+const NODE_BUILTIN_BARE = /^(?:fs|path|child_process|os|crypto|stream|url|net|tls|http|https|zlib|querystring|readline|buffer|events|util|tty|dns|module|process|worker_threads|fs\/promises|stream\/promises)$/;
+const externalNodeBuiltinsPlugin = {
+	name: "external-node-builtins",
+	setup(build) {
+		build.onResolve({ filter: /^node:/ }, (args) => ({ path: args.path, external: true }));
+		build.onResolve({ filter: NODE_BUILTIN_BARE }, (args) => ({ path: args.path, external: true }));
+	},
+};
+
 const inlineSqliteWorkerPlugin = {
 	name: "inline-sqlite-worker",
 	setup(build) {
@@ -67,6 +80,10 @@ const mainContext = await context({
 	external: [
 		"obsidian",
 		"electron",
+		// Mobile-compat note: ALL `node:*` builtins are additionally marked external via
+		// the `externalNodeBuiltinsPlugin` below (esbuild's `external` field accepts only
+		// strings; regex matching must be done in a plugin). Obsidian Mobile WebView throws
+		// when these modules are required, so this is mobile compatibility, NOT size opt.
 		"@codemirror/autocomplete",
 		"@codemirror/collab",
 		"@codemirror/commands",
@@ -115,6 +132,7 @@ const mainContext = await context({
 			],
 		}),
 		inlineSqliteWorkerPlugin,
+		externalNodeBuiltinsPlugin,
 	],
 });
 

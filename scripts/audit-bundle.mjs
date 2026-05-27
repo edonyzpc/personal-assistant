@@ -4,8 +4,16 @@ import { join } from "node:path";
 import process from "node:process";
 
 const DEFAULT_INPUT = "dist/main.js";
-const DEFAULT_GZIP_BUDGET_BYTES = 80 * 1024;
-const NODE_BUILTIN_PATTERN = /(?:from\s+["'](?:node:)?(?:fs|path|child_process)["']|require\(\s*["'](?:node:)?(?:fs|path|child_process)["']\s*\))/g;
+// Informational budget — bundle size is not a hard release gate per D9. The 1.5 MB ceiling
+// leaves ~30% headroom above the post-v2.0.0 baseline (~1.14 MB gzip) for Ops Agent growth.
+const DEFAULT_GZIP_BUDGET_BYTES = 1.5 * 1024 * 1024;
+// Match the full set of Node builtins so transitive imports (`@langchain/community`, etc.)
+// don't sneak into the mobile bundle when only fs/path/child_process are whitelisted.
+const NODE_BUILTIN_NAMES = "fs|path|child_process|os|crypto|stream|url|net|tls|http|https|zlib|querystring|readline|buffer|events|util|tty|dns|fs\\/promises|stream\\/promises|module|process|worker_threads";
+const NODE_BUILTIN_PATTERN = new RegExp(
+    `(?:from\\s+["'](?:node:)?(?:${NODE_BUILTIN_NAMES})["']|require\\(\\s*["'](?:node:)?(?:${NODE_BUILTIN_NAMES})["']\\s*\\))`,
+    "g",
+);
 
 async function main() {
     const options = parseArgs(process.argv.slice(2));

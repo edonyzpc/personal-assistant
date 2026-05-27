@@ -3,7 +3,6 @@ import { BUILTIN_WEB_SEARCH_TOOL_NAME } from "./builtin-web-search-provider";
 import type { CapabilityRegistry } from "./capability-registry";
 import type { AgentRuntimePlatform } from "./capability-types";
 import {
-    type CurrentNoteContextInput,
     isCurrentNoteContextResult,
     isSearchMemoryResult,
 } from "./chat-tools";
@@ -19,7 +18,7 @@ import type {
     PaAgentToolExecutionResult,
     PaAgentToolExecutor,
 } from "./pa-agent-loop";
-import { isExplicitCurrentNoteOnlyRequest } from "./pa-agent-required-capability-policy";
+import { LOAD_SKILL_TOOL_NAME } from "./skill-context-provider";
 
 const MAX_PREVIEW_CHARS = 1200;
 
@@ -38,21 +37,47 @@ export function createPaAgentCapabilityToolExecutor(
 ): PaAgentToolExecutor {
     return {
         execute: async (input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult> => {
-            const normalizedToolCall = normalizeHostToolCallInput(input.toolCall, input.userInput);
-            if (!isAllowedHostToolCall(normalizedToolCall.name, options)) {
+            // SPEC-TCR-04: removed cross-cutting normalizeHostToolCallInput dispatch.
+            // Per-tool prepareArguments hooks in chat-tools.ts now handle alias mapping;
+            // CapabilityRegistry.prepareAndValidate runs prepareArguments + validateInput.
+            // Failure → schema_invalid outcome → HostPolicy corrective turn + answer-completion failed-only path.
+            const toolCall = input.toolCall;
+            if (!isAllowedHostToolCall(toolCall.name, options)) {
                 return {
                     outcome: "policy_rejected",
-                    promptText: `Tool ${normalizedToolCall.name} was skipped because the user limited this request to different available context.`,
-                    previewText: `Skipped ${normalizedToolCall.name}; outside the user-requested context scope.`,
+                    promptText: `Tool ${toolCall.name} was skipped because the user limited this request to different available context.`,
+                    previewText: `Skipped ${toolCall.name}; outside the user-requested context scope.`,
                     metadata: {
                         outcome: "policy_rejected",
                         reason: "tool_outside_user_requested_scope",
                     },
                 };
             }
+            if (toolCall.name === LOAD_SKILL_TOOL_NAME) {
+                const disabledRejection = preflightLoadSkill(toolCall, options.plugin);
+                if (disabledRejection) return disabledRejection;
+            }
+            const preparedResult = options.registry.prepareAndValidate(
+                toolCall.name,
+                toolCall.input,
+                { userInput: input.userInput },
+            );
+            if (!preparedResult.ok) {
+                const message = preparedResult.error.message;
+                return {
+                    outcome: "schema_invalid",
+                    promptText: `Tool ${toolCall.name} input invalid: ${message}. Retry with the correct schema.`,
+                    previewText: `Schema validation failed for ${toolCall.name}.`,
+                    metadata: {
+                        outcome: "schema_invalid",
+                        reason: "input_validation_failed",
+                        tool: toolCall.name,
+                    },
+                };
+            }
             const result = await options.registry.execute(
-                normalizedToolCall.name,
-                normalizedToolCall.input,
+                toolCall.name,
+                preparedResult.input,
                 {
                     plugin: options.plugin,
                     turnId: input.turnId,
@@ -62,9 +87,22 @@ export function createPaAgentCapabilityToolExecutor(
                     onToolRunning: options.onToolRunning,
                 },
             );
-            const canonicalResult = chatToolResultToPaAgentToolExecutionResult(normalizedToolCall, result);
+            const canonicalResult = chatToolResultToPaAgentToolExecutionResult(toolCall, result);
+            // Phase 4 preflight metadata: when prepareArguments mutated raw input,
+            // record audit fields on toolResult.metadata for Phase B alias-usage analytics
+            // and Ops Agent write-tool audit ("model intent vs actual execution" comparison).
+            const augmentedMetadata = preparedResult.repaired
+                ? {
+                    ...(canonicalResult.metadata ?? {}),
+                    inputRepaired: true,
+                    repairReason: preparedResult.repaired.reason,
+                    originalInputSummary: preparedResult.repaired.originalInputSummary,
+                    originalInputKeys: preparedResult.repaired.originalKeys,
+                }
+                : canonicalResult.metadata;
             return {
                 ...canonicalResult,
+                metadata: augmentedMetadata,
                 sourceRecords: canonicalResult.sourceRecords?.map((record) => ({
                     ...record,
                     turnId: record.turnId ?? input.turnId,
@@ -80,419 +118,60 @@ function isAllowedHostToolCall(toolName: string, options: PaAgentCapabilityToolE
     return true;
 }
 
-function normalizeHostToolCallInput(toolCall: PaAgentToolCall, userInput: string): PaAgentToolCall {
-    switch (toolCall.name) {
-        case "search_memory":
-            return {
-                ...toolCall,
-                input: normalizeSearchMemoryInput(toolCall.input, userInput),
-            };
-        case BUILTIN_WEB_SEARCH_TOOL_NAME:
-            return {
-                ...toolCall,
-                input: normalizeWebSearchInput(toolCall.input, userInput),
-            };
-        case "get_current_note_context":
-            return {
-                ...toolCall,
-                input: normalizeCurrentNoteContextInput(toolCall.input, userInput),
-            };
-        case "search_vault_metadata":
-            return {
-                ...toolCall,
-                input: normalizeVaultMetadataInput(toolCall.input, userInput),
-            };
-        case "search_vault_snippets":
-            return {
-                ...toolCall,
-                input: normalizeVaultSnippetsInput(toolCall.input, userInput),
-            };
-        case "read_note_outline":
-            return {
-                ...toolCall,
-                input: normalizeReadNoteOutlineInput(toolCall.input, userInput),
-            };
-        case "inspect_obsidian_note":
-            return {
-                ...toolCall,
-                input: normalizeInspectObsidianNoteInput(toolCall.input, userInput),
-            };
-        case "read_canvas_summary":
-            return {
-                ...toolCall,
-                input: normalizeReadCanvasSummaryInput(toolCall.input, userInput),
-            };
-        default:
-            return toolCall;
-    }
-}
-
-function normalizeSearchMemoryInput(input: unknown, fallbackQuery: string): unknown {
-    const fallback = fallbackQuery.trim();
-    if (typeof input === "string") {
-        const query = input.trim();
-        return query ? { query } : (fallback ? { query: fallback } : input);
-    }
-    if (!input || typeof input !== "object" || Array.isArray(input)) {
-        return fallback ? { query: fallback } : input;
-    }
-
-    const value = input as Record<string, unknown>;
-    const query = readFirstString(value, [
-        "query",
-        "q",
-        "searchQuery",
-        "search_query",
-        "keywords",
-        "keyword",
-        "input",
-        "prompt",
-        "question",
-    ]);
-    const fallbackOrQuery = query ?? fallback;
-    return fallbackOrQuery ? { query: fallbackOrQuery } : input;
-}
-
-function normalizeWebSearchInput(input: unknown, fallbackQuery: string): unknown {
-    const fallback = fallbackQuery.trim();
-    if (typeof input === "string") {
-        const query = input.trim();
-        return query ? { query } : (fallback ? { query: fallback } : input);
-    }
-    if (!input || typeof input !== "object" || Array.isArray(input)) {
-        return fallback ? { query: fallback } : input;
-    }
-
-    const value = input as Record<string, unknown>;
-    const query = readFirstString(value, [
-        "query",
-        "q",
-        "searchQuery",
-        "search_query",
-        "searchTerms",
-        "search_terms",
-        "keywords",
-        "keyword",
-        "input",
-        "prompt",
-        "question",
-    ]);
-    const fallbackOrQuery = query ?? fallback;
-    if (!fallbackOrQuery) {
-        return input;
-    }
-
-    const normalized: { query: string; limit?: number } = { query: fallbackOrQuery };
-    const limit = readFirstPositiveNumber(value, [
-        "limit",
-        "count",
-        "maxResults",
-        "max_results",
-        "numResults",
-        "num_results",
-        "topK",
-        "top_k",
-    ]);
-    if (limit !== undefined) {
-        normalized.limit = limit;
-    }
-    return normalized;
-}
-
-function readFirstString(value: Record<string, unknown>, keys: string[]): string | undefined {
-    for (const key of keys) {
-        const candidate = value[key];
-        if (typeof candidate === "string") {
-            const trimmed = candidate.trim();
-            if (trimmed) return trimmed;
-        }
-    }
-    const nestedInput = value.input;
-    if (nestedInput && typeof nestedInput === "object" && !Array.isArray(nestedInput)) {
-        return readFirstString(nestedInput as Record<string, unknown>, keys.filter((key) => key !== "input"));
-    }
-    return undefined;
-}
-
-function readFirstPositiveNumber(value: Record<string, unknown>, keys: string[]): number | undefined {
-    for (const key of keys) {
-        const candidate = value[key];
-        const numericValue = typeof candidate === "number"
-            ? candidate
-            : typeof candidate === "string"
-                ? Number(candidate.trim())
-                : Number.NaN;
-        if (Number.isFinite(numericValue) && numericValue > 0) {
-            return Math.floor(numericValue);
-        }
-    }
-    const nestedInput = value.input;
-    if (nestedInput && typeof nestedInput === "object" && !Array.isArray(nestedInput)) {
-        return readFirstPositiveNumber(nestedInput as Record<string, unknown>, keys.filter((key) => key !== "input"));
-    }
-    return undefined;
-}
-
-function normalizeCurrentNoteContextInput(input: unknown, userInput: string): CurrentNoteContextInput {
-    if (shouldUseFullCurrentNoteContext(userInput)) {
-        return { mode: "full" };
-    }
-
-    const rawMode = input && typeof input === "object" && !Array.isArray(input)
-        ? (input as Record<string, unknown>).mode
-        : input;
-    const mode = typeof rawMode === "string"
-        ? rawMode.trim().toLowerCase().replace(/[_\s]+/g, "-")
-        : "";
-
-    if (mode === "outline" || mode === "structure" || mode === "headings") {
-        return { mode: "outline" };
-    }
-    if (mode === "metadata" || mode === "properties" || mode === "frontmatter") {
-        return { mode: "metadata" };
-    }
-    if (mode === "full" || mode === "full-note" || mode === "full-current-note" || mode === "entire-note") {
-        return { mode: "full" };
-    }
-    return { mode: "selection-or-nearby" };
-}
-
-function shouldUseFullCurrentNoteContext(userInput: string): boolean {
-    if (!isExplicitCurrentNoteOnlyRequest(userInput)) return false;
-    return /\b(token|prefix|exact|identifier|id|find|search|contains?|match|full token|whole token)\b/i.test(userInput)
-        || /查找|寻找|搜索|精确|完整\s*token|全文|前缀/.test(userInput);
-}
-
-function normalizeVaultMetadataInput(input: unknown, userInput: string): unknown {
-    const fallbackQuery = extractQueryFromUserInput(userInput, "search_vault_metadata");
-    return normalizeQueryObjectInput(input, fallbackQuery, [
-        "query",
-        "q",
-        "searchQuery",
-        "search_query",
-        "metadataQuery",
-        "metadata_query",
-        "filename",
-        "fileName",
-        "file_name",
-        "path",
-        "tag",
-        "keyword",
-        "keywords",
-        "input",
-    ], { includeLimit: true });
-}
-
-function normalizeVaultSnippetsInput(input: unknown, userInput: string): unknown {
-    const fallbackQuery = extractQueryFromUserInput(userInput, "search_vault_snippets");
-    const normalized = normalizeQueryObjectInput(input, fallbackQuery, [
-        "query",
-        "q",
-        "searchQuery",
-        "search_query",
-        "snippetQuery",
-        "snippet_query",
-        "text",
-        "term",
-        "token",
-        "prefix",
-        "keyword",
-        "keywords",
-        "input",
-    ], { includeLimit: true });
-    const inputRecord = toInputRecord(input);
-    const scope = inputRecord ? readFirstString(inputRecord, ["scope", "path", "folder", "file"]) : undefined;
-    if (scope && normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
-        return { ...(normalized as Record<string, unknown>), scope };
-    }
-    return normalized;
-}
-
-function normalizeReadNoteOutlineInput(input: unknown, userInput: string): unknown {
-    return normalizePathObjectInput(input, userInput, [".md"], {
-        pathKeys: ["path", "notePath", "note_path", "filePath", "file_path", "file", "note", "target", "input"],
-        includeMaxHeadings: true,
-    });
-}
-
-function normalizeInspectObsidianNoteInput(input: unknown, userInput: string): unknown {
-    const path = extractInputPath(input, [".md"]) ?? extractPathFromUserInput(userInput, [".md"]);
-    if (path) return { path };
-    const inputRecord = toInputRecord(input);
-    if (!inputRecord) return {};
-    return typeof inputRecord.path === "string" && !inputRecord.path.trim() ? {} : input;
-}
-
-function normalizeReadCanvasSummaryInput(input: unknown, userInput: string): unknown {
-    return normalizePathObjectInput(input, userInput, [".canvas"], {
-        pathKeys: ["path", "canvasPath", "canvas_path", "filePath", "file_path", "file", "canvas", "target", "input"],
-    });
-}
-
-function normalizeQueryObjectInput(
-    input: unknown,
-    fallbackQuery: string | undefined,
-    queryKeys: string[],
-    options: { includeLimit?: boolean } = {},
-): unknown {
-    if (typeof input === "string") {
-        const query = input.trim() || fallbackQuery;
-        return query ? { query } : input;
-    }
-    const inputRecord = toInputRecord(input);
-    if (!inputRecord) {
-        return fallbackQuery ? { query: fallbackQuery } : input;
-    }
-    const query = readFirstString(inputRecord, queryKeys) ?? fallbackQuery;
-    if (!query) return input;
-
-    const normalized: Record<string, unknown> = { query };
-    if (options.includeLimit) {
-        const limit = readFirstPositiveNumber(inputRecord, [
-            "limit",
-            "count",
-            "maxResults",
-            "max_results",
-            "maxMatches",
-            "max_matches",
-            "topK",
-            "top_k",
-        ]);
-        if (limit !== undefined) normalized.limit = limit;
-    }
-    return normalized;
-}
-
-function normalizePathObjectInput(
-    input: unknown,
-    userInput: string,
-    extensions: readonly string[],
-    options: {
-        pathKeys: string[];
-        includeMaxHeadings?: boolean;
-    },
-): unknown {
-    const path = extractInputPath(input, extensions) ?? extractPathFromUserInput(userInput, extensions);
-    if (!path) return input;
-    const inputRecord = toInputRecord(input);
-    const normalized: Record<string, unknown> = { path };
-    if (options.includeMaxHeadings) {
-        const maxHeadings = inputRecord
-            ? readFirstPositiveNumber(inputRecord, ["max_headings", "maxHeadings", "headingLimit", "heading_limit", "limit"])
-            : undefined;
-        normalized.max_headings = maxHeadings ?? extractMaxHeadingsFromUserInput(userInput);
-    }
-    return normalized;
-}
-
-function extractInputPath(input: unknown, extensions: readonly string[]): string | undefined {
-    if (typeof input === "string") {
-        const candidate = input.trim();
-        return hasAllowedExtension(candidate, extensions) ? candidate : undefined;
-    }
-    const inputRecord = toInputRecord(input);
-    if (!inputRecord) return undefined;
-    const path = readFirstString(inputRecord, [
-        "path",
-        "notePath",
-        "note_path",
-        "canvasPath",
-        "canvas_path",
-        "filePath",
-        "file_path",
-        "file",
-        "note",
-        "canvas",
-        "target",
-        "input",
-    ]);
-    return path && hasAllowedExtension(path, extensions) ? path : undefined;
-}
-
-function toInputRecord(input: unknown): Record<string, unknown> | undefined {
-    return input && typeof input === "object" && !Array.isArray(input)
-        ? input as Record<string, unknown>
+function preflightLoadSkill(
+    toolCall: PaAgentToolCall,
+    plugin: PluginManager,
+): PaAgentToolExecutionResult | null {
+    const settings = plugin.settings as unknown as Record<string, unknown>;
+    const skillContextEnabled = settings.skillContextEnabled !== false;
+    const enabledSkillIds = Array.isArray(settings.enabledSkillIds)
+        ? (settings.enabledSkillIds as readonly string[])
         : undefined;
-}
 
-type QueryToolName = "search_vault_metadata" | "search_vault_snippets";
-
-function extractQueryFromUserInput(userInput: string, tool: QueryToolName): string | undefined {
-    const queryFromExplicitLabel = cleanExtractedQuery(matchFirst(userInput, [
-        /\bquery\s+string\s*[:=]\s*["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-        /\bquery\s*[:=]\s*["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-        /\bwith\s+query\s+["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-    ]));
-    if (queryFromExplicitLabel) return queryFromExplicitLabel;
-
-    if (tool === "search_vault_metadata") {
-        return cleanExtractedQuery(matchFirst(userInput, [
-            /\bsearch_vault_metadata\s+(?:with\s+)?(?:query\s+)?["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-            /\bmetadata\s+(?:for|matching|query)\s+["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-        ]));
+    if (!skillContextEnabled) {
+        return {
+            outcome: "policy_rejected",
+            promptText: "load_skill is unavailable because skill guides are disabled in user settings.",
+            previewText: "Skipped load_skill; skill guides disabled in settings.",
+            metadata: {
+                outcome: "policy_rejected",
+                reason: "skill_context_disabled",
+            },
+        };
     }
 
-    return cleanExtractedQuery(matchFirst(userInput, [
-        /\bsearch_vault_snippets\s+(?:with\s+)?(?:query\s+)?["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-        /\bsearch\s+(?:note\s+)?snippets?\s+for\s+["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-        /\bfind\s+(?:note\s+)?snippets?\s+for\s+["'`]?(.+?)(?=$|[\n.;]|,\s*(?:reply|return|do not)\b)/i,
-        /\bexact\s+token\s+["'`]?([A-Za-z0-9_.:/#@-]+)/i,
-        /\bprefix\s+(?:is\s+)?["'`]?([A-Za-z0-9_.:/#@-]+)/i,
-    ]));
-}
-
-function extractPathFromUserInput(userInput: string, extensions: readonly string[]): string | undefined {
-    const extensionPattern = extensions
-        .map((extension) => extension.replace(/^\./, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&"))
-        .join("|");
-    const pathPattern = new RegExp(
-        `(^|[\\s"'\\\`])((?:[A-Za-z0-9_.@#()+-]+\\/)*[A-Za-z0-9_.@#()+-]+\\.(${extensionPattern}))(?=$|[\\s"'\\\`,.;)])`,
-        "i",
-    );
-    const match = userInput.match(pathPattern);
-    return match?.[2]?.trim();
-}
-
-function extractMaxHeadingsFromUserInput(userInput: string): number | undefined {
-    const direct = userInput.match(/\b(?:first|top)\s+(\d{1,2})\s+headings?\b/i);
-    if (direct?.[1]) return Number(direct[1]);
-    const word = userInput.match(/\b(?:first|top)\s+(one|two|three|four|five|six|seven|eight|nine|ten)\s+headings?\b/i)?.[1];
-    if (!word) return undefined;
-    return {
-        one: 1,
-        two: 2,
-        three: 3,
-        four: 4,
-        five: 5,
-        six: 6,
-        seven: 7,
-        eight: 8,
-        nine: 9,
-        ten: 10,
-    }[word.toLowerCase() as "one" | "two" | "three" | "four" | "five" | "six" | "seven" | "eight" | "nine" | "ten"];
-}
-
-function hasAllowedExtension(value: string, extensions: readonly string[]): boolean {
-    const normalized = value.trim().toLowerCase();
-    return extensions.some((extension) => normalized.endsWith(extension.toLowerCase()));
-}
-
-function matchFirst(value: string, patterns: RegExp[]): string | undefined {
-    for (const pattern of patterns) {
-        const match = value.match(pattern);
-        const candidate = match?.[1]?.trim();
-        if (candidate) return candidate;
+    if (enabledSkillIds && enabledSkillIds.length === 0) {
+        return {
+            outcome: "policy_rejected",
+            promptText: "load_skill is unavailable because no skills are enabled in user settings.",
+            previewText: "Skipped load_skill; no skills enabled.",
+            metadata: {
+                outcome: "policy_rejected",
+                reason: "no_enabled_skills",
+            },
+        };
     }
-    return undefined;
-}
 
-function cleanExtractedQuery(value: string | undefined): string | undefined {
-    if (!value) return undefined;
-    const cleaned = value
-        .replace(/\s+\b(?:and\s+)?(?:reply|return|respond|tell|list|do not|don't|without)\b[\s\S]*$/i, "")
-        .replace(/^[:"'`\s]+|[."'`,;:\s]+$/g, "")
-        .trim();
-    return cleaned || undefined;
+    const inputRecord = (toolCall.input && typeof toolCall.input === "object")
+        ? (toolCall.input as Record<string, unknown>)
+        : {};
+    const requestedName = typeof inputRecord.name === "string" ? inputRecord.name.trim() : "";
+
+    if (requestedName && enabledSkillIds && !enabledSkillIds.includes(requestedName)) {
+        const enabledList = enabledSkillIds.join(", ");
+        return {
+            outcome: "policy_rejected",
+            promptText: `Skill "${requestedName}" is disabled in user settings. Enabled skills: ${enabledList || "(none)"}.`,
+            previewText: `Skipped load_skill("${requestedName}"); not in enabled skill list.`,
+            metadata: {
+                outcome: "policy_rejected",
+                reason: "skill_disabled",
+                requestedSkill: requestedName,
+            },
+        };
+    }
+
+    return null;
 }
 
 export function chatToolResultToPaAgentToolExecutionResult(

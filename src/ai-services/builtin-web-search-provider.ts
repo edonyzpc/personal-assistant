@@ -20,6 +20,14 @@ import type {
 import type { SourceRecord } from "./chat-types";
 import { obsidianFetch } from "./obsidian-fetch";
 import { normalizeSourceRecord } from "./source-store";
+import {
+    deepEqualJson,
+    readFirstPositiveNumber,
+    readFirstString,
+    summarizeRawInput,
+    toInputRecord,
+} from "./chat-tool-prepare-helpers";
+import type { PrepareCapabilityArgumentsRepair } from "./capability-types";
 
 export const BUILTIN_WEB_SEARCH_PROVIDER_ID = "builtin-web-search";
 export const BUILTIN_WEB_SEARCH_TOOL_NAME = "webSearch";
@@ -217,6 +225,18 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             networkPolicy: this.policy,
             toProviderSchema: () => createWebSearchProviderSchema(),
             toRegistryDefinition: () => createWebSearchRegistryDefinition(this.policy.maxResponseBytes),
+            prepareAndValidate: (raw, _ctx) => {
+                const prepared = prepareWebSearchArguments(raw);
+                const parsed = parseWebSearchInput(prepared);
+                if (!parsed) {
+                    return {
+                        ok: false,
+                        error: new Error("webSearch input.query must be a non-empty string."),
+                    };
+                }
+                const repaired = buildWebSearchRepairInfo(raw, prepared);
+                return repaired ? { ok: true, input: prepared, repaired } : { ok: true, input: prepared };
+            },
             execute: (input, context) => this.executeSearch(input, context),
         };
     }
@@ -640,4 +660,60 @@ function isHttpsUrl(value: string): boolean {
     } catch {
         return false;
     }
+}
+
+const WEB_SEARCH_QUERY_ALIASES = [
+    "query",
+    "q",
+    "searchQuery",
+    "search_query",
+    "searchTerms",
+    "search_terms",
+    "keywords",
+    "keyword",
+    "input",
+    "prompt",
+    "question",
+] as const;
+
+const WEB_SEARCH_LIMIT_ALIASES = [
+    "limit",
+    "count",
+    "maxResults",
+    "max_results",
+    "numResults",
+    "num_results",
+    "topK",
+    "top_k",
+] as const;
+
+/**
+ * SPEC-TCR-04 fail-loud variant of the old `normalizeWebSearchInput` in pa-agent-host-tools.ts.
+ * Alias mapping only — no userInput fallback. Empty args → return raw → parseWebSearchInput
+ * fails → prepareAndValidate returns ok:false → executor emits schema_invalid.
+ */
+function buildWebSearchRepairInfo(raw: unknown, prepared: unknown): PrepareCapabilityArgumentsRepair | undefined {
+    if (deepEqualJson(raw, prepared)) return undefined;
+    const rawRecord = toInputRecord(raw);
+    const originalKeys = rawRecord ? Object.keys(rawRecord).join(",") : typeof raw;
+    return {
+        originalKeys,
+        originalInputSummary: summarizeRawInput(raw),
+        reason: "alias mapping or normalization applied",
+    };
+}
+
+function prepareWebSearchArguments(raw: unknown): unknown {
+    if (typeof raw === "string") {
+        const query = raw.trim();
+        return query ? { query } : raw;
+    }
+    const record = toInputRecord(raw);
+    if (!record) return raw;
+    const query = readFirstString(record, WEB_SEARCH_QUERY_ALIASES);
+    if (!query) return raw;
+    const normalized: { query: string; limit?: number } = { query };
+    const limit = readFirstPositiveNumber(record, WEB_SEARCH_LIMIT_ALIASES);
+    if (limit !== undefined) normalized.limit = limit;
+    return normalized;
 }

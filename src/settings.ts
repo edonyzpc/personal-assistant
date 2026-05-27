@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Notice, Platform, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
@@ -55,7 +55,7 @@ export interface PluginManagerSettings {
     countComments: boolean;
     animation: boolean;
     // AI模型配置
-    aiProvider: string; // 'qwen' | 'openai' | 'ollama'
+    aiProvider: string; // 'qwen' | 'openai'
     apiToken: string;
     baseURL: string;
     chatModelName: string;
@@ -69,7 +69,6 @@ export interface PluginManagerSettings {
     nativeToolPlanningSmokeEnabled: boolean;
     qwenThinkingEnabled: boolean;
     webSearchEnabled: boolean;
-    paAgentAnswerStreamEnabled: boolean;
     shareAnonymousCapabilityUsage: boolean;
     skillContextEnabled: boolean;
     enabledSkillIds: string[];
@@ -144,7 +143,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     nativeToolPlanningSmokeEnabled: false,
     qwenThinkingEnabled: false,
     webSearchEnabled: false,
-    paAgentAnswerStreamEnabled: true,
     shareAnonymousCapabilityUsage: false,
     skillContextEnabled: true,
     enabledSkillIds: [...BUNDLED_SKILL_IDS],
@@ -656,13 +654,8 @@ export class SettingTab extends PluginSettingTab {
         // setting for AI assistant
         containerEl.createEl('h2', { text: 'AI Assistant' });
         containerEl.createEl("p", {
-            text: Platform.isDesktop
-                ? 'AI Helper supports Qwen, OpenAI, and Ollama models'
-                : 'AI Helper supports Qwen and OpenAI models on mobile',
+            text: 'AI Helper supports Qwen and OpenAI models',
         }).setAttr("style", "font-size:15px");
-        if (!Platform.isDesktop && this.plugin.settings.aiProvider === 'ollama') {
-            containerEl.createEl("p", { text: 'Ollama is desktop-only. Select Qwen or OpenAI before using AI features on mobile.' }).setAttr("style", "font-size:14px");
-        }
         let refreshQwenResponseOptionAvailability: (() => void) | undefined;
 
         // AI Provider Selection
@@ -671,16 +664,8 @@ export class SettingTab extends PluginSettingTab {
             .addDropdown(dropDown => {
                 dropDown.addOption('qwen', 'Qwen (通义千问)');
                 dropDown.addOption('openai', 'OpenAI');
-                if (Platform.isDesktop) {
-                    dropDown.addOption('ollama', 'Ollama (Local)');
-                } else if (this.plugin.settings.aiProvider === 'ollama') {
-                    dropDown.addOption('ollama', 'Ollama (Desktop only)');
-                }
 
                 dropDown.setValue(this.plugin.settings.aiProvider);
-                if (!Platform.isDesktop) {
-                    dropDown.selectEl.querySelector('option[value="ollama"]')?.setAttribute('disabled', 'true');
-                }
                 dropDown.onChange(async (value) => {
                     this.plugin.log("changing AI provider", value);
                     this.plugin.settings.aiProvider = value;
@@ -693,10 +678,6 @@ export class SettingTab extends PluginSettingTab {
                         this.plugin.settings.baseURL = 'https://api.openai.com/v1';
                         this.plugin.settings.chatModelName = 'gpt-3.5-turbo';
                         this.plugin.settings.embeddingModelName = 'text-embedding-3-small';
-                    } else if (value === 'ollama') {
-                        this.plugin.settings.baseURL = 'http://localhost:11434';
-                        this.plugin.settings.chatModelName = 'llama3.1';
-                        this.plugin.settings.embeddingModelName = 'mxbai-embed-large';
                     }
                     await this.plugin.saveSettings();
                     this.display(); // 重新渲染设置界面
@@ -838,7 +819,7 @@ export class SettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName("API Token")
-            .setDesc("API Token for the selected provider. For Ollama, this can be empty. NOTE: your input token is protected by AES-GCM encryption.")
+            .setDesc("API Token for the selected provider. NOTE: your input token is protected by AES-GCM encryption.")
             .addText((text) => {
                 text.setPlaceholder("sk-xxx");
                 text.setValue(this.plugin.settings.apiToken);

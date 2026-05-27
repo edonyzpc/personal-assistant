@@ -12,16 +12,12 @@ import {
 import type { AgentEvent, LegacyAgentEvent } from "../src/ai-services/chat-types";
 
 describe("AgentEventEmitter", () => {
-    it("emits versioned events with stable turn id and segment boundary schema", () => {
+    it("emits versioned events with stable turn id and incrementing sequence", () => {
         const events: LegacyAgentEvent[] = [];
         const emitter = new AgentEventEmitter((event) => events.push(event));
 
         emitter.activity("loop-start", "Starting assistant loop");
-        emitter.segmentBoundary({
-            from: "thinking",
-            to: "tool-calling",
-            reason: "tool-call-started",
-        });
+        emitter.activity("answering", "Producing final answer");
 
         expect(events).toHaveLength(2);
         expect(events[0]).toMatchObject({
@@ -32,13 +28,9 @@ describe("AgentEventEmitter", () => {
         });
         expect(events[1]).toMatchObject({
             version: 1,
-            kind: "segment-boundary",
+            kind: "activity",
             seq: 2,
-            boundary: {
-                from: "thinking",
-                to: "tool-calling",
-                reason: "tool-call-started",
-            },
+            type: "answering",
         });
         expect(events[1].turnId).toBe(events[0].turnId);
     });

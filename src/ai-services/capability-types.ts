@@ -66,6 +66,29 @@ export interface AgentCapabilityResult {
     userSafeMessage?: string;
 }
 
+export interface PrepareCapabilityArgumentsContext {
+    userInput: string;
+}
+
+/**
+ * Phase 4 preflight metadata: when prepareArguments mutates the raw input,
+ * `repaired` carries audit info so toolResult.metadata can record the change.
+ * Detection is automatic via deepEqualJson (CapabilityRegistry.prepareAndValidate
+ * compares prepared !== raw).
+ */
+export interface PrepareCapabilityArgumentsRepair {
+    /** Comma-joined top-level keys of the raw input (e.g., "q,limit") for Phase B alias-usage analytics. */
+    originalKeys: string;
+    /** Length-bounded JSON.stringify of raw input for audit replay. */
+    originalInputSummary: string;
+    /** Short human-readable reason; Phase A path B uses a generic "alias mapping or normalization applied". */
+    reason: string;
+}
+
+export type PrepareCapabilityArgumentsResult =
+    | { ok: true; input: unknown; repaired?: PrepareCapabilityArgumentsRepair }
+    | { ok: false; error: Error };
+
 export interface AgentCapability {
     name: ChatToolName;
     description: string;
@@ -87,6 +110,13 @@ export interface AgentCapability {
     networkPolicy?: AgentNetworkPolicy;
     toProviderSchema(): ChatToolProviderSchema;
     toRegistryDefinition(): ChatToolRegistryDefinition;
+    /**
+     * Pre-validation pipeline (pi-style). Runs the optional per-tool prepareArguments
+     * hook (alias mapping) then validateInput. Failure → caller converts to schema_invalid
+     * outcome BEFORE execute, bypassing ChatToolResult's recoverable_error flattening.
+     * Capabilities without per-tool validation (e.g., context capabilities) may omit this.
+     */
+    prepareAndValidate?(raw: unknown, ctx: PrepareCapabilityArgumentsContext): PrepareCapabilityArgumentsResult;
     execute(input: unknown, context: AgentCapabilityContext): Promise<AgentCapabilityResult>;
 }
 

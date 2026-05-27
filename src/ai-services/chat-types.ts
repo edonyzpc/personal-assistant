@@ -384,19 +384,6 @@ export type AgentActivityType =
     | "partial-output-error"
     | "guardrail-stopped";
 
-export type AgentSegmentState = "thinking" | "answering" | "tool-calling";
-export type AgentSegmentBoundaryReason =
-    | "answer-started"
-    | "tool-call-started"
-    | "tool-call-finished"
-    | "answer-resumed";
-
-export interface AgentSegmentBoundary {
-    from: AgentSegmentState;
-    to: AgentSegmentState;
-    reason: AgentSegmentBoundaryReason;
-}
-
 export interface LegacyAgentEventBase {
     version: 1;
     turnId: string;
@@ -430,11 +417,6 @@ export interface LegacyAgentTurnMetadataEvent extends LegacyAgentEventBase {
     metadata: ChatTurnMemoryMetadata;
 }
 
-export interface LegacyAgentSegmentBoundaryEvent extends LegacyAgentEventBase {
-    kind: "segment-boundary";
-    boundary: AgentSegmentBoundary;
-}
-
 export type LegacyAgentTerminalEvent =
     | (LegacyAgentEventBase & { kind: "answer-complete" })
     | (LegacyAgentEventBase & { kind: "partial-output-error"; category: string })
@@ -446,7 +428,6 @@ export type LegacyAgentEvent =
     | LegacyAgentAnswerSnapshotEvent
     | LegacyAgentReasoningChunkEvent
     | LegacyAgentTurnMetadataEvent
-    | LegacyAgentSegmentBoundaryEvent
     | LegacyAgentTerminalEvent;
 
 export type VaultAdviceEvidenceKind =
@@ -485,7 +466,8 @@ export type ChatToolName =
     | "read_canvas_summary"
     | "search_vault_snippets"
     | "list_vault_tags"
-    | "webSearch";
+    | "webSearch"
+    | "load_skill";
 
 export interface ChatToolResult<Output> {
     ok: boolean;

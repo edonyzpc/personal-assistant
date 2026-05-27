@@ -101,7 +101,6 @@ const memorySettings = {
     qwenThinkingEnabled: false,
     webSearchEnabled: false,
     policyModelName: '',
-    paAgentAnswerStreamEnabled: true,
     shareAnonymousCapabilityUsage: false,
     skillContextEnabled: true,
     enabledSkillIds: mockBundledSkillIds,
@@ -318,7 +317,6 @@ describe('settings migration', () => {
         expect(plugin.settings.qwenThinkingEnabled).toBe(false);
         expect(plugin.settings.webSearchEnabled).toBe(false);
         expect(plugin.settings.policyModelName).toBe('');
-        expect(plugin.settings.paAgentAnswerStreamEnabled).toBe(true);
         expect(plugin.settings.shareAnonymousCapabilityUsage).toBe(false);
         expect(plugin.settings.skillContextEnabled).toBe(true);
         expect(plugin.settings.enabledSkillIds).toEqual(mockBundledSkillIds);
@@ -348,6 +346,28 @@ describe('settings migration', () => {
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
     });
 
+    it('migrates removed ollama provider to qwen default on v2.0.0 upgrade', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            aiProvider: 'ollama',
+            baseURL: 'http://localhost:11434',
+            chatModelName: 'llama3.1',
+            embeddingModelName: 'mxbai-embed-large',
+            embeddingV4MigrationNoticeDismissed: true,
+            statisticsType: 'overview',
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        await plugin.migrateSettings();
+
+        expect(plugin.settings.aiProvider).toBe('qwen');
+        expect(plugin.settings.baseURL).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
+        expect(plugin.settings.chatModelName).toBe('qwen-plus');
+        expect(plugin.settings.embeddingModelName).toBe('text-embedding-v4');
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
     it('preserves the background memory approval policy during migration', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
@@ -362,7 +382,6 @@ describe('settings migration', () => {
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
             policyModelName: '',
-            paAgentAnswerStreamEnabled: true,
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
@@ -396,7 +415,6 @@ describe('settings migration', () => {
             qwenThinkingEnabled: false,
             webSearchEnabled: false,
             policyModelName: '',
-            paAgentAnswerStreamEnabled: true,
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,

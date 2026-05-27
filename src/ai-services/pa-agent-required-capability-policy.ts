@@ -202,11 +202,11 @@ export function classifyRequiredCapabilitiesDeterministic(userInput: string): Re
     };
 }
 
-export function isExplicitCurrentNoteOnlyRequest(text: string): boolean {
-    const normalized = text.toLowerCase();
-    return /\b(current note|this note)\s+only\b/.test(normalized)
-        || /\buse\s+(the\s+)?current note\s+only\b/.test(normalized);
-}
+// Definition moved to `./chat-tool-prepare-helpers` so chat-tools.ts prepareArguments
+// can call it without a circular import. Re-exported here for backward compatibility
+// with existing callers in pa-agent-runtime.ts and other modules.
+export { isExplicitCurrentNoteOnlyRequest, shouldUseFullCurrentNoteContext } from "./chat-tool-prepare-helpers";
+import { isExplicitCurrentNoteOnlyRequest } from "./chat-tool-prepare-helpers";
 
 function normalizeClassifierResult(result: unknown): RequiredCapabilityClassification | null {
     const parsed = typeof result === "string" ? parseJsonObject(result) : result;

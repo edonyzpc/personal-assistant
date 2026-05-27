@@ -982,8 +982,19 @@ export class PluginManager extends Plugin {
                 delete (this.settings as Partial<PluginManagerSettings> & { qwenWebSearchEnabled?: unknown }).qwenWebSearchEnabled;
                 changed = true;
             }
-            if (typeof this.settings.paAgentAnswerStreamEnabled !== "boolean") {
-                this.settings.paAgentAnswerStreamEnabled = true;
+            if ("paAgentAnswerStreamEnabled" in this.settings) {
+                delete (this.settings as Partial<PluginManagerSettings> & { paAgentAnswerStreamEnabled?: unknown }).paAgentAnswerStreamEnabled;
+                changed = true;
+            }
+            // v2.0.0 removed Ollama provider support. Users upgrading from v1.x with
+            // `aiProvider: "ollama"` would otherwise hit a hard runtime throw on first
+            // chat. Migrate them to the qwen default so the app remains usable; the v2.0.0
+            // CHANGELOG break-change note instructs them to reconfigure their model.
+            if (this.settings.aiProvider === "ollama") {
+                this.settings.aiProvider = "qwen";
+                this.settings.baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+                this.settings.chatModelName = "qwen-plus";
+                this.settings.embeddingModelName = "text-embedding-v4";
                 changed = true;
             }
             if (typeof this.settings.shareAnonymousCapabilityUsage !== "boolean") {
@@ -1062,11 +1073,6 @@ export class PluginManager extends Plugin {
     }
 
     async getAPIToken() {
-        // Ollama不需要API Token
-        if (this.settings.aiProvider === 'ollama') {
-            return "";
-        }
-
         if (this.token !== "") {
             return this.token;
         }

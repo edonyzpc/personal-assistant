@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@jest/globals";
 import { AIMessageChunk } from "@langchain/core/messages";
 
-import { parseNativeToolCallsFromModelResponse } from "../ai-services/chat-agent";
+import { parseNativeToolCallsFromModelResponse } from "../ai-services/pa-agent-runtime";
 import {
     TEST_CHAT_TOOL_NAMES,
     createTestToolRegistry,

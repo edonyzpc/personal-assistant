@@ -319,10 +319,6 @@ describe('PA Agent telemetry settings', () => {
         expect(DEFAULT_SETTINGS.shareAnonymousCapabilityUsage).toBe(false);
     });
 
-    it('enables the PA answer-stream runtime by default', () => {
-        expect(DEFAULT_SETTINGS.paAgentAnswerStreamEnabled).toBe(true);
-    });
-
     it('keeps the optional policy model unset by default', () => {
         expect(DEFAULT_SETTINGS.policyModelName).toBe('');
     });

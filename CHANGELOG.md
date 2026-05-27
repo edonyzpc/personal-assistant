@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [2.0.0](https://github.com/edonyzpc/personal-assistant/compare/1.11.0...2.0.0) (2026-05-25)
+
+> Breaking release. The PA Agent canonical runtime is now the only chat path; Ollama support and the `paAgentAnswerStreamEnabled` toggle have been removed. Vault and chat behavior continue unchanged for OpenAI and Qwen/DashScope users.
+
+### BREAKING CHANGES
+- Ollama and Qwen-self-hosted (non-DashScope) providers are no longer supported. Only OpenAI and Qwen on DashScope-compatible endpoints work; existing Ollama configurations will fail validation.
+- `paAgentAnswerStreamEnabled` setting was removed. The PA Agent answer-stream runtime is always on; legacy chat planning loop has been deleted.
+- `ChatAgentRuntime` was renamed to `PaAgentRuntime`; `src/ai-services/chat-agent.ts` was renamed to `src/ai-services/pa-agent-runtime.ts`. Downstream code importing these symbols must update.
+
+### Features
+- pa-agent: WebSearch queries may be sent to DashScope WebSearch MCP — see Settings → AI Assistant for the disclosure.
+- pa-agent: ship 7 bundled skills (json-canvas, obsidian-bases, obsidian-markdown, pa-callout-cleanup, pa-frontmatter-audit, pa-plugin-config-review, pa-vault-link-health).
+
+### Refactor
+- pa-agent: collapse god class — chat-agent.ts (4860 lines) → pa-agent-runtime.ts (~1640 lines); remove `streamPaAgentAnswerTurn` intermediate path, legacy chat planning loop, `answer-stream-state.ts`, `RegisteredNativeToolCallSignalTracker`, and `PromptBuilder` class.
+- pa-agent: drop user-prompt regex repair in pa-agent-host-tools; require structured tool inputs from the model.
+- agent-utils: extract shared `getErrorType` helper.
+- esbuild: add `node:*` builtins to `external` (mobile WebView compatibility).
+- scripts: add `npm run audit:bundle` as an observation tool — bundle size is recorded in release notes but does **not** gate releases.
+
+### Tests
+- Remove ~5,000 lines of legacy chat / Ollama / answer-stream integration tests now superseded by the PA Agent canonical runtime.
+
 ## [1.11.0](https://github.com/edonyzpc/personal-assistant/compare/1.10.0...1.11.0) (2026-05-20)
 
 ### Features

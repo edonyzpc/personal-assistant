@@ -112,7 +112,6 @@ Personal Assistant does not include telemetry or analytics. By default, Statisti
 | Qwen web search | You enable web search for Qwen responses | Question and final prompt context | DashScope/Bailian | No | Qwen response setting |
 | Featured image generation | You run image generation | Current note content for prompt generation, then image prompt and task requests | Configured AI provider and DashScope/Bailian | Polls task status after your request | User action and AI settings |
 | Plugin/theme updater | You run the updater/install flow | Plugin or theme IDs and download requests | GitHub and jsDelivr | No | User action |
-| Ollama | You select the local provider | Prompt or Memory text | Local Ollama endpoint | Depends on the feature | Provider setting |
 
 ### VSS SQLite/WASM dependency note
 

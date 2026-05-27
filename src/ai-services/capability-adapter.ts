@@ -6,6 +6,8 @@ import type {
     AgentCapabilityCost,
     AgentPermissionV1,
     AgentSourceRecordKind,
+    PrepareCapabilityArgumentsContext,
+    PrepareCapabilityArgumentsResult,
     SourceRecord,
 } from "./capability-types";
 import type {
@@ -27,6 +29,12 @@ export interface ChatToolCapabilityAdapterOptions {
     platform?: AgentCapability["platform"];
     timeoutMs?: number;
     execute: (input: unknown, context: AgentCapabilityContext) => Promise<ChatToolResult<unknown>>;
+    /**
+     * Pre-validation pipeline bridging the underlying ToolRegistry's prepareArguments + validateInput.
+     * CoreToolProvider binds this from `legacyRegistry.prepareAndValidate(definitionName, raw, ctx)`.
+     * If omitted, the capability has no prepareAndValidate (CapabilityRegistry will pass through raw input).
+     */
+    prepareAndValidate?: (raw: unknown, ctx: PrepareCapabilityArgumentsContext) => PrepareCapabilityArgumentsResult;
 }
 
 export function createCapabilityFromChatToolDefinition(
@@ -108,6 +116,7 @@ class ChatToolCapability implements AgentCapability {
     readonly sourceRecordKind: AgentSourceRecordKind;
     private readonly definition: ChatToolRegistryDefinition;
     private readonly executeLegacyTool: ChatToolCapabilityAdapterOptions["execute"];
+    private readonly prepareAndValidateImpl?: ChatToolCapabilityAdapterOptions["prepareAndValidate"];
 
     constructor(
         definition: ChatToolRegistryDefinition,
@@ -131,6 +140,12 @@ class ChatToolCapability implements AgentCapability {
         this.statusMessageText = definition.statusMessage;
         this.sourceRecordKind = sourceBoundaryToSourceRecordKind(definition.sourceBoundary);
         this.executeLegacyTool = options.execute;
+        this.prepareAndValidateImpl = options.prepareAndValidate;
+    }
+
+    prepareAndValidate(raw: unknown, ctx: PrepareCapabilityArgumentsContext): PrepareCapabilityArgumentsResult {
+        if (!this.prepareAndValidateImpl) return { ok: true, input: raw };
+        return this.prepareAndValidateImpl(raw, ctx);
     }
 
     toProviderSchema(): ChatToolProviderSchema {

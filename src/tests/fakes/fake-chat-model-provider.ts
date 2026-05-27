@@ -78,7 +78,7 @@ export class FakeChatModelProvider {
         };
     }
 
-    toChatAgentRuntimeAiUtils(): AIUtils {
+    toPaAgentRuntimeAiUtils(): AIUtils {
         return this.toChatPlannerDependencies() as unknown as AIUtils;
     }
 }

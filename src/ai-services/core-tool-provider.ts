@@ -59,6 +59,9 @@ export class CoreToolProvider implements CapabilityProvider {
                 execute: (input: unknown, context: AgentCapabilityContext) => {
                     return this.legacyRegistry.execute(definition.name, input, context);
                 },
+                prepareAndValidate: (raw, ctx) => {
+                    return this.legacyRegistry.prepareAndValidate(definition.name, raw, ctx);
+                },
             },
         ));
     }

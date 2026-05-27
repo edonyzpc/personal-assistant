@@ -6,6 +6,8 @@ import {
     type CapabilityDiagnostic,
     type CapabilityProvider,
     type CapabilityUsageEvent,
+    type PrepareCapabilityArgumentsContext,
+    type PrepareCapabilityArgumentsResult,
     type ProviderLoadContext,
     type ProviderLoadResult,
 } from "./capability-types";
@@ -17,6 +19,7 @@ import type {
     ChatToolResult,
 } from "./chat-tools";
 import { PolicyEngine } from "./policy-engine";
+import { getErrorType } from "./agent-utils";
 
 export interface CapabilityRegistryOptions {
     policyEngine?: PolicyEngine;
@@ -162,6 +165,29 @@ export class CapabilityRegistry {
         return Boolean(this.get(name));
     }
 
+    /**
+     * Pre-validation pipeline for PA executor.
+     * Delegates to capability.prepareAndValidate when defined; otherwise passes through.
+     * PA executor converts { ok: false } to schema_invalid outcome BEFORE registry.execute,
+     * bypassing the recoverable_error flattening in chatToolResultToPaAgentToolExecutionResult.
+     */
+    prepareAndValidate(
+        name: string,
+        raw: unknown,
+        ctx: PrepareCapabilityArgumentsContext,
+    ): PrepareCapabilityArgumentsResult {
+        const capability = this.get(name);
+        if (!capability) {
+            return { ok: false, error: new Error(`Capability ${name} is not registered.`) };
+        }
+        if (!capability.prepareAndValidate) {
+            return { ok: true, input: raw };
+        }
+        // Phase 4 preflight metadata: capability.prepareAndValidate returns repaired info
+        // when prepareArguments mutated raw input. We pass it through verbatim.
+        return capability.prepareAndValidate(raw, ctx);
+    }
+
     async execute(
         name: string,
         input: unknown,
@@ -255,8 +281,4 @@ function normalizeCapabilityEventName(name: string): ChatToolName {
 
 function isPlatformSupported(support: AgentPlatformSupport, platform: ProviderLoadContext["platform"]): boolean {
     return support === "both" || support === platform;
-}
-
-function getErrorType(error: unknown): string {
-    return error instanceof Error ? error.name || "Error" : typeof error;
 }

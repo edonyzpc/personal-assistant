@@ -12,6 +12,16 @@ import {
     type ObsidianOperationsCatalogSectionId,
 } from "./obsidian-operations-capability-catalog";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
+import { getErrorType } from "./agent-utils";
+import {
+    deepEqualJson,
+    extractInputPath,
+    readFirstPositiveNumber,
+    readFirstString,
+    shouldUseFullCurrentNoteContext,
+    summarizeRawInput,
+    toInputRecord,
+} from "./chat-tool-prepare-helpers";
 
 export type { ChatToolName, ChatToolResult } from "./chat-types";
 
@@ -84,6 +94,10 @@ export type ChatToolProviderSchemaExportResult =
     | { ok: true; schemas: ChatToolProviderSchema[] }
     | { ok: false; schemas: []; error: string };
 
+export interface PrepareToolArgumentsContext {
+    userInput: string;
+}
+
 export interface ChatToolDefinition<Input, Output> {
     name: ChatToolName;
     description: string;
@@ -97,6 +111,14 @@ export interface ChatToolDefinition<Input, Output> {
     statusMessageText: string;
     sourceBoundary: ChatToolSourceBoundary;
     statusMessage(input: Input): string;
+    /**
+     * Optional pre-validation transform for raw tool-call arguments from the model.
+     * - Maps known aliases to canonical schema keys (e.g., `q` → `query`).
+     * - MUST NOT throw on unrepairable input; return raw so validateInput throws with a model-actionable error.
+     * - May read ctx.userInput when a tool has a documented host-context shim
+     *   (currently only get_current_note_context for shouldUseFullCurrentNoteContext override).
+     */
+    prepareArguments?: (raw: unknown, ctx: PrepareToolArgumentsContext) => unknown;
     validateInput(input: unknown): Input;
     execute(input: Input, context: ChatToolContext): Promise<ChatToolResult<Output>>;
 }
@@ -104,10 +126,32 @@ export interface ChatToolDefinition<Input, Output> {
 interface RegisteredChatTool {
     name: ChatToolName;
     definition: ChatToolRegistryDefinition;
+    prepareArguments?: (raw: unknown, ctx: PrepareToolArgumentsContext) => unknown;
     validateInput(input: unknown): unknown;
     statusMessage(input: unknown): string;
     execute(input: unknown, context: ChatToolContext): Promise<ChatToolResult<unknown>>;
 }
+
+/**
+ * Phase 4 preflight metadata for ToolRegistry.prepareAndValidate.
+ * Mirrors `PrepareCapabilityArgumentsRepair` in capability-types.ts so the same
+ * audit shape flows through ChatToolCapability bridge into Capability layer.
+ */
+export interface PrepareAndValidateRepair {
+    originalKeys: string;
+    originalInputSummary: string;
+    reason: string;
+}
+
+/**
+ * Result of registry.prepareAndValidate — used by PA executor to validate
+ * tool input BEFORE registry.execute. Failure → schema_invalid outcome.
+ * On success, `repaired` is populated when prepareArguments mutated the input
+ * (Phase 4 preflight metadata for audit / Phase B alias-usage analytics).
+ */
+export type PrepareAndValidateResult =
+    | { ok: true; input: unknown; repaired?: PrepareAndValidateRepair }
+    | { ok: false; error: Error };
 
 export interface SearchMemoryInput {
     query: string;
@@ -437,6 +481,7 @@ export class ToolRegistry {
         this.tools.set(definition.name, {
             name: definition.name,
             definition: toRegistryDefinition(definition),
+            prepareArguments: definition.prepareArguments,
             validateInput: definition.validateInput,
             statusMessage: definition.statusMessage as (input: unknown) => string,
             execute: definition.execute as (input: unknown, context: ChatToolContext) => Promise<ChatToolResult<unknown>>,
@@ -446,6 +491,32 @@ export class ToolRegistry {
     get(name: string): RegisteredChatTool | undefined {
         if (!isChatToolName(name)) return undefined;
         return this.tools.get(name);
+    }
+
+    /**
+     * Pre-validation pipeline for PA executor.
+     * Runs prepareArguments (if defined) → validateInput. Returns Ok with prepared
+     * input on success, or Err on validation failure. PA executor converts Err to
+     * schema_invalid outcome BEFORE registry.execute, bypassing ChatToolResult's
+     * recoverable_error flattening at chatToolResultToPaAgentToolExecutionResult.
+     *
+     * Phase 4 preflight metadata: if prepareArguments mutated raw input, the result
+     * carries `repaired` (originalKeys / originalInputSummary / reason) so PA executor
+     * can write it into toolResult.metadata for audit + Phase B alias-usage analytics.
+     */
+    prepareAndValidate(name: string, raw: unknown, ctx: PrepareToolArgumentsContext): PrepareAndValidateResult {
+        const tool = this.get(name);
+        if (!tool) {
+            return { ok: false, error: new Error(`Tool ${name} is not registered.`) };
+        }
+        try {
+            const prepared = tool.prepareArguments ? tool.prepareArguments(raw, ctx) : raw;
+            tool.validateInput(prepared);
+            const repaired = buildPrepareRepairInfo(raw, prepared);
+            return repaired ? { ok: true, input: prepared, repaired } : { ok: true, input: prepared };
+        } catch (error) {
+            return { ok: false, error: error instanceof Error ? error : new Error(String(error)) };
+        }
     }
 
     getDefinition(name: string): ChatToolRegistryDefinition | undefined {
@@ -754,6 +825,23 @@ function cloneRegistryDefinition(definition: ChatToolRegistryDefinition): ChatTo
     };
 }
 
+/**
+ * Phase 4 preflight metadata detector. Returns repair info if prepareArguments
+ * mutated raw input (deepEqual compare), else undefined. The reason field is
+ * intentionally generic in path B — Phase B analytics use originalKeys to identify
+ * which alias keys triggered, not a per-tool reason string.
+ */
+function buildPrepareRepairInfo(raw: unknown, prepared: unknown): PrepareAndValidateRepair | undefined {
+    if (deepEqualJson(raw, prepared)) return undefined;
+    const rawRecord = toInputRecord(raw);
+    const originalKeys = rawRecord ? Object.keys(rawRecord).join(",") : typeof raw;
+    return {
+        originalKeys,
+        originalInputSummary: summarizeRawInput(raw),
+        reason: "alias mapping or normalization applied",
+    };
+}
+
 function cloneInputSchema(schema: ChatToolInputSchema): ChatToolInputSchema {
     return {
         ...schema,
@@ -795,6 +883,7 @@ export function createSearchMemoryTool(
         statusMessageText: "Searching memory",
         sourceBoundary: "memory",
         statusMessage: (input) => `Searching memory: ${input.query}`,
+        prepareArguments: prepareSearchMemoryArguments,
         validateInput: validateSearchMemoryInput,
         execute: async (input, context) => {
             const result = await executeSearch(input, context);
@@ -807,6 +896,170 @@ export function createSearchMemoryTool(
             };
         },
     };
+}
+
+const SEARCH_MEMORY_QUERY_ALIASES = [
+    "query",
+    "q",
+    "searchQuery",
+    "search_query",
+    "keywords",
+    "keyword",
+    "input",
+    "prompt",
+    "question",
+] as const;
+
+function prepareSearchMemoryArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
+    // SPEC-TCR-04 fail-loud: alias mapping only. Empty args → return raw → validateInput throws
+    // → executor returns schema_invalid → HostPolicy corrective turn lets the model retry with valid args.
+    if (typeof raw === "string") {
+        const query = raw.trim();
+        return query ? { query } : raw;
+    }
+    const record = toInputRecord(raw);
+    if (!record) return raw;
+    const query = readFirstString(record, SEARCH_MEMORY_QUERY_ALIASES);
+    return query ? { query } : raw;
+}
+
+function prepareCurrentNoteContextArguments(raw: unknown, ctx: PrepareToolArgumentsContext): unknown {
+    if (shouldUseFullCurrentNoteContext(ctx.userInput)) {
+        return { mode: "full" };
+    }
+    const rawMode = raw && typeof raw === "object" && !Array.isArray(raw)
+        ? (raw as Record<string, unknown>).mode
+        : raw;
+    const mode = typeof rawMode === "string"
+        ? rawMode.trim().toLowerCase().replace(/[_\s]+/g, "-")
+        : "";
+    if (mode === "outline" || mode === "structure" || mode === "headings") {
+        return { mode: "outline" };
+    }
+    if (mode === "metadata" || mode === "properties" || mode === "frontmatter") {
+        return { mode: "metadata" };
+    }
+    if (mode === "full" || mode === "full-note" || mode === "full-current-note" || mode === "entire-note") {
+        return { mode: "full" };
+    }
+    return { mode: "selection-or-nearby" };
+}
+
+const QUERY_LIMIT_ALIASES = [
+    "limit",
+    "count",
+    "maxResults",
+    "max_results",
+    "maxMatches",
+    "max_matches",
+    "topK",
+    "top_k",
+] as const;
+
+function normalizeQueryWithOptionalLimit(
+    raw: unknown,
+    queryAliases: readonly string[],
+    options: { includeLimit?: boolean } = {},
+): unknown {
+    if (typeof raw === "string") {
+        const query = raw.trim();
+        return query ? { query } : raw;
+    }
+    const record = toInputRecord(raw);
+    if (!record) return raw;
+    const query = readFirstString(record, queryAliases);
+    if (!query) return raw;
+    const normalized: Record<string, unknown> = { query };
+    if (options.includeLimit) {
+        const limit = readFirstPositiveNumber(record, QUERY_LIMIT_ALIASES);
+        if (limit !== undefined) normalized.limit = limit;
+    }
+    return normalized;
+}
+
+const VAULT_METADATA_QUERY_ALIASES = [
+    "query",
+    "q",
+    "searchQuery",
+    "search_query",
+    "metadataQuery",
+    "metadata_query",
+    "filename",
+    "fileName",
+    "file_name",
+    "path",
+    "tag",
+    "keyword",
+    "keywords",
+    "input",
+] as const;
+
+function prepareSearchVaultMetadataArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
+    return normalizeQueryWithOptionalLimit(raw, VAULT_METADATA_QUERY_ALIASES, { includeLimit: true });
+}
+
+const VAULT_SNIPPETS_QUERY_ALIASES = [
+    "query",
+    "q",
+    "searchQuery",
+    "search_query",
+    "snippetQuery",
+    "snippet_query",
+    "text",
+    "term",
+    "token",
+    "prefix",
+    "keyword",
+    "keywords",
+    "input",
+] as const;
+
+const VAULT_SNIPPETS_SCOPE_ALIASES = ["scope", "path", "folder", "file"] as const;
+
+function prepareSearchVaultSnippetsArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
+    const normalized = normalizeQueryWithOptionalLimit(raw, VAULT_SNIPPETS_QUERY_ALIASES, { includeLimit: true });
+    const record = toInputRecord(raw);
+    const scope = record ? readFirstString(record, VAULT_SNIPPETS_SCOPE_ALIASES) : undefined;
+    if (scope && normalized && typeof normalized === "object" && !Array.isArray(normalized)) {
+        return { ...(normalized as Record<string, unknown>), scope };
+    }
+    return normalized;
+}
+
+const NOTE_OUTLINE_MAX_HEADINGS_ALIASES = [
+    "max_headings",
+    "maxHeadings",
+    "headingLimit",
+    "heading_limit",
+    "limit",
+] as const;
+
+function prepareReadNoteOutlineArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
+    const path = extractInputPath(raw, [".md"]);
+    if (!path) return raw;
+    const record = toInputRecord(raw);
+    const normalized: Record<string, unknown> = { path };
+    const maxHeadings = record ? readFirstPositiveNumber(record, NOTE_OUTLINE_MAX_HEADINGS_ALIASES) : undefined;
+    if (maxHeadings !== undefined) normalized.max_headings = maxHeadings;
+    return normalized;
+}
+
+function prepareInspectObsidianNoteArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
+    // wrinkle (c): inspect_obsidian_note permits empty input → reads current open note.
+    // prepareArguments must NOT invent a path when none is supplied.
+    const path = extractInputPath(raw, [".md"]);
+    if (path) return { path };
+    const record = toInputRecord(raw);
+    if (!record) return {};
+    // If `path` is present but empty/whitespace, normalize to `{}` so validateInput
+    // doesn't reject an empty string as an invalid path.
+    return typeof record.path === "string" && !record.path.trim() ? {} : raw;
+}
+
+function prepareReadCanvasSummaryArguments(raw: unknown, _ctx: PrepareToolArgumentsContext): unknown {
+    const path = extractInputPath(raw, [".canvas"]);
+    if (!path) return raw;
+    return { path };
 }
 
 export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteContextInput, CurrentNoteContextOutput> {
@@ -838,6 +1091,10 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
         statusMessageText: "Reading current note",
         sourceBoundary: "current-note",
         statusMessage: () => "Reading current note",
+        // host-context shim: shouldUseFullCurrentNoteContext OVERRIDES any model-picked
+        // mode when user phrasing matches "current note only + find/exact/搜索/全文" etc.
+        // This is host-policy behavior; candidate to move into runtime instruction in Phase B/C.
+        prepareArguments: prepareCurrentNoteContextArguments,
         validateInput: validateCurrentNoteContextInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
@@ -930,6 +1187,7 @@ export function createSearchVaultMetadataTool(): ChatToolDefinition<SearchVaultM
         statusMessageText: "Searching note metadata",
         sourceBoundary: "read-only-tool",
         statusMessage: (input) => `Searching note metadata: ${input.query}`,
+        prepareArguments: prepareSearchVaultMetadataArguments,
         validateInput: validateSearchVaultMetadataInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
@@ -1039,6 +1297,7 @@ export function createReadNoteOutlineTool(): ChatToolDefinition<ReadNoteOutlineI
         statusMessageText: "Reading note outline",
         sourceBoundary: "read-only-tool",
         statusMessage: (input) => `Reading note outline: ${input.path}`,
+        prepareArguments: prepareReadNoteOutlineArguments,
         validateInput: validateReadNoteOutlineInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
@@ -1101,6 +1360,7 @@ export function createInspectObsidianNoteTool(): ChatToolDefinition<InspectObsid
         statusMessageText: "Reading note structure",
         sourceBoundary: "read-only-tool",
         statusMessage: (input) => input.path ? `Reading note structure: ${input.path}` : "Reading current note structure",
+        prepareArguments: prepareInspectObsidianNoteArguments,
         validateInput: validateInspectObsidianNoteInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
@@ -1164,6 +1424,7 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
         statusMessageText: "Reading canvas structure",
         sourceBoundary: "read-only-tool",
         statusMessage: (input) => `Reading canvas structure: ${input.path}`,
+        prepareArguments: prepareReadCanvasSummaryArguments,
         validateInput: validateReadCanvasSummaryInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
@@ -1251,6 +1512,7 @@ export function createSearchVaultSnippetsTool(): ChatToolDefinition<SearchVaultS
         statusMessage: (input) => input.scope
             ? `Searching note snippets: ${input.query} in ${input.scope}`
             : `Searching note snippets: ${input.query}`,
+        prepareArguments: prepareSearchVaultSnippetsArguments,
         validateInput: validateSearchVaultSnippetsInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
@@ -2756,10 +3018,6 @@ function summarizeInvalidToolInput(input: unknown): string {
         // Fall through to String(input).
     }
     return truncate(String(input), TOOL_VALIDATION_INPUT_SUMMARY_CHARS);
-}
-
-function getErrorType(error: unknown): string {
-    return error instanceof Error ? error.name : typeof error;
 }
 
 function truncate(value: string, maxLength: number): string {

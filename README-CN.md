@@ -96,7 +96,6 @@ Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statist
 | Qwen web search | 你开启 Qwen web search | 问题和最终 prompt context | DashScope/Bailian | 否 | Qwen response 设置 |
 | Featured image generation | 你运行图片生成 | 用于生成图片 prompt 的当前 note content，以及图片 prompt 和 task 请求 | 配置的 AI provider 和 DashScope/Bailian | 请求后会轮询 task 状态 | 用户操作和 AI 设置 |
 | Plugin/theme updater | 你运行 updater/install 流程 | Plugin 或 theme ID 以及下载请求 | GitHub 和 jsDelivr | 否 | 用户操作 |
-| Ollama | 你选择 local provider | Prompt 或 Memory text | 本地 Ollama endpoint | 取决于具体功能 | Provider 设置 |
 
 ### VSS SQLite/WASM 依赖说明
 

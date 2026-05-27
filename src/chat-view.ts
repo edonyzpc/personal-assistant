@@ -68,13 +68,11 @@ const MEMORY_CHIP_STATE_CLASSES = [
     "personal-assistant-ai-statusbar-unavailable",
 ];
 export const CHAT_MENU_IDLE_CLOSE_MS = 8000;
-const KEYBOARD_FOCUS_FALLBACK_DELAY_MS = 300;
 
 let ldrsLoadersRequested = false;
 let mermaidPreviewModalId = 0;
 
 type KeyboardPluginEventName = 'keyboardWillShow' | 'keyboardDidShow' | 'keyboardWillHide' | 'keyboardDidHide';
-type KeyboardDocumentEventName = 'focusin' | 'focusout';
 type KeyboardWindowEventName = KeyboardPluginEventName | 'resize' | 'orientationchange';
 
 interface KeyboardPluginInfo {
@@ -85,11 +83,18 @@ interface KeyboardPluginListenerHandle {
     remove?: () => Promise<void> | void;
 }
 
+// Capacitor Keyboard plugin facade. We rely on:
+//   - addListener: observe keyboard show/hide for diagnostics + immediate JS-side scheduleUpdate
+//   - setResizeMode({mode: 'body'}): let Capacitor itself manage layout viewport resize so the
+//     250-400ms race between keyboardWillShow and visualViewport.resize is owned by the WebView.
+// Combined with CSS env(keyboard-inset-height, 0px) fallback in setKeyboardClearanceStyles, this
+// eliminates the need for JS-side keyboard height estimation.
 interface KeyboardPluginFacade {
     addListener?: (
         eventName: KeyboardPluginEventName,
         listenerFunc: (info: KeyboardPluginInfo) => void,
     ) => Promise<KeyboardPluginListenerHandle> | KeyboardPluginListenerHandle;
+    setResizeMode?: (options: { mode: string }) => Promise<void> | void;
 }
 
 function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) => void): void {
@@ -597,13 +602,8 @@ export class LLMView extends ItemView {
     private keyboardUpdateHandler: (() => void) | null = null;
     private keyboardUpdateFrame: number | null = null;
     private keyboardWindowListeners: Array<{ type: KeyboardWindowEventName; listener: EventListener }> = [];
-    private keyboardDocumentListeners: Array<{ type: KeyboardDocumentEventName; listener: EventListener }> = [];
     private keyboardPluginListenerHandles: KeyboardPluginListenerHandle[] = [];
-    private keyboardFocusFallbackTimer: ReturnType<typeof setTimeout> | null = null;
-    private keyboardFocusFallbackToken = 0;
-    private keyboardFocusFallbackElement: HTMLElement | null = null;
     private nativeKeyboardHeight = 0;
-    private focusFallbackKeyboardHeight = 0;
     private memoryStatusUnsubscribe: (() => void) | null = null;
     private markdownRenderOwners = new Set<Component>();
 
@@ -2993,13 +2993,7 @@ export class LLMView extends ItemView {
         let previousClearance = -1;
         const applyClearance = (notify: boolean) => {
             const measurement = this.measureKeyboardClearance(containerEl, inputEl);
-            if (measurement.hasRealKeyboardClearance) {
-                this.cancelKeyboardFocusFallback();
-                this.focusFallbackKeyboardHeight = 0;
-            }
-            const clearance = measurement.realClearance > 0
-                ? measurement.realClearance
-                : measurement.fallbackClearance;
+            const clearance = measurement.realClearance;
             if (clearance === previousClearance) return;
             previousClearance = clearance;
             this.setKeyboardClearanceStyles(containerEl, clearance);
@@ -3030,13 +3024,8 @@ export class LLMView extends ItemView {
 
         if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
             this.addWindowKeyboardListener('resize', scheduleUpdate);
-            this.addWindowKeyboardListener('orientationchange', () => {
-                this.cancelKeyboardFocusFallback();
-                scheduleUpdate();
-            });
+            this.addWindowKeyboardListener('orientationchange', scheduleUpdate);
         }
-        this.addDocumentKeyboardListener('focusin', () => this.scheduleKeyboardFocusFallback(containerEl, scheduleUpdate));
-        this.addDocumentKeyboardListener('focusout', () => this.scheduleKeyboardFocusFallbackClear(containerEl, scheduleUpdate));
         this.observeNativeKeyboardEvents(scheduleUpdate);
     }
 
@@ -3049,7 +3038,6 @@ export class LLMView extends ItemView {
             window.cancelAnimationFrame(this.keyboardUpdateFrame);
         }
         this.keyboardUpdateFrame = null;
-        this.cancelKeyboardFocusFallback();
 
         if (this.keyboardUpdateHandler) {
             this.keyboardVisualViewport?.removeEventListener('resize', this.keyboardUpdateHandler);
@@ -3061,25 +3049,17 @@ export class LLMView extends ItemView {
             }
         }
         this.keyboardWindowListeners = [];
-        if (typeof document !== 'undefined' && typeof document.removeEventListener === 'function') {
-            for (const { type, listener } of this.keyboardDocumentListeners) {
-                document.removeEventListener(type, listener);
-            }
-        }
-        this.keyboardDocumentListeners = [];
 
         for (const handle of this.keyboardPluginListenerHandles.splice(0)) {
-            try {
-                void handle.remove?.();
-            } catch (error) {
-                this.plugin.log?.('Could not remove native keyboard listener', error);
-            }
+            this.safeInvokeKeyboardPlugin(
+                () => handle.remove?.(),
+                'Could not remove native keyboard listener',
+            );
         }
 
         this.keyboardVisualViewport = null;
         this.keyboardUpdateHandler = null;
         this.nativeKeyboardHeight = 0;
-        this.focusFallbackKeyboardHeight = 0;
         this.setKeyboardClearanceStyles(this.containerEl, 0);
         this.clearKeyboardComposerOverlay(this.containerEl);
     }
@@ -3091,27 +3071,21 @@ export class LLMView extends ItemView {
 
     private measureKeyboardClearance(containerEl: HTMLElement, inputEl: HTMLElement): {
         realClearance: number;
-        fallbackClearance: number;
         composerHeight: number;
-        hasRealKeyboardClearance: boolean;
     } {
         if (!containerEl.getBoundingClientRect) {
             return {
                 realClearance: 0,
-                fallbackClearance: 0,
                 composerHeight: 0,
-                hasRealKeyboardClearance: false,
             };
         }
 
         const viewRect = containerEl.getBoundingClientRect();
         const viewportOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, this.getVisualViewport());
         const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.nativeKeyboardHeight);
-        const fallbackOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.focusFallbackKeyboardHeight);
         const realClearance = Math.max(viewportOverlap, nativeOverlap);
-        const clearance = realClearance > 0 ? realClearance : fallbackOverlap;
         let composerHeight = 0;
-        if (clearance > 0) {
+        if (realClearance > 0) {
             const composerRect = inputEl.getBoundingClientRect?.();
             composerHeight = composerRect?.height && Number.isFinite(composerRect.height)
                 ? Math.ceil(composerRect.height)
@@ -3120,9 +3094,7 @@ export class LLMView extends ItemView {
 
         return {
             realClearance,
-            fallbackClearance: fallbackOverlap,
             composerHeight,
-            hasRealKeyboardClearance: realClearance > 0,
         };
     }
 
@@ -3164,8 +3136,18 @@ export class LLMView extends ItemView {
     }
 
     private setKeyboardClearanceStyles(containerEl: HTMLElement, clearance: number) {
-        containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
-        containerEl.style?.setProperty('--pa-chat-keyboard-offset', clearance > 0 ? `-${clearance}px` : '0px');
+        // When JS has measured a real overlap (visualViewport or Capacitor keyboard event),
+        // pin the explicit pixel value. When clearance is 0 we defer to CSS
+        // env(keyboard-inset-height, 0px), which the browser/WebView fills in as soon as the
+        // keyboard begins to show — bridging the 250-400 ms gap before our JS observers fire.
+        // No more JS-side fallback estimation.
+        if (clearance > 0) {
+            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
+            containerEl.style?.setProperty('--pa-chat-keyboard-offset', `-${clearance}px`);
+        } else {
+            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', 'env(keyboard-inset-height, 0px)');
+            containerEl.style?.setProperty('--pa-chat-keyboard-offset', 'calc(0px - env(keyboard-inset-height, 0px))');
+        }
     }
 
     private getLayoutViewportHeight(): number {
@@ -3184,16 +3166,12 @@ export class LLMView extends ItemView {
         const handleShow = (source: unknown) => {
             const keyboardHeight = this.readKeyboardHeight(source);
             if (keyboardHeight > 0) {
-                this.cancelKeyboardFocusFallback();
                 this.nativeKeyboardHeight = keyboardHeight;
-                this.focusFallbackKeyboardHeight = 0;
             }
             scheduleUpdate();
         };
         const handleHide = () => {
-            this.cancelKeyboardFocusFallback();
             this.nativeKeyboardHeight = 0;
-            this.focusFallbackKeyboardHeight = 0;
             scheduleUpdate();
         };
 
@@ -3204,6 +3182,13 @@ export class LLMView extends ItemView {
 
         const keyboardPlugin = this.getNativeKeyboardPlugin();
         if (!keyboardPlugin?.addListener) return;
+        // Hand layout management off to Capacitor so the WebView itself resizes the layout
+        // viewport above the keyboard. Combined with env(keyboard-inset-height) CSS, this
+        // removes the need for JS-side height estimation entirely.
+        this.safeInvokeKeyboardPlugin(
+            () => keyboardPlugin.setResizeMode?.({ mode: 'body' }),
+            'Could not set native keyboard resize mode',
+        );
         this.addKeyboardPluginListener(keyboardPlugin, 'keyboardWillShow', handleShow, scheduleUpdate);
         this.addKeyboardPluginListener(keyboardPlugin, 'keyboardDidShow', handleShow, scheduleUpdate);
         this.addKeyboardPluginListener(keyboardPlugin, 'keyboardWillHide', handleHide, scheduleUpdate);
@@ -3215,13 +3200,6 @@ export class LLMView extends ItemView {
         const eventListener: EventListener = (event) => listener(event);
         window.addEventListener(type, eventListener);
         this.keyboardWindowListeners.push({ type, listener: eventListener });
-    }
-
-    private addDocumentKeyboardListener(type: KeyboardDocumentEventName, listener: (source: unknown) => void) {
-        if (typeof document === 'undefined' || typeof document.addEventListener !== 'function') return;
-        const eventListener: EventListener = (event) => listener(event);
-        document.addEventListener(type, eventListener);
-        this.keyboardDocumentListeners.push({ type, listener: eventListener });
     }
 
     private addKeyboardPluginListener(
@@ -3260,99 +3238,20 @@ export class LLMView extends ItemView {
         return candidate.Capacitor?.Plugins?.Keyboard ?? null;
     }
 
-    private scheduleKeyboardFocusFallback(containerEl: HTMLElement, scheduleUpdate: () => void) {
-        this.cancelKeyboardFocusFallback();
-        const focusedElement = this.getKeyboardEditableFocusedElement(containerEl);
-        if (!focusedElement) return;
-        if (!this.isLikelyTouchPhoneViewport()) return;
-        if (this.nativeKeyboardHeight > 0) return;
-        if (this.hasMeasuredKeyboardClearance(containerEl)) return;
-
-        const token = ++this.keyboardFocusFallbackToken;
-        this.keyboardFocusFallbackElement = focusedElement;
-        this.keyboardFocusFallbackTimer = setTimeout(() => {
-            this.keyboardFocusFallbackTimer = null;
-            this.applyKeyboardFocusFallback(containerEl, focusedElement, token, scheduleUpdate);
-        }, KEYBOARD_FOCUS_FALLBACK_DELAY_MS);
-    }
-
-    private scheduleKeyboardFocusFallbackClear(containerEl: HTMLElement, scheduleUpdate: () => void) {
-        this.cancelKeyboardFocusFallback();
-        this.keyboardFocusFallbackTimer = setTimeout(() => {
-            this.keyboardFocusFallbackTimer = null;
-            if (this.isKeyboardEditableFocused(containerEl)) return;
-            if (this.focusFallbackKeyboardHeight === 0) return;
-            this.focusFallbackKeyboardHeight = 0;
-            scheduleUpdate();
-        }, 120);
-    }
-
-    private clearKeyboardFocusFallbackTimer() {
-        if (this.keyboardFocusFallbackTimer === null) return;
-        clearTimeout(this.keyboardFocusFallbackTimer);
-        this.keyboardFocusFallbackTimer = null;
-    }
-
-    private cancelKeyboardFocusFallback() {
-        this.clearKeyboardFocusFallbackTimer();
-        this.keyboardFocusFallbackToken += 1;
-        this.keyboardFocusFallbackElement = null;
-    }
-
-    private shouldUseKeyboardFocusFallback(containerEl: HTMLElement): boolean {
-        if (!this.isKeyboardEditableFocused(containerEl)) return false;
-        if (!this.isLikelyTouchPhoneViewport()) return false;
-        return this.nativeKeyboardHeight <= 0;
-    }
-
-    private applyKeyboardFocusFallback(
-        containerEl: HTMLElement,
-        focusedElement: HTMLElement,
-        token: number,
-        scheduleUpdate: () => void,
-    ) {
-        if (token !== this.keyboardFocusFallbackToken) return;
-        if (this.keyboardFocusFallbackElement !== focusedElement) return;
-        if (!this.isKeyboardContainerConnected(containerEl)) return;
-        if (!this.isKeyboardEditableFocusedElement(containerEl, focusedElement)) return;
-        if (!this.shouldUseKeyboardFocusFallback(containerEl)) return;
-        if (this.hasMeasuredKeyboardClearance(containerEl)) return;
-
-        const fallbackHeight = this.estimatePhoneKeyboardHeight();
-        if (fallbackHeight <= 0 || fallbackHeight === this.focusFallbackKeyboardHeight) return;
-        this.focusFallbackKeyboardHeight = fallbackHeight;
-        scheduleUpdate();
-    }
-
-    private isKeyboardEditableFocused(containerEl: HTMLElement): boolean {
-        return this.getKeyboardEditableFocusedElement(containerEl) !== null;
-    }
-
-    private getKeyboardEditableFocusedElement(containerEl: HTMLElement): HTMLElement | null {
-        if (typeof document === 'undefined') return null;
-        const activeElement = document.activeElement as HTMLElement | null;
-        if (!activeElement || !this.isKeyboardEditableFocusedElement(containerEl, activeElement)) return null;
-        return activeElement;
-    }
-
-    private isKeyboardEditableFocusedElement(containerEl: HTMLElement, element: HTMLElement): boolean {
-        if (!this.isElementInside(containerEl, element)) return false;
-        if (!this.isKeyboardEditableElement(element)) return false;
-        if (typeof document !== 'undefined' && document.activeElement !== element) return false;
-        return true;
-    }
-
-    private isKeyboardEditableElement(element: HTMLElement): boolean {
-        const tagName = element.tagName?.toLowerCase();
-        return tagName === 'textarea'
-            || tagName === 'input'
-            || element.isContentEditable
-            || element.getAttribute?.('contenteditable') === 'true';
-    }
-
-    private isKeyboardContainerConnected(containerEl: HTMLElement): boolean {
-        const maybeConnected = (containerEl as HTMLElement & { isConnected?: boolean }).isConnected;
-        return maybeConnected !== false;
+    // Wraps a Capacitor plugin call that may return void OR a Promise. The naive
+    // `try { void op(); } catch {}` pattern silently drops async rejections — this helper
+    // also attaches a .catch() so unhandled rejections do not leak.
+    private safeInvokeKeyboardPlugin(op: () => unknown, errorMessage: string): void {
+        try {
+            const result = op();
+            if (result && typeof (result as Promise<unknown>).catch === 'function') {
+                (result as Promise<unknown>).catch((error) => {
+                    this.plugin.log?.(errorMessage, error);
+                });
+            }
+        } catch (error) {
+            this.plugin.log?.(errorMessage, error);
+        }
     }
 
     private shouldFocusComposerTextArea(
@@ -3410,53 +3309,6 @@ export class LLMView extends ItemView {
             'switch',
             'textbox',
         ].includes(role));
-    }
-
-    private isElementInside(root: HTMLElement, element: HTMLElement): boolean {
-        let current: HTMLElement | null = element;
-        while (current) {
-            if (current === root) return true;
-            current = current.parentElement;
-        }
-        return false;
-    }
-
-    private isLikelyTouchPhoneViewport(): boolean {
-        if (typeof window === 'undefined') return false;
-        const width = this.getLayoutViewportWidth();
-        const height = this.getLayoutViewportHeight();
-        const shortSide = Math.min(width || Number.POSITIVE_INFINITY, height || Number.POSITIVE_INFINITY);
-        if (!Number.isFinite(shortSide) || shortSide > 520) return false;
-
-        const coarsePointer = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-        const touchPoints = typeof navigator !== 'undefined' ? navigator.maxTouchPoints ?? 0 : 0;
-        return coarsePointer || touchPoints > 0;
-    }
-
-    private hasMeasuredKeyboardClearance(containerEl: HTMLElement): boolean {
-        if (!containerEl.getBoundingClientRect) return false;
-        const viewRect = containerEl.getBoundingClientRect();
-        const visualOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, this.getVisualViewport());
-        const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.nativeKeyboardHeight);
-        return Math.max(visualOverlap, nativeOverlap) > 0;
-    }
-
-    private estimatePhoneKeyboardHeight(): number {
-        const layoutHeight = this.getLayoutViewportHeight();
-        if (layoutHeight <= 0) return 0;
-        return Math.ceil(Math.min(Math.max(layoutHeight * 0.45, 300), layoutHeight * 0.6));
-    }
-
-    private getLayoutViewportWidth(): number {
-        if (typeof window !== 'undefined' && Number.isFinite(window.innerWidth) && window.innerWidth > 0) {
-            return window.innerWidth;
-        }
-        if (typeof document !== 'undefined') {
-            return document.documentElement?.clientWidth
-                ?? document.body?.clientWidth
-                ?? 0;
-        }
-        return 0;
     }
 
     private readKeyboardHeight(source: unknown): number {

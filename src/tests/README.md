@@ -38,4 +38,4 @@ Use `src/tests/factories` to build registry/tool definitions without copying too
 
 ## Fakes
 
-Use `src/tests/fakes` for provider-level tests. `FakeChatModelProvider` exposes `createChatModel` and `getNativeToolCallingCapability`, and can be cast with `toChatAgentRuntimeAiUtils()` when a test needs to inject the existing `ChatAgentRuntime` constructor.
+Use `src/tests/fakes` for provider-level tests. `FakeChatModelProvider` exposes `createChatModel` and `getNativeToolCallingCapability`, and can be cast with `toPaAgentRuntimeAiUtils()` when a test needs to inject the existing `PaAgentRuntime` constructor.
