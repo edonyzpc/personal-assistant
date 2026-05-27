@@ -1400,6 +1400,452 @@ describe("PaAgentLoop", () => {
     });
 });
 
+describe("PaAgentLoop hybrid tool execution (P0-A)", () => {
+    beforeEach(() => {
+        deterministicCounters.clear();
+    });
+
+    it("runs two parallel-mode tools concurrently in hybrid dispatch", async () => {
+        const events: AgentEvent[] = [];
+        const concurrent = { active: 0, peak: 0 };
+        const release: Array<() => void> = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "parallel tools",
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
+                ]),
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    concurrent.active += 1;
+                    concurrent.peak = Math.max(concurrent.peak, concurrent.active);
+                    await new Promise<void>((resolve) => release.push(resolve));
+                    concurrent.active -= 1;
+                    return { outcome: "success", promptText: `result:${toolCall.id}` };
+                },
+                getExecutionMode: () => "parallel",
+            },
+            toolExecutionMode: "hybrid",
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        const runPromise = loop.run();
+        // Wait for both executes to be in-flight; release them only after we've seen the peak.
+        while (release.length < 2) {
+            await delay(1);
+        }
+        release.forEach((fn) => fn());
+        const result = await runPromise;
+
+        expect(concurrent.peak).toBe(2);
+        // toolExecutionStart emitted in parsed order before launch.
+        const startEvents = events.filter((event) => event.type === "tool_execution_start");
+        expect(startEvents.map((event) => event.toolCallId)).toEqual(["call_1", "call_2"]);
+        // toolResults emitted in parsed order despite concurrent execution.
+        expect(result.turns[0].toolResults.map((message) => message.toolCallId)).toEqual(["call_1", "call_2"]);
+        expect(result.turns[0].toolResults.map((message) => message.content.promptText)).toEqual([
+            "result:call_1",
+            "result:call_2",
+        ]);
+    });
+
+    it("forces sequential when any tool reports executionMode='sequential' in hybrid mode", async () => {
+        const executorOrder: Array<{ id: string; phase: "enter" | "exit" }> = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "mixed dispatch",
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "write_thing", input: { value: "b" }, index: 1 },
+                ]),
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    executorOrder.push({ id: toolCall.id, phase: "enter" });
+                    await delay(5);
+                    executorOrder.push({ id: toolCall.id, phase: "exit" });
+                    return { outcome: "success", promptText: toolCall.id };
+                },
+                getExecutionMode: (name) => name === "write_thing" ? "sequential" : "parallel",
+            },
+            toolExecutionMode: "hybrid",
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const result = await loop.run();
+
+        // Sequential dispatch ⇒ tool_2 doesn't enter until tool_1 exits.
+        expect(executorOrder).toEqual([
+            { id: "call_1", phase: "enter" },
+            { id: "call_1", phase: "exit" },
+            { id: "call_2", phase: "enter" },
+            { id: "call_2", phase: "exit" },
+        ]);
+        expect(result.turns[0].toolResults.map((message) => message.toolCallId)).toEqual(["call_1", "call_2"]);
+    });
+
+    it("falls back to parallel when executor omits getExecutionMode in hybrid mode", async () => {
+        const concurrent = { active: 0, peak: 0 };
+        const release: Array<() => void> = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "no execution mode",
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
+                ]),
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    concurrent.active += 1;
+                    concurrent.peak = Math.max(concurrent.peak, concurrent.active);
+                    await new Promise<void>((resolve) => release.push(resolve));
+                    concurrent.active -= 1;
+                    return { outcome: "success", promptText: toolCall.id };
+                },
+            },
+            toolExecutionMode: "hybrid",
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const runPromise = loop.run();
+        while (release.length < 2) {
+            await delay(1);
+        }
+        release.forEach((fn) => fn());
+        const result = await runPromise;
+
+        expect(concurrent.peak).toBe(2);
+        expect(result.turns[0].toolResults.map((message) => message.toolCallId)).toEqual(["call_1", "call_2"]);
+    });
+
+    it("abort during parallel batch emits one toolResult per launched tool (no early-skip)", async () => {
+        const events: AgentEvent[] = [];
+        const controller = new AbortController();
+        const release: Array<() => void> = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "parallel abort",
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
+                ]),
+            },
+            toolExecutor: {
+                execute: async () => {
+                    await new Promise<void>((resolve) => release.push(resolve));
+                    return { outcome: "success", promptText: "late" };
+                },
+            },
+            signal: controller.signal,
+            toolAbortGraceMs: 1,
+            toolTimeoutMs: 1000,
+            toolExecutionMode: "parallel",
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        const runPromise = loop.run();
+        while (release.length < 2) {
+            await delay(1);
+        }
+        controller.abort();
+        // Let the abort + grace timeout race resolve before we release the pending awaits.
+        await delay(20);
+        release.forEach((fn) => fn());
+        const result = await runPromise;
+
+        // pi parallel contract: both tools launched → both have toolExecutionStart + toolResult.
+        const startEvents = events.filter((event) => event.type === "tool_execution_start");
+        expect(startEvents.map((event) => event.toolCallId)).toEqual(["call_1", "call_2"]);
+        expect(result.turns[0].toolResults).toHaveLength(2);
+        for (const message of result.turns[0].toolResults) {
+            expect(message.content.metadata).toMatchObject({
+                outcome: "abort_timeout",
+                reason: "user_abort",
+                stoppedBy: "aborted",
+            });
+        }
+        expect(result.status).toBe("aborted");
+    });
+
+    it("parallel pre-flight enforces budget cap deterministically in input order", async () => {
+        let executedCount = 0;
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "parallel budget",
+            maxToolCalls: 2,
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "a" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "b" }, index: 1 },
+                    { type: "toolcall_delta", id: "call_3", name: "search_memory", input: { query: "c" }, index: 2 },
+                ]),
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    executedCount += 1;
+                    return { outcome: "success", promptText: toolCall.id };
+                },
+            },
+            toolExecutionMode: "parallel",
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const result = await loop.run();
+
+        expect(executedCount).toBe(2);
+        const outcomes = result.turns[0].toolResults.map((message) => message.content.metadata?.outcome);
+        expect(outcomes).toEqual(["success", "success", "budget_exceeded"]);
+        expect(result.turns[0].toolResults[2].content.metadata).toMatchObject({
+            outcome: "budget_exceeded",
+            maxToolCalls: 2,
+        });
+    });
+
+    it("parallel pre-flight deduplicates identical tool calls before launching real executes", async () => {
+        let executedCount = 0;
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "parallel dedup",
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "search_memory", input: { query: "same" }, index: 0 },
+                    { type: "toolcall_delta", id: "call_2", name: "search_memory", input: { query: "same" }, index: 1 },
+                ]),
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    executedCount += 1;
+                    return { outcome: "success", promptText: toolCall.id };
+                },
+            },
+            toolExecutionMode: "parallel",
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const result = await loop.run();
+
+        expect(executedCount).toBe(1);
+        const outcomes = result.turns[0].toolResults.map((message) => message.content.metadata?.outcome);
+        expect(outcomes).toEqual(["success", "duplicate_skipped"]);
+    });
+});
+
+describe("PaAgentLoop endPayload diagnostics (P0-C)", () => {
+    beforeEach(() => {
+        deterministicCounters.clear();
+    });
+
+    it("captures the provider_error diagnostic on the result so callers can re-throw with context", async () => {
+        const events: AgentEvent[] = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "hello",
+            model: {
+                stream: async function* () {
+                    throw new Error("provider failed");
+                },
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        const result = await loop.run();
+
+        expect(result.status).toBe("error");
+        expect(result.endPayload).toMatchObject({
+            reason: "error",
+            diagnostics: [expect.objectContaining({ type: "provider_error", message: "provider failed" })],
+        });
+        // The endPayload mirrors what was emitted to listeners — the runtime can JSON.stringify it
+        // into an Error message and recover the same context that observability already saw.
+        const agentEnd = events.at(-1);
+        expect(agentEnd).toMatchObject({ type: "agent_end", status: "error" });
+        expect((agentEnd as { metadata: Record<string, unknown> }).metadata).toMatchObject({
+            reason: "error",
+            diagnostics: [expect.objectContaining({ type: "provider_error" })],
+        });
+    });
+
+    it("surfaces the wall_clock_exceeded diagnostic on the result when the timer fires mid-stream", async () => {
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "hello",
+            model: { stream: () => neverStream() },
+            createId: createDeterministicId,
+            now: () => 100,
+            maxWallClockMs: 5,
+            assistantIdleTimeoutMs: 60_000,
+        });
+
+        const result = await loop.run();
+
+        expect(result.status).toBe("incomplete");
+        // The wall_clock guard fires inside the model stream (not the outer turn guard) — so the
+        // reason is the soft turn status while the actual cause is preserved in `diagnostics`.
+        expect(result.endPayload).toMatchObject({
+            reason: "incomplete",
+            diagnostics: [expect.objectContaining({ type: "wall_clock_exceeded", maxWallClockMs: 5 })],
+        });
+    });
+
+    it("captures max_turns_exceeded reason + budget when the loop exits the turn cap", async () => {
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "hello",
+            model: {
+                stream: async function* () {
+                    yield { type: "text_delta", text: "." } as const;
+                },
+            },
+            hostPolicy: {
+                afterTurn: () => ({ action: "continue", reason: "needs_follow_up" }),
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+            maxTurns: 2,
+        });
+
+        const result = await loop.run();
+
+        expect(result.status).toBe("incomplete");
+        expect(result.endPayload).toMatchObject({
+            reason: "max_turns_exceeded",
+            maxTurns: 2,
+        });
+    });
+
+    it("surfaces the user_abort diagnostic on the result when an in-stream abort fires", async () => {
+        const controller = new AbortController();
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "hello",
+            model: {
+                stream: async function* () {
+                    yield { type: "text_delta", text: "Partial." } as const;
+                    controller.abort();
+                    await new Promise(() => undefined);
+                },
+            },
+            signal: controller.signal,
+            createId: createDeterministicId,
+            now: () => 100,
+        });
+
+        const result = await loop.run();
+
+        expect(result.status).toBe("aborted");
+        // Mid-stream abort routes through the turn handler — `reason` is the turn status, the
+        // user_abort cause lives in diagnostics. The outer-loop user_abort branch (covered by
+        // the "early abort" suite) emits `reason: "user_abort"` directly.
+        expect(result.endPayload).toMatchObject({
+            reason: "aborted",
+            diagnostics: [expect.objectContaining({ type: "user_abort" })],
+        });
+    });
+});
+
+describe("PaAgentLoop final_answer_only executor guard (#8)", () => {
+    beforeEach(() => {
+        deterministicCounters.clear();
+    });
+
+    it("rejects any tool call with policy_rejected when toolMode=final_answer_only and never invokes the executor", async () => {
+        const events: AgentEvent[] = [];
+        const executorCalls: string[] = [];
+
+        // Turn 0: assistant produces a draft, hostPolicy then forces final_answer_only.
+        // Turn 1: model still hallucinates a tool call against the empty schema list — the guard
+        // must reject it (not silently execute) so observability/audit see "model violated".
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "answer only",
+            model: {
+                stream: async function* (input) {
+                    if (input.turnIndex === 0) {
+                        yield { type: "text_delta", text: "Draft." };
+                    } else {
+                        yield {
+                            type: "toolcall_delta",
+                            id: "call_1",
+                            name: "search_memory",
+                            input: { query: "should not run" },
+                            index: 0,
+                        };
+                    }
+                },
+            },
+            hostPolicy: {
+                afterTurn: (summary) => summary.turnIndex === 0
+                    ? {
+                        action: "continue",
+                        reason: "needs_follow_up",
+                        runtimeInstruction: "finalize without tools",
+                        toolMode: "final_answer_only",
+                    }
+                    : { action: "stop", status: "completed", reason: "done" },
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    executorCalls.push(toolCall.name);
+                    return { outcome: "success", promptText: "should not be reached" };
+                },
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        await loop.run();
+
+        // Executor never ran — the guard short-circuits ahead of executeRealToolCall.
+        expect(executorCalls).toEqual([]);
+
+        // The buffered tool call still gets paired start/end events so the lifecycle stays
+        // consistent and the toolResult is emitted with policy_rejected outcome.
+        const toolStart = events.find((event) => event.type === "tool_execution_start");
+        const toolEnd = events.find((event) => event.type === "tool_execution_end");
+        expect(toolStart).toMatchObject({
+            toolCallId: "call_1",
+            toolName: "search_memory",
+        });
+        expect(toolEnd).toMatchObject({
+            toolCallId: "call_1",
+            toolName: "search_memory",
+            outcome: "policy_rejected",
+        });
+
+        // The toolResult message itself records the violation reason so the model sees it as an
+        // observation and can produce a corrective final answer next turn.
+        const turn1ToolResult = events
+            .filter((event) => event.type === "message_end" && event.message.role === "toolResult")
+            .at(-1) as { message: { content: { metadata?: Record<string, unknown>; includeInNextPrompt?: boolean } } } | undefined;
+        expect(turn1ToolResult).toBeDefined();
+        expect(turn1ToolResult?.message.content.metadata).toMatchObject({
+            outcome: "policy_rejected",
+            reason: "final_answer_only_violation",
+            toolName: "search_memory",
+        });
+        // policy_rejected defaults to includeInNextPrompt=true so the model learns from the error.
+        expect(turn1ToolResult?.message.content.includeInNextPrompt).toBe(true);
+    });
+});
+
 function createLoop(options: {
     events: AgentEvent[];
     committedSnapshots: string[];

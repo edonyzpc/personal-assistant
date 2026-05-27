@@ -1,7 +1,7 @@
 import type { PluginManager } from "../plugin";
 import { BUILTIN_WEB_SEARCH_TOOL_NAME } from "./builtin-web-search-provider";
 import type { CapabilityRegistry } from "./capability-registry";
-import type { AgentRuntimePlatform } from "./capability-types";
+import type { AgentCapabilityExecutionMode, AgentRuntimePlatform } from "./capability-types";
 import {
     isCurrentNoteContextResult,
     isSearchMemoryResult,
@@ -36,6 +36,13 @@ export function createPaAgentCapabilityToolExecutor(
     options: PaAgentCapabilityToolExecutorOptions,
 ): PaAgentToolExecutor {
     return {
+        getExecutionMode: (toolName: string): AgentCapabilityExecutionMode | undefined => {
+            // pi hybrid dispatch hook: look up the capability's declared executionMode (defaults to undefined
+            // ⇒ treated as "parallel" by the loop). Returning "sequential" for any tool forces the whole
+            // batch serial. v2.0.0 capabilities are all read-only and omit executionMode; this hook is wired
+            // for future write/mutate tools.
+            return options.registry.get(toolName)?.executionMode;
+        },
         execute: async (input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult> => {
             // SPEC-TCR-04: removed cross-cutting normalizeHostToolCallInput dispatch.
             // Per-tool prepareArguments hooks in chat-tools.ts now handle alias mapping;

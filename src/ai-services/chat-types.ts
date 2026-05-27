@@ -381,6 +381,7 @@ export type AgentActivityType =
     | "context-used"
     | "answering"
     | "fallback-tool-disabled"
+    | "fallback-stream-invoke"
     | "partial-output-error"
     | "guardrail-stopped";
 

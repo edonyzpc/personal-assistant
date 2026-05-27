@@ -26,6 +26,14 @@ export type AgentCapabilityCost = ChatToolCost | "network-calls";
 export type AgentPlatformSupport = "desktop" | "mobile" | "both";
 export type AgentRuntimePlatform = "desktop" | "mobile";
 export type AgentSourceRecordKind = SourceRecordKind;
+/**
+ * Per-capability tool execution mode (pi hybrid dispatch).
+ * - "parallel" (default): read-only/idempotent tools may run concurrently in a tool batch.
+ * - "sequential": tool must run serially with previous tools in the batch (e.g., write tools, tools that mutate shared state).
+ * If *any* tool in a batch declares "sequential", or if AgentLoopConfig opts the whole loop into sequential mode,
+ * the entire batch runs serially. Otherwise the batch runs in parallel with preserved toolCall order in toolResults.
+ */
+export type AgentCapabilityExecutionMode = "sequential" | "parallel";
 
 export interface AgentNetworkPolicy {
     transport: "streamable-http";
@@ -108,6 +116,12 @@ export interface AgentCapability {
     statusMessageText: string;
     sourceRecordKind: AgentSourceRecordKind;
     networkPolicy?: AgentNetworkPolicy;
+    /**
+     * Per-tool dispatch hint for the buffered tool-call executor.
+     * Omitted ⇒ treated as "parallel" (pi default for read-only/idempotent tools).
+     * Set to "sequential" for tools that mutate shared state or must serialize within a batch.
+     */
+    executionMode?: AgentCapabilityExecutionMode;
     toProviderSchema(): ChatToolProviderSchema;
     toRegistryDefinition(): ChatToolRegistryDefinition;
     /**

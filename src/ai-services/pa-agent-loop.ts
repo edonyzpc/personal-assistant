@@ -2,6 +2,7 @@ import {
     AgentLifecycleEventEmitter,
 } from "./agent-runtime-primitives";
 import { errorMessage, stableStringify } from "./agent-utils";
+import type { AgentCapabilityExecutionMode } from "./capability-types";
 import type {
     AgentEndStatus,
     AgentEvent,
@@ -12,6 +13,16 @@ import type {
     TurnEndStatus,
     UserMessageContent,
 } from "./chat-types";
+
+/**
+ * Dispatch policy for a buffered tool-call batch (pi hybrid pattern).
+ * - "sequential" (default): tools run one at a time, abort/wall-clock short-circuits remaining tools.
+ *   Preserved as the default for backward compatibility with the v1 lifecycle plan tests.
+ * - "parallel": all tools launch concurrently; abort cancels in-flight tools but each emits a toolResult.
+ * - "hybrid": per-tool dispatch via `PaAgentToolExecutor.getExecutionMode`. If any tool in the batch reports
+ *   "sequential" the whole batch runs serially; otherwise the batch runs in parallel.
+ */
+export type PaAgentToolExecutionMode = "sequential" | "parallel" | "hybrid";
 
 export type PaAgentModelStreamChunk =
     | { type: "thinking_delta"; text: string }
@@ -60,6 +71,12 @@ export interface PaAgentToolExecutionResult {
 
 export interface PaAgentToolExecutor {
     execute(input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult>;
+    /**
+     * Optional hybrid-dispatch lookup. Returns the tool's preferred execution mode (defaults to "parallel"
+     * when omitted). When the loop is in "hybrid" mode, any tool returning "sequential" forces the whole
+     * batch to run serially.
+     */
+    getExecutionMode?(toolName: string): AgentCapabilityExecutionMode | undefined;
 }
 
 export type PaAgentToolMode = "normal" | "final_answer_only";
@@ -116,6 +133,12 @@ export interface PaAgentLoopOptions {
     toolTimeoutMs?: number;
     toolTimeoutOutcome?: ToolExecutionOutcome;
     toolAbortGraceMs?: number;
+    /**
+     * Dispatch policy for buffered tool calls (pi hybrid pattern). Default is "sequential" for backward
+     * compatibility with v1 lifecycle assumptions; the production runtime (pa-agent-runtime.ts) opts into
+     * "hybrid" so read-only tools execute concurrently.
+     */
+    toolExecutionMode?: PaAgentToolExecutionMode;
     signal?: AbortSignal;
 }
 
@@ -124,6 +147,13 @@ export interface PaAgentLoopResult {
     transcript: PaAgentMessage[];
     committedFinalText: string;
     turns: PaAgentTurnSummary[];
+    /**
+     * Mirrors the final `agent_end` event payload (reason + any diagnostics/warnings/max* limits).
+     * Always populated when the loop returns normally. Callers that re-throw on a non-success status
+     * (e.g., the canonical runtime on `status === "error"`) should JSON.stringify this into the Error
+     * message so loop diagnostics survive past the event stream and reach upstream logs.
+     */
+    endPayload?: Record<string, unknown>;
 }
 
 export class PaAgentLoop {
@@ -145,6 +175,8 @@ export class PaAgentLoop {
     private committedFinalText = "";
     private toolCallCount = 0;
     private remainingObservationChars: number;
+    private endPayload?: Record<string, unknown>;
+    private currentTurnToolMode: PaAgentToolMode | undefined;
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
@@ -173,11 +205,11 @@ export class PaAgentLoop {
         let nextToolMode: PaAgentToolMode | undefined;
         for (let turnIndex = 0; turnIndex < this.maxTurns; turnIndex++) {
             if (this.isAborted()) {
-                this.events.agentEnd("aborted", { reason: "user_abort" });
+                this.endAgent("aborted", { reason: "user_abort" });
                 return this.createResult("aborted");
             }
             if (this.isWallClockExceeded()) {
-                this.events.agentEnd("incomplete", {
+                this.endAgent("incomplete", {
                     reason: "wall_clock_exceeded",
                     maxWallClockMs: this.maxWallClockMs,
                 });
@@ -191,7 +223,7 @@ export class PaAgentLoop {
 
             if (turnSummary.status === "aborted" || turnSummary.status === "error") {
                 const status = this.agentStatusFromTurn(turnSummary.status);
-                this.events.agentEnd(status, {
+                this.endAgent(status, {
                     reason: turnSummary.status,
                     diagnostics: turnSummary.diagnostics,
                 });
@@ -208,7 +240,7 @@ export class PaAgentLoop {
             const status = decision.status ?? this.agentStatusFromTurn(turnSummary.status);
             const diagnostics = decision.diagnostics
                 ?? (turnSummary.diagnostics.length > 0 ? turnSummary.diagnostics : undefined);
-            this.events.agentEnd(status, {
+            this.endAgent(status, {
                 reason: decision.reason,
                 ...(decision.warnings ? { warnings: decision.warnings } : {}),
                 ...(diagnostics ? { diagnostics } : {}),
@@ -216,7 +248,7 @@ export class PaAgentLoop {
             return this.createResult(status);
         }
 
-        this.events.agentEnd("incomplete", {
+        this.endAgent("incomplete", {
             reason: "max_turns_exceeded",
             maxTurns: this.maxTurns,
         });
@@ -228,6 +260,7 @@ export class PaAgentLoop {
         runtimeInstruction?: string,
         toolMode?: PaAgentToolMode,
     ): Promise<PaAgentTurnSummary> {
+        this.currentTurnToolMode = toolMode;
         const turnId = this.createId("turn");
         this.events.turnStart(turnId, {
             turnIndex,
@@ -451,16 +484,40 @@ export class PaAgentLoop {
         turnIndex: number,
         buffers: BufferedToolCall[],
     ): Promise<ToolExecutionSummary> {
-        const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
-        const diagnostics: Array<Record<string, unknown>> = [];
         const parsedToolCalls = [...buffers]
             .sort(compareBufferedToolCallOrder)
             .map((buffer) => parseBufferedToolCall(buffer));
-        const meaningfulToolCallNames = new Set(
-            parsedToolCalls
-                .filter(isMeaningfulParsedToolCall)
-                .map((toolCall) => toolCall.name),
-        );
+        const dispatch = this.resolveBatchExecutionMode(parsedToolCalls);
+        if (dispatch === "parallel") {
+            return this.executeToolCallsParallel(turnId, turnIndex, parsedToolCalls);
+        }
+        return this.executeToolCallsSequential(turnId, turnIndex, parsedToolCalls);
+    }
+
+    private resolveBatchExecutionMode(parsedToolCalls: ParsedBufferedToolCall[]): "sequential" | "parallel" {
+        const requested: PaAgentToolExecutionMode = this.options.toolExecutionMode ?? "sequential";
+        if (requested === "sequential") return "sequential";
+        if (requested === "parallel") return "parallel";
+        // hybrid: per-tool dispatch — any tool reporting "sequential" forces the whole batch serial.
+        const executor = this.options.toolExecutor;
+        const getMode = executor?.getExecutionMode;
+        if (!executor || !getMode) return "parallel";
+        for (const toolCall of parsedToolCalls) {
+            if (getMode.call(executor, toolCall.name) === "sequential") {
+                return "sequential";
+            }
+        }
+        return "parallel";
+    }
+
+    private async executeToolCallsSequential(
+        turnId: string,
+        turnIndex: number,
+        parsedToolCalls: ParsedBufferedToolCall[],
+    ): Promise<ToolExecutionSummary> {
+        const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
+        const diagnostics: Array<Record<string, unknown>> = [];
+        const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
 
         for (const toolCall of parsedToolCalls) {
             if (this.isAborted()) {
@@ -470,57 +527,16 @@ export class PaAgentLoop {
                 return { toolResults, diagnostics, stoppedBy: "wall_clock_exceeded" };
             }
 
-            const toolCallKey = normalizeToolCallKey(toolCall);
-            let executionResult: PaAgentToolExecutionResult;
             this.events.toolExecutionStart(turnId, toolCall.id, toolCall.name, toolCall.input, {
                 index: toolCall.index,
             });
 
-            if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) {
-                executionResult = {
-                    outcome: "duplicate_skipped",
-                    promptText: "",
-                    previewText: `Skipped placeholder tool call ${toolCall.name}.`,
-                    includeInNextPrompt: false,
-                    metadata: {
-                        outcome: "duplicate_skipped",
-                        reason: "placeholder_tool_call",
-                    },
-                };
-            } else if (this.toolCallCount >= this.maxToolCalls) {
-                executionResult = {
-                    outcome: "budget_exceeded",
-                    promptText: `Tool call budget exceeded before running ${toolCall.name}.`,
-                    previewText: `Skipped ${toolCall.name}; maxToolCalls=${this.maxToolCalls}.`,
-                    metadata: {
-                        outcome: "budget_exceeded",
-                        maxToolCalls: this.maxToolCalls,
-                    },
-                };
-            } else if (toolCall.parseError) {
-                executionResult = {
-                    outcome: "schema_invalid",
-                    promptText: `Tool call ${toolCall.name} was not executed because its input JSON is invalid.`,
-                    previewText: toolCall.parseError,
-                    metadata: {
-                        outcome: "schema_invalid",
-                        reason: "invalid_tool_input",
-                        parseError: toolCall.parseError,
-                    },
-                };
-            } else if (this.seenToolCallKeys.has(toolCallKey)) {
-                executionResult = {
-                    outcome: "duplicate_skipped",
-                    promptText: "",
-                    previewText: `Skipped duplicate tool call ${toolCall.name}.`,
-                    includeInNextPrompt: false,
-                    metadata: {
-                        outcome: "duplicate_skipped",
-                        reason: "duplicate_tool_call",
-                    },
-                };
+            const skipResult = this.classifyPreflightSkip(toolCall, meaningfulToolCallNames);
+            let executionResult: PaAgentToolExecutionResult;
+            if (skipResult) {
+                executionResult = skipResult;
             } else {
-                this.seenToolCallKeys.add(toolCallKey);
+                this.seenToolCallKeys.add(normalizeToolCallKey(toolCall));
                 this.toolCallCount += 1;
                 executionResult = await this.executeRealToolCall(turnId, turnIndex, toolCall);
             }
@@ -537,6 +553,140 @@ export class PaAgentLoop {
         }
 
         return { toolResults, diagnostics };
+    }
+
+    private async executeToolCallsParallel(
+        turnId: string,
+        turnIndex: number,
+        parsedToolCalls: ParsedBufferedToolCall[],
+    ): Promise<ToolExecutionSummary> {
+        const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
+        const diagnostics: Array<Record<string, unknown>> = [];
+
+        if (this.isAborted()) {
+            return { toolResults, diagnostics, stoppedBy: "aborted" };
+        }
+        if (this.isWallClockExceeded()) {
+            return { toolResults, diagnostics, stoppedBy: "wall_clock_exceeded" };
+        }
+
+        const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
+        // Pre-flight pass: classify each tool call in deterministic order so state mutations
+        // (seenToolCallKeys, toolCallCount) mirror the sequential path. Only the "real" executes run concurrently.
+        const entries: ParallelToolEntry[] = [];
+        for (const toolCall of parsedToolCalls) {
+            const skipResult = this.classifyPreflightSkip(toolCall, meaningfulToolCallNames);
+            if (skipResult) {
+                entries.push({ toolCall, skipResult });
+                continue;
+            }
+            this.seenToolCallKeys.add(normalizeToolCallKey(toolCall));
+            this.toolCallCount += 1;
+            entries.push({ toolCall });
+        }
+
+        for (const entry of entries) {
+            this.events.toolExecutionStart(turnId, entry.toolCall.id, entry.toolCall.name, entry.toolCall.input, {
+                index: entry.toolCall.index,
+            });
+        }
+
+        const pending: Array<Promise<PaAgentToolExecutionResult>> = entries.map((entry) =>
+            entry.skipResult !== undefined
+                ? Promise.resolve(entry.skipResult)
+                : this.executeRealToolCall(turnId, turnIndex, entry.toolCall),
+        );
+        const results = await Promise.all(pending);
+
+        let stoppedBy: "aborted" | "wall_clock_exceeded" | undefined;
+        for (let i = 0; i < entries.length; i++) {
+            const executionResult = results[i];
+            const toolResult = this.emitToolResult(turnId, entries[i].toolCall, executionResult);
+            toolResults.push(toolResult);
+            if (stoppedBy === undefined) {
+                if (executionResult.metadata?.stoppedBy === "wall_clock_exceeded") {
+                    stoppedBy = "wall_clock_exceeded";
+                } else if (executionResult.outcome === "aborted" || executionResult.outcome === "abort_timeout") {
+                    stoppedBy = "aborted";
+                }
+            }
+        }
+
+        return { toolResults, diagnostics, ...(stoppedBy ? { stoppedBy } : {}) };
+    }
+
+    private classifyPreflightSkip(
+        toolCall: ParsedBufferedToolCall,
+        meaningfulToolCallNames: Set<string>,
+    ): PaAgentToolExecutionResult | null {
+        // Ops Agent prerequisite: when toolMode=final_answer_only, the runtime exports zero tool
+        // schemas (see pa-agent-runtime.ts `tool_definitions: input.toolMode === "final_answer_only" ? []`)
+        // and the answer-completion policy expects the model to produce a final answer. If a model
+        // still emits a tool call (hallucinated against the empty schema list, or a malformed
+        // provider response), reject it hard rather than executing — same fail-loud spirit as
+        // SPEC-TCR-04. Must run before any other classifyPreflightSkip branch so the rejection
+        // surfaces even when the call is also a duplicate / over-budget / schema-invalid.
+        if (this.currentTurnToolMode === "final_answer_only") {
+            return {
+                outcome: "policy_rejected",
+                promptText: `Tool call ${toolCall.name} was not executed because this turn is final_answer_only. Produce a final answer from the existing observations.`,
+                previewText: `Skipped ${toolCall.name}; toolMode=final_answer_only.`,
+                metadata: {
+                    outcome: "policy_rejected",
+                    reason: "final_answer_only_violation",
+                    toolName: toolCall.name,
+                },
+            };
+        }
+        if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) {
+            return {
+                outcome: "duplicate_skipped",
+                promptText: "",
+                previewText: `Skipped placeholder tool call ${toolCall.name}.`,
+                includeInNextPrompt: false,
+                metadata: {
+                    outcome: "duplicate_skipped",
+                    reason: "placeholder_tool_call",
+                },
+            };
+        }
+        if (this.toolCallCount >= this.maxToolCalls) {
+            return {
+                outcome: "budget_exceeded",
+                promptText: `Tool call budget exceeded before running ${toolCall.name}.`,
+                previewText: `Skipped ${toolCall.name}; maxToolCalls=${this.maxToolCalls}.`,
+                metadata: {
+                    outcome: "budget_exceeded",
+                    maxToolCalls: this.maxToolCalls,
+                },
+            };
+        }
+        if (toolCall.parseError) {
+            return {
+                outcome: "schema_invalid",
+                promptText: `Tool call ${toolCall.name} was not executed because its input JSON is invalid.`,
+                previewText: toolCall.parseError,
+                metadata: {
+                    outcome: "schema_invalid",
+                    reason: "invalid_tool_input",
+                    parseError: toolCall.parseError,
+                },
+            };
+        }
+        const toolCallKey = normalizeToolCallKey(toolCall);
+        if (this.seenToolCallKeys.has(toolCallKey)) {
+            return {
+                outcome: "duplicate_skipped",
+                promptText: "",
+                previewText: `Skipped duplicate tool call ${toolCall.name}.`,
+                includeInNextPrompt: false,
+                metadata: {
+                    outcome: "duplicate_skipped",
+                    reason: "duplicate_tool_call",
+                },
+            };
+        }
+        return null;
     }
 
     private async executeRealToolCall(
@@ -879,6 +1029,11 @@ export class PaAgentLoop {
         return { promise, cleanup };
     }
 
+    private endAgent(status: AgentEndStatus, payload: Record<string, unknown>): void {
+        this.endPayload = payload;
+        this.events.agentEnd(status, payload);
+    }
+
     private agentStatusFromTurn(status: TurnEndStatus): AgentEndStatus {
         switch (status) {
             case "completed":
@@ -901,6 +1056,7 @@ export class PaAgentLoop {
             transcript: [...this.transcript],
             committedFinalText: this.committedFinalText,
             turns: [...this.turns],
+            ...(this.endPayload ? { endPayload: this.endPayload } : {}),
         };
     }
 
@@ -1022,6 +1178,19 @@ interface ToolExecutionSummary {
     toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>>;
     diagnostics: Array<Record<string, unknown>>;
     stoppedBy?: "aborted" | "wall_clock_exceeded";
+}
+
+interface ParallelToolEntry {
+    toolCall: ParsedBufferedToolCall;
+    skipResult?: PaAgentToolExecutionResult;
+}
+
+function collectMeaningfulToolCallNames(parsedToolCalls: ParsedBufferedToolCall[]): Set<string> {
+    return new Set(
+        parsedToolCalls
+            .filter(isMeaningfulParsedToolCall)
+            .map((toolCall) => toolCall.name),
+    );
 }
 
 function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
