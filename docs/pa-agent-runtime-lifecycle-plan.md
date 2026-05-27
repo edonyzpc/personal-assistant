@@ -468,7 +468,7 @@ Thinking parts, provider reasoning, toolcall deltas, and text from toolcall mess
 - assistant message partial state;
 - optimistic final text commit/reclassify;
 - tool-call buffering and post-`message_end` parse/validation;
-- sequential tool execution orchestration;
+- hybrid tool execution orchestration (pi pattern: per-tool `executionMode` decides parallel vs sequential dispatch, default parallel for read-only tools);
 - toolResult message injection;
 - `turn_end` and `agent_end` consistency.
 
@@ -698,18 +698,22 @@ Abort rules:
 
 ## Tool Execution
 
-PA v1 uses sequential tool execution.
+PA v2.0.0 uses pi-style hybrid tool execution dispatch (`PaAgentLoopOptions.toolExecutionMode = "hybrid"` in `pa-agent-runtime.ts`). For each buffered tool-call batch the loop consults `PaAgentToolExecutor.getExecutionMode(toolName)`: if any tool declares `executionMode === "sequential"` the entire batch runs serially; otherwise the batch runs in parallel. All v2.0.0 host capabilities are read-only/idempotent and omit `executionMode` (treated as `"parallel"`), so a model that calls two read-only tools in one turn sees them execute concurrently. Pre-flight checks (placeholder/budget/schema-invalid/duplicate) and state mutations (`seenToolCallKeys`, `toolCallCount`) always run in deterministic input order, so the two dispatch paths produce identical skip decisions.
 
 ```mermaid
 flowchart TD
-  A["message_end: assistant"] --> B["parse ordered toolcalls"]
-  B --> C["tool_execution_start #1"]
-  C --> D["tool_execution_end #1"]
-  D --> E["message_start/end: toolResult #1"]
-  E --> F["tool_execution_start #2"]
-  F --> G["tool_execution_end #2"]
-  G --> H["message_start/end: toolResult #2"]
-  H --> I["turn_end"]
+  A["message_end: assistant"] --> B["parse + sort ordered toolcalls"]
+  B --> C["resolve batch dispatch (hybrid → per-tool executionMode)"]
+  C -->|"all parallel"| P1["pre-flight skip pass (in order)"]
+  P1 --> P2["tool_execution_start #1..N"]
+  P2 --> P3["launch real executes concurrently"]
+  P3 --> P4["await Promise.all + emit toolResult #1..N in order"]
+  C -->|"any sequential"| S1["tool_execution_start #1"]
+  S1 --> S2["tool_execution_end #1 + toolResult #1"]
+  S2 --> S3["tool_execution_start #2"]
+  S3 --> S4["tool_execution_end #2 + toolResult #2"]
+  P4 --> Z["turn_end"]
+  S4 --> Z
 ```
 
 Rules:
@@ -717,10 +721,12 @@ Rules:
 - Tool execution starts only after `message_end: assistant`.
 - Partial streaming toolcall JSON is buffered but not executed.
 - Toolcalls are parsed and schema/policy validated after assistant message end.
-- Canonical host-tool adapters may normalize benign provider schema drift before executing read-only tools when the model has explicitly selected that tool and the normalized action remains strictly inside the same tool boundary. V1 allows current-note mode aliases, Memory query aliases or empty arguments that fall back to the original user request, and builtin WebSearch query aliases or empty arguments that fall back to the original user request. These recoveries do not create hidden Memory/current-note pre-context or provider web fallback.
-- Multiple toolcalls execute in assistant toolcall order.
+- Canonical host-tool adapters may normalize benign provider schema drift before executing read-only tools when the model has explicitly selected that tool and the normalized action remains strictly inside the same tool boundary. V1 allows current-note mode aliases and Memory/builtin-WebSearch query-key aliases (`q`, `searchQuery`, `keywords`, etc. → `{ query }`). These recoveries do not create hidden Memory/current-note pre-context or provider web fallback. Empty or missing required arguments are **not** silently filled — SPEC-TCR-04 (2026-05-26 Phase A) emits a `schema_invalid` outcome and lets HostPolicy's corrective + answer-completion `force_finalize` handle the retry. See §776/§798 amendments and [PA Agent Design Completion Audit §4.4](./pa-agent-design-completion-audit.md) for the rationale.
+- `tool_execution_start` and `toolResult` messages are emitted in original parsed-toolcall index order, regardless of whether the real executes ran serially or concurrently.
 - Recoverable tool errors, schema invalid results, policy rejects, duplicate skips, and budget skips still emit `tool_execution_end` and a toolResult message.
 - Best-effort execution continues after recoverable errors, schema invalid, policy rejected, duplicate skipped, and budget skipped outcomes.
+- **Sequential dispatch** (any tool declares `executionMode = "sequential"`, or the loop is explicitly configured `toolExecutionMode = "sequential"`): abort or wall-clock between iterations short-circuits — remaining tools are never started and no `tool_execution_start` is emitted for them.
+- **Parallel dispatch** (the v2.0.0 default for read-only batches): all tools launch concurrently after pre-flight, so abort or wall-clock that fires mid-batch reaches every in-flight tool via the shared `AbortSignal`. Each in-flight tool emits a paired `tool_execution_end` + toolResult (typically with outcome `aborted` or `abort_timeout`). The summary's `stoppedBy` reflects the first such terminal outcome in input order.
 - User abort and wall-clock deadline stop remaining tools.
 
 Tool result prompt inclusion:
@@ -992,7 +998,9 @@ Automated tests must cover:
 - text then idle partial-output warning behavior;
 - provider error after partial text warning behavior;
 - partial tool call then idle without executing incomplete tools;
-- sequential tool execution and paired start/end;
+- hybrid tool execution dispatch: per-tool `executionMode` (default parallel) decides serial vs concurrent dispatch, with paired start/end in input order regardless of dispatch path;
+- parallel-mode abort/wall-clock contract: every launched tool emits `tool_execution_start` + paired toolResult (typically `aborted` / `abort_timeout`), no remaining-tool short-circuit;
+- pre-flight ordering invariants for parallel mode (placeholder/budget/schema-invalid/duplicate skips and state mutations execute in deterministic input order before any real execute runs);
 - best-effort continuation after recoverable tool failures;
 - abort during tool waits up to 2s and emits paired tool end/toolResult;
 - every tool outcome emits toolResult;

@@ -75,7 +75,7 @@ Post-1.11.0 cleanup（17 项 C1-C17）已落地 15/17（C7/C8 因 C11 删除 `pa
 | 14 | Provider web fallback 删除 | DONE | `enable_search` / `search_options` / `enableSearch` / `searchOptions` 全仓 0 命中 |
 | 15 | Idle timeout 60s + tool 独立 timeout + delta 重置 idle | DONE | `pa-agent-loop.ts:156-160,716-718,907-963` |
 | 16 | Abort grace 2s + 晚到结果丢弃 + paired tool_execution_end | DONE | `pa-agent-loop.ts:160,650-668,702` |
-| 17 | **Canonical history 持久化（`PaAgentPersistedTurn` 含 schemaVersion/runId/finalTurnId/...）+ legacy dual-read** | **PARTIAL** | `chat-types.ts:240-249` 持久化结构齐全；但 `finalTurnId` 字段缺失，复用到 `turnId`（`chat-view.ts:2366-2378`），方案明确要求 `runId` 与 `finalTurnId` 并列独立字段以区分 run-vs-final |
+| 17 | **Canonical history 持久化（`PaAgentPersistedTurn` 含 schemaVersion/runId/finalTurnId/...）+ legacy dual-read** | DONE | `chat-types.ts:354-356` `agent_end.metadata.finalTurnId` 字段独立存在（emitter `agent-runtime-primitives.ts:176,199,311` 写入；`chat-view.ts:2503-2505` 持久化 + reload）。方案 [lifecycle plan §337](./pa-agent-runtime-lifecycle-plan.md) 明确要求 finalTurnId 作为 `agent_end.metadata` 字段而非顶层 `turnId` 替换；现实现完全对齐方案。`PaAgentPersistedTurn.turnId`（`chat-types.ts:240-249`）按方案保持 `RUN_SCOPE_TURN_ID`，actual final turn id 由 metadata 携带 |
 | 18 | Legacy adapter（仅 committed text 进 `onChunk`、不双发） | DONE | `pa-agent-runtime.ts:344-449` `CanonicalToLegacyEventAdapter`; `chat-service.ts:118-147` |
 | 19 | Warning metadata 不入 answer body（结构化 `runtimeWarnings` 字段渲染） | DONE | `chat-types.ts:6-15`; `chat-view.ts:2497-2553` |
 | 20 | Run vs turn 语义（user message 仅 first turn emit） | DONE | `pa-agent-loop.ts:239-244,266` |
@@ -91,7 +91,7 @@ Post-1.11.0 cleanup（17 项 C1-C17）已落地 15/17（C7/C8 因 C11 删除 `pa
 | **Phase 1** 纯派生模块（`TurnFacts` / `RunEvidenceLedger` / `CompletionDecision`） | DONE（字段名 minor delta） | `pa-agent-answer-completion-policy.ts:13-50`；实现把 `failedRequiredCapabilities` / `missingRequiredCapabilities` 改为入参传入 `decideAnswerCompletion`（line 117），语义等价 |
 | **Phase 2** 与 `RequiredCapabilityHostPolicy` 合并（旧 booleans 收敛到 ledger） | DONE | `pa-agent-required-capability-policy.ts:5-11,272-365`；保留 `correctiveAttempted` + `failedRequiredToolRetryAttempted` 是方案要求保留的 corrective 路径 |
 | **Phase 3** `final_answer_only` 模式（schema 清空 + 模板提示） | DONE | `pa-agent-loop.ts:65-72`; `pa-agent-runtime.ts:522-524,710-711`; 模板 `pa-agent-answer-completion-policy.ts:175-198` |
-| **Phase 4** Tool preflight metadata（`inputRepaired/repairReason/originalInputSummary`） | DEFERRED | 方案 line 11 声明 future polish；当前 `pa-agent-host-tools.ts:421-445` 只记 `outcome/tool/toolCallId/inputSummary/ok/...` |
+| **Phase 4** Tool preflight metadata（`inputRepaired/repairReason/originalInputSummary`） | DONE（2026-05-27 SPEC-TCR-07 路径 B 自动检测，详见 §0 + §4.2） | `CapabilityRegistry.prepareAndValidate` + `ToolRegistry.prepareAndValidate` 用 `deepEqualJson(raw, prepared)` 自动检测；触发时 `pa-agent-host-tools.ts` executor 把 `{inputRepaired, repairReason, originalInputKeys, originalInputSummary}` 写入 `toolResult.content.metadata` |
 | **Phase 5** UI semantics（preserve "Answer incomplete" wording、不引入误报） | DONE | `chat-view.ts:2232-2262`；`completed_with_warning` 与 `incomplete` 分离 |
 | **Tool input repair contract**（3 tool 的 alias + 空参 fallback） | DONE | `pa-agent-host-tools.ts:130-258`；额外覆盖 `search_vault_metadata/search_vault_snippets/read_note_outline/inspect_obsidian_note/read_canvas_summary` |
 | `ToolInputRepairResult { status, input, reason }` 结构化类型 | 未采用（plan §232-247 标 "initial low-risk implementation"，未硬性要求） | 当前 repair 函数直接返回 normalized input |
@@ -100,14 +100,13 @@ Post-1.11.0 cleanup（17 项 C1-C17）已落地 15/17（C7/C8 因 C11 删除 `pa
 
 ---
 
-## 4. 实际未完成的 1 项（PARTIAL）+ 1 项 DEFERRED + 2 项方案文档需修正
+## 4. Phase 完成报告与方案文档同步记录
 
-### 4.1 `PaAgentPersistedTurn.finalTurnId` 字段缺失（lifecycle #17）
+### 4.1 `finalTurnId` 持久化对齐（lifecycle #17，已 DONE）
 
-- **现状**：`PaAgentPersistedTurn` 把 final turn id 复用到 `turnId`（`chat-types.ts:243`, `chat-view.ts:2366-2378`）。
-- **影响**：history reload 仍正常；只在审计/调试时丢失 "run-scope 还是 final actual turn" 的区分。
-- **修法**：`chat-types.ts:240-249` 加 `finalTurnId: string` 字段；写入侧 `pa-agent-history.ts:23-38` 同时存 `runId` + `turnId`(= RUN_SCOPE_TURN_ID) + `finalTurnId`；reload 侧优先读 `finalTurnId`。
-- **优先级**：低；属于"做对会更整齐"，不补也不会回归。
+- **设计意图**：[lifecycle plan §337/§984](./pa-agent-runtime-lifecycle-plan.md) 明确要求 `agent_end.turnId` 保持 `RUN_SCOPE_TURN_ID`，actual final turn id 由 `agent_end.metadata.finalTurnId` 携带。
+- **实现现状**：`chat-types.ts:354-356` 定义 `metadata.finalTurnId?` 可选字段；emitter (`agent-runtime-primitives.ts:176/199/311`) 写入；`chat-view.ts:2503-2505` 持久化 + reload 优先读 metadata。
+- **结论**：与方案完全对齐，无需补丁。`PaAgentPersistedTurn.turnId` 保持 run-scope 即可，actual final turn id 通过 metadata 通道访问。
 
 ### 4.2 Phase 4 preflight metadata（answer-completion，**2026-05-27 完成**）
 
@@ -213,7 +212,7 @@ Post-1.11.0 cleanup（17 项 C1-C17）已落地 15/17（C7/C8 因 C11 删除 `pa
 - **从 A1 到 A3 的动机**：独立 re-audit 发现 A1 严格字面违反 spec §444-445 的 "L2 在 SkillRouter 选中后加载"。同时 Anthropic 2025 发布的 Agent Skills spec 真正的 progressive disclosure 是"模型当 router"——通过 tool call 主动拉取 body，不是 router-gated。A3 完整实现这个目标。
 - **A3 SPEC-driven 实施**：6 个 SPEC（PSD-01 ~ PSD-06）经独立 Plan subagent review 后批准，按依赖顺序落地。
   - **SPEC-PSD-01** 类型契约：`SkillCatalogEntry` / `SkillCatalog` / `SkillBody` 类型（`skill-router.ts`），`getCatalog` / `loadSkillBody` API（`skill-context-provider.ts`），`createSkillSourceRecord` 导出，`ChatToolName` 加 `"load_skill"`。
-  - **SPEC-PSD-02** Provider API：`getCatalog` / `loadSkillBody` 实现 + 4 个新 it 覆盖；旧 `selectContext` / `selectAllEnabledContexts` 标 `@deprecated`。
+  - **SPEC-PSD-02** Provider API：`getCatalog` / `loadSkillBody` 实现 + 4 个新 it 覆盖；旧 `selectContext` / `selectAllEnabledContexts` 在 v2.0.0 cleanup 中删除（含 `SkillRouter` class 与 `scoreSkillForPrompt`，零生产 caller）。
   - **SPEC-PSD-03** `load_skill` capability：自定义 `LoadSkillCapability implements AgentCapability` 类（避免 `ChatToolCapability` adapter 丢失 source record 的 `title`/`snippet`）；host-side preflight 在 `pa-agent-host-tools.ts:preflightLoadSkill` 处理 `policy_rejected`（registry 链路只支持 `ok/unavailable/failed`）。
   - **SPEC-PSD-04** Runtime + system prompt：`loadCanonicalHostContextForRun` 改返回 `{ catalog }`；首次 turn 通过 `toolRegistry.registerProvider(skillContextProvider, ...)` 把 `load_skill` capability 注册到 registry（由 `skillContextProviderRegistered` flag 保证幂等）；system prompt `Available skills:` 区段改为 catalog bullet 列表 + `load_skill` 调用提示；`formatAvailableSkills` 删除，新增 `formatSkillCatalog`；删除 A1 的 `buildContextUsedItems` / `contextItemToContextUsedItem` / `getToolContextUsedInfo` / `readToolContextAvailability` 死代码。
   - **SPEC-PSD-05** 测试：新增 9 个测试覆盖 catalog / loadSkillBody / capability execute / `<skill_body>` wrapper / 4 类 preflight policy_rejected。
@@ -261,7 +260,7 @@ Post-1.11.0 cleanup（17 项 C1-C17）已落地 15/17（C7/C8 因 C11 删除 `pa
 ### Ops Agent 准备
 
 - 方案 D4 决策 "v2.1 / 3 个月内启动 Operations Agent"。
-- 当前 `policy-engine.ts` / `tool-calling-protocol.ts` / `AgentNetworkPolicy` 9 字段 / `kind:"action"` 占位 / `AgentPermissionFuture` 枚举均按 D4 保留。
+- 当前 `policy-engine.ts` / `AgentNetworkPolicy` 9 字段 / `kind:"action"` 占位 / `AgentPermissionFuture` 枚举均按 D4 保留。`tool-calling-protocol.ts` 已于 v2.0.0 cleanup 删除（rollback 路径不再保留，矩阵以注释形式归档到 `src/ai-services/ai-utils.ts:34` 之上）。
 - 启动前建议先 freeze `PaAgentRuntime` public API（execution plan §7 风险 3）。
 
 ---

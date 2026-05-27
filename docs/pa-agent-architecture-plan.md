@@ -40,12 +40,12 @@ The current code now has a PA Agent default path plus a legacy fallback path:
 - `ChatService.streamLLM(...)` is the stable public chat entrypoint.
 - `ChatAgentRuntime` owns turn orchestration, capability registration, answer-stream tool calls, final prompt construction, abort, fallback, and metadata emission.
 - Existing read-only tools are exposed through `CoreToolProvider` and execute through `CapabilityRegistry` on the PA path.
-- `paAgentAnswerStreamEnabled` defaults to `true` for providers with an approved PA streaming protocol path: OpenAI-compatible providers and DashScope-compatible Qwen. Setting it to `false`, or using a declined provider such as Ollama, preserves the previous Ralpha planning/tool-collection path for rollback and regression coverage.
+- PA Agent canonical runtime is the only chat path. The legacy Ralpha planning/tool-collection fallback has been removed (v2.0.0). `paAgentAnswerStreamEnabled` is a historical setting kept as a no-op flag for stored-settings compatibility; OpenAI-compatible providers and DashScope-compatible Qwen remain the supported provider matrix and unsupported providers (e.g. Ollama) now surface an error rather than falling back. See provider matrix in `src/ai-services/ai-utils.ts` for the authoritative gate.
 - Builtin Bailian WebSearch is registered as an optional desktop/mobile `network-read` provider when the builtin WebSearch setting is enabled and DashScope-compatible settings are present.
 - Provider built-in web search, such as Qwen `enable_search`, is not supported. PA Agent WebSearch must go through the builtin WebSearch tool.
 - Memory references are strict Memory sources. Current-note and read-only tool context belong in Context Used, not Memory references.
 
-PA Agent v1 replaces the old planning/tool-collection shape in the default ChatService path while keeping the old path available behind the rollback flag until live smoke coverage is complete.
+PA Agent v1 fully owns the default ChatService path; no rollback flag remains.
 
 ## Decision Record
 
@@ -90,7 +90,6 @@ flowchart TD
   CoreProvider["CoreToolProvider"]
   McpProvider["BuiltinMcpProvider"]
   SkillProvider["SkillContextProvider"]
-  SkillRouter["SkillRouter"]
   ContextBuilder["ContextBuilder"]
   LLM["Tool-capable LLM stream"]
   SourceStore["SourceStore"]
@@ -103,13 +102,12 @@ flowchart TD
   User --> ChatView --> ChatService --> Runtime
   Runtime --> Events --> ChatView
   Runtime --> Registry
-  Runtime --> SkillRouter
   Runtime --> ContextBuilder
   Registry --> Policy
   Registry --> CoreProvider --> CoreTools
   Registry --> McpProvider --> WebSearch
-  SkillProvider --> Skills
-  SkillRouter --> SkillProvider
+  Registry --> SkillProvider --> Skills
+  SkillProvider -->|"L1 catalog + load_skill capability"| Registry
   SkillProvider --> ContextBuilder
   ContextBuilder --> LLM
   Registry -->|"available schemas"| LLM
@@ -346,7 +344,7 @@ Provider rules:
 - Provider load failure must be isolated. One optional provider failure must not remove capabilities from another provider.
 - Provider availability is recomputed per turn from platform, settings, key availability, and runtime gates.
 - The registry exports only `kind = "tool"` capabilities that are both available and policy-allowed.
-- Context capabilities are routed through `SkillRouter` and `ContextBuilder`; they do not export tool schemas and do not use `execute()`.
+- Context capabilities are exposed through `SkillContextProvider.getCatalog` (L1 catalog into system prompt) and the `load_skill` tool capability (L2 body fetched on model tool call). The earlier `SkillRouter` bag-of-words selector and its deprecated `selectContext` / `selectAllEnabledContexts` paths were deleted in v2.0.0 cleanup; the model is now the router (see [Audit §4.5](./pa-agent-design-completion-audit.md) for A1→A3 history).
 
 ## CoreToolProvider
 
@@ -400,25 +398,26 @@ Skill v1 does not:
 - call shell, CLI, or local executables,
 - bypass `CapabilityRegistry` or `PolicyEngine`.
 
-Skill flow:
+Skill flow (A3 progressive disclosure, post v2.0.0 cleanup):
 
 ```mermaid
 flowchart TD
   Prompt["User prompt"]
-  Catalog["Skill catalog metadata"]
-  Router["SkillRouter"]
-  Selected["Selected skills"]
-  Loader["Bounded skill context loader"]
-  Context["ContextBuilder"]
+  Catalog["Skill catalog metadata (L1)"]
+  SysPrompt["System prompt (L1 catalog injected)"]
+  Model["LLM answer stream"]
+  LoadSkill["load_skill tool call"]
+  Loader["Bounded skill body loader (L2 + L3 references)"]
+  ToolResult["toolResult: skill body"]
   Loop["Answer-stream tool loop"]
   Used["Context Used: skill guide"]
 
-  Prompt --> Router
-  Catalog --> Router
-  Router --> Selected
-  Selected --> Loader
-  Loader --> Context
-  Context --> Loop
+  Catalog --> SysPrompt
+  Prompt --> Model
+  SysPrompt --> Model
+  Model -->|"emits"| LoadSkill
+  LoadSkill --> Loader
+  Loader --> ToolResult --> Loop
   Loader --> Used
 ```
 
@@ -566,7 +565,7 @@ Rules:
 - Broad vault searches, truncated results, unavailable mobile capabilities, and unavailable WebSearch should be visible in Context Used or a concise status row.
 - Normal successful read-only use should avoid noisy confirmation prompts.
 - When a request is broad, sensitive, or materially incomplete because of budgets/platform fallback, the answer should briefly state that it used bounded context.
-- Skill 选择对用户暴露两路径：(a) 自动选择基于 SkillRouter + skill `description`，默认开启 (b) chat 输入区 typeahead 显式选择，显式优先。settings 提供全局 "禁用所有 skill" 开关与 per-skill enable/disable 列表。
+- Skill 选择对用户暴露两路径：(a) 自动选择由模型在 answer-stream 中通过 `load_skill` tool 主动加载匹配的 skill body（L1 catalog 进 system prompt，模型按 description 自判），默认开启 (b) chat 输入区 typeahead 显式选择，显式优先。settings 提供全局 "禁用所有 skill" 开关与 per-skill enable/disable 列表。早期版本曾用 `SkillRouter` bag-of-words 选择器，已被 A3 progressive disclosure 取代并在 v2.0.0 cleanup 删除（详见 [Audit §4.5](./pa-agent-design-completion-audit.md)）。
 - v1 提供 opt-in usage telemetry：settings "Share anonymous capability usage" 开关，默认关闭。事件仅含 capability/skill 名 + ok/failed/skipped + 耗时，不含 prompt / observation / note 内容。
 
 ## Desktop And Mobile Strategy
