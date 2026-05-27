@@ -1,5 +1,6 @@
 # Obsidian 插件移动端网络兼容优化方案
 
+> **Status (2026-05-25)**: Historical — Ollama support was removed in v2.0.0. References below to Ollama as a supported provider are no longer accurate; see [`CHANGELOG.md`](../CHANGELOG.md) for the v2.0.0 break-change release notes.
 ## Summary
 
 - 目标：移除 `node-fetch`、`ChatAlibabaTongyi`、`@langchain/community` 以及全局 `fetch` monkey patch，让 AI 网络调用兼容 Obsidian Desktop 和 Mobile。

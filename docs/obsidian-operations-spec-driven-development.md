@@ -15,7 +15,7 @@ No runtime code should be changed from this tracker until the relevant SPEC is r
 | `docs/obsidian-operations-agent-plan.md` | Contract source of truth for product behavior, read risk, v1A tools, v1B CLI adapter boundary, source-boundary rules, and deferred actions. | This wins for Obsidian Operations product/runtime/source-boundary decisions. |
 | `docs/obsidian-operations-spec-driven-development.md` | Active SPEC tracker for task slicing, execution status, review records, verification evidence, and smoke closeout. | If it drifts from the plan, update both docs in the same reviewed change before implementation continues. |
 | `docs/write-action-design-handoff.md` | Contract for future write actions and command execution. | This tracker cannot approve write or command execution by weakening read-only tools. |
-| `docs/chat-agent-native-ralpha-loop-plan.md` and `docs/chat-agent-native-ralpha-spec-driven-development.md` | Current Chat Agent runtime reference and historical SPEC execution evidence. | Use as runtime reference; do not edit their status for this feature unless the shared runtime contract changes. |
+| `docs/pa-agent-architecture-plan.md` + `docs/pa-agent-runtime-lifecycle-plan.md` | Current PA Agent runtime reference (replaced the historical Ralpha plan in v2.0.0). | Use as runtime reference; do not edit their status for this feature unless the shared runtime contract changes. |
 
 ## Status Legend
 

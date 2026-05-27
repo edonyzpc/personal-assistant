@@ -1,5 +1,6 @@
 # VSS Embedding 刷新方案说明
 
+> **Status (2026-05-25)**: Historical — Ollama support was removed in v2.0.0. References below to Ollama as a supported provider are no longer accurate; see [`CHANGELOG.md`](../CHANGELOG.md) for the v2.0.0 break-change release notes.
 ## 目标
 
 在保证 Memory 搜索结果新鲜度的前提下，降低频繁编辑和大 vault 重建时的 embedding 请求数与 Token 消耗，让准备和后台维护过程不阻塞聊天，并在限流或网络抖动时给用户明确反馈。

@@ -8,7 +8,7 @@ It is a design boundary, not an implementation plan for immediate runtime writes
 
 ## Source Of Truth
 
-- Active refactor plan: [Chat Agent Native Ralpha Loop Refactor Plan](./chat-agent-native-ralpha-loop-plan.md)
+- Active runtime contract: [PA Agent Architecture Plan](./pa-agent-architecture-plan.md) + [PA Agent Runtime Lifecycle Plan](./pa-agent-runtime-lifecycle-plan.md) (replaced the historical Ralpha plan in v2.0.0)
 - Historical refactor plan: [Archived Vault-native Obsidian Assistant Refactor Plan](./archive/vault-native-assistant-refactor-plan.md)
 - Historical tracker: [Archived Vault-native Assistant Development Tracker](./archive/vault-native-assistant-development-tracker.md)
 

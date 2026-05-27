@@ -24,7 +24,7 @@ SPEC-00 request-changes findings and the explicit post-closeout subagent review 
 | `docs/obsidian-operations-agent-plan.md` | Product and architecture contract for Obsidian operations knowledge, v1A read-only tools, v1B CLI adapter, source boundaries, and safety model. | This wins for this feature family. |
 | `docs/obsidian-operations-spec-driven-development.md` | SPEC tracker for task slicing, status, review records, verification evidence, and smoke closeout. | If it drifts from this plan, update both docs in the same reviewed change before implementation continues. |
 | `docs/write-action-design-handoff.md` | Future write-action boundary for preview, confirmation, and audit. | This wins for future writes and command execution. This plan must not weaken it. |
-| `docs/chat-agent-native-ralpha-loop-plan.md` and `docs/chat-agent-native-ralpha-spec-driven-development.md` | Current Chat Agent runtime and native tool loop reference. | These win for existing runtime behavior until an approved Obsidian Operations SPEC changes it. |
+| `docs/pa-agent-architecture-plan.md` + `docs/pa-agent-runtime-lifecycle-plan.md` | Current PA Agent runtime + native tool loop reference (replaced the historical Ralpha plan in v2.0.0). | These win for existing runtime behavior until an approved Obsidian Operations SPEC changes it. |
 | External Obsidian skills and CLI docs | Research inputs for distilled local rules. | Never load remote content at runtime; copy only reviewed, repo-local distilled rules into this feature. |
 
 ## Runtime Boundary Diagram
