@@ -635,7 +635,9 @@ describe('VSS SQLite/WASM lifecycle', () => {
             opfsDirectory: expect.stringMatching(/^\/personal-assistant-vss-v2\/Work_20Vault-[a-z0-9]+$/),
             legacyOpfsDirectory: '/personal-assistant-vss',
             opfsVfsName: expect.stringMatching(/^opfs-sahpool-Work_20Vault-[a-z0-9]+$/),
-            wasmUrl: expect.stringContaining('data:application/wasm'),
+            // P0-E: wasm now ships as a Uint8Array via esbuild's binary loader and the
+            // inline-assets module wraps it into a (cached) blob URL on first use.
+            wasmUrl: expect.stringMatching(/^blob:/),
             workerFactory: expect.any(Function),
             workerUrl: 'inline:personal-assistant-vss-worker',
         }));

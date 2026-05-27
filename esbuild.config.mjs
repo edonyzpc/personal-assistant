@@ -108,7 +108,14 @@ const mainContext = await context({
 		'.js': 'js',
 		'.jsx': 'jsx',
 		'.md': 'text',
-		'.wasm': 'dataurl',
+		// `binary` (vs `dataurl`): bundle source is the same base64 payload either way (esbuild's
+		// browser-target binary loader still encodes via base64), but `binary` decodes the
+		// ~941KB SQLite wasm to a Uint8Array once at module load — sqlite-inline-assets caches
+		// the resulting blob URL across all SqliteVectorIndex instances. The old `dataurl` path
+		// kept a ~1.25MB string in memory permanently AND re-ran the atob+Blob conversion every
+		// time SqliteVectorIndex was reconstructed. Trade-off: +333 bytes for the __toBinary
+		// helper in exchange for ~1.25MB persistent heap + per-reconnect work.
+		'.wasm': 'binary',
 	},
 	define: {
 		"process.env.NODE_ENV": prod ? '"production"' : '"development"',

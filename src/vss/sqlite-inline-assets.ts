@@ -1,5 +1,5 @@
 import sqliteWorkerSource from "./sqlite-worker.ts?worker-source";
-import sqliteWasmDataUrl from "@sqliteai/sqlite-wasm/sqlite3.wasm";
+import sqliteWasmBinary from "@sqliteai/sqlite-wasm/sqlite3.wasm";
 
 export function createInlineSqliteWorker(): Worker {
     const objectUrl = URL.createObjectURL(new Blob([sqliteWorkerSource], { type: "text/javascript" }));
@@ -20,6 +20,33 @@ export function createInlineSqliteWorker(): Worker {
     }
 }
 
+let cachedSqliteWasmUrl: string | null = null;
+
+/**
+ * Returns a blob URL pointing at the inlined SQLite wasm payload. The blob is built lazily on
+ * first call: URL.createObjectURL would throw at module-load time in non-DOM contexts (Jest's
+ * default environment), and we want to skip the work entirely when the VSS subsystem is never
+ * exercised. The URL is cached across callers because the wasm bytes are identical for every
+ * SqliteVectorIndex instance — SqliteVectorIndex.prepareWasmUrl treats blob: URLs as same-origin
+ * and returns them as-is, so caching here avoids rebuilding the Blob on every reconnect (the
+ * old dataurl path was paying that cost per instance).
+ */
 export function getInlineSqliteWasmUrl(): string {
-    return sqliteWasmDataUrl;
+    if (cachedSqliteWasmUrl === null) {
+        const blob = new Blob([sqliteWasmBinary], { type: "application/wasm" });
+        cachedSqliteWasmUrl = URL.createObjectURL(blob);
+    }
+    return cachedSqliteWasmUrl;
+}
+
+/**
+ * Optional revoke for hot-reload / test cleanup. Plugin teardown does not call this — orphaning
+ * a single ~941KB blob URL on plugin reload is preferable to risking a use-after-revoke on any
+ * SqliteVectorIndex that still holds the URL.
+ */
+export function disposeInlineSqliteWasmUrl(): void {
+    if (cachedSqliteWasmUrl !== null) {
+        URL.revokeObjectURL(cachedSqliteWasmUrl);
+        cachedSqliteWasmUrl = null;
+    }
 }
