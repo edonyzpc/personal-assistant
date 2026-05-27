@@ -4,14 +4,9 @@ import path from "node:path";
 
 import { BUNDLED_SKILL_RESOURCES } from "../src/ai-services/bundled-skills";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
+import { SkillContextProvider } from "../src/ai-services/skill-context-provider";
 import {
-    SKILL_CONTEXT_PROVIDER_ID,
-    SkillContextProvider,
-} from "../src/ai-services/skill-context-provider";
-import {
-    MAX_SKILL_CONTEXT_CHARS,
     SkillParseError,
-    SkillRouter,
     buildSkillContext,
     parseAgentSkillMarkdown,
 } from "../src/ai-services/skill-router";
@@ -72,24 +67,6 @@ describe("SkillContextProvider", () => {
         expect(result.layerCharCounts.body).toBeLessThanOrEqual(600);
         expect(result.layerCharCounts.references).toBeLessThanOrEqual(380);
         expect(result.selectedReferences).toEqual(["references/base-schema.md"]);
-    });
-
-    it("routes prompts to the best skill by description", () => {
-        const markdown = parseAgentSkillMarkdown(createSkillMarkdown({
-            name: "obsidian-markdown",
-            description: "Use when explaining wikilinks, callouts, embeds, or markdown properties.",
-        }));
-        const bases = parseAgentSkillMarkdown(createSkillMarkdown({
-            name: "obsidian-bases",
-            description: "Use when inspecting Obsidian Bases formulas, filters, and views.",
-        }));
-
-        const selected = new SkillRouter().selectSkill("Can you inspect this Bases formula and view filter?", [
-            markdown,
-            bases,
-        ]);
-
-        expect(selected?.metadata.name).toBe("obsidian-bases");
     });
 
     it("registers load_skill capability when at least one skill is enabled (A3 progressive disclosure)", async () => {
@@ -159,34 +136,6 @@ describe("SkillContextProvider", () => {
 
         expect(result.status).toBe("available");
         expect(result.capabilities).toEqual([]);
-    });
-
-    it("returns skill-guide source records for selected context", async () => {
-        const provider = new SkillContextProvider([{
-            path: "skills/pa-vault-link-health/SKILL.md",
-            content: createSkillMarkdown({
-                name: "pa-vault-link-health",
-                description: "Use when inspecting unresolved wikilinks, orphan notes, backlinks, and vault link health.",
-                body: "Report findings as suggestions only.",
-            }),
-        }]);
-        await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
-
-        const context = provider.selectContext("Find unresolved wikilinks and orphan notes", {
-            maxContextChars: MAX_SKILL_CONTEXT_CHARS,
-        });
-
-        expect(context?.sourceRecords).toEqual([expect.objectContaining({
-            kind: "skill-guide",
-            providerId: SKILL_CONTEXT_PROVIDER_ID,
-            capabilityName: "skill-context",
-            citationEligible: false,
-        })]);
-        expect(context?.contextItem).toMatchObject({
-            kind: "skill-guide",
-            tool: "pa-vault-link-health",
-            sources: [{ path: "skills/pa-vault-link-health/SKILL.md" }],
-        });
     });
 
     it("getCatalog returns L1 metadata only for all enabled bundled skills", async () => {
@@ -277,93 +226,6 @@ describe("SkillContextProvider", () => {
         }
     });
 
-    it("selectAllEnabledContexts returns all enabled skills ranked by relevance", async () => {
-        const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
-        await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
-
-        const contexts = provider.selectAllEnabledContexts(
-            "Check unresolved wikilinks and orphan notes in my vault.",
-        );
-
-        expect(contexts).toHaveLength(BUNDLED_SKILL_RESOURCES.length);
-        expect(contexts[0]?.skill.metadata.name).toBe("pa-vault-link-health");
-        const names = contexts.map((context) => context.skill.metadata.name);
-        for (const expected of [
-            "obsidian-markdown",
-            "obsidian-bases",
-            "json-canvas",
-            "pa-frontmatter-audit",
-            "pa-callout-cleanup",
-            "pa-vault-link-health",
-            "pa-plugin-config-review",
-        ]) {
-            expect(names).toContain(expected);
-        }
-    });
-
-    it("selectAllEnabledContexts honors enabledSkillIds filter", async () => {
-        const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
-        await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
-
-        const contexts = provider.selectAllEnabledContexts("any prompt", {
-            enabledSkillIds: ["obsidian-markdown", "json-canvas"],
-        });
-
-        expect(contexts).toHaveLength(2);
-        const names = contexts.map((context) => context.skill.metadata.name).sort();
-        expect(names).toEqual(["json-canvas", "obsidian-markdown"]);
-    });
-
-    it("selectAllEnabledContexts returns empty array when no skills are enabled", async () => {
-        const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
-        await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
-
-        const contexts = provider.selectAllEnabledContexts("any prompt", {
-            enabledSkillIds: [],
-        });
-
-        expect(contexts).toEqual([]);
-    });
-
-    it("routes representative prompts to each bundled v1 skill", () => {
-        const parsed = BUNDLED_SKILL_RESOURCES.map((resource) =>
-            parseAgentSkillMarkdown(resource.content, resource.path));
-        const router = new SkillRouter();
-        const cases: Array<{ prompt: string; expected: string }> = [
-            {
-                prompt: "Explain Obsidian wikilinks, callouts, embeds, tags, and block references in this note.",
-                expected: "obsidian-markdown",
-            },
-            {
-                prompt: "Inspect this .base file for Bases formulas, filters, views, and property casing.",
-                expected: "obsidian-bases",
-            },
-            {
-                prompt: "Inspect this Obsidian Canvas .canvas JSON for nodes, edges, groups, links, and layout structure.",
-                expected: "json-canvas",
-            },
-            {
-                prompt: "Audit frontmatter consistency, missing properties, property casing, tag spelling, and metadata drift.",
-                expected: "pa-frontmatter-audit",
-            },
-            {
-                prompt: "Review callout types, malformed callouts, nested callouts, and callout taxonomy across snippets.",
-                expected: "pa-callout-cleanup",
-            },
-            {
-                prompt: "Check unresolved wikilinks, backlinks, outgoing links, orphan notes, embeds, and vault link health.",
-                expected: "pa-vault-link-health",
-            },
-            {
-                prompt: "Review Obsidian plugin lists, disabled plugins, plugin settings, config folders, and possible unused plugin signals.",
-                expected: "pa-plugin-config-review",
-            },
-        ];
-
-        for (const testCase of cases) {
-            expect(router.selectSkill(testCase.prompt, parsed)?.metadata.name).toBe(testCase.expected);
-        }
-    });
 });
 
 describe("load_skill capability execution (A3 progressive disclosure)", () => {

@@ -19,14 +19,11 @@ import {
     MAX_SKILL_BODY_CHARS,
     MAX_SKILL_REFERENCE_CHARS,
     parseAgentSkillMarkdown,
-    scoreSkillForPrompt,
-    SkillRouter,
     type AgentSkill,
     type SkillBody,
     type SkillCatalog,
     type SkillCatalogEntry,
     type SkillContextBuildOptions,
-    type SkillContextResult,
     type SkillReferenceResource,
 } from "./skill-router";
 
@@ -55,12 +52,10 @@ export class SkillContextProvider implements CapabilityProvider {
     readonly platform = "both" as const;
 
     private readonly resources: readonly BundledSkillResource[];
-    private readonly router: SkillRouter;
     private loadedSkills: LoadedSkillResource[] = [];
 
-    constructor(resources: readonly BundledSkillResource[], router = new SkillRouter()) {
+    constructor(resources: readonly BundledSkillResource[]) {
         this.resources = resources;
-        this.router = router;
     }
 
     async load(context: ProviderLoadContext): Promise<ProviderLoadResult> {
@@ -157,43 +152,6 @@ export class SkillContextProvider implements CapabilityProvider {
 
     getSkills(): AgentSkill[] {
         return this.loadedSkills.map((entry) => entry.skill);
-    }
-
-    /**
-     * @deprecated Use getCatalog + load_skill capability instead. Kept for backward compatibility through one release cycle.
-     */
-    selectContext(
-        prompt: string,
-        options: SkillContextBuildOptions & { enabledSkillIds?: readonly string[] } = {},
-    ): SkillContextResult | null {
-        const enabledSkillIds = options.enabledSkillIds ? new Set(options.enabledSkillIds) : null;
-        const candidateSkills = this.loadedSkills
-            .map((entry) => entry.skill)
-            .filter((skill) => !enabledSkillIds || enabledSkillIds.has(skill.metadata.name));
-        const selected = this.router.selectSkill(prompt, candidateSkills);
-        if (!selected) return null;
-        const resource = this.loadedSkills.find((entry) => entry.skill.metadata.name === selected.metadata.name);
-        if (!resource) return null;
-        return buildSkillContext(resource.skill, resource.references, options);
-    }
-
-    /**
-     * @deprecated Use getCatalog + load_skill capability instead. Kept for backward compatibility through one release cycle.
-     */
-    selectAllEnabledContexts(
-        prompt: string,
-        options: SkillContextBuildOptions & { enabledSkillIds?: readonly string[] } = {},
-    ): SkillContextResult[] {
-        const enabledSkillIds = options.enabledSkillIds ? new Set(options.enabledSkillIds) : null;
-        const candidates = this.loadedSkills.filter((entry) =>
-            !enabledSkillIds || enabledSkillIds.has(entry.skill.metadata.name));
-        if (candidates.length === 0) return [];
-
-        const ranked = [...candidates].sort((a, b) =>
-            scoreSkillForPrompt(prompt, b.skill) - scoreSkillForPrompt(prompt, a.skill));
-
-        return ranked.map((entry) =>
-            buildSkillContext(entry.skill, entry.references, options));
     }
 
     getCatalog(options: { enabledSkillIds?: readonly string[] } = {}): SkillCatalog {

@@ -89,25 +89,6 @@ export function parseAgentSkillMarkdown(markdown: string, sourcePath = "SKILL.md
     };
 }
 
-export class SkillRouter {
-    selectSkill(prompt: string, skills: readonly AgentSkill[]): AgentSkill | null {
-        let selected: AgentSkill | null = null;
-        let selectedScore = 0;
-        for (const skill of skills) {
-            const score = scoreSkill(prompt, skill);
-            if (score > selectedScore) {
-                selected = skill;
-                selectedScore = score;
-            }
-        }
-        return selectedScore > 0 ? selected : null;
-    }
-}
-
-export function scoreSkillForPrompt(prompt: string, skill: AgentSkill): number {
-    return scoreSkill(prompt, skill);
-}
-
 export function buildSkillContext(
     skill: AgentSkill,
     references: readonly SkillReferenceResource[] = [],
@@ -238,43 +219,6 @@ function getOptionalList(metadata: Record<string, string | string[]>, key: strin
     if (Array.isArray(value)) return value.filter(Boolean);
     if (typeof value === "string" && value.trim()) return [value.trim()];
     return [];
-}
-
-function scoreSkill(prompt: string, skill: AgentSkill): number {
-    const promptTokens = new Set(tokenize(prompt));
-    const descriptionTokens = tokenize(skill.metadata.description.replace(/\buse when\b/i, ""));
-    const nameTokens = tokenize(skill.metadata.name.replace(/-/g, " "));
-    let score = 0;
-    for (const token of descriptionTokens) {
-        if (promptTokens.has(token)) score += 1;
-    }
-    for (const token of nameTokens) {
-        if (promptTokens.has(token)) score += 2;
-    }
-    return score;
-}
-
-function tokenize(value: string): string[] {
-    const stopWords = new Set([
-        "the",
-        "and",
-        "for",
-        "with",
-        "when",
-        "use",
-        "using",
-        "need",
-        "needs",
-        "about",
-        "note",
-        "notes",
-        "vault",
-        "obsidian",
-    ]);
-    return value
-        .toLowerCase()
-        .split(/[^a-z0-9]+/)
-        .filter((token) => token.length >= 3 && !stopWords.has(token));
 }
 
 function formatSkillMetadata(metadata: AgentSkillMetadata): string {

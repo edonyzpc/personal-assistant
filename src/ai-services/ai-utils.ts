@@ -31,6 +31,18 @@ export interface NativeToolCallingCapabilityOptions {
     validatedModels?: readonly NativeToolCallingValidation[];
 }
 
+// Tool-calling protocol matrix (canonical PA streaming support, v2.0.0):
+//   provider=openai  → transport=openai-compatible-stream, streamingToolCalls=true, preservesToolCallId=true,
+//                      earliest observable shape = AIMessageChunk.tool_call_chunks or additional_kwargs.tool_calls.
+//   provider=qwen    → transport=openai-compatible-stream, streamingToolCalls=true, preservesToolCallId=true,
+//                      earliest observable shape = AIMessageChunk.tool_call_chunks from DashScope OpenAI-compatible
+//                      streaming. Only validated DashScope-compatible model/baseURL combinations (see
+//                      DASHSCOPE_NATIVE_TOOL_CALLING_MODELS below) enter PA streamed tool-call mode.
+//   Unsupported providers (e.g. Ollama) must error out rather than fall back — the legacy json-planning-loop /
+//   non-streaming-transport paths were removed with v2.0.0 (see PaAgentRuntime path; no rollback flag remains).
+//   Historical record: this matrix used to live in `src/ai-services/tool-calling-protocol.ts` (deleted v2.0.0
+//   cleanup) and is preserved here for grep-ability and architecture-plan §38-48 cross-reference.
+
 export const DASHSCOPE_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 export const DASHSCOPE_INTL_COMPATIBLE_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
 export const DASHSCOPE_COMPATIBLE_BASE_URLS: readonly string[] = [
