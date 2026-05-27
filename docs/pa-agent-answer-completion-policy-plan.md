@@ -8,7 +8,7 @@ Code-level implementation: 2026-05-24
 
 This document analyzes why PA Agent can show `Answer incomplete` after otherwise recoverable tool-call situations, and proposes a generic runtime fix that preserves the current v1 feature set and delivery behavior.
 
-Implementation note: Phases 1-3 are now implemented in `src/ai-services/pa-agent-answer-completion-policy.ts`, `src/ai-services/pa-agent-required-capability-policy.ts`, `src/ai-services/pa-agent-loop.ts`, and the PA answer-stream model binding path. Phase 4 remains future metadata polish; Phase 5 is covered by preserving existing UI warnings while reducing false incomplete states at runtime.
+Implementation note: Phases 1-3 are now implemented in `src/ai-services/pa-agent-answer-completion-policy.ts`, `src/ai-services/pa-agent-required-capability-policy.ts`, `src/ai-services/pa-agent-loop.ts`, and the PA answer-stream model binding path. **Phase 4 was completed 2026-05-26** via SPEC-TCR-07 (Tool Calling Refactor Phase A path B auto-detect) — see §Phase 4 below. Phase 5 is covered by preserving existing UI warnings while reducing false incomplete states at runtime.
 
 The problem is not one broken tool. Recent iPhone and desktop smoke tests exposed the same class of failure across current-note, WebSearch, Memory, and vault tools:
 
@@ -227,9 +227,12 @@ This changes the mental model from "retry specific bad cases" to "always resolve
 
 ## Tool Input Repair Contract
 
-The existing behavior should be kept, but represented as a preflight contract:
+**Updated 2026-05-26 (Tool Calling Refactor Phase A)** — this plan's original "initial low-risk implementation" in `pa-agent-host-tools.ts` has been superseded by pi-style per-tool `prepareArguments` hooks inside each `create*Tool` factory (`chat-tools.ts`) and `BuiltinWebSearchProvider.createCapability`. The structured `ToolInputRepairResult { status, input, reason }` interface below has been superseded by the simpler `PrepareCapabilityArgumentsResult = { ok: true, input, repaired? } | { ok: false, error }` contract on `CapabilityRegistry.prepareAndValidate`. The `repaired` field carries Phase 4 audit metadata; failure flows through `schema_invalid` outcome to HostPolicy corrective. See [PA Agent Design Completion Audit §4.4](./pa-agent-design-completion-audit.md) for the consolidated new-contract summary.
+
+The original design recorded here for historical context:
 
 ```ts
+// Historical (pre-2026-05-26) design — superseded by Phase A.
 interface ToolInputRepairResult {
   status: "unchanged" | "repaired" | "not_repairable";
   input: unknown;
@@ -237,16 +240,16 @@ interface ToolInputRepairResult {
 }
 ```
 
-Initial low-risk implementation can keep the repair map in `pa-agent-host-tools.ts`:
+The original repair-map table for historical context:
 
-| Tool | Allowed repair |
-| --- | --- |
-| `search_memory` | Query aliases and empty input fall back to original user request. |
-| `webSearch` | Query aliases and empty input fall back to original user request; result remains builtin WebSearch only. |
-| `get_current_note_context` | Mode aliases and current-note-only exact lookup promote to full current note. |
-| Other read-only tools | No silent repair initially; validation errors become structured `schema_invalid` / `recoverable_error` observations. |
+| Tool | Allowed repair (historical) | Current (Phase A) |
+| --- | --- | --- |
+| `search_memory` | Query aliases and empty input fall back to original user request. | Aliases preserved; **empty input is fail-loud** (`schema_invalid` outcome → HostPolicy corrective). |
+| `webSearch` | Query aliases and empty input fall back to original user request. | Same as search_memory: aliases preserved, empty input fail-loud. |
+| `get_current_note_context` | Mode aliases and current-note-only exact lookup promote to full current note. | Unchanged. |
+| Other read-only tools | No silent repair initially; validation errors become structured `schema_invalid` / `recoverable_error` observations. | Same; per-tool `prepareArguments` defined only where alias mapping benefit exists. |
 
-Later, the same contract can move into `AgentCapability` metadata without changing user-visible behavior.
+The plan's foresight "Later, the same contract can move into `AgentCapability` metadata without changing user-visible behavior" was the migration path executed by Phase A.
 
 ## Why This Is Better Than More Tool-Specific Patches
 
@@ -318,15 +321,22 @@ This is the main loop-control fix that prevents duplicate, failed, malformed, or
 
 ### Phase 4: Normalize Tool Preflight Metadata
 
-Record repair metadata on tool results:
+**Completed 2026-05-26 (SPEC-TCR-07 Tool Calling Refactor Phase A)** — Path B (auto-detect) chosen over path A (per-tool structured reason).
+
+Repair metadata is now recorded on tool results:
 
 ```ts
 metadata: {
   inputRepaired?: true;
-  repairReason?: string;
-  originalInputSummary?: string;
+  repairReason?: string;                // generic: "alias mapping or normalization applied"
+  originalInputSummary?: string;        // length-bounded JSON.stringify(raw)
+  originalInputKeys?: string;           // comma-joined top-level keys, e.g. "q,limit" — Phase B analytics
 }
 ```
+
+Implementation: `CapabilityRegistry.prepareAndValidate` auto-detects via `deepEqualJson(raw, prepared)`; when prepared differs, the result carries `repaired` info (`PrepareCapabilityArgumentsRepair`). `pa-agent-host-tools.ts:createPaAgentCapabilityToolExecutor` writes these onto `toolResult.content.metadata` on the success path.
+
+Per-tool structured `reason` strings (path A) were rejected as over-engineering for v1; Phase B alias-usage analytics use `originalInputKeys` distribution (which alias keys triggered repair) rather than per-tool reason strings. If Ops Agent write tools later need more granular reasons, prepareArguments signatures can be extended to return `{ input, repaired? }` directly without breaking the registry contract.
 
 This supports audit/debug without changing Context Used or final answer behavior.
 

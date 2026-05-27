@@ -6,8 +6,7 @@
 | --- | --- |
 | Status | Implemented and closeout-verified canonical lifecycle refactor plan |
 | Last revised | 2026-05-24 |
-| Development tracker | [PA Agent Runtime Lifecycle Development Tracker](./pa-agent-runtime-lifecycle-development-tracker.md) |
-| Current baseline | [PA Agent Runtime Lifecycle Baseline](./pa-agent-runtime-lifecycle-baseline.md) |
+| Completion summary | [PA Agent Design Completion Audit](./pa-agent-design-completion-audit.md) — runtime lifecycle development tracker + baseline 已于 2026-05-27 精简归档，结论已折叠到 audit |
 | Parent plan | [PA Agent Architecture Plan](./pa-agent-architecture-plan.md) |
 | Reference implementation | [pi agent package](https://github.com/earendil-works/pi/tree/main/packages/agent) |
 
@@ -760,19 +759,20 @@ Context Used ownership:
 - `agent_end.metadata` may carry a derived final summary.
 - Do not infer Context Used from final answer text.
 
-SkillContext:
+SkillContext (updated 2026-05-26 by A3 progressive skill disclosure implementation; details in [PA Agent Design Completion Audit §4.5](./pa-agent-design-completion-audit.md)):
 
-- SkillContextProvider is host pre-context, not a tool.
-- It does not emit `tool_execution_*` or fake `toolResult` messages.
-- Skill context may be recorded in `turn_start.metadata.hostContext` and in derived Context Used as `skill-guide`.
-- SkillContext is not Memory, WebSearch, or current-note evidence.
-- Persisted canonical turns may store host pre-context source records and Context Used at the turn level because those records do not belong to a toolResult message.
+- SkillContextProvider provides the L1 skill catalog (name + description only) as host pre-context, recorded on `turn_start.metadata.hostContext.catalog`.
+- SkillContextProvider also registers a `load_skill` tool capability. When the model calls `load_skill(name)`, the runtime emits standard `tool_execution_*` events and a `toolResult` message — this is the canonical tool execution contract, NOT a fake toolResult.
+- Earlier wording "SkillContextProvider is host pre-context, not a tool. It does not emit tool_execution_* or fake toolResult messages" applied to the A1 implementation only. The A3 implementation inverts the second clause: L2 body delivery is a real tool execution.
+- Catalog (L1) is metadata only and does not produce ContextUsed entries. ContextUsed and skill-guide source records derive only from successful `load_skill` toolResult messages.
+- SkillContext is not Memory, WebSearch, or current-note evidence — those still flow through their own dedicated tools.
+- Persisted canonical turns store the catalog in `turn_start.metadata.hostContext`; loaded skill bodies are persisted as toolResult messages in the canonical transcript.
 
 Memory and current note:
 
 - Memory enters the run only through `search_memory`.
-- The host adapter may normalize benign `search_memory` argument drift only after the model has explicitly selected the Memory tool. Query aliases such as `q`, `searchQuery`, `search_query`, `keywords`, `prompt`, and `question` may normalize to `{ query }`.
-- If the model emits a `search_memory` call with missing or empty arguments, the adapter may use the original user request as the `query`. This is a recovery inside the same read-only Memory tool boundary, not hidden Memory pre-context.
+- The host adapter may normalize benign `search_memory` argument drift only after the model has explicitly selected the Memory tool. Query aliases such as `q`, `searchQuery`, `search_query`, `keywords`, `prompt`, and `question` may normalize to `{ query }`. As of 2026-05-26 (SPEC-TCR-03), this normalization lives in `createSearchMemoryTool.prepareArguments` (per-tool pi-style hook in `chat-tools.ts`), not in a cross-cutting host-tools switch.
+- **Updated 2026-05-26 (SPEC-TCR-04 Tool Calling Refactor Phase A)** — Silent fallback to original user request removed. If the model emits a `search_memory` call with missing or empty arguments, `validateInput` throws and `pa-agent-host-tools.ts` returns a `schema_invalid` outcome (`metadata.reason: "input_validation_failed"`). HostPolicy's `failedRequiredToolRetryAttempted` corrective + answer-completion `force_finalize` automatically handle the retry. This is the fail-loud successor of the older silent-fallback contract; both share the same read-only Memory tool boundary and neither injects hidden Memory pre-context. See [PA Agent Design Completion Audit §4.4](./pa-agent-design-completion-audit.md) for the rationale.
 - Current-note content enters the run only through `get_current_note_context`.
 - Do not inject Memory or current-note content as hidden host pre-context.
 - User-explicit pasted text, selected text, or uploaded text belongs to the user message content, not hidden host context.
@@ -792,9 +792,9 @@ Removal requirements:
 
 Builtin tool input normalization:
 
-- The host adapter may normalize benign `webSearch` argument drift only after the model has explicitly selected the builtin `webSearch` tool.
+- The host adapter may normalize benign `webSearch` argument drift only after the model has explicitly selected the builtin `webSearch` tool. As of 2026-05-26 (SPEC-TCR-03), this normalization lives in `BuiltinWebSearchProvider.createCapability.prepareAndValidate` (capability-internal pi-style hook in `builtin-web-search-provider.ts`), not in a cross-cutting host-tools switch.
 - Query aliases such as `q`, `searchQuery`, `search_query`, `keywords`, `prompt`, and `question` may normalize to `{ query }`.
-- If the model emits a builtin `webSearch` call with missing or empty arguments, the adapter may use the original user request as the `query`. This is a recovery inside the same read-only builtin tool boundary, not provider web fallback.
+- **Updated 2026-05-26 (SPEC-TCR-04 Tool Calling Refactor Phase A)** — Silent fallback to original user request removed. If the model emits a builtin `webSearch` call with missing or empty arguments, `prepareAndValidate` returns `{ ok: false, error }` and `pa-agent-host-tools.ts` emits a `schema_invalid` outcome (`metadata.reason: "input_validation_failed"`). HostPolicy's corrective + answer-completion `force_finalize` handle the retry. This is the fail-loud successor of the older silent-fallback contract; it remains inside the read-only builtin WebSearch boundary and does not enable provider web fallback. See [PA Agent Design Completion Audit §4.4](./pa-agent-design-completion-audit.md).
 - Invalid or unsupported non-query fields must not create web source records by themselves. Only a successful builtin `webSearch` toolResult may produce Web source records and WebSearch Context Used.
 - Placeholder or stale duplicate streamed tool calls may be skipped for auditability when a meaningful same-name tool call in the same assistant message is executed.
 

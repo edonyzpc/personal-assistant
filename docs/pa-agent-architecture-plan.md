@@ -8,11 +8,7 @@ This document is the product, architecture, runtime, capability, source-boundary
 
 PA Agent is the next architecture step after the current Chat Agent and Ralpha native-tool loop work. The goal is not to add a few isolated tools to chat. The goal is to evolve chat into a transparent, cancellable, read-only assistant for understanding, auditing, organizing, and drafting safe next steps for the user's Obsidian vault, with a long-term path toward a more general personal agent while keeping the v1 boundary safe, understandable, and shippable.
 
-Implementation progress is tracked in [PA Agent Development Tracker](./pa-agent-development-tracker.md). Architecture comparison diagrams remain in [PA Agent Architecture Comparison](./pa-agent-architecture-comparison.md), but this document is the implementation contract.
-
-The deeper canonical runtime lifecycle refactor is tracked separately in [PA Agent Runtime Lifecycle Plan](./pa-agent-runtime-lifecycle-plan.md) and [PA Agent Runtime Lifecycle Development Tracker](./pa-agent-runtime-lifecycle-development-tracker.md). That track defines the intended next runtime event model for the PA answer-stream path.
-
-If this document conflicts with `docs/pa-agent-architecture-comparison.md`, this document wins. If this document conflicts with existing Ralpha runtime behavior, the current code remains the factual baseline until a PA Agent implementation SPEC changes it and updates the tracker.
+Implementation completion is summarized in [PA Agent Design Completion Audit](./pa-agent-design-completion-audit.md). The deeper canonical runtime lifecycle refactor contract lives in [PA Agent Runtime Lifecycle Plan](./pa-agent-runtime-lifecycle-plan.md). Historical trackers (development-tracker, architecture-comparison, runtime-lifecycle-development-tracker, post-1.11.0 review/execution/cleanup, A3 progressive-skill-disclosure, Tool Calling Refactor) were precise during execution but have been精简归档 2026-05-27; their conclusions are folded into the audit doc.
 
 ## Product Goal
 
@@ -78,6 +74,7 @@ PA Agent v1 replaces the old planning/tool-collection shape in the default ChatS
 | Skill 格式 | 采用 agentskills.io 规范 | SKILL.md (YAML frontmatter + Markdown body) + `references/` 子目录；与 Claude Code / Codex CLI 兼容；可直接消费 kepano 仓库 skill。 |
 | Source UI 呈现 | 引用列表 + 折叠详情 | 3 个 source bucket 在数据层保留；UI 主区只展示 Citations (Memory refs + Web sources)，Context Used 默认折叠到二级面板。 |
 | PA Agent runtime 拆分 | 内改 + feature flag | 先在 `ChatAgentRuntime` 内加 feature flag 路径；先抽 `PromptBuilder` / `AgentEventEmitter` / `TurnExecutionDeadline` 为独立类（行为不变）；SPEC-03 落地后再 rename 为 `PaAgentRuntime`。 |
+| Tool input repair | pi-style 每 tool `prepareArguments` hook + fail-loud strict validation（2026-05-26 Phase A 落地） | `chat-tools.ts:ChatToolDefinition.prepareArguments?` 字段做 alias 映射；`CapabilityRegistry.prepareAndValidate(name, raw, ctx)` 前置验证；失败 → `schema_invalid` outcome → HostPolicy corrective + force_finalize 自动承接。删除 `pa-agent-host-tools.ts` 散乱的 `normalizeHostToolCallInput` switch 与 silent userInput fallback（净减 ~338 行）。详见 [PA Agent Design Completion Audit §4.4](./pa-agent-design-completion-audit.md)。 |
 
 ## Target Architecture
 
@@ -442,9 +439,9 @@ Plugin-bundled skill 规则：
 - 目录结构：`skills/<skill-name>/SKILL.md` (必需) + `references/*.md` (可选，按需加载)。
 - `SKILL.md` 必须含 YAML frontmatter，必需字段 `name` (kebab-case, ≤64 chars) + `description` (含 "Use when ..." 触发提示)。可选字段：`version` / `author` / `allowed-tools`。
 - `allowed-tools` 字段在 v1 仅作 prompt hint，不改 `CapabilityRegistry` allowlist；模型仍只能调用 Registry 已 export 的 capability。
-- 三层渐进加载：L1 frontmatter 始终进 system prompt；L2 `SKILL.md` body 在 SkillRouter 选中后加载；L3 `references/*.md` 在 body 显式引用时按需加载。
+- 三层渐进加载：L1 frontmatter 始终进 system prompt；L2 `SKILL.md` body 由模型 `load_skill` tool call 触发加载（详见 [PA Agent Design Completion Audit §4.5](./pa-agent-design-completion-audit.md)）；L3 `references/*.md` 在 body 显式引用时按需加载。早期方案 §445 写的 "L2 在 SkillRouter 选中后加载" 已被 A3 决策取代——bag-of-words router 召回率不足以承担 L2 选择，模型自判通过 description 是更好的 router。
 - 描述应聚焦 read-only：v1 ship 的 skill body 用 "draft / suggest / inspect" 措辞，不用 "create / edit / write"。
-- Bundled skill 仍是 untrusted context；frontmatter + body + references 全部进入 PromptBuilder 现有的 `<untrusted>` 包裹。
+- Bundled skill 仍是 untrusted context；skill body 通过 `<skill_body name="...">` envelope 标记；所有 tool observation（含 vault / Memory / web / current note / skill body）通过 `formatToolObservations` 统一包裹为 `<untrusted source="tool:X" turn="N" index="M" is_error="bool">...</untrusted>`（详见 `src/ai-services/pa-agent-runtime.ts` 的 `formatToolObservations` helper），防止 prompt injection 攻击者通过 vault/web 内容劫持模型指令。
 - v1 仅扫描 plugin-bundled skill；settings 预留 `.pa/skills/` vault-local 扫描开关（默认关），由 v1.x 启用后兼容 kepano 安装路径。
 
 ## MCP WebSearch Model
