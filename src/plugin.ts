@@ -3,13 +3,14 @@
 import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Platform, Plugin, TFile, addIcon, debounce, moment as obsidianMoment, normalizePath, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { VIEW_TYPE_LLM, LLMView } from "./chat-view";
+import { VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds } from './settings'
 import { LocalGraph } from './local-graph';
+import { openSettings, openSettingsTab } from './obsidian-internals';
 import { CryptoHelper, icons, personalAssitant } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
@@ -103,6 +104,7 @@ export class PluginManager extends Plugin {
     private token: string = "";
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private hoverPopoverObserver: MutationObserver | null = null;
+    private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
 
     async onload() {
@@ -117,22 +119,27 @@ export class PluginManager extends Plugin {
             // register mobile debug log
             monkeyPatchConsole(this);
         }
-        // observe element which is concerned by commands
+        // observe hover-editor popovers for local graph resize
         this.hoverPopoverObserver = new MutationObserver((mutations) => {
-            mutations.forEach((mutation) => {
-                mutation.addedNodes.forEach((node) => {
-                    if ((node instanceof HTMLElement)) {
-                        document.querySelectorAll('.popover.hover-popover.hover-editor').forEach((el) => {
-                            this.log("observing...")
+            for (const mutation of mutations) {
+                for (const node of Array.from(mutation.addedNodes)) {
+                    if (
+                        node instanceof HTMLElement
+                        && (node.matches('.popover.hover-popover.hover-editor')
+                            || node.querySelector('.popover.hover-popover.hover-editor'))
+                    ) {
+                        if (this.resizeDebounceTimer !== null) clearTimeout(this.resizeDebounceTimer);
+                        this.resizeDebounceTimer = setTimeout(() => {
+                            this.resizeDebounceTimer = null;
                             this.localGraph.resize();
-                        })
+                        }, 150);
+                        return;
                     }
-                });
-            });
+                }
+            }
         });
         this.hoverPopoverObserver.observe(document.body, {
-            attributes: true,
-            childList: true
+            childList: true,
         });
 
         // This creates an icon in the left ribbon.
@@ -154,8 +161,8 @@ export class PluginManager extends Plugin {
             // status bar event handling
             statusBarItemEl.onClickEvent((e) => {
                 // showup setting tab of this plugin
-                (this.app as any).setting.open(); // eslint-disable-line @typescript-eslint/no-explicit-any
-                (this.app as any).setting.openTabById('personal-assistant'); // eslint-disable-line @typescript-eslint/no-explicit-any
+                openSettings(this.app);
+                openSettingsTab(this.app, 'personal-assistant');
             });
         }
 
@@ -427,6 +434,8 @@ export class PluginManager extends Plugin {
 
     onunload() {
         const statsManager = this.statsManager;
+        if (this.resizeDebounceTimer !== null) clearTimeout(this.resizeDebounceTimer);
+        this.resizeDebounceTimer = null;
         this.hoverPopoverObserver?.disconnect();
         this.hoverPopoverObserver = null;
         this.memoryManager?.stopAutoMaintenance();

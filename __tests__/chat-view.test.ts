@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
-import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat-view';
+import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat/chat-view';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 
 jest.mock('obsidian');

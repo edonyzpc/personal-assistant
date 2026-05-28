@@ -48,7 +48,7 @@ jest.mock('obsidian', () => {
 });
 
 jest.mock('obsidian-callout-manager', () => ({ getApi: jest.fn() }));
-jest.mock('../src/chat-view', () => ({ VIEW_TYPE_LLM: 'llm-view', LLMView: class { } }));
+jest.mock('../src/chat/chat-view', () => ({ VIEW_TYPE_LLM: 'llm-view', LLMView: class { } }));
 jest.mock('../src/ai', () => ({ AssistantFeaturedImageHelper: class { }, AssistantHelper: class { } }));
 jest.mock('../src/vss', () => ({ VSS: class { } }));
 jest.mock('../src/memory-manager', () => ({
