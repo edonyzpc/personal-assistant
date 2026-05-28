@@ -255,6 +255,37 @@ describe('native tool calling capability', () => {
     });
 });
 
+describe('cleanMarkdownContent', () => {
+    const aiUtils = new AIUtils(createPlugin({}) as never);
+
+    it('preserves fenced code blocks', () => {
+        const input = 'before\n```typescript\nconst x = 1;\n```\nafter';
+        expect(aiUtils.cleanMarkdownContent(input)).toBe(input);
+    });
+
+    it('strips Obsidian comments', () => {
+        expect(aiUtils.cleanMarkdownContent('hello %%secret%% world')).toBe('hello  world');
+    });
+
+    it('strips file-extension wikilinks', () => {
+        expect(aiUtils.cleanMarkdownContent('see [[image.png]] here')).toBe('see  here');
+    });
+
+    it('preserves non-file wikilinks', () => {
+        expect(aiUtils.cleanMarkdownContent('see [[My Note]] here')).toBe('see [[My Note]] here');
+    });
+
+    it('does not let comment regex penetrate code block boundaries', () => {
+        const input = 'before\n```python\nresult = x %% 2\n```\nafter';
+        expect(aiUtils.cleanMarkdownContent(input)).toBe(input);
+    });
+
+    it('strips comment outside code block while preserving %% inside', () => {
+        const input = '%%hidden%% text\n```\nx %% y\n```\nmore';
+        expect(aiUtils.cleanMarkdownContent(input)).toBe(' text\n```\nx %% y\n```\nmore');
+    });
+});
+
 describe('Qwen DashScope request options', () => {
     it('recognizes DashScope OpenAI-compatible base URLs with trailing slashes', () => {
         expect(isDashScopeCompatibleBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1/')).toBe(true);

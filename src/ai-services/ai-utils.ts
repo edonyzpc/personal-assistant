@@ -344,41 +344,19 @@ export class AIUtils {
     }
 
     /**
-     * 创建OpenAI兼容的LLM实例（兼容旧版本）
-     */
-    async createOpenAICompatibleLLM(model: string = "qwen-max", temperature: number = 0.8): Promise<ChatOpenAI<ChatOpenAICallOptions>> {
-        const token = await this.getAPIToken();
-        return new ChatOpenAI({
-            model: model,
-            apiKey: token,
-            configuration: this.createOpenAIClientOptions('https://dashscope.aliyuncs.com/compatible-mode/v1'),
-            temperature: temperature,
-        });
-    }
-
-    /**
-     * 创建OpenAI Embeddings实例（兼容旧版本）
-     */
-    async createOpenAIEmbeddings(model: string = "text-embedding-v3", dimensions: number = 512): Promise<OpenAIEmbeddings> {
-        const token = await this.getAPIToken();
-        return new OpenAIEmbeddings({
-            model: model,
-            dimensions: dimensions,
-            apiKey: token,
-            configuration: this.createOpenAIClientOptions('https://dashscope.aliyuncs.com/compatible-mode/v1'),
-        });
-    }
-
-    /**
      * 清理markdown内容
      */
     cleanMarkdownContent(markdown: string): string {
-        // 过滤代码块
-        let cleaned = markdown.replace(/^```.*?$(?:\n.*?)*^```$/gm, '');
-        // 过滤注释
+        // 保护代码块区域，避免注释正则穿透 ``` 边界
+        const codeBlockPlaceholders: string[] = [];
+        let cleaned = markdown.replace(/^```.*?$(?:\n.*?)*^```$/gm, (match) => {
+            codeBlockPlaceholders.push(match);
+            return `\x00CB${codeBlockPlaceholders.length - 1}\x00`;
+        });
         cleaned = cleaned.replace(/%%[\s\S]*?%%/g, '');
-        // 过滤文件引用
         cleaned = cleaned.replace(/\[\[[\w-]+\.[a-z]{1,}\]\]/g, '');
+        // 恢复代码块
+        cleaned = cleaned.replace(/\x00CB(\d+)\x00/g, (_, i) => codeBlockPlaceholders[Number(i)]);
         return cleaned;
     }
 
