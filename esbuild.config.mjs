@@ -14,7 +14,7 @@ const prod = (process.argv[2] === "production");
 
 // Mark every Node builtin import as external so Obsidian Mobile WebView never tries
 // to require missing builtins at runtime. Catches both `node:*` (modern) and bare names
-// like `worker_threads`/`crypto` (legacy) from transitive `@langchain/community` etc.
+// like `worker_threads`/`crypto` (legacy) from transitive LangChain dependencies.
 // Maintained list mirrors `NODE_BUILTIN_NAMES` in scripts/audit-bundle.mjs.
 const NODE_BUILTIN_BARE = /^(?:fs|path|child_process|os|crypto|stream|url|net|tls|http|https|zlib|querystring|readline|buffer|events|util|tty|dns|module|process|worker_threads|fs\/promises|stream\/promises)$/;
 const externalNodeBuiltinsPlugin = {
@@ -96,7 +96,7 @@ const mainContext = await context({
 		"@lezer/highlight",
 		"@lezer/lr"],
 	format: "cjs",
-	target: "es2018",
+	target: "es2020",
 	logLevel: "info",
 	sourcemap: prod ? false : "inline",
 	treeShaking: true,
