@@ -105,7 +105,7 @@ export interface PaAgentRuntimeOptions {
 
 type ReadOnlyToolContextAvailability = "available" | "partial" | "unavailable";
 
-interface RawSearchResult {
+export interface RawSearchResult {
     score?: unknown;
     doc?: {
         pageContent?: unknown;
@@ -119,6 +119,7 @@ const MAX_MEMORY_CHARS = 2000;
 const MAX_MEMORY_RERANK_CANDIDATES = 6;
 const MAX_MEMORY_CANDIDATE_CHUNKS = 2;
 const MAX_MEMORY_CANDIDATE_EXCERPT_CHARS = 500;
+const MIN_MEMORY_SCORE = 0.30;
 export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 12000;
 export const canFallbackToNonStreaming = (
     error: unknown,
@@ -831,7 +832,7 @@ function formatPlannerToolDefinitions(definitions: ChatToolRegistryDefinition[])
 }
 
 
-function normalizeSearchCandidates(results: RawSearchResult[]): MemoryCandidate[] {
+export function normalizeSearchCandidates(results: RawSearchResult[]): MemoryCandidate[] {
     const documents = results.slice(0, 8).map((result): MemorySearchDocument | null => {
         const metadata = result.doc?.metadata ?? {};
         const path = typeof metadata.path === "string" ? metadata.path : "";
@@ -861,7 +862,8 @@ function normalizeSearchCandidates(results: RawSearchResult[]): MemoryCandidate[
                 indexVersion: typeof metadata.indexVersion === "string" ? metadata.indexVersion : undefined,
             },
         };
-    }).filter((entry): entry is MemorySearchDocument => entry !== null);
+    }).filter((entry): entry is MemorySearchDocument => entry !== null)
+      .filter(entry => entry.score >= MIN_MEMORY_SCORE);
 
     return createMemoryCandidatesFromDocuments(documents);
 }
