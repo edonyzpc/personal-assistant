@@ -119,8 +119,21 @@ class MockElement {
     onclick: ((event: { stopPropagation: () => void; preventDefault: () => void }) => void | Promise<void>) | null = null;
     onkeydown: ((event: { key: string; preventDefault: () => void }) => void) | null = null;
 
+    private _className = '';
+
     constructor(tagName: string) {
         this.tagName = tagName.toLowerCase();
+    }
+
+    get className() {
+        return this._className;
+    }
+
+    set className(value: string) {
+        this._className = value;
+        for (const cls of value.split(/\s+/).filter(Boolean)) {
+            this.classList.add(cls);
+        }
     }
 
     createDiv(options?: CreateOptions) {
@@ -148,6 +161,33 @@ class MockElement {
         const listeners = this.listeners.get(type) ?? [];
         listeners.push(listener);
         this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: (event: unknown) => void) {
+        const listeners = this.listeners.get(type);
+        if (!listeners) return;
+        const index = listeners.indexOf(listener);
+        if (index !== -1) listeners.splice(index, 1);
+    }
+
+    remove() {
+        if (this.parentElement) {
+            this.parentElement.removeChild(this);
+        }
+    }
+
+    closest(selector: string): MockElement | null {
+        // eslint-disable-next-line @typescript-eslint/no-this-alias
+        let current: MockElement | null = this.parentElement;
+        while (current) {
+            if (matchesSelector(current, selector)) return current;
+            current = current.parentElement;
+        }
+        return null;
+    }
+
+    querySelector<T extends MockElement = MockElement>(selector: string): T | null {
+        return walk(this, (el) => el !== this && matchesSelector(el, selector)) as T | null;
     }
 
     dispatchEvent(type: string, event: unknown = {}) {
@@ -302,6 +342,17 @@ class MockElement {
         const values = Array.isArray(input) ? input : [input];
         child.classList.add(...values);
     }
+}
+
+function matchesSelector(el: MockElement, selector: string): boolean {
+    if (selector.startsWith('.')) {
+        return el.classList.contains(selector.slice(1));
+    }
+    if (selector.startsWith('[data-type=')) {
+        const value = selector.match(/\[data-type="(.+)"\]/)?.[1];
+        return value ? el.getAttribute('data-type') === value : false;
+    }
+    return el.tagName === selector;
 }
 
 function walk(root: MockElement, predicate: (el: MockElement) => boolean): MockElement | null {
@@ -3561,5 +3612,134 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).toContain('Context Used');
         expect(allText(containerEl)).toContain('Using gathered context');
         expect(allText(containerEl)).toContain('planning limit');
+    });
+});
+
+describe('mobile tab bar auto-hide', () => {
+    let originalPlatform: { isDesktop: boolean; isMobile: boolean };
+
+    function buildMobileDrawerDOM() {
+        const drawerInner = new MockElement('div');
+        drawerInner.classList.add('workspace-drawer-inner');
+        const tabContainer = new MockElement('div');
+        tabContainer.classList.add('workspace-drawer-tab-container');
+        drawerInner.appendChild(tabContainer);
+        const tabOptions = new MockElement('div');
+        tabOptions.classList.add('workspace-drawer-tab-options');
+        tabContainer.appendChild(tabOptions);
+        const activeTabContent = new MockElement('div');
+        activeTabContent.classList.add('workspace-drawer-active-tab-content');
+        tabContainer.appendChild(activeTabContent);
+        const workspaceLeaf = new MockElement('div');
+        workspaceLeaf.classList.add('workspace-leaf');
+        activeTabContent.appendChild(workspaceLeaf);
+        return { drawerInner, tabContainer, tabOptions, workspaceLeaf };
+    }
+
+    function createMobileView() {
+        const { drawerInner, tabContainer, tabOptions, workspaceLeaf } = buildMobileDrawerDOM();
+        const { view, containerEl, ...rest } = createView();
+        workspaceLeaf.appendChild(containerEl);
+        return { view, containerEl, drawerInner, tabContainer, tabOptions, ...rest };
+    }
+
+    beforeEach(() => {
+        const { Platform } = jest.requireMock('obsidian') as { Platform: { isDesktop: boolean; isMobile: boolean } };
+        originalPlatform = { ...Platform };
+        Platform.isMobile = true;
+        Platform.isDesktop = false;
+
+        Object.defineProperty(globalThis, 'window', {
+            configurable: true,
+            value: {
+                requestAnimationFrame: jest.fn((cb: FrameRequestCallback) => { cb(0); return 0; }),
+                cancelAnimationFrame: jest.fn(),
+            },
+        });
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tag: string) => new MockElement(tag),
+            },
+        });
+        Object.defineProperty(globalThis, 'ResizeObserver', { configurable: true, value: undefined });
+        Object.defineProperty(globalThis, 'MutationObserver', { configurable: true, value: undefined });
+        Object.defineProperty(globalThis, 'navigator', {
+            configurable: true,
+            value: { clipboard: { writeText: jest.fn(async () => undefined) } },
+        });
+    });
+
+    afterEach(() => {
+        const { Platform } = jest.requireMock('obsidian') as { Platform: { isDesktop: boolean; isMobile: boolean } };
+        Platform.isMobile = originalPlatform.isMobile;
+        Platform.isDesktop = originalPlatform.isDesktop;
+        jest.useRealTimers();
+    });
+
+    it('creates a handle and removes the click listener from tabOptions on teardown', async () => {
+        const { view, containerEl, tabOptions } = createMobileView();
+        await view.onOpen();
+
+        const handle = walk(containerEl, (el) => el.classList.contains('pa-tab-bar-handle'));
+        expect(handle).not.toBeNull();
+
+        const listenersBefore = tabOptions.listeners.get('click')?.length ?? 0;
+        expect(listenersBefore).toBeGreaterThan(0);
+
+        await view.onClose();
+
+        const listenersAfter = tabOptions.listeners.get('click')?.length ?? 0;
+        expect(listenersAfter).toBe(listenersBefore - 1);
+        expect(handle!.parentElement).toBeNull();
+    });
+
+    it('toggles aria-label and aria-expanded on handle click', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl, tabOptions } = createMobileView();
+        await view.onOpen();
+
+        const handle = walk(containerEl, (el) => el.classList.contains('pa-tab-bar-handle'))!;
+        expect(handle.getAttribute('aria-expanded')).toBe('false');
+        expect(handle.getAttribute('aria-label')).toBe('Show tab bar');
+
+        handle.click();
+        expect(handle.getAttribute('aria-expanded')).toBe('true');
+        expect(handle.getAttribute('aria-label')).toBe('Hide tab bar');
+        expect(tabOptions.classList.contains('pa-tab-bar-visible')).toBe(true);
+
+        handle.click();
+        expect(handle.getAttribute('aria-expanded')).toBe('false');
+        expect(handle.getAttribute('aria-label')).toBe('Show tab bar');
+        expect(tabOptions.classList.contains('pa-tab-bar-visible')).toBe(false);
+    });
+
+    it('does not create duplicate handles on re-entry without onClose', async () => {
+        const { view, containerEl, tabOptions } = createMobileView();
+        await view.onOpen();
+        await view.onOpen();
+
+        const handles = walkAll(containerEl, (el) => el.classList.contains('pa-tab-bar-handle'));
+        expect(handles).toHaveLength(1);
+
+        const clickListeners = tabOptions.listeners.get('click')?.length ?? 0;
+        expect(clickListeners).toBe(1);
+    });
+
+    it('auto-dismisses the tab bar after 5 seconds', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl, tabOptions } = createMobileView();
+        await view.onOpen();
+
+        const handle = walk(containerEl, (el) => el.classList.contains('pa-tab-bar-handle'))!;
+        handle.click();
+        expect(tabOptions.classList.contains('pa-tab-bar-visible')).toBe(true);
+
+        jest.advanceTimersByTime(4999);
+        expect(tabOptions.classList.contains('pa-tab-bar-visible')).toBe(true);
+
+        jest.advanceTimersByTime(1);
+        expect(tabOptions.classList.contains('pa-tab-bar-visible')).toBe(false);
+        expect(handle.getAttribute('aria-expanded')).toBe('false');
     });
 });

@@ -390,6 +390,67 @@ body {
 	background: var(--background-primary);
 }
 
+/* ── Chat view host containers ──
+   Obsidian wraps the view in .workspace-leaf-content on desktop;
+   on mobile it adds .workspace-drawer-inner (with padding that exposes
+   a different background), .workspace-drawer-header (top bar), and
+   .workspace-drawer-tab-container (bottom tab switcher).
+   Unify all host containers to --background-primary so the chat body
+   blends seamlessly across all themes. Scoped via :has(.llm-view)
+   so other drawer tabs are unaffected. */
+body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
+	background: var(--background-primary) !important;
+}
+.workspace-drawer-inner:has(.llm-view) {
+	background: var(--background-primary);
+	padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));
+}
+.workspace-drawer-inner:has(.llm-view) > .workspace-drawer-header {
+	display: none;
+}
+.workspace-drawer-inner:has(.llm-view) > .workspace-drawer-tab-container {
+	background: var(--background-primary);
+}
+
+/* ── Mobile tab bar auto-hide (scoped to PA chat via :has) ── */
+.workspace-drawer-inner:has(.llm-view) .workspace-drawer-tab-options {
+	max-height: 0;
+	padding-top: 0;
+	padding-bottom: 0;
+	overflow: hidden;
+	opacity: 0;
+	pointer-events: none;
+	transition: max-height 0.2s ease, padding 0.2s ease, opacity 0.2s ease;
+}
+.workspace-drawer-inner:has(.llm-view) .workspace-drawer-tab-options.pa-tab-bar-visible {
+	max-height: 60px;
+	padding-top: 4px;
+	padding-bottom: 4px;
+	overflow: visible;
+	opacity: 1;
+	pointer-events: auto;
+	transition: max-height 0.2s ease, padding 0.2s ease, opacity 0.2s ease;
+}
+.pa-tab-bar-handle {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	min-height: 44px;
+	padding: 12px 0;
+	opacity: 0.5;
+	color: var(--text-muted);
+	cursor: pointer;
+	-webkit-tap-highlight-color: transparent;
+	flex-shrink: 0;
+}
+.pa-tab-bar-handle:active {
+	opacity: 0.85;
+}
+.pa-tab-bar-handle svg {
+	width: 20px;
+	height: 20px;
+}
+
 .llm-chat-container {
 	flex: 1 1 auto;
 	min-height: 0;

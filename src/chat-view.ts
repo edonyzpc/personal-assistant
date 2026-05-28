@@ -1,4 +1,4 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, setIcon, Modal, Setting, Component, type EventRef } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, MarkdownRenderer, setIcon, Modal, Setting, Component, Platform, type EventRef } from 'obsidian';
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatTurnMemoryMetadata } from './ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from './ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from './ai-services/pa-agent-history';
@@ -606,6 +606,10 @@ export class LLMView extends ItemView {
     private nativeKeyboardHeight = 0;
     private memoryStatusUnsubscribe: (() => void) | null = null;
     private markdownRenderOwners = new Set<Component>();
+    private mobileTabBarHandle: HTMLElement | null = null;
+    private mobileTabBarOptions: HTMLElement | null = null;
+    private mobileTabBarOptionsHandler: (() => void) | null = null;
+    private mobileTabBarDismissTimer: ReturnType<typeof setTimeout> | null = null;
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
@@ -656,6 +660,7 @@ export class LLMView extends ItemView {
         const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container' });
 
         const inputDiv = containerEl.createDiv({ cls: 'llm-input' });
+        this.setupMobileTabBarAutoHide(containerEl);
         const composerRow = inputDiv.createDiv({ cls: 'pa-chat-composer-row' });
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: 'Ask about your notes...' }
@@ -2898,6 +2903,7 @@ export class LLMView extends ItemView {
         this.disconnectStatusBarClearance();
         this.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
+        this.teardownMobileTabBarAutoHide();
     }
 
     private startViewSession(): number {
@@ -2911,6 +2917,75 @@ export class LLMView extends ItemView {
     private disconnectMemoryStatusListener() {
         this.memoryStatusUnsubscribe?.();
         this.memoryStatusUnsubscribe = null;
+    }
+
+    private setupMobileTabBarAutoHide(containerEl: HTMLElement) {
+        this.teardownMobileTabBarAutoHide();
+        if (!Platform.isMobile) return;
+        const tabContainer = containerEl.closest('.workspace-drawer-tab-container');
+        if (!tabContainer) return;
+        const tabOptions = tabContainer.querySelector<HTMLElement>('.workspace-drawer-tab-options');
+        if (!tabOptions) return;
+        this.mobileTabBarOptions = tabOptions;
+
+        const handle = document.createElement('div');
+        handle.className = 'pa-tab-bar-handle';
+        handle.setAttribute('aria-label', 'Show tab bar');
+        handle.setAttribute('aria-expanded', 'false');
+        setIcon(handle, 'chevron-up');
+        containerEl.appendChild(handle);
+        this.mobileTabBarHandle = handle;
+
+        const dismiss = () => {
+            tabOptions.classList.remove('pa-tab-bar-visible');
+            setIcon(handle, 'chevron-up');
+            handle.setAttribute('aria-label', 'Show tab bar');
+            handle.setAttribute('aria-expanded', 'false');
+        };
+        const scheduleDismiss = () => {
+            this.clearMobileTabBarDismissTimer();
+            this.mobileTabBarDismissTimer = setTimeout(dismiss, 5000);
+        };
+
+        handle.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (tabOptions.classList.contains('pa-tab-bar-visible')) {
+                this.clearMobileTabBarDismissTimer();
+                dismiss();
+            } else {
+                tabOptions.classList.add('pa-tab-bar-visible');
+                setIcon(handle, 'chevron-down');
+                handle.setAttribute('aria-label', 'Hide tab bar');
+                handle.setAttribute('aria-expanded', 'true');
+                scheduleDismiss();
+            }
+        });
+
+        const tabOptionsHandler = () => {
+            this.clearMobileTabBarDismissTimer();
+            scheduleDismiss();
+        };
+        tabOptions.addEventListener('click', tabOptionsHandler);
+        this.mobileTabBarOptionsHandler = tabOptionsHandler;
+    }
+
+    private teardownMobileTabBarAutoHide() {
+        this.clearMobileTabBarDismissTimer();
+        if (this.mobileTabBarOptions && this.mobileTabBarOptionsHandler) {
+            this.mobileTabBarOptions.removeEventListener('click', this.mobileTabBarOptionsHandler);
+        }
+        this.mobileTabBarOptionsHandler = null;
+        this.mobileTabBarOptions?.classList.remove('pa-tab-bar-visible');
+        this.mobileTabBarOptions = null;
+        this.mobileTabBarHandle?.remove();
+        this.mobileTabBarHandle = null;
+    }
+
+    private clearMobileTabBarDismissTimer() {
+        if (this.mobileTabBarDismissTimer !== null) {
+            clearTimeout(this.mobileTabBarDismissTimer);
+            this.mobileTabBarDismissTimer = null;
+        }
     }
 
     private observePanelDensity(containerEl: HTMLElement) {
