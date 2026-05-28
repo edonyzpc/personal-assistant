@@ -1183,10 +1183,15 @@ function getCanonicalToolCallDeltas(
     chunk: unknown,
     streamedToolNames: Map<string, string>,
 ): PaAgentModelStreamChunk[] {
-    return [
-        ...getNativeToolCallArray(chunk, "tool_calls"),
-        ...getNativeToolCallArray(chunk, "tool_call_chunks"),
-    ].flatMap((entry): PaAgentModelStreamChunk[] => {
+    // Prefer tool_call_chunks (LangChain raw streaming format) over tool_calls.
+    // tool_calls includes both LangChain's pre-parsed entries (args already an object)
+    // AND additional_kwargs.tool_calls (raw OpenAI-format string fragments). Combining
+    // both sources causes double-accumulation of argument fragments in the same buffer.
+    const rawChunks = getNativeToolCallArray(chunk, "tool_call_chunks");
+    const toolCallEntries = rawChunks.length > 0
+        ? rawChunks
+        : getNativeToolCallArray(chunk, "tool_calls");
+    return toolCallEntries.flatMap((entry): PaAgentModelStreamChunk[] => {
         const record = asRecord(entry);
         const functionRecord = asRecord(record?.function);
         const rawArgs = record?.args ?? record?.arguments ?? functionRecord?.arguments;
@@ -1194,6 +1199,16 @@ function getCanonicalToolCallDeltas(
         const explicitName = readNativeToolCallName(record, functionRecord);
         if (explicitName && key) {
             streamedToolNames.set(key, explicitName);
+            // Cross-register under index key so subsequent index-only streaming
+            // deltas can resolve the name (first chunk often has both id + index,
+            // while follow-up chunks only carry index).
+            const recordIndex = record?.index;
+            if (typeof recordIndex === "number") {
+                const indexKey = `index:${recordIndex}`;
+                if (indexKey !== key) {
+                    streamedToolNames.set(indexKey, explicitName);
+                }
+            }
         }
         const name = explicitName || (key ? streamedToolNames.get(key) : undefined);
         if (!name) return [];

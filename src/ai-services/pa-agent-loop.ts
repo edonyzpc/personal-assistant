@@ -1234,6 +1234,13 @@ function upsertToolCallBuffer(
 ): { buffer: BufferedToolCall; isNew: boolean } {
     const key = createToolCallBufferKey(chunk, buffers.length);
     let buffer = buffers.find((candidate) => candidate.key === key);
+    // Fallback: match by index when key format differs across stream chunks.
+    // First chunk may use id-based key ("id:call_...") while subsequent chunks
+    // only carry index ("index:0"). Without this fallback, arguments accumulate
+    // in an orphaned buffer and the original buffer stays empty.
+    if (!buffer && chunk.index !== undefined) {
+        buffer = buffers.find((candidate) => candidate.index === chunk.index);
+    }
     const isNew = buffer === undefined;
 
     if (!buffer) {
