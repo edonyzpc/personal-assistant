@@ -11,9 +11,9 @@
 ## Phase 总览
 
 ```
-Phase 1 (Done)     Phase 2 (Mid-term)           Phase 3 (数据驱动，按需启动)
-代码块保留          FTS5 Hybrid Retrieval         Query Rewrite 或 Reranker
-分数阈值过滤        unicode61 + RRF 融合           根据 Phase 2 miss case 决定做哪个
+Phase 1 (Done)     Phase 2 (Done)               Phase 3 (In Progress)
+代码块保留          FTS5 Hybrid Retrieval         Query Rewrite + LLM Reranker
+分数阈值过滤        Intl.Segmenter + RRF 融合      并行延迟优化，仅 +200ms overhead
 ```
 
 ---
@@ -130,33 +130,70 @@ RRF_score(doc) = Σ 1/(60 + rank_i)   // rank 1-indexed, k=60
 
 ---
 
-## Phase 3: 数据驱动的检索增强（按需启动）
+## Phase 3: Query Rewrite + LLM Reranker（并行延迟优化方案）
 
-Phase 2 稳定运行后，收集实际搜索 miss case，分析是**召回问题**还是**排序问题**，按需启动以下之一：
+双做 Rewrite + Reranker，通过并行化将延迟 overhead 压到仅 +200ms（等于只做 Reranker）。
 
-### 选项 A：改善 plannerGuidance（零成本优先）
+### 核心延迟优化
 
-agent 本身是 LLM，已经在构造 search_memory query。优化 `search_memory` tool 的 `plannerGuidance` prompt 指令（如明确要求保留专有名词、拆分中英文关键词），零延迟、零 token 成本。
+Rewrite 与 embedQuery 并行执行。embed ~250ms，Rewrite ~150ms，并行后 Rewrite 完全被 embed 遮蔽。
 
-**在考虑 LLM query rewrite 之前先穷尽这条路。**
+```
+Phase 2: 330ms          Phase 3: 530ms (+200ms only)
+embed(250) + worker(80)  embed‖rewrite(250) + worker(80) + reranker(200)
+```
 
-### 选项 B：LLM Reranker（排序问题时启动）
+### 时序图
 
-如果 miss case 显示 RRF 排序导致好结果被挤出 top-4：
-- 在 `normalizeSearchCandidates()` 返回 6 candidates 后，用 LLM 做 relevance scoring
-- 使用独立的 model 配置（不复用 `policyModelName`），避免与 capability classifier 耦合
-- 必须加 timeout（500ms）和 fallback
-- `memory-reranking` 状态基础设施已预埋
+```
+T=0:   ┬─→ embedQuery(originalQuery)      [~250ms network]
+       └─→ rewriteQuery(originalQuery)     [~150ms network, parallel]
 
-### 选项 C：Query Rewrite（召回问题时启动）
+T=150: rewrite done → keywordQuery ready   (embed still in flight)
+T=250: embed done → queryEmbedding ready
+       → buildFtsQuery(keywordQuery)        [~0ms local]
+       → searchHybrid(embedding, ftsQuery)  [~80ms worker]
 
-如果 miss case 显示 agent query 质量是瓶颈（plannerGuidance 调优后仍不足）：
-- 专门的 query rewrite LLM 调用，独立 model 配置
-- 可拆分为 semanticQuery + keywordQuery 分别喂两条检索腿
-- 必须加 timeout（500ms）和 fallback
+T=330: 6 candidates ready
+       → emit "memory-reranking" status
+       → rerankCandidates(query, candidates) [~200ms network]
 
-### 决策原则
+T=530: done ✓
+```
 
-- 不预先承诺同时做 B 和 C — 根据数据单独决策
-- 每个功能独立开关、独立 model 配置
-- 延迟预算：现有 classifier 用 qwen-turbo 给了 800ms timeout，任何新增 LLM 调用都要按 300-500ms 实际延迟估算
+设计取舍：embed 使用 originalQuery（不等 Rewrite 的 semanticQuery），换取并行性。Rewrite 只产出 `keywordQuery` 优化 FTS 腿。
+
+### Query Rewrite（`src/ai-services/query-rewriter.ts`）
+
+从原始 query 提取 2-6 个关键词用于 FTS 精确匹配：
+- 复用 `policyModelName`（qwen-turbo）
+- 返回 JSON `{"keywords":"..."}`
+- 短 query (≤3 tokens) 跳过
+- timeout 500ms，失败 fallback 到原始 query
+
+### LLM Reranker（`pa-agent-runtime.ts` 内）
+
+对 `normalizeSearchCandidates()` 返回的 6 candidates 做 relevance ranking：
+- 复用 `policyModelName`
+- 返回 JSON `{"ranking":[0,2,1,...]}`（按相关性排序的候选索引）
+- timeout 500ms，失败 fallback 到 RRF 原序
+- 发射 `{ type: "memory-reranking", candidateCount }` 状态
+
+### 降级策略
+
+| 条件 | 行为 |
+|------|------|
+| `policyModelName` 为空 | 跳过 rewrite 和 reranker，等价于 Phase 2 |
+| query ≤3 tokens | rewrite 跳过，FTS 用原始 query |
+| rewrite 超时/失败 | FTS 用原始 query |
+| reranker 超时/失败 | 保持 RRF 原序 |
+| candidates ≤1 | 跳过 reranker |
+
+### 文件变更
+
+| 文件 | 变更 |
+|------|------|
+| `src/ai-services/pa-agent-runtime.ts` | `searchVss()` 集成并行 rewrite + 串行 rerank |
+| `src/vss.ts` | `searchHybrid()` 增加可选 `ftsQueryOverride` 参数 |
+| **新** `src/ai-services/query-rewriter.ts` | `rewriteQuery()` |
+| **新** `__tests__/query-rewriter.test.ts` | rewrite 测试（mock LLM） |
