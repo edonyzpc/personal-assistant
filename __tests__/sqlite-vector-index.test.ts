@@ -172,6 +172,51 @@ describe('SqliteVectorIndex worker recovery', () => {
         }));
     });
 
+    it('sends searchHybrid with correct payload and returns fused results', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const hybridResults = [
+            { score: 0.032, distance: 0, doc: { pageContent: 'chunk1', metadata: { path: 'a.md', chunkIndex: 0 } } },
+            { score: 0.016, distance: 0, doc: { pageContent: 'chunk2', metadata: { path: 'b.md', chunkIndex: 0 } } },
+        ];
+        const worker = new MockWorker(true, hybridResults);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        const embedding = [0.1, 0.2, 0.3];
+        const results = await index.searchHybrid(embedding, '"渲 染"', 8, 12);
+
+        expect(results).toEqual(hybridResults);
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'searchHybrid',
+            payload: { queryEmbedding: embedding, ftsQuery: '"渲 染"', k: 8, fusionTopK: 12 },
+        }));
+    });
+
+    it('sends searchHybrid with null ftsQuery when no keyword query', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const worker = new MockWorker(true, []);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        const results = await index.searchHybrid([0.1], null, 8, 12);
+
+        expect(results).toEqual([]);
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'searchHybrid',
+            payload: { queryEmbedding: [0.1], ftsQuery: null, k: 8, fusionTopK: 12 },
+        }));
+    });
+
     it('reports unsupported worker fallback URLs when direct worker creation is blocked', async () => {
         Object.defineProperty(globalThis, 'Worker', {
             configurable: true,

@@ -42,7 +42,7 @@ export interface VSSChunk {
 
 export interface VectorSearchResult {
     score: number;
-    distance: number;
+    distance?: number;
     doc: Document;
 }
 
@@ -119,26 +119,6 @@ export function scoreFromDistance(distance: number, metric: VSSDistanceMetric): 
         return Math.max(-1, Math.min(1, 1 - distance));
     }
     return 1 / (1 + Math.max(0, distance));
-}
-
-export const RRF_K = 60;
-
-export function fuseRRF(
-    sources: number[][],
-    topK: number,
-): Map<number, number> {
-    const scores = new Map<number, number>();
-    for (const source of sources) {
-        for (let rank = 0; rank < source.length; rank++) {
-            const id = source[rank];
-            scores.set(id, (scores.get(id) ?? 0) + 1 / (RRF_K + rank + 1));
-        }
-    }
-    return new Map(
-        [...scores.entries()]
-            .sort(([, a], [, b]) => b - a)
-            .slice(0, topK),
-    );
 }
 
 export function estimateVectorMemoryBytes(chunkCount: number, dimensions: number): number {

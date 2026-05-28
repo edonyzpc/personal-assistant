@@ -2,7 +2,6 @@
 
 import sqlite3InitModule from "@sqliteai/sqlite-wasm";
 import {
-    fuseRRF,
     getEmbeddingProfileSignature,
     scoreFromDistance,
     VSS_SCHEMA_VERSION,
@@ -12,6 +11,7 @@ import {
     type VSSFileState,
     type VSSIndexStats,
 } from "./types";
+import { fuseRRF } from "./rrf";
 import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-protocol";
 
 type SQLiteDatabase = any; // sqlite-wasm's OO API is runtime-shaped and broad.
@@ -184,7 +184,7 @@ async function openOpfsDatabase(
         pool = await module.installOpfsSAHPoolVfs({
             name: options.vfsName ?? "opfs-sahpool",
             directory: options.directory ?? "/personal-assistant-vss",
-            initialCapacity: 8,
+            initialCapacity: 12,
             verbosity: 0,
             forceReinitIfPreviouslyFailed: true,
         });
@@ -578,9 +578,10 @@ function searchHybrid(
         resultRows: vectorRows,
     });
 
-    // FTS leg (skip when no valid query)
+    // FTS leg (skip when no valid query or total deadline exceeded)
+    const SEARCH_DEADLINE_MS = 500;
     const ftsRows: Array<Record<string, unknown>> = [];
-    if (ftsQuery) {
+    if (ftsQuery && performance.now() - startedAt < SEARCH_DEADLINE_MS) {
         try {
             database.exec({
                 sql: `
@@ -595,8 +596,10 @@ function searchHybrid(
                 rowMode: "object",
                 resultRows: ftsRows,
             });
-        } catch {
-            // Malformed FTS query — fall through with vector-only results
+        } catch (error) {
+            if (!(error instanceof Error) || !error.message.includes("fts5")) {
+                console.warn("[vss-worker] FTS search error:", error);
+            }
         }
     }
 
@@ -621,7 +624,6 @@ function searchHybrid(
         const metadata = parseMetadata(row.metadata);
         return {
             score,
-            distance: 0,
             doc: {
                 pageContent: primitiveString(row.content),
                 metadata: {

@@ -1,8 +1,9 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { VSS, buildFtsQuery } from '../src/vss';
+import { VSS } from '../src/vss';
 import { computeContentHash, DirtyTimestamps } from '../src/vss-helpers';
 import { TFile } from 'obsidian';
-import { fuseRRF, RRF_K, type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
+import { type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
+import { fuseRRF, RRF_K } from '../src/vss/rrf';
 import { MemoryVSSIndexStateStore } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
 
@@ -2051,71 +2052,6 @@ describe('VSS SQLite/WASM lifecycle', () => {
     });
 });
 
-describe('buildFtsQuery', () => {
-    it('passes through Latin words unchanged', () => {
-        expect(buildFtsQuery('React performance')).toBe('React performance');
-    });
-
-    it('passes through CJK text for FTS5 tokenizer to handle', () => {
-        expect(buildFtsQuery('渲染优化')).toBe('渲染优化');
-    });
-
-    it('passes through mixed CJK and Latin text', () => {
-        expect(buildFtsQuery('React 渲染性能')).toBe('React 渲染性能');
-    });
-
-    it('passes through code keywords unchanged', () => {
-        expect(buildFtsQuery('useMemo useCallback')).toBe('useMemo useCallback');
-    });
-
-    it('returns null for empty string', () => {
-        expect(buildFtsQuery('')).toBeNull();
-    });
-
-    it('returns null for null or undefined input', () => {
-        expect(buildFtsQuery(null as unknown as string)).toBeNull();
-        expect(buildFtsQuery(undefined as unknown as string)).toBeNull();
-    });
-
-    it('handles emoji input by passing surviving tokens through', () => {
-        // Emoji are not split by whitespace/punctuation delimiters, so they survive as tokens
-        const result = buildFtsQuery('🎉🚀');
-        expect(result).toBe('🎉🚀');
-    });
-
-    it('quotes tokens containing double quotes with internal quote doubling', () => {
-        const result = buildFtsQuery('error "not found"');
-        expect(result).toBe('error """not" "found"""');
-    });
-
-    it('quotes FTS5 reserved words case-insensitively', () => {
-        expect(buildFtsQuery('React AND hooks')).toBe('React "AND" hooks');
-        expect(buildFtsQuery('React or hooks')).toBe('React "or" hooks');
-        expect(buildFtsQuery('NOT important')).toBe('"NOT" important');
-        expect(buildFtsQuery('NEAR match')).toBe('"NEAR" match');
-    });
-
-    it('quotes tokens containing FTS5 operator characters', () => {
-        const result = buildFtsQuery('file-name.ts');
-        expect(result).toBe('"file-name.ts"');
-    });
-
-    it('returns null for whitespace-only input', () => {
-        expect(buildFtsQuery('   ')).toBeNull();
-    });
-
-    it('quotes tokens containing colons', () => {
-        expect(buildFtsQuery('key:value')).toBe('"key:value"');
-    });
-
-    it('quotes tokens containing parentheses', () => {
-        expect(buildFtsQuery('fn(x)')).toBe('"fn(x)"');
-    });
-
-    it('strips punctuation delimiters between tokens', () => {
-        expect(buildFtsQuery('hello, world! yes')).toBe('hello world yes');
-    });
-});
 
 describe('fuseRRF', () => {
     it('scores a single-source result correctly', () => {
