@@ -8,6 +8,7 @@ import {
   getFrontMatterInfo,
 } from "obsidian";
 import type { PluginManager } from "plugin";
+import { isPluginEnabled } from "../obsidian-internals";
 
 type Props = {
   app: App;
@@ -94,11 +95,6 @@ function getClosestMatchingFilePath(vault: Vault, mediaSrc: string, containingNo
 function getMediaUri(vault: Vault, mediaSrc: string, containingNotePath: string) {
   const matchingPath = getClosestMatchingFilePath(vault, mediaSrc, containingNotePath);
   return vault.adapter.getResourcePath(matchingPath);
-}
-
-function isPluginEnabled(app: App, pluginID: string) {
-  // @ts-expect-error obsidian plugins map
-  return app.plugins?.manifests?.hasOwnProperty(pluginID) && app.plugins?.enabledPlugins?.has(pluginID);
 }
 
 function getNoteUri(app: App, noteHref: string) {

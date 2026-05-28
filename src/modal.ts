@@ -3,6 +3,7 @@
 import { App, Notice, SuggestModal, addIcon, setIcon } from 'obsidian'
 
 import { icons } from './utils';
+import { getInternalPlugins } from './obsidian-internals';
 
 export interface Plugin {
     name: string;
@@ -12,22 +13,25 @@ export interface Plugin {
 }
 
 export class PluginControlModal extends SuggestModal<Plugin> {
-    private obsidianPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private readonly obsidianPlugins;
     private enabledColor = "green";
     private disabledColor = "red";
 
     constructor(app: App) {
         super(app);
-        this.obsidianPlugins = (app as any).plugins; // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.obsidianPlugins = getInternalPlugins(app);
+        if (!this.obsidianPlugins) {
+            new Notice('Plugin list unavailable');
+        }
     }
 
-    // Returns all available suggestions.
     getSuggestions(query: string): Plugin[] {
         'use strict'
+        if (!this.obsidianPlugins) return [];
         const disabledPlugins: Plugin[] = [];
         const enabledPlugins: Plugin[] = [];
         const plugins: Plugin[] = [];
-        for (const key of Object.keys((this.app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
+        for (const key of Object.keys(this.obsidianPlugins.manifests)) {
             const pluginObject: Plugin = {
                 name: this.obsidianPlugins.manifests[key].name,
                 id: this.obsidianPlugins.manifests[key].id,
@@ -71,8 +75,8 @@ export class PluginControlModal extends SuggestModal<Plugin> {
 
         try {
             const result = plugin.enbaled
-                ? await this.obsidianPlugins.disablePluginAndSave(plugin.id)
-                : await this.obsidianPlugins.enablePluginAndSave(plugin.id);
+                ? await this.obsidianPlugins?.disablePluginAndSave(plugin.id)
+                : await this.obsidianPlugins?.enablePluginAndSave(plugin.id);
 
             if (result === false) {
                 new Notice(`${action} plugin[${plugin.name}] failed, try it again`);

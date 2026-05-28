@@ -3,6 +3,7 @@
 import { Notice, Platform, normalizePath, type App, type WorkspaceLeaf } from "obsidian";
 
 import type { PluginManager } from "./plugin"
+import { executeCommandById } from './obsidian-internals';
 import { ViewType, ViewResize } from "./view";
 
 type GraphColorGroup = {
@@ -43,7 +44,7 @@ export class LocalGraph extends ViewResize {
         }
         // only hover local graph in desktop
         if (Platform.isDesktop && this.plugin.settings.localGraph.type === "popover") {
-            const ret = await (this.app as any).commands.executeCommandById("obsidian-hover-editor:convert-active-pane-to-popover"); // eslint-disable-line @typescript-eslint/no-explicit-any
+            const ret = executeCommandById(this.app, "obsidian-hover-editor:convert-active-pane-to-popover");
             if (!ret) {
                 new Notice("hover local graph failed");
                 return;

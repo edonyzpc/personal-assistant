@@ -3,6 +3,7 @@ import { App, Editor, MarkdownView, getFrontMatterInfo, type FrontMatterInfo } f
 import { EditorView } from '@codemirror/view';
 import { AIService } from './ai-services/service';
 import { PluginManager } from './plugin'
+import { getVaultTags } from './obsidian-internals';
 
 export class AssistantHelper {
     private editor: Editor
@@ -58,7 +59,7 @@ export class AssistantRobot {
         this.query = markdown.slice(this.fontmatterInfo.contentStart);
         this.view = view;
         this.selected = selected
-        this.tags = Object.keys((app.metadataCache as any).getTags()); // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.tags = Object.keys(getVaultTags(app));
         this.aiService = new AIService(plugin);
     }
 

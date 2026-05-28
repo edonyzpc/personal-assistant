@@ -5,6 +5,7 @@ import { gt, prerelease, valid } from "semver";
 import type { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, PluginReleaseFiles } from "./types/manifest";
 import { ProgressBar } from "./progress-bar";
+import { getPluginManifests, isPluginEnabled, enablePluginAndSave } from "./obsidian-internals";
 
 
 export class PluginsUpdater implements ObsidianManifest {
@@ -27,13 +28,11 @@ export class PluginsUpdater implements ObsidianManifest {
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
         this.URLCDN = `https://cdn.jsdelivr.net/gh/obsidianmd/obsidian-releases@master/community-plugins.json`;
         this.items = [];
-        for (const m of Object.values((app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
-            const id = (m as PluginManifest).id;
-            const i: Manifest = {
-                id,
-                version: (m as PluginManifest).version,
-            };
-            this.items.push(i);
+        for (const m of Object.values(getPluginManifests(app))) {
+            this.items.push({
+                id: m.id,
+                version: m.version,
+            });
         }
         this.totalPlugins = 0;
         this.checkedPlugins = 0;
@@ -129,7 +128,7 @@ export class PluginsUpdater implements ObsidianManifest {
     }
 
     private isPluginEnabled(pluginID: string): boolean {
-        return Boolean((this.app as any).plugins.enabledPlugins?.has(pluginID)); // eslint-disable-line @typescript-eslint/no-explicit-any
+        return isPluginEnabled(this.app, pluginID);
     }
 
     async isNeedToUpdate(latestRelease: JSON | null, currentVersion: string): Promise<UpdateStatus> {
@@ -252,7 +251,7 @@ export class PluginsUpdater implements ObsidianManifest {
         await Promise.all(promisePluginsUpdating);
         for (const pluginID of updatedPlugins) {
             if (this.isPluginEnabled(pluginID)) {
-                await (this.app as any).plugins.enablePluginAndSave(pluginID); // eslint-disable-line @typescript-eslint/no-explicit-any
+                await enablePluginAndSave(this.app, pluginID);
             }
         }
         this.log('All async plugin updating completed')

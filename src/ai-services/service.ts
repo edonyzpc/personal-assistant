@@ -7,7 +7,7 @@ import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
 import { AIUtils } from './ai-utils';
 import type { PluginManager } from '../plugin'
-import { isPluginEnabled } from 'utils';
+import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
 
 const isOkStatus = (status: number): boolean => status >= 200 && status < 300;
 const failedImageTaskStatuses = new Set(['FAILED', 'CANCELED']);
@@ -267,7 +267,7 @@ export class AIService {
     async generateTags(editor: Editor, view: MarkdownView, app: App): Promise<string[]> {
         const markdown = editor.getValue();
         const { content } = this.aiUtils.getDocumentContent(markdown);
-        const tags = Object.keys((app.metadataCache as any).getTags()); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const tags = Object.keys(getVaultTags(app));
 
         const prompt = this.getTagsPrompt(content, tags);
         const result = await this.callLLM(content, prompt);

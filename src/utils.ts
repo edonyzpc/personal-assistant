@@ -278,8 +278,3 @@ export class CryptoHelper {
 
 }
 
-export const isPluginEnabled = (app: App, pluginID: string) => {
-    return (
-        (app as any).plugins.manifests.hasOwnProperty(pluginID) && (app as any).plugins.enabledPlugins.has(pluginID) // eslint-disable-line @typescript-eslint/no-explicit-any
-    );
-};

@@ -1,20 +1,26 @@
 import { App, Modal, Notice, Setting, ToggleComponent } from 'obsidian'
 
 import { type Plugin } from './modal'
+import { getInternalPlugins } from './obsidian-internals';
 
 export class BatchPluginControlModal extends Modal {
-    private obsidianPlugins: any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    private readonly obsidianPlugins;
     constructor(app: App) {
         super(app);
-        this.obsidianPlugins = (app as any).plugins; // eslint-disable-line @typescript-eslint/no-explicit-any
+        this.obsidianPlugins = getInternalPlugins(app);
         this.contentEl.createEl('h3', { text: 'Batch Plugin Management', attr: { 'style': 'text-align:center;' } });
+
+        if (!this.obsidianPlugins) {
+            this.contentEl.createEl('p', { text: 'Plugin list unavailable.' });
+            return;
+        }
 
         const disabledPlugins: Plugin[] = [];
         const enabledPlugins: Plugin[] = [];
         const plugins: Plugin[] = [];
         const desiredPluginStates = new Map<string, { plugin: Plugin, enabled: boolean }>();
         const toggles: ToggleComponent[] = [];
-        for (const key of Object.keys((this.app as any).plugins.manifests)) { // eslint-disable-line @typescript-eslint/no-explicit-any
+        for (const key of Object.keys(this.obsidianPlugins.manifests)) {
             const pluginObject: Plugin = {
                 name: this.obsidianPlugins.manifests[key].name,
                 id: this.obsidianPlugins.manifests[key].id,
@@ -71,8 +77,8 @@ export class BatchPluginControlModal extends Modal {
                             try {
                                 console.log(`${action} ${plugin.name}`);
                                 const result = enabled
-                                    ? await this.obsidianPlugins.enablePluginAndSave(plugin.id)
-                                    : await this.obsidianPlugins.disablePluginAndSave(plugin.id);
+                                    ? await this.obsidianPlugins?.enablePluginAndSave(plugin.id)
+                                    : await this.obsidianPlugins?.disablePluginAndSave(plugin.id);
 
                                 if (result === false) {
                                     failedCount += 1;
