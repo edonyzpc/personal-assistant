@@ -27,6 +27,7 @@ import {
 } from './vss/types';
 import type { MemoryMaintenancePlan } from './memory-manager';
 import { confirmUserAction } from './confirm';
+import { buildFtsQuery } from './vss/fts-query-builder';
 
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
@@ -1379,7 +1380,7 @@ export class VSS {
         return results.map(normalizeSearchResult);
     }
 
-    async searchHybrid(prompt: string) {
+    async searchHybrid(prompt: string, options?: { ftsQueryOverride?: string | null }) {
         if (this.disposed) return [];
         await this.initialize();
         if (this.index) {
@@ -1398,7 +1399,9 @@ export class VSS {
 
         const profile = this.profile ?? this.createEmbeddingProfile();
         const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
-        const ftsQuery = buildFtsQuery(prompt);
+        const ftsQuery = options?.ftsQueryOverride != null
+            ? buildFtsQuery(options.ftsQueryOverride)
+            : buildFtsQuery(prompt);
         const queryEmbedding = await embeddings.embedQuery(prompt);
 
         if (!(this.index instanceof SqliteVectorIndex)) {
@@ -2545,25 +2548,4 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-/**
- * Build a FTS5 MATCH expression from a raw query string.
- * Escapes special characters and reserved words so they are treated as literals.
- * Returns `null` when no valid tokens remain (empty input, whitespace-only, etc.).
- */
-export function buildFtsQuery(query: string): string | null {
-    if (!query || typeof query !== "string") return null;
-
-    const FTS5_RESERVED = /^(NEAR|AND|OR|NOT)$/i;
-    const FTS5_SPECIAL = /["*^+\-():]/;
-
-    const rawTokens = query.split(/[\s,;!?。，；！？·]+/).filter(Boolean);
-
-    const tokens = rawTokens.map(token => {
-        if (FTS5_RESERVED.test(token) || FTS5_SPECIAL.test(token)) {
-            return `"${token.replace(/"/g, '""')}"`;
-        }
-        return token;
-    }).filter(t => t.length > 0);
-
-    return tokens.length > 0 ? tokens.join(" ") : null;
-}
+export { buildFtsQuery } from './vss/fts-query-builder';
