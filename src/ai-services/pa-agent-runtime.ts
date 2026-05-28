@@ -1,5 +1,6 @@
 import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate } from "@langchain/core/prompts";
 
+import { rewriteQuery, REWRITE_SYSTEM_PROMPT, REWRITE_TIMEOUT_MS } from "./query-rewriter";
 import type {
     AIUtils,
     NativeToolCallingValidation,
@@ -471,7 +472,7 @@ export class PaAgentRuntime {
         this.plugin = plugin;
         this.options = options;
         this.planner = new ChatPlanner(aiUtils);
-        this.memoryTool = new MemorySearchTool(plugin);
+        this.memoryTool = new MemorySearchTool(plugin, aiUtils);
         const runtimePlatform = this.options.runtimePlatform ?? "desktop";
         this.toolRegistry = new CapabilityRegistry({
             policyEngine: new PolicyEngine({ platform: runtimePlatform }),
@@ -768,11 +769,26 @@ class ChatPlanner {
 
 }
 
+const RERANK_TIMEOUT_MS = 30_000;
+
+const RERANK_SYSTEM_PROMPT = [
+    "You are a strict relevance filter for a personal knowledge base.",
+    "Task: Decide which candidates ACTUALLY help answer the query. Be conservative.",
+    "Rules:",
+    "- Include a candidate ONLY if its content directly addresses the query topic",
+    "- Omit candidates that merely share superficial keywords or are topically unrelated",
+    "- If NO candidates are relevant, return empty: {\"ranking\":[]}",
+    "- Order included candidates by relevance (most relevant first)",
+    'Return ONLY valid JSON: {"ranking":[...]} with 0-based candidate indices.',
+].join("\n");
+
 class MemorySearchTool {
     private readonly plugin: PluginManager;
+    private readonly aiUtils: AIUtils;
 
-    constructor(plugin: PluginManager) {
+    constructor(plugin: PluginManager, aiUtils: AIUtils) {
         this.plugin = plugin;
+        this.aiUtils = aiUtils;
     }
 
     async search(query: string, signal?: AbortSignal, onBeforeVssSearch?: () => void): Promise<MemorySearchResult> {
@@ -800,18 +816,128 @@ class MemorySearchTool {
 
     private async searchVss(query: string, signal?: AbortSignal): Promise<MemorySearchResult> {
         throwIfAborted(signal);
-        const rawResults = await this.plugin.vss.searchHybrid(query) as RawSearchResult[];
+
+        const policyModelName = this.plugin.settings.policyModelName.trim();
+
+        // Parallel: rewrite runs alongside embed inside searchHybrid
+        const rewritePromise = policyModelName
+            ? this.rewriteQueryWithTimeout(query, policyModelName, signal)
+            : Promise.resolve(null);
+
+        const ftsQueryOverride = await rewritePromise;
+        const rawResults = await this.plugin.vss.searchHybrid(query, {
+            ftsQueryOverride,
+        }) as RawSearchResult[];
+
         throwIfAborted(signal);
         const candidates = normalizeSearchCandidates(rawResults);
-        const documents = flattenCandidateDocuments(candidates).slice(0, MAX_MEMORY_DOCUMENTS);
+
+        // Serial: rerank after candidates are ready
+        const rankedCandidates = policyModelName
+            ? await this.rerankCandidates(query, candidates, policyModelName, signal)
+            : candidates;
+
+        const documents = flattenCandidateDocuments(rankedCandidates).slice(0, MAX_MEMORY_DOCUMENTS);
         return {
             usedMemory: documents.length > 0,
             query,
             documents,
             sources: documents.map((entry) => entry.source),
-            candidates,
+            candidates: rankedCandidates,
         };
     }
+
+    private async rewriteQueryWithTimeout(
+        query: string,
+        policyModelName: string,
+        signal?: AbortSignal,
+    ): Promise<string | null> {
+        const controller = new AbortController();
+        const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+        const timeoutId = setTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
+
+        try {
+            const llm = await this.aiUtils.createChatModel(0, {
+                transport: "native",
+                modelName: policyModelName,
+            });
+            const invoker = async (q: string, s?: AbortSignal) => {
+                const escapedSystemPrompt = REWRITE_SYSTEM_PROMPT.replace(/\{/g, "{{").replace(/\}/g, "}}");
+                const prompt = ChatPromptTemplate.fromMessages([
+                    SystemMessagePromptTemplate.fromTemplate(escapedSystemPrompt),
+                    HumanMessagePromptTemplate.fromTemplate("{query}"),
+                ]);
+                const response = await prompt.pipe(llm).invoke({ query: q }, { signal: s });
+                return typeof response.content === "string" ? response.content : "";
+            };
+            return await rewriteQuery(query, invoker, combinedSignal);
+        } catch {
+            return null;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+
+    private async rerankCandidates(
+        query: string,
+        candidates: MemoryCandidate[],
+        policyModelName: string,
+        signal?: AbortSignal,
+    ): Promise<MemoryCandidate[]> {
+        if (candidates.length <= 1) return candidates;
+
+        const controller = new AbortController();
+        const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
+        const timeoutId = setTimeout(() => controller.abort(), RERANK_TIMEOUT_MS);
+
+        try {
+            const llm = await this.aiUtils.createChatModel(0, {
+                transport: "native",
+                modelName: policyModelName,
+            });
+            const candidateList = candidates
+                .map((c, i) => `[${i}] ${c.path}: ${c.excerpt.slice(0, 200)}`)
+                .join("\n");
+            const escapedRerankPrompt = RERANK_SYSTEM_PROMPT.replace(/\{/g, "{{").replace(/\}/g, "}}");
+            const prompt = ChatPromptTemplate.fromMessages([
+                SystemMessagePromptTemplate.fromTemplate(escapedRerankPrompt),
+                HumanMessagePromptTemplate.fromTemplate("Query: {query}\n\nCandidates:\n{candidates}"),
+            ]);
+            const response = await prompt.pipe(llm).invoke(
+                { query, candidates: candidateList },
+                { signal: combinedSignal },
+            );
+            const content = typeof response.content === "string" ? response.content : "";
+            return parseRerankResponse(content, candidates);
+        } catch {
+            return candidates;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    }
+}
+
+export function parseRerankResponse(content: string, candidates: MemoryCandidate[]): MemoryCandidate[] {
+    const trimmed = content.trim();
+    const jsonMatch = trimmed.match(/\{[^}]*"ranking"\s*:\s*\[([^\]]*)\][^}]*\}/);
+    const arrayStr = jsonMatch?.[1];
+    if (!arrayStr) return candidates;
+
+    const indices = arrayStr.split(",")
+        .map((s) => parseInt(s.trim(), 10))
+        .filter((n) => !isNaN(n) && n >= 0 && n < candidates.length);
+
+    if (indices.length === 0) return candidates;
+
+    const seen = new Set<number>();
+    const result: MemoryCandidate[] = [];
+    for (const idx of indices) {
+        if (!seen.has(idx)) {
+            seen.add(idx);
+            result.push(candidates[idx]);
+        }
+    }
+    return result;
 }
 
 function formatPlannerToolDefinitions(definitions: ChatToolRegistryDefinition[]): string {

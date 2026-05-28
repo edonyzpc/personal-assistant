@@ -2,8 +2,10 @@ import { describe, expect, it } from "@jest/globals";
 
 import {
     normalizeSearchCandidates,
+    parseRerankResponse,
     type RawSearchResult,
 } from "../src/ai-services/pa-agent-runtime";
+import type { MemoryCandidate } from "../src/ai-services/chat-types";
 
 function makeResult(score: unknown, path: string, chunkIndex = 0): RawSearchResult {
     return {
@@ -80,5 +82,69 @@ describe("normalizeSearchCandidates score filtering", () => {
         ];
         const candidates = normalizeSearchCandidates(results);
         expect(candidates).toHaveLength(2);
+    });
+});
+
+function makeCandidate(path: string, score: number): MemoryCandidate {
+    return {
+        candidateId: path,
+        path,
+        score,
+        documents: [{ source: path, content: `content of ${path}`, metadata: { path, chunkIndex: 0 } }],
+        excerpt: `excerpt of ${path}`,
+    };
+}
+
+describe("parseRerankResponse", () => {
+    const candidates = [
+        makeCandidate("a.md", 0.03),
+        makeCandidate("b.md", 0.025),
+        makeCandidate("c.md", 0.02),
+        makeCandidate("d.md", 0.015),
+    ];
+
+    it("reorders candidates according to ranking", () => {
+        const result = parseRerankResponse('{"ranking":[2,0,3,1]}', candidates);
+        expect(result.map(c => c.path)).toEqual(["c.md", "a.md", "d.md", "b.md"]);
+    });
+
+    it("returns subset when ranking omits indices", () => {
+        const result = parseRerankResponse('{"ranking":[1,3]}', candidates);
+        expect(result.map(c => c.path)).toEqual(["b.md", "d.md"]);
+    });
+
+    it("returns original order for invalid JSON", () => {
+        const result = parseRerankResponse("not json at all", candidates);
+        expect(result).toBe(candidates);
+    });
+
+    it("returns original order for empty ranking array", () => {
+        const result = parseRerankResponse('{"ranking":[]}', candidates);
+        expect(result).toBe(candidates);
+    });
+
+    it("returns original order when missing ranking field", () => {
+        const result = parseRerankResponse('{"scores":[0.9,0.8]}', candidates);
+        expect(result).toBe(candidates);
+    });
+
+    it("ignores out-of-bounds indices", () => {
+        const result = parseRerankResponse('{"ranking":[0,99,2,-1]}', candidates);
+        expect(result.map(c => c.path)).toEqual(["a.md", "c.md"]);
+    });
+
+    it("deduplicates repeated indices", () => {
+        const result = parseRerankResponse('{"ranking":[1,1,0,1]}', candidates);
+        expect(result.map(c => c.path)).toEqual(["b.md", "a.md"]);
+    });
+
+    it("handles JSON with extra whitespace", () => {
+        const result = parseRerankResponse('  { "ranking" : [ 3 , 1 ] }  ', candidates);
+        expect(result.map(c => c.path)).toEqual(["d.md", "b.md"]);
+    });
+
+    it("extracts from markdown code fences", () => {
+        const result = parseRerankResponse('```json\n{"ranking":[2,0]}\n```', candidates);
+        expect(result.map(c => c.path)).toEqual(["c.md", "a.md"]);
     });
 });
