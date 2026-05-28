@@ -92,6 +92,17 @@ export class SqliteVectorIndex implements VectorIndex {
         return this.enqueue(() => this.send<VectorSearchResult[]>("search", { queryEmbedding, k }));
     }
 
+    searchHybrid(
+        queryEmbedding: number[],
+        ftsQuery: string | null,
+        k: number,
+        fusionTopK: number,
+    ): Promise<VectorSearchResult[]> {
+        return this.enqueue(() => this.send<VectorSearchResult[]>("searchHybrid", {
+            queryEmbedding, ftsQuery, k, fusionTopK,
+        }));
+    }
+
     getFileRecord(path: string): Promise<VSSFileRecord | null> {
         return this.enqueue(() => this.send<VSSFileRecord | null>("getFileRecord", { path }));
     }

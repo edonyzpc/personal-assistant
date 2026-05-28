@@ -1,8 +1,8 @@
 import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
-import { VSS } from '../src/vss';
+import { VSS, buildFtsQuery } from '../src/vss';
 import { computeContentHash, DirtyTimestamps } from '../src/vss-helpers';
 import { TFile } from 'obsidian';
-import type { EmbeddingProfile, VectorIndex, VectorIndexStatus, VectorSearchResult, VSSChunk, VSSFileRecord, VSSFileState, VSSIndexMarker, VSSIndexStats } from '../src/vss/types';
+import { fuseRRF, RRF_K, type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
 import { MemoryVSSIndexStateStore } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
 
@@ -2048,5 +2048,131 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(mockConfirmUserAction).not.toHaveBeenCalled();
         expect(mockAdapter.list).not.toHaveBeenCalledWith('cache');
         expect(mockAdapter.remove).not.toHaveBeenCalled();
+    });
+});
+
+describe('buildFtsQuery', () => {
+    it('passes through Latin words unchanged', () => {
+        expect(buildFtsQuery('React performance')).toBe('React performance');
+    });
+
+    it('passes through CJK text for FTS5 tokenizer to handle', () => {
+        expect(buildFtsQuery('渲染优化')).toBe('渲染优化');
+    });
+
+    it('passes through mixed CJK and Latin text', () => {
+        expect(buildFtsQuery('React 渲染性能')).toBe('React 渲染性能');
+    });
+
+    it('passes through code keywords unchanged', () => {
+        expect(buildFtsQuery('useMemo useCallback')).toBe('useMemo useCallback');
+    });
+
+    it('returns null for empty string', () => {
+        expect(buildFtsQuery('')).toBeNull();
+    });
+
+    it('returns null for null or undefined input', () => {
+        expect(buildFtsQuery(null as unknown as string)).toBeNull();
+        expect(buildFtsQuery(undefined as unknown as string)).toBeNull();
+    });
+
+    it('handles emoji input by passing surviving tokens through', () => {
+        // Emoji are not split by whitespace/punctuation delimiters, so they survive as tokens
+        const result = buildFtsQuery('🎉🚀');
+        expect(result).toBe('🎉🚀');
+    });
+
+    it('quotes tokens containing double quotes with internal quote doubling', () => {
+        const result = buildFtsQuery('error "not found"');
+        expect(result).toBe('error """not" "found"""');
+    });
+
+    it('quotes FTS5 reserved words case-insensitively', () => {
+        expect(buildFtsQuery('React AND hooks')).toBe('React "AND" hooks');
+        expect(buildFtsQuery('React or hooks')).toBe('React "or" hooks');
+        expect(buildFtsQuery('NOT important')).toBe('"NOT" important');
+        expect(buildFtsQuery('NEAR match')).toBe('"NEAR" match');
+    });
+
+    it('quotes tokens containing FTS5 operator characters', () => {
+        const result = buildFtsQuery('file-name.ts');
+        expect(result).toBe('"file-name.ts"');
+    });
+
+    it('returns null for whitespace-only input', () => {
+        expect(buildFtsQuery('   ')).toBeNull();
+    });
+
+    it('quotes tokens containing colons', () => {
+        expect(buildFtsQuery('key:value')).toBe('"key:value"');
+    });
+
+    it('quotes tokens containing parentheses', () => {
+        expect(buildFtsQuery('fn(x)')).toBe('"fn(x)"');
+    });
+
+    it('strips punctuation delimiters between tokens', () => {
+        expect(buildFtsQuery('hello, world! yes')).toBe('hello world yes');
+    });
+});
+
+describe('fuseRRF', () => {
+    it('scores a single-source result correctly', () => {
+        const result = fuseRRF([[10, 20, 30]], 10);
+        expect(result.size).toBe(3);
+        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 10);
+        expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2), 10);
+        expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 3), 10);
+    });
+
+    it('boosts overlapping documents from two sources', () => {
+        const result = fuseRRF([[10, 20], [20, 30]], 10);
+        expect(result.get(20)).toBeCloseTo(1 / (RRF_K + 2) + 1 / (RRF_K + 1), 10);
+        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 10);
+        expect(result.get(30)).toBeCloseTo(1 / (RRF_K + 2), 10);
+    });
+
+    it('ranks overlap above single-source rank-1 when both sources agree on rank-1', () => {
+        const result = fuseRRF([[10, 20], [10, 30]], 10);
+        const entries = [...result.entries()].sort(([, a], [, b]) => b - a);
+        expect(entries[0][0]).toBe(10);
+        expect(entries[0][1]).toBeCloseTo(2 / (RRF_K + 1), 10);
+    });
+
+    it('returns empty map for empty sources', () => {
+        expect(fuseRRF([[], []], 10).size).toBe(0);
+    });
+
+    it('returns empty map for no sources', () => {
+        expect(fuseRRF([], 10).size).toBe(0);
+    });
+
+    it('respects topK limit', () => {
+        const result = fuseRRF([[1, 2, 3, 4, 5]], 3);
+        expect(result.size).toBe(3);
+        expect(result.has(1)).toBe(true);
+        expect(result.has(2)).toBe(true);
+        expect(result.has(3)).toBe(true);
+        expect(result.has(4)).toBe(false);
+    });
+
+    it('preserves order by score in map iteration', () => {
+        const result = fuseRRF([[10, 20], [20, 10]], 10);
+        const ids = [...result.keys()];
+        expect(ids[0]).toBe(10);
+        expect(ids[1]).toBe(20);
+        expect(result.get(10)).toBe(result.get(20));
+    });
+
+    it('handles single-source fallback (FTS returns nothing)', () => {
+        const result = fuseRRF([[10, 20, 30], []], 10);
+        expect(result.size).toBe(3);
+        expect(result.get(10)).toBeCloseTo(1 / (RRF_K + 1), 10);
+    });
+
+    it('supports more than two sources', () => {
+        const result = fuseRRF([[10], [10], [10]], 10);
+        expect(result.get(10)).toBeCloseTo(3 / (RRF_K + 1), 10);
     });
 });

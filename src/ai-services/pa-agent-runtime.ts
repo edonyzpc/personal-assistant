@@ -119,7 +119,7 @@ const MAX_MEMORY_CHARS = 2000;
 const MAX_MEMORY_RERANK_CANDIDATES = 6;
 const MAX_MEMORY_CANDIDATE_CHUNKS = 2;
 const MAX_MEMORY_CANDIDATE_EXCERPT_CHARS = 500;
-const MIN_MEMORY_SCORE = 0.30;
+const MIN_MEMORY_SCORE = 0.01;
 export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 12000;
 export const canFallbackToNonStreaming = (
     error: unknown,
@@ -800,7 +800,7 @@ class MemorySearchTool {
 
     private async searchVss(query: string, signal?: AbortSignal): Promise<MemorySearchResult> {
         throwIfAborted(signal);
-        const rawResults = await this.plugin.vss.searchSimilarity(query) as RawSearchResult[];
+        const rawResults = await this.plugin.vss.searchHybrid(query) as RawSearchResult[];
         throwIfAborted(signal);
         const candidates = normalizeSearchCandidates(rawResults);
         const documents = flattenCandidateDocuments(candidates).slice(0, MAX_MEMORY_DOCUMENTS);

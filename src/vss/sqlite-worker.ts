@@ -2,6 +2,7 @@
 
 import sqlite3InitModule from "@sqliteai/sqlite-wasm";
 import {
+    fuseRRF,
     getEmbeddingProfileSignature,
     scoreFromDistance,
     VSS_SCHEMA_VERSION,
@@ -88,6 +89,14 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
         case "search":
             requireDb();
             return search(request.payload.queryEmbedding, request.payload.k);
+        case "searchHybrid":
+            requireDb();
+            return searchHybrid(
+                request.payload.queryEmbedding,
+                request.payload.ftsQuery,
+                request.payload.k,
+                request.payload.fusionTopK,
+            );
         case "getFileRecord":
             requireDb();
             return getFileRecord(request.payload.path);
@@ -137,6 +146,7 @@ async function initialize(
         }
 
         createSchema(db);
+        backfillFtsIfNeeded(db);
         const storedSignature = getMeta("profileSignature");
         const profileSignature = getEmbeddingProfileSignature(profile);
 
@@ -327,7 +337,41 @@ function createSchema(database: SQLiteDatabase): void {
         );
 
         CREATE INDEX IF NOT EXISTS idx_vss_chunks_path ON vss_chunks(path);
+
+        CREATE VIRTUAL TABLE IF NOT EXISTS vss_chunks_fts USING fts5(
+            content,
+            content='',
+            contentless_delete=1,
+            tokenize='unicode61 remove_diacritics 2'
+        );
     `);
+}
+
+function backfillFtsIfNeeded(database: SQLiteDatabase): void {
+    const ftsCount = getNumberValueFrom(database, "SELECT COUNT(*) FROM vss_chunks_fts");
+    const chunkCount = getNumberValueFrom(database, "SELECT COUNT(*) FROM vss_chunks");
+    if (chunkCount === 0 || ftsCount === chunkCount) return;
+    // Partial backfill recovery: clear and re-insert atomically
+    database.exec("BEGIN");
+    try {
+        database.exec("DELETE FROM vss_chunks_fts");
+        database.exec("INSERT INTO vss_chunks_fts(rowid, content) SELECT id, content FROM vss_chunks");
+        database.exec("COMMIT");
+    } catch (error) {
+        database.exec("ROLLBACK");
+        throw error;
+    }
+}
+
+function getNumberValueFrom(database: SQLiteDatabase, sql: string): number {
+    const rows: unknown[][] = [];
+    database.exec({
+        sql,
+        rowMode: "array",
+        resultRows: rows,
+    });
+    const value = rows[0]?.[0];
+    return typeof value === "number" ? value : Number(value ?? 0);
 }
 
 function initializeVectorColumn(profile: EmbeddingProfile): void {
@@ -385,6 +429,12 @@ function upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: num
             chunkStmt.finalize();
         }
 
+        database.exec({
+            sql: `INSERT INTO vss_chunks_fts(rowid, content)
+                  SELECT id, content FROM vss_chunks WHERE path = ?`,
+            bind: [fileState.path],
+        });
+
         database.exec("COMMIT");
         status = "ready";
         lastRefreshDurationMs = performance.now() - startedAt;
@@ -397,6 +447,11 @@ function upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: num
 
 function deleteFile(path: string): void {
     const database = requireDb();
+    // FTS delete must precede chunks delete — subquery reads vss_chunks.id
+    database.exec({
+        sql: "DELETE FROM vss_chunks_fts WHERE rowid IN (SELECT id FROM vss_chunks WHERE path = ?)",
+        bind: [path],
+    });
     database.exec({
         sql: "DELETE FROM vss_chunks WHERE path = ?",
         bind: [path],
@@ -494,6 +549,91 @@ function search(queryEmbedding: number[], k: number): unknown[] {
     });
 }
 
+function searchHybrid(
+    queryEmbedding: number[],
+    ftsQuery: string | null,
+    k: number,
+    fusionTopK: number,
+): unknown[] {
+    const profile = activeProfile;
+    if (!profile) {
+        throw createWorkerError("profile-missing", "SQLite vector index has no active embedding profile.");
+    }
+    initializeVectorColumn(profile);
+    const startedAt = performance.now();
+    const database = requireDb();
+
+    // Vector leg
+    const vectorRows: Array<Record<string, unknown>> = [];
+    database.exec({
+        sql: `
+            SELECT c.id, c.path, c.chunk_index, c.content, c.metadata
+            FROM vector_full_scan('vss_chunks', 'embedding', vector_as_f32(?), ?) AS v
+            JOIN vss_chunks AS c ON c.id = v.rowid
+            ORDER BY v.distance ASC
+            LIMIT ?
+        `,
+        bind: [JSON.stringify(queryEmbedding), k, k],
+        rowMode: "object",
+        resultRows: vectorRows,
+    });
+
+    // FTS leg (skip when no valid query)
+    const ftsRows: Array<Record<string, unknown>> = [];
+    if (ftsQuery) {
+        try {
+            database.exec({
+                sql: `
+                    SELECT c.id, c.path, c.chunk_index, c.content, c.metadata
+                    FROM vss_chunks_fts
+                    JOIN vss_chunks AS c ON c.id = vss_chunks_fts.rowid
+                    WHERE vss_chunks_fts MATCH ?
+                    ORDER BY rank
+                    LIMIT ?
+                `,
+                bind: [ftsQuery, k],
+                rowMode: "object",
+                resultRows: ftsRows,
+            });
+        } catch {
+            // Malformed FTS query — fall through with vector-only results
+        }
+    }
+
+    // RRF fusion
+    const rowById = new Map<number, Record<string, unknown>>();
+    const vectorIds = vectorRows.map((row) => {
+        const id = Number(row.id);
+        rowById.set(id, row);
+        return id;
+    });
+    const ftsIds = ftsRows.map((row) => {
+        const id = Number(row.id);
+        if (!rowById.has(id)) rowById.set(id, row);
+        return id;
+    });
+
+    const fusedScores = fuseRRF([vectorIds, ftsIds], fusionTopK);
+
+    lastSearchDurationMs = performance.now() - startedAt;
+    return [...fusedScores.entries()].map(([id, score]) => {
+        const row = rowById.get(id)!;
+        const metadata = parseMetadata(row.metadata);
+        return {
+            score,
+            distance: 0,
+            doc: {
+                pageContent: primitiveString(row.content),
+                metadata: {
+                    ...metadata,
+                    path: primitiveString(row.path, primitiveString(metadata.path)),
+                    chunkIndex: Number(row.chunk_index ?? metadata.chunkIndex ?? 0),
+                },
+            },
+        };
+    });
+}
+
 function getFileRecord(path: string): VSSFileRecord | null {
     const rows: Array<Record<string, unknown>> = [];
     requireDb().exec({
@@ -548,6 +688,13 @@ function verify(): VSSIndexStats["status"] {
         status = "stale";
         return status;
     }
+
+    try {
+        database.exec("INSERT INTO vss_chunks_fts(vss_chunks_fts) VALUES('integrity-check')");
+    } catch (ftsError) {
+        console.warn("FTS5 integrity-check failed (non-blocking):", ftsError);
+    }
+
     status = "ready";
     return status;
 }
@@ -573,6 +720,7 @@ function getStats(): VSSIndexStats {
 function reset(): void {
     const database = requireDb();
     database.exec(`
+        DROP TABLE IF EXISTS vss_chunks_fts;
         DROP TABLE IF EXISTS vss_chunks;
         DROP TABLE IF EXISTS vss_files;
         DROP TABLE IF EXISTS vss_meta;

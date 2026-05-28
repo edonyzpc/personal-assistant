@@ -1379,6 +1379,37 @@ export class VSS {
         return results.map(normalizeSearchResult);
     }
 
+    async searchHybrid(prompt: string) {
+        if (this.disposed) return [];
+        await this.initialize();
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+        }
+        if (!this.index || this.status === "uninitialized") {
+            return [];
+        }
+        if (this.status === "missing-local-index") {
+            this.showMissingIndexNotice();
+            return [];
+        }
+        if (this.status !== "ready") {
+            return [];
+        }
+
+        const profile = this.profile ?? this.createEmbeddingProfile();
+        const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
+        const ftsQuery = buildFtsQuery(prompt);
+        const queryEmbedding = await embeddings.embedQuery(prompt);
+
+        if (!(this.index instanceof SqliteVectorIndex)) {
+            const results = await this.index.search(queryEmbedding, 8);
+            return results.map(normalizeSearchResult);
+        }
+
+        const results = await this.index.searchHybrid(queryEmbedding, ftsQuery, 8, 12);
+        return results.map(normalizeSearchResult);
+    }
+
     async getStats(options: { mode?: VSSIndexOpenMode } = {}): Promise<VSSIndexStats> {
         if (this.disposed) {
             return this.createUnavailableStats("uninitialized");
@@ -2512,4 +2543,27 @@ function isMissingFileError(error: unknown): boolean {
 
 function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Build a FTS5 MATCH expression from a raw query string.
+ * Escapes special characters and reserved words so they are treated as literals.
+ * Returns `null` when no valid tokens remain (empty input, whitespace-only, etc.).
+ */
+export function buildFtsQuery(query: string): string | null {
+    if (!query || typeof query !== "string") return null;
+
+    const FTS5_RESERVED = /^(NEAR|AND|OR|NOT)$/i;
+    const FTS5_SPECIAL = /["*^+\-():]/;
+
+    const rawTokens = query.split(/[\s,;!?。，；！？·]+/).filter(Boolean);
+
+    const tokens = rawTokens.map(token => {
+        if (FTS5_RESERVED.test(token) || FTS5_SPECIAL.test(token)) {
+            return `"${token.replace(/"/g, '""')}"`;
+        }
+        return token;
+    }).filter(t => t.length > 0);
+
+    return tokens.length > 0 ? tokens.join(" ") : null;
 }
