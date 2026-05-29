@@ -8,7 +8,7 @@ import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, icons, personalAssitant } from './utils';
@@ -96,6 +96,16 @@ export class PluginManager extends Plugin {
     private localGraph = new LocalGraph(this.app, this);
     calloutManager: CalloutManager<true> | undefined;
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
+    // Runtime-only state: tracks whether the "update-metadata" command has armed
+    // the file-open listener for this session. Not persisted — restarting the
+    // app should always start with the listener disarmed.
+    private isEnabledMetadataUpdating: boolean = false;
+    // True when the loaded data blob has the shape of a legacy v1.x install:
+    // non-empty but missing the `aiProvider` field. Used by migrateSettings
+    // to apply the qwen default exactly once on the upgrade path, rather
+    // than every time aiProvider happens to be empty (which is also a
+    // valid Phase 3 state on fresh installs and after the user clears it).
+    private needsLegacyAiProviderMigration: boolean = false;
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
     vss!: VSS;
@@ -271,14 +281,14 @@ export class PluginManager extends Plugin {
             name: "Update metadata with one command",
             callback: async () => {
                 if (this.settings.enableMetadataUpdating) {
-                    if (this.settings.isEnabledMetadataUpdating) {
+                    if (this.isEnabledMetadataUpdating) {
                         // if the command has already triggered, disable it and remove status
                         const statusBar = document.getElementById("personal-assistant-statusbar");
                         statusBar?.removeClass("personal-assistant-statusbar-breathing");
                         // empty debounce which will stop updating metadata
                         this.updateDebouncer = debounce((file) => { }, 100, true);
                         // update the command triggered status
-                        this.settings.isEnabledMetadataUpdating = false;
+                        this.isEnabledMetadataUpdating = false;
                     } else {
                         this.updateDebouncer = debounce(this.updateMetadata, 100, true);
                         // if updating metadata is enabled, set the status and monitor the events to update metadata
@@ -288,7 +298,7 @@ export class PluginManager extends Plugin {
                             this.updateDebouncer(file);
                         }));
                         // update the command triggered status
-                        this.settings.isEnabledMetadataUpdating = true;
+                        this.isEnabledMetadataUpdating = true;
                     }
                 } else {
                     new Notice("update metadata command is not enabled in setting tab");
@@ -467,7 +477,16 @@ export class PluginManager extends Plugin {
     }
 
     async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        const loaded = await this.loadData();
+        const fresh = isFreshInstall(loaded);
+        this.needsLegacyAiProviderMigration = isLegacyV1Install(loaded);
+        this.settings = mergeLoadedSettings(loaded);
+        if (fresh) {
+            // Force an explicit provider choice on first run instead of
+            // defaulting to qwen. The Settings UI renders a "Choose your
+            // AI provider" prompt while aiProvider is empty.
+            this.settings.aiProvider = "";
+        }
         this.log("Settings loaded", this.settings);
     }
 
@@ -966,13 +985,19 @@ export class PluginManager extends Plugin {
     private async migrateSettings(): Promise<void> {
         try {
             let changed = false;
-            // 如果aiProvider未设置，说明是旧版本，进行迁移
-            if (!this.settings.aiProvider) {
+            // Legacy v1.x migration: pre-Provider users had no aiProvider field
+            // and stored their model in `modelName`. Detected by the *shape* of
+            // the persisted blob (non-empty AND lacking aiProvider) rather than
+            // a runtime "is empty now" check, so we don't re-trigger on every
+            // launch where aiProvider happens to be "" (fresh install, or the
+            // user intentionally cleared it via the new provider chooser).
+            if (this.needsLegacyAiProviderMigration) {
                 this.log("Migrating settings from old version");
                 this.settings.aiProvider = 'qwen';
                 this.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
                 this.settings.chatModelName = this.settings.modelName || 'qwen-plus';
                 this.settings.embeddingModelName = 'text-embedding-v3';
+                this.needsLegacyAiProviderMigration = false;
                 changed = true;
             }
             const normalizedStatisticsType = normalizeStatisticsView(this.settings.statisticsType);
@@ -1021,6 +1046,14 @@ export class PluginManager extends Plugin {
             }
             if ("paAgentAnswerStreamEnabled" in this.settings) {
                 delete (this.settings as Partial<PluginManagerSettings> & { paAgentAnswerStreamEnabled?: unknown }).paAgentAnswerStreamEnabled;
+                changed = true;
+            }
+            // isEnabledMetadataUpdating used to be persisted alongside the user-facing
+            // enableMetadataUpdating toggle, but it is runtime state (whether the
+            // file-open listener is armed for this session) and should not survive
+            // restarts. Strip it from data.json on load.
+            if ("isEnabledMetadataUpdating" in this.settings) {
+                delete (this.settings as Partial<PluginManagerSettings> & { isEnabledMetadataUpdating?: unknown }).isEnabledMetadataUpdating;
                 changed = true;
             }
             // v2.0.0 removed Ollama provider support. Users upgrading from v1.x with
@@ -1109,7 +1142,14 @@ export class PluginManager extends Plugin {
                     changed = true;
                     this.log("API token migrated to OS keychain");
                 } else {
+                    // Decryption failed — likely a key change, corrupted blob, or a
+                    // pasted plaintext token. Clear the residual value so the
+                    // ciphertext (or plaintext) does not stay on disk forever and
+                    // re-trigger this Notice on every launch.
                     new Notice("API token migration failed. Please re-enter your token in Settings.", 8000);
+                    this.settings.apiToken = "";
+                    changed = true;
+                    this.log("API token migration failed; cleared residual value from data.json");
                 }
             }
             if (changed) {
