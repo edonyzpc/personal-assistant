@@ -38,6 +38,12 @@
 
 ## Completed Priority Items
 
+- [x] Complete RAG Phase 3: Query Rewrite + LLM Reranker.
+  - Context: Phase 2 (FTS5 Hybrid Retrieval + RRF) was complete; Phase 3 adds LLM-based query rewriting for better FTS keywords and LLM reranking for improved relevance ordering.
+  - Result: `query-rewriter.ts` extracts 2-6 keywords from user query via `policyModelName` LLM; `pa-agent-runtime.ts` integrates serial rewrite→searchHybrid→rerank pipeline with graceful degradation (short query skip, timeout fallback, candidates ≤1 skip).
+  - Evidence: `__tests__/query-rewriter.test.ts` (136 lines); `__tests__/pa-agent-runtime-memory.test.ts` (150 lines); `npm test` passing.
+  - Source docs: `docs/rag-hybrid-retrieval-plan.md`.
+
 - [x] Implement generic PA Agent answer-completion controller.
   - Context: mobile and desktop smoke exposed repeated `Answer incomplete` paths caused by the same runtime gap: tool execution outcomes, required-capability policy, duplicate/no-op results, and empty assistant turns did not share one answer-readiness contract.
   - Result: `pa-agent-answer-completion-policy.ts` now derives turn facts, tracks a run evidence ledger, and returns generic finalization decisions. Required-capability HostPolicy uses that controller for failed required tools, duplicate/no-op tool results, and empty assistant turns after observations. `PaAgentLoop` carries `toolMode: final_answer_only`, and PA answer-stream finalization turns export no tool schemas while keeping existing observations available to the model.

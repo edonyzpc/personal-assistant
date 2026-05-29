@@ -11,9 +11,9 @@
 ## Phase 总览
 
 ```
-Phase 1 (Done)     Phase 2 (Done)               Phase 3 (In Progress)
+Phase 1 (Done)     Phase 2 (Done)               Phase 3 (Done)
 代码块保留          FTS5 Hybrid Retrieval         Query Rewrite + LLM Reranker
-分数阈值过滤        Intl.Segmenter + RRF 融合      并行延迟优化，仅 +200ms overhead
+分数阈值过滤        Intl.Segmenter + RRF 融合      串行 rewrite→hybrid→rerank
 ```
 
 ---
@@ -58,7 +58,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS vss_chunks_fts USING fts5(
 
 ### FTS Query 构造
 
-内联到 `vss.ts` 的简单函数（~20 行），不单独建文件：
+独立模块 `src/vss/fts-query-builder.ts`（~64 行）：
 - 转义 FTS5 特殊字符（`"`、`*`、`^`、`+`、`-`、`NEAR`、括号）
 - 按空格/标点拆分为 token，过滤空 token
 - 返回 `null` 表示无有效 token（空 query / 全 emoji），调用方跳过 FTS 腿
@@ -79,10 +79,12 @@ RRF_score(doc) = Σ 1/(60 + rank_i)   // rank 1-indexed, k=60
 | `src/vss/sqlite-worker.ts` | FTS5 DDL 加入 `createSchema()`、upsert/delete/reset 同步、`searchHybrid()` handler、空表回填 |
 | `src/vss/sqlite-worker-protocol.ts` | `"searchHybrid"` request/response 类型 |
 | `src/vss/sqlite-vector-index.ts` | `searchHybrid()` proxy 方法（加在具体类上，不改 `VectorIndex` 接口） |
-| `src/vss.ts` | `searchHybrid()` 方法 + 内联 `buildFtsQuery()` |
+| `src/vss.ts` | `searchHybrid()` 方法，import `buildFtsQuery` |
 | `src/ai-services/pa-agent-runtime.ts` | `searchVss()` 改用 `searchHybrid()`，`MIN_MEMORY_SCORE` 重标定 |
+| **新** `src/vss/fts-query-builder.ts` | `buildFtsQuery()` 独立模块（转义 + 分词 + null 保护） |
+| **新** `src/vss/rrf.ts` | RRF 融合算法独立模块 |
 
-共 5 个文件，0 个新建文件。
+共 7 个文件，2 个新建文件。
 
 ### 必须处理的风险
 
@@ -124,67 +126,51 @@ RRF_score(doc) = Σ 1/(60 + rank_i)   // rank 1-indexed, k=60
 ### 实施子步骤
 
 1. **2a**: FTS5 DDL + reset/verify 安全 + 空表回填
-2. **2b**: `buildFtsQuery()` 内联 + 空 query 保护
-3. **2c**: `searchHybrid` worker 协议 + RRF 融合
+2. **2b**: `buildFtsQuery()` 独立模块 + 空 query 保护
+3. **2c**: `searchHybrid` worker 协议 + RRF 融合（独立模块 `src/vss/rrf.ts`）
 4. **2d**: 接入 MemorySearchTool，MIN_MEMORY_SCORE 重标定
 
 ---
 
-## Phase 3: Query Rewrite + LLM Reranker（并行延迟优化方案）
+## Phase 3: Query Rewrite + LLM Reranker（串行管线）
 
-双做 Rewrite + Reranker，通过并行化将延迟 overhead 压到仅 +200ms（等于只做 Reranker）。
+Rewrite → searchHybrid → Reranker 串行执行。Rewrite 先完成得到 `keywordQuery`，作为 `ftsQueryOverride` 传入 `searchHybrid`（embed 在 searchHybrid 内部执行），最后 Reranker 对候选做 relevance ranking。
 
-### 核心延迟优化
-
-Rewrite 与 embedQuery 并行执行。embed ~250ms，Rewrite ~150ms，并行后 Rewrite 完全被 embed 遮蔽。
+### 实际时序
 
 ```
-Phase 2: 330ms          Phase 3: 530ms (+200ms only)
-embed(250) + worker(80)  embed‖rewrite(250) + worker(80) + reranker(200)
-```
-
-### 时序图
-
-```
-T=0:   ┬─→ embedQuery(originalQuery)      [~250ms network]
-       └─→ rewriteQuery(originalQuery)     [~150ms network, parallel]
-
-T=150: rewrite done → keywordQuery ready   (embed still in flight)
-T=250: embed done → queryEmbedding ready
-       → buildFtsQuery(keywordQuery)        [~0ms local]
-       → searchHybrid(embedding, ftsQuery)  [~80ms worker]
-
-T=330: 6 candidates ready
-       → emit "memory-reranking" status
+T=0:   rewriteQuery(originalQuery)         [~150ms network]
+T=150: keywordQuery ready
+       → searchHybrid(query, {ftsQueryOverride})
+         内部: embedQuery(query) [~250ms] + buildFtsQuery(keywordQuery) + worker [~80ms]
+T=480: 6 candidates ready
        → rerankCandidates(query, candidates) [~200ms network]
-
-T=530: done ✓
+T=680: done ✓
 ```
 
-设计取舍：embed 使用 originalQuery（不等 Rewrite 的 semanticQuery），换取并行性。Rewrite 只产出 `keywordQuery` 优化 FTS 腿。
+设计取舍：Rewrite 结果作为 `ftsQueryOverride` 传入 searchHybrid 优化 FTS 腿；embed 仍使用 originalQuery 保证语义召回质量。
 
 ### Query Rewrite（`src/ai-services/query-rewriter.ts`）
 
 从原始 query 提取 2-6 个关键词用于 FTS 精确匹配：
 - 复用 `policyModelName`（qwen-turbo）
 - 返回 JSON `{"keywords":"..."}`
-- 短 query (≤3 tokens) 跳过
-- timeout 500ms，失败 fallback 到原始 query
+- 短 query 跳过（`tokens < 4` 且 `length ≤ 15`，兼顾 CJK 长句判断）
+- timeout 30s（`REWRITE_TIMEOUT_MS`），失败 fallback 到原始 query
 
 ### LLM Reranker（`pa-agent-runtime.ts` 内）
 
 对 `normalizeSearchCandidates()` 返回的 6 candidates 做 relevance ranking：
 - 复用 `policyModelName`
 - 返回 JSON `{"ranking":[0,2,1,...]}`（按相关性排序的候选索引）
-- timeout 500ms，失败 fallback 到 RRF 原序
-- 发射 `{ type: "memory-reranking", candidateCount }` 状态
+- timeout 30s（`RERANK_TIMEOUT_MS`），失败 fallback 到 RRF 原序
 
 ### 降级策略
 
 | 条件 | 行为 |
 |------|------|
 | `policyModelName` 为空 | 跳过 rewrite 和 reranker，等价于 Phase 2 |
-| query ≤3 tokens | rewrite 跳过，FTS 用原始 query |
+| 短 query（tokens < 4 且 length ≤ 15） | rewrite 跳过，FTS 用原始 query |
 | rewrite 超时/失败 | FTS 用原始 query |
 | reranker 超时/失败 | 保持 RRF 原序 |
 | candidates ≤1 | 跳过 reranker |
