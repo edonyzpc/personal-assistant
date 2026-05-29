@@ -37,6 +37,15 @@ describe("PA Agent required capability HostPolicy", () => {
             ]);
         });
 
+        it("classifies latest/today freshness questions with external nouns as required", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("What's the latest Obsidian release?").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", confidence: 0.9, level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("What is today's weather in Shanghai?").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", confidence: 0.9, level: "required" }),
+            ]);
+        });
+
         it("classifies English search_memory strong-signal inputs as required", () => {
             expect(classifyRequiredCapabilitiesDeterministic("Check my notes for the spec.").items).toEqual([
                 expect.objectContaining({ capability: "search_memory", confidence: 0.9, level: "required" }),

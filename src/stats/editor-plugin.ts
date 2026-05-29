@@ -3,8 +3,7 @@ import { ViewUpdate, EditorView, ViewPlugin, Decoration, WidgetType } from "@cod
 import type { DecorationSet, PluginValue } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
 import type PluginManager from "../main";
-import { getWordCount } from "./stats-utils";
-import { MATCH_COMMENT, MATCH_HTML_COMMENT } from "../constant";
+import { cleanCommentsPreservingNewlines, getWordCount } from "./stats-utils";
 
 export const pluginField = StateField.define<PluginManager | null>({
     create(state) {
@@ -136,22 +135,11 @@ class SectionWordCountEditorPlugin implements PluginValue {
     }
 
     calculateLineCounts(state: EditorState, plugin: PluginManager) {
-        const stripComments = plugin.settings.countComments;
+        const stripComments = !plugin.settings.countComments;
         let docStr = state.doc.toString();
 
         if (stripComments) {
-            // Strip out comments, but preserve new lines for accurate positioning data
-            const preserveNl = (match: string, offset: number, str: string) => {
-                let output = '';
-                for (let i = offset, len = offset + match.length; i < len; i++) {
-                    if (/[\r\n]/.test(str[i])) {
-                        output += str[i];
-                    }
-                }
-                return output;
-            }
-
-            docStr = docStr.replace(MATCH_COMMENT, preserveNl).replace(MATCH_HTML_COMMENT, preserveNl);
+            docStr = cleanCommentsPreservingNewlines(docStr);
         }
 
         const lines = docStr.split(state.facet(EditorState.lineSeparator) || /\r\n?|\n/)
@@ -167,7 +155,8 @@ class SectionWordCountEditorPlugin implements PluginValue {
         if (!plugin) {
             return
         }
-        const { displaySectionCounts, countComments: stripComments } = plugin.settings;
+        const { displaySectionCounts } = plugin.settings;
+        const stripComments = !plugin.settings.countComments;
         let didSettingsChange = false;
 
         if (this.lineCounts.length && !displaySectionCounts) {

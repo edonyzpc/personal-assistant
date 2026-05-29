@@ -1,10 +1,7 @@
 # SDD: WASM 懒加载
 
-**Status:** Draft, awaiting user approval
-**Owner:** TBD
-**Branch:** `feat/wasm-lazy-load`
-**Worktree:** `wasm-lazy-load`
-**Related plan:** `/Users/edony/.claude/plans/breezy-wiggling-gem.md` (Phase 3.3)
+**Status:** Accepted design record
+**Phase:** 3.3
 
 ---
 
@@ -373,8 +370,6 @@ esbuild `splitting: false` 把 dynamic import 退化为 require，需要类似 `
 
 ## 13. 工作流程
 
-1. ✅ Spec 定稿（本文档）
-2. 用户 review 确认
-3. 通过 `EnterWorktree` 创建 `wasm-lazy-load` worktree
-4. 实施（独立于其他 Phase 3 项目）
-5. 验证 + 推送 PR
+1. 设计记录定稿并通过 review。
+2. 在独立开发分支或 worktree 中实施，避免与其他 Phase 3 项目互相阻塞。
+3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。

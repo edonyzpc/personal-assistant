@@ -11,7 +11,7 @@ import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
-import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, icons, personalAssitant } from './utils';
+import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, icons, personalAssitant } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
@@ -335,6 +335,7 @@ export class PluginManager extends Plugin {
             id: 'ai-assistant-summary',
             name: 'AI Summary',
             editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+                if (!this.ensureAIConfigured()) return;
                 const sel = editor.getSelection();
                 const v = editor.getValue();
 
@@ -351,6 +352,7 @@ export class PluginManager extends Plugin {
             id: 'ai-assistant-featured-images',
             name: 'AI Featured Images',
             editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+                if (!this.ensureAIConfigured()) return;
                 const sel = editor.getSelection();
                 const v = editor.getValue();
 
@@ -366,9 +368,9 @@ export class PluginManager extends Plugin {
         this.addCommand({
             id: "init-vss",
             name: "Prepare Memory",
-            callback: async () => {
+            checkCallback: (checking) => this.runMemoryCommand(checking, async () => {
                 await this.memoryManager.prepareFromCommand();
-            }
+            }),
         })
 
         this.registerAdvancedMemoryCommands();
@@ -969,14 +971,27 @@ export class PluginManager extends Plugin {
     }
 
     private runAdvancedMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
-        if (!this.settings.showAdvancedMemoryControls) return false;
+        if (!this.settings.memoryEnabled || !this.settings.showAdvancedMemoryControls) return false;
+        return this.runMemoryCommand(checking, action);
+    }
+
+    private runMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
+        if (!this.settings.memoryEnabled) return false;
+        if (this.getAISetupIssue() !== null) return false;
         if (!checking) {
             void action().catch((error) => {
-                this.log("Advanced memory command failed", error);
+                this.log("Memory command failed", error);
                 new Notice("Could not complete memory action.", 5000);
             });
         }
         return true;
+    }
+
+    private ensureAIConfigured(): boolean {
+        const issue = this.getAISetupIssue();
+        if (!issue) return true;
+        new Notice(issue, 5000);
+        return false;
     }
 
     /**
@@ -1133,23 +1148,36 @@ export class PluginManager extends Plugin {
                 changed = true;
             }
             const rawApiToken = this.settings.apiToken;
+            const scopedTokenId = this.getAPITokenSecretId();
+            const legacySecretId = this.getLegacyAPITokenSecretId();
             if (rawApiToken && rawApiToken !== "sk-xxx") {
                 const decrypted = await this.cryptoHelper.decryptFromBase64(rawApiToken, personalAssitant);
                 if (decrypted) {
-                    this.app.secretStorage.setSecret(KEYCHAIN_API_TOKEN_ID, decrypted);
-                    this.settings.apiToken = "";
+                    this.app.secretStorage.setSecret(scopedTokenId, decrypted);
+                    delete this.settings.apiToken;
                     this.token = decrypted;
                     changed = true;
-                    this.log("API token migrated to OS keychain");
+                    this.log("API token migrated to vault-scoped OS keychain");
                 } else {
                     // Decryption failed — likely a key change, corrupted blob, or a
                     // pasted plaintext token. Clear the residual value so the
                     // ciphertext (or plaintext) does not stay on disk forever and
                     // re-trigger this Notice on every launch.
                     new Notice("API token migration failed. Please re-enter your token in Settings.", 8000);
-                    this.settings.apiToken = "";
+                    delete this.settings.apiToken;
                     changed = true;
                     this.log("API token migration failed; cleared residual value from data.json");
+                }
+            } else if ("apiToken" in this.settings) {
+                delete this.settings.apiToken;
+                changed = true;
+            }
+            if (!this.app.secretStorage.getSecret(scopedTokenId)) {
+                const legacyToken = this.app.secretStorage.getSecret(legacySecretId);
+                if (legacyToken) {
+                    this.app.secretStorage.setSecret(scopedTokenId, legacyToken);
+                    this.token = legacyToken;
+                    this.log("API token migrated from legacy keychain id to vault-scoped id");
                 }
             }
             if (changed) {
@@ -1162,14 +1190,49 @@ export class PluginManager extends Plugin {
         }
     }
 
+    getAPITokenSecretId(): string {
+        return getVaultApiTokenId(this.settings.statisticsVaultId || "default-vault");
+    }
+
+    getLegacyAPITokenSecretId(): string {
+        return KEYCHAIN_API_TOKEN_ID;
+    }
+
+    hasConfiguredAPIToken(): boolean {
+        return Boolean(
+            this.app.secretStorage.getSecret(this.getAPITokenSecretId())
+            ?? this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId())
+        );
+    }
+
+    getAISetupIssue(): string | null {
+        if (!this.settings.aiProvider) {
+            return "Choose an AI provider in Settings first.";
+        }
+        if (!this.settings.baseURL || !this.settings.chatModelName) {
+            return "Complete the AI provider URL and model in Settings first.";
+        }
+        if (!this.hasConfiguredAPIToken()) {
+            return "Add your API token in Settings first.";
+        }
+        return null;
+    }
+
     async getAPIToken() {
         if (this.token !== "") {
             return this.token;
         }
-        const token = this.app.secretStorage.getSecret(KEYCHAIN_API_TOKEN_ID);
+        const scopedTokenId = this.getAPITokenSecretId();
+        const legacySecretId = this.getLegacyAPITokenSecretId();
+        const scopedToken = this.app.secretStorage.getSecret(scopedTokenId);
+        const token = scopedToken ?? this.app.secretStorage.getSecret(legacySecretId);
         if (!token) {
             new Notice("API token not configured. Please set it in Settings → Personal Assistant.", 5000);
             return "";
+        }
+        if (!scopedToken) {
+            this.app.secretStorage.setSecret(scopedTokenId, token);
+            this.log("API token copied from legacy keychain id to vault-scoped id");
         }
         this.token = token;
         return token;

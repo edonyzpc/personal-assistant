@@ -406,7 +406,7 @@ export function getStatsRecordKey(date: string, deviceId: string): string {
     return `${date}\0${deviceId}`;
 }
 
-const REQUIRED_STORES = [DAILY_RECORDS_STORE, METADATA_STORE, FILE_COUNT_CACHE_STORE];
+const REQUIRED_STORES = [DAILY_RECORDS_STORE, METADATA_STORE];
 
 function getStatsLocalDbName(vault: Vault, vaultId: string): string {
     const scopeSource = `${vaultId}\n${getVaultConfigDir(vault)}\n${getVaultLocalPath(vault) ?? ""}`;

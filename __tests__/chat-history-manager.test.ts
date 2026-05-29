@@ -392,12 +392,11 @@ describe("deriveTitle / derivePreview", () => {
 });
 
 describe("chat history persistence safety", () => {
-    it("isLiveTurn=false on auto-create still records nothing in chat-view (regression guard mock)", async () => {
-        // This test documents the persistFinalizedTurn contract used by chat-view.ts:
-        //   - if isLiveTurn() becomes false between startConversation and recordTurn,
-        //     we early-return BEFORE writing the turn so a stale UI session does not corrupt history.
-        // We simulate that contract here by reusing manager.startConversation + recordTurn calls
-        // with an explicit gate.
+    it("skips recording when chat-view abandons a non-live finalized turn before persistence", async () => {
+        // chat-view.ts checks isLiveTurn before constructing the finalized history
+        // entry. Once a turn is finalized, persistFinalizedTurn serializes it without
+        // re-checking liveness so switch/new-chat flows cannot erase completed turns.
+        // This reproduces the pre-persistence gate around ChatHistoryManager calls.
         const { manager, store } = makeManager();
         await manager.initialize();
         let live = true;

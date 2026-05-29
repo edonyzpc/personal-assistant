@@ -3,7 +3,6 @@ import {
     createStatsLocalStore,
     IndexedDbStatsLocalStore,
     MemoryStatsLocalStore,
-    SchemaIntegrityError,
     getStatsRecordKey,
     type FileCountCacheEntry,
     type StatsDailyDeviceRecord,
@@ -283,10 +282,17 @@ describe("StatsLocalStore", () => {
         await expect(store.getAllFileCountEntries()).resolves.toEqual([]);
     });
 
-    it("falls back with SchemaIntegrityError when the file count cache store is missing post-upgrade", async () => {
+    it("initializes daily stats when optional file count cache store is missing post-upgrade", async () => {
         const fakeIndexedDb = new FakeIndexedDbFactory({ hasStore: true, suppressCreateObjectStore: ["fileCountCache"] });
         const store = new IndexedDbStatsLocalStore("stats-test-db", fakeIndexedDb as unknown as IDBFactory);
-        await expect(store.initialize()).rejects.toBeInstanceOf(SchemaIntegrityError);
+        const consoleError = jest.spyOn(console, "error").mockImplementation(() => undefined);
+        try {
+            await expect(store.initialize()).resolves.toBeUndefined();
+            await expect(store.getAllRecords()).resolves.toEqual([]);
+            await expect(store.getAllFileCountEntries()).resolves.toEqual([]);
+        } finally {
+            consoleError.mockRestore();
+        }
     });
 
     it("UnavailableStatsLocalStore rejects file count cache methods", async () => {
