@@ -3,7 +3,9 @@ import {
     createStatsLocalStore,
     IndexedDbStatsLocalStore,
     MemoryStatsLocalStore,
+    SchemaIntegrityError,
     getStatsRecordKey,
+    type FileCountCacheEntry,
     type StatsDailyDeviceRecord,
 } from "../src/stats/stats-local-store";
 
@@ -77,7 +79,7 @@ describe("StatsLocalStore", () => {
             "2026-05-20",
         ]);
         expect(fakeIndexedDb.openCalls).toBe(1);
-        expect(fakeIndexedDb.db.createObjectStoreCalls).toBe(2);
+        expect(fakeIndexedDb.db.createObjectStoreCalls).toBe(3);
     });
 
     it("adds IndexedDB records only when absent", async () => {
@@ -235,7 +237,93 @@ describe("StatsLocalStore", () => {
 
         await expect(store.upsertRecord(createRecord())).rejects.toThrow("put aborted");
     });
+
+    it("stores, lists, and clears file count cache entries via the memory store", async () => {
+        const store = new MemoryStatsLocalStore();
+        await store.initialize();
+        const entries: FileCountCacheEntry[] = [
+            createCacheEntry({ path: "a.md", wordCount: 10 }),
+            createCacheEntry({ path: "b.md", wordCount: 20 }),
+        ];
+        await store.putFileCountEntries(entries);
+        entries[0].wordCount = 999;
+
+        const stored = await store.getAllFileCountEntries();
+        expect(stored.map((entry) => [entry.path, entry.wordCount]).sort()).toEqual([
+            ["a.md", 10],
+            ["b.md", 20],
+        ]);
+
+        await store.deleteFileCountEntries(["a.md"]);
+        const remaining = await store.getAllFileCountEntries();
+        expect(remaining.map((entry) => entry.path)).toEqual(["b.md"]);
+
+        await store.clearFileCountCache();
+        await expect(store.getAllFileCountEntries()).resolves.toEqual([]);
+    });
+
+    it("persists file count cache entries through IndexedDB and round-trips them", async () => {
+        const fakeIndexedDb = new FakeIndexedDbFactory({ hasStore: false });
+        const store = new IndexedDbStatsLocalStore("stats-test-db", fakeIndexedDb as unknown as IDBFactory);
+        await store.initialize();
+
+        await store.putFileCountEntries([
+            createCacheEntry({ path: "a.md", mtime: 100 }),
+            createCacheEntry({ path: "b.md", mtime: 200 }),
+        ]);
+
+        const all = await store.getAllFileCountEntries();
+        expect(all.map((entry) => entry.path).sort()).toEqual(["a.md", "b.md"]);
+
+        await store.deleteFileCountEntries(["a.md"]);
+        const remaining = await store.getAllFileCountEntries();
+        expect(remaining.map((entry) => entry.path)).toEqual(["b.md"]);
+
+        await store.clearFileCountCache();
+        await expect(store.getAllFileCountEntries()).resolves.toEqual([]);
+    });
+
+    it("falls back with SchemaIntegrityError when the file count cache store is missing post-upgrade", async () => {
+        const fakeIndexedDb = new FakeIndexedDbFactory({ hasStore: true, suppressCreateObjectStore: ["fileCountCache"] });
+        const store = new IndexedDbStatsLocalStore("stats-test-db", fakeIndexedDb as unknown as IDBFactory);
+        await expect(store.initialize()).rejects.toBeInstanceOf(SchemaIntegrityError);
+    });
+
+    it("UnavailableStatsLocalStore rejects file count cache methods", async () => {
+        const originalIndexedDb = globalThis.indexedDB;
+        Object.defineProperty(globalThis, "indexedDB", {
+            configurable: true,
+            value: undefined,
+        });
+        try {
+            const store = createStatsLocalStore({} as never, "vault-id");
+            await expect(store.getAllFileCountEntries()).rejects.toThrow("local app storage");
+            await expect(store.putFileCountEntries([])).rejects.toThrow("local app storage");
+            await expect(store.deleteFileCountEntries([])).rejects.toThrow("local app storage");
+            await expect(store.clearFileCountCache()).rejects.toThrow("local app storage");
+        } finally {
+            Object.defineProperty(globalThis, "indexedDB", {
+                configurable: true,
+                value: originalIndexedDb,
+            });
+        }
+    });
 });
+
+function createCacheEntry(overrides: Partial<FileCountCacheEntry> = {}): FileCountCacheEntry {
+    return {
+        path: "note.md",
+        mtime: 1,
+        size: 10,
+        wordCount: 1,
+        charCount: 1,
+        sentenceCount: 1,
+        pageCount: 0.1,
+        footnoteCount: 0,
+        citationCount: 0,
+        ...overrides,
+    };
+}
 
 type FakeIndexedDbOptions = {
     hasStore?: boolean;
@@ -244,6 +332,7 @@ type FakeIndexedDbOptions = {
     blockedOpenCount?: number;
     failGetAll?: boolean;
     failPut?: "error" | "abort";
+    suppressCreateObjectStore?: string[];
 };
 
 class FakeIndexedDbFactory {
@@ -298,6 +387,9 @@ class FakeIdbDatabase {
     };
 
     createObjectStore(name: string): IDBObjectStore {
+        if (this.options.suppressCreateObjectStore?.includes(name)) {
+            throw new Error(`Suppressed createObjectStore for ${name}`);
+        }
         this.createObjectStoreCalls += 1;
         this.storeNames.add(name);
         return new FakeObjectStore(this.getStore(name), null, this.options) as unknown as IDBObjectStore;
@@ -377,8 +469,8 @@ class FakeObjectStore {
         return createAsyncRequest(record ? cloneValue(record) : undefined);
     }
 
-    put(record: { key?: string; recordKey?: string }): IDBRequest<IDBValidKey> {
-        const key = record.recordKey ?? record.key;
+    put(record: { key?: string; recordKey?: string; path?: string }): IDBRequest<IDBValidKey> {
+        const key = record.recordKey ?? record.key ?? record.path;
         if (!key) throw new Error("Missing fake IndexedDB key.");
         this.records.set(key, cloneValue(record));
         queueMicrotask(() => {
@@ -395,8 +487,20 @@ class FakeObjectStore {
         return createAsyncRequest(key);
     }
 
-    add(record: { key?: string; recordKey?: string }): IDBRequest<IDBValidKey> {
-        const key = record.recordKey ?? record.key;
+    delete(key: IDBValidKey): IDBRequest<undefined> {
+        this.records.delete(String(key));
+        queueMicrotask(() => this.transaction?.complete());
+        return createAsyncRequest(undefined);
+    }
+
+    clear(): IDBRequest<undefined> {
+        this.records.clear();
+        queueMicrotask(() => this.transaction?.complete());
+        return createAsyncRequest(undefined);
+    }
+
+    add(record: { key?: string; recordKey?: string; path?: string }): IDBRequest<IDBValidKey> {
+        const key = record.recordKey ?? record.key ?? record.path;
         if (!key) throw new Error("Missing fake IndexedDB key.");
         const request = new FakeRequest(key) as unknown as IDBRequest<IDBValidKey>;
         queueMicrotask(() => {

@@ -1,4 +1,4 @@
-import { Platform, debounce, moment as obsidianMoment, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
+import { Platform, debounce, moment as obsidianMoment, type App, type Debouncer, type TFile, type Vault, type Workspace } from "obsidian";
 import type PluginManager from "../main";
 import type {
     ActivityCounts,
@@ -14,7 +14,7 @@ import {
     emptyActivityCounts,
     emptySnapshotCounts,
 } from "./stats-store";
-import { createStatsRepository, type StatsRepository } from "./stats-repository";
+import { createStatsRepository, type StatsRepository, type StatsRepositoryBundle } from "./stats-repository";
 import {
     getCharacterCount,
     getSentenceCount,
@@ -23,6 +23,8 @@ import {
     getCitationCount,
     getFootnoteCount,
 } from "./stats-utils";
+import type { FileCountCacheEntry, StatsLocalStore } from "./stats-local-store";
+import { SchemaIntegrityError } from "./stats-local-store";
 
 const moment = obsidianMoment as unknown as () => { format: (format: string) => string };
 
@@ -35,6 +37,14 @@ type PendingTextChange = {
 };
 
 type CancelCheck = () => boolean;
+
+const SAMPLE_SIZE = 5;
+const SAMPLE_DEVIATION_THRESHOLD = 0.05;
+const CACHE_SIZE_RATIO_THRESHOLD = 1.5;
+// Per-file sampling only fires when the cache is big enough for it to be
+// statistically meaningful — sampling 1 of 1 file just doubles I/O for no
+// drift-detection power.
+const SAMPLE_MIN_CACHE_SIZE = 5;
 
 export function getStatsWriteDelayMs(isMobile: boolean): number {
     return isMobile ? 3000 : 1500;
@@ -56,6 +66,7 @@ export default class StatsManager {
     private workspace: Workspace;
     private plugin: PluginManager;
     private store: StatsRepository;
+    private fileCountStore: StatsLocalStore;
     private modifiedFiles: ModifiedFiles = {};
     private baseActivity: ActivityCounts = emptyActivityCounts();
     private today: string;
@@ -69,6 +80,13 @@ export default class StatsManager {
     private snapshotRefreshTimer: ReturnType<typeof setTimeout> | null = null;
     private isDisposed = false;
     private ready: Promise<void>;
+    private dirtyFileCountPaths = new Set<string>();
+    private pendingCacheDeletes = new Set<string>();
+    private pendingCachePuts = new Map<string, FileCountCacheEntry>();
+    private fileCountCacheMap = new Map<string, FileCountCacheEntry>();
+    private fileCountCacheReady = false;
+    private fileCountCacheUnavailable = false;
+    private sampleValidated = false;
     public debounceChange: Debouncer<[filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider], Promise<void>>;
     private debounceWrite: Debouncer<[], Promise<void>>;
 
@@ -77,7 +95,9 @@ export default class StatsManager {
         this.workspace = app.workspace;
         this.plugin = plugin;
         this.today = moment().format("YYYY-MM-DD");
-        this.store = this.createStore(this.plugin.settings.statisticsSyncEnabled);
+        const bundle = this.createStore(this.plugin.settings.statisticsSyncEnabled);
+        this.store = bundle.repository;
+        this.fileCountStore = bundle.fileCountStore;
         this.debounceChange = debounce(
             (filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider) =>
                 this.change(filePath, currentText, previousText),
@@ -98,6 +118,7 @@ export default class StatsManager {
                     delete this.modifiedFiles[oldPath];
                     this.modifiedFiles[newFile.path] = content;
                 }
+                this.handleRenameForFileCountCache(newFile as TFile, oldPath);
             })
         );
 
@@ -107,18 +128,21 @@ export default class StatsManager {
                 if (this.modifiedFiles.hasOwnProperty(deletedFile.path)) {
                     delete this.modifiedFiles[deletedFile.path];
                 }
+                this.handleDeleteForFileCountCache(deletedFile.path);
             })
         );
 
         this.plugin.registerEvent(
             this.vault.on("create", (createdFile) => {
                 this.invalidateDashboardCacheForPath(createdFile.path);
+                this.handleCreateForFileCountCache(createdFile as TFile);
             })
         );
 
         this.plugin.registerEvent(
             this.vault.on("modify", (modifiedFile) => {
                 this.invalidateDashboardCacheForPath(modifiedFile.path);
+                this.handleModifyForFileCountCache(modifiedFile.path);
             })
         );
 
@@ -147,12 +171,15 @@ export default class StatsManager {
     async setStatisticsSyncEnabled(enabled: boolean): Promise<void> {
         await this.flushLocalOnly();
         const previousStore = this.store;
+        const previousFileCountStore = this.fileCountStore;
         const previousInitialized = this.initialized;
         const previousCurrentShard = this.currentShard;
         const previousBaseActivity = { ...this.baseActivity };
         const previousReady = this.ready;
         this.stateGeneration += 1;
-        this.store = this.createStore(enabled);
+        const bundle = this.createStore(enabled);
+        this.store = bundle.repository;
+        this.fileCountStore = bundle.fileCountStore;
         this.initialized = false;
         this.currentShard = null;
         this.baseActivity = emptyActivityCounts();
@@ -165,6 +192,7 @@ export default class StatsManager {
         } catch (error) {
             this.stateGeneration += 1;
             this.store = previousStore;
+            this.fileCountStore = previousFileCountStore;
             this.initialized = previousInitialized;
             this.currentShard = previousCurrentShard;
             this.baseActivity = previousBaseActivity;
@@ -176,7 +204,10 @@ export default class StatsManager {
     async updateToday(): Promise<void> {
         await this.ensureToday();
         if (!this.currentShard) return;
-        this.currentShard.snapshot = await this.calcSnapshot();
+        await this.clearFileCountCacheState();
+        const snapshot = await this.calcSnapshotIncremental();
+        if (!snapshot) return;
+        this.currentShard.snapshot = snapshot;
         this.currentShard.updatedAt = new Date().toISOString();
         await this.writeCurrentShardNow();
         await this.checkpointSync();
@@ -236,13 +267,22 @@ export default class StatsManager {
         );
         this.currentShard.updatedAt = new Date().toISOString();
         this.scheduleWrite();
+
+        // Mark the file as dirty so the next incremental snapshot re-reads it from disk
+        // and refreshes mtime/size. Do NOT write to fileCountCache here: file.stat is
+        // refreshed asynchronously by Obsidian after editor flush, so its mtime/size may
+        // still be stale relative to change.currentText, producing a poisoned cache entry.
+        this.handleModifyForFileCountCache(change.filePath);
     }
 
     public async recalcTotals(): Promise<void> {
         await this.ready;
         await this.ensureToday();
         if (!this.currentShard) return;
-        this.currentShard.snapshot = await this.calcSnapshot();
+        await this.clearFileCountCacheState();
+        const snapshot = await this.calcSnapshotIncremental();
+        if (!snapshot) return;
+        this.currentShard.snapshot = snapshot;
         this.currentShard.updatedAt = new Date().toISOString();
         await this.writeCurrentShardNow();
         await this.checkpointSync();
@@ -472,7 +512,7 @@ export default class StatsManager {
         }
     }
 
-    private createStore(syncEnabled: boolean): StatsRepository {
+    private createStore(syncEnabled: boolean): StatsRepositoryBundle {
         return createStatsRepository(this.vault, {
             legacyStatsPath: this.plugin.settings.statsPath,
             vaultId: this.plugin.settings.statisticsVaultId,
@@ -496,7 +536,7 @@ export default class StatsManager {
             await this.ensureToday();
             if (this.isDisposed || generation !== this.stateGeneration || !this.currentShard) return;
             const shard = this.currentShard;
-            const snapshot = await this.calcSnapshot(() => this.isDisposed || generation !== this.stateGeneration);
+            const snapshot = await this.calcSnapshotIncremental(() => this.isDisposed || generation !== this.stateGeneration);
             if (!snapshot) return;
             if (this.isDisposed || generation !== this.stateGeneration || this.currentShard !== shard) return;
             shard.snapshot = snapshot;
@@ -553,27 +593,324 @@ export default class StatsManager {
         };
     }
 
-    private async calcSnapshot(): Promise<SnapshotCounts>;
-    private async calcSnapshot(shouldCancel: CancelCheck): Promise<SnapshotCounts | null>;
-    private async calcSnapshot(shouldCancel: CancelCheck = () => false): Promise<SnapshotCounts | null> {
-        const totals = emptySnapshotCounts();
+    private handleModifyForFileCountCache(path: string): void {
+        if (!isMarkdownPath(path)) return;
+        this.fileCountCacheMap.delete(path);
+        this.pendingCachePuts.delete(path);
+        this.dirtyFileCountPaths.add(path);
+    }
 
-        for (const file of this.vault.getFiles()) {
+    private handleCreateForFileCountCache(file: TFile): void {
+        if (!isMarkdownPath(file.path)) return;
+        this.dirtyFileCountPaths.add(file.path);
+    }
+
+    private handleDeleteForFileCountCache(path: string): void {
+        if (!isMarkdownPath(path)) return;
+        this.fileCountCacheMap.delete(path);
+        this.pendingCachePuts.delete(path);
+        this.dirtyFileCountPaths.delete(path);
+        this.pendingCacheDeletes.add(path);
+    }
+
+    private handleRenameForFileCountCache(newFile: TFile, oldPath: string): void {
+        const oldWasMd = isMarkdownPath(oldPath);
+        const newIsMd = isMarkdownPath(newFile.path);
+        if (!oldWasMd && !newIsMd) return;
+
+        const oldEntry = oldWasMd ? this.fileCountCacheMap.get(oldPath) : undefined;
+        if (oldWasMd) {
+            this.fileCountCacheMap.delete(oldPath);
+            this.pendingCachePuts.delete(oldPath);
+            this.dirtyFileCountPaths.delete(oldPath);
+            this.pendingCacheDeletes.add(oldPath);
+        }
+        if (!newIsMd) return;
+
+        if (oldEntry) {
+            const movedEntry: FileCountCacheEntry = { ...oldEntry, path: newFile.path };
+            this.fileCountCacheMap.set(newFile.path, movedEntry);
+            this.pendingCachePuts.set(newFile.path, movedEntry);
+            this.pendingCacheDeletes.delete(newFile.path);
+        } else {
+            this.dirtyFileCountPaths.add(newFile.path);
+        }
+    }
+
+    private async clearFileCountCacheState(): Promise<void> {
+        this.fileCountCacheMap.clear();
+        this.dirtyFileCountPaths.clear();
+        this.pendingCacheDeletes.clear();
+        this.pendingCachePuts.clear();
+        this.fileCountCacheReady = false;
+        this.sampleValidated = false;
+        if (this.fileCountCacheUnavailable) return;
+        try {
+            await this.fileCountStore.clearFileCountCache();
+        } catch (error) {
+            this.plugin.log("Failed to clear file count cache", error);
+        }
+    }
+
+    private async loadFileCountCacheIfNeeded(): Promise<boolean> {
+        if (this.fileCountCacheReady) return true;
+        if (this.fileCountCacheUnavailable) return false;
+        try {
+            const entries = await this.fileCountStore.getAllFileCountEntries();
+            const loaded = new Map<string, FileCountCacheEntry>();
+            for (const entry of entries) {
+                loaded.set(entry.path, entry);
+            }
+            // Vault events may have mutated the in-memory map while loading; reconcile by
+            // preferring any pre-existing in-memory entries / deletions.
+            for (const [path, entry] of this.fileCountCacheMap.entries()) {
+                loaded.set(path, entry);
+            }
+            for (const path of this.pendingCacheDeletes) {
+                loaded.delete(path);
+            }
+            this.fileCountCacheMap = loaded;
+            this.fileCountCacheReady = true;
+            return true;
+        } catch (error) {
+            if (error instanceof SchemaIntegrityError) {
+                this.plugin.log("Statistics file count cache schema incompatible; disabling incremental snapshot.", error);
+            } else {
+                this.plugin.log("Failed to load file count cache", error);
+            }
+            this.fileCountCacheUnavailable = true;
+            return false;
+        }
+    }
+
+    private async validateCacheIntegritySample(shouldCancel: CancelCheck): Promise<boolean> {
+        const vaultFiles = this.vault.getMarkdownFiles();
+        const cacheSize = this.fileCountCacheMap.size;
+        if (cacheSize === 0) return true;
+        if (vaultFiles.length === 0) return false;
+
+        const ratio = Math.max(vaultFiles.length, cacheSize) / Math.max(1, Math.min(vaultFiles.length, cacheSize));
+        if (ratio > CACHE_SIZE_RATIO_THRESHOLD) return false;
+        if (cacheSize < SAMPLE_MIN_CACHE_SIZE) return true;
+
+        const hits: TFile[] = [];
+        for (const file of vaultFiles) {
+            const cached = this.fileCountCacheMap.get(file.path);
+            if (cached && cached.mtime === getFileMtime(file) && cached.size === getFileSize(file)) {
+                hits.push(file);
+            }
+        }
+        if (hits.length === 0) return true;
+
+        const sample = pickRandomSample(hits, SAMPLE_SIZE);
+        for (const file of sample) {
+            if (shouldCancel()) return true;
+            const cached = this.fileCountCacheMap.get(file.path);
+            if (!cached) continue;
+            const text = await this.vault.cachedRead(file);
+            if (shouldCancel()) return true;
+            const counts = this.countText(text);
+            if (!isWithinSampleTolerance(cached.wordCount, counts.words)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private async calcSnapshotIncremental(shouldCancel: CancelCheck = () => false): Promise<SnapshotCounts | null> {
+        const loaded = await this.loadFileCountCacheIfNeeded();
+        if (shouldCancel()) return null;
+
+        if (!loaded) {
+            return this.calcSnapshot(shouldCancel);
+        }
+
+        if (!this.sampleValidated) {
+            const sampleOk = await this.validateCacheIntegritySample(shouldCancel);
             if (shouldCancel()) return null;
-            if (file.extension !== "md") continue;
+            if (!sampleOk) {
+                await this.clearFileCountCacheState();
+                return this.calcSnapshotIncremental(shouldCancel);
+            }
+            this.sampleValidated = true;
+        }
+
+        const BATCH_SIZE = Platform.isMobile ? 20 : 50;
+        const YIELD_MS = Platform.isMobile ? 16 : 50;
+
+        const totals = emptySnapshotCounts();
+        const needsCounting: TFile[] = [];
+        const files = this.vault.getMarkdownFiles();
+        const cacheView = new Map(this.fileCountCacheMap);
+
+        for (const file of files) {
+            const cached = cacheView.get(file.path);
+            if (cached
+                && cached.mtime === getFileMtime(file)
+                && cached.size === getFileSize(file)
+                && !this.dirtyFileCountPaths.has(file.path)) {
+                accumulateFromCacheEntry(totals, cached);
+                cacheView.delete(file.path);
+            } else {
+                needsCounting.push(file);
+                cacheView.delete(file.path);
+            }
+        }
+        const stalePaths = Array.from(cacheView.keys());
+
+        const newEntries: FileCountCacheEntry[] = [];
+        let processed = 0;
+        for (const file of needsCounting) {
+            if (shouldCancel()) return null;
             const text = await this.vault.cachedRead(file);
             if (shouldCancel()) return null;
             const counts = this.countText(text);
-            totals.totalWords += counts.words;
-            totals.totalCharacters += counts.characters;
-            totals.totalSentences += counts.sentences;
-            totals.totalFootnotes += counts.footnotes;
-            totals.totalCitations += counts.citations;
-            totals.totalPages += counts.pages;
+            accumulateFromCounts(totals, counts);
+            const entry = buildFileCountEntry(file, counts);
+            newEntries.push(entry);
+            this.fileCountCacheMap.set(file.path, entry);
+            this.dirtyFileCountPaths.delete(file.path);
+            this.pendingCachePuts.delete(file.path);
+
+            processed++;
+            if (processed % BATCH_SIZE === 0) {
+                await sleep(YIELD_MS);
+                if (shouldCancel()) return null;
+            }
+        }
+
+        const renamePuts = Array.from(this.pendingCachePuts.values()).filter((entry) => {
+            // Skip entries that were already covered by newEntries to avoid duplicate writes.
+            return !newEntries.some((fresh) => fresh.path === entry.path);
+        });
+        this.pendingCachePuts.clear();
+        const pendingDeletes = Array.from(this.pendingCacheDeletes);
+        this.pendingCacheDeletes.clear();
+        for (const path of stalePaths) {
+            this.fileCountCacheMap.delete(path);
+        }
+        for (const path of pendingDeletes) {
+            this.fileCountCacheMap.delete(path);
+        }
+
+        if (!this.fileCountCacheUnavailable) {
+            try {
+                const toPut = [...newEntries, ...renamePuts];
+                if (toPut.length > 0) {
+                    await this.fileCountStore.putFileCountEntries(toPut);
+                }
+                const toDelete = uniqueStrings([...stalePaths, ...pendingDeletes]);
+                if (toDelete.length > 0) {
+                    await this.fileCountStore.deleteFileCountEntries(toDelete);
+                }
+            } catch (error) {
+                this.plugin.log("Failed to persist file count cache", error);
+            }
         }
 
         totals.files = this.getTotalFiles();
         totals.totalPages = Number(totals.totalPages.toFixed(1));
         return totals;
     }
+
+    private async calcSnapshot(): Promise<SnapshotCounts>;
+    private async calcSnapshot(shouldCancel: CancelCheck): Promise<SnapshotCounts | null>;
+    private async calcSnapshot(shouldCancel: CancelCheck = () => false): Promise<SnapshotCounts | null> {
+        const BATCH_SIZE = Platform.isMobile ? 20 : 50;
+        const YIELD_MS = Platform.isMobile ? 16 : 50;
+        const totals = emptySnapshotCounts();
+        const files = this.vault.getFiles();
+
+        let processed = 0;
+        for (const file of files) {
+            if (shouldCancel()) return null;
+            if (file.extension !== "md") continue;
+            const text = await this.vault.cachedRead(file);
+            if (shouldCancel()) return null;
+            const counts = this.countText(text);
+            accumulateFromCounts(totals, counts);
+            processed++;
+            if (processed % BATCH_SIZE === 0) {
+                await sleep(YIELD_MS);
+                if (shouldCancel()) return null;
+            }
+        }
+
+        totals.files = this.getTotalFiles();
+        totals.totalPages = Number(totals.totalPages.toFixed(1));
+        return totals;
+    }
+}
+
+function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isMarkdownPath(path: string): boolean {
+    return path.toLowerCase().endsWith(".md");
+}
+
+function getFileMtime(file: TFile): number {
+    return (file as TFile & { stat?: { mtime?: number } }).stat?.mtime ?? 0;
+}
+
+function getFileSize(file: TFile): number {
+    return (file as TFile & { stat?: { size?: number } }).stat?.size ?? 0;
+}
+
+function buildFileCountEntry(file: TFile, counts: ActivityCounts): FileCountCacheEntry {
+    return {
+        path: file.path,
+        mtime: getFileMtime(file),
+        size: getFileSize(file),
+        wordCount: counts.words,
+        charCount: counts.characters,
+        sentenceCount: counts.sentences,
+        pageCount: counts.pages,
+        footnoteCount: counts.footnotes,
+        citationCount: counts.citations,
+    };
+}
+
+function accumulateFromCacheEntry(totals: SnapshotCounts, entry: FileCountCacheEntry): void {
+    totals.totalWords += entry.wordCount;
+    totals.totalCharacters += entry.charCount;
+    totals.totalSentences += entry.sentenceCount;
+    totals.totalFootnotes += entry.footnoteCount;
+    totals.totalCitations += entry.citationCount;
+    totals.totalPages += entry.pageCount;
+}
+
+function accumulateFromCounts(totals: SnapshotCounts, counts: ActivityCounts): void {
+    totals.totalWords += counts.words;
+    totals.totalCharacters += counts.characters;
+    totals.totalSentences += counts.sentences;
+    totals.totalFootnotes += counts.footnotes;
+    totals.totalCitations += counts.citations;
+    totals.totalPages += counts.pages;
+}
+
+function pickRandomSample<T>(items: T[], size: number): T[] {
+    if (items.length <= size) return items.slice();
+    const pool = items.slice();
+    const result: T[] = [];
+    for (let i = 0; i < size; i++) {
+        const idx = Math.floor(Math.random() * pool.length);
+        result.push(pool[idx]);
+        pool[idx] = pool[pool.length - 1];
+        pool.pop();
+    }
+    return result;
+}
+
+function isWithinSampleTolerance(cached: number, actual: number): boolean {
+    if (cached === actual) return true;
+    const denom = Math.max(cached, actual);
+    if (denom === 0) return true;
+    const deviation = Math.abs(cached - actual) / denom;
+    return deviation <= SAMPLE_DEVIATION_THRESHOLD;
+}
+
+function uniqueStrings(values: string[]): string[] {
+    return Array.from(new Set(values));
 }

@@ -8,6 +8,8 @@ import {
     getDeviceId,
 } from "./stats-store";
 import {
+    SchemaIntegrityError,
+    UnavailableStatsLocalStore,
     createStatsLocalStore,
     getStatsRecordKey,
     type StatsDailyDeviceRecord,
@@ -30,7 +32,7 @@ export interface StatsRepository {
 }
 
 export class LocalStatsRepository implements StatsRepository {
-    private readonly localStore: StatsLocalStore;
+    private localStore: StatsLocalStore;
     private readonly deviceId: string;
     private dashboardCache: StatsDashboardData | null = null;
     private dashboardDirty = true;
@@ -64,7 +66,24 @@ export class LocalStatsRepository implements StatsRepository {
     }
 
     private async initializeOnce(): Promise<void> {
-        await this.localStore.initialize();
+        try {
+            await this.localStore.initialize();
+        } catch (error) {
+            if (error instanceof SchemaIntegrityError) {
+                // SDD §3.2 fallback: required object stores are missing — replace the local
+                // store with the no-op Unavailable variant so subsequent reads return empty
+                // dashboards instead of cascading failures.
+                this.localStore = new UnavailableStatsLocalStore();
+                this.migrationErrors = [{
+                    path: this.legacyStatsPath,
+                    message: error.message,
+                }];
+                this.dashboardDirty = true;
+                this.initialized = true;
+                return;
+            }
+            throw error;
+        }
         const importResult = await importV2StatsHistory(this.vault, {
             legacyStatsPath: this.legacyStatsPath,
             vaultId: this.vaultId,
@@ -185,15 +204,21 @@ export class LocalStatsRepository implements StatsRepository {
     }
 }
 
+export interface StatsRepositoryBundle {
+    repository: StatsRepository;
+    fileCountStore: StatsLocalStore;
+}
+
 export function createStatsRepository(
     vault: Vault,
     options: { vaultId?: string; legacyStatsPath: string; syncEnabled?: boolean },
-): StatsRepository {
+): StatsRepositoryBundle {
     const vaultId = options.vaultId || "default-vault";
     const localStore = createStatsLocalStore(vault, vaultId);
     const deviceId = getDeviceId();
     const syncStore = options.syncEnabled ? new StatsSyncStore(vault, vaultId, deviceId) : null;
-    return new LocalStatsRepository(vault, vaultId, localStore, options.legacyStatsPath, syncStore, deviceId);
+    const repository = new LocalStatsRepository(vault, vaultId, localStore, options.legacyStatsPath, syncStore, deviceId);
+    return { repository, fileCountStore: localStore };
 }
 
 function createDashboardData(
