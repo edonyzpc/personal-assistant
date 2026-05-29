@@ -5,8 +5,9 @@ jest.mock('obsidian', () => ({
     Notice: class { },
     Platform: { isDesktop: true, isMobile: false },
     PluginSettingTab: class {
+        app: unknown;
         containerEl = { empty: jest.fn() };
-        constructor(_app: unknown, _plugin: unknown) { }
+        constructor(app: unknown, _plugin: unknown) { this.app = app; }
     },
     Setting: class {
         record: {
@@ -119,6 +120,16 @@ jest.mock('obsidian', () => ({
             callback(buttonComponent);
             return this;
         }
+
+        addComponent(callback: (el: HTMLElement) => unknown) {
+            callback(document.createElement('div'));
+            return this;
+        }
+    },
+    SecretComponent: class {
+        constructor(_app: unknown, _el: unknown) { }
+        setValue(_value: string) { return this; }
+        onChange(_cb: (value: string) => unknown) { return this; }
     },
 }));
 
@@ -130,8 +141,7 @@ jest.mock('vanilla-picker', () => ({
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 jest.mock('../src/utils', () => ({
-    CryptoHelper: class { },
-    personalAssitant: 'personal-assistant',
+    KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
 }));
 
 import {
@@ -220,6 +230,16 @@ function installMockDocument() {
     (globalThis as unknown as { document: unknown }).document = documentMock;
 }
 
+function makeMockApp() {
+    return {
+        secretStorage: {
+            setSecret: jest.fn(),
+            getSecret: jest.fn(() => null),
+            listSecrets: jest.fn(() => []),
+        },
+    };
+}
+
 function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
     return {
         settings: {
@@ -236,6 +256,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             ...overrides,
         },
         saveSettings: jest.fn(async () => undefined),
+        clearTokenCache: jest.fn(),
         log: jest.fn(),
         memoryManager: {
             updateFromCommand: jest.fn(async () => undefined),
@@ -325,7 +346,7 @@ describe('PA Agent telemetry settings', () => {
 
     it('renders policy model privacy copy in settings', () => {
         const plugin = makePlugin();
-        const tab = new SettingTab({} as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();
@@ -350,7 +371,7 @@ describe('PA Agent builtin WebSearch settings', () => {
             baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             webSearchEnabled: true,
         });
-        const tab = new SettingTab({} as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();
@@ -366,7 +387,7 @@ describe('PA Agent builtin WebSearch settings', () => {
             baseURL: 'https://example.com/compatible-mode/v1',
             webSearchEnabled: true,
         });
-        const tab = new SettingTab({} as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();
@@ -400,7 +421,7 @@ describe('PA Agent skill settings', () => {
 
     it('renders global and bundled skill guide toggles in settings', () => {
         const plugin = makePlugin();
-        const tab = new SettingTab({} as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();
@@ -422,7 +443,7 @@ describe('PA Agent skill settings', () => {
 
     it('disables bundled skill guide toggles when the global switch is off', () => {
         const plugin = makePlugin({ skillContextEnabled: false });
-        const tab = new SettingTab({} as never, plugin as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();

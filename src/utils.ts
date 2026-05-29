@@ -137,14 +137,13 @@ const utf8Encoder = new TextEncoder();
 const utf8Decoder = new TextDecoder();
 const iterations = 1000;
 const salt = utf8Encoder.encode('XHWnDAT6ehMVY2zD');
+export const KEYCHAIN_API_TOKEN_ID = "pa-api-token";
+
+/** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
 export const personalAssitant = "personal-assistant-plugin-api-token";
-export const queryAI = "X-Api-Auth=36fb38ddc202fec";
 
+/** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
 export class CryptoHelper {
-
-    // constructor(){
-    // 	console.debug('new CryptoHelper');
-    // }
 
     private async deriveKey(password: string): Promise<CryptoKey> {
         const buffer = utf8Encoder.encode(password);

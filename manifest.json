@@ -2,7 +2,7 @@
 	"id": "personal-assistant",
 	"name": "Personal Assistant",
 	"version": "2.0.0",
-	"minAppVersion": "1.1.0",
+	"minAppVersion": "1.11.4",
 	"description": "AI-powered workflows to streamline the automated management of records, callouts, frontmatter, graph views, themes, and plugins.",
 	"author": "edony",
 	"authorUrl": "https://github.com/edonyzpc",

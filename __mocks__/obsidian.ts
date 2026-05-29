@@ -143,6 +143,11 @@ export class App {
         getRoot: () => ({ path: '' }),
         getMarkdownFiles: () => [],
     };
+    secretStorage = {
+        setSecret: jest.fn(),
+        getSecret: jest.fn(() => null),
+        listSecrets: jest.fn(() => []),
+    };
     metadataCache = { getCache: jest.fn() };
     workspace: MockWorkspace = {
         getLeaf: jest.fn(),
