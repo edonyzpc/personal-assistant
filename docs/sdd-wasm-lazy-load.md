@@ -78,11 +78,11 @@ WASM 实际使用发生在：`createSqliteIndex()`（`vss.ts:1827-1836`）→ `g
 const lazyBinaryPlugin = {
     name: "lazy-binary-wasm",
     setup(build) {
-        build.onResolve({ filter: /\.wasm$/ }, (args) => ({
-            path: require("path").resolve(args.resolveDir, args.path),
-            namespace: "lazy-wasm",
-        }));
-        build.onLoad({ filter: /.*/, namespace: "lazy-wasm" }, async (args) => {
+        // 实施提示: 不要写 onResolve。这里的 `path.resolve(args.resolveDir, args.path)`
+        // 对 bare module 导入（如 `@sqliteai/sqlite-wasm/sqlite3.wasm`）会算成
+        // `<resolveDir>/@sqliteai/...` 这种无效路径。让 esbuild 默认 resolver 走 node_modules，
+        // 再用默认 file namespace 的 onLoad 拦截 `.wasm$` 即可。
+        build.onLoad({ filter: /\.wasm$/ }, async (args) => {
             const { readFile } = require("node:fs/promises");
             const bytes = await readFile(args.path);
             const base64 = bytes.toString("base64");
@@ -154,7 +154,7 @@ export function getSqliteWasmBinaryAsync() {
 
 ### 4.3 TypeScript 类型声明（`src/types/assets.d.ts`）
 
-`.wasm` import 当前依赖 esbuild loader，TypeScript 不识别。新增类型声明告诉 TSC 把 `.wasm` 默认导入视为函数：
+`.wasm` import 当前依赖 esbuild loader，TypeScript 不识别。该文件**已存在**（含 `*.md` 和 `*?worker-source` 声明），本次只**修改其中的 `*.wasm` 块**，从值导入声明改为函数导入声明：
 
 ```typescript
 // src/types/assets.d.ts
@@ -167,17 +167,39 @@ declare module "*.wasm" {
 
 `tsconfig.json` 的 `include` 已覆盖 `src/**/*`（包含 `*.d.ts`）。如果消费者使用 `import` 语句而非 `import =`，需确认 `esModuleInterop: true`（当前已是 true，`tsconfig.json:18`）。
 
-### 4.4 `__mocks__/asset-string.js` 同步改动
+### 4.4 Jest mock 拆分（split-mock 方案）
 
-```diff
-- module.exports = new Uint8Array([0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
-+ module.exports = function() {
-+     return new Uint8Array([0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
-+ };
-+ module.exports.default = module.exports;
+**约束发现:** 原 jest 配置把 `\.wasm$` 和 `\?worker-source$` 都映射到 `__mocks__/asset-string.js`。如果把 asset-string.js 改成函数返回，会同时破坏 `?worker-source` 消费者 —— 后者把值喂给 `new Blob([sqliteWorkerSource], { type: "text/javascript" })`（见 `sqlite-inline-assets.ts:5`），期望的是字符串/Uint8Array 值而非函数。
+
+**Canonical 方案:** 拆分为两个独立 mock，互不影响。
+
+新建 `__mocks__/wasm-binary-fn.js`（仅服务 `*.wasm`）：
+
+```javascript
+// Jest mock for `*.wasm` imports. Mirrors lazyBinaryPlugin's emitted shape: a sync default
+// getter + named getSqliteWasmBinaryAsync. Actual bytes do not matter — tests that
+// exercise the wasm payload mock SqliteVectorIndex itself.
+const _bytes = new Uint8Array([0, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
+function getSqliteWasmBinary() { return _bytes; }
+function getSqliteWasmBinaryAsync() { return Promise.resolve(_bytes); }
+module.exports = getSqliteWasmBinary;
+module.exports.default = getSqliteWasmBinary;
+module.exports.getSqliteWasmBinaryAsync = getSqliteWasmBinaryAsync;
 ```
 
-Jest `moduleNameMapper` 已映射 `\.wasm$` → `asset-string.js`，调用契约从值导入变为函数导入，必须同步更新。
+修改 `jest.config.js` 的 `moduleNameMapper`：
+
+```diff
+  moduleNameMapper: {
+-     "\\.wasm$": "<rootDir>/__mocks__/asset-string.js",
++     "\\.wasm$": "<rootDir>/__mocks__/wasm-binary-fn.js",
+      "\\?worker-source$": "<rootDir>/__mocks__/asset-string.js",
+  },
+```
+
+`__mocks__/asset-string.js` 保持值导出不动（继续给 `?worker-source` 用），但**更新注释**澄清它现在只服务 worker-source，不再服务 wasm（避免误导后续维护）。
+
+**为什么不合并成单一 dual-purpose mock:** 试过 `module.exports = function(){...}; module.exports.default = module.exports;` 这种 hybrid 形态可以同时通过 jest 解析为函数和值（typeof = function 但可以被 Blob 接受），但语义混乱、调用方读不出契约。拆分清晰，对应 plugin 真实 emit 形状。
 
 ### 4.5 Worker 流程不变
 
@@ -205,26 +227,35 @@ Jest `moduleNameMapper` 已映射 `\.wasm$` → `asset-string.js`，调用契约
 ## 6. Implementation Steps
 
 ### 文件: `esbuild.config.mjs`
-1. 删除 loader map 中的 `'.wasm': 'binary'`（line 118）
-2. 新增 `lazyBinaryPlugin` 定义（含同步 + 异步两条 export）
-3. 加入 `plugins` 数组（在 `inlineSqliteWorkerPlugin` 前后均可）
+1. 顶部加 `import { readFile } from 'node:fs/promises';`（plugin onLoad 用）
+2. 删除 loader map 中的 `'.wasm': 'binary'`
+3. 新增 `lazyBinaryPlugin` 定义（含同步 + 异步两条 export）
+4. 加入 `plugins` 数组（在 `inlineSqliteWorkerPlugin` 前后均可）
 
-### 文件: `src/types/assets.d.ts`（新增）
-4. 添加 `declare module "*.wasm"` 类型声明（参见 §4.3）
+**注:** plugin 实施时 `onResolve` 阶段需要让 esbuild 默认 resolver 走 node_modules（处理 bare module 如 `@sqliteai/sqlite-wasm/sqlite3.wasm`）。最简形态是**不写 onResolve**，只在默认 `file` namespace 用 `build.onLoad({ filter: /\.wasm$/ }, ...)` 拦截。§4.1 伪代码里的 `onResolve` 是示意，实施时不要照搬 `path.resolve(args.resolveDir, args.path)` —— 那对 bare module 路径不成立。
+
+### 文件: `src/types/assets.d.ts`（修改已有文件）
+5. 重写 `*.wasm` 块为函数声明（参见 §4.3），保留 `*.md` 和 `*?worker-source` 块不变
 
 ### 文件: `src/vss/sqlite-inline-assets.ts`
-5. import 默认导入从值改为函数（line 2）
-6. `getInlineSqliteWasmUrl()` 改调函数
+6. import 默认导入从值改为函数（line 2）
+7. `getInlineSqliteWasmUrl()` 改调函数
+
+### 文件: `__mocks__/wasm-binary-fn.js`（新增）
+8. 创建 function-shaped mock（参见 §4.4）
+
+### 文件: `jest.config.js`
+9. `moduleNameMapper` 里 `*.wasm` remap 到 `wasm-binary-fn.js`（参见 §4.4）
 
 ### 文件: `__mocks__/asset-string.js`
-7. 改为导出函数
+10. 仅更新文件顶部注释（说明它现在只服务 `?worker-source`），导出值不变
 
 ### 验证
-8. `tsc -noEmit -skipLibCheck`（确认类型声明生效）
-9. `npm test`（确认现有 sqlite/vss 测试通过）
-10. `npm run build`（确认输出文件中 base64 仍存在但被函数包裹）
-11. `npm run audit:bundle`（gzip 预算）
-12. 手动 Obsidian 装载 + Memory 端到端
+11. `tsc -noEmit -skipLibCheck`（确认类型声明生效）
+12. `npm test`（确认现有 sqlite/vss 测试通过）
+13. `npm run build`（确认输出文件中 base64 仍存在但被函数包裹）
+14. `npm run audit:bundle`（gzip 预算）
+15. 手动 Obsidian 装载 + Memory 端到端（延后到 release 前统一）
 
 ---
 
@@ -287,11 +318,24 @@ esbuild `splitting: false` 把 dynamic import 退化为 require，需要类似 `
 
 ## 10. Rollback
 
-直接还原 4 个文件：
-1. `esbuild.config.mjs` 恢复 `'.wasm': 'binary'`，移除 plugin
-2. `sqlite-inline-assets.ts` 恢复 `import sqliteWasmBinary` 值导入
-3. `__mocks__/asset-string.js` 恢复 `module.exports = new Uint8Array(...)`
-4. 删除 `src/types/assets.d.ts`（rollback 后 TypeScript 由 esbuild loader 注入的类型自动恢复）
+直接还原 5 个文件（含一个 mock 新增）：
+
+1. `esbuild.config.mjs`
+   - 恢复 loader map 里 `'.wasm': 'binary'`
+   - 移除 `lazyBinaryPlugin` 定义和 plugins 数组里的引用
+   - 移除顶部 `import { readFile } from 'node:fs/promises';`（如果只有 plugin 用到它）
+2. `src/vss/sqlite-inline-assets.ts`
+   - 恢复 `import sqliteWasmBinary from "@sqliteai/sqlite-wasm/sqlite3.wasm";`
+   - `getInlineSqliteWasmUrl()` 内部恢复 `new Blob([sqliteWasmBinary], ...)`
+3. `src/types/assets.d.ts`
+   - **只 revert `*.wasm` 块**，恢复为 `const source: Uint8Array; export default source;`
+   - 文件本身保留（含 `*.md` 和 `*?worker-source` 声明）
+4. `jest.config.js`
+   - 恢复 `"\\.wasm$": "<rootDir>/__mocks__/asset-string.js"`
+5. `__mocks__/wasm-binary-fn.js`
+   - **删除文件**（rollback 后无消费者）
+
+**注意:** `__mocks__/asset-string.js` 在本 PR 中**没有改过实际导出**（只更新了文件顶部注释），rollback 时只需 revert 注释回到原描述即可。
 
 ---
 
@@ -310,13 +354,20 @@ esbuild `splitting: false` 把 dynamic import 退化为 require，需要类似 `
 
 ## 12. Critical Files
 
-- `esbuild.config.mjs` — `lazyBinaryPlugin` 实现
-- `src/types/assets.d.ts` — **新增** `*.wasm` 模块类型声明
-- `src/vss/sqlite-inline-assets.ts` — 改函数调用
-- `__mocks__/asset-string.js` — mock 同步改函数
-- `src/vss.ts` — 阅读参考（无需改动，理解调用链）
-- `src/plugin.ts` — 阅读参考（无需改动，理解 lifecycle）
-- `tsconfig.json` — 阅读参考（确认 esModuleInterop: true 已启用）
+**修改:**
+- `esbuild.config.mjs` — `lazyBinaryPlugin` 实现 + 移除 loader 里的 `.wasm` 条目 + 顶部加 `readFile` import
+- `src/types/assets.d.ts` — **修改**（已有文件）`*.wasm` 模块类型声明从值改函数
+- `src/vss/sqlite-inline-assets.ts` — import 名 + Blob 构造改函数调用
+- `jest.config.js` — `moduleNameMapper` 里 `*.wasm` remap 到新 mock
+- `__mocks__/asset-string.js` — **仅更新注释**（明确只服务 `?worker-source`），导出值不变
+
+**新增:**
+- `__mocks__/wasm-binary-fn.js` — `*.wasm` 专用 function-shaped mock，匹配 plugin 契约
+
+**阅读参考（无需改动）:**
+- `src/vss.ts` — 理解调用链
+- `src/plugin.ts` — 理解 lifecycle
+- `tsconfig.json` — 确认 esModuleInterop: true 已启用
 
 ---
 
