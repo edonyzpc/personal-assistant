@@ -17,7 +17,7 @@ import type {
     ChatToolResult,
 } from "./chat-types";
 
-export type { ChatToolName, ChatToolResult } from "./chat-types";
+export type { ChatToolName, ChatToolResult, MemorySearchResult } from "./chat-types";
 
 export interface ChatToolContext {
     plugin: PluginManager;

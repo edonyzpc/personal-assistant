@@ -16,6 +16,7 @@ import type {
     ListRecentNotesInput,
     ListRecentNotesOutput,
     ListVaultTagsInput,
+    MemorySearchResult,
     ReadCanvasSummaryInput,
     ReadCanvasSummaryOutput,
     ReadNoteOutlineInput,
@@ -48,7 +49,6 @@ import {
     normalizeLimit,
     validateVaultRelativeTargetPath,
 } from "./chat-tool-execution-helpers";
-import type { MemorySearchResult } from "./chat-types";
 
 export function isSearchMemoryResult(content: unknown): content is MemorySearchResult {
     return Boolean(

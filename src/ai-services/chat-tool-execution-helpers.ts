@@ -211,7 +211,7 @@ export async function readVaultFile(plugin: PluginManager, file: VaultFileLike):
     return await getVault(plugin).cachedRead?.(file) ?? "";
 }
 
-export interface BudgetedVaultRead {
+interface BudgetedVaultRead {
     content: string;
     truncated: boolean;
     skippedForSize: boolean;
@@ -377,7 +377,7 @@ export function limitInputText(value: string, maxLength: number): string {
     return value.slice(0, maxLength).trim();
 }
 
-export interface MetadataQuerySignals {
+interface MetadataQuerySignals {
     normalizedQuery: string;
     tokens: string[];
 }
@@ -620,7 +620,7 @@ export function extractNoteHeadings(
         .filter((heading) => heading.text.length > 0);
 }
 
-export interface ParsedMarkdownStructure {
+interface ParsedMarkdownStructure {
     headings: NoteOutlineHeading[];
     tasks: Array<{ line: number; text: string; status: string; checked: boolean }>;
     callouts: Array<{ line: number; type: string; title?: string }>;
@@ -1160,7 +1160,7 @@ export function takeWithOmitted<T>(values: T[], limit: number, onOmitted: (count
     return values.slice(0, limit);
 }
 
-export interface ExtractedOutline {
+interface ExtractedOutline {
     headings: NoteOutlineHeading[];
     outlineTruncated: boolean;
     totalHeadings: number;
@@ -1209,7 +1209,7 @@ export function normalizeHeadingLevel(level: unknown): number {
         : 1;
 }
 
-export interface CurrentNoteOutline {
+interface CurrentNoteOutline {
     headings: string[];
     outlineTruncated: boolean;
     scannedLineLimit: number;
