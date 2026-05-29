@@ -139,6 +139,11 @@ const iterations = 1000;
 const salt = utf8Encoder.encode('XHWnDAT6ehMVY2zD');
 export const KEYCHAIN_API_TOKEN_ID = "pa-api-token";
 
+export function getVaultApiTokenId(vaultId?: string): string {
+    const scope = (vaultId ?? "").trim();
+    return scope ? `${KEYCHAIN_API_TOKEN_ID}:${scope}` : KEYCHAIN_API_TOKEN_ID;
+}
+
 /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
 export const personalAssitant = "personal-assistant-plugin-api-token";
 
@@ -276,4 +281,3 @@ export class CryptoHelper {
     }
 
 }
-

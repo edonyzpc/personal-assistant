@@ -19,8 +19,8 @@ export type RequiredCapability =
 
 /**
  * @deprecated since 2026-05-29 — use the literal union `"required" | "suggested"` directly.
- * The "ignore" arm no longer exists: ignored signals are dropped from `items` instead of
- * being recorded. Will be removed after 2026-06-12.
+ * This is a compatibility alias for old imports only. The former `ignore` level was
+ * intentionally removed as a breaking cleanup; ignored signals are dropped from `items`.
  */
 export type RequiredCapabilityLevel = "required" | "suggested";
 
@@ -36,9 +36,8 @@ export interface RequiredCapabilityClassification {
 }
 
 /**
- * @deprecated since 2026-05-29 — inline the parameter object at the call site. The
- * shape is the same; this alias remains only to avoid breaking external imports during
- * the one-sprint stability window. Will be removed after 2026-06-12.
+ * @deprecated since 2026-05-29 — inline the parameter object at the call site.
+ * Retained for old imports while callers move to the current required-capability API.
  */
 export interface RequiredCapabilityHostPolicyOptions {
     userInput: string;
@@ -606,14 +605,16 @@ interface CapabilitySignalTable {
 const CAPABILITY_SIGNALS: readonly CapabilitySignalTable[] = [
     {
         capability: "webSearch",
-        // SDD §4.2: keep `latest|today's|this week's` only as compound prefixes
-        // ("latest news", "today's version") — bare `latest`/`today` is intentionally
-        // excluded so it does not false-match notes-domain phrases like "today I wrote".
+        // SDD §4.2: keep `latest|today's|this week's` tied to an external/current
+        // information noun so note-domain phrases like "today I wrote" do not match.
         strong: {
             regex: [
                 /\b(search the web|look online|official site|web search)\b/,
                 /\bcurrent (news|events|price|version|status|weather|release|information|info|situation)\b/,
                 /\b(latest|today's|this week's) (news|version|release|update)\b/,
+                /\bwhat(?:'s| is) (?:the )?(latest|newest)\b.*\b(news|version|release|update|status|price|weather|docs|documentation)\b/,
+                /\btoday(?:'s)?\b.*\b(news|version|release|update|status|price|weather|schedule|events)\b/,
+                /\b(latest|newest) (docs|documentation|guide|api|sdk|model|pricing|rules|regulations|law|standard|schedule)\b/,
             ],
             chineseTokens: ["搜索网", "网上查", "网络搜索", "在线查", "上网查", "查一下网"],
         },

@@ -1,10 +1,7 @@
 # SDD: calcSnapshot() 增量优化
 
-**Status:** Draft, awaiting user approval
-**Owner:** TBD
-**Branch:** `feat/calc-snapshot-incr`
-**Worktree:** `calc-snapshot-incr`
-**Related plan:** `/Users/edony/.claude/plans/breezy-wiggling-gem.md` (Phase 3.2)
+**Status:** Accepted design record
+**Phase:** 3.2
 
 ---
 
@@ -379,9 +376,9 @@ async calcSnapshot(shouldCancel: CancelCheck = () => false): Promise<SnapshotCou
 | `applyChange` 时点错位（file.stat 滞后于 currentText） | 高 | **不在 applyChange 写缓存**，仅 dirty 标记 + Map 移除；模式书面化在 §3.5 |
 | rename 后立即快照命中错误 path | 中 | 内存 Map 双写，新旧路径同步切换，无 window |
 | IndexedDB 跨设备不可同步 | 低（设计如此） | 缓存为本地优化，不影响 daily shard 同步 |
-| Schema 升级单事务失败 | 中 | onupgradeneeded 内 try/catch + init-time 兜底重 open，转 `UnavailableStatsLocalStore` |
+| Schema 升级单事务失败 | 中 | daily records / metadata stores 仍为必需；`fileCountCache` 是可丢弃优化，缺失或损坏时禁用增量缓存并回退全量快照 |
 | IDB 版本号不可逆 | 中 | 升级失败由 `UnavailableStatsLocalStore` 屏蔽，不写 v3 坏数据；用户 `recalcTotals` 可触发自愈尝试 |
-| 抽样校验耗时拖累启动 | 低 | 上限 5 文件 × ~10ms = 50ms，ScheduleSnapshotRefresh 已是后台 3s 触发 |
+| 抽样校验耗时拖累启动 | 低 | 上限 5 文件 × ~10ms = 50ms；启动后台快照延迟触发，vault 事件使用低频桌面延迟和更保守的移动端延迟 |
 | Cloud sync 仅更新 mtime | 低 | mtime + size 双校验阻止假阳性 |
 
 ---

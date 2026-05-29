@@ -22,6 +22,7 @@ import {
     getWordCount,
     getCitationCount,
     getFootnoteCount,
+    cleanComments,
 } from "./stats-utils";
 import type { FileCountCacheEntry, StatsLocalStore } from "./stats-local-store";
 import { SchemaIntegrityError } from "./stats-local-store";
@@ -48,6 +49,10 @@ const SAMPLE_MIN_CACHE_SIZE = 5;
 
 export function getStatsWriteDelayMs(isMobile: boolean): number {
     return isMobile ? 3000 : 1500;
+}
+
+export function getStatsSnapshotRefreshDelayMs(isMobile: boolean): number {
+    return isMobile ? 30000 : 5000;
 }
 
 export function combineActivityCounts(base: ActivityCounts, session: ActivityCounts): ActivityCounts {
@@ -87,6 +92,7 @@ export default class StatsManager {
     private fileCountCacheReady = false;
     private fileCountCacheUnavailable = false;
     private sampleValidated = false;
+    private fileCountMutationGeneration = 0;
     public debounceChange: Debouncer<[filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider], Promise<void>>;
     private debounceWrite: Debouncer<[], Promise<void>>;
 
@@ -118,7 +124,9 @@ export default class StatsManager {
                     delete this.modifiedFiles[oldPath];
                     this.modifiedFiles[newFile.path] = content;
                 }
-                this.handleRenameForFileCountCache(newFile as TFile, oldPath);
+                if (this.handleRenameForFileCountCache(newFile as TFile, oldPath)) {
+                    this.scheduleSnapshotRefresh(getStatsSnapshotRefreshDelayMs(Platform.isMobile));
+                }
             })
         );
 
@@ -128,21 +136,27 @@ export default class StatsManager {
                 if (this.modifiedFiles.hasOwnProperty(deletedFile.path)) {
                     delete this.modifiedFiles[deletedFile.path];
                 }
-                this.handleDeleteForFileCountCache(deletedFile.path);
+                if (this.handleDeleteForFileCountCache(deletedFile.path)) {
+                    this.scheduleSnapshotRefresh(getStatsSnapshotRefreshDelayMs(Platform.isMobile));
+                }
             })
         );
 
         this.plugin.registerEvent(
             this.vault.on("create", (createdFile) => {
                 this.invalidateDashboardCacheForPath(createdFile.path);
-                this.handleCreateForFileCountCache(createdFile as TFile);
+                if (this.handleCreateForFileCountCache(createdFile as TFile)) {
+                    this.scheduleSnapshotRefresh(getStatsSnapshotRefreshDelayMs(Platform.isMobile));
+                }
             })
         );
 
         this.plugin.registerEvent(
             this.vault.on("modify", (modifiedFile) => {
                 this.invalidateDashboardCacheForPath(modifiedFile.path);
-                this.handleModifyForFileCountCache(modifiedFile.path);
+                if (this.handleModifyForFileCountCache(modifiedFile.path)) {
+                    this.scheduleSnapshotRefresh(getStatsSnapshotRefreshDelayMs(Platform.isMobile));
+                }
             })
         );
 
@@ -426,13 +440,14 @@ export default class StatsManager {
     }
 
     private countText(text: string): ActivityCounts {
+        const countableText = this.plugin.settings.countComments ? text : cleanComments(text);
         return {
-            words: getWordCount(text),
-            characters: getCharacterCount(text),
-            sentences: getSentenceCount(text),
-            pages: getPageCount(text, 300),
-            footnotes: getFootnoteCount(text),
-            citations: getCitationCount(text),
+            words: getWordCount(countableText),
+            characters: getCharacterCount(countableText),
+            sentences: getSentenceCount(countableText),
+            pages: getPageCount(countableText, 300),
+            footnotes: getFootnoteCount(countableText),
+            citations: getCitationCount(countableText),
         };
     }
 
@@ -520,13 +535,13 @@ export default class StatsManager {
         });
     }
 
-    private scheduleSnapshotRefresh(): void {
+    private scheduleSnapshotRefresh(delayMs = 3000): void {
         if (this.isDisposed) return;
         if (this.snapshotRefreshTimer) return;
         this.snapshotRefreshTimer = setTimeout(() => {
             this.snapshotRefreshTimer = null;
             void this.refreshSnapshotInBackground();
-        }, 3000);
+        }, delayMs);
     }
 
     private async refreshSnapshotInBackground(): Promise<void> {
@@ -593,30 +608,37 @@ export default class StatsManager {
         };
     }
 
-    private handleModifyForFileCountCache(path: string): void {
-        if (!isMarkdownPath(path)) return;
+    private handleModifyForFileCountCache(path: string): boolean {
+        if (!isMarkdownPath(path)) return false;
+        this.fileCountMutationGeneration += 1;
         this.fileCountCacheMap.delete(path);
         this.pendingCachePuts.delete(path);
         this.dirtyFileCountPaths.add(path);
+        return true;
     }
 
-    private handleCreateForFileCountCache(file: TFile): void {
-        if (!isMarkdownPath(file.path)) return;
+    private handleCreateForFileCountCache(file: TFile): boolean {
+        if (!isMarkdownPath(file.path)) return false;
+        this.fileCountMutationGeneration += 1;
         this.dirtyFileCountPaths.add(file.path);
+        return true;
     }
 
-    private handleDeleteForFileCountCache(path: string): void {
-        if (!isMarkdownPath(path)) return;
+    private handleDeleteForFileCountCache(path: string): boolean {
+        if (!isMarkdownPath(path)) return false;
+        this.fileCountMutationGeneration += 1;
         this.fileCountCacheMap.delete(path);
         this.pendingCachePuts.delete(path);
         this.dirtyFileCountPaths.delete(path);
         this.pendingCacheDeletes.add(path);
+        return true;
     }
 
-    private handleRenameForFileCountCache(newFile: TFile, oldPath: string): void {
+    private handleRenameForFileCountCache(newFile: TFile, oldPath: string): boolean {
         const oldWasMd = isMarkdownPath(oldPath);
         const newIsMd = isMarkdownPath(newFile.path);
-        if (!oldWasMd && !newIsMd) return;
+        if (!oldWasMd && !newIsMd) return false;
+        this.fileCountMutationGeneration += 1;
 
         const oldEntry = oldWasMd ? this.fileCountCacheMap.get(oldPath) : undefined;
         if (oldWasMd) {
@@ -625,7 +647,7 @@ export default class StatsManager {
             this.dirtyFileCountPaths.delete(oldPath);
             this.pendingCacheDeletes.add(oldPath);
         }
-        if (!newIsMd) return;
+        if (!newIsMd) return true;
 
         if (oldEntry) {
             const movedEntry: FileCountCacheEntry = { ...oldEntry, path: newFile.path };
@@ -635,6 +657,7 @@ export default class StatsManager {
         } else {
             this.dirtyFileCountPaths.add(newFile.path);
         }
+        return true;
     }
 
     private async clearFileCountCacheState(): Promise<void> {
@@ -649,6 +672,7 @@ export default class StatsManager {
             await this.fileCountStore.clearFileCountCache();
         } catch (error) {
             this.plugin.log("Failed to clear file count cache", error);
+            this.fileCountCacheUnavailable = true;
         }
     }
 
@@ -718,16 +742,18 @@ export default class StatsManager {
     }
 
     private async calcSnapshotIncremental(shouldCancel: CancelCheck = () => false): Promise<SnapshotCounts | null> {
+        const mutationGeneration = this.fileCountMutationGeneration;
+        const shouldAbort = () => shouldCancel() || mutationGeneration !== this.fileCountMutationGeneration;
         const loaded = await this.loadFileCountCacheIfNeeded();
-        if (shouldCancel()) return null;
+        if (shouldAbort()) return null;
 
         if (!loaded) {
-            return this.calcSnapshot(shouldCancel);
+            return this.calcSnapshot(shouldAbort);
         }
 
         if (!this.sampleValidated) {
-            const sampleOk = await this.validateCacheIntegritySample(shouldCancel);
-            if (shouldCancel()) return null;
+            const sampleOk = await this.validateCacheIntegritySample(shouldAbort);
+            if (shouldAbort()) return null;
             if (!sampleOk) {
                 await this.clearFileCountCacheState();
                 return this.calcSnapshotIncremental(shouldCancel);
@@ -761,9 +787,9 @@ export default class StatsManager {
         const newEntries: FileCountCacheEntry[] = [];
         let processed = 0;
         for (const file of needsCounting) {
-            if (shouldCancel()) return null;
+            if (shouldAbort()) return null;
             const text = await this.vault.cachedRead(file);
-            if (shouldCancel()) return null;
+            if (shouldAbort()) return null;
             const counts = this.countText(text);
             accumulateFromCounts(totals, counts);
             const entry = buildFileCountEntry(file, counts);
@@ -775,9 +801,10 @@ export default class StatsManager {
             processed++;
             if (processed % BATCH_SIZE === 0) {
                 await sleep(YIELD_MS);
-                if (shouldCancel()) return null;
+                if (shouldAbort()) return null;
             }
         }
+        if (shouldAbort()) return null;
 
         const renamePuts = Array.from(this.pendingCachePuts.values()).filter((entry) => {
             // Skip entries that were already covered by newEntries to avoid duplicate writes.

@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import type { App, Vault } from "obsidian";
 import type PluginManager from "../src/main";
-import StatsManager, { combineActivityCounts, getStatsWriteDelayMs } from "../src/stats/stats-manager";
+import StatsManager, { combineActivityCounts, getStatsSnapshotRefreshDelayMs, getStatsWriteDelayMs } from "../src/stats/stats-manager";
 import {
     createStatsLocalStore,
     MemoryStatsLocalStore,
@@ -157,6 +157,11 @@ describe("StatsManager write scheduling", () => {
         expect(getStatsWriteDelayMs(true)).toBe(3000);
     });
 
+    it("uses conservative background snapshot refresh delays on mobile", () => {
+        expect(getStatsSnapshotRefreshDelayMs(false)).toBe(5000);
+        expect(getStatsSnapshotRefreshDelayMs(true)).toBe(30000);
+    });
+
     it("keeps edits in memory and flushes local stats without vault writes", async () => {
         jest.useFakeTimers();
         const adapter = new ManagerMemoryAdapter();
@@ -198,6 +203,36 @@ describe("StatsManager write scheduling", () => {
         expect(latest.totalWords).toBe(1);
 
         manager.dispose();
+        jest.useRealTimers();
+    });
+
+    it("excludes comments by default and includes them when countComments is true", async () => {
+        jest.useFakeTimers();
+        const adapter = new ManagerMemoryAdapter();
+        const text = "visible words\n%% hidden words %%\n<!-- html hidden -->";
+        const manager = createManager(adapter, {
+            files: [{ path: "note.md", extension: "md" }],
+            cachedRead: jest.fn(async () => text),
+        });
+
+        await manager.recalcTotals();
+        let dashboard = await manager.getDashboardData();
+        let latest = dashboard.days[dashboard.days.length - 1];
+        expect(latest.totalWords).toBe(2);
+
+        manager.dispose();
+
+        const includedManager = createManager(adapter, {
+            files: [{ path: "note.md", extension: "md" }],
+            cachedRead: jest.fn(async () => text),
+            settings: { countComments: true },
+        });
+        await includedManager.recalcTotals();
+        dashboard = await includedManager.getDashboardData();
+        latest = dashboard.days[dashboard.days.length - 1];
+        expect(latest.totalWords).toBeGreaterThan(2);
+
+        includedManager.dispose();
         jest.useRealTimers();
     });
 

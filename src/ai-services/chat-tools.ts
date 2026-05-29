@@ -3,8 +3,8 @@
  *
  * The original 3043-line monolith has been split into six sub-modules
  * (see docs/sdd-chat-tools-split.md). External consumers continue to import
- * from `"./chat-tools"` — this file forwards everything from the sub-modules
- * so no consumer changes were required.
+ * public registry, factories, types, and result guards from `"./chat-tools"`.
+ * Internal vault I/O and parser helpers stay in their implementation modules.
  *
  * Do NOT add new logic here. Place it in the appropriate sub-module:
  *   - chat-tool-types.ts       (A) types, OBSIDIAN_OPERATIONS_V1A_* policy
@@ -16,8 +16,17 @@
  */
 
 export * from "./chat-tool-types";
-export * from "./chat-tool-constants";
 export * from "./chat-tool-registry";
 export * from "./chat-tool-factories";
-export * from "./chat-tool-guards";
-export * from "./chat-tool-execution-helpers";
+export {
+    isChatToolName,
+    isCurrentNoteContextResult,
+    isInspectObsidianNoteResult,
+    isListRecentNotesResult,
+    isReadCanvasSummaryResult,
+    isReadNoteOutlineResult,
+    isSearchMemoryResult,
+    isSearchVaultMetadataResult,
+    isVaultSnippetSearchResult,
+    isVaultTagsResult,
+} from "./chat-tool-guards";

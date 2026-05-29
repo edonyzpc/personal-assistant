@@ -1,10 +1,7 @@
 # SDD: 聊天历史持久化
 
-**Status:** Draft, awaiting user approval
-**Owner:** TBD
-**Branch:** `feat/chat-history-persist`
-**Worktree:** `chat-history-persist`
-**Related plan:** `/Users/edony/.claude/plans/breezy-wiggling-gem.md` (Phase 3.5)
+**Status:** Accepted design record
+**Phase:** 3.5
 
 ---
 
@@ -35,6 +32,7 @@
 ## Non-goals
 
 - 不跨设备同步（device-local，避免 sync 冲突）
+- 不额外加密 IndexedDB 内容；隐私边界与本机 Obsidian profile / OS 用户账户一致
 - 不持久化 `canonicalTurn.messages`（原始 API 流，体积过大）
 - 不在 streaming 过程中实时写入（避免 I/O 风暴）
 - 不支持搜索历史对话（v2 再做）
@@ -46,7 +44,7 @@
 | 选项 | 评价 |
 |------|------|
 | **A. `plugin.saveData()`（vault config JSON）** | 与 ~80 字段的 settings 共用一个 blob，每次 streaming 都序列化整个 blob → I/O 风暴 + sync 冲突。**不可行。** |
-| **B. IndexedDB（device-local）** | 复用 `stats-local-store.ts` 三层模式，device-local 无冲突，mobile WebKit 支持，<10ms keyed 读取。**最佳选择。** |
+| **B. IndexedDB（device-local, unencrypted）** | 复用 `stats-local-store.ts` 三层模式，device-local 无冲突，mobile WebKit 支持，<10ms keyed 读取。**最佳选择。** |
 | **C. vault 内独立 JSON 文件** | 重复造轮子，仍有 sync 冲突。比 B 差。 |
 
 ✅ **选定 Option B**
@@ -436,8 +434,6 @@ async switchActiveConversation(newId: string): Promise<void> {
 
 ## 16. 工作流程
 
-1. ✅ Spec 定稿（本文档）
-2. 用户 review 确认
-3. 通过 `EnterWorktree` 创建 `chat-history-persist` worktree
-4. 实施（独立于其他 Phase 3 项目）
-5. 验证 + 推送 PR
+1. 设计记录定稿并通过 review。
+2. 在独立开发分支或 worktree 中实施，避免与其他 Phase 3 项目互相阻塞。
+3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。

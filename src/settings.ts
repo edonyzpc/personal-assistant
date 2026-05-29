@@ -5,10 +5,9 @@ import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
-import { isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
+import { getDashScopeImageSynthesisUrl, isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
-import { KEYCHAIN_API_TOKEN_ID } from './utils'
 import { confirmUserAction } from "./confirm";
 
 export interface ResizeStyle {
@@ -55,7 +54,9 @@ export interface PluginManagerSettings {
     animation: boolean;
     // AI模型配置
     aiProvider: string; // 'qwen' | 'openai'
-    apiToken: string;
+    aiProviderPreset?: string;
+    /** @deprecated legacy data.json token migrated to SecretStorage on load */
+    apiToken?: string;
     baseURL: string;
     chatModelName: string;
     policyModelName: string;
@@ -128,7 +129,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     animation: false,
     // AI模型配置
     aiProvider: "qwen",
-    apiToken: "",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     chatModelName: "qwen-plus",
     policyModelName: "",
@@ -177,6 +177,10 @@ const QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC =
     "Qwen thinking and builtin WebSearch are available only with the DashScope OpenAI-compatible base URL.";
 export const STATISTICS_SYNC_SETTING_DESC =
     "Creates Statistics history files inside this plugin's vault folder so writing history can sync across devices. Leave off to avoid ongoing Git changes from synced history.";
+const PREVIEW_LIMITS_MAX = 100;
+const LOCAL_GRAPH_DEPTH_MAX = 6;
+const LOCAL_GRAPH_DIMENSION_MAX = 2000;
+const FEATURED_IMAGE_COUNT_MAX = 4;
 
 /**
  * Parse an integer from user input, falling back to a known-valid value when
@@ -184,9 +188,10 @@ export const STATISTICS_SYNC_SETTING_DESC =
  * values from being persisted to data.json, which downstream consumers (Local
  * Graph dimensions, preview limits, featured image counts) cannot tolerate.
  */
-export function safeParseInt(value: string, fallback: number, min = 0): number {
+export function safeParseInt(value: string, fallback: number, min = 0, max?: number): number {
     const parsed = parseInt(value, 10);
-    return Number.isFinite(parsed) && parsed >= min ? parsed : fallback;
+    if (!Number.isFinite(parsed) || parsed < min) return fallback;
+    return typeof max === "number" ? Math.min(parsed, max) : parsed;
 }
 
 /**
@@ -195,17 +200,18 @@ export function safeParseInt(value: string, fallback: number, min = 0): number {
  *
  * Object.assign is shallow, so `localGraph: { depth: 3 }` in data.json would
  * otherwise replace the entire DEFAULT_SETTINGS.localGraph object and lose
- * defaults for showTags / showAttach / autoColors / resizeStyle. Arrays
- * (colorGroups, metadatas, *ExcludePath) are kept as single values — when the
- * user customizes one, they own the whole list.
+ * defaults for showTags / showAttach / autoColors / resizeStyle. Arrays are
+ * shallow-normalized so malformed data.json values cannot crash settings render.
  */
 export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
-    const merged = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {}) as PluginManagerSettings;
-    const loadedLocalGraph =
-        (loaded as { localGraph?: Partial<typeof DEFAULT_SETTINGS.localGraph> } | null | undefined)?.localGraph;
-    const loadedResizeStyle =
-        (loadedLocalGraph as { resizeStyle?: Partial<typeof DEFAULT_SETTINGS.localGraph.resizeStyle> } | undefined)
-            ?.resizeStyle;
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    const merged = Object.assign({}, DEFAULT_SETTINGS, loadedObject) as PluginManagerSettings;
+    const loadedLocalGraph = isRecord(loadedObject.localGraph)
+        ? loadedObject.localGraph as Partial<typeof DEFAULT_SETTINGS.localGraph>
+        : undefined;
+    const loadedResizeStyle = isRecord(loadedLocalGraph?.resizeStyle)
+        ? loadedLocalGraph.resizeStyle as Partial<typeof DEFAULT_SETTINGS.localGraph.resizeStyle>
+        : undefined;
     merged.localGraph = {
         ...DEFAULT_SETTINGS.localGraph,
         ...(loadedLocalGraph ?? {}),
@@ -214,6 +220,12 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
             ...(loadedResizeStyle ?? {}),
         },
     };
+    merged.previewTags = normalizeStringArray(loadedObject.previewTags, DEFAULT_SETTINGS.previewTags);
+    merged.metadataExcludePath = normalizeStringArray(loadedObject.metadataExcludePath, DEFAULT_SETTINGS.metadataExcludePath);
+    merged.vssCacheExcludePath = normalizeStringArray(loadedObject.vssCacheExcludePath, DEFAULT_SETTINGS.vssCacheExcludePath);
+    merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
+    merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
+    merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
     return merged;
 }
 
@@ -275,8 +287,9 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
  * the selection when the user cancels a switch confirmation.
  */
 export function deriveDisplayPreset(
-    settings: Pick<PluginManagerSettings, "aiProvider" | "baseURL">,
+    settings: Pick<PluginManagerSettings, "aiProvider" | "baseURL" | "aiProviderPreset">,
 ): string {
+    if (settings.aiProviderPreset === "custom") return "custom";
     if (settings.aiProvider === "openai" && settings.baseURL === PROVIDER_PRESETS.openai.baseURL) {
         return "openai";
     }
@@ -326,6 +339,43 @@ export function normalizeEnabledSkillIds(value: unknown): string[] {
         .filter((entry): entry is string => typeof entry === "string")
         .filter((entry) => knownSkillIds.has(entry));
     return [...new Set(normalized)];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function normalizeStringArray(value: unknown, fallback: string[]): string[] {
+    if (!Array.isArray(value)) return [...fallback];
+    return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function normalizeGraphColorArray(value: unknown, fallback: PluginManagerSettings["colorGroups"]): PluginManagerSettings["colorGroups"] {
+    if (!Array.isArray(value)) return JSON.parse(JSON.stringify(fallback));
+    return value
+        .filter((entry): entry is GraphColor => {
+            if (!isRecord(entry) || typeof entry.query !== "string" || !isRecord(entry.color)) return false;
+            return typeof entry.color.a === "number" && typeof entry.color.rgb === "number";
+        })
+        .map((entry) => ({
+            query: entry.query,
+            color: {
+                a: entry.color.a,
+                rgb: entry.color.rgb,
+            },
+        }));
+}
+
+function normalizeMetadataArray(value: unknown, fallback: PluginManagerSettings["metadatas"]): PluginManagerSettings["metadatas"] {
+    if (!Array.isArray(value)) return JSON.parse(JSON.stringify(fallback));
+    return value
+        .filter((entry): entry is { key: string; value: unknown; t: string } =>
+            isRecord(entry) && typeof entry.key === "string" && typeof entry.t === "string")
+        .map((entry) => ({
+            key: entry.key,
+            value: entry.value,
+            t: entry.t,
+        }));
 }
 
 interface QwenResponseOptionToggle {
@@ -489,7 +539,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('5')
                     .setValue(plugin.settings.previewLimits.toString())
                     .onChange((value) => {
-                        plugin.settings.previewLimits = safeParseInt(value, plugin.settings.previewLimits, 1);
+                        plugin.settings.previewLimits = safeParseInt(value, plugin.settings.previewLimits, 1, PREVIEW_LIMITS_MAX);
                         this.debouncedSave();
                     })
             });
@@ -515,7 +565,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.localGraph.depth.toString())
                     .onChange((value) => {
-                        plugin.settings.localGraph.depth = safeParseInt(value, plugin.settings.localGraph.depth, 1);
+                        plugin.settings.localGraph.depth = safeParseInt(value, plugin.settings.localGraph.depth, 1, LOCAL_GRAPH_DEPTH_MAX);
                         this.debouncedSave();
                     })
             });
@@ -591,7 +641,7 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(plugin.settings.localGraph.resizeStyle.height.toString())
                     .onChange((value) => {
                         plugin.settings.localGraph.resizeStyle.height =
-                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.height, 1);
+                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.height, 1, LOCAL_GRAPH_DIMENSION_MAX);
                         this.debouncedSave();
                     })
             });
@@ -601,7 +651,7 @@ export class SettingTab extends PluginSettingTab {
                     .setValue(plugin.settings.localGraph.resizeStyle.width.toString())
                     .onChange((value) => {
                         plugin.settings.localGraph.resizeStyle.width =
-                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.width, 1);
+                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.width, 1, LOCAL_GRAPH_DIMENSION_MAX);
                         this.debouncedSave();
                     })
             });
@@ -943,7 +993,7 @@ export class SettingTab extends PluginSettingTab {
         });
 
         new Setting(parentEl).setName("AI Provider")
-            .setDesc("Select the AI service provider. Switching providers replaces the Base URL and Model Name with that provider's defaults.")
+            .setDesc("Select the AI service provider. Presets fill recommended defaults; you can edit the URL and models after switching.")
             .addDropdown(dropDown => {
                 if (!plugin.settings.aiProvider) {
                     dropDown.addOption('', '-- Choose your AI provider --');
@@ -967,14 +1017,9 @@ export class SettingTab extends PluginSettingTab {
                         return;
                     }
 
-                    // Detect customizations against the *prior* preset (skipped on
-                    // fresh install where there is no prior preset, and on no-op
-                    // re-selections of the same preset). Only ask for
-                    // confirmation when the destination is not "custom" — custom
-                    // preserves whatever the user already had.
                     if (plugin.settings.aiProvider) {
                         const prevKey = deriveDisplayPreset(plugin.settings);
-                        if (value !== prevKey && value !== "custom") {
+                        if (value !== prevKey) {
                             const prev = PROVIDER_PRESETS[prevKey];
                             const hasCustomURL = prevKey === "custom"
                                 ? plugin.settings.baseURL !== ""
@@ -982,29 +1027,30 @@ export class SettingTab extends PluginSettingTab {
                             const hasCustomModel = prevKey === "custom"
                                 ? plugin.settings.chatModelName !== ""
                                 : Boolean(prev) && plugin.settings.chatModelName !== prev.chatModelName;
-                            if (hasCustomURL || hasCustomModel) {
-                                const confirmed = await confirmUserAction(this.app, {
-                                    title: "Switch AI provider?",
-                                    message: "Switching providers replaces your Base URL, chat model, and Memory model with the new provider's defaults. Your API token is kept.",
-                                    confirmText: "Switch",
-                                });
-                                if (!confirmed) {
-                                    dropDown.setValue(prevKey);
-                                    return;
-                                }
+                            const hasCustomMemoryModel = prevKey === "custom"
+                                ? plugin.settings.embeddingModelName !== ""
+                                : Boolean(prev) && plugin.settings.embeddingModelName !== prev.embeddingModelName;
+                            const confirmed = await confirmUserAction(this.app, {
+                                title: "Switch AI provider?",
+                                message: value === "custom"
+                                    ? "Switching to Custom keeps your current Base URL, chat model, and Memory model so you can edit them manually. Your API token is kept but may need to be replaced."
+                                    : "Switching providers replaces your Base URL, chat model, and Memory model with that preset's defaults. You can edit them afterward. Your API token is kept but may need to be replaced.",
+                                confirmText: "Switch",
+                            });
+                            if (!confirmed) {
+                                dropDown.setValue(prevKey);
+                                return;
+                            }
+                            if (!hasCustomURL && !hasCustomModel && !hasCustomMemoryModel) {
+                                plugin.log("Switching provider from unmodified preset", { from: prevKey, to: value });
                             }
                         }
                     }
 
                     plugin.settings.aiProvider = preset.runtimeProvider;
+                    plugin.settings.aiProviderPreset = value;
                     if (value === "custom") {
-                        // Clear preset-bound fields so deriveDisplayPreset returns
-                        // "custom" on next render instead of falling back to the
-                        // prior preset's URL/model. The user fills these in
-                        // themselves via the Base URL / Model Name inputs.
-                        plugin.settings.baseURL = "";
-                        plugin.settings.chatModelName = "";
-                        plugin.settings.embeddingModelName = "";
+                        // Custom keeps the current URL/model fields; the user can edit them below.
                     } else {
                         plugin.settings.baseURL = preset.baseURL;
                         plugin.settings.chatModelName = preset.chatModelName;
@@ -1047,7 +1093,9 @@ export class SettingTab extends PluginSettingTab {
             .setDesc("Stored securely in your OS keychain (macOS Keychain / iOS Keychain / Windows Credential Manager). Clear the field to remove it.")
             .addComponent((el) => {
                 const secret = new SecretComponent(this.app, el);
-                const existing = this.app.secretStorage.getSecret(KEYCHAIN_API_TOKEN_ID);
+                const secretId = plugin.getAPITokenSecretId();
+                const existing = this.app.secretStorage.getSecret(secretId)
+                    ?? this.app.secretStorage.getSecret(plugin.getLegacyAPITokenSecretId());
                 if (existing) {
                     secret.setValue(existing);
                 }
@@ -1055,7 +1103,7 @@ export class SettingTab extends PluginSettingTab {
                     // SecretStorage exposes only setSecret — writing "" is
                     // the equivalent of clearing the token. getAPIToken()
                     // already treats empty strings as no-token.
-                    this.app.secretStorage.setSecret(KEYCHAIN_API_TOKEN_ID, value);
+                    this.app.secretStorage.setSecret(secretId, value);
                     plugin.clearTokenCache();
                 });
                 return secret;
@@ -1069,12 +1117,14 @@ export class SettingTab extends PluginSettingTab {
                 text.setValue(plugin.settings.baseURL);
                 text.onChange((value: string) => {
                     plugin.settings.baseURL = value;
+                    plugin.settings.aiProviderPreset = "custom";
                     this.debouncedSave();
                     // Visual sync (enabling/disabling DashScope-only toggles)
                     // is intentionally synchronous — it reflects the in-memory
                     // setting, not the persisted one, so debouncing the save
                     // does not delay it.
                     this.refreshQwenResponseOptionAvailability?.();
+                    this.rebuildFeaturedImage();
                 });
             });
 
@@ -1086,6 +1136,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setValue(plugin.settings.chatModelName);
                 text.onChange((value: string) => {
                     plugin.settings.chatModelName = value;
+                    plugin.settings.aiProviderPreset = "custom";
                     this.debouncedSave();
                 });
             });
@@ -1317,6 +1368,17 @@ export class SettingTab extends PluginSettingTab {
                 toggle
                     .setValue(plugin.settings.memoryApprovalPolicy === "auto-refresh-after-prepare")
                     .onChange(async (value) => {
+                        if (value) {
+                            const confirmed = await confirmUserAction(this.app, {
+                                title: "Keep memory updated in background?",
+                                message: "Your notes will not be changed or deleted. Changed note text may be sent to your configured AI provider to prepare Memory. AI credits or API calls may be used; unchanged notes are skipped when possible.",
+                                confirmText: "Keep updated",
+                            });
+                            if (!confirmed) {
+                                toggle.setValue(false);
+                                return;
+                            }
+                        }
                         plugin.settings.memoryApprovalPolicy = value ? "auto-refresh-after-prepare" : "always";
                         await plugin.saveSettings();
                         if (value) {
@@ -1334,6 +1396,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setValue(plugin.settings.embeddingModelName);
                 text.onChange((value: string) => {
                     plugin.settings.embeddingModelName = value;
+                    plugin.settings.aiProviderPreset = "custom";
                     this.debouncedSave();
                 });
             });
@@ -1415,6 +1478,7 @@ export class SettingTab extends PluginSettingTab {
         this.featuredImageContainer.empty();
         const plugin = this.plugin;
         if (plugin.settings.aiProvider !== 'qwen') return;
+        if (!getDashScopeImageSynthesisUrl(plugin.settings.baseURL)) return;
 
         const container = this.featuredImageContainer;
 
@@ -1435,7 +1499,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.numFeaturedImages.toString())
                     .onChange((value) => {
-                        plugin.settings.numFeaturedImages = safeParseInt(value, plugin.settings.numFeaturedImages, 1);
+                        plugin.settings.numFeaturedImages = safeParseInt(value, plugin.settings.numFeaturedImages, 1, FEATURED_IMAGE_COUNT_MAX);
                         this.debouncedSave();
                     })
             });

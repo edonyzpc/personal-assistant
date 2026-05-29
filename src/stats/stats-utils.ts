@@ -65,3 +65,8 @@ export function getTotalFileCount(vault: Vault): number {
 export function cleanComments(text: string): string {
     return text.replace(MATCH_COMMENT, "").replace(MATCH_HTML_COMMENT, "");
 }
+
+export function cleanCommentsPreservingNewlines(text: string): string {
+    const preserveNewlines = (match: string): string => match.replace(/[^\r\n]/g, "");
+    return text.replace(MATCH_COMMENT, preserveNewlines).replace(MATCH_HTML_COMMENT, preserveNewlines);
+}

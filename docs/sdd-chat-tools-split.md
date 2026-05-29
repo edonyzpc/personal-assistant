@@ -1,10 +1,7 @@
 # SDD: chat-tools.ts 模块拆分
 
-**Status:** Draft, awaiting user approval
-**Owner:** TBD
-**Branch:** `feat/chat-tools-split`
-**Worktree:** `chat-tools-split`
-**Related plan:** `/Users/edony/.claude/plans/breezy-wiggling-gem.md` (Phase 3.1)
+**Status:** Accepted design record
+**Phase:** 3.1
 
 ---
 
@@ -189,16 +186,27 @@
 
 ```typescript
 /**
- * Barrel re-export for chat-tools module.
- * Original 3043-line monolith split into sub-modules.
- * Do NOT add new logic here — place it in the appropriate sub-module.
+ * Barrel re-export for the chat-tools module.
+ *
+ * External consumers continue to import public registry, factories, types,
+ * and result guards from "./chat-tools". Internal vault I/O and parser helpers
+ * stay in their implementation modules.
  */
 export * from "./chat-tool-types";
-export * from "./chat-tool-constants";
 export * from "./chat-tool-registry";
 export * from "./chat-tool-factories";
-export * from "./chat-tool-guards";
-export * from "./chat-tool-execution-helpers";
+export {
+    isChatToolName,
+    isCurrentNoteContextResult,
+    isInspectObsidianNoteResult,
+    isListRecentNotesResult,
+    isReadCanvasSummaryResult,
+    isReadNoteOutlineResult,
+    isSearchMemoryResult,
+    isSearchVaultMetadataResult,
+    isVaultSnippetSearchResult,
+    isVaultTagsResult,
+} from "./chat-tool-guards";
 ```
 
 ---
@@ -236,7 +244,7 @@ D (factories)    : A, B, E, F  (+ obsidian-operations-capability-catalog)
 | `tests/factories/chat-tool-factory.ts` | `ToolRegistry` + 类型 | A + C |
 | `tests/fakes/fake-chat-model-provider.ts` | `ChatToolProviderSchema` | A |
 
-**关键:** 所有 10 个文件均通过 `"./chat-tools"`（或 `"../../ai-services/chat-tools"`）导入，barrel 完全屏蔽变更。
+**关键:** 所有 10 个文件均通过 `"./chat-tools"`（或 `"../../ai-services/chat-tools"`）导入，barrel 屏蔽变更；`chat-tool-constants.ts`、`chat-tool-execution-helpers.ts` 和未列出的 guard/validator 仍是实现模块，不作为公共 API 透出。
 
 ---
 
@@ -264,8 +272,8 @@ D (factories)    : A, B, E, F  (+ obsidian-operations-capability-catalog)
 10. 验证：`tsc --noEmit` + `npm test`（旧 chat-tools.ts 仍是权威路径，新文件 dead code）
 
 **Commit 3: Barrel switch + 删除原 monolith**
-11. 把 `chat-tools.ts` 替换为 `export *` barrel
-12. 删除原 chat-tools.ts 中已迁移的所有代码（仅留 re-export）
+11. 把 `chat-tools.ts` 替换为 public barrel：类型、registry、factories 使用 `export *`，result guard / `isChatToolName` 使用命名 re-export
+12. 删除原 chat-tools.ts 中已迁移的所有代码（仅留 public re-export）
 13. 验证：`tsc --noEmit` + `npm test` + `npm run build` 全部通过
 
 **Commit 1/2 安全性:** 因为是新增独立文件，旧路径未触碰，`npm test` 必然通过；任何 tsc/test 失败都局限于新文件本身。
@@ -278,7 +286,7 @@ D (factories)    : A, B, E, F  (+ obsidian-operations-capability-catalog)
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| 私有符号暴露公开 API | 美观/治理 | 接受。tree-shake 阻止 bundle 增长。如严格管控，barrel 可改为命名 re-export（+~80 行维护） |
+| 私有符号暴露公开 API | 美观/治理 | 已采用命名 re-export 收窄公开面；内部 constants/helpers/validators 不从 barrel 透出 |
 | `satisfies` 表达式跨模块类型引用 | TS 编译 | 类型 import，无运行时影响。`tsc --noEmit` 验证 |
 | `export type { ... } from "..."` 转发 | TS 兼容性 | TypeScript 标准支持 `export *` 转发 type re-export |
 | Jest `moduleNameMapper` 冲突 | 测试 | 已检查，无 chat-tools mock |
@@ -314,8 +322,6 @@ D (factories)    : A, B, E, F  (+ obsidian-operations-capability-catalog)
 
 ## 10. 工作流程
 
-1. ✅ Spec 定稿（本文档）
-2. 用户 review 确认
-3. 通过 `EnterWorktree` 创建 `chat-tools-split` worktree
-4. 在 worktree 中实施（Phase 1.1–1.7、Phase 2 已合入主分支后开始，避免 rebase 冲突）
-5. 验证 + 推送 PR
+1. 设计记录定稿并通过 review。
+2. 在独立开发分支或 worktree 中实施，保持每个阶段可独立验证。
+3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。

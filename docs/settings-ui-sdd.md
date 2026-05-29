@@ -1,6 +1,6 @@
 # SDD: Settings UI Refactor
 
-> Version: 1.0 | Date: 2026-05-29 | Status: Draft
+> Version: 1.0 | Date: 2026-05-29 | Status: Accepted design record
 > Upstream: [settings-ui-review.md](./settings-ui-review.md) — 30 issues (5 P0 + 13 P1 + 12 P2)
 
 ---

@@ -71,7 +71,13 @@ jest.mock('../src/settings', () => ({
     },
 }));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
-jest.mock('../src/utils', () => ({ CryptoHelper: class { }, icons: {}, personalAssitant: '' }));
+jest.mock('../src/utils', () => ({
+    KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
+    CryptoHelper: class { },
+    getVaultApiTokenId: (vaultId?: string) => vaultId ? `pa-api-token:${vaultId}` : 'pa-api-token',
+    icons: {},
+    personalAssitant: '',
+}));
 jest.mock('../src/plugin-manifest', () => ({ PluginsUpdater: class { } }));
 jest.mock('../src/theme-manifest', () => ({ ThemeUpdater: class { } }));
 jest.mock('../src/obsidian-hack/obsidian-mobile-debug', () => ({ monkeyPatchConsole: jest.fn() }));
@@ -92,6 +98,14 @@ const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
     return new FileCtor(path);
 };
+
+const createMigrationApp = (configDir?: string) => ({
+    ...(configDir ? { vault: { configDir } } : {}),
+    secretStorage: {
+        getSecret: jest.fn(() => null),
+        setSecret: jest.fn(),
+    },
+});
 
 const memorySettings = {
     memoryEnabled: true,
@@ -133,11 +147,15 @@ const createPluginHarness = ({
     const workspace = {
         getLeaf: jest.fn(() => ({ openFile })),
     };
+    const secretStorage = {
+        getSecret: jest.fn(() => null),
+        setSecret: jest.fn(),
+    };
     const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-    plugin.app = { vault, workspace };
+    plugin.app = { vault, workspace, secretStorage };
     plugin.log = jest.fn();
 
-    return { plugin, vault, openFile, createdFiles };
+    return { plugin, vault, openFile, createdFiles, secretStorage };
 };
 
 describe('record note creation', () => {
@@ -254,6 +272,7 @@ describe('settings migration', () => {
     it('preserves the old default Qwen v3 embedding model and only shows a migration notice', async () => {
         mockNoticeMessages.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
         plugin.settings = {
             aiProvider: 'qwen',
             embeddingModelName: 'text-embedding-v3',
@@ -278,6 +297,7 @@ describe('settings migration', () => {
     it('does not bother custom embedding models during migration', async () => {
         mockNoticeMessages.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
         plugin.settings = {
             aiProvider: 'qwen',
             embeddingModelName: 'custom-embedding-model',
@@ -299,6 +319,7 @@ describe('settings migration', () => {
     it('enables memory defaults for older settings without changing AI model settings', async () => {
         mockNoticeMessages.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
         plugin.settings = {
             aiProvider: 'openai',
             embeddingModelName: 'custom-embedding-model',
@@ -329,6 +350,7 @@ describe('settings migration', () => {
 
     it('deletes the legacy provider web search setting without enabling builtin WebSearch', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
         plugin.settings = {
             aiProvider: 'qwen',
             embeddingModelName: 'custom-embedding-model',
@@ -348,6 +370,7 @@ describe('settings migration', () => {
 
     it('migrates removed ollama provider to qwen default on v2.0.0 upgrade', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
         plugin.settings = {
             aiProvider: 'ollama',
             baseURL: 'http://localhost:11434',
@@ -370,6 +393,7 @@ describe('settings migration', () => {
 
     it('preserves the background memory approval policy during migration', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
         plugin.settings = {
             aiProvider: 'openai',
             embeddingModelName: 'custom-embedding-model',
@@ -398,11 +422,7 @@ describe('settings migration', () => {
 
     it('preserves an intentionally empty memory exclude path during migration', async () => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        plugin.app = {
-            vault: {
-                configDir: '.vault-config',
-            },
-        };
+        plugin.app = createMigrationApp('.vault-config');
         plugin.settings = {
             aiProvider: 'openai',
             embeddingModelName: 'custom-embedding-model',

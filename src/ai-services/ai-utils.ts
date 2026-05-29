@@ -45,6 +45,10 @@ export interface NativeToolCallingCapabilityOptions {
 
 export const DASHSCOPE_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
 export const DASHSCOPE_INTL_COMPATIBLE_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+export const DASHSCOPE_IMAGE_SYNTHESIS_URL = "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
+export const DASHSCOPE_INTL_IMAGE_SYNTHESIS_URL = "https://dashscope-intl.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis";
+export const DASHSCOPE_TASKS_URL = "https://dashscope.aliyuncs.com/api/v1/tasks";
+export const DASHSCOPE_INTL_TASKS_URL = "https://dashscope-intl.aliyuncs.com/api/v1/tasks";
 export const DASHSCOPE_COMPATIBLE_BASE_URLS: readonly string[] = [
     DASHSCOPE_COMPATIBLE_BASE_URL,
     DASHSCOPE_INTL_COMPATIBLE_BASE_URL,
@@ -387,6 +391,20 @@ function normalizeBaseURL(value: unknown): string {
 export function isDashScopeCompatibleBaseURL(value: unknown): boolean {
     const normalized = normalizeBaseURL(value);
     return DASHSCOPE_COMPATIBLE_BASE_URLS.some((baseURL) => normalizeBaseURL(baseURL) === normalized);
+}
+
+export function getDashScopeImageSynthesisUrl(value: unknown): string | null {
+    const normalized = normalizeBaseURL(value);
+    if (normalized === normalizeBaseURL(DASHSCOPE_COMPATIBLE_BASE_URL)) return DASHSCOPE_IMAGE_SYNTHESIS_URL;
+    if (normalized === normalizeBaseURL(DASHSCOPE_INTL_COMPATIBLE_BASE_URL)) return DASHSCOPE_INTL_IMAGE_SYNTHESIS_URL;
+    return null;
+}
+
+export function getDashScopeTasksUrl(value: unknown): string | null {
+    const normalized = normalizeBaseURL(value);
+    if (normalized === normalizeBaseURL(DASHSCOPE_COMPATIBLE_BASE_URL)) return DASHSCOPE_TASKS_URL;
+    if (normalized === normalizeBaseURL(DASHSCOPE_INTL_COMPATIBLE_BASE_URL)) return DASHSCOPE_INTL_TASKS_URL;
+    return null;
 }
 
 function buildDashScopeNativeToolCallingValidations(

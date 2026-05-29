@@ -5,7 +5,7 @@ import { EditorView } from '@codemirror/view'
 import { nanoid } from 'nanoid'
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
-import { AIUtils } from './ai-utils';
+import { AIUtils, getDashScopeImageSynthesisUrl, getDashScopeTasksUrl } from './ai-utils';
 import type { PluginManager } from '../plugin'
 import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
 
@@ -278,9 +278,8 @@ export class AIService {
      * 生成特色图片
      */
     async generateFeaturedImage(editor: Editor, view: MarkdownView): Promise<void> {
-        // 检查是否支持图片生成（目前只支持Qwen）
-        if (this.plugin.settings.aiProvider !== 'qwen') {
-            new Notice("Featured image generation is only supported with Qwen provider.", 3000);
+        if (this.plugin.settings.aiProvider !== 'qwen' || !getDashScopeImageSynthesisUrl(this.plugin.settings.baseURL)) {
+            new Notice("Featured image generation requires a supported DashScope Qwen endpoint.", 3000);
             return;
         }
 
@@ -534,8 +533,13 @@ export class AIService {
      */
     private async generateImage(genMsg: string) {
         const token = await this.plugin.getAPIToken();
+        const imageUrl = getDashScopeImageSynthesisUrl(this.plugin.settings.baseURL);
+        if (!imageUrl) {
+            new Notice("Featured image generation requires a supported DashScope Qwen endpoint.", 3000);
+            return null;
+        }
         const resp = await requestUrl({
-            url: "https://dashscope.aliyuncs.com/api/v1/services/aigc/text2image/image-synthesis",
+            url: imageUrl,
             method: "POST",
             contentType: "application/json",
             headers: {
@@ -617,7 +621,10 @@ export class AIService {
             return null;
         }
 
-        const baseUrl = 'https://dashscope.aliyuncs.com/api/v1/tasks';
+        const baseUrl = getDashScopeTasksUrl(this.plugin.settings.baseURL);
+        if (!baseUrl) {
+            throw new Error("Unsupported DashScope image task endpoint.");
+        }
         const taskId = taskID;
         const timeout = 10 * 60 * 1000; // 10分钟超时
 

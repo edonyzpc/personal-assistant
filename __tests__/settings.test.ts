@@ -447,6 +447,8 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         memoryManager: {
             updateFromCommand: jest.fn(async () => undefined),
             prepareFromCommand: jest.fn(async () => undefined),
+            scheduleReconcile: jest.fn(),
+            scheduleAutoFlush: jest.fn(),
         },
         updateMemoryStatusBar: jest.fn(async () => undefined),
         vss: {
@@ -454,6 +456,8 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             cleanLegacyJsonCache: jest.fn(async () => undefined),
         },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
+        getAPITokenSecretId: jest.fn(() => 'pa-api-token:vault-test'),
+        getLegacyAPITokenSecretId: jest.fn(() => 'pa-api-token'),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
         },
@@ -713,6 +717,7 @@ describe('Phase 1 refactor invariants', () => {
         const displaySpy = jest.spyOn(tab, 'display');
         const rebuildSpy = jest.spyOn(internals, 'rebuildProviderConfig');
 
+        setMockConfirmDecision(true);
         await providerDropdown!.onChange!('openai');
 
         expect(rebuildSpy).toHaveBeenCalledTimes(1);
@@ -797,6 +802,11 @@ describe('safeParseInt', () => {
         expect(safeParseInt('0x10', 7, 1)).toBe(7);
         expect(safeParseInt('0x10', 7, 0)).toBe(0);
     });
+
+    it('clamps values to max when provided', () => {
+        expect(safeParseInt('500', 7, 1, 100)).toBe(100);
+        expect(safeParseInt('42', 7, 1, 100)).toBe(42);
+    });
 });
 
 describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
@@ -836,14 +846,9 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
         expect(merged.colorGroups).toEqual([]);
     });
 
-    it('passes malformed colorGroups through unchanged (documented opaque behavior)', () => {
-        // src/settings.ts comment: "Arrays (colorGroups, metadatas, *ExcludePath)
-        // are kept as single values — when the user customizes one, they own
-        // the whole list." A garbage value in data.json must not silently swap
-        // back to the defaults; downstream rendering already guards against
-        // unexpected types. This test pins the contract.
+    it('falls back to defaults when array-backed settings are malformed', () => {
         const merged = mergeLoadedSettings({ colorGroups: 'corrupted' as unknown });
-        expect(merged.colorGroups).toBe('corrupted');
+        expect(merged.colorGroups).toEqual(DEFAULT_SETTINGS.colorGroups);
     });
 });
 
@@ -1092,6 +1097,20 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(featuredIdx).toBeLessThan(debugIdx);
     });
 
+    it('hides Featured Image settings when Qwen uses a non-DashScope custom endpoint', () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            baseURL: 'https://my-proxy.example.com/v1',
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const settingNames = getMockSettingRecords().map((r) => r.name);
+        expect(settingNames).not.toContain('AI Featured Image Path');
+        expect(settingNames).not.toContain('AI Featured Images Generating Number');
+    });
+
     it('Debug toggle moves out of the header into the Advanced section', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
@@ -1208,12 +1227,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.settings.chatModelName).toBe(PROVIDER_PRESETS.openai.chatModelName);
     });
 
-    it('switching to "custom" clears the URL/model fields without prompting', async () => {
-        // L1 review fix: keeping the prior preset's values would cause
-        // deriveDisplayPreset to return the prior preset on next render,
-        // so the dropdown would silently snap back to qwen instead of
-        // showing "custom". Clearing URL/model on switch makes the
-        // "custom" selection actually stick.
+    it('switching to "custom" confirms and preserves URL/model fields', async () => {
         const plugin = makePlugin({
             aiProvider: 'qwen',
             baseURL: PROVIDER_PRESETS.qwen.baseURL,
@@ -1227,14 +1241,16 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const records = getMockSettingRecords();
         const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
 
+        setMockConfirmDecision(true);
         await dropdown!.onChange!('custom');
 
-        expect(confirmUserAction).not.toHaveBeenCalled();
-        // runtimeProvider for "custom" is "qwen"; URL/model fields cleared.
+        expect(confirmUserAction).toHaveBeenCalledTimes(1);
+        // runtimeProvider for "custom" is "qwen"; URL/model fields are preserved.
         expect(plugin.settings.aiProvider).toBe('qwen');
-        expect(plugin.settings.baseURL).toBe('');
-        expect(plugin.settings.chatModelName).toBe('');
-        expect(plugin.settings.embeddingModelName).toBe('');
+        expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS.qwen.baseURL);
+        expect(plugin.settings.chatModelName).toBe('qwen-plus');
+        expect(plugin.settings.embeddingModelName).toBe(PROVIDER_PRESETS.qwen.embeddingModelName);
+        expect(plugin.settings.aiProviderPreset).toBe('custom');
         // After re-render, dropdown should display "custom".
         expect(deriveDisplayPreset(plugin.settings)).toBe('custom');
     });
@@ -1310,7 +1326,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         secret.onChange!('');
 
-        expect(app.secretStorage.setSecret).toHaveBeenLastCalledWith('pa-api-token', '');
+        expect(app.secretStorage.setSecret).toHaveBeenLastCalledWith('pa-api-token:vault-test', '');
         expect(plugin.clearTokenCache).toHaveBeenCalled();
     });
 });
@@ -1519,6 +1535,52 @@ describe('Phase 4 P1 UX', () => {
             const namesAfter = getMockSettingRecords().map((r) => r.name);
             expect(namesAfter).toContain('Ask before using AI credits');
             expect(namesAfter).toContain('Advanced memory controls');
+        });
+
+        it('asks for confirmation before enabling background memory updates', async () => {
+            (confirmUserAction as jest.Mock).mockClear();
+            const plugin = makePlugin({ showAdvancedMemoryControls: true });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const toggle = getMockSettingRecords()
+                .find((r) => r.name === 'Keep memory updated in background')?.toggles[0];
+            expect(toggle?.onChange).toBeDefined();
+
+            setMockConfirmDecision(false);
+            await toggle!.onChange!(true);
+            expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+            expect(toggle!.value).toBe(false);
+
+            setMockConfirmDecision(true);
+            await toggle!.onChange!(true);
+            expect(confirmUserAction).toHaveBeenCalledTimes(2);
+            const options = (confirmUserAction as jest.Mock).mock.calls[1]?.[1] as { message?: string };
+            expect(options?.message).toContain('Your notes will not be changed or deleted');
+            expect(options?.message).toContain('configured AI provider');
+            expect(options?.message).toContain('AI credits or API calls');
+            expect(plugin.settings.memoryApprovalPolicy).toBe('auto-refresh-after-prepare');
+            expect(plugin.memoryManager.scheduleReconcile).toHaveBeenCalledWith('settings');
+            expect(plugin.memoryManager.scheduleAutoFlush).toHaveBeenCalledWith('settings');
+        });
+
+        it('does not ask for confirmation when disabling background memory updates', async () => {
+            (confirmUserAction as jest.Mock).mockClear();
+            const plugin = makePlugin({
+                showAdvancedMemoryControls: true,
+                memoryApprovalPolicy: 'auto-refresh-after-prepare',
+            });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const toggle = getMockSettingRecords()
+                .find((r) => r.name === 'Keep memory updated in background')?.toggles[0];
+            await toggle!.onChange!(false);
+
+            expect(confirmUserAction).not.toHaveBeenCalled();
+            expect(plugin.settings.memoryApprovalPolicy).toBe('always');
         });
     });
 

@@ -483,13 +483,17 @@ export class LLMView extends ItemView {
         const syncComposerControls = () => {
             const generating = isGenerating();
             const hasDraft = textArea.value.trim().length > 0;
-            sendButton.disabled = generating || !hasDraft;
+            const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
+            sendButton.disabled = generating || !hasDraft || setupIssue !== null;
             if (generating && !isStopping) {
                 textArea.setAttribute('placeholder', 'Draft next message');
                 sendButton.classList.replace('send-button-visible', 'send-button-hidden');
                 cancelButton.classList.replace('cancel-button-hidden', 'cancel-button-visible');
             } else {
-                textArea.setAttribute('placeholder', generating ? 'Draft next message' : 'Ask about your notes...');
+                textArea.setAttribute(
+                    'placeholder',
+                    generating ? 'Draft next message' : setupIssue ? 'Set up AI provider first' : 'Ask about your notes...',
+                );
                 sendButton.classList.replace('send-button-hidden', 'send-button-visible');
                 cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
             }
@@ -1655,7 +1659,7 @@ export class LLMView extends ItemView {
             };
             timelineEntries.push(historyEntry);
             this.result = responseContent;
-            void this.persistFinalizedTurn(prompt, historyEntry, isLiveTurn);
+            await this.persistFinalizedTurn(prompt, historyEntry);
 
             const deleteCompletedPair = () => deleteHistoryPairForMessages(userMessage, assistantMessage);
             ensureCompletedMessageActions(userRendered, {
@@ -1702,6 +1706,12 @@ export class LLMView extends ItemView {
 
         const sendPrompt = async (prompt: string) => {
             if (!prompt.trim() || isGenerating()) return;
+            const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
+            if (setupIssue) {
+                showComposerHint(setupIssue);
+                syncComposerControls();
+                return;
+            }
             isStopping = false;
             removeElement(emptyStateEl);
             emptyStateEl = null;
@@ -1866,13 +1876,14 @@ export class LLMView extends ItemView {
 
         clearButton.onclick = async () => {
             const confirmed = await confirmChatAction(this.plugin, {
-                title: 'Clear chat?',
-                message: 'This clears the chat, draft, and chat history.',
-                confirmText: 'Clear chat',
+                title: 'Clear current chat?',
+                message: 'This clears the current chat and draft. Other saved conversations remain in History.',
+                confirmText: 'Clear current chat',
                 danger: true,
             });
             if (!confirmed) return;
             if (!isCurrentSession()) return;
+            await this.persistChain.catch(() => undefined);
             this.invalidateActiveTurn();
             this.cancelScheduledScroll();
             const conversationIdToDelete = this.activeConversationId;
@@ -1888,21 +1899,21 @@ export class LLMView extends ItemView {
             hideComposerHint();
             syncComposerControls();
             renderEmptyState();
-            const manager = this.getChatHistoryManager();
-            if (manager?.isAvailable() && conversationIdToDelete) {
+            const manager = await getReadyHistoryManager();
+            if (manager && conversationIdToDelete) {
                 try {
                     await manager.deleteConversation(conversationIdToDelete);
                 } catch (error) {
                     this.plugin.log?.("Failed to delete cleared conversation", error);
                 }
-            } else if (manager?.isAvailable()) {
+            } else if (manager) {
                 try {
                     await manager.setActiveConversationId(null);
                 } catch (error) {
                     this.plugin.log?.("Failed to clear active conversation pointer", error);
                 }
             }
-            new Notice('Chat cleared');
+            new Notice('Current chat cleared');
         };
 
         const addContentToEditor = async (content: string) => {
@@ -1973,12 +1984,24 @@ export class LLMView extends ItemView {
             this.result = '';
             renderTimeline();
         };
+        const getReadyHistoryManager = async (showNotice = false): Promise<ChatHistoryManager | null> => {
+            const manager = this.getChatHistoryManager();
+            if (!manager) {
+                if (showNotice) new Notice('Chat history is unavailable.');
+                return null;
+            }
+            await manager.initialize();
+            if (!manager.isAvailable()) {
+                if (showNotice) new Notice('Chat history is unavailable.');
+                return null;
+            }
+            return manager;
+        };
 
         const restoreActiveConversation = async () => {
-            const manager = this.getChatHistoryManager();
-            if (!manager) return;
             try {
-                if (!manager.isAvailable()) return;
+                const manager = await getReadyHistoryManager();
+                if (!manager) return;
                 const activeId = await manager.getActiveConversationId();
                 if (!activeId) return;
                 if (!isCurrentSession()) return;
@@ -2004,11 +2027,9 @@ export class LLMView extends ItemView {
                 new Notice('Wait for the current response to finish before switching conversations.');
                 return;
             }
-            const manager = this.getChatHistoryManager();
-            if (!manager || !manager.isAvailable()) {
-                new Notice('Chat history is unavailable.');
-                return;
-            }
+            await this.persistChain.catch(() => undefined);
+            const manager = await getReadyHistoryManager(true);
+            if (!manager) return;
             try {
                 const conversation = await manager.findConversation(conversationId);
                 if (!conversation) {
@@ -2035,6 +2056,7 @@ export class LLMView extends ItemView {
                 new Notice('Wait for the current response to finish before starting a new chat.');
                 return;
             }
+            await this.persistChain.catch(() => undefined);
             this.invalidateActiveTurn();
             this.cancelScheduledScroll();
             this.chatHistory = [];
@@ -2049,8 +2071,8 @@ export class LLMView extends ItemView {
             hideComposerHint();
             syncComposerControls();
             renderEmptyState();
-            const manager = this.getChatHistoryManager();
-            if (manager?.isAvailable()) {
+            const manager = await getReadyHistoryManager();
+            if (manager) {
                 try {
                     await manager.setActiveConversationId(null);
                 } catch (error) {
@@ -2061,11 +2083,8 @@ export class LLMView extends ItemView {
         };
 
         const openHistoryPicker = async () => {
-            const manager = this.getChatHistoryManager();
-            if (!manager || !manager.isAvailable()) {
-                new Notice('Chat history is unavailable.');
-                return;
-            }
+            const manager = await getReadyHistoryManager(true);
+            if (!manager) return;
             try {
                 const conversations = await manager.listConversations();
                 if (!isCurrentSession()) return;
@@ -2792,11 +2811,10 @@ export class LLMView extends ItemView {
     private persistFinalizedTurn(
         prompt: string,
         entry: TimelineEntry,
-        isLiveTurn: () => boolean,
     ): Promise<void> {
         const next = this.persistChain
             .catch(() => undefined)
-            .then(() => this.runPersistFinalizedTurn(prompt, entry, isLiveTurn));
+            .then(() => this.runPersistFinalizedTurn(prompt, entry));
         this.persistChain = next;
         return next;
     }
@@ -2804,24 +2822,17 @@ export class LLMView extends ItemView {
     private async runPersistFinalizedTurn(
         prompt: string,
         entry: TimelineEntry,
-        isLiveTurn: () => boolean,
     ): Promise<void> {
         if (entry.kind !== 'history') return;
         const manager = this.getChatHistoryManager();
-        if (!manager || !manager.isAvailable()) return;
+        if (!manager) return;
+        await manager.initialize();
+        if (!manager.isAvailable()) return;
         try {
             let conversation = this.activeConversation;
             let conversationId = this.activeConversationId;
             if (!conversation || !conversationId) {
                 const created = await manager.startConversation(prompt);
-                if (!isLiveTurn()) {
-                    try {
-                        await manager.deleteConversation(created.id);
-                    } catch (rollbackError) {
-                        this.plugin.log?.("Failed to roll back orphan chat conversation", rollbackError);
-                    }
-                    return;
-                }
                 conversation = created;
                 conversationId = created.id;
                 this.activeConversation = conversation;
@@ -2836,7 +2847,6 @@ export class LLMView extends ItemView {
                 userPrompt: prompt,
                 conversation,
             });
-            if (!isLiveTurn()) return;
             this.activeConversation = updated;
             this.nextTurnIndex = turnIndex + 1;
             this.persistedTurnIndexByEntry.set(entry, turnIndex);

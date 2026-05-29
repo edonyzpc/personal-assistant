@@ -1,10 +1,7 @@
 # SDD: RequiredCapabilityClassification 重构简化
 
-**Status:** Draft, awaiting user approval
-**Owner:** TBD
-**Branch:** `feat/capability-refactor`
-**Worktree:** `capability-refactor`
-**Related plan:** `/Users/edony/.claude/plans/breezy-wiggling-gem.md` (Phase 3.6)
+**Status:** Accepted design record
+**Phase:** 3.6
 
 ---
 
@@ -77,7 +74,7 @@
 | `chat-tool-prepare-helpers.ts` | （定义）`isExplicitCurrentNoteOnlyRequest`、`shouldUseFullCurrentNoteContext` | 实际定义在此，policy 文件 re-export |
 | `__tests__/pa-agent-required-capability-policy.test.ts` | 测试全套 | 行为回归基线 |
 
-**外部 API 必须保留**（标记 ✅ 必须兼容）：
+**保留的外部入口**（签名保持可导入，但语义按本 SDD 收敛）：
 - ✅ `RequiredCapability` type
 - ✅ `RequiredCapabilityClassification` interface（`items` 数组）
 - ✅ `RequiredCapabilityClassifier` 接口（`pa-agent-runtime.ts` 注入 LLM 分类器实现）
@@ -88,14 +85,14 @@
 - ✅ `REQUIRED_CAPABILITY_CLASSIFIER_TIMEOUT_MS` 常量
 - ✅ re-export `isExplicitCurrentNoteOnlyRequest` / `shouldUseFullCurrentNoteContext`
 
-**可移除**（无消费者）：
+**Breaking cleanup（已确认采用方案 B）：**
 
-> **迁移期注意（per §5）:** 下列 type-only 别名虽无内部消费者，但本 PR 中保留为 `@deprecated` 别名直至 **2026-06-12**（一个 sprint 的稳定窗口），以避免外部消费者（如插件用户的下游代码）破坏。`metadata.*` 字段是数据字段，本 PR 直接移除——无 deprecation 期，因为数据字段无法以 `@deprecated` 别名形式过渡，且 grep 确认仓内无消费者读取。`2026-06-12` 之后的 follow-up PR 再删 type 别名。
+> `ignore` level 和 `classification.metadata.*` 字段不保留旧形状，直接按新 schema 清理。仍留在代码中的 type-only alias 只服务旧 import 路径，类型内容已经是新形状，不承诺兼容旧数据字段或旧 union arm。
 
-- ❌ `RequiredCapabilityLevel` type（仅内部用，保留 @deprecated 至 2026-06-12）
-- ❌ `RequiredCapabilityHostPolicyOptions` / `RequiredCapabilityHostPolicyResult`（消费者只用返回值字段，保留 @deprecated 至 2026-06-12）
-- ❌ `RequiredCapabilityClassifierInput` 接口（仅作为 `RequiredCapabilityClassifier` 输入参数，归属为公开类型的内部细节，保留 @deprecated 至 2026-06-12；新代码使用 inline `{ userInput: string; signal?: AbortSignal }`）
-- ❌ `metadata.policyModelAvailable` / `classifierUsed` / `classifierTimedOut` / `fallbackUsed`（本 PR 直接移除）
+- ❌ `RequiredCapabilityLevel` type 的旧 `"ignore"` arm（直接移除；低置信项不进入 `items`）
+- ❌ `RequiredCapabilityHostPolicyOptions` / `RequiredCapabilityHostPolicyResult` 作为推荐写法（保留 alias 但新代码 inline）
+- ❌ `RequiredCapabilityClassifierInput` 接口作为推荐写法（保留 alias 但新代码使用 inline `{ userInput: string; signal?: AbortSignal }`）
+- ❌ `metadata.policyModelAvailable` / `classifierUsed` / `classifierTimedOut` / `fallbackUsed`（直接移除）
 
 **RequiredCapabilityClassifier 调整说明:** 之前列在"可移除"是误判 —— `pa-agent-runtime.ts` 的 LLM 分类器实例需要这个接口契约（duck typing 不够，因为有 `classify(input): Promise<unknown>` 的具体形状）。保留为公开 API，只是把 `RequiredCapabilityClassifierInput` 转为 inline `{ userInput: string; signal?: AbortSignal }`。
 
@@ -376,20 +373,19 @@ function normalizeClassifierResult(result: unknown): RequiredCapabilityClassific
 
 ---
 
-## 5. 兼容层（迁移期）
+## 5. 兼容说明（方案 B breaking cleanup）
 
-为避免外部消费者破坏，保留以下 deprecated 别名 1 个 sprint：
+旧的 `ignore` level 与 `classification.metadata.*` 字段不提供 deprecation 期；它们是本次重构要删除的冗余 schema。代码中仍保留的 deprecated alias 只用于减少 import churn，内容已经是新形状：
 
 ```typescript
 /**
  * @deprecated since 2026-05-29 — use literal "required" | "suggested".
- * Will be removed after 2026-06-12 (one sprint stability window).
+ * The former "ignore" arm was intentionally removed.
  */
 export type RequiredCapabilityLevel = "required" | "suggested";
 
 /**
  * @deprecated since 2026-05-29 — metadata 字段已移除，传递的 classification 直接生效.
- * Will be removed after 2026-06-12.
  */
 export interface RequiredCapabilityHostPolicyOptions {
     userInput: string;
@@ -398,7 +394,7 @@ export interface RequiredCapabilityHostPolicyOptions {
 }
 ```
 
-实施完成 + 一周稳定后删除（在 follow-up PR）。具体删除日期写入 deprecated 注释，避免"等多久"的不确定性。
+后续如果继续删除 alias，应作为单独清理提交处理；本设计记录不要求恢复旧 schema。
 
 ---
 
@@ -485,7 +481,7 @@ export interface RequiredCapabilityHostPolicyOptions {
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| metadata 移除破坏未知消费者 | 中 | grep 全仓 + Phase D 增量删除 + deprecated 别名缓冲（带日期） |
+| metadata / ignore 直接移除破坏未知消费者 | 中 | 已确认采用方案 B；grep 全仓确认仓内无消费者，release notes 标明 breaking cleanup |
 | 状态机重构改变行为 | 中 | Phase C 在 Phase B 之后，全部测试通过才进入；§4.5 表格定义新旧等价关系 |
 | 中文 token 表覆盖不全 | 低 | 用户实际使用反馈迭代；初版覆盖最高频 6-10 词；LLM 分类器兜底 |
 | 中文 token 误命中（漏 vs 误的取舍） | 中 | §4.4 主动收紧通用 token（移除"最新/今天/当前/上下文"），优先漏命中走 LLM；§7.2 加 NOT 触发回归测试 |
@@ -523,8 +519,6 @@ export interface RequiredCapabilityHostPolicyOptions {
 
 ## 11. 工作流程
 
-1. ✅ Spec 定稿（本文档）
-2. 用户 review 确认
-3. 通过 `EnterWorktree` 创建 `capability-refactor` worktree
-4. 按 Phase A→B→C→D 顺序实施，每阶段独立 commit
-5. 全测试通过 + 中文 vault 实测后推送 PR
+1. 设计记录定稿并通过 review。
+2. 按 Phase A→B→C→D 顺序实施，每阶段保持可独立 review。
+3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。
