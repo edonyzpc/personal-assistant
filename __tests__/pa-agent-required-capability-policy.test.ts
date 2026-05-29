@@ -674,6 +674,30 @@ describe("PA Agent required capability HostPolicy", () => {
         });
     });
 
+    it("is idempotent after reaching a terminal stop decision (SDD §7.3)", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Search the web for the latest docs.",
+            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
+        });
+
+        // Round 1: initial → corrective_issued
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            committedFinalText: "Answer without web.",
+        }))).toMatchObject({ action: "continue", reason: "corrective_turn" });
+
+        // Round 2: corrective_issued → terminal(from corrective)
+        const terminalDecision = await policy.hostPolicy.afterTurn(createSummary({
+            committedFinalText: "Still no web.",
+        }));
+        expect(terminalDecision).toMatchObject({ action: "stop" });
+
+        // Round 3+: any further call should be a no-op stop, never crash, never re-run policy
+        const post = await policy.hostPolicy.afterTurn(createSummary({
+            committedFinalText: "After terminal.",
+        }));
+        expect(post).toMatchObject({ action: "stop", reason: "terminal_idempotent", status: "completed" });
+    });
+
     it("warns only for unsatisfied required capabilities when available and unavailable capabilities are mixed", async () => {
         const policy = createRequiredCapabilityHostPolicy({
             userInput: "Use my notes and current web information.",

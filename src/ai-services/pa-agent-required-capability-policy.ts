@@ -48,13 +48,17 @@ export interface RequiredCapabilityHostPolicyResult {
     classification: RequiredCapabilityClassification;
 }
 
+type CapabilityRuntimePhase =
+    | { kind: "awaiting_initial_tools" }
+    | { kind: "corrective_issued" }
+    | { kind: "failed_retry_issued" }
+    | { kind: "terminal"; from: "initial" | "corrective" | "failed_retry" };
+
 interface RequiredCapabilityRuntimeState {
-    required: RequiredCapabilityClassificationItem[];
-    suggested: RequiredCapabilityClassificationItem[];
+    classification: RequiredCapabilityClassification;
     availableCapabilities: ReadonlySet<RequiredCapability>;
     usedCapabilities: Set<RequiredCapability>;
-    correctiveAttempted: boolean;
-    failedRequiredToolRetryAttempted: boolean;
+    phase: CapabilityRuntimePhase;
     answerCompletionLedger: AnswerCompletionLedger;
 }
 
@@ -85,12 +89,10 @@ export function createRequiredCapabilityHostPolicy(
 ): RequiredCapabilityHostPolicyResult {
     const classification = options.classification ?? classifyRequiredCapabilitiesDeterministic(options.userInput);
     const state: RequiredCapabilityRuntimeState = {
-        required: classification.items.filter((item) => item.level === "required"),
-        suggested: classification.items.filter((item) => item.level === "suggested"),
+        classification,
         availableCapabilities: options.availableCapabilities,
         usedCapabilities: new Set(),
-        correctiveAttempted: false,
-        failedRequiredToolRetryAttempted: false,
+        phase: { kind: "awaiting_initial_tools" },
         answerCompletionLedger: createAnswerCompletionLedger(),
     };
 
@@ -268,36 +270,17 @@ function decideAfterTurn(
     summary: PaAgentTurnSummary,
     state: RequiredCapabilityRuntimeState,
 ): ReturnType<PaAgentHostPolicy["afterTurn"]> {
+    if (state.phase.kind === "terminal") {
+        return { action: "stop", reason: "terminal_idempotent", status: "completed" };
+    }
+
     const facts = deriveAnswerCompletionTurnFacts(summary);
     recordUsedCapabilities(summary, state.usedCapabilities);
     recordAnswerCompletionTurn(state.answerCompletionLedger, summary, facts);
 
     const failedRequiredCapabilities = getFailedRequiredCapabilityNames(summary, state);
     if (failedRequiredCapabilities.length > 0) {
-        if (!state.failedRequiredToolRetryAttempted && !state.correctiveAttempted) {
-            state.failedRequiredToolRetryAttempted = true;
-            const completionDecision = decideAnswerCompletion({
-                summary,
-                ledger: state.answerCompletionLedger,
-                facts,
-                failedRequiredCapabilities,
-            });
-            if (completionDecision?.action === "force_finalize") {
-                return {
-                    action: "continue",
-                    reason: "needs_follow_up",
-                    runtimeInstruction: completionDecision.runtimeInstruction,
-                    toolMode: completionDecision.toolMode,
-                };
-            }
-            return {
-                action: "continue",
-                reason: "needs_follow_up",
-                runtimeInstruction: buildFailedRequiredToolInstruction(failedRequiredCapabilities),
-                toolMode: "final_answer_only",
-            };
-        }
-        return buildMissingRequiredDecision(summary, state, "required_capability_failed");
+        return handleFailedRequired(summary, state, facts, failedRequiredCapabilities);
     }
 
     const completionDecision = decideAnswerCompletion({
@@ -314,6 +297,7 @@ function decideAfterTurn(
         };
     }
     if (completionDecision?.action === "stop_incomplete") {
+        state.phase = phaseToTerminal(state.phase);
         return {
             action: "stop",
             reason: completionDecision.reason,
@@ -326,46 +310,125 @@ function decideAfterTurn(
         return { action: "continue", reason: "tool_results_ready" };
     }
 
-    const missingRequired = state.required
-        .filter((item) => !state.usedCapabilities.has(item.capability));
-    const missingAvailable = missingRequired
-        .filter((item) => state.availableCapabilities.has(item.capability));
+    const missing = computeMissingRequired(state);
 
-    if (missingAvailable.length > 0 && !state.correctiveAttempted && !state.failedRequiredToolRetryAttempted) {
-        state.correctiveAttempted = true;
+    if (missing.available.length > 0 && state.phase.kind === "awaiting_initial_tools") {
+        state.phase = { kind: "corrective_issued" };
         return {
             action: "continue",
             reason: "corrective_turn",
-            runtimeInstruction: buildCorrectiveInstruction(missingAvailable),
+            runtimeInstruction: buildCorrectiveInstruction(missing.available),
         };
     }
 
-    if (missingRequired.length > 0) {
+    if (missing.all.length > 0) {
+        state.phase = phaseToTerminal(state.phase);
         return buildMissingRequiredDecision(summary, state, "required_capability_missing");
     }
 
+    state.phase = phaseToTerminal(state.phase);
     return {
         action: "stop",
         reason: summary.status,
-        status: summary.status === "completed_with_warning"
-            ? "completed_with_warning"
-            : summary.status === "aborted"
-                ? "aborted"
-                : summary.status === "error"
-                    ? "error"
-                    : summary.status === "incomplete"
-                        ? "incomplete"
-                        : "completed",
+        status: mapTerminalStatus(summary.status),
     };
+}
+
+function handleFailedRequired(
+    summary: PaAgentTurnSummary,
+    state: RequiredCapabilityRuntimeState,
+    facts: ReturnType<typeof deriveAnswerCompletionTurnFacts>,
+    failedRequiredCapabilities: RequiredCapability[],
+): ReturnType<PaAgentHostPolicy["afterTurn"]> {
+    if (state.phase.kind === "awaiting_initial_tools") {
+        state.phase = { kind: "failed_retry_issued" };
+        const completionDecision = decideAnswerCompletion({
+            summary,
+            ledger: state.answerCompletionLedger,
+            facts,
+            failedRequiredCapabilities,
+        });
+        if (completionDecision?.action === "force_finalize") {
+            return {
+                action: "continue",
+                reason: "needs_follow_up",
+                runtimeInstruction: completionDecision.runtimeInstruction,
+                toolMode: completionDecision.toolMode,
+            };
+        }
+        return {
+            action: "continue",
+            reason: "needs_follow_up",
+            runtimeInstruction: buildFailedRequiredToolInstruction(failedRequiredCapabilities),
+            toolMode: "final_answer_only",
+        };
+    }
+    state.phase = phaseToTerminal(state.phase);
+    return buildMissingRequiredDecision(summary, state, "required_capability_failed");
+}
+
+function computeMissingRequired(state: RequiredCapabilityRuntimeState): {
+    all: RequiredCapabilityClassificationItem[];
+    available: RequiredCapabilityClassificationItem[];
+} {
+    const all = getRequiredItems(state.classification)
+        .filter((item) => !state.usedCapabilities.has(item.capability));
+    const available = all
+        .filter((item) => state.availableCapabilities.has(item.capability));
+    return { all, available };
+}
+
+function mapTerminalStatus(
+    status: PaAgentTurnSummary["status"],
+): "completed" | "completed_with_warning" | "aborted" | "error" | "incomplete" {
+    if (status === "completed_with_warning") return "completed_with_warning";
+    if (status === "aborted") return "aborted";
+    if (status === "error") return "error";
+    if (status === "incomplete") return "incomplete";
+    return "completed";
+}
+
+// Convert any non-terminal phase to terminal, preserving which prior phase issued
+// the corrective / failed-retry attempt so that warning metadata can expose the
+// `correctiveAttempted` / `failedRequiredToolRetryAttempted` booleans that downstream
+// consumers (and tests) inspect.
+function phaseToTerminal(phase: CapabilityRuntimePhase): CapabilityRuntimePhase {
+    if (phase.kind === "corrective_issued") return { kind: "terminal", from: "corrective" };
+    if (phase.kind === "failed_retry_issued") return { kind: "terminal", from: "failed_retry" };
+    if (phase.kind === "terminal") return phase;
+    return { kind: "terminal", from: "initial" };
+}
+
+function isCorrectiveAttempted(phase: CapabilityRuntimePhase): boolean {
+    return phase.kind === "corrective_issued"
+        || (phase.kind === "terminal" && phase.from === "corrective");
+}
+
+function isFailedRetryAttempted(phase: CapabilityRuntimePhase): boolean {
+    return phase.kind === "failed_retry_issued"
+        || (phase.kind === "terminal" && phase.from === "failed_retry");
+}
+
+function getRequiredItems(
+    classification: RequiredCapabilityClassification,
+): RequiredCapabilityClassificationItem[] {
+    return classification.items.filter((item) => item.level === "required");
+}
+
+function getSuggestedItems(
+    classification: RequiredCapabilityClassification,
+): RequiredCapabilityClassificationItem[] {
+    return classification.items.filter((item) => item.level === "suggested");
 }
 
 function buildInitialRuntimeInstruction(state: RequiredCapabilityRuntimeState): string | undefined {
     const parts: string[] = [];
-    const availableRequired = state.required
+    const required = getRequiredItems(state.classification);
+    const availableRequired = required
         .filter((item) => state.availableCapabilities.has(item.capability));
-    const unavailableRequired = state.required
+    const unavailableRequired = required
         .filter((item) => !state.availableCapabilities.has(item.capability));
-    const suggested = state.suggested
+    const suggested = getSuggestedItems(state.classification)
         .filter((item) => item.confidence >= 0.60 && state.availableCapabilities.has(item.capability));
 
     if (availableRequired.length > 0) {
@@ -416,21 +479,23 @@ function buildMissingRequiredDecision(
     state: RequiredCapabilityRuntimeState,
     reason: "required_capability_missing" | "required_capability_failed",
 ): ReturnType<PaAgentHostPolicy["afterTurn"]> {
-    const missingRequired = state.required
+    const missingRequired = getRequiredItems(state.classification)
         .filter((item) => !state.usedCapabilities.has(item.capability));
+    const correctiveAttempted = isCorrectiveAttempted(state.phase);
+    const failedRequiredToolRetryAttempted = isFailedRetryAttempted(state.phase);
     const warnings = missingRequired.map((item) => ({
         type: "required_capability_missing",
         capability: item.capability,
         message: "Answer may be incomplete",
-        detail: reason === "required_capability_failed" || state.failedRequiredToolRetryAttempted
+        detail: reason === "required_capability_failed" || failedRequiredToolRetryAttempted
             ? `${CAPABILITY_LABELS[item.capability]} was required but failed or was unavailable.`
             : `${CAPABILITY_LABELS[item.capability]} was required but was not used.`,
         metadata: {
             confidence: item.confidence,
             reason: item.reason,
             available: state.availableCapabilities.has(item.capability),
-            correctiveAttempted: state.correctiveAttempted,
-            failedRequiredToolRetryAttempted: state.failedRequiredToolRetryAttempted,
+            correctiveAttempted,
+            failedRequiredToolRetryAttempted,
         },
     }));
     const diagnostics = summary.committedFinalText ? undefined : [{
@@ -485,7 +550,7 @@ function getFailedRequiredCapabilityNames(
     summary: PaAgentTurnSummary,
     state: RequiredCapabilityRuntimeState,
 ): RequiredCapability[] {
-    const requiredNames = new Set(state.required.map((item) => item.capability));
+    const requiredNames = new Set(getRequiredItems(state.classification).map((item) => item.capability));
     return [...new Set(summary.toolResults
         .filter((result) =>
             isRequiredCapability(result.toolName)
