@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Notice, PluginSettingTab, SecretComponent, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, SecretComponent, Setting, debounce } from "obsidian";
 import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
@@ -146,9 +146,13 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     enabledSkillIds: [...BUNDLED_SKILL_IDS],
     // 兼容旧版本
     modelName: "qwen-plus",
-    featuredImagePath: "9.src",
+    featuredImagePath: "",
     numFeaturedImages: 2,
-    vssCacheExcludePath: [".obsidian", "8.template", "9.src", "a.subjects", "b.notion"],
+    // Generic default — the prior list ("8.template", "9.src", "a.subjects",
+    // "b.notion") was the original developer's vault layout and made no sense
+    // as a fresh-install default. mergeLoadedSettings preserves any persisted
+    // value, so existing users keep their configured exclusions.
+    vssCacheExcludePath: [".obsidian"],
 }
 
 interface GraphColor {
@@ -356,6 +360,7 @@ export class SettingTab extends PluginSettingTab {
     private providerConfigContainer: HTMLDivElement | null = null;
     private qwenOptionsContainer: HTMLDivElement | null = null;
     private skillTogglesContainer: HTMLDivElement | null = null;
+    private memorySubContainer: HTMLDivElement | null = null;
     private memoryAdvancedContainer: HTMLDivElement | null = null;
     private graphColorsContainer: HTMLDivElement | null = null;
     private metadataContainer: HTMLDivElement | null = null;
@@ -366,6 +371,18 @@ export class SettingTab extends PluginSettingTab {
 
     // Set by rebuildQwenOptions(); invoked by Base URL onChange.
     private refreshQwenResponseOptionAvailability: (() => void) | null = null;
+
+    // Coalesces saveSettings() across keystrokes in text inputs. Each addText
+    // onChange mutates plugin.settings.* synchronously, then calls
+    // debouncedSave(); the actual disk write is deferred 400ms past the last
+    // keystroke. hide() cancels the timer and forces one final save so a user
+    // who closes the tab mid-edit doesn't lose their input.
+    //
+    // Toggle / Dropdown / Button onChange handlers still save immediately —
+    // those are discrete user actions where each value flip is meaningful and
+    // some of them rebuild dependent UI (e.g. enableGraphColors,
+    // enableMetadataUpdating, aiProvider).
+    private debouncedSave = debounce(() => { void this.plugin.saveSettings(); }, 400, true);
 
     constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
@@ -383,6 +400,7 @@ export class SettingTab extends PluginSettingTab {
         this.providerConfigContainer = null;
         this.qwenOptionsContainer = null;
         this.skillTogglesContainer = null;
+        this.memorySubContainer = null;
         this.memoryAdvancedContainer = null;
         this.graphColorsContainer = null;
         this.metadataContainer = null;
@@ -410,6 +428,11 @@ export class SettingTab extends PluginSettingTab {
         // Tear down Pickers explicitly so popup elements + listeners are not
         // orphaned when the tab DOM is detached.
         this.destroyPickers();
+        // Flush any pending text-input save: the onChange handlers have
+        // already mutated plugin.settings.* synchronously, so persisting
+        // the current settings object captures the user's latest input.
+        this.debouncedSave.cancel();
+        void this.plugin.saveSettings();
     }
 
     private destroyPickers(): void {
@@ -438,10 +461,10 @@ export class SettingTab extends PluginSettingTab {
             .addText(text => text
                 .setPlaceholder('.')
                 .setValue(plugin.settings.targetPath)
-                .onChange(async (value) => {
+                .onChange((value) => {
                     this.log('target path: ' + value);
                     plugin.settings.targetPath = value;
-                    await plugin.saveSettings();
+                    this.debouncedSave();
                 }));
         const desc_format = document.createDocumentFragment();
         desc_format.createEl('p', undefined, (p) => {
@@ -455,19 +478,19 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(desc_format)
             .addText(text => text.setPlaceholder('YYYY-MM-DD')
                 .setValue(plugin.settings.fileFormat)
-                .onChange(async (value) => {
+                .onChange((value) => {
                     this.log('format setting: ' + value);
                     plugin.settings.fileFormat = value;
-                    await plugin.saveSettings();
+                    this.debouncedSave();
                 }));
         new Setting(parentEl).setName("Preview Number")
             .setDesc("File numbers to preview")
             .addText(text => {
                 text.setPlaceholder('5')
                     .setValue(plugin.settings.previewLimits.toString())
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.previewLimits = safeParseInt(value, plugin.settings.previewLimits, 1);
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
     }
@@ -481,9 +504,9 @@ export class SettingTab extends PluginSettingTab {
             .addText(text => {
                 text.setPlaceholder('popover')
                     .setValue(plugin.settings.localGraph.type)
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.localGraph.type = value;
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
         new Setting(parentEl).setName('Depth')
@@ -491,9 +514,9 @@ export class SettingTab extends PluginSettingTab {
             .addText(text => {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.localGraph.depth.toString())
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.localGraph.depth = safeParseInt(value, plugin.settings.localGraph.depth, 1);
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
         new Setting(parentEl).setName('Show Tags')
@@ -566,20 +589,20 @@ export class SettingTab extends PluginSettingTab {
             .addText(text => {
                 text.setPlaceholder('height')
                     .setValue(plugin.settings.localGraph.resizeStyle.height.toString())
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.localGraph.resizeStyle.height =
                             safeParseInt(value, plugin.settings.localGraph.resizeStyle.height, 1);
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
         new Setting(parentEl).setName(w)
             .addText(text => {
                 text.setPlaceholder('width')
                     .setValue(plugin.settings.localGraph.resizeStyle.width.toString())
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.localGraph.resizeStyle.width =
                             safeParseInt(value, plugin.settings.localGraph.resizeStyle.width, 1);
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
     }
@@ -631,10 +654,10 @@ export class SettingTab extends PluginSettingTab {
                 .setDesc('This will be the Color used in the graph view.')
                 .addText(text => {
                     text.setValue(plugin.settings.colorGroups[index].query)
-                        .onChange(async (value) => {
+                        .onChange((value) => {
                             if (index > -1) {
                                 plugin.settings.colorGroups[index].query = value;
-                                await plugin.saveSettings();
+                                this.debouncedSave();
                             }
                         })
                 })
@@ -740,10 +763,10 @@ export class SettingTab extends PluginSettingTab {
                 .setName(nameEl)
                 .addText(text => {
                     text.setValue(plugin.settings.metadatas[index].value)
-                        .onChange(async (value) => {
+                        .onChange((value) => {
                             if (index > -1) {
                                 plugin.settings.metadatas[index].value = value;
-                                await plugin.saveSettings();
+                                this.debouncedSave();
                             }
                         })
                 })
@@ -761,7 +784,6 @@ export class SettingTab extends PluginSettingTab {
         const nameEl2 = document.createDocumentFragment();
         nameEl2.createSpan({ text: "---" });
         new Setting(container).setName(nameEl2);
-        // TODO: design better UX to configure frontmatter auto-updating
 
         // Initialize with the dropdown's first option ("string") so a user who
         // clicks Add without touching the dropdown gets a valid type instead of
@@ -769,10 +791,16 @@ export class SettingTab extends PluginSettingTab {
         let key = "";
         let value: any = ""; // eslint-disable-line @typescript-eslint/no-explicit-any
         let t = "string";
+        // Track the input components so the Add handler can reset their visible
+        // value after a successful save — otherwise the form retains the just-
+        // submitted text and the next entry has to be typed over it.
+        let keyInput: { setValue: (v: string) => unknown } | null = null;
+        let valueInput: { setValue: (v: string) => unknown } | null = null;
         new Setting(container)
             .setName("Add Key:Value in frontmatter")
-            .setDesc('Value now only upport formatted timestamp and regular string.')
+            .setDesc('Value only supports formatted timestamp and regular string.')
             .addText(text => {
+                keyInput = text;
                 text.setPlaceholder('key')
                     .setValue(key)
                     .onChange(async (val) => {
@@ -780,6 +808,7 @@ export class SettingTab extends PluginSettingTab {
                     })
             })
             .addText(text => {
+                valueInput = text;
                 text.setPlaceholder('value')
                     .setValue(value)
                     .onChange(async (val) => {
@@ -787,8 +816,8 @@ export class SettingTab extends PluginSettingTab {
                     })
             })
             .addDropdown(dropDown => {
-                dropDown.addOption('string', '1 Regular String');
-                dropDown.addOption('moment', '2 Timestamp');
+                dropDown.addOption('string', 'Regular string');
+                dropDown.addOption('moment', 'Formatted timestamp');
                 dropDown.setValue(t);
                 dropDown.onChange(async (value) => {
                     t = value;
@@ -804,6 +833,14 @@ export class SettingTab extends PluginSettingTab {
                     this.log("adding new frontmatter");
                     plugin.settings.metadatas.push({ key: trimmedKey, value: value, t: t });
                     await plugin.saveSettings();
+                    // Reset the form so the next add starts blank. We update both
+                    // the captured local vars (consumed by the next Add click)
+                    // and the visible inputs (rebuildMetadataList will re-mount,
+                    // but resetting first avoids a flash of stale text).
+                    key = "";
+                    value = "";
+                    keyInput?.setValue("");
+                    valueInput?.setValue("");
                     this.rebuildMetadataList();
                 })
             });
@@ -812,9 +849,9 @@ export class SettingTab extends PluginSettingTab {
             .addText(text => {
                 text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
                     .setValue(plugin.settings.metadataExcludePath.join(','))
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.metadataExcludePath = value.split(",");
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
     }
@@ -871,6 +908,30 @@ export class SettingTab extends PluginSettingTab {
                     plugin.saveSettings();
                 })
         );
+
+        new Setting(parentEl)
+            .setName("Show section word counts")
+            .setDesc("Display word counts under each heading while editing.")
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(plugin.settings.displaySectionCounts)
+                    .onChange(async (value) => {
+                        plugin.settings.displaySectionCounts = value;
+                        await plugin.saveSettings();
+                    });
+            });
+
+        new Setting(parentEl)
+            .setName("Count comments in statistics")
+            .setDesc("Include text inside HTML and Obsidian comments in word and character counts.")
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(plugin.settings.countComments)
+                    .onChange(async (value) => {
+                        plugin.settings.countComments = value;
+                        await plugin.saveSettings();
+                    });
+            });
     }
 
     private renderAISection(parentEl: HTMLElement): void {
@@ -1006,9 +1067,13 @@ export class SettingTab extends PluginSettingTab {
             .addText((text) => {
                 text.setPlaceholder("https://api.openai.com/v1");
                 text.setValue(plugin.settings.baseURL);
-                text.onChange(async (value: string) => {
+                text.onChange((value: string) => {
                     plugin.settings.baseURL = value;
-                    await plugin.saveSettings();
+                    this.debouncedSave();
+                    // Visual sync (enabling/disabling DashScope-only toggles)
+                    // is intentionally synchronous — it reflects the in-memory
+                    // setting, not the persisted one, so debouncing the save
+                    // does not delay it.
                     this.refreshQwenResponseOptionAvailability?.();
                 });
             });
@@ -1019,9 +1084,9 @@ export class SettingTab extends PluginSettingTab {
             .addText((text) => {
                 text.setPlaceholder("gpt-4o-mini");
                 text.setValue(plugin.settings.chatModelName);
-                text.onChange(async (value: string) => {
+                text.onChange((value: string) => {
                     plugin.settings.chatModelName = value;
-                    await plugin.saveSettings();
+                    this.debouncedSave();
                 });
             });
 
@@ -1031,9 +1096,9 @@ export class SettingTab extends PluginSettingTab {
             .addText((text) => {
                 text.setPlaceholder(plugin.settings.chatModelName || "optional");
                 text.setValue(plugin.settings.policyModelName);
-                text.onChange(async (value: string) => {
+                text.onChange((value: string) => {
                     plugin.settings.policyModelName = value.trim();
-                    await plugin.saveSettings();
+                    this.debouncedSave();
                 });
             });
     }
@@ -1186,14 +1251,31 @@ export class SettingTab extends PluginSettingTab {
                     .onChange(async (value) => {
                         plugin.settings.memoryEnabled = value;
                         await plugin.saveSettings();
-                        // Phase 1 preserves current behavior: no UI in this section depends on memoryEnabled.
-                        // Phase 4 will hide the sub-settings when this toggle is off.
+                        this.rebuildMemorySubSettings();
                     });
             });
 
-        new Setting(parentEl)
-            .setName("Check memory before chat")
-            .setDesc("The assistant will ask before preparing anything that may use AI credits.")
+        // Everything below the master toggle lives in a sub-container so we
+        // can hide it entirely when memoryEnabled is off (mirroring the
+        // enableGraphColors / enableMetadataUpdating pattern).
+        this.memorySubContainer = parentEl.createDiv();
+        this.rebuildMemorySubSettings();
+    }
+
+    private rebuildMemorySubSettings(): void {
+        if (!this.memorySubContainer) return;
+        this.memorySubContainer.empty();
+        // Advanced sub-container is a child of the now-cleared memorySubContainer.
+        this.memoryAdvancedContainer = null;
+
+        const plugin = this.plugin;
+        if (!plugin.settings.memoryEnabled) return;
+
+        const container = this.memorySubContainer;
+
+        new Setting(container)
+            .setName("Ask before using AI credits")
+            .setDesc("The assistant will ask for your approval before preparing or updating Memory, which uses API calls.")
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.memoryAutoCheckBeforeChat)
@@ -1203,7 +1285,7 @@ export class SettingTab extends PluginSettingTab {
                     });
             });
 
-        new Setting(parentEl)
+        new Setting(container)
             .setName("Advanced memory controls")
             .setDesc("Show maintenance and diagnostic controls for the local memory copy.")
             .addToggle((toggle) => {
@@ -1216,7 +1298,7 @@ export class SettingTab extends PluginSettingTab {
                     });
             });
 
-        this.memoryAdvancedContainer = parentEl.createDiv();
+        this.memoryAdvancedContainer = container.createDiv();
         this.rebuildMemoryAdvanced();
     }
 
@@ -1250,9 +1332,9 @@ export class SettingTab extends PluginSettingTab {
             .addText((text) => {
                 text.setPlaceholder("model name");
                 text.setValue(plugin.settings.embeddingModelName);
-                text.onChange(async (value: string) => {
+                text.onChange((value: string) => {
                     plugin.settings.embeddingModelName = value;
-                    await plugin.saveSettings();
+                    this.debouncedSave();
                 });
             });
 
@@ -1315,9 +1397,9 @@ export class SettingTab extends PluginSettingTab {
             .addText(text => {
                 text.setPlaceholder('tmp/,notes/templates')
                     .setValue(plugin.settings.vssCacheExcludePath.join(','))
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.vssCacheExcludePath = value.split(",").map((path) => path.trim()).filter(Boolean);
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
     }
@@ -1342,9 +1424,9 @@ export class SettingTab extends PluginSettingTab {
             .addText((text) => {
                 text.setPlaceholder("9.src");
                 text.setValue(plugin.settings.featuredImagePath.toString());
-                text.onChange(async (value: string) => {
+                text.onChange((value: string) => {
                     plugin.settings.featuredImagePath = value;
-                    await plugin.saveSettings();
+                    this.debouncedSave();
                 });
             });
         new Setting(container).setName("AI Featured Images Generating Number")
@@ -1352,9 +1434,9 @@ export class SettingTab extends PluginSettingTab {
             .addText(text => {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.numFeaturedImages.toString())
-                    .onChange(async (value) => {
+                    .onChange((value) => {
                         plugin.settings.numFeaturedImages = safeParseInt(value, plugin.settings.numFeaturedImages, 1);
-                        await plugin.saveSettings();
+                        this.debouncedSave();
                     })
             });
     }

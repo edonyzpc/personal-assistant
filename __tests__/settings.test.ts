@@ -4,6 +4,47 @@ jest.mock('obsidian', () => ({
     App: class { },
     Notice: class { },
     Platform: { isDesktop: true, isMobile: false },
+    // Tests record every debounce wrapper that is created so they can assert
+    // *which* callback was deferred (vs. fired synchronously). The wrapper
+    // exposes `pending`/`runs` so `hide()`'s flush path can also be verified.
+    debounce: <T extends unknown[], V>(cb: (...args: T) => V, _timeout: number, _resetTimer = true) => {
+        const record: { calls: T[]; cancelled: number; runs: number; pending: boolean; lastArgs?: T } = {
+            calls: [],
+            cancelled: 0,
+            runs: 0,
+            pending: false,
+        };
+        const debounced = ((...args: T) => {
+            record.calls.push(args);
+            record.lastArgs = args;
+            record.pending = true;
+            return debounced;
+        }) as ((...args: T) => unknown) & {
+            cancel: () => unknown;
+            run: () => unknown;
+            __record: typeof record;
+            __cb: (...args: T) => V;
+        };
+        debounced.cancel = () => {
+            record.cancelled += 1;
+            record.pending = false;
+            return debounced;
+        };
+        debounced.run = () => {
+            record.runs += 1;
+            const args = record.lastArgs ?? ([] as unknown as T);
+            record.pending = false;
+            return cb(...args);
+        };
+        debounced.__record = record;
+        debounced.__cb = cb;
+        const globalObj = globalThis as typeof globalThis & {
+            __paDebounceRecords?: Array<typeof record>;
+        };
+        globalObj.__paDebounceRecords = globalObj.__paDebounceRecords ?? [];
+        globalObj.__paDebounceRecords.push(record);
+        return debounced;
+    },
     PluginSettingTab: class {
         app: unknown;
         containerEl = { empty: jest.fn() };
@@ -20,10 +61,11 @@ jest.mock('obsidian', () => ({
                 onChange?: (value: string) => unknown;
             }>;
             buttons: Array<{ text?: string; onClick?: () => unknown | Promise<unknown> }>;
+            texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
         };
 
         constructor(_containerEl: unknown) {
-            this.record = { toggles: [], dropdowns: [], buttons: [] };
+            this.record = { toggles: [], dropdowns: [], buttons: [], texts: [] };
             const globalObj = globalThis as typeof globalThis & {
                 __paSettingRecords?: Array<{
                     name?: string;
@@ -35,6 +77,7 @@ jest.mock('obsidian', () => ({
                         onChange?: (value: string) => unknown;
                     }>;
                     buttons: Array<{ text?: string; onClick?: () => unknown | Promise<unknown> }>;
+                    texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
                 }>;
             };
             globalObj.__paSettingRecords = globalObj.__paSettingRecords ?? [];
@@ -85,10 +128,27 @@ jest.mock('obsidian', () => ({
             setValue: (value: unknown) => unknown;
             onChange: (onChange: (value: string) => unknown) => unknown;
         }) => void) {
+            const text: {
+                value?: unknown;
+                placeholder?: string;
+                onChange?: (value: string) => unknown;
+                setValueCalls: unknown[];
+            } = { setValueCalls: [] };
+            this.record.texts.push(text);
             const textComponent = {
-                setPlaceholder: (_value: string) => textComponent,
-                setValue: (_value: unknown) => textComponent,
-                onChange: (_onChange: (value: string) => unknown) => textComponent,
+                setPlaceholder: (value: string) => {
+                    text.placeholder = value;
+                    return textComponent;
+                },
+                setValue: (value: unknown) => {
+                    text.value = value;
+                    text.setValueCalls.push(value);
+                    return textComponent;
+                },
+                onChange: (onChange: (value: string) => unknown) => {
+                    text.onChange = onChange;
+                    return textComponent;
+                },
             };
             callback(textComponent);
             return this;
@@ -321,13 +381,26 @@ type MockDropdownRecord = {
     onChange?: (value: string) => unknown;
 };
 type MockButtonRecord = { text?: string; onClick?: () => unknown | Promise<unknown> };
+type MockTextRecord = {
+    value?: unknown;
+    placeholder?: string;
+    onChange?: (value: string) => unknown;
+    setValueCalls: unknown[];
+};
 type MockSettingRecord = {
     name?: string;
     desc?: string;
     toggles: Array<MockToggleRecord>;
     dropdowns: Array<MockDropdownRecord>;
     buttons: Array<MockButtonRecord>;
+    texts: Array<MockTextRecord>;
 };
+type MockDebounceRecord = { calls: unknown[][]; cancelled: number; runs: number; pending: boolean; lastArgs?: unknown[] };
+function getMockDebounceRecords(): MockDebounceRecord[] {
+    const globalObj = globalThis as typeof globalThis & { __paDebounceRecords?: MockDebounceRecord[] };
+    globalObj.__paDebounceRecords = globalObj.__paDebounceRecords ?? [];
+    return globalObj.__paDebounceRecords;
+}
 
 function getMockSettingRecords(): MockSettingRecord[] {
     const globalObj = globalThis as typeof globalThis & { __paSettingRecords?: MockSettingRecord[] };
@@ -389,6 +462,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
 
 beforeEach(() => {
     getMockSettingRecords().length = 0;
+    getMockDebounceRecords().length = 0;
     installMockDocument();
 });
 
@@ -1315,5 +1389,239 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
         const { settings, migrationApplied } = simulate(persisted);
         expect(migrationApplied).toBe(false);
         expect(settings.aiProvider).toBe('openai');
+    });
+});
+
+describe('Phase 4 P1 UX', () => {
+    type Phase4Internals = {
+        debouncedSave: { __record: MockDebounceRecord };
+        rebuildMemorySubSettings: () => void;
+        memorySubContainer: { children: unknown[] } | null;
+    };
+
+    describe('4a: text input debounce', () => {
+        it('text onChange routes through debouncedSave instead of saveSettings', async () => {
+            const plugin = makePlugin({ enableMetadataUpdating: true });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const records = getMockSettingRecords();
+            // "Meta Updating Exclude Path" has a single addText whose onChange
+            // mutates plugin.settings.metadataExcludePath then calls debouncedSave.
+            const excludeRecord = records.find((r) => r.name === 'Meta Updating Exclude Path');
+            expect(excludeRecord?.texts[0]?.onChange).toBeDefined();
+
+            const beforeSaves = plugin.saveSettings.mock.calls.length;
+            const debounceRecord = (tab as unknown as Phase4Internals).debouncedSave.__record;
+            const beforeDebounceCalls = debounceRecord.calls.length;
+
+            await excludeRecord!.texts[0].onChange!('tmp/,drafts/');
+
+            // Mutation lands synchronously…
+            expect(plugin.settings.metadataExcludePath).toEqual(['tmp/', 'drafts/']);
+            // …debounced save is queued, not called…
+            expect(debounceRecord.calls.length).toBe(beforeDebounceCalls + 1);
+            // …and saveSettings has not run yet.
+            expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaves);
+        });
+
+        it('hide() cancels pending debounce and forces one final saveSettings()', () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const debounceRecord = (tab as unknown as Phase4Internals).debouncedSave.__record;
+            const beforeCancels = debounceRecord.cancelled;
+            const beforeSaves = plugin.saveSettings.mock.calls.length;
+
+            tab.hide();
+
+            expect(debounceRecord.cancelled).toBe(beforeCancels + 1);
+            expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaves + 1);
+        });
+    });
+
+    describe('4b: Memory sub-settings hide when memory is off', () => {
+        it('hides Ask-before-AI-credits + Advanced memory controls when memoryEnabled=false', () => {
+            const plugin = makePlugin({ memoryEnabled: false });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const names = getMockSettingRecords().map((r) => r.name);
+            // Master toggle still rendered.
+            expect(names).toContain('Use memory from my notes');
+            // Sub-settings hidden.
+            expect(names).not.toContain('Ask before using AI credits');
+            expect(names).not.toContain('Advanced memory controls');
+        });
+
+        it('shows the sub-settings when memoryEnabled=true (default)', () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const names = getMockSettingRecords().map((r) => r.name);
+            expect(names).toContain('Use memory from my notes');
+            expect(names).toContain('Ask before using AI credits');
+            expect(names).toContain('Advanced memory controls');
+        });
+
+        it('toggling memoryEnabled rebuilds sub-settings without calling display()', async () => {
+            const plugin = makePlugin({ memoryEnabled: false });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const masterToggle = getMockSettingRecords()
+                .find((r) => r.name === 'Use memory from my notes')?.toggles[0];
+            expect(masterToggle?.onChange).toBeDefined();
+
+            const displaySpy = jest.spyOn(tab, 'display');
+            const internals = tab as unknown as Phase4Internals;
+            const rebuildSpy = jest.spyOn(internals, 'rebuildMemorySubSettings');
+
+            await masterToggle!.onChange!(true);
+
+            expect(displaySpy).not.toHaveBeenCalled();
+            expect(rebuildSpy).toHaveBeenCalledTimes(1);
+            // Sub-settings now appear in the records.
+            const namesAfter = getMockSettingRecords().map((r) => r.name);
+            expect(namesAfter).toContain('Ask before using AI credits');
+            expect(namesAfter).toContain('Advanced memory controls');
+        });
+    });
+
+    describe('4c: pre-chat copy', () => {
+        it('renames the pre-chat toggle to "Ask before using AI credits" with cost-framed desc', () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const record = getMockSettingRecords()
+                .find((r) => r.name === 'Ask before using AI credits');
+            expect(record).toBeDefined();
+            expect(record?.desc).toContain('approval');
+            expect(record?.desc).toContain('API calls');
+            // Avoid leaking VSS / RAG / embedding internals into normal copy.
+            expect(record?.desc).not.toMatch(/vss|rag|embedding|vector|chunk/i);
+        });
+    });
+
+    describe('4d: new Statistics toggles', () => {
+        it('defaults displaySectionCounts and countComments to false', () => {
+            expect(DEFAULT_SETTINGS.displaySectionCounts).toBe(false);
+            expect(DEFAULT_SETTINGS.countComments).toBe(false);
+        });
+
+        it('renders both new toggles in Vault Statistics with onChange handlers', () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const records = getMockSettingRecords();
+            const sectionCounts = records.find((r) => r.name === 'Show section word counts');
+            const commentsCount = records.find((r) => r.name === 'Count comments in statistics');
+            expect(sectionCounts?.toggles[0]).toMatchObject({ value: false });
+            expect(commentsCount?.toggles[0]).toMatchObject({ value: false });
+            expect(sectionCounts?.toggles[0]?.onChange).toBeDefined();
+            expect(commentsCount?.toggles[0]?.onChange).toBeDefined();
+        });
+
+        it('toggling each new control mutates the matching setting and saves', async () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const records = getMockSettingRecords();
+            const sectionCounts = records.find((r) => r.name === 'Show section word counts')!.toggles[0];
+            const commentsCount = records.find((r) => r.name === 'Count comments in statistics')!.toggles[0];
+
+            const beforeSaves = plugin.saveSettings.mock.calls.length;
+            await sectionCounts.onChange!(true);
+            await commentsCount.onChange!(true);
+
+            expect(plugin.settings.displaySectionCounts).toBe(true);
+            expect(plugin.settings.countComments).toBe(true);
+            expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaves + 2);
+        });
+    });
+
+    describe('4e: metadata form polish', () => {
+        it('uses a corrected desc string ("Value only supports …")', () => {
+            const plugin = makePlugin({ enableMetadataUpdating: true });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const record = getMockSettingRecords()
+                .find((r) => r.name === 'Add Key:Value in frontmatter');
+            expect(record?.desc).toBe('Value only supports formatted timestamp and regular string.');
+        });
+
+        it('renames metadata type dropdown labels to plain English', () => {
+            const plugin = makePlugin({ enableMetadataUpdating: true });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const record = getMockSettingRecords()
+                .find((r) => r.name === 'Add Key:Value in frontmatter');
+            const options = record?.dropdowns[0]?.options;
+            expect(options).toEqual([
+                { value: 'string', text: 'Regular string' },
+                { value: 'moment', text: 'Formatted timestamp' },
+            ]);
+        });
+
+        it('clears the visible key/value inputs after a successful Add', async () => {
+            const plugin = makePlugin({ enableMetadataUpdating: true });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const records = getMockSettingRecords();
+            const addRecord = records.find((r) => r.name === 'Add Key:Value in frontmatter')!;
+            // Drive the form through its onChange handlers (mirrors a real user typing).
+            await addRecord.texts[0].onChange!('newKey');
+            await addRecord.texts[1].onChange!('newValue');
+            const beforeKeyResetCalls = addRecord.texts[0].setValueCalls.length;
+            const beforeValueResetCalls = addRecord.texts[1].setValueCalls.length;
+
+            const addButton = addRecord.buttons.find((b) => b.text === 'Add')!;
+            await addButton.onClick!();
+
+            expect(plugin.settings.metadatas[plugin.settings.metadatas.length - 1])
+                .toMatchObject({ key: 'newKey', value: 'newValue', t: 'string' });
+            // Add handler invoked setValue("") on both inputs after save.
+            expect(addRecord.texts[0].setValueCalls.length).toBe(beforeKeyResetCalls + 1);
+            expect(addRecord.texts[0].setValueCalls[addRecord.texts[0].setValueCalls.length - 1]).toBe('');
+            expect(addRecord.texts[1].setValueCalls.length).toBe(beforeValueResetCalls + 1);
+            expect(addRecord.texts[1].setValueCalls[addRecord.texts[1].setValueCalls.length - 1]).toBe('');
+        });
+    });
+
+    describe('4f: default-path cleanup', () => {
+        it('uses generic defaults that do not leak the original developer\'s vault layout', () => {
+            // Prior defaults baked in personal folder names ("9.src", "8.template",
+            // "a.subjects", "b.notion") that made no sense as fresh-install seeds.
+            expect(DEFAULT_SETTINGS.featuredImagePath).toBe('');
+            expect(DEFAULT_SETTINGS.vssCacheExcludePath).toEqual(['.obsidian']);
+        });
+
+        it('mergeLoadedSettings preserves a user\'s configured exclusions', () => {
+            const merged = mergeLoadedSettings({
+                vssCacheExcludePath: ['my/private', 'tmp/'],
+                featuredImagePath: 'attachments/ai',
+            });
+            expect(merged.vssCacheExcludePath).toEqual(['my/private', 'tmp/']);
+            expect(merged.featuredImagePath).toBe('attachments/ai');
+        });
     });
 });
