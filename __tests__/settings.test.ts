@@ -199,6 +199,14 @@ class MockDomNode {
         return child;
     }
 
+    createDiv(options?: { text?: string } | undefined, callback?: (element: MockDomNode) => void) {
+        return this.createEl('div', options, callback);
+    }
+
+    empty() {
+        this.children = [];
+    }
+
     createSpan(options?: { text?: string; attr?: { style?: string } }) {
         return this.createEl('span', { text: options?.text });
     }
