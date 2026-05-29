@@ -184,12 +184,11 @@ function applyUserExplicitCapabilityConstraints(
 }
 
 export function classifyRequiredCapabilitiesDeterministic(userInput: string): RequiredCapabilityClassification {
-    const text = userInput.toLowerCase();
     const items: RequiredCapabilityClassificationItem[] = [];
-
-    addItem(items, "webSearch", scoreWebSearch(text));
-    addItem(items, "search_memory", scoreMemory(text));
-    addItem(items, "get_current_note_context", scoreCurrentNote(text));
+    for (const table of CAPABILITY_SIGNALS) {
+        const score = scoreCapability(userInput, table);
+        if (score) addItem(items, table.capability, score);
+    }
 
     return {
         items,
@@ -235,12 +234,8 @@ function normalizeClassifierItem(value: unknown): RequiredCapabilityClassificati
     const confidence = typeof record.confidence === "number"
         ? Math.max(0, Math.min(1, record.confidence))
         : 0;
-    const level = confidence >= 0.75
-        ? "required"
-        : confidence >= 0.45
-            ? "suggested"
-            : "ignore";
-    if (level === "ignore") return null;
+    const level = classifyConfidenceToLevel(confidence);
+    if (!level) return null;
     return {
         capability: record.capability,
         confidence,
@@ -515,12 +510,8 @@ function addItem(
     capability: RequiredCapability,
     score: { confidence: number; reason: string },
 ): void {
-    const level = score.confidence >= 0.75
-        ? "required"
-        : score.confidence >= 0.45
-            ? "suggested"
-            : "ignore";
-    if (level === "ignore") return;
+    const level = classifyConfidenceToLevel(score.confidence);
+    if (!level) return;
     items.push({
         capability,
         confidence: score.confidence,
@@ -529,15 +520,81 @@ function addItem(
     });
 }
 
-function scoreWebSearch(text: string): { confidence: number; reason: string } {
-    if (/\b(search the web|look online|latest|today|official site|web search)\b/.test(text)
-        || /\bcurrent (news|events|price|version|status|weather|release|information|info|situation)\b/.test(text)) {
-        return { confidence: 0.9, reason: "strong web freshness signal" };
+function classifyConfidenceToLevel(
+    confidence: number,
+): "required" | "suggested" | null {
+    if (confidence >= 0.75) return "required";
+    if (confidence >= 0.45) return "suggested";
+    return null;
+}
+
+interface CapabilitySignalTable {
+    capability: RequiredCapability;
+    /** Strong signal — any hit → confidence 0.9 ("required") */
+    strong: { regex: RegExp[]; chineseTokens: string[] };
+    /** Weak signal — any hit → confidence 0.65 ("suggested") */
+    weak: { regex: RegExp[]; chineseTokens: string[] };
+}
+
+// Single source of truth for deterministic capability signals.
+// CJK token guidance (SDD §4.4): only include double-character-plus, domain-specific
+// compounds. Generic adverbs like 最新/今天/当前/最近/上下文/更新/实时 are intentionally
+// excluded because they collide across topics and produce false positives.
+const CAPABILITY_SIGNALS: readonly CapabilitySignalTable[] = [
+    {
+        capability: "webSearch",
+        strong: {
+            regex: [
+                /\b(search the web|look online|latest|today|official site|web search)\b/,
+                /\bcurrent (news|events|price|version|status|weather|release|information|info|situation)\b/,
+            ],
+            chineseTokens: ["搜索网", "网上查", "网络搜索", "在线查", "上网查", "查一下网"],
+        },
+        weak: {
+            regex: [/\b(recent|may have changed|up to date|newest)\b/],
+            chineseTokens: ["最新版本", "最新动态", "新版本发布"],
+        },
+    },
+    {
+        capability: "search_memory",
+        strong: {
+            regex: [/\b(my notes|my vault|memory|in my notes|from my notes)\b/],
+            chineseTokens: ["我的笔记", "笔记库", "我的记忆", "我写过", "我的文档", "我的资料"],
+        },
+        weak: {
+            regex: [/\b(i wrote before|my materials|my docs|my documents)\b/],
+            chineseTokens: ["以前写过", "之前记录", "笔记里写"],
+        },
+    },
+    {
+        capability: "get_current_note_context",
+        strong: {
+            regex: [/\b(current note|this note|opened file|active note)\b/],
+            chineseTokens: ["当前笔记", "这篇笔记", "打开的文件", "正在编辑"],
+        },
+        weak: {
+            regex: [/\b(this article|the content here|this document|selected text)\b/],
+            chineseTokens: ["这篇文章", "这个文档", "选中的文字", "这一段", "光标处"],
+        },
+    },
+];
+
+function scoreCapability(
+    text: string,
+    table: CapabilitySignalTable,
+): { confidence: number; reason: string } | null {
+    const lower = text.toLowerCase();
+    const strongHit = table.strong.regex.some((r) => r.test(lower))
+        || table.strong.chineseTokens.some((t) => text.includes(t));
+    if (strongHit) {
+        return { confidence: 0.9, reason: `strong ${table.capability} signal` };
     }
-    if (/\b(recent|may have changed|up to date|newest)\b/.test(text)) {
-        return { confidence: 0.65, reason: "weak web freshness signal" };
+    const weakHit = table.weak.regex.some((r) => r.test(lower))
+        || table.weak.chineseTokens.some((t) => text.includes(t));
+    if (weakHit) {
+        return { confidence: 0.65, reason: `weak ${table.capability} signal` };
     }
-    return { confidence: 0, reason: "no web signal" };
+    return null;
 }
 
 export function getExplicitlySuppressedRequiredCapabilities(text: string): Set<RequiredCapability> {
@@ -553,26 +610,6 @@ export function getExplicitlySuppressedRequiredCapabilities(text: string): Set<R
         suppressed.add("search_memory");
     }
     return suppressed;
-}
-
-function scoreMemory(text: string): { confidence: number; reason: string } {
-    if (/\b(my notes|my vault|memory|in my notes|from my notes)\b/.test(text)) {
-        return { confidence: 0.9, reason: "strong Memory signal" };
-    }
-    if (/\b(i wrote before|my materials|my docs|my documents)\b/.test(text)) {
-        return { confidence: 0.65, reason: "weak Memory signal" };
-    }
-    return { confidence: 0, reason: "no Memory signal" };
-}
-
-function scoreCurrentNote(text: string): { confidence: number; reason: string } {
-    if (/\b(current note|this note|opened file|active note)\b/.test(text)) {
-        return { confidence: 0.9, reason: "strong current-note signal" };
-    }
-    if (/\b(this article|the content here|this document|selected text)\b/.test(text)) {
-        return { confidence: 0.65, reason: "weak current-note signal" };
-    }
-    return { confidence: 0, reason: "no current-note signal" };
 }
 
 function isRequiredCapability(value: string): value is RequiredCapability {

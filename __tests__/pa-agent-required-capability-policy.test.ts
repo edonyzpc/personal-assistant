@@ -26,6 +26,66 @@ describe("PA Agent required capability HostPolicy", () => {
         ]);
     });
 
+    describe("CJK keyword classification (SDD §7.2)", () => {
+        it("classifies Chinese webSearch strong-signal inputs as required", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("网上查 React 最新版本").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("在线查这个 API 文档").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("上网查一下今天的天气").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+        });
+
+        it("classifies Chinese memory strong-signal inputs as required", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里写过什么相关内容").items).toEqual([
+                expect.objectContaining({ capability: "search_memory", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("笔记库里有相关资料吗").items).toEqual([
+                expect.objectContaining({ capability: "search_memory", level: "required" }),
+            ]);
+        });
+
+        it("classifies Chinese current-note signals correctly", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("总结当前笔记").items).toEqual([
+                expect.objectContaining({ capability: "get_current_note_context", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("这篇文章在讲什么").items).toEqual([
+                expect.objectContaining({ capability: "get_current_note_context", level: "suggested" }),
+            ]);
+        });
+
+        it("classifies mixed Chinese-English input via English strong signals", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("web search for the latest React docs").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+        });
+
+        it("does NOT trigger webSearch on generic Chinese adverbs (regression guard)", () => {
+            // Each of these used to trip "最新/今天/当前/更新/实时/上下文" — see SDD §4.4
+            expect(classifyRequiredCapabilitiesDeterministic("今天写了什么笔记").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
+            expect(classifyRequiredCapabilitiesDeterministic("最新的项目进展").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
+            expect(classifyRequiredCapabilitiesDeterministic("更新一下笔记内容").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
+        });
+
+        it("does NOT trigger get_current_note_context on generic prompt-engineering terms", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("基于上下文给我建议").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "get_current_note_context" })]),
+            );
+            expect(classifyRequiredCapabilitiesDeterministic("当前任务是什么").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "get_current_note_context" })]),
+            );
+        });
+    });
+
     it("does not treat current-note prompts as web freshness requests", () => {
         const classification = classifyRequiredCapabilitiesDeterministic(
             "Use the current note context only. What is the exact positive snippet token in this current note?",
