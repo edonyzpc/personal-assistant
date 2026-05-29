@@ -89,10 +89,13 @@
 - ✅ re-export `isExplicitCurrentNoteOnlyRequest` / `shouldUseFullCurrentNoteContext`
 
 **可移除**（无消费者）：
-- ❌ `RequiredCapabilityLevel` type（仅内部用）
-- ❌ `RequiredCapabilityHostPolicyOptions` / `RequiredCapabilityHostPolicyResult`（消费者只用返回值字段）
-- ❌ `RequiredCapabilityClassifierInput` 接口（仅作为 `RequiredCapabilityClassifier` 输入参数，归属为公开类型的内部细节）
-- ❌ `metadata.policyModelAvailable` / `classifierUsed` / `classifierTimedOut` / `fallbackUsed`（grep 确认无消费者读取）
+
+> **迁移期注意（per §5）:** 下列 type-only 别名虽无内部消费者，但本 PR 中保留为 `@deprecated` 别名直至 **2026-06-12**（一个 sprint 的稳定窗口），以避免外部消费者（如插件用户的下游代码）破坏。`metadata.*` 字段是数据字段，本 PR 直接移除——无 deprecation 期，因为数据字段无法以 `@deprecated` 别名形式过渡，且 grep 确认仓内无消费者读取。`2026-06-12` 之后的 follow-up PR 再删 type 别名。
+
+- ❌ `RequiredCapabilityLevel` type（仅内部用，保留 @deprecated 至 2026-06-12）
+- ❌ `RequiredCapabilityHostPolicyOptions` / `RequiredCapabilityHostPolicyResult`（消费者只用返回值字段，保留 @deprecated 至 2026-06-12）
+- ❌ `RequiredCapabilityClassifierInput` 接口（仅作为 `RequiredCapabilityClassifier` 输入参数，归属为公开类型的内部细节，保留 @deprecated 至 2026-06-12；新代码使用 inline `{ userInput: string; signal?: AbortSignal }`）
+- ❌ `metadata.policyModelAvailable` / `classifierUsed` / `classifierTimedOut` / `fallbackUsed`（本 PR 直接移除）
 
 **RequiredCapabilityClassifier 调整说明:** 之前列在"可移除"是误判 —— `pa-agent-runtime.ts` 的 LLM 分类器实例需要这个接口契约（duck typing 不够，因为有 `classify(input): Promise<unknown>` 的具体形状）。保留为公开 API，只是把 `RequiredCapabilityClassifierInput` 转为 inline `{ userInput: string; signal?: AbortSignal }`。
 
@@ -267,7 +270,9 @@ function decideAfterTurn(
     state: RuntimeState,
 ): ReturnType<PaAgentHostPolicy["afterTurn"]> {
     if (state.phase.kind === "terminal") {
-        return { action: "stop", reason: "terminal", status: "completed" };
+        // Use the more semantically explicit `terminal_idempotent` reason to
+        // distinguish the no-op re-entry from a fresh `terminal` stop decision.
+        return { action: "stop", reason: "terminal_idempotent", status: "completed" };
     }
 
     const facts = deriveAnswerCompletionTurnFacts(summary);
@@ -323,10 +328,14 @@ function decideAfterTurn(
 |------|------|------|
 | `correctiveAttempted=false`, `failedRequiredToolRetryAttempted=false` | `awaiting_initial_tools` | 还没发过 corrective_turn，可以发 |
 | `correctiveAttempted=true`, `failedRequiredToolRetryAttempted=false` | `corrective_issued` | 已发 corrective，等待执行；下一步看缺失情况 |
-| `correctiveAttempted=true`, `failedRequiredToolRetryAttempted=true` | `failed_retry_issued` | 失败重试已发 |
-| 任何 stop 决策已下发 | `terminal` | 不可逆，再次进入 `decideAfterTurn` 直接 stop |
+| `correctiveAttempted=false`, `failedRequiredToolRetryAttempted=true` | `failed_retry_issued` | 失败重试从 initial 直接进入（pre-refactor `decideAfterTurn` line 282 显式约束 `!correctiveAttempted` 才会设 failed retry，因此两个 boolean 互斥） |
+| 任何 stop 决策已下发 | `terminal`（实现中带 `from` 标签保留前一阶段，用于 warning metadata 派生两个 boolean） | 不可逆，再次进入 `decideAfterTurn` 直接 stop |
 
-**不可达组合（迁移要保护的不变量）:** `correctiveAttempted=false, failedRequiredToolRetryAttempted=true` — 旧代码的隐含约束（先 corrective 后 retry），新 phase 状态机用单字段强制显式化。
+**真正不可达组合:** `correctiveAttempted=true, failedRequiredToolRetryAttempted=true` — pre-refactor 的失败重试路径要求 `!correctiveAttempted`，所以一旦走过 corrective 路径就不能再走 failed retry。新 phase 状态机用 4 个互斥 kind 自然表达此约束。
+
+**实现 vs 本节 spec 的细微偏离（已确认刻意）:** 本节 §4.5 代码片段写的是 `state.phase = { kind: "terminal" }`（无 payload）。实际实现为 `{ kind: "terminal"; from: "initial" | "corrective" | "failed_retry" }`，原因是 `buildMissingRequiredDecision` 仍需输出 `correctiveAttempted` / `failedRequiredToolRetryAttempted` 两个 warning metadata 字段（pre-refactor 的契约），`from` 标签是无信息损失迁移到 phase 单字段的最简方式。等价表新增的"terminal 行"在备注中说明此点。
+
+**前一节等价表的历史修正记录（2026-05-29 PR review 发现）:** 初版 SDD 将 `(correctiveAttempted=true, failedRequiredToolRetryAttempted=true)` 标为可达组合，把 `(correctiveAttempted=false, failedRequiredToolRetryAttempted=true)` 标为不可达不变量。实际查阅 pre-refactor `decideAfterTurn` line 282 的 `if (!state.failedRequiredToolRetryAttempted && !state.correctiveAttempted)` 守卫后确认：两个组合恰好反了。已按上表更正。
 
 ### 4.6 LLM 分类器路径精简
 
