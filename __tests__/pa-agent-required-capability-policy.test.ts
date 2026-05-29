@@ -186,12 +186,6 @@ describe("PA Agent required capability HostPolicy", () => {
                 confidence: 0.82,
                 level: "required",
             })],
-            metadata: {
-                policyModelAvailable: true,
-                classifierUsed: true,
-                classifierTimedOut: false,
-                fallbackUsed: false,
-            },
         });
     });
 
@@ -204,12 +198,6 @@ describe("PA Agent required capability HostPolicy", () => {
                 confidence: 0.9,
                 level: "required",
             })],
-            metadata: {
-                policyModelAvailable: false,
-                classifierUsed: false,
-                classifierTimedOut: false,
-                fallbackUsed: true,
-            },
         });
     });
 
@@ -255,12 +243,6 @@ describe("PA Agent required capability HostPolicy", () => {
                     level: "suggested",
                 }),
             ],
-            metadata: {
-                policyModelAvailable: true,
-                classifierUsed: true,
-                classifierTimedOut: false,
-                fallbackUsed: false,
-            },
         });
     });
 
@@ -287,12 +269,6 @@ describe("PA Agent required capability HostPolicy", () => {
 
         expect(classification).toEqual({
             items: [expect.objectContaining({ capability: "webSearch", level: "required" })],
-            metadata: {
-                policyModelAvailable: true,
-                classifierUsed: false,
-                classifierTimedOut: true,
-                fallbackUsed: true,
-            },
         });
         await new Promise((resolve) => setTimeout(resolve, 25));
         expect(lateResolved).toBe(true);
@@ -305,11 +281,6 @@ describe("PA Agent required capability HostPolicy", () => {
             classifier: { classify: async () => "not json" },
         })).resolves.toMatchObject({
             items: [expect.objectContaining({ capability: "webSearch" })],
-            metadata: expect.objectContaining({
-                policyModelAvailable: true,
-                classifierUsed: false,
-                fallbackUsed: true,
-            }),
         });
 
         await expect(resolveRequiredCapabilityClassification({
@@ -317,11 +288,6 @@ describe("PA Agent required capability HostPolicy", () => {
             classifier: { classify: async () => { throw new Error("policy model failed"); } },
         })).resolves.toMatchObject({
             items: [expect.objectContaining({ capability: "webSearch" })],
-            metadata: expect.objectContaining({
-                policyModelAvailable: true,
-                classifierUsed: false,
-                fallbackUsed: true,
-            }),
         });
     });
 
@@ -622,12 +588,6 @@ describe("PA Agent required capability HostPolicy", () => {
                         level: "suggested",
                     },
                 ],
-                metadata: {
-                    policyModelAvailable: true,
-                    classifierUsed: true,
-                    classifierTimedOut: false,
-                    fallbackUsed: false,
-                },
             },
         });
 
@@ -717,12 +677,6 @@ describe("PA Agent required capability HostPolicy", () => {
                         level: "required",
                     },
                 ],
-                metadata: {
-                    policyModelAvailable: true,
-                    classifierUsed: true,
-                    classifierTimedOut: false,
-                    fallbackUsed: false,
-                },
             },
         });
 

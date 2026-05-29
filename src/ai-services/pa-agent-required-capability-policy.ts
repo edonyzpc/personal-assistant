@@ -17,31 +17,39 @@ export type RequiredCapability =
     | "webSearch"
     | "get_current_note_context";
 
-export type RequiredCapabilityLevel = "required" | "suggested" | "ignore";
+/**
+ * @deprecated since 2026-05-29 — use the literal union `"required" | "suggested"` directly.
+ * The "ignore" arm no longer exists: ignored signals are dropped from `items` instead of
+ * being recorded. Will be removed after 2026-06-12.
+ */
+export type RequiredCapabilityLevel = "required" | "suggested";
 
 export interface RequiredCapabilityClassificationItem {
     capability: RequiredCapability;
     confidence: number;
     reason: string;
-    level: RequiredCapabilityLevel;
+    level: "required" | "suggested";
 }
 
 export interface RequiredCapabilityClassification {
     items: RequiredCapabilityClassificationItem[];
-    metadata: {
-        policyModelAvailable: boolean;
-        classifierUsed: boolean;
-        classifierTimedOut: boolean;
-        fallbackUsed: boolean;
-    };
 }
 
+/**
+ * @deprecated since 2026-05-29 — inline the parameter object at the call site. The
+ * shape is the same; this alias remains only to avoid breaking external imports during
+ * the one-sprint stability window. Will be removed after 2026-06-12.
+ */
 export interface RequiredCapabilityHostPolicyOptions {
     userInput: string;
     availableCapabilities: ReadonlySet<RequiredCapability>;
     classification?: RequiredCapabilityClassification;
 }
 
+/**
+ * @deprecated since 2026-05-29 — destructure the return value directly. Will be
+ * removed after 2026-06-12.
+ */
 export interface RequiredCapabilityHostPolicyResult {
     hostPolicy: PaAgentHostPolicy;
     initialRuntimeInstruction?: string;
@@ -62,13 +70,18 @@ interface RequiredCapabilityRuntimeState {
     answerCompletionLedger: AnswerCompletionLedger;
 }
 
+/**
+ * @deprecated since 2026-05-29 — the shape is inlined into
+ * {@link RequiredCapabilityClassifier.classify}. Imports of this type are no longer
+ * needed. Will be removed after 2026-06-12.
+ */
 export interface RequiredCapabilityClassifierInput {
     userInput: string;
     signal?: AbortSignal;
 }
 
 export interface RequiredCapabilityClassifier {
-    classify(input: RequiredCapabilityClassifierInput): Promise<unknown>;
+    classify(input: { userInput: string; signal?: AbortSignal }): Promise<unknown>;
 }
 
 export interface ResolveRequiredCapabilityClassificationOptions {
@@ -141,32 +154,13 @@ export async function resolveRequiredCapabilityClassification(
             timeout,
         ]);
 
-        if (result === "timeout") {
-            return withClassificationMetadata(fallback, {
-                policyModelAvailable: true,
-                classifierUsed: false,
-                classifierTimedOut: true,
-                fallbackUsed: true,
-            });
-        }
+        if (result === "timeout") return fallback;
 
         const normalized = normalizeClassifierResult(result);
-        if (!normalized) {
-            return withClassificationMetadata(fallback, {
-                policyModelAvailable: true,
-                classifierUsed: false,
-                classifierTimedOut: false,
-                fallbackUsed: true,
-            });
-        }
+        if (!normalized) return fallback;
         return applyUserExplicitCapabilityConstraints(normalized, options.userInput);
     } catch {
-        return withClassificationMetadata(fallback, {
-            policyModelAvailable: true,
-            classifierUsed: false,
-            classifierTimedOut: false,
-            fallbackUsed: true,
-        });
+        return fallback;
     } finally {
         if (timeoutId) clearTimeout(timeoutId);
         options.signal?.removeEventListener("abort", abortFromParent);
@@ -181,7 +175,6 @@ function applyUserExplicitCapabilityConstraints(
     if (suppressed.size === 0) return classification;
     return {
         items: classification.items.filter((item) => !suppressed.has(item.capability)),
-        metadata: classification.metadata,
     };
 }
 
@@ -191,16 +184,7 @@ export function classifyRequiredCapabilitiesDeterministic(userInput: string): Re
         const score = scoreCapability(userInput, table);
         if (score) addItem(items, table.capability, score);
     }
-
-    return {
-        items,
-        metadata: {
-            policyModelAvailable: false,
-            classifierUsed: false,
-            classifierTimedOut: false,
-            fallbackUsed: true,
-        },
-    };
+    return { items };
 }
 
 // Definition moved to `./chat-tool-prepare-helpers` so chat-tools.ts prepareArguments
@@ -218,15 +202,7 @@ function normalizeClassifierResult(result: unknown): RequiredCapabilityClassific
     const items = (parsed as { items: unknown[] }).items
         .map(normalizeClassifierItem)
         .filter((item): item is RequiredCapabilityClassificationItem => Boolean(item));
-    return {
-        items,
-        metadata: {
-            policyModelAvailable: true,
-            classifierUsed: true,
-            classifierTimedOut: false,
-            fallbackUsed: false,
-        },
-    };
+    return { items };
 }
 
 function normalizeClassifierItem(value: unknown): RequiredCapabilityClassificationItem | null {
@@ -254,16 +230,6 @@ function parseJsonObject(value: string): unknown {
     } catch {
         return null;
     }
-}
-
-function withClassificationMetadata(
-    classification: RequiredCapabilityClassification,
-    metadata: RequiredCapabilityClassification["metadata"],
-): RequiredCapabilityClassification {
-    return {
-        items: classification.items.map((item) => ({ ...item })),
-        metadata,
-    };
 }
 
 function decideAfterTurn(
