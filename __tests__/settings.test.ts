@@ -13,16 +13,26 @@ jest.mock('obsidian', () => ({
         record: {
             name?: string;
             desc?: string;
-            toggles: Array<{ value?: boolean; disabled?: boolean }>;
+            toggles: Array<{ value?: boolean; disabled?: boolean; onChange?: (value: boolean) => unknown }>;
+            dropdowns: Array<{
+                value?: string;
+                options: Array<{ value: string; text: string }>;
+                onChange?: (value: string) => unknown;
+            }>;
         };
 
         constructor(_containerEl: unknown) {
-            this.record = { toggles: [] };
+            this.record = { toggles: [], dropdowns: [] };
             const globalObj = globalThis as typeof globalThis & {
                 __paSettingRecords?: Array<{
                     name?: string;
                     desc?: string;
-                    toggles: Array<{ value?: boolean; disabled?: boolean }>;
+                    toggles: Array<{ value?: boolean; disabled?: boolean; onChange?: (value: boolean) => unknown }>;
+                    dropdowns: Array<{
+                        value?: string;
+                        options: Array<{ value: string; text: string }>;
+                        onChange?: (value: string) => unknown;
+                    }>;
                 }>;
             };
             globalObj.__paSettingRecords = globalObj.__paSettingRecords ?? [];
@@ -44,7 +54,11 @@ jest.mock('obsidian', () => ({
             setDisabled: (disabled: boolean) => unknown;
             onChange: (onChange: (value: boolean) => unknown) => unknown;
         }) => void) {
-            const toggle = { value: undefined as boolean | undefined, disabled: false };
+            const toggle: { value?: boolean; disabled: boolean; onChange?: (value: boolean) => unknown } = {
+                value: undefined,
+                disabled: false,
+                onChange: undefined,
+            };
             this.record.toggles.push(toggle);
             const toggleComponent = {
                 setValue: (value: boolean) => {
@@ -55,7 +69,10 @@ jest.mock('obsidian', () => ({
                     toggle.disabled = disabled;
                     return toggleComponent;
                 },
-                onChange: (_onChange: (value: boolean) => unknown) => toggleComponent,
+                onChange: (onChange: (value: boolean) => unknown) => {
+                    toggle.onChange = onChange;
+                    return toggleComponent;
+                },
             };
             callback(toggleComponent);
             return this;
@@ -81,10 +98,29 @@ jest.mock('obsidian', () => ({
             onChange: (onChange: (value: string) => unknown) => unknown;
             selectEl: { querySelector: (selector: string) => { setAttribute: (name: string, value: string) => void } | null };
         }) => void) {
+            const dropdown: {
+                value?: string;
+                options: Array<{ value: string; text: string }>;
+                onChange?: (value: string) => unknown;
+            } = {
+                value: undefined,
+                options: [],
+                onChange: undefined,
+            };
+            this.record.dropdowns.push(dropdown);
             const dropdownComponent = {
-                addOption: (_value: string, _text: string) => dropdownComponent,
-                setValue: (_value: string) => dropdownComponent,
-                onChange: (_onChange: (value: string) => unknown) => dropdownComponent,
+                addOption: (value: string, text: string) => {
+                    dropdown.options.push({ value, text });
+                    return dropdownComponent;
+                },
+                setValue: (value: string) => {
+                    dropdown.value = value;
+                    return dropdownComponent;
+                },
+                onChange: (onChange: (value: string) => unknown) => {
+                    dropdown.onChange = onChange;
+                    return dropdownComponent;
+                },
                 selectEl: { querySelector: (_selector: string) => ({ setAttribute: jest.fn() }) },
             };
             callback(dropdownComponent);
@@ -135,7 +171,12 @@ jest.mock('obsidian', () => ({
 
 jest.mock('vanilla-picker', () => ({
     __esModule: true,
-    default: class { },
+    // Each Picker instance gets its own destroy spy so tests can assert
+    // teardown without sharing call counts across instances.
+    default: class {
+        destroy = jest.fn();
+        constructor(_options: unknown) { /* options ignored in tests */ }
+    },
 }));
 
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
@@ -163,11 +204,19 @@ function mockStringifyText(value: unknown): string {
     return '';
 }
 
+type MockElOptions = {
+    text?: string;
+    cls?: string | string[];
+    attr?: Record<string, string>;
+};
+
 class MockDomNode {
     children: MockDomNode[] = [];
     href = '';
     innerText = '';
     textContent = '';
+    classes: string[] = [];
+    attrs: Record<string, string> = {};
 
     constructor(readonly tagName: string) { }
 
@@ -177,7 +226,8 @@ class MockDomNode {
         return this;
     }
 
-    setAttr(_name: string, _value: string) {
+    setAttr(name: string, value: string) {
+        this.attrs[name] = value;
         return this;
     }
 
@@ -191,15 +241,23 @@ class MockDomNode {
         this.textContent += text;
     }
 
-    createEl(tagName: string, options?: { text?: string } | undefined, callback?: (element: MockDomNode) => void) {
+    createEl(tagName: string, options?: MockElOptions | undefined, callback?: (element: MockDomNode) => void) {
         const child = new MockDomNode(tagName);
         if (options?.text) child.setText(options.text);
+        if (options?.cls) {
+            child.classes = Array.isArray(options.cls) ? [...options.cls] : [options.cls];
+        }
+        if (options?.attr) {
+            for (const [name, value] of Object.entries(options.attr)) {
+                child.setAttr(name, value);
+            }
+        }
         this.children.push(child);
         callback?.(child);
         return child;
     }
 
-    createDiv(options?: { text?: string } | undefined, callback?: (element: MockDomNode) => void) {
+    createDiv(options?: MockElOptions | undefined, callback?: (element: MockDomNode) => void) {
         return this.createEl('div', options, callback);
     }
 
@@ -207,8 +265,8 @@ class MockDomNode {
         this.children = [];
     }
 
-    createSpan(options?: { text?: string; attr?: { style?: string } }) {
-        return this.createEl('span', { text: options?.text });
+    createSpan(options?: MockElOptions) {
+        return this.createEl('span', options);
     }
 }
 
@@ -218,10 +276,17 @@ class MockContainerEl extends MockDomNode {
     });
 }
 
+type MockToggleRecord = { value?: boolean; disabled?: boolean; onChange?: (value: boolean) => unknown };
+type MockDropdownRecord = {
+    value?: string;
+    options: Array<{ value: string; text: string }>;
+    onChange?: (value: string) => unknown;
+};
 type MockSettingRecord = {
     name?: string;
     desc?: string;
-    toggles: Array<{ value?: boolean; disabled?: boolean }>;
+    toggles: Array<MockToggleRecord>;
+    dropdowns: Array<MockDropdownRecord>;
 };
 
 function getMockSettingRecords(): MockSettingRecord[] {
@@ -463,5 +528,113 @@ describe('PA Agent skill settings', () => {
                 disabled: true,
             });
         }
+    });
+});
+
+describe('Phase 1 refactor invariants', () => {
+    type PickerProbe = { destroy: jest.Mock };
+    type SettingTabInternals = {
+        activePickers: PickerProbe[];
+        rebuildGraphColors: () => void;
+        rebuildProviderConfig: () => void;
+        graphColorsContainer: unknown;
+        metadataContainer: unknown;
+        providerConfigContainer: unknown;
+        skillTogglesContainer: unknown;
+        featuredImageContainer: unknown;
+        memoryAdvancedContainer: unknown;
+    };
+
+    it('hide() destroys all active Pickers and resets the registry', () => {
+        const plugin = makePlugin({ enableGraphColors: true });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const internals = tab as unknown as SettingTabInternals;
+        const captured = [...internals.activePickers];
+        expect(captured.length).toBeGreaterThan(0);
+
+        tab.hide();
+
+        for (const picker of captured) {
+            expect(picker.destroy).toHaveBeenCalledTimes(1);
+        }
+        expect(internals.activePickers).toHaveLength(0);
+    });
+
+    it('rebuildGraphColors destroys prior Pickers before creating new ones', () => {
+        const plugin = makePlugin({ enableGraphColors: true });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const internals = tab as unknown as SettingTabInternals;
+        const oldPickers = [...internals.activePickers];
+        expect(oldPickers).toHaveLength(1); // DEFAULT_SETTINGS.colorGroups has one entry
+
+        internals.rebuildGraphColors();
+
+        for (const picker of oldPickers) {
+            expect(picker.destroy).toHaveBeenCalledTimes(1);
+        }
+        expect(internals.activePickers).toHaveLength(1);
+        expect(internals.activePickers[0]).not.toBe(oldPickers[0]);
+    });
+
+    it('switching AI provider runs rebuildProviderConfig — not full display()', async () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const providerDropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+        expect(providerDropdown?.onChange).toBeDefined();
+
+        const internals = tab as unknown as SettingTabInternals;
+        const displaySpy = jest.spyOn(tab, 'display');
+        const rebuildSpy = jest.spyOn(internals, 'rebuildProviderConfig');
+
+        await providerDropdown!.onChange!('openai');
+
+        expect(rebuildSpy).toHaveBeenCalledTimes(1);
+        expect(displaySpy).not.toHaveBeenCalled();
+    });
+
+    it('toggling Advanced memory controls leaves sibling sub-container refs intact', async () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const internals = tab as unknown as SettingTabInternals;
+        const before = {
+            graph: internals.graphColorsContainer,
+            metadata: internals.metadataContainer,
+            provider: internals.providerConfigContainer,
+            skills: internals.skillTogglesContainer,
+            featured: internals.featuredImageContainer,
+        };
+
+        const records = getMockSettingRecords();
+        const advancedToggle = records.find((record) => record.name === 'Advanced memory controls')?.toggles[0];
+        expect(advancedToggle?.onChange).toBeDefined();
+
+        const displaySpy = jest.spyOn(tab, 'display');
+
+        await advancedToggle!.onChange!(true);
+
+        expect(displaySpy).not.toHaveBeenCalled();
+        // Sibling sub-container refs preserved across the rebuild.
+        expect(internals.graphColorsContainer).toBe(before.graph);
+        expect(internals.metadataContainer).toBe(before.metadata);
+        expect(internals.providerConfigContainer).toBe(before.provider);
+        expect(internals.skillTogglesContainer).toBe(before.skills);
+        expect(internals.featuredImageContainer).toBe(before.featured);
     });
 });

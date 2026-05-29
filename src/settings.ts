@@ -264,6 +264,13 @@ export class SettingTab extends PluginSettingTab {
         this.renderFeaturedImageSection(containerEl);
     }
 
+    hide(): void {
+        // Obsidian invokes hide() when the user closes the settings tab.
+        // Tear down Pickers explicitly so popup elements + listeners are not
+        // orphaned when the tab DOM is detached.
+        this.destroyPickers();
+    }
+
     private destroyPickers(): void {
         for (const picker of this.activePickers) {
             try { picker.destroy(); } catch { /* picker may already be torn down */ }
