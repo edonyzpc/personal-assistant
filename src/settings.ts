@@ -213,6 +213,108 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     return merged;
 }
 
+export interface ProviderPreset {
+    label: string;
+    baseURL: string;
+    chatModelName: string;
+    embeddingModelName: string;
+    description: string;
+    runtimeProvider: "qwen" | "openai";
+}
+
+/**
+ * Catalog of supported AI providers shown in the Provider dropdown. The
+ * dropdown key is a *display* preset (qwen / qwen-intl / openai / custom);
+ * the persisted `aiProvider` field stays one of "qwen" / "openai" via
+ * `runtimeProvider`. Two qwen variants share a runtime provider but render
+ * as separate options because users on the international DashScope endpoint
+ * cannot reach the China-region URL and vice versa.
+ */
+export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
+    qwen: {
+        label: "Qwen (Alibaba Cloud DashScope)",
+        baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        chatModelName: "qwen-plus",
+        embeddingModelName: "text-embedding-v4",
+        description: "Qwen models via Alibaba Cloud. Also hosts DeepSeek, Kimi, GLM, and other models.",
+        runtimeProvider: "qwen",
+    },
+    "qwen-intl": {
+        label: "Qwen (DashScope International)",
+        baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        chatModelName: "qwen-plus",
+        embeddingModelName: "text-embedding-v4",
+        description: "Qwen models via the DashScope International endpoint.",
+        runtimeProvider: "qwen",
+    },
+    openai: {
+        label: "OpenAI",
+        baseURL: "https://api.openai.com/v1",
+        chatModelName: "gpt-4o-mini",
+        embeddingModelName: "text-embedding-3-small",
+        description: "OpenAI models via the official API.",
+        runtimeProvider: "openai",
+    },
+    custom: {
+        label: "Custom (OpenAI-compatible)",
+        baseURL: "",
+        chatModelName: "",
+        embeddingModelName: "",
+        description: "Any OpenAI-compatible API endpoint.",
+        runtimeProvider: "qwen",
+    },
+};
+
+/**
+ * Map persisted (aiProvider, baseURL) back to the preset key used by the
+ * dropdown. Used to (a) initialize the dropdown on render and (b) revert
+ * the selection when the user cancels a switch confirmation.
+ */
+export function deriveDisplayPreset(
+    settings: Pick<PluginManagerSettings, "aiProvider" | "baseURL">,
+): string {
+    if (settings.aiProvider === "openai" && settings.baseURL === PROVIDER_PRESETS.openai.baseURL) {
+        return "openai";
+    }
+    if (settings.aiProvider === "qwen") {
+        if (settings.baseURL === PROVIDER_PRESETS.qwen.baseURL) return "qwen";
+        if (settings.baseURL === PROVIDER_PRESETS["qwen-intl"].baseURL) return "qwen-intl";
+    }
+    return "custom";
+}
+
+/**
+ * True when the persisted data blob is missing or empty — the user has
+ * never opened settings in this vault. Used to force an explicit provider
+ * choice instead of silently defaulting to qwen on fresh installs.
+ *
+ * Arrays are not considered fresh installs even when empty: a persisted `[]`
+ * would be a malformed blob, not an absence of data, and treating it as
+ * fresh would silently wipe whatever migration logic the loader runs.
+ */
+export function isFreshInstall(loaded: unknown): boolean {
+    if (loaded == null) return true;
+    if (typeof loaded !== "object") return false;
+    if (Array.isArray(loaded)) return false;
+    return Object.keys(loaded as object).length === 0;
+}
+
+/**
+ * True when the persisted data blob is from a legacy v1.x install — it has
+ * data but is missing the `aiProvider` field that Provider-aware versions
+ * always write. Used by migrateSettings to apply the qwen default exactly
+ * once on the first launch after upgrade, instead of every time aiProvider
+ * happens to be empty (which is also a valid Phase 3 state on fresh installs).
+ */
+export function isLegacyV1Install(loaded: unknown): boolean {
+    if (loaded == null) return false;
+    if (typeof loaded !== "object") return false;
+    if (Array.isArray(loaded)) return false;
+    const obj = loaded as Record<string, unknown>;
+    if (Object.keys(obj).length === 0) return false;
+    return obj.aiProvider === undefined;
+}
+
 export function normalizeEnabledSkillIds(value: unknown): string[] {
     const knownSkillIds = new Set(BUNDLED_SKILL_IDS);
     if (!Array.isArray(value)) return [...BUNDLED_SKILL_IDS];
@@ -287,18 +389,20 @@ export class SettingTab extends PluginSettingTab {
         this.featuredImageContainer = null;
         this.refreshQwenResponseOptionAvailability = null;
 
+        // Section order matches the user's typical configuration flow:
+        // pick a provider first (AI Assistant), then layer Memory + Skills,
+        // then per-feature settings, with diagnostics at the bottom.
         this.renderHeader(containerEl);
+        this.renderAISection(containerEl);
+        this.renderSkillsSection(containerEl);
+        this.renderMemorySection(containerEl);
+        this.renderStatisticsSection(containerEl);
         this.renderRecordSection(containerEl);
         this.renderGraphSection(containerEl);
         this.renderGraphColorsSection(containerEl);
         this.renderMetadataSection(containerEl);
-        this.renderStatisticsSection(containerEl);
-        this.renderAISection(containerEl);
-        this.renderTelemetrySection(containerEl);
-        this.renderSkillsSection(containerEl);
-        this.renderApiTokenSection(containerEl);
-        this.renderMemorySection(containerEl);
         this.renderFeaturedImageSection(containerEl);
+        this.renderAdvancedSection(containerEl);
     }
 
     hide(): void {
@@ -316,20 +420,12 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private renderHeader(parentEl: HTMLElement): void {
-        const plugin = this.plugin;
         parentEl.createEl('h1', { text: 'Settings for Obsidian Assistant' });
         const link = document.createElement("a");
         link.setText("Open GitHub repository");
         link.href = "https://github.com/edonyzpc/personal-assistant";
         link.setAttr("style", "font-style: italic;");
         parentEl.createEl("p", { text: "Obsidian Assistant by Shadow Walker, " }).appendChild(link);
-
-        new Setting(parentEl).setName("Debug").addToggle((cb) =>
-            cb.setValue(plugin.settings.debug)
-                .onChange((value) => {
-                    plugin.settings.debug = value;
-                    plugin.saveSettings();
-                }));
     }
 
     private renderRecordSection(parentEl: HTMLElement): void {
@@ -779,32 +875,79 @@ export class SettingTab extends PluginSettingTab {
 
     private renderAISection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        // setting for AI assistant
         parentEl.createEl('h2', { text: 'AI Assistant' });
         parentEl.createEl("p", {
-            text: 'AI Helper supports Qwen and OpenAI models',
-        }).setAttr("style", "font-size:15px");
+            text: 'AI Helper supports Qwen, OpenAI, and other OpenAI-compatible providers.',
+            cls: "pa-settings-section-desc",
+        });
 
-        // AI Provider Selection
         new Setting(parentEl).setName("AI Provider")
-            .setDesc("Select the AI service provider")
+            .setDesc("Select the AI service provider. Switching providers replaces the Base URL and Model Name with that provider's defaults.")
             .addDropdown(dropDown => {
-                dropDown.addOption('qwen', 'Qwen (通义千问)');
-                dropDown.addOption('openai', 'OpenAI');
+                if (!plugin.settings.aiProvider) {
+                    dropDown.addOption('', '-- Choose your AI provider --');
+                }
+                for (const [key, preset] of Object.entries(PROVIDER_PRESETS)) {
+                    dropDown.addOption(key, preset.label);
+                }
 
-                dropDown.setValue(plugin.settings.aiProvider);
+                const initialPreset = plugin.settings.aiProvider
+                    ? deriveDisplayPreset(plugin.settings)
+                    : '';
+                dropDown.setValue(initialPreset);
+
                 dropDown.onChange(async (value) => {
-                    plugin.log("changing AI provider", value);
-                    plugin.settings.aiProvider = value;
-                    // 根据提供商设置默认值
-                    if (value === 'qwen') {
-                        plugin.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-                        plugin.settings.chatModelName = 'qwen-plus';
-                        plugin.settings.embeddingModelName = 'text-embedding-v4';
-                    } else if (value === 'openai') {
-                        plugin.settings.baseURL = 'https://api.openai.com/v1';
-                        plugin.settings.chatModelName = 'gpt-3.5-turbo';
-                        plugin.settings.embeddingModelName = 'text-embedding-3-small';
+                    plugin.log("changing AI provider preset", value);
+                    if (!value) {
+                        return;
+                    }
+                    const preset = PROVIDER_PRESETS[value];
+                    if (!preset) {
+                        return;
+                    }
+
+                    // Detect customizations against the *prior* preset (skipped on
+                    // fresh install where there is no prior preset, and on no-op
+                    // re-selections of the same preset). Only ask for
+                    // confirmation when the destination is not "custom" — custom
+                    // preserves whatever the user already had.
+                    if (plugin.settings.aiProvider) {
+                        const prevKey = deriveDisplayPreset(plugin.settings);
+                        if (value !== prevKey && value !== "custom") {
+                            const prev = PROVIDER_PRESETS[prevKey];
+                            const hasCustomURL = prevKey === "custom"
+                                ? plugin.settings.baseURL !== ""
+                                : Boolean(prev) && plugin.settings.baseURL !== prev.baseURL;
+                            const hasCustomModel = prevKey === "custom"
+                                ? plugin.settings.chatModelName !== ""
+                                : Boolean(prev) && plugin.settings.chatModelName !== prev.chatModelName;
+                            if (hasCustomURL || hasCustomModel) {
+                                const confirmed = await confirmUserAction(this.app, {
+                                    title: "Switch AI provider?",
+                                    message: "Switching providers replaces your Base URL, chat model, and Memory model with the new provider's defaults. Your API token is kept.",
+                                    confirmText: "Switch",
+                                });
+                                if (!confirmed) {
+                                    dropDown.setValue(prevKey);
+                                    return;
+                                }
+                            }
+                        }
+                    }
+
+                    plugin.settings.aiProvider = preset.runtimeProvider;
+                    if (value === "custom") {
+                        // Clear preset-bound fields so deriveDisplayPreset returns
+                        // "custom" on next render instead of falling back to the
+                        // prior preset's URL/model. The user fills these in
+                        // themselves via the Base URL / Model Name inputs.
+                        plugin.settings.baseURL = "";
+                        plugin.settings.chatModelName = "";
+                        plugin.settings.embeddingModelName = "";
+                    } else {
+                        plugin.settings.baseURL = preset.baseURL;
+                        plugin.settings.chatModelName = preset.chatModelName;
+                        plugin.settings.embeddingModelName = preset.embeddingModelName;
                     }
                     await plugin.saveSettings();
                     this.rebuildProviderConfig();
@@ -816,7 +959,6 @@ export class SettingTab extends PluginSettingTab {
         this.providerConfigContainer = parentEl.createDiv();
         this.rebuildProviderConfig();
 
-        // Qwen response options live just below the provider config block.
         this.qwenOptionsContainer = parentEl.createDiv();
         this.rebuildQwenOptions();
     }
@@ -827,7 +969,37 @@ export class SettingTab extends PluginSettingTab {
         const plugin = this.plugin;
         const container = this.providerConfigContainer;
 
-        // Base URL Setting
+        if (!plugin.settings.aiProvider) {
+            // Fresh install: hide Token / URL / Model fields until the user
+            // chooses a provider above. Without this guard the user is faced
+            // with empty Token + Base URL + Model fields and no clue which
+            // values belong with which provider.
+            container.createEl("p", {
+                text: "Choose an AI provider above to configure your API token, base URL, and model.",
+                cls: "pa-settings-provider-prompt",
+            });
+            return;
+        }
+
+        new Setting(container)
+            .setName("API Token")
+            .setDesc("Stored securely in your OS keychain (macOS Keychain / iOS Keychain / Windows Credential Manager). Clear the field to remove it.")
+            .addComponent((el) => {
+                const secret = new SecretComponent(this.app, el);
+                const existing = this.app.secretStorage.getSecret(KEYCHAIN_API_TOKEN_ID);
+                if (existing) {
+                    secret.setValue(existing);
+                }
+                secret.onChange((value: string) => {
+                    // SecretStorage exposes only setSecret — writing "" is
+                    // the equivalent of clearing the token. getAPIToken()
+                    // already treats empty strings as no-token.
+                    this.app.secretStorage.setSecret(KEYCHAIN_API_TOKEN_ID, value);
+                    plugin.clearTokenCache();
+                });
+                return secret;
+            });
+
         new Setting(container)
             .setName("Base URL")
             .setDesc("API base URL for the selected provider")
@@ -841,12 +1013,11 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
 
-        // Chat Model Name
         new Setting(container)
             .setName("Chat Model Name")
             .setDesc("Name of the chat model to use")
             .addText((text) => {
-                text.setPlaceholder("gpt-3.5-turbo");
+                text.setPlaceholder("gpt-4o-mini");
                 text.setValue(plugin.settings.chatModelName);
                 text.onChange(async (value: string) => {
                     plugin.settings.chatModelName = value;
@@ -917,8 +1088,23 @@ export class SettingTab extends PluginSettingTab {
         this.refreshQwenResponseOptionAvailability();
     }
 
-    private renderTelemetrySection(parentEl: HTMLElement): void {
+    private renderAdvancedSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
+        parentEl.createEl('h2', { text: 'Advanced' });
+        parentEl.createEl("p", {
+            text: "Diagnostics, telemetry, and developer-facing toggles.",
+            cls: "pa-settings-section-desc",
+        });
+
+        new Setting(parentEl).setName("Debug")
+            .setDesc("Print plugin diagnostics to the developer console.")
+            .addToggle((cb) =>
+                cb.setValue(plugin.settings.debug)
+                    .onChange((value) => {
+                        plugin.settings.debug = value;
+                        plugin.saveSettings();
+                    }));
+
         new Setting(parentEl)
             .setName("Share anonymous capability usage")
             .setDesc("Share local PA Agent usage events for capability invoked, failed, skipped, or unavailable states. Events do not include prompts, note text, observations, or vault paths.")
@@ -982,27 +1168,6 @@ export class SettingTab extends PluginSettingTab {
                         });
                 });
         }
-    }
-
-    private renderApiTokenSection(parentEl: HTMLElement): void {
-        const plugin = this.plugin;
-        new Setting(parentEl)
-            .setName("API Token")
-            .setDesc("Stored securely in your OS keychain (macOS Keychain / iOS Keychain / Windows Credential Manager).")
-            .addComponent((el) => {
-                const secret = new SecretComponent(this.app, el);
-                const existing = this.app.secretStorage.getSecret(KEYCHAIN_API_TOKEN_ID);
-                if (existing) {
-                    secret.setValue(existing);
-                }
-                secret.onChange((value: string) => {
-                    if (value) {
-                        this.app.secretStorage.setSecret(KEYCHAIN_API_TOKEN_ID, value);
-                        plugin.clearTokenCache();
-                    }
-                });
-                return secret;
-            });
     }
 
     private renderMemorySection(parentEl: HTMLElement): void {

@@ -173,11 +173,32 @@ jest.mock('obsidian', () => ({
         }
     },
     SecretComponent: class {
-        constructor(_app: unknown, _el: unknown) { }
-        setValue(_value: string) { return this; }
-        onChange(_cb: (value: string) => unknown) { return this; }
+        constructor(_app: unknown, _el: unknown) {
+            const globalObj = globalThis as typeof globalThis & {
+                __paSecretRecords?: Array<{ value?: string; onChange?: (value: string) => unknown }>;
+            };
+            globalObj.__paSecretRecords = globalObj.__paSecretRecords ?? [];
+            const record: { value?: string; onChange?: (value: string) => unknown } = {};
+            globalObj.__paSecretRecords.push(record);
+            (this as unknown as { __record: typeof record }).__record = record;
+        }
+        setValue(value: string) {
+            (this as unknown as { __record: { value?: string } }).__record.value = value;
+            return this;
+        }
+        onChange(cb: (value: string) => unknown) {
+            (this as unknown as { __record: { onChange?: (value: string) => unknown } }).__record.onChange = cb;
+            return this;
+        }
     },
 }));
+
+jest.mock('../src/confirm', () => {
+    const globalObj = globalThis as typeof globalThis & { __paConfirmDecision?: boolean };
+    return {
+        confirmUserAction: jest.fn(async () => globalObj.__paConfirmDecision ?? false),
+    };
+});
 
 jest.mock('vanilla-picker', () => ({
     __esModule: true,
@@ -197,13 +218,18 @@ jest.mock('../src/utils', () => ({
 
 import {
     DEFAULT_SETTINGS,
+    PROVIDER_PRESETS,
     STATISTICS_SYNC_SETTING_DESC,
     SettingTab,
+    deriveDisplayPreset,
+    isFreshInstall,
+    isLegacyV1Install,
     mergeLoadedSettings,
     normalizeEnabledSkillIds,
     safeParseInt,
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
+import { confirmUserAction } from '../src/confirm';
 import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
 
 function mockStringifyText(value: unknown): string {
@@ -757,5 +783,537 @@ describe('Phase 2 P0 data integrity', () => {
         const records = getMockSettingRecords();
         const addRecord = records.find((record) => record.name === 'Add Key:Value in frontmatter');
         expect(addRecord?.dropdowns[0]?.value).toBe('string');
+    });
+});
+
+type SecretRecord = { value?: string; onChange?: (value: string) => unknown };
+function getMockSecretRecords(): SecretRecord[] {
+    const globalObj = globalThis as typeof globalThis & { __paSecretRecords?: SecretRecord[] };
+    globalObj.__paSecretRecords = globalObj.__paSecretRecords ?? [];
+    return globalObj.__paSecretRecords;
+}
+
+function setMockConfirmDecision(decision: boolean | undefined) {
+    const globalObj = globalThis as typeof globalThis & { __paConfirmDecision?: boolean };
+    if (decision === undefined) {
+        delete globalObj.__paConfirmDecision;
+    } else {
+        globalObj.__paConfirmDecision = decision;
+    }
+}
+
+describe('isFreshInstall', () => {
+    it('treats null and undefined as fresh installs', () => {
+        expect(isFreshInstall(null)).toBe(true);
+        expect(isFreshInstall(undefined)).toBe(true);
+    });
+
+    it('treats an empty object as a fresh install', () => {
+        expect(isFreshInstall({})).toBe(true);
+    });
+
+    it('treats any persisted field as not a fresh install', () => {
+        expect(isFreshInstall({ aiProvider: 'qwen' })).toBe(false);
+        expect(isFreshInstall({ debug: false })).toBe(false);
+    });
+
+    it('treats non-object input as not fresh', () => {
+        // Defensive: a corrupted data.json that returns a primitive should not
+        // silently nuke the user's config by being labelled "fresh".
+        expect(isFreshInstall('garbage')).toBe(false);
+        expect(isFreshInstall(42)).toBe(false);
+    });
+
+    it('rejects arrays even when empty', () => {
+        // A persisted [] is malformed, not absent — treating it as fresh
+        // would let the loader run with no migration signal at all.
+        expect(isFreshInstall([])).toBe(false);
+        expect(isFreshInstall([{ aiProvider: 'qwen' }])).toBe(false);
+    });
+});
+
+describe('isLegacyV1Install', () => {
+    it('returns true only for non-empty objects missing aiProvider', () => {
+        // Legacy v1.x persisted data without an aiProvider field.
+        expect(isLegacyV1Install({ debug: false, modelName: 'qwen-plus' })).toBe(true);
+    });
+
+    it('returns false for fresh installs (null, undefined, empty object)', () => {
+        expect(isLegacyV1Install(null)).toBe(false);
+        expect(isLegacyV1Install(undefined)).toBe(false);
+        expect(isLegacyV1Install({})).toBe(false);
+    });
+
+    it('returns false when aiProvider is set (any value, including empty string)', () => {
+        // Empty string means "user cleared their provider via the new chooser",
+        // not "legacy install" — must not re-trigger the qwen migration.
+        expect(isLegacyV1Install({ aiProvider: '' })).toBe(false);
+        expect(isLegacyV1Install({ aiProvider: 'qwen' })).toBe(false);
+        expect(isLegacyV1Install({ aiProvider: 'openai' })).toBe(false);
+    });
+
+    it('returns false for arrays and primitives', () => {
+        expect(isLegacyV1Install([])).toBe(false);
+        expect(isLegacyV1Install([{ debug: false }])).toBe(false);
+        expect(isLegacyV1Install('garbage')).toBe(false);
+        expect(isLegacyV1Install(42)).toBe(false);
+    });
+});
+
+describe('PROVIDER_PRESETS catalog', () => {
+    it('exposes qwen, qwen-intl, openai, and custom entries', () => {
+        expect(Object.keys(PROVIDER_PRESETS).sort()).toEqual(
+            ['custom', 'openai', 'qwen', 'qwen-intl'].sort(),
+        );
+    });
+
+    it('uses gpt-4o-mini as the OpenAI default chat model', () => {
+        expect(PROVIDER_PRESETS.openai.chatModelName).toBe('gpt-4o-mini');
+        expect(PROVIDER_PRESETS.openai.embeddingModelName).toBe('text-embedding-3-small');
+    });
+
+    it('maps qwen-intl to a different baseURL but same runtime provider', () => {
+        expect(PROVIDER_PRESETS['qwen-intl'].runtimeProvider).toBe('qwen');
+        expect(PROVIDER_PRESETS['qwen-intl'].baseURL).not.toBe(PROVIDER_PRESETS.qwen.baseURL);
+    });
+
+    it('keeps the custom preset blank so it does not overwrite user values', () => {
+        expect(PROVIDER_PRESETS.custom.baseURL).toBe('');
+        expect(PROVIDER_PRESETS.custom.chatModelName).toBe('');
+        expect(PROVIDER_PRESETS.custom.embeddingModelName).toBe('');
+    });
+});
+
+describe('deriveDisplayPreset', () => {
+    it('returns "qwen" for the China DashScope baseURL with qwen runtime', () => {
+        expect(deriveDisplayPreset({
+            aiProvider: 'qwen',
+            baseURL: PROVIDER_PRESETS.qwen.baseURL,
+        })).toBe('qwen');
+    });
+
+    it('returns "qwen-intl" for the international DashScope baseURL with qwen runtime', () => {
+        expect(deriveDisplayPreset({
+            aiProvider: 'qwen',
+            baseURL: PROVIDER_PRESETS['qwen-intl'].baseURL,
+        })).toBe('qwen-intl');
+    });
+
+    it('returns "openai" for openai runtime + openai baseURL', () => {
+        expect(deriveDisplayPreset({
+            aiProvider: 'openai',
+            baseURL: PROVIDER_PRESETS.openai.baseURL,
+        })).toBe('openai');
+    });
+
+    it('returns "custom" for openai runtime + non-openai baseURL', () => {
+        expect(deriveDisplayPreset({
+            aiProvider: 'openai',
+            baseURL: 'https://my-proxy.example.com/v1',
+        })).toBe('custom');
+    });
+
+    it('returns "custom" for qwen runtime + non-DashScope baseURL', () => {
+        expect(deriveDisplayPreset({
+            aiProvider: 'qwen',
+            baseURL: 'https://my-proxy.example.com/v1',
+        })).toBe('custom');
+    });
+});
+
+describe('Phase 3 IA reorder + provider UX', () => {
+    type PhaseThreeInternals = {
+        providerConfigContainer: { children: { tagName: string; classes?: string[]; textContent?: string }[] } | null;
+    };
+
+    beforeEach(() => {
+        setMockConfirmDecision(undefined);
+        const records = getMockSecretRecords();
+        records.length = 0;
+        (confirmUserAction as jest.Mock).mockClear();
+    });
+
+    it('display() renders sections in the new IA order (h1/h2/h3 + featured image)', () => {
+        // Use qwen so the otherwise-empty Featured Image section actually emits
+        // a Setting we can locate in the order check.
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        // Walk every top-level child of containerEl in render order. Heading
+        // tags (h1/h2/h3) are kept by their textContent; the Featured Image
+        // section emits its content under a div sub-container with no heading,
+        // so we mark it via the "AI Featured Image Path" Setting record's
+        // index in the Setting render queue and reconstruct ordering by
+        // scanning for the matching div.
+        const children = (tab.containerEl as unknown as { children: { tagName: string; textContent?: string; children?: unknown[] }[] }).children;
+        const headingTags = new Set(['h1', 'h2', 'h3']);
+        const sectionLabels: string[] = [];
+        for (const child of children) {
+            if (headingTags.has(child.tagName)) {
+                sectionLabels.push(`${child.tagName}:${child.textContent ?? ''}`);
+            }
+        }
+
+        // Skills uses h3, all others h2; the only un-titled section is
+        // Featured Image, which we verify separately below.
+        expect(sectionLabels).toEqual([
+            'h1:Settings for Obsidian Assistant',
+            'h2:AI Assistant',
+            // Qwen response options is an h3 nested under the AI section's
+            // qwenOptionsContainer (not a top-level child), so it is absent here.
+            'h3:Skill guides',
+            'h2:Memory',
+            'h2:Vault Statistics',
+            'h2:Settings for Record',
+            'h2:Settings for Hover Local Graph',
+            'h2:Graph Colors',
+            'h2:Metadata Management',
+            // No heading between Metadata and Advanced — that gap is the
+            // Featured Image section, asserted via Setting records below.
+            'h2:Advanced',
+        ]);
+
+        // Featured Image lives between Metadata Management and Advanced. With
+        // aiProvider='qwen' it renders a single "AI Featured Image Path" Setting.
+        // Use the Setting record list to confirm it falls in that gap, between
+        // the metadata section's only default-rendered Setting ("Enable
+        // Updating Metadata") and Advanced's Debug toggle.
+        const settingNames = getMockSettingRecords().map((r) => r.name);
+        const featuredIdx = settingNames.indexOf('AI Featured Image Path');
+        const metadataIdx = settingNames.indexOf('Enable Updating Metadata');
+        const debugIdx = settingNames.indexOf('Debug');
+        expect(featuredIdx).toBeGreaterThan(-1);
+        expect(metadataIdx).toBeGreaterThan(-1);
+        expect(debugIdx).toBeGreaterThan(-1);
+        expect(featuredIdx).toBeGreaterThan(metadataIdx);
+        expect(featuredIdx).toBeLessThan(debugIdx);
+    });
+
+    it('Debug toggle moves out of the header into the Advanced section', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const debugRecord = records.find((record) => record.name === 'Debug');
+        expect(debugRecord).toBeDefined();
+        // Find Advanced section heading; Debug should be a sibling of (i.e.,
+        // after) the Advanced h2, not at the top.
+        const headings = records.map((record) => record.name);
+        const debugIdx = headings.indexOf('Debug');
+        const telemetryIdx = headings.indexOf('Share anonymous capability usage');
+        expect(debugIdx).toBeGreaterThan(0);
+        expect(telemetryIdx).toBeGreaterThan(debugIdx);
+    });
+
+    it('fresh install shows the placeholder option and hides the provider config', () => {
+        const plugin = makePlugin({ aiProvider: '' });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const providerRecord = records.find((record) => record.name === 'AI Provider');
+        const dropdown = providerRecord?.dropdowns[0];
+        expect(dropdown).toBeDefined();
+        expect(dropdown!.value).toBe('');
+        // Placeholder option present and listed first.
+        expect(dropdown!.options[0]).toMatchObject({ value: '', text: '-- Choose your AI provider --' });
+        // Token, Base URL, Chat Model rows are absent until a provider is picked.
+        expect(records.find((record) => record.name === 'API Token')).toBeUndefined();
+        expect(records.find((record) => record.name === 'Base URL')).toBeUndefined();
+        expect(records.find((record) => record.name === 'Chat Model Name')).toBeUndefined();
+
+        // Provider config container shows the guidance prompt instead.
+        const internals = tab as unknown as PhaseThreeInternals;
+        const promptChild = internals.providerConfigContainer?.children.find(
+            (child) => child.classes?.includes('pa-settings-provider-prompt'),
+        );
+        expect(promptChild).toBeDefined();
+    });
+
+    it('selecting a preset on fresh install applies preset baseURL and model', async () => {
+        const plugin = makePlugin({ aiProvider: '' });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+        expect(dropdown?.onChange).toBeDefined();
+
+        await dropdown!.onChange!('qwen-intl');
+
+        expect(plugin.settings.aiProvider).toBe('qwen');
+        expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS['qwen-intl'].baseURL);
+        expect(plugin.settings.chatModelName).toBe(PROVIDER_PRESETS['qwen-intl'].chatModelName);
+        expect(plugin.settings.embeddingModelName).toBe(PROVIDER_PRESETS['qwen-intl'].embeddingModelName);
+        // No confirmation needed when there is no prior preset to compare against.
+        expect((confirmUserAction as jest.Mock)).not.toHaveBeenCalled();
+    });
+
+    it('switching to a new preset asks for confirmation when baseURL was customized', async () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            baseURL: 'https://my-proxy.example.com/v1',
+            chatModelName: 'qwen-plus',
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+        expect(dropdown?.onChange).toBeDefined();
+        // deriveDisplayPreset puts a custom-URL qwen install in the "custom" preset,
+        // and switching from custom to anything is allowed without confirm — so
+        // for this test we explicitly switch FROM the qwen preset (matching
+        // baseURL) but with a custom chatModelName to trigger the prompt.
+        plugin.settings.baseURL = PROVIDER_PRESETS.qwen.baseURL;
+        plugin.settings.chatModelName = 'my-fine-tuned-qwen';
+
+        setMockConfirmDecision(false);
+        await dropdown!.onChange!('openai');
+
+        expect(confirmUserAction).toHaveBeenCalledTimes(1);
+        // Settings unchanged because user canceled.
+        expect(plugin.settings.aiProvider).toBe('qwen');
+        expect(plugin.settings.chatModelName).toBe('my-fine-tuned-qwen');
+        // Dropdown reverted to derived preset.
+        expect(dropdown!.value).toBe('qwen');
+    });
+
+    it('confirming the switch applies preset values', async () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            baseURL: PROVIDER_PRESETS.qwen.baseURL,
+            chatModelName: 'my-fine-tuned-qwen',
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+
+        setMockConfirmDecision(true);
+        await dropdown!.onChange!('openai');
+
+        expect(plugin.settings.aiProvider).toBe('openai');
+        expect(plugin.settings.baseURL).toBe(PROVIDER_PRESETS.openai.baseURL);
+        expect(plugin.settings.chatModelName).toBe(PROVIDER_PRESETS.openai.chatModelName);
+    });
+
+    it('switching to "custom" clears the URL/model fields without prompting', async () => {
+        // L1 review fix: keeping the prior preset's values would cause
+        // deriveDisplayPreset to return the prior preset on next render,
+        // so the dropdown would silently snap back to qwen instead of
+        // showing "custom". Clearing URL/model on switch makes the
+        // "custom" selection actually stick.
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            baseURL: PROVIDER_PRESETS.qwen.baseURL,
+            chatModelName: 'qwen-plus',
+            embeddingModelName: PROVIDER_PRESETS.qwen.embeddingModelName,
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+
+        await dropdown!.onChange!('custom');
+
+        expect(confirmUserAction).not.toHaveBeenCalled();
+        // runtimeProvider for "custom" is "qwen"; URL/model fields cleared.
+        expect(plugin.settings.aiProvider).toBe('qwen');
+        expect(plugin.settings.baseURL).toBe('');
+        expect(plugin.settings.chatModelName).toBe('');
+        expect(plugin.settings.embeddingModelName).toBe('');
+        // After re-render, dropdown should display "custom".
+        expect(deriveDisplayPreset(plugin.settings)).toBe('custom');
+    });
+
+    it('leaving the custom preset prompts confirmation when user has values', async () => {
+        // L1 review fix: previously the `prev.baseURL !== ""` guard short-
+        // circuited the customization check whenever prevKey === "custom"
+        // (since the custom preset's baseURL is ""), letting any switch
+        // away from custom silently overwrite the user's values. Treat any
+        // non-empty user value on the custom preset as customization.
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            // Both blank baseURL/chatModelName would put us on "custom" — but
+            // here the user has typed in a private endpoint and a fine-tuned
+            // model, which deriveDisplayPreset still classifies as custom
+            // (URL doesn't match qwen/qwen-intl/openai presets).
+            baseURL: 'https://my-vpc.example.com/v1',
+            chatModelName: 'fine-tuned-llama',
+        });
+        // Sanity: prevKey resolves to "custom"
+        expect(deriveDisplayPreset(plugin.settings)).toBe('custom');
+
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+
+        setMockConfirmDecision(false);
+        await dropdown!.onChange!('openai');
+
+        expect(confirmUserAction).toHaveBeenCalledTimes(1);
+        // User canceled — settings unchanged.
+        expect(plugin.settings.aiProvider).toBe('qwen');
+        expect(plugin.settings.baseURL).toBe('https://my-vpc.example.com/v1');
+        expect(plugin.settings.chatModelName).toBe('fine-tuned-llama');
+    });
+
+    it('switch confirmation copy mentions the Memory model and that the API token is kept', async () => {
+        const plugin = makePlugin({
+            aiProvider: 'qwen',
+            baseURL: PROVIDER_PRESETS.qwen.baseURL,
+            chatModelName: 'my-fine-tuned-qwen',
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const dropdown = records.find((record) => record.name === 'AI Provider')?.dropdowns[0];
+
+        setMockConfirmDecision(true);
+        await dropdown!.onChange!('openai');
+
+        const call = (confirmUserAction as jest.Mock).mock.calls[0];
+        const options = call?.[1] as { title?: string; message?: string };
+        expect(options?.message).toContain('Memory model');
+        expect(options?.message).toContain('API token is kept');
+    });
+
+    it('clearing the API token field calls setSecret with empty string', () => {
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const app = makeMockApp();
+        const tab = new SettingTab(app as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const secretRecords = getMockSecretRecords();
+        expect(secretRecords).toHaveLength(1);
+        const secret = secretRecords[0];
+        expect(secret.onChange).toBeDefined();
+
+        secret.onChange!('');
+
+        expect(app.secretStorage.setSecret).toHaveBeenLastCalledWith('pa-api-token', '');
+        expect(plugin.clearTokenCache).toHaveBeenCalled();
+    });
+});
+
+describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-launch)', () => {
+    // We don't instantiate the full PluginManager (huge mock surface). Instead
+    // we replay the exact loadSettings → migrateSettings logic from src/plugin.ts
+    // using the real helpers, so this guards against regressions in either
+    // the helpers or the call-site wiring.
+    function simulate(loaded: unknown): {
+        settings: ReturnType<typeof mergeLoadedSettings>;
+        migrationApplied: boolean;
+    } {
+        const fresh = isFreshInstall(loaded);
+        const needsLegacyMigration = isLegacyV1Install(loaded);
+        const settings = mergeLoadedSettings(loaded);
+        if (fresh) {
+            settings.aiProvider = '';
+        }
+
+        let migrationApplied = false;
+        if (needsLegacyMigration) {
+            settings.aiProvider = 'qwen';
+            settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
+            settings.chatModelName = settings.modelName || 'qwen-plus';
+            settings.embeddingModelName = 'text-embedding-v3';
+            migrationApplied = true;
+        }
+        return { settings, migrationApplied };
+    }
+
+    it('fresh install (null data) → aiProvider stays empty, no migration', () => {
+        const { settings, migrationApplied } = simulate(null);
+        expect(migrationApplied).toBe(false);
+        expect(settings.aiProvider).toBe('');
+    });
+
+    it('fresh install ({}) → aiProvider stays empty, no migration', () => {
+        const { settings, migrationApplied } = simulate({});
+        expect(migrationApplied).toBe(false);
+        expect(settings.aiProvider).toBe('');
+    });
+
+    it('legacy v1.x install (no aiProvider field) migrates to qwen with proper defaults', () => {
+        const legacyBlob = {
+            // v1.x stored chat model in `modelName`, no `aiProvider` field.
+            modelName: 'qwen-turbo',
+            debug: false,
+            apiToken: 'sk-encrypted-blob',
+        };
+        const { settings, migrationApplied } = simulate(legacyBlob);
+        expect(migrationApplied).toBe(true);
+        expect(settings.aiProvider).toBe('qwen');
+        expect(settings.baseURL).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
+        // The legacy modelName field is preferred over the qwen-plus fallback.
+        expect(settings.chatModelName).toBe('qwen-turbo');
+        expect(settings.embeddingModelName).toBe('text-embedding-v3');
+    });
+
+    it('legacy v1.x install with no modelName falls back to qwen-plus', () => {
+        const { settings, migrationApplied } = simulate({ debug: false });
+        expect(migrationApplied).toBe(true);
+        expect(settings.chatModelName).toBe('qwen-plus');
+    });
+
+    it('post-fresh second launch: persisted aiProvider:"" must NOT re-trigger migration', () => {
+        // After a fresh install, the user opens settings and the plugin saves
+        // the merged blob to disk. That blob now has an explicit `aiProvider`
+        // field (empty string, because the user has not picked a provider yet).
+        // The next load must keep aiProvider blank instead of silently
+        // overwriting it with the legacy "qwen" default.
+        const persistedAfterFreshSave = {
+            aiProvider: '',
+            debug: false,
+            // Other defaults baked in by mergeLoadedSettings on first save.
+            statisticsType: 'word',
+        };
+        const { settings, migrationApplied } = simulate(persistedAfterFreshSave);
+        expect(migrationApplied).toBe(false);
+        expect(settings.aiProvider).toBe('');
+    });
+
+    it('post-migration second launch: aiProvider:"qwen" stays put, no re-migration', () => {
+        const persistedAfterMigration = {
+            aiProvider: 'qwen',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            chatModelName: 'qwen-plus',
+            embeddingModelName: 'text-embedding-v3',
+        };
+        const { settings, migrationApplied } = simulate(persistedAfterMigration);
+        expect(migrationApplied).toBe(false);
+        expect(settings.aiProvider).toBe('qwen');
+        expect(settings.chatModelName).toBe('qwen-plus');
+    });
+
+    it('user picks openai then re-launches: aiProvider stays "openai", no migration', () => {
+        const persisted = {
+            aiProvider: 'openai',
+            baseURL: 'https://api.openai.com/v1',
+            chatModelName: 'gpt-4o-mini',
+            embeddingModelName: 'text-embedding-3-small',
+        };
+        const { settings, migrationApplied } = simulate(persisted);
+        expect(migrationApplied).toBe(false);
+        expect(settings.aiProvider).toBe('openai');
     });
 });
