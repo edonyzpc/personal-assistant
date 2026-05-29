@@ -1,9 +1,10 @@
 import type { Vault } from "obsidian";
 import type { ActivityCounts, SnapshotCounts } from "./stats-types";
 
-const STATS_LOCAL_DB_VERSION = 2;
+const STATS_LOCAL_DB_VERSION = 3;
 const DAILY_RECORDS_STORE = "dailyRecords";
 const METADATA_STORE = "metadata";
+const FILE_COUNT_CACHE_STORE = "fileCountCache";
 const MIGRATION_METADATA_KEY = "migration";
 const SYNC_STATE_KEY = "sync";
 const PLUGIN_STORAGE_SCOPE = "personal-assistant-statistics-v3";
@@ -20,6 +21,25 @@ export interface StatsDailyDeviceRecord {
     snapshot: SnapshotCounts;
 }
 
+export interface FileCountCacheEntry {
+    path: string;
+    mtime: number;
+    size: number;
+    wordCount: number;
+    charCount: number;
+    sentenceCount: number;
+    pageCount: number;
+    footnoteCount: number;
+    citationCount: number;
+}
+
+export class SchemaIntegrityError extends Error {
+    constructor(public readonly missingStores: string[]) {
+        super(`Statistics local store is missing required object stores: ${missingStores.join(", ")}`);
+        this.name = "SchemaIntegrityError";
+    }
+}
+
 export interface StatsLocalStore {
     initialize(): Promise<void>;
     getAllRecords(): Promise<StatsDailyDeviceRecord[]>;
@@ -30,6 +50,10 @@ export interface StatsLocalStore {
     setMigrationMetadata(metadata: StatsMigrationMetadata): Promise<void>;
     getSyncState(): Promise<StatsSyncState | null>;
     setSyncState(state: StatsSyncState): Promise<void>;
+    getAllFileCountEntries(): Promise<FileCountCacheEntry[]>;
+    putFileCountEntries(entries: FileCountCacheEntry[]): Promise<void>;
+    deleteFileCountEntries(paths: string[]): Promise<void>;
+    clearFileCountCache(): Promise<void>;
 }
 
 export interface StatsMigrationMetadata {
@@ -60,6 +84,7 @@ export interface StatsSyncRecordState {
 
 export class MemoryStatsLocalStore implements StatsLocalStore {
     private readonly records = new Map<string, StatsDailyDeviceRecord>();
+    private readonly fileCountEntries = new Map<string, FileCountCacheEntry>();
 
     async initialize(): Promise<void> {
         // Memory store is ready immediately.
@@ -105,6 +130,26 @@ export class MemoryStatsLocalStore implements StatsLocalStore {
     async setSyncState(state: StatsSyncState): Promise<void> {
         this.syncState = cloneSyncState(state);
     }
+
+    async getAllFileCountEntries(): Promise<FileCountCacheEntry[]> {
+        return Array.from(this.fileCountEntries.values()).map(cloneFileCountEntry);
+    }
+
+    async putFileCountEntries(entries: FileCountCacheEntry[]): Promise<void> {
+        for (const entry of entries) {
+            this.fileCountEntries.set(entry.path, cloneFileCountEntry(entry));
+        }
+    }
+
+    async deleteFileCountEntries(paths: string[]): Promise<void> {
+        for (const path of paths) {
+            this.fileCountEntries.delete(path);
+        }
+    }
+
+    async clearFileCountCache(): Promise<void> {
+        this.fileCountEntries.clear();
+    }
 }
 
 export class IndexedDbStatsLocalStore implements StatsLocalStore {
@@ -118,6 +163,11 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
         if (!this.initializing) {
             this.initializing = this.openDatabase()
                 .then((db) => {
+                    const missing = REQUIRED_STORES.filter((store) => !db.objectStoreNames.contains(store));
+                    if (missing.length > 0) {
+                        db.close();
+                        throw new SchemaIntegrityError(missing);
+                    }
                     this.db = db;
                 })
                 .catch((error) => {
@@ -168,13 +218,30 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
     private openDatabase(): Promise<IDBDatabase> {
         return new Promise((resolve, reject) => {
             const request = this.indexedDb.open(this.dbName, STATS_LOCAL_DB_VERSION);
-            request.onupgradeneeded = () => {
+            request.onupgradeneeded = (event) => {
                 const db = request.result;
-                if (!db.objectStoreNames.contains(DAILY_RECORDS_STORE)) {
-                    db.createObjectStore(DAILY_RECORDS_STORE, { keyPath: "recordKey" });
-                }
-                if (!db.objectStoreNames.contains(METADATA_STORE)) {
-                    db.createObjectStore(METADATA_STORE, { keyPath: "key" });
+                const oldVersion = (event as IDBVersionChangeEvent).oldVersion ?? 0;
+                try {
+                    if (oldVersion < 2) {
+                        if (!db.objectStoreNames.contains(DAILY_RECORDS_STORE)) {
+                            db.createObjectStore(DAILY_RECORDS_STORE, { keyPath: "recordKey" });
+                        }
+                        if (!db.objectStoreNames.contains(METADATA_STORE)) {
+                            db.createObjectStore(METADATA_STORE, { keyPath: "key" });
+                        }
+                    }
+                    if (oldVersion < 3) {
+                        if (!db.objectStoreNames.contains(FILE_COUNT_CACHE_STORE)) {
+                            db.createObjectStore(FILE_COUNT_CACHE_STORE, { keyPath: "path" });
+                        }
+                    }
+                } catch (error) {
+                    // Do not throw — let onsuccess fire and let init-time integrity check
+                    // detect the missing store and fall back to UnavailableStatsLocalStore.
+                    // Throwing here would abort the upgrade transaction, which is acceptable,
+                    // but logging + delegating to the init-time guard keeps a single recovery path.
+                    // eslint-disable-next-line no-console
+                    console.error("[stats-local-store] schema upgrade failed:", error);
                 }
             };
             request.onsuccess = () => {
@@ -237,6 +304,38 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
         });
         await transactionDone(transaction);
     }
+
+    async getAllFileCountEntries(): Promise<FileCountCacheEntry[]> {
+        const store = this.getStore(FILE_COUNT_CACHE_STORE, "readonly");
+        const entries = await requestToPromise<FileCountCacheEntry[]>(store.getAll());
+        return entries.map(cloneFileCountEntry);
+    }
+
+    async putFileCountEntries(entries: FileCountCacheEntry[]): Promise<void> {
+        if (entries.length === 0) return;
+        const transaction = this.getTransaction(FILE_COUNT_CACHE_STORE, "readwrite");
+        const objectStore = transaction.objectStore(FILE_COUNT_CACHE_STORE);
+        for (const entry of entries) {
+            objectStore.put(cloneFileCountEntry(entry));
+        }
+        await transactionDone(transaction);
+    }
+
+    async deleteFileCountEntries(paths: string[]): Promise<void> {
+        if (paths.length === 0) return;
+        const transaction = this.getTransaction(FILE_COUNT_CACHE_STORE, "readwrite");
+        const objectStore = transaction.objectStore(FILE_COUNT_CACHE_STORE);
+        for (const path of paths) {
+            objectStore.delete(path);
+        }
+        await transactionDone(transaction);
+    }
+
+    async clearFileCountCache(): Promise<void> {
+        const transaction = this.getTransaction(FILE_COUNT_CACHE_STORE, "readwrite");
+        transaction.objectStore(FILE_COUNT_CACHE_STORE).clear();
+        await transactionDone(transaction);
+    }
 }
 
 export class UnavailableStatsLocalStore implements StatsLocalStore {
@@ -277,6 +376,22 @@ export class UnavailableStatsLocalStore implements StatsLocalStore {
     async setSyncState(_state: StatsSyncState): Promise<void> {
         throw this.error;
     }
+
+    async getAllFileCountEntries(): Promise<FileCountCacheEntry[]> {
+        throw this.error;
+    }
+
+    async putFileCountEntries(_entries: FileCountCacheEntry[]): Promise<void> {
+        throw this.error;
+    }
+
+    async deleteFileCountEntries(_paths: string[]): Promise<void> {
+        throw this.error;
+    }
+
+    async clearFileCountCache(): Promise<void> {
+        throw this.error;
+    }
 }
 
 export function createStatsLocalStore(vault: Vault, vaultId: string): StatsLocalStore {
@@ -290,6 +405,8 @@ export function createStatsLocalStore(vault: Vault, vaultId: string): StatsLocal
 export function getStatsRecordKey(date: string, deviceId: string): string {
     return `${date}\0${deviceId}`;
 }
+
+const REQUIRED_STORES = [DAILY_RECORDS_STORE, METADATA_STORE, FILE_COUNT_CACHE_STORE];
 
 function getStatsLocalDbName(vault: Vault, vaultId: string): string {
     const scopeSource = `${vaultId}\n${getVaultConfigDir(vault)}\n${getVaultLocalPath(vault) ?? ""}`;
@@ -334,6 +451,10 @@ function cloneSyncState(state: StatsSyncState): StatsSyncState {
             { ...value },
         ])),
     };
+}
+
+function cloneFileCountEntry(entry: FileCountCacheEntry): FileCountCacheEntry {
+    return { ...entry };
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {

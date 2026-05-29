@@ -6,6 +6,8 @@ import { createStatsShard, getStatsDailyRoot } from "../src/stats/stats-store";
 import {
     getStatsRecordKey,
     MemoryStatsLocalStore,
+    SchemaIntegrityError,
+    type FileCountCacheEntry,
     type StatsDailyDeviceRecord,
     type StatsLocalStore,
     type StatsMigrationMetadata,
@@ -671,6 +673,22 @@ describe("LocalStatsRepository", () => {
         expect(adapter.deleteCalls).toBe(0);
     });
 
+    it("falls back to UnavailableStatsLocalStore when the local schema is corrupt (SDD §6.20)", async () => {
+        const schemaStore = new SchemaFailingStatsLocalStore();
+        const repository = new LocalStatsRepository({} as Vault, "vault-id", schemaStore, ".obsidian/stats.json");
+
+        // SDD §3.2 contract: the SchemaIntegrityError is caught inside the repository
+        // and the local store is swapped to the Unavailable variant. Initialize must
+        // resolve successfully even though the underlying schema check threw.
+        await expect(repository.initialize()).resolves.toBeUndefined();
+
+        // Subsequent reads now hit UnavailableStatsLocalStore, which throws. The
+        // StatsManager.getDashboardData try/catch surfaces this as empty dashboards;
+        // here we assert the throw so the manager-level fallback has something to catch.
+        await expect(repository.readDashboardData()).rejects.toThrow(/unavailable/i);
+        await expect(repository.readLatestSnapshot()).rejects.toThrow(/unavailable/i);
+    });
+
     it("imports synced records when dashboard data is read", async () => {
         const adapter = new RepositoryMemoryAdapter({
             ".vault-config/plugins/personal-assistant/stats/devices/device-b.jsonl": JSON.stringify(toSyncLine(createRecord({
@@ -759,6 +777,16 @@ class BlockingStatsLocalStore implements StatsLocalStore {
     }
 
     async setSyncState(_state: StatsSyncState): Promise<void> { }
+
+    async getAllFileCountEntries(): Promise<never[]> {
+        return [];
+    }
+
+    async putFileCountEntries(_entries: unknown[]): Promise<void> { }
+
+    async deleteFileCountEntries(_paths: string[]): Promise<void> { }
+
+    async clearFileCountCache(): Promise<void> { }
 
     releaseNextWrite(): void {
         const release = this.releases.shift();
@@ -884,6 +912,24 @@ class FailingOnceStatsLocalStore extends MemoryStatsLocalStore {
         }
         await super.initialize();
     }
+}
+
+class SchemaFailingStatsLocalStore implements StatsLocalStore {
+    async initialize(): Promise<void> {
+        throw new SchemaIntegrityError(["required object store"]);
+    }
+    async getAllRecords(): Promise<StatsDailyDeviceRecord[]> { throw new Error("should not reach"); }
+    async getRecord(): Promise<StatsDailyDeviceRecord | null> { throw new Error("should not reach"); }
+    async upsertRecord(): Promise<void> { throw new Error("should not reach"); }
+    async addRecordIfAbsent(): Promise<boolean> { throw new Error("should not reach"); }
+    async getMigrationMetadata(): Promise<StatsMigrationMetadata | null> { throw new Error("should not reach"); }
+    async setMigrationMetadata(): Promise<void> { throw new Error("should not reach"); }
+    async getSyncState(): Promise<StatsSyncState | null> { throw new Error("should not reach"); }
+    async setSyncState(): Promise<void> { throw new Error("should not reach"); }
+    async getAllFileCountEntries(): Promise<FileCountCacheEntry[]> { throw new Error("should not reach"); }
+    async putFileCountEntries(): Promise<void> { throw new Error("should not reach"); }
+    async deleteFileCountEntries(): Promise<void> { throw new Error("should not reach"); }
+    async clearFileCountCache(): Promise<void> { throw new Error("should not reach"); }
 }
 
 function createVault(adapter: RepositoryMemoryAdapter): Vault {
