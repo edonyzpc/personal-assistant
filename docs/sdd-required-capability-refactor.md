@@ -89,10 +89,13 @@
 - ✅ re-export `isExplicitCurrentNoteOnlyRequest` / `shouldUseFullCurrentNoteContext`
 
 **可移除**（无消费者）：
-- ❌ `RequiredCapabilityLevel` type（仅内部用）
-- ❌ `RequiredCapabilityHostPolicyOptions` / `RequiredCapabilityHostPolicyResult`（消费者只用返回值字段）
-- ❌ `RequiredCapabilityClassifierInput` 接口（仅作为 `RequiredCapabilityClassifier` 输入参数，归属为公开类型的内部细节）
-- ❌ `metadata.policyModelAvailable` / `classifierUsed` / `classifierTimedOut` / `fallbackUsed`（grep 确认无消费者读取）
+
+> **迁移期注意（per §5）:** 下列 type-only 别名虽无内部消费者，但本 PR 中保留为 `@deprecated` 别名直至 **2026-06-12**（一个 sprint 的稳定窗口），以避免外部消费者（如插件用户的下游代码）破坏。`metadata.*` 字段是数据字段，本 PR 直接移除——无 deprecation 期，因为数据字段无法以 `@deprecated` 别名形式过渡，且 grep 确认仓内无消费者读取。`2026-06-12` 之后的 follow-up PR 再删 type 别名。
+
+- ❌ `RequiredCapabilityLevel` type（仅内部用，保留 @deprecated 至 2026-06-12）
+- ❌ `RequiredCapabilityHostPolicyOptions` / `RequiredCapabilityHostPolicyResult`（消费者只用返回值字段，保留 @deprecated 至 2026-06-12）
+- ❌ `RequiredCapabilityClassifierInput` 接口（仅作为 `RequiredCapabilityClassifier` 输入参数，归属为公开类型的内部细节，保留 @deprecated 至 2026-06-12；新代码使用 inline `{ userInput: string; signal?: AbortSignal }`）
+- ❌ `metadata.policyModelAvailable` / `classifierUsed` / `classifierTimedOut` / `fallbackUsed`（本 PR 直接移除）
 
 **RequiredCapabilityClassifier 调整说明:** 之前列在"可移除"是误判 —— `pa-agent-runtime.ts` 的 LLM 分类器实例需要这个接口契约（duck typing 不够，因为有 `classify(input): Promise<unknown>` 的具体形状）。保留为公开 API，只是把 `RequiredCapabilityClassifierInput` 转为 inline `{ userInput: string; signal?: AbortSignal }`。
 
@@ -267,7 +270,9 @@ function decideAfterTurn(
     state: RuntimeState,
 ): ReturnType<PaAgentHostPolicy["afterTurn"]> {
     if (state.phase.kind === "terminal") {
-        return { action: "stop", reason: "terminal", status: "completed" };
+        // Use the more semantically explicit `terminal_idempotent` reason to
+        // distinguish the no-op re-entry from a fresh `terminal` stop decision.
+        return { action: "stop", reason: "terminal_idempotent", status: "completed" };
     }
 
     const facts = deriveAnswerCompletionTurnFacts(summary);
