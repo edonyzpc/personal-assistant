@@ -780,6 +780,23 @@ describe('safeParseInt', () => {
     it('accepts zero when min allows it', () => {
         expect(safeParseInt('0', 5, 0)).toBe(0);
     });
+
+    it('parses with radix 10 — leading-zero strings are decimal, not octal', () => {
+        // Pre-ES5 parseInt would have read "010" as octal 8. parseInt(value, 10)
+        // makes the radix explicit; this test pins that contract so a future
+        // refactor cannot silently revert to radix-inference.
+        expect(safeParseInt('010', 99, 0)).toBe(10);
+        expect(safeParseInt('0100', 99, 0)).toBe(100);
+    });
+
+    it('does not interpret 0x prefix as hexadecimal', () => {
+        // Without an explicit radix, parseInt('0x10') would return 16. With
+        // radix 10, parseInt stops at the "x" and yields 0 (leading "0"). The
+        // important contract is that 0x10 is *never* read as 16. With min=1
+        // the 0 is below min and the fallback wins; with min=0 it returns 0.
+        expect(safeParseInt('0x10', 7, 1)).toBe(7);
+        expect(safeParseInt('0x10', 7, 0)).toBe(0);
+    });
 });
 
 describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
@@ -817,6 +834,16 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
     it('treats arrays as opaque user values (no element-level merge)', () => {
         const merged = mergeLoadedSettings({ colorGroups: [] });
         expect(merged.colorGroups).toEqual([]);
+    });
+
+    it('passes malformed colorGroups through unchanged (documented opaque behavior)', () => {
+        // src/settings.ts comment: "Arrays (colorGroups, metadatas, *ExcludePath)
+        // are kept as single values — when the user customizes one, they own
+        // the whole list." A garbage value in data.json must not silently swap
+        // back to the defaults; downstream rendering already guards against
+        // unexpected types. This test pins the contract.
+        const merged = mergeLoadedSettings({ colorGroups: 'corrupted' as unknown });
+        expect(merged.colorGroups).toBe('corrupted');
     });
 });
 
