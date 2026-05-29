@@ -7,7 +7,9 @@ import type PluginManager from "../main";
 import { VSS } from '../vss'
 import type { MemoryMaintenancePlan } from '../memory-manager';
 import type { ThinkingStatusView, RenderedMessage, RuntimeWarningViewItem, CanonicalLifecycleUiState, UiTurn, TerminalTurnEntry, TimelineEntry } from './types';
-import { confirmChatAction } from './modals';
+import { confirmChatAction, pickChatConversation } from './modals';
+import type { ChatHistoryManager } from './chat-history-manager';
+import type { PersistedConversation, PersistedTurn } from './chat-history-store';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
@@ -105,12 +107,25 @@ export class LLMView extends ItemView {
     private mobileTabBarOptions: HTMLElement | null = null;
     private mobileTabBarOptionsHandler: (() => void) | null = null;
     private mobileTabBarDismissTimer: ReturnType<typeof setTimeout> | null = null;
+    private activeConversationId: string | null = null;
+    private activeConversation: PersistedConversation | null = null;
+    private nextTurnIndex = 0;
+    private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
+    private persistChain: Promise<void> = Promise.resolve();
+
+    get isStreaming(): boolean {
+        return this.abortController !== null;
+    }
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
         super(leaf);
         this.plugin = plugin;
         this.vss = vss;
         this.chatService = new ChatService(plugin);
+    }
+
+    private getChatHistoryManager(): ChatHistoryManager | undefined {
+        return this.plugin.chatHistoryManager;
     }
 
     private createMarkdownRenderOwner(): Component {
@@ -258,6 +273,14 @@ export class LLMView extends ItemView {
         moreButton.createSpan({ cls: 'pa-sr-only', text: 'More chat actions' });
         const composerMenu = moreControl.createDiv({ cls: 'pa-chat-menu pa-chat-composer-menu' });
         composerMenu.hidden = true;
+        const newChatButton = createChatMenuItem(composerMenu, {
+            text: 'New Chat',
+            icon: 'plus-square',
+        });
+        const historyButton = createChatMenuItem(composerMenu, {
+            text: 'History',
+            icon: 'history',
+        });
         const copyConversationButton = createChatMenuItem(composerMenu, {
             text: 'Copy conversation',
             icon: 'copy',
@@ -958,10 +981,16 @@ export class LLMView extends ItemView {
             const currentPairStart = this.chatHistory.indexOf(expectedUser);
             if (currentPairStart < 0 || this.chatHistory[currentPairStart + 1] !== expectedAssistant) return;
             this.chatHistory.splice(currentPairStart, 2);
-            timelineEntries = timelineEntries.filter((entry) =>
-                entry.kind !== 'history' || entry.user !== expectedUser || entry.assistant !== expectedAssistant
-            );
+            const removedEntries: TimelineEntry[] = [];
+            timelineEntries = timelineEntries.filter((entry) => {
+                const keep = entry.kind !== 'history' || entry.user !== expectedUser || entry.assistant !== expectedAssistant;
+                if (!keep) removedEntries.push(entry);
+                return keep;
+            });
             renderTimeline();
+            for (const entry of removedEntries) {
+                void this.deletePersistedTurnForEntry(entry);
+            }
             new Notice('Message deleted');
         };
 
@@ -1615,7 +1644,7 @@ export class LLMView extends ItemView {
                     : {}),
             };
             this.chatHistory.push(userMessage, assistantMessage);
-            timelineEntries.push({
+            const historyEntry: TimelineEntry = {
                 kind: 'history',
                 user: userMessage,
                 assistant: assistantMessage,
@@ -1623,8 +1652,10 @@ export class LLMView extends ItemView {
                 contextUsedItems: turn.contextUsedItems,
                 activityDetails: turn.activityDetails,
                 providerReasoningObserved: turn.providerReasoningObserved,
-            });
+            };
+            timelineEntries.push(historyEntry);
             this.result = responseContent;
+            void this.persistFinalizedTurn(prompt, historyEntry, isLiveTurn);
 
             const deleteCompletedPair = () => deleteHistoryPairForMessages(userMessage, assistantMessage);
             ensureCompletedMessageActions(userRendered, {
@@ -1844,8 +1875,12 @@ export class LLMView extends ItemView {
             if (!isCurrentSession()) return;
             this.invalidateActiveTurn();
             this.cancelScheduledScroll();
+            const conversationIdToDelete = this.activeConversationId;
             this.chatHistory = [];
             timelineEntries = [];
+            this.activeConversation = null;
+            this.activeConversationId = null;
+            this.nextTurnIndex = 0;
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
@@ -1853,6 +1888,20 @@ export class LLMView extends ItemView {
             hideComposerHint();
             syncComposerControls();
             renderEmptyState();
+            const manager = this.getChatHistoryManager();
+            if (manager?.isAvailable() && conversationIdToDelete) {
+                try {
+                    await manager.deleteConversation(conversationIdToDelete);
+                } catch (error) {
+                    this.plugin.log?.("Failed to delete cleared conversation", error);
+                }
+            } else if (manager?.isAvailable()) {
+                try {
+                    await manager.setActiveConversationId(null);
+                } catch (error) {
+                    this.plugin.log?.("Failed to clear active conversation pointer", error);
+                }
+            }
             new Notice('Chat cleared');
         };
 
@@ -1898,6 +1947,172 @@ export class LLMView extends ItemView {
         });
         const memoryMenuAutoClose = createIdleMenuAutoClose(memoryMenu, memoryChip, closeMemoryMenu);
 
+        const applyRestoredConversation = (
+            conversation: PersistedConversation,
+            turns: PersistedTurn[],
+        ) => {
+            const manager = this.getChatHistoryManager();
+            if (!manager) return;
+            this.invalidateActiveTurn();
+            this.cancelScheduledScroll();
+            this.chatHistory = [];
+            timelineEntries = [];
+            let maxTurnIndex = -1;
+            for (const turn of turns) {
+                const rehydrated = manager.deserializeTurn(turn);
+                this.chatHistory.push(rehydrated.userMessage, rehydrated.assistantMessage);
+                timelineEntries.push(rehydrated.historyEntry);
+                this.persistedTurnIndexByEntry.set(rehydrated.historyEntry, turn.turnIndex);
+                if (turn.turnIndex > maxTurnIndex) maxTurnIndex = turn.turnIndex;
+            }
+            this.activeConversation = conversation;
+            this.activeConversationId = conversation.id;
+            this.nextTurnIndex = maxTurnIndex + 1;
+            this.unloadAllMarkdownRenderOwners();
+            this.responseDiv.empty();
+            this.result = '';
+            renderTimeline();
+        };
+
+        const restoreActiveConversation = async () => {
+            const manager = this.getChatHistoryManager();
+            if (!manager) return;
+            try {
+                if (!manager.isAvailable()) return;
+                const activeId = await manager.getActiveConversationId();
+                if (!activeId) return;
+                if (!isCurrentSession()) return;
+                if (isGenerating() || this.chatHistory.length > 0) return;
+                const conversation = await manager.findConversation(activeId);
+                if (!conversation) {
+                    await manager.setActiveConversationId(null);
+                    return;
+                }
+                if (!isCurrentSession()) return;
+                if (isGenerating() || this.chatHistory.length > 0) return;
+                const turns = await manager.getTurns(activeId);
+                if (!isCurrentSession()) return;
+                if (isGenerating() || this.chatHistory.length > 0) return;
+                applyRestoredConversation(conversation, turns);
+            } catch (error) {
+                this.plugin.log?.("Failed to restore chat history", error);
+            }
+        };
+
+        const switchActiveConversation = async (conversationId: string) => {
+            if (isGenerating()) {
+                new Notice('Wait for the current response to finish before switching conversations.');
+                return;
+            }
+            const manager = this.getChatHistoryManager();
+            if (!manager || !manager.isAvailable()) {
+                new Notice('Chat history is unavailable.');
+                return;
+            }
+            try {
+                const conversation = await manager.findConversation(conversationId);
+                if (!conversation) {
+                    new Notice('Conversation no longer exists.');
+                    return;
+                }
+                if (!isCurrentSession()) return;
+                if (isGenerating()) {
+                    new Notice('Wait for the current response to finish before switching conversations.');
+                    return;
+                }
+                await manager.setActiveConversationId(conversationId);
+                const turns = await manager.getTurns(conversationId);
+                if (!isCurrentSession()) return;
+                applyRestoredConversation(conversation, turns);
+            } catch (error) {
+                this.plugin.log?.("Failed to switch chat conversation", error);
+                new Notice('Could not load that conversation.');
+            }
+        };
+
+        const startNewConversation = async () => {
+            if (isGenerating()) {
+                new Notice('Wait for the current response to finish before starting a new chat.');
+                return;
+            }
+            this.invalidateActiveTurn();
+            this.cancelScheduledScroll();
+            this.chatHistory = [];
+            timelineEntries = [];
+            this.activeConversation = null;
+            this.activeConversationId = null;
+            this.nextTurnIndex = 0;
+            this.unloadAllMarkdownRenderOwners();
+            this.responseDiv.empty();
+            textArea.value = '';
+            this.result = '';
+            hideComposerHint();
+            syncComposerControls();
+            renderEmptyState();
+            const manager = this.getChatHistoryManager();
+            if (manager?.isAvailable()) {
+                try {
+                    await manager.setActiveConversationId(null);
+                } catch (error) {
+                    this.plugin.log?.("Failed to clear active conversation pointer", error);
+                }
+            }
+            new Notice('Started a new chat');
+        };
+
+        const openHistoryPicker = async () => {
+            const manager = this.getChatHistoryManager();
+            if (!manager || !manager.isAvailable()) {
+                new Notice('Chat history is unavailable.');
+                return;
+            }
+            try {
+                const conversations = await manager.listConversations();
+                if (!isCurrentSession()) return;
+                conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+                const selection = await pickChatConversation(this.plugin, {
+                    conversations,
+                    activeConversationId: this.activeConversationId,
+                    isStreaming: this.isStreaming,
+                });
+                if (!selection) return;
+                if (!isCurrentSession()) return;
+                if (selection.action === 'open') {
+                    await switchActiveConversation(selection.conversationId);
+                    return;
+                }
+                if (selection.action === 'delete') {
+                    const confirmed = await confirmChatAction(this.plugin, {
+                        title: 'Delete conversation?',
+                        message: 'This deletes the conversation and all its turns. This cannot be undone.',
+                        confirmText: 'Delete',
+                        danger: true,
+                    });
+                    if (!confirmed) return;
+                    if (!isCurrentSession()) return;
+                    await manager.deleteConversation(selection.conversationId);
+                    if (!isCurrentSession()) return;
+                    if (selection.conversationId === this.activeConversationId) {
+                        await startNewConversation();
+                    } else {
+                        new Notice('Conversation deleted');
+                    }
+                }
+            } catch (error) {
+                this.plugin.log?.("Failed to open chat history picker", error);
+                new Notice('Could not open chat history.');
+            }
+        };
+
+        newChatButton.onclick = () => {
+            composerMenuAutoClose.close();
+            void startNewConversation();
+        };
+        historyButton.onclick = () => {
+            composerMenuAutoClose.close();
+            void openHistoryPicker();
+        };
+
         moreButton.onclick = () => {
             const willOpen = composerMenu.hidden;
             if (willOpen) {
@@ -1941,6 +2156,7 @@ export class LLMView extends ItemView {
 
         syncComposerControls();
         renderEmptyState();
+        void restoreActiveConversation();
         this.memoryStatusUnsubscribe = this.plugin.onMemoryStatusChanged?.(async () => {
             if (!isCurrentSession()) return;
             await refreshMemoryChipState();
@@ -2571,5 +2787,78 @@ export class LLMView extends ItemView {
             return mostRecentLeaf;
         }
         return this.app.workspace.getLeavesOfType('markdown')[0] ?? null;
+    }
+
+    private persistFinalizedTurn(
+        prompt: string,
+        entry: TimelineEntry,
+        isLiveTurn: () => boolean,
+    ): Promise<void> {
+        const next = this.persistChain
+            .catch(() => undefined)
+            .then(() => this.runPersistFinalizedTurn(prompt, entry, isLiveTurn));
+        this.persistChain = next;
+        return next;
+    }
+
+    private async runPersistFinalizedTurn(
+        prompt: string,
+        entry: TimelineEntry,
+        isLiveTurn: () => boolean,
+    ): Promise<void> {
+        if (entry.kind !== 'history') return;
+        const manager = this.getChatHistoryManager();
+        if (!manager || !manager.isAvailable()) return;
+        try {
+            let conversation = this.activeConversation;
+            let conversationId = this.activeConversationId;
+            if (!conversation || !conversationId) {
+                const created = await manager.startConversation(prompt);
+                if (!isLiveTurn()) {
+                    try {
+                        await manager.deleteConversation(created.id);
+                    } catch (rollbackError) {
+                        this.plugin.log?.("Failed to roll back orphan chat conversation", rollbackError);
+                    }
+                    return;
+                }
+                conversation = created;
+                conversationId = created.id;
+                this.activeConversation = conversation;
+                this.activeConversationId = conversationId;
+                this.nextTurnIndex = 0;
+            }
+            const turnIndex = this.nextTurnIndex;
+            const updated = await manager.recordTurn({
+                conversationId,
+                turnIndex,
+                entry,
+                userPrompt: prompt,
+                conversation,
+            });
+            if (!isLiveTurn()) return;
+            this.activeConversation = updated;
+            this.nextTurnIndex = turnIndex + 1;
+            this.persistedTurnIndexByEntry.set(entry, turnIndex);
+            await manager.maybePrune();
+        } catch (error) {
+            this.plugin.log?.("Failed to persist chat turn", error);
+        }
+    }
+
+    private async deletePersistedTurnForEntry(entry: TimelineEntry): Promise<void> {
+        if (entry.kind !== 'history') return;
+        const manager = this.getChatHistoryManager();
+        if (!manager || !manager.isAvailable()) return;
+        const conversationId = this.activeConversationId;
+        if (!conversationId) return;
+        const turnIndex = this.persistedTurnIndexByEntry.get(entry);
+        if (turnIndex === undefined) return;
+        try {
+            await manager.deleteTurn(conversationId, turnIndex);
+            this.persistedTurnIndexByEntry.delete(entry);
+        } catch (error) {
+            this.plugin.log?.("Failed to delete persisted chat turn", error);
+        }
     }
 }

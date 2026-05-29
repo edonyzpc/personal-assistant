@@ -25,6 +25,8 @@ import { MemoryManager } from './memory-manager';
 import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
 import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
+import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
+import { ChatHistoryManager } from './chat/chat-history-manager';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -98,6 +100,8 @@ export class PluginManager extends Plugin {
     statsManager: StatsManager | undefined;
     vss!: VSS;
     memoryManager!: MemoryManager;
+    chatHistoryStore: ChatHistoryStore | undefined;
+    chatHistoryManager: ChatHistoryManager | undefined;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
     /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
@@ -168,6 +172,12 @@ export class PluginManager extends Plugin {
         }
 
         this.vss = this.initVss();
+        this.chatHistoryStore = this.createChatHistoryStore();
+        this.chatHistoryManager = new ChatHistoryManager({
+            store: this.chatHistoryStore,
+            log: (message, error) => this.log(message, error),
+        });
+        void this.chatHistoryManager.initialize();
         this.registerView(
             RECORD_PREVIEW_TYPE,
             (leaf) => { return new RecordPreview(this.app, this, leaf); }
@@ -446,6 +456,14 @@ export class PluginManager extends Plugin {
             statsManager.dispose();
             void flush.catch((error) => this.log("Failed to flush statistics during unload", error));
         }
+        const chatHistoryStore = this.chatHistoryStore;
+        if (chatHistoryStore) {
+            void chatHistoryStore
+                .dispose()
+                .catch((error) => this.log("Failed to dispose chat history store", error));
+        }
+        this.chatHistoryStore = undefined;
+        this.chatHistoryManager = undefined;
     }
 
     async loadSettings() {
@@ -702,6 +720,15 @@ export class PluginManager extends Plugin {
     createVSSIndexStateStore(): VSSIndexStateStore {
         const manifest = this.manifest as { id?: string } | undefined;
         return createVSSIndexStateStore(
+            this.app.vault,
+            this.settings.statisticsVaultId || "default-vault",
+            manifest?.id ?? "personal-assistant",
+        );
+    }
+
+    createChatHistoryStore(): ChatHistoryStore {
+        const manifest = this.manifest as { id?: string } | undefined;
+        return createChatHistoryStore(
             this.app.vault,
             this.settings.statisticsVaultId || "default-vault",
             manifest?.id ?? "personal-assistant",
