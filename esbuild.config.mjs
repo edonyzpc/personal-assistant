@@ -2,6 +2,7 @@ import { build as esbuildBuild, context } from 'esbuild';
 import process from 'process';
 import { copy } from 'esbuild-plugin-copy';
 import path from 'node:path';
+import { readFile } from 'node:fs/promises';
 
 const banner =
 	`/*
@@ -68,6 +69,55 @@ const inlineSqliteWorkerPlugin = {
 	},
 };
 
+// Lazy wasm loader: keeps the ~1.25MB base64 payload in the bundle (no separate file —
+// Obsidian plugins ship as a single main.js), but defers atob+Uint8Array decoding to first
+// use. After decoding the base64 string is nulled so GC can reclaim ~1.25MB. Trade-off vs
+// the previous esbuild `binary` loader: same bundle size, but plugin-load heap drops by
+// ~941KB (decoded Uint8Array no longer eagerly built) and users who never touch the Memory
+// feature save the full payload permanently after GC.
+const lazyBinaryPlugin = {
+	name: "lazy-binary-wasm",
+	setup(build) {
+		// No onResolve: let esbuild's default resolver walk node_modules so bare imports
+		// like `@sqliteai/sqlite-wasm/sqlite3.wasm` end up with an absolute on-disk path.
+		// onLoad in the default `file` namespace then handles the bytes.
+		build.onLoad({ filter: /\.wasm$/ }, async (args) => {
+			const bytes = await readFile(args.path);
+			const base64 = bytes.toString("base64");
+			return {
+				contents: `
+var _b64 = ${JSON.stringify(base64)};
+var _decoded = null;
+var _decoding = null;
+export default function getSqliteWasmBinary() {
+    if (_decoded !== null) return _decoded;
+    var b = atob(_b64);
+    _decoded = new Uint8Array(b.length);
+    for (var i = 0; i < b.length; i++) _decoded[i] = b.charCodeAt(i);
+    _b64 = null;
+    return _decoded;
+}
+export function getSqliteWasmBinaryAsync() {
+    if (_decoded !== null) return Promise.resolve(_decoded);
+    if (_decoding !== null) return _decoding;
+    _decoding = Promise.resolve().then(() => {
+        if (_decoded !== null) return _decoded;
+        var b = atob(_b64);
+        _decoded = new Uint8Array(b.length);
+        for (var i = 0; i < b.length; i++) _decoded[i] = b.charCodeAt(i);
+        _b64 = null;
+        return _decoded;
+    });
+    return _decoding;
+}
+`,
+				loader: "js",
+				watchFiles: [args.path],
+			};
+		});
+	},
+};
+
 const mainContext = await context({
 	platform: "browser",
 	mainFields: ["browser", "module", "main"],
@@ -108,14 +158,10 @@ const mainContext = await context({
 		'.js': 'js',
 		'.jsx': 'jsx',
 		'.md': 'text',
-		// `binary` (vs `dataurl`): bundle source is the same base64 payload either way (esbuild's
-		// browser-target binary loader still encodes via base64), but `binary` decodes the
-		// ~941KB SQLite wasm to a Uint8Array once at module load — sqlite-inline-assets caches
-		// the resulting blob URL across all SqliteVectorIndex instances. The old `dataurl` path
-		// kept a ~1.25MB string in memory permanently AND re-ran the atob+Blob conversion every
-		// time SqliteVectorIndex was reconstructed. Trade-off: +333 bytes for the __toBinary
-		// helper in exchange for ~1.25MB persistent heap + per-reconnect work.
-		'.wasm': 'binary',
+		// `.wasm` is handled by `lazyBinaryPlugin` (see plugin block above) — not via the
+		// `binary` loader anymore. The plugin keeps the base64 string inline but defers
+		// atob+Uint8Array decoding until first use, saving ~941KB of plugin-load heap and
+		// allowing GC to reclaim the base64 string after decode.
 	},
 	define: {
 		"process.env.NODE_ENV": prod ? '"production"' : '"development"',
@@ -139,6 +185,7 @@ const mainContext = await context({
 			],
 		}),
 		inlineSqliteWorkerPlugin,
+		lazyBinaryPlugin,
 		externalNodeBuiltinsPlugin,
 	],
 });

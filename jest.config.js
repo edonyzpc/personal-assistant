@@ -90,7 +90,11 @@ module.exports = {
 
   // A map from regular expressions to module names or to arrays of module names that allow to stub out resources with a single module
   moduleNameMapper: {
-    "\\.wasm$": "<rootDir>/__mocks__/asset-string.js",
+    // `*.wasm` now uses the function-shaped mock to match the new lazyBinaryPlugin contract
+    // (default export is a sync getter, plus a named getSqliteWasmBinaryAsync). `?worker-source`
+    // still expects a string payload (it's wrapped in new Blob([...])), so it keeps the
+    // legacy asset-string mock — do not merge the two.
+    "\\.wasm$": "<rootDir>/__mocks__/wasm-binary-fn.js",
     "\\?worker-source$": "<rootDir>/__mocks__/asset-string.js",
   },
 

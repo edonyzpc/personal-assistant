@@ -1,5 +1,5 @@
 import sqliteWorkerSource from "./sqlite-worker.ts?worker-source";
-import sqliteWasmBinary from "@sqliteai/sqlite-wasm/sqlite3.wasm";
+import getSqliteWasmBinary from "@sqliteai/sqlite-wasm/sqlite3.wasm";
 
 export function createInlineSqliteWorker(): Worker {
     const objectUrl = URL.createObjectURL(new Blob([sqliteWorkerSource], { type: "text/javascript" }));
@@ -30,10 +30,14 @@ let cachedSqliteWasmUrl: string | null = null;
  * SqliteVectorIndex instance — SqliteVectorIndex.prepareWasmUrl treats blob: URLs as same-origin
  * and returns them as-is, so caching here avoids rebuilding the Blob on every reconnect (the
  * old dataurl path was paying that cost per instance).
+ *
+ * The Uint8Array itself is now produced lazily by `lazyBinaryPlugin` (esbuild.config.mjs): the
+ * first call to `getSqliteWasmBinary()` runs atob + byte copy and nulls the base64 string so
+ * GC can reclaim ~1.25MB. Subsequent calls return the cached Uint8Array.
  */
 export function getInlineSqliteWasmUrl(): string {
     if (cachedSqliteWasmUrl === null) {
-        const blob = new Blob([sqliteWasmBinary], { type: "application/wasm" });
+        const blob = new Blob([getSqliteWasmBinary()], { type: "application/wasm" });
         cachedSqliteWasmUrl = URL.createObjectURL(blob);
     }
     return cachedSqliteWasmUrl;

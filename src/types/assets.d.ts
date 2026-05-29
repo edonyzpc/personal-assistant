@@ -1,8 +1,12 @@
 declare module "*.wasm" {
-    // esbuild `binary` loader (see esbuild.config.mjs) emits a Uint8Array literal at bundle time
-    // rather than a base64 data URL. The runtime wraps it into a blob URL on first use.
-    const source: Uint8Array;
-    export default source;
+    // `lazyBinaryPlugin` (see esbuild.config.mjs) emits a base64 string + decoder functions
+    // instead of a pre-decoded Uint8Array. The default export is a sync getter that decodes
+    // on first call (and nulls the base64 string after, allowing GC). `getSqliteWasmBinaryAsync`
+    // yields the same payload across a microtask, so call sites that can defer to a Promise
+    // avoid blocking the main thread on the ~941KB atob+copy work.
+    const getBinary: () => Uint8Array;
+    export default getBinary;
+    export function getSqliteWasmBinaryAsync(): Promise<Uint8Array>;
 }
 
 declare module "*.md" {
