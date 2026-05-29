@@ -58,6 +58,10 @@ export interface ChatHistoryStore {
 
     getTurns(conversationId: string): Promise<PersistedTurn[]>;
     appendTurn(turn: PersistedTurn): Promise<void>;
+    appendTurnAndUpdateConversation(
+        turn: PersistedTurn,
+        conversation: PersistedConversation,
+    ): Promise<void>;
     deleteTurn(conversationId: string, turnIndex: number): Promise<void>;
     deleteTurnsForConversation(conversationId: string): Promise<void>;
 
@@ -133,6 +137,14 @@ export class MemoryChatHistoryStore implements ChatHistoryStore {
 
     async appendTurn(turn: PersistedTurn): Promise<void> {
         this.turns.set(buildTurnRecordKey(turn.conversationId, turn.turnIndex), cloneTurn(turn));
+    }
+
+    async appendTurnAndUpdateConversation(
+        turn: PersistedTurn,
+        conversation: PersistedConversation,
+    ): Promise<void> {
+        this.turns.set(buildTurnRecordKey(turn.conversationId, turn.turnIndex), cloneTurn(turn));
+        this.conversations.set(conversation.id, cloneConversation(conversation));
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
@@ -256,6 +268,19 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
             key: buildTurnRecordKey(turn.conversationId, turn.turnIndex),
             turn: cloneTurn(turn),
         } satisfies TurnRecord);
+        await transactionDone(transaction);
+    }
+
+    async appendTurnAndUpdateConversation(
+        turn: PersistedTurn,
+        conversation: PersistedConversation,
+    ): Promise<void> {
+        const transaction = this.getTransaction([TURNS_STORE, CONVERSATIONS_STORE], "readwrite");
+        transaction.objectStore(TURNS_STORE).put({
+            key: buildTurnRecordKey(turn.conversationId, turn.turnIndex),
+            turn: cloneTurn(turn),
+        } satisfies TurnRecord);
+        transaction.objectStore(CONVERSATIONS_STORE).put(cloneConversation(conversation));
         await transactionDone(transaction);
     }
 
@@ -402,6 +427,13 @@ export class UnavailableChatHistoryStore implements ChatHistoryStore {
     }
 
     async appendTurn(_turn: PersistedTurn): Promise<void> {
+        throw this.error;
+    }
+
+    async appendTurnAndUpdateConversation(
+        _turn: PersistedTurn,
+        _conversation: PersistedConversation,
+    ): Promise<void> {
         throw this.error;
     }
 

@@ -287,6 +287,27 @@ describe("IndexedDbChatHistoryStore", () => {
         await store.initialize();
         expect(factory.lastVersion).toBe(CHAT_HISTORY_IDB_VERSION);
     });
+
+    it("appendTurnAndUpdateConversation writes both records inside a single multi-store transaction", async () => {
+        const factory = new FakeIndexedDbFactory();
+        const store = new IndexedDbChatHistoryStore("chat-history-test", factory as unknown as IDBFactory);
+        await store.initialize();
+        await store.upsertConversation(makeConversation({ id: "c1", turnCount: 0 }));
+        const callsBefore = factory.db.transactionCalls.length;
+        await store.appendTurnAndUpdateConversation(
+            makeTurn({ conversationId: "c1", turnIndex: 0 }),
+            makeConversation({ id: "c1", turnCount: 1, updatedAt: "2026-05-29T12:00:00.000Z" }),
+        );
+        const newCalls = factory.db.transactionCalls.slice(callsBefore);
+        // Exactly one transaction was opened, and it spans both stores.
+        expect(newCalls).toHaveLength(1);
+        expect(new Set(newCalls[0])).toEqual(new Set(["turns", "conversations"]));
+        // Both records reflect the atomic write.
+        await expect(store.getTurns("c1")).resolves.toHaveLength(1);
+        const updated = await store.getConversation("c1");
+        expect(updated?.turnCount).toBe(1);
+        expect(updated?.updatedAt).toBe("2026-05-29T12:00:00.000Z");
+    });
 });
 
 type FakeIndexedDbOptions = {
@@ -320,6 +341,7 @@ class FakeIdbDatabase {
     onversionchange: ((this: IDBDatabase, ev: IDBVersionChangeEvent) => unknown) | null = null;
     createObjectStoreCalls = 0;
     closeCalls = 0;
+    readonly transactionCalls: string[][] = [];
 
     constructor(private readonly options: FakeIndexedDbOptions) {
         if (options.hasStores) {
@@ -341,6 +363,7 @@ class FakeIdbDatabase {
 
     transaction(storeNames: string | string[], _mode: IDBTransactionMode): IDBTransaction {
         const allowed = Array.isArray(storeNames) ? storeNames : [storeNames];
+        this.transactionCalls.push([...allowed]);
         return new FakeTransaction(this, allowed) as unknown as IDBTransaction;
     }
 

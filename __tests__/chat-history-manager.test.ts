@@ -22,6 +22,7 @@ function makeManager(options: {
     now?: () => Date;
     generateId?: () => string;
     maxConversations?: number;
+    pruneInterval?: number;
 } = {}) {
     const store = new MemoryChatHistoryStore();
     let idCounter = 0;
@@ -30,6 +31,7 @@ function makeManager(options: {
         now: options.now ?? (() => new Date("2026-05-29T12:00:00.000Z")),
         generateId: options.generateId ?? (() => `conv-${++idCounter}`),
         maxConversations: options.maxConversations,
+        pruneInterval: options.pruneInterval,
     });
     return { manager, store };
 }
@@ -244,6 +246,78 @@ describe("ChatHistoryManager", () => {
         await expect(store.getTurns(conversation.id)).resolves.toHaveLength(1);
         const after = await store.getConversation(conversation.id);
         expect(after?.turnCount).toBe(1);
+    });
+
+    it("maybePrune only prunes once the pruneInterval is reached", async () => {
+        const { manager, store } = makeManager({ maxConversations: 1, pruneInterval: 3 });
+        await manager.initialize();
+        const conv = await manager.startConversation("hi");
+        await manager.recordTurn({
+            conversationId: conv.id,
+            turnIndex: 0,
+            entry: makeHistoryEntry(),
+            userPrompt: "hi",
+            conversation: conv,
+        });
+        const other = await manager.startConversation("hello");
+        await manager.recordTurn({
+            conversationId: other.id,
+            turnIndex: 0,
+            entry: makeHistoryEntry(),
+            userPrompt: "hello",
+            conversation: other,
+        });
+        // Two recordTurn calls so far → maybePrune should NOT fire yet.
+        await expect(manager.maybePrune()).resolves.toEqual([]);
+        await expect(manager.maybePrune()).resolves.toEqual([]);
+        // Third call hits the interval boundary and prunes the older conversation.
+        const removed = await manager.maybePrune();
+        expect(removed).toHaveLength(1);
+        const remaining = await store.listConversations();
+        expect(remaining).toHaveLength(1);
+    });
+
+    it("recordTurn writes both the turn record and the conversation row via the atomic store method", async () => {
+        let atomicCalls = 0;
+        let appendOnlyCalls = 0;
+        let upsertOnlyCalls = 0;
+        const store = new MemoryChatHistoryStore();
+        const originalAtomic = store.appendTurnAndUpdateConversation.bind(store);
+        const originalAppend = store.appendTurn.bind(store);
+        const originalUpsert = store.upsertConversation.bind(store);
+        store.appendTurnAndUpdateConversation = async (turn, conversation) => {
+            atomicCalls += 1;
+            return originalAtomic(turn, conversation);
+        };
+        store.appendTurn = async (turn) => {
+            appendOnlyCalls += 1;
+            return originalAppend(turn);
+        };
+        store.upsertConversation = async (conversation) => {
+            upsertOnlyCalls += 1;
+            return originalUpsert(conversation);
+        };
+        const manager = new ChatHistoryManager({
+            store,
+            now: () => new Date("2026-05-29T12:00:00.000Z"),
+            generateId: () => "conv-atomic",
+        });
+        await manager.initialize();
+        upsertOnlyCalls = 0; // ignore the schema-version write
+        appendOnlyCalls = 0;
+        const conv = await manager.startConversation("hi"); // 1 upsert (conversation row)
+        const upsertsAfterStart = upsertOnlyCalls;
+        await manager.recordTurn({
+            conversationId: conv.id,
+            turnIndex: 0,
+            entry: makeHistoryEntry(),
+            userPrompt: "hi",
+            conversation: conv,
+        });
+        expect(atomicCalls).toBe(1);
+        // recordTurn must NOT issue a separate appendTurn + upsertConversation
+        expect(appendOnlyCalls).toBe(0);
+        expect(upsertOnlyCalls).toBe(upsertsAfterStart);
     });
 
     it("prune respects maxConversations and removes oldest", async () => {

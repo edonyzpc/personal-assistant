@@ -111,6 +111,7 @@ export class LLMView extends ItemView {
     private activeConversation: PersistedConversation | null = null;
     private nextTurnIndex = 0;
     private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
+    private persistChain: Promise<void> = Promise.resolve();
 
     get isStreaming(): boolean {
         return this.abortController !== null;
@@ -1980,14 +1981,18 @@ export class LLMView extends ItemView {
                 if (!manager.isAvailable()) return;
                 const activeId = await manager.getActiveConversationId();
                 if (!activeId) return;
+                if (!isCurrentSession()) return;
+                if (isGenerating() || this.chatHistory.length > 0) return;
                 const conversation = await manager.findConversation(activeId);
                 if (!conversation) {
                     await manager.setActiveConversationId(null);
                     return;
                 }
                 if (!isCurrentSession()) return;
+                if (isGenerating() || this.chatHistory.length > 0) return;
                 const turns = await manager.getTurns(activeId);
                 if (!isCurrentSession()) return;
+                if (isGenerating() || this.chatHistory.length > 0) return;
                 applyRestoredConversation(conversation, turns);
             } catch (error) {
                 this.plugin.log?.("Failed to restore chat history", error);
@@ -2084,7 +2089,9 @@ export class LLMView extends ItemView {
                         danger: true,
                     });
                     if (!confirmed) return;
+                    if (!isCurrentSession()) return;
                     await manager.deleteConversation(selection.conversationId);
+                    if (!isCurrentSession()) return;
                     if (selection.conversationId === this.activeConversationId) {
                         await startNewConversation();
                     } else {
@@ -2782,7 +2789,19 @@ export class LLMView extends ItemView {
         return this.app.workspace.getLeavesOfType('markdown')[0] ?? null;
     }
 
-    private async persistFinalizedTurn(
+    private persistFinalizedTurn(
+        prompt: string,
+        entry: TimelineEntry,
+        isLiveTurn: () => boolean,
+    ): Promise<void> {
+        const next = this.persistChain
+            .catch(() => undefined)
+            .then(() => this.runPersistFinalizedTurn(prompt, entry, isLiveTurn));
+        this.persistChain = next;
+        return next;
+    }
+
+    private async runPersistFinalizedTurn(
         prompt: string,
         entry: TimelineEntry,
         isLiveTurn: () => boolean,
@@ -2794,9 +2813,17 @@ export class LLMView extends ItemView {
             let conversation = this.activeConversation;
             let conversationId = this.activeConversationId;
             if (!conversation || !conversationId) {
-                conversation = await manager.startConversation(prompt);
-                if (!isLiveTurn()) return;
-                conversationId = conversation.id;
+                const created = await manager.startConversation(prompt);
+                if (!isLiveTurn()) {
+                    try {
+                        await manager.deleteConversation(created.id);
+                    } catch (rollbackError) {
+                        this.plugin.log?.("Failed to roll back orphan chat conversation", rollbackError);
+                    }
+                    return;
+                }
+                conversation = created;
+                conversationId = created.id;
                 this.activeConversation = conversation;
                 this.activeConversationId = conversationId;
                 this.nextTurnIndex = 0;
@@ -2813,7 +2840,7 @@ export class LLMView extends ItemView {
             this.activeConversation = updated;
             this.nextTurnIndex = turnIndex + 1;
             this.persistedTurnIndexByEntry.set(entry, turnIndex);
-            await manager.prune();
+            await manager.maybePrune();
         } catch (error) {
             this.plugin.log?.("Failed to persist chat turn", error);
         }

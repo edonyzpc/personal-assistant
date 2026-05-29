@@ -18,6 +18,7 @@ import {
 
 const TITLE_MAX_LENGTH = 60;
 const PREVIEW_MAX_LENGTH = 200;
+const DEFAULT_PRUNE_INTERVAL = 10;
 
 export interface RehydratedTurn {
     userMessage: ChatMessage;
@@ -28,6 +29,7 @@ export interface RehydratedTurn {
 export interface ChatHistoryManagerOptions {
     store: ChatHistoryStore;
     maxConversations?: number;
+    pruneInterval?: number;
     generateId?: () => string;
     now?: () => Date;
     log?: (message: string, error?: unknown) => void;
@@ -36,16 +38,19 @@ export interface ChatHistoryManagerOptions {
 export class ChatHistoryManager {
     private readonly store: ChatHistoryStore;
     private readonly maxConversations: number;
+    private readonly pruneInterval: number;
     private readonly generateId: () => string;
     private readonly now: () => Date;
     private readonly log: (message: string, error?: unknown) => void;
     private initializing: Promise<void> | null = null;
     private initialized = false;
     private initializationFailed = false;
+    private turnsSinceLastPrune = 0;
 
     constructor(options: ChatHistoryManagerOptions) {
         this.store = options.store;
         this.maxConversations = options.maxConversations ?? MAX_CONVERSATIONS;
+        this.pruneInterval = Math.max(1, options.pruneInterval ?? DEFAULT_PRUNE_INTERVAL);
         this.generateId = options.generateId ?? generateUuid;
         this.now = options.now ?? (() => new Date());
         this.log = options.log ?? (() => undefined);
@@ -141,9 +146,16 @@ export class ChatHistoryManager {
         };
         if (!this.isAvailable()) return updated;
         const turn = this.serializeTurn(input.entry, input.conversationId, input.turnIndex);
-        await this.store.appendTurn(turn);
-        await this.store.upsertConversation(updated);
+        await this.store.appendTurnAndUpdateConversation(turn, updated);
         return updated;
+    }
+
+    async maybePrune(): Promise<string[]> {
+        if (!this.isAvailable()) return [];
+        this.turnsSinceLastPrune += 1;
+        if (this.turnsSinceLastPrune < this.pruneInterval) return [];
+        this.turnsSinceLastPrune = 0;
+        return this.prune();
     }
 
     async deleteTurn(conversationId: string, turnIndex: number): Promise<void> {
