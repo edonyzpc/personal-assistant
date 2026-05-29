@@ -138,10 +138,34 @@ const utf8Decoder = new TextDecoder();
 const iterations = 1000;
 const salt = utf8Encoder.encode('XHWnDAT6ehMVY2zD');
 export const KEYCHAIN_API_TOKEN_ID = "pa-api-token";
+const SECRET_STORAGE_ID_MAX_LENGTH = 64;
+
+function hashSecretScope(value: string): string {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i += 1) {
+        hash ^= value.charCodeAt(i);
+        hash = Math.imul(hash, 16777619);
+    }
+    return (hash >>> 0).toString(36);
+}
 
 export function getVaultApiTokenId(vaultId?: string): string {
-    const scope = (vaultId ?? "").trim();
-    return scope ? `${KEYCHAIN_API_TOKEN_ID}:${scope}` : KEYCHAIN_API_TOKEN_ID;
+    const rawScope = (vaultId ?? "").trim().toLowerCase();
+    if (!rawScope) return KEYCHAIN_API_TOKEN_ID;
+
+    const prefix = `${KEYCHAIN_API_TOKEN_ID}-`;
+    const maxScopeLength = SECRET_STORAGE_ID_MAX_LENGTH - prefix.length;
+    const hash = hashSecretScope(rawScope);
+    const sanitized = rawScope
+        .replace(/[^a-z0-9-]+/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "");
+    const scope = sanitized || `vault-${hash}`;
+    if (scope.length <= maxScopeLength) return `${prefix}${scope}`;
+
+    const suffix = `-${hash}`;
+    const head = scope.slice(0, maxScopeLength - suffix.length).replace(/-+$/g, "");
+    return `${prefix}${head}${suffix}`;
 }
 
 /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */

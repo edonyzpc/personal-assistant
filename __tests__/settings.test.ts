@@ -456,7 +456,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             cleanLegacyJsonCache: jest.fn(async () => undefined),
         },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
-        getAPITokenSecretId: jest.fn(() => 'pa-api-token:vault-test'),
+        getAPITokenSecretId: jest.fn(() => 'pa-api-token-vault-test'),
         getLegacyAPITokenSecretId: jest.fn(() => 'pa-api-token'),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
@@ -1326,7 +1326,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         secret.onChange!('');
 
-        expect(app.secretStorage.setSecret).toHaveBeenLastCalledWith('pa-api-token:vault-test', '');
+        expect(app.secretStorage.setSecret).toHaveBeenLastCalledWith('pa-api-token-vault-test', '');
         expect(plugin.clearTokenCache).toHaveBeenCalled();
     });
 });

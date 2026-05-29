@@ -90,6 +90,21 @@ describe('Keychain Migration - SecretStorage', () => {
         };
     });
 
+    describe('vault-scoped secret id', () => {
+        it('uses only characters accepted by Obsidian SecretStorage', () => {
+            const scopedId = getVaultApiTokenId('Vault ID: 123 / test');
+            expect(scopedId).toMatch(/^[a-z0-9-]{1,64}$/);
+            expect(scopedId).toBe('pa-api-token-vault-id-123-test');
+        });
+
+        it('keeps long scopes within the Obsidian SecretStorage length limit', () => {
+            const scopedId = getVaultApiTokenId('vault-' + 'x'.repeat(100));
+            expect(scopedId).toMatch(/^[a-z0-9-]{1,64}$/);
+            expect(scopedId.length).toBeLessThanOrEqual(64);
+            expect(scopedId.startsWith('pa-api-token-vault-')).toBe(true);
+        });
+    });
+
     describe('S5: getAPIToken() - normal read path', () => {
         it('reads from vault-scoped secretStorage when cache is empty', () => {
             secretValues.set(plugin.getAPITokenSecretId(), 'sk-real-token');

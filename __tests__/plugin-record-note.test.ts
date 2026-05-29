@@ -74,7 +74,7 @@ jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
     KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
     CryptoHelper: class { },
-    getVaultApiTokenId: (vaultId?: string) => vaultId ? `pa-api-token:${vaultId}` : 'pa-api-token',
+    getVaultApiTokenId: (vaultId?: string) => vaultId ? `pa-api-token-${vaultId}` : 'pa-api-token',
     icons: {},
     personalAssitant: '',
 }));
