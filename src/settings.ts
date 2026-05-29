@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Notice, PluginSettingTab, Setting } from "obsidian";
+import { App, Notice, PluginSettingTab, SecretComponent, Setting } from "obsidian";
 import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
@@ -8,7 +8,7 @@ import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-
 import { isDashScopeCompatibleBaseURL } from "./ai-services/ai-utils";
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
-import { CryptoHelper, personalAssitant } from './utils'
+import { KEYCHAIN_API_TOKEN_ID } from './utils'
 import { confirmUserAction } from "./confirm";
 
 export interface ResizeStyle {
@@ -130,7 +130,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     animation: false,
     // AI模型配置
     aiProvider: "qwen",
-    apiToken: "sk-xxx",
+    apiToken: "",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
     chatModelName: "qwen-plus",
     policyModelName: "",
@@ -819,16 +819,20 @@ export class SettingTab extends PluginSettingTab {
 
         new Setting(containerEl)
             .setName("API Token")
-            .setDesc("API Token for the selected provider. NOTE: your input token is protected by AES-GCM encryption.")
-            .addText((text) => {
-                text.setPlaceholder("sk-xxx");
-                text.setValue(this.plugin.settings.apiToken);
-                text.onChange(async (value: string) => {
-                    const crypto = new CryptoHelper();
-                    const data = await crypto.encryptToBase64(value, personalAssitant);
-                    this.plugin.settings.apiToken = data;
-                    await this.plugin.saveSettings();
+            .setDesc("Stored securely in your OS keychain (macOS Keychain / iOS Keychain / Windows Credential Manager).")
+            .addComponent((el) => {
+                const secret = new SecretComponent(this.app, el);
+                const existing = this.app.secretStorage.getSecret(KEYCHAIN_API_TOKEN_ID);
+                if (existing) {
+                    secret.setValue(existing);
+                }
+                secret.onChange((value: string) => {
+                    if (value) {
+                        this.app.secretStorage.setSecret(KEYCHAIN_API_TOKEN_ID, value);
+                        this.plugin.clearTokenCache();
+                    }
                 });
+                return secret;
             });
         containerEl.createEl('h2', { text: 'Memory' });
         containerEl.createEl("p", {

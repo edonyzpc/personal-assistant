@@ -11,7 +11,7 @@ import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
-import { CryptoHelper, icons, personalAssitant } from './utils';
+import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, icons, personalAssitant } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
@@ -100,7 +100,8 @@ export class PluginManager extends Plugin {
     memoryManager!: MemoryManager;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
-    cryptoHelper: CryptoHelper = new CryptoHelper();
+    /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
+    private cryptoHelper: CryptoHelper = new CryptoHelper();
     private token: string = "";
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private hoverPopoverObserver: MutationObserver | null = null;
@@ -1071,6 +1072,19 @@ export class PluginManager extends Plugin {
                 this.settings.embeddingV4MigrationNoticeDismissed = true;
                 changed = true;
             }
+            const rawApiToken = this.settings.apiToken;
+            if (rawApiToken && rawApiToken !== "sk-xxx") {
+                const decrypted = await this.cryptoHelper.decryptFromBase64(rawApiToken, personalAssitant);
+                if (decrypted) {
+                    this.app.secretStorage.setSecret(KEYCHAIN_API_TOKEN_ID, decrypted);
+                    this.settings.apiToken = "";
+                    this.token = decrypted;
+                    changed = true;
+                    this.log("API token migrated to OS keychain");
+                } else {
+                    new Notice("API token migration failed. Please re-enter your token in Settings.", 8000);
+                }
+            }
             if (changed) {
                 await this.saveSettings();
                 this.log("Settings migration completed");
@@ -1085,15 +1099,17 @@ export class PluginManager extends Plugin {
         if (this.token !== "") {
             return this.token;
         }
-        const encryptedToken = this.settings.apiToken;
-        const token = await this.cryptoHelper.decryptFromBase64(encryptedToken, personalAssitant);
+        const token = this.app.secretStorage.getSecret(KEYCHAIN_API_TOKEN_ID);
         if (!token) {
-            new Notice("Prepare LLM failed!", 3000);
+            new Notice("API token not configured. Please set it in Settings → Personal Assistant.", 5000);
             return "";
         }
         this.token = token;
-
         return token;
+    }
+
+    clearTokenCache(): void {
+        this.token = "";
     }
 }
 

@@ -90,7 +90,7 @@ function makeCandidate(path: string, score: number): MemoryCandidate {
         candidateId: path,
         path,
         score,
-        documents: [{ source: path, content: `content of ${path}`, metadata: { path, chunkIndex: 0 } }],
+        documents: [{ source: { path, chunkIndex: 0 }, content: `content of ${path}`, score }],
         excerpt: `excerpt of ${path}`,
     };
 }
