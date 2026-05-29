@@ -3,6 +3,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
     classifyRequiredCapabilitiesDeterministic,
     createRequiredCapabilityHostPolicy,
+    inspectRequiredCapabilityPhase,
     resolveRequiredCapabilityClassification,
     type RequiredCapability,
 } from "../src/ai-services/pa-agent-required-capability-policy";
@@ -24,6 +25,35 @@ describe("PA Agent required capability HostPolicy", () => {
                 level: "suggested",
             }),
         ]);
+    });
+
+    describe("English baseline classification (SDD §7.1 deterministic)", () => {
+        it("classifies English webSearch weak-signal inputs as suggested", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("This may have changed recently.").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", confidence: 0.65, level: "suggested" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("Is there a newest release out?").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", confidence: 0.65, level: "suggested" }),
+            ]);
+        });
+
+        it("classifies English search_memory strong-signal inputs as required", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("Check my notes for the spec.").items).toEqual([
+                expect.objectContaining({ capability: "search_memory", confidence: 0.9, level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("Search my vault for the design doc.").items).toEqual([
+                expect.objectContaining({ capability: "search_memory", confidence: 0.9, level: "required" }),
+            ]);
+        });
+
+        it("classifies English current-note weak-signal inputs as suggested", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("Summarize this document for me.").items).toEqual([
+                expect.objectContaining({ capability: "get_current_note_context", confidence: 0.65, level: "suggested" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("What does the selected text mean?").items).toEqual([
+                expect.objectContaining({ capability: "get_current_note_context", confidence: 0.65, level: "suggested" }),
+            ]);
+        });
     });
 
     describe("CJK keyword classification (SDD §7.2)", () => {
@@ -63,24 +93,23 @@ describe("PA Agent required capability HostPolicy", () => {
             ]);
         });
 
-        it("does NOT trigger webSearch on generic Chinese adverbs (regression guard)", () => {
-            // Each of these used to trip "最新/今天/当前/更新/实时/上下文" — see SDD §4.4
-            expect(classifyRequiredCapabilitiesDeterministic("今天写了什么笔记").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-            expect(classifyRequiredCapabilitiesDeterministic("最新的项目进展").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
-            );
-            expect(classifyRequiredCapabilitiesDeterministic("更新一下笔记内容").items).not.toEqual(
+        // Per SDD §4.4: each of these used to trip bare 最新/今天/当前/更新 in the old
+        // CJK keyword table. Split per-input so a failing case is named in the test output.
+        it.each([
+            "今天写了什么笔记",
+            "最新的项目进展",
+            "更新一下笔记内容",
+        ])("does NOT trigger webSearch on generic Chinese adverb: %s (regression guard)", (input) => {
+            expect(classifyRequiredCapabilitiesDeterministic(input).items).not.toEqual(
                 expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
             );
         });
 
-        it("does NOT trigger get_current_note_context on generic prompt-engineering terms", () => {
-            expect(classifyRequiredCapabilitiesDeterministic("基于上下文给我建议").items).not.toEqual(
-                expect.arrayContaining([expect.objectContaining({ capability: "get_current_note_context" })]),
-            );
-            expect(classifyRequiredCapabilitiesDeterministic("当前任务是什么").items).not.toEqual(
+        it.each([
+            "基于上下文给我建议",
+            "当前任务是什么",
+        ])("does NOT trigger get_current_note_context on generic term: %s (regression guard)", (input) => {
+            expect(classifyRequiredCapabilitiesDeterministic(input).items).not.toEqual(
                 expect.arrayContaining([expect.objectContaining({ capability: "get_current_note_context" })]),
             );
         });
@@ -656,6 +685,47 @@ describe("PA Agent required capability HostPolicy", () => {
             committedFinalText: "After terminal.",
         }));
         expect(post).toMatchObject({ action: "stop", reason: "terminal_idempotent", status: "completed" });
+    });
+
+    describe("phase introspection (SDD §7.3)", () => {
+        it("starts in awaiting_initial_tools", () => {
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Search the web for the latest docs.",
+                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
+            });
+            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("awaiting_initial_tools");
+        });
+
+        it("transitions to corrective_issued after a corrective_turn", async () => {
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Search the web for the latest docs.",
+                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
+            });
+            await policy.hostPolicy.afterTurn(createSummary({ committedFinalText: "Answer without web." }));
+            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("corrective_issued");
+        });
+
+        it("transitions to failed_retry_issued when a required tool fails from initial", async () => {
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Search the web for the latest docs.",
+                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
+            });
+            await policy.hostPolicy.afterTurn(createSummary({
+                committedFinalText: "Tried web but it failed.",
+                toolResults: [createToolResult("webSearch", { isError: true, outcome: "recoverable_error" })],
+            }));
+            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("failed_retry_issued");
+        });
+
+        it("transitions to terminal after a stop decision", async () => {
+            const policy = createRequiredCapabilityHostPolicy({
+                userInput: "Search the web for the latest docs.",
+                availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
+            });
+            await policy.hostPolicy.afterTurn(createSummary({ committedFinalText: "Answer without web." }));
+            await policy.hostPolicy.afterTurn(createSummary({ committedFinalText: "Still no web." }));
+            expect(inspectRequiredCapabilityPhase(policy.hostPolicy)).toBe("terminal");
+        });
     });
 
     it("warns only for unsatisfied required capabilities when available and unavailable capabilities are mixed", async () => {

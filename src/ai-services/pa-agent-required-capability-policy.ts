@@ -109,13 +109,36 @@ export function createRequiredCapabilityHostPolicy(
         answerCompletionLedger: createAnswerCompletionLedger(),
     };
 
+    const hostPolicy: PaAgentHostPolicy = {
+        afterTurn: (summary) => decideAfterTurn(summary, state),
+    };
+    HOST_POLICY_STATE_MAP.set(hostPolicy, state);
+
     return {
         classification,
         initialRuntimeInstruction: buildInitialRuntimeInstruction(state),
-        hostPolicy: {
-            afterTurn: (summary) => decideAfterTurn(summary, state),
-        },
+        hostPolicy,
     };
+}
+
+export type RequiredCapabilityPhaseKind =
+    | "awaiting_initial_tools"
+    | "corrective_issued"
+    | "failed_retry_issued"
+    | "terminal";
+
+const HOST_POLICY_STATE_MAP = new WeakMap<PaAgentHostPolicy, RequiredCapabilityRuntimeState>();
+
+/**
+ * Test-only inspector for the runtime phase of a host policy created by
+ * {@link createRequiredCapabilityHostPolicy}. Production code MUST NOT depend on
+ * this — phase transitions are an internal mechanism, and decisions should be
+ * driven by the values returned from `afterTurn`.
+ */
+export function inspectRequiredCapabilityPhase(
+    hostPolicy: PaAgentHostPolicy,
+): RequiredCapabilityPhaseKind | undefined {
+    return HOST_POLICY_STATE_MAP.get(hostPolicy)?.phase.kind;
 }
 
 export async function resolveRequiredCapabilityClassification(
@@ -308,29 +331,38 @@ function handleFailedRequired(
 ): ReturnType<PaAgentHostPolicy["afterTurn"]> {
     if (state.phase.kind === "awaiting_initial_tools") {
         state.phase = { kind: "failed_retry_issued" };
-        const completionDecision = decideAnswerCompletion({
-            summary,
-            ledger: state.answerCompletionLedger,
-            facts,
-            failedRequiredCapabilities,
-        });
-        if (completionDecision?.action === "force_finalize") {
-            return {
-                action: "continue",
-                reason: "needs_follow_up",
-                runtimeInstruction: completionDecision.runtimeInstruction,
-                toolMode: completionDecision.toolMode,
-            };
-        }
-        return {
-            action: "continue",
-            reason: "needs_follow_up",
-            runtimeInstruction: buildFailedRequiredToolInstruction(failedRequiredCapabilities),
-            toolMode: "final_answer_only",
-        };
+        return buildFailedRetryDecision(summary, state, facts, failedRequiredCapabilities);
     }
     state.phase = phaseToTerminal(state.phase);
     return buildMissingRequiredDecision(summary, state, "required_capability_failed");
+}
+
+function buildFailedRetryDecision(
+    summary: PaAgentTurnSummary,
+    state: RequiredCapabilityRuntimeState,
+    facts: ReturnType<typeof deriveAnswerCompletionTurnFacts>,
+    failedRequiredCapabilities: RequiredCapability[],
+): ReturnType<PaAgentHostPolicy["afterTurn"]> {
+    const completionDecision = decideAnswerCompletion({
+        summary,
+        ledger: state.answerCompletionLedger,
+        facts,
+        failedRequiredCapabilities,
+    });
+    if (completionDecision?.action === "force_finalize") {
+        return {
+            action: "continue",
+            reason: "needs_follow_up",
+            runtimeInstruction: completionDecision.runtimeInstruction,
+            toolMode: completionDecision.toolMode,
+        };
+    }
+    return {
+        action: "continue",
+        reason: "needs_follow_up",
+        runtimeInstruction: buildFailedRequiredToolInstruction(failedRequiredCapabilities),
+        toolMode: "final_answer_only",
+    };
 }
 
 function computeMissingRequired(state: RequiredCapabilityRuntimeState): {
@@ -574,10 +606,14 @@ interface CapabilitySignalTable {
 const CAPABILITY_SIGNALS: readonly CapabilitySignalTable[] = [
     {
         capability: "webSearch",
+        // SDD §4.2: keep `latest|today's|this week's` only as compound prefixes
+        // ("latest news", "today's version") — bare `latest`/`today` is intentionally
+        // excluded so it does not false-match notes-domain phrases like "today I wrote".
         strong: {
             regex: [
-                /\b(search the web|look online|latest|today|official site|web search)\b/,
+                /\b(search the web|look online|official site|web search)\b/,
                 /\bcurrent (news|events|price|version|status|weather|release|information|info|situation)\b/,
+                /\b(latest|today's|this week's) (news|version|release|update)\b/,
             ],
             chineseTokens: ["搜索网", "网上查", "网络搜索", "在线查", "上网查", "查一下网"],
         },

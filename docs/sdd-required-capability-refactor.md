@@ -323,10 +323,14 @@ function decideAfterTurn(
 |------|------|------|
 | `correctiveAttempted=false`, `failedRequiredToolRetryAttempted=false` | `awaiting_initial_tools` | 还没发过 corrective_turn，可以发 |
 | `correctiveAttempted=true`, `failedRequiredToolRetryAttempted=false` | `corrective_issued` | 已发 corrective，等待执行；下一步看缺失情况 |
-| `correctiveAttempted=true`, `failedRequiredToolRetryAttempted=true` | `failed_retry_issued` | 失败重试已发 |
-| 任何 stop 决策已下发 | `terminal` | 不可逆，再次进入 `decideAfterTurn` 直接 stop |
+| `correctiveAttempted=false`, `failedRequiredToolRetryAttempted=true` | `failed_retry_issued` | 失败重试从 initial 直接进入（pre-refactor `decideAfterTurn` line 282 显式约束 `!correctiveAttempted` 才会设 failed retry，因此两个 boolean 互斥） |
+| 任何 stop 决策已下发 | `terminal`（实现中带 `from` 标签保留前一阶段，用于 warning metadata 派生两个 boolean） | 不可逆，再次进入 `decideAfterTurn` 直接 stop |
 
-**不可达组合（迁移要保护的不变量）:** `correctiveAttempted=false, failedRequiredToolRetryAttempted=true` — 旧代码的隐含约束（先 corrective 后 retry），新 phase 状态机用单字段强制显式化。
+**真正不可达组合:** `correctiveAttempted=true, failedRequiredToolRetryAttempted=true` — pre-refactor 的失败重试路径要求 `!correctiveAttempted`，所以一旦走过 corrective 路径就不能再走 failed retry。新 phase 状态机用 4 个互斥 kind 自然表达此约束。
+
+**实现 vs 本节 spec 的细微偏离（已确认刻意）:** 本节 §4.5 代码片段写的是 `state.phase = { kind: "terminal" }`（无 payload）。实际实现为 `{ kind: "terminal"; from: "initial" | "corrective" | "failed_retry" }`，原因是 `buildMissingRequiredDecision` 仍需输出 `correctiveAttempted` / `failedRequiredToolRetryAttempted` 两个 warning metadata 字段（pre-refactor 的契约），`from` 标签是无信息损失迁移到 phase 单字段的最简方式。等价表新增的"terminal 行"在备注中说明此点。
+
+**前一节等价表的历史修正记录（2026-05-29 PR review 发现）:** 初版 SDD 将 `(correctiveAttempted=true, failedRequiredToolRetryAttempted=true)` 标为可达组合，把 `(correctiveAttempted=false, failedRequiredToolRetryAttempted=true)` 标为不可达不变量。实际查阅 pre-refactor `decideAfterTurn` line 282 的 `if (!state.failedRequiredToolRetryAttempted && !state.correctiveAttempted)` 守卫后确认：两个组合恰好反了。已按上表更正。
 
 ### 4.6 LLM 分类器路径精简
 
