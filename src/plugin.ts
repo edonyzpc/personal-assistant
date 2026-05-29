@@ -8,7 +8,7 @@ import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, icons, personalAssitant } from './utils';
@@ -94,6 +94,10 @@ export class PluginManager extends Plugin {
     private localGraph = new LocalGraph(this.app, this);
     calloutManager: CalloutManager<true> | undefined;
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
+    // Runtime-only state: tracks whether the "update-metadata" command has armed
+    // the file-open listener for this session. Not persisted — restarting the
+    // app should always start with the listener disarmed.
+    private isEnabledMetadataUpdating: boolean = false;
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
     vss!: VSS;
@@ -261,14 +265,14 @@ export class PluginManager extends Plugin {
             name: "Update metadata with one command",
             callback: async () => {
                 if (this.settings.enableMetadataUpdating) {
-                    if (this.settings.isEnabledMetadataUpdating) {
+                    if (this.isEnabledMetadataUpdating) {
                         // if the command has already triggered, disable it and remove status
                         const statusBar = document.getElementById("personal-assistant-statusbar");
                         statusBar?.removeClass("personal-assistant-statusbar-breathing");
                         // empty debounce which will stop updating metadata
                         this.updateDebouncer = debounce((file) => { }, 100, true);
                         // update the command triggered status
-                        this.settings.isEnabledMetadataUpdating = false;
+                        this.isEnabledMetadataUpdating = false;
                     } else {
                         this.updateDebouncer = debounce(this.updateMetadata, 100, true);
                         // if updating metadata is enabled, set the status and monitor the events to update metadata
@@ -278,7 +282,7 @@ export class PluginManager extends Plugin {
                             this.updateDebouncer(file);
                         }));
                         // update the command triggered status
-                        this.settings.isEnabledMetadataUpdating = true;
+                        this.isEnabledMetadataUpdating = true;
                     }
                 } else {
                     new Notice("update metadata command is not enabled in setting tab");
@@ -449,7 +453,7 @@ export class PluginManager extends Plugin {
     }
 
     async loadSettings() {
-        this.settings = Object.assign({}, DEFAULT_SETTINGS, await this.loadData());
+        this.settings = mergeLoadedSettings(await this.loadData());
         this.log("Settings loaded", this.settings);
     }
 
@@ -996,6 +1000,14 @@ export class PluginManager extends Plugin {
                 delete (this.settings as Partial<PluginManagerSettings> & { paAgentAnswerStreamEnabled?: unknown }).paAgentAnswerStreamEnabled;
                 changed = true;
             }
+            // isEnabledMetadataUpdating used to be persisted alongside the user-facing
+            // enableMetadataUpdating toggle, but it is runtime state (whether the
+            // file-open listener is armed for this session) and should not survive
+            // restarts. Strip it from data.json on load.
+            if ("isEnabledMetadataUpdating" in this.settings) {
+                delete (this.settings as Partial<PluginManagerSettings> & { isEnabledMetadataUpdating?: unknown }).isEnabledMetadataUpdating;
+                changed = true;
+            }
             // v2.0.0 removed Ollama provider support. Users upgrading from v1.x with
             // `aiProvider: "ollama"` would otherwise hit a hard runtime throw on first
             // chat. Migrate them to the qwen default so the app remains usable; the v2.0.0
@@ -1082,7 +1094,14 @@ export class PluginManager extends Plugin {
                     changed = true;
                     this.log("API token migrated to OS keychain");
                 } else {
+                    // Decryption failed — likely a key change, corrupted blob, or a
+                    // pasted plaintext token. Clear the residual value so the
+                    // ciphertext (or plaintext) does not stay on disk forever and
+                    // re-trigger this Notice on every launch.
                     new Notice("API token migration failed. Please re-enter your token in Settings.", 8000);
+                    this.settings.apiToken = "";
+                    changed = true;
+                    this.log("API token migration failed; cleared residual value from data.json");
                 }
             }
             if (changed) {

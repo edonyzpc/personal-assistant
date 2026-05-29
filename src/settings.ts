@@ -44,7 +44,6 @@ export interface PluginManagerSettings {
     enableMetadataUpdating: boolean;
     metadatas: { key: string, value: any, t: string }[]; // eslint-disable-line @typescript-eslint/no-explicit-any
     metadataExcludePath: string[];
-    isEnabledMetadataUpdating: boolean;
     cachePluginRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
     cacheThemeRepo: { [key: string]: any; }; // eslint-disable-line @typescript-eslint/no-explicit-any
     statisticsType: string;
@@ -114,7 +113,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
         { key: "modify", value: "YYYY-MM-DD HH:mm:ss", t: "moment" },
     ],
     metadataExcludePath: [],
-    isEnabledMetadataUpdating: false,
     cachePluginRepo: {
         "personal-assistant": "edonyzpc/personal-assistant",
     },
@@ -175,6 +173,45 @@ const QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC =
     "Qwen thinking and builtin WebSearch are available only with the DashScope OpenAI-compatible base URL.";
 export const STATISTICS_SYNC_SETTING_DESC =
     "Creates Statistics history files inside this plugin's vault folder so writing history can sync across devices. Leave off to avoid ongoing Git changes from synced history.";
+
+/**
+ * Parse an integer from user input, falling back to a known-valid value when
+ * the input is empty, non-numeric, or below `min`. Prevents NaN / 0 / negative
+ * values from being persisted to data.json, which downstream consumers (Local
+ * Graph dimensions, preview limits, featured image counts) cannot tolerate.
+ */
+export function safeParseInt(value: string, fallback: number, min = 0): number {
+    const parsed = parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed >= min ? parsed : fallback;
+}
+
+/**
+ * Merge data.json contents with DEFAULT_SETTINGS, preserving default values
+ * for nested object fields whose siblings the user never customized.
+ *
+ * Object.assign is shallow, so `localGraph: { depth: 3 }` in data.json would
+ * otherwise replace the entire DEFAULT_SETTINGS.localGraph object and lose
+ * defaults for showTags / showAttach / autoColors / resizeStyle. Arrays
+ * (colorGroups, metadatas, *ExcludePath) are kept as single values — when the
+ * user customizes one, they own the whole list.
+ */
+export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
+    const merged = Object.assign({}, DEFAULT_SETTINGS, loaded ?? {}) as PluginManagerSettings;
+    const loadedLocalGraph =
+        (loaded as { localGraph?: Partial<typeof DEFAULT_SETTINGS.localGraph> } | null | undefined)?.localGraph;
+    const loadedResizeStyle =
+        (loadedLocalGraph as { resizeStyle?: Partial<typeof DEFAULT_SETTINGS.localGraph.resizeStyle> } | undefined)
+            ?.resizeStyle;
+    merged.localGraph = {
+        ...DEFAULT_SETTINGS.localGraph,
+        ...(loadedLocalGraph ?? {}),
+        resizeStyle: {
+            ...DEFAULT_SETTINGS.localGraph.resizeStyle,
+            ...(loadedResizeStyle ?? {}),
+        },
+    };
+    return merged;
+}
 
 export function normalizeEnabledSkillIds(value: unknown): string[] {
     const knownSkillIds = new Set(BUNDLED_SKILL_IDS);
@@ -333,7 +370,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('5')
                     .setValue(plugin.settings.previewLimits.toString())
                     .onChange(async (value) => {
-                        plugin.settings.previewLimits = parseInt(value);
+                        plugin.settings.previewLimits = safeParseInt(value, plugin.settings.previewLimits, 1);
                         await plugin.saveSettings();
                     })
             });
@@ -359,7 +396,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.localGraph.depth.toString())
                     .onChange(async (value) => {
-                        plugin.settings.localGraph.depth = parseInt(value);
+                        plugin.settings.localGraph.depth = safeParseInt(value, plugin.settings.localGraph.depth, 1);
                         await plugin.saveSettings();
                     })
             });
@@ -434,7 +471,8 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('height')
                     .setValue(plugin.settings.localGraph.resizeStyle.height.toString())
                     .onChange(async (value) => {
-                        plugin.settings.localGraph.resizeStyle.height = parseInt(value);
+                        plugin.settings.localGraph.resizeStyle.height =
+                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.height, 1);
                         await plugin.saveSettings();
                     })
             });
@@ -443,7 +481,8 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('width')
                     .setValue(plugin.settings.localGraph.resizeStyle.width.toString())
                     .onChange(async (value) => {
-                        plugin.settings.localGraph.resizeStyle.width = parseInt(value);
+                        plugin.settings.localGraph.resizeStyle.width =
+                            safeParseInt(value, plugin.settings.localGraph.resizeStyle.width, 1);
                         await plugin.saveSettings();
                     })
             });
@@ -628,9 +667,12 @@ export class SettingTab extends PluginSettingTab {
         new Setting(container).setName(nameEl2);
         // TODO: design better UX to configure frontmatter auto-updating
 
-        let key: string;
-        let value: any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        let t: string;
+        // Initialize with the dropdown's first option ("string") so a user who
+        // clicks Add without touching the dropdown gets a valid type instead of
+        // undefined being persisted to data.json.
+        let key = "";
+        let value: any = ""; // eslint-disable-line @typescript-eslint/no-explicit-any
+        let t = "string";
         new Setting(container)
             .setName("Add Key:Value in frontmatter")
             .setDesc('Value now only upport formatted timestamp and regular string.')
@@ -651,14 +693,20 @@ export class SettingTab extends PluginSettingTab {
             .addDropdown(dropDown => {
                 dropDown.addOption('string', '1 Regular String');
                 dropDown.addOption('moment', '2 Timestamp');
+                dropDown.setValue(t);
                 dropDown.onChange(async (value) => {
                     t = value;
                 });
             })
             .addButton(btn => {
                 btn.setButtonText("Add").onClick(async () => {
+                    const trimmedKey = key.trim();
+                    if (!trimmedKey) {
+                        new Notice("Frontmatter key is required.", 4000);
+                        return;
+                    }
                     this.log("adding new frontmatter");
-                    plugin.settings.metadatas.push({ key: key, value: value, t: t });
+                    plugin.settings.metadatas.push({ key: trimmedKey, value: value, t: t });
                     await plugin.saveSettings();
                     this.rebuildMetadataList();
                 })
@@ -1140,7 +1188,7 @@ export class SettingTab extends PluginSettingTab {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.numFeaturedImages.toString())
                     .onChange(async (value) => {
-                        plugin.settings.numFeaturedImages = parseInt(value);
+                        plugin.settings.numFeaturedImages = safeParseInt(value, plugin.settings.numFeaturedImages, 1);
                         await plugin.saveSettings();
                     })
             });

@@ -19,10 +19,11 @@ jest.mock('obsidian', () => ({
                 options: Array<{ value: string; text: string }>;
                 onChange?: (value: string) => unknown;
             }>;
+            buttons: Array<{ text?: string; onClick?: () => unknown | Promise<unknown> }>;
         };
 
         constructor(_containerEl: unknown) {
-            this.record = { toggles: [], dropdowns: [] };
+            this.record = { toggles: [], dropdowns: [], buttons: [] };
             const globalObj = globalThis as typeof globalThis & {
                 __paSettingRecords?: Array<{
                     name?: string;
@@ -33,6 +34,7 @@ jest.mock('obsidian', () => ({
                         options: Array<{ value: string; text: string }>;
                         onChange?: (value: string) => unknown;
                     }>;
+                    buttons: Array<{ text?: string; onClick?: () => unknown | Promise<unknown> }>;
                 }>;
             };
             globalObj.__paSettingRecords = globalObj.__paSettingRecords ?? [];
@@ -133,11 +135,19 @@ jest.mock('obsidian', () => ({
             setButtonText: (text: string) => unknown;
             onClick: (callback: () => void) => unknown;
         }) => void) {
+            const button: { text?: string; onClick?: () => unknown | Promise<unknown> } = {};
+            this.record.buttons.push(button);
             const buttonComponent = {
                 buttonEl: {},
                 setCta: () => buttonComponent,
-                setButtonText: (_text: string) => buttonComponent,
-                onClick: (_callback: () => void) => buttonComponent,
+                setButtonText: (text: string) => {
+                    button.text = text;
+                    return buttonComponent;
+                },
+                onClick: (cb: () => void) => {
+                    button.onClick = cb;
+                    return buttonComponent;
+                },
             };
             callback(buttonComponent);
             return this;
@@ -189,7 +199,9 @@ import {
     DEFAULT_SETTINGS,
     STATISTICS_SYNC_SETTING_DESC,
     SettingTab,
+    mergeLoadedSettings,
     normalizeEnabledSkillIds,
+    safeParseInt,
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
 import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
@@ -282,11 +294,13 @@ type MockDropdownRecord = {
     options: Array<{ value: string; text: string }>;
     onChange?: (value: string) => unknown;
 };
+type MockButtonRecord = { text?: string; onClick?: () => unknown | Promise<unknown> };
 type MockSettingRecord = {
     name?: string;
     desc?: string;
     toggles: Array<MockToggleRecord>;
     dropdowns: Array<MockDropdownRecord>;
+    buttons: Array<MockButtonRecord>;
 };
 
 function getMockSettingRecords(): MockSettingRecord[] {
@@ -636,5 +650,112 @@ describe('Phase 1 refactor invariants', () => {
         expect(internals.providerConfigContainer).toBe(before.provider);
         expect(internals.skillTogglesContainer).toBe(before.skills);
         expect(internals.featuredImageContainer).toBe(before.featured);
+    });
+});
+
+describe('safeParseInt', () => {
+    it('returns the parsed value when valid and at or above min', () => {
+        expect(safeParseInt('5', 99, 1)).toBe(5);
+        expect(safeParseInt('1', 99, 1)).toBe(1);
+        expect(safeParseInt('500', 100, 1)).toBe(500);
+    });
+
+    it('falls back when input is empty or non-numeric', () => {
+        expect(safeParseInt('', 7, 1)).toBe(7);
+        expect(safeParseInt('abc', 7, 1)).toBe(7);
+        expect(safeParseInt('  ', 7, 1)).toBe(7);
+    });
+
+    it('falls back when parseInt would yield NaN', () => {
+        expect(safeParseInt(undefined as unknown as string, 3, 1)).toBe(3);
+        expect(safeParseInt(null as unknown as string, 3, 1)).toBe(3);
+    });
+
+    it('falls back when value is below min', () => {
+        expect(safeParseInt('0', 5, 1)).toBe(5);
+        expect(safeParseInt('-1', 5, 1)).toBe(5);
+        expect(safeParseInt('-100', 5, 1)).toBe(5);
+    });
+
+    it('accepts zero when min allows it', () => {
+        expect(safeParseInt('0', 5, 0)).toBe(0);
+    });
+});
+
+describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
+    it('returns DEFAULT_SETTINGS when data.json is empty or missing', () => {
+        expect(mergeLoadedSettings(undefined).localGraph).toEqual(DEFAULT_SETTINGS.localGraph);
+        expect(mergeLoadedSettings(null).localGraph).toEqual(DEFAULT_SETTINGS.localGraph);
+        expect(mergeLoadedSettings({}).localGraph).toEqual(DEFAULT_SETTINGS.localGraph);
+    });
+
+    it('preserves localGraph defaults when only one nested field is set', () => {
+        const merged = mergeLoadedSettings({ localGraph: { depth: 9 } });
+        expect(merged.localGraph.depth).toBe(9);
+        expect(merged.localGraph.showTags).toBe(DEFAULT_SETTINGS.localGraph.showTags);
+        expect(merged.localGraph.showAttach).toBe(DEFAULT_SETTINGS.localGraph.showAttach);
+        expect(merged.localGraph.showNeighbor).toBe(DEFAULT_SETTINGS.localGraph.showNeighbor);
+        expect(merged.localGraph.collapse).toBe(DEFAULT_SETTINGS.localGraph.collapse);
+        expect(merged.localGraph.autoColors).toBe(DEFAULT_SETTINGS.localGraph.autoColors);
+        expect(merged.localGraph.resizeStyle).toEqual(DEFAULT_SETTINGS.localGraph.resizeStyle);
+    });
+
+    it('preserves resizeStyle defaults when only one dimension is set', () => {
+        const merged = mergeLoadedSettings({
+            localGraph: { resizeStyle: { width: 800 } },
+        });
+        expect(merged.localGraph.resizeStyle.width).toBe(800);
+        expect(merged.localGraph.resizeStyle.height).toBe(DEFAULT_SETTINGS.localGraph.resizeStyle.height);
+    });
+
+    it('keeps top-level overrides (apiToken, debug, etc.)', () => {
+        const merged = mergeLoadedSettings({ debug: true, apiToken: '' });
+        expect(merged.debug).toBe(true);
+        expect(merged.apiToken).toBe('');
+    });
+
+    it('treats arrays as opaque user values (no element-level merge)', () => {
+        const merged = mergeLoadedSettings({ colorGroups: [] });
+        expect(merged.colorGroups).toEqual([]);
+    });
+});
+
+describe('Phase 2 P0 data integrity', () => {
+    it('isEnabledMetadataUpdating is no longer a persisted setting', () => {
+        expect(DEFAULT_SETTINGS).not.toHaveProperty('isEnabledMetadataUpdating');
+        // The user-facing toggle is unchanged.
+        expect(DEFAULT_SETTINGS).toHaveProperty('enableMetadataUpdating');
+    });
+
+    it('rejects empty metadata key on Add and does not mutate settings', async () => {
+        const plugin = makePlugin({ enableMetadataUpdating: true });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const addRecord = records.find((record) => record.name === 'Add Key:Value in frontmatter');
+        expect(addRecord).toBeDefined();
+        const addButton = addRecord!.buttons.find((button) => button.text === 'Add');
+        expect(addButton?.onClick).toBeDefined();
+
+        const beforeLength = plugin.settings.metadatas.length;
+        const beforeSaveCount = plugin.saveSettings.mock.calls.length;
+
+        await addButton!.onClick!();
+
+        expect(plugin.settings.metadatas).toHaveLength(beforeLength);
+        expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaveCount);
+    });
+
+    it('initializes the metadata Add dropdown with the "string" type', () => {
+        const plugin = makePlugin({ enableMetadataUpdating: true });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const addRecord = records.find((record) => record.name === 'Add Key:Value in frontmatter');
+        expect(addRecord?.dropdowns[0]?.value).toBe('string');
     });
 });
