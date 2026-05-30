@@ -1207,7 +1207,7 @@ export class PluginManager extends Plugin {
     hasConfiguredAPIToken(): boolean {
         return Boolean(
             this.app.secretStorage.getSecret(this.getAPITokenSecretId())
-            ?? this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId())
+            || this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId())
         );
     }
 
@@ -1231,7 +1231,7 @@ export class PluginManager extends Plugin {
         const scopedTokenId = this.getAPITokenSecretId();
         const legacySecretId = this.getLegacyAPITokenSecretId();
         const scopedToken = this.app.secretStorage.getSecret(scopedTokenId);
-        const token = scopedToken ?? this.app.secretStorage.getSecret(legacySecretId);
+        const token = scopedToken || this.app.secretStorage.getSecret(legacySecretId);
         if (!token) {
             new Notice("API token not configured. Please set it in Settings → Personal Assistant.", 5000);
             return "";

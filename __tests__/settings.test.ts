@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, jest } from '@jest/globals';
+import { readFileSync } from 'node:fs';
 
 jest.mock('obsidian', () => ({
     App: class { },
@@ -420,7 +421,7 @@ function makeMockApp() {
     return {
         secretStorage: {
             setSecret: jest.fn(),
-            getSecret: jest.fn(() => null),
+            getSecret: jest.fn((_id: string): string | null => null),
             listSecrets: jest.fn(() => []),
         },
     };
@@ -544,9 +545,19 @@ describe('PA Agent telemetry settings', () => {
 
         const policyModel = getMockSettingRecords()
             .find((record) => record.name === 'Policy model name');
-        expect(policyModel?.desc).toContain('Your chat request and explicitly sent context may be sent to your configured AI provider');
+        expect(policyModel?.desc).toContain('Sends your request and explicit context to your AI provider');
         expect(policyModel?.desc).toContain('hidden vault content is not sent');
-        expect(policyModel?.desc).toContain('Leave blank to use local fallback rules');
+        expect(policyModel?.desc).toContain('Blank uses local fallback rules');
+    });
+
+    it('keeps settings text inputs right-aligned with consistent width', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+
+        expect(css).toContain('.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"])');
+        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)[\s\S]*?align-items:\s*center;[\s\S]*?gap:\s*clamp\(20px,\s*4vw,\s*64px\);/);
+        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)\s+\.setting-item-control,[\s\S]*?flex:\s*0 0 clamp\(280px,\s*44%,\s*560px\);[\s\S]*?justify-content:\s*flex-end;[\s\S]*?min-width:\s*240px;/);
+        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)\s+\.setting-item-control input,[\s\S]*?width:\s*100%;/);
+        expect(css).toMatch(/@media\s+\(max-width:\s*700px\)\s*{[\s\S]*?\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)[\s\S]*?flex-direction:\s*column;[\s\S]*?\.setting-item-control[\s\S]*?width:\s*100%;/);
     });
 });
 
@@ -1312,7 +1323,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(options?.message).toContain('API token is kept');
     });
 
-    it('clearing the API token field calls setSecret with empty string', () => {
+    it('ignores an empty API token change when no token is stored', async () => {
         const plugin = makePlugin({ aiProvider: 'qwen' });
         const app = makeMockApp();
         const tab = new SettingTab(app as never, plugin as never);
@@ -1324,9 +1335,52 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const secret = secretRecords[0];
         expect(secret.onChange).toBeDefined();
 
-        secret.onChange!('');
+        await secret.onChange!('');
 
-        expect(app.secretStorage.setSecret).toHaveBeenLastCalledWith('pa-api-token-vault-test', '');
+        expect(confirmUserAction).not.toHaveBeenCalled();
+        expect(app.secretStorage.setSecret).not.toHaveBeenCalled();
+        expect(plugin.clearTokenCache).not.toHaveBeenCalled();
+    });
+
+    it('requires confirmation before clearing an existing API token', async () => {
+        setMockConfirmDecision(false);
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const app = makeMockApp();
+        app.secretStorage.getSecret.mockImplementation((id: string) => (
+            id === 'pa-api-token-vault-test' ? 'sk-existing-token' : null
+        ));
+        const tab = new SettingTab(app as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const secret = getMockSecretRecords()[0];
+        expect(secret.value).toBe('sk-existing-token');
+
+        await secret.onChange!('');
+
+        expect(confirmUserAction).toHaveBeenCalledTimes(1);
+        expect(app.secretStorage.setSecret).not.toHaveBeenCalled();
+        expect(secret.value).toBe('sk-existing-token');
+        expect(plugin.clearTokenCache).not.toHaveBeenCalled();
+    });
+
+    it('clears scoped and legacy API token ids after confirmation', async () => {
+        setMockConfirmDecision(true);
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const app = makeMockApp();
+        app.secretStorage.getSecret.mockImplementation((id: string) => (
+            id === 'pa-api-token-vault-test' ? 'sk-existing-token' : null
+        ));
+        const tab = new SettingTab(app as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        const secret = getMockSecretRecords()[0];
+
+        await secret.onChange!('');
+
+        expect(app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token-vault-test', '');
+        expect(app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token', '');
         expect(plugin.clearTokenCache).toHaveBeenCalled();
     });
 });

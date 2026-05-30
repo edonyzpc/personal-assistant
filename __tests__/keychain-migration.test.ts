@@ -48,7 +48,7 @@ describe('Keychain Migration - SecretStorage', () => {
                 }
                 const scopedId = this.getAPITokenSecretId();
                 const scopedToken = this.app.secretStorage.getSecret(scopedId);
-                const token = scopedToken ?? this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId());
+                const token = scopedToken || this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId());
                 if (!token) {
                     return '';
                 }
@@ -114,6 +114,14 @@ describe('Keychain Migration - SecretStorage', () => {
         });
 
         it('falls back to legacy secret id and copies it to the vault-scoped id', () => {
+            secretValues.set(KEYCHAIN_API_TOKEN_ID, 'sk-legacy-token');
+            const result = plugin.getAPIToken();
+            expect(result).toBe('sk-legacy-token');
+            expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith(plugin.getAPITokenSecretId(), 'sk-legacy-token');
+        });
+
+        it('treats an empty vault-scoped secret as missing and falls back to legacy', () => {
+            secretValues.set(plugin.getAPITokenSecretId(), '');
             secretValues.set(KEYCHAIN_API_TOKEN_ID, 'sk-legacy-token');
             const result = plugin.getAPIToken();
             expect(result).toBe('sk-legacy-token');

@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { App, Notice, PluginSettingTab, SecretComponent, Setting, debounce } from "obsidian";
+import { App, Modal, Notice, PluginSettingTab, SecretComponent, Setting, debounce, setIcon } from "obsidian";
 import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
@@ -415,6 +415,9 @@ export class SettingTab extends PluginSettingTab {
     private graphColorsContainer: HTMLDivElement | null = null;
     private metadataContainer: HTMLDivElement | null = null;
     private featuredImageContainer: HTMLDivElement | null = null;
+    private secretPickerObserver: MutationObserver | null = null;
+    private patchedSecretPickerEditButtons = new WeakSet<HTMLElement>();
+    private secretPickerEditClickHandler: ((event: MouseEvent) => void) | null = null;
 
     // vanilla-picker instances; destroyed before rebuilding graphColorsContainer.
     private activePickers: Picker[] = [];
@@ -445,6 +448,9 @@ export class SettingTab extends PluginSettingTab {
 
         this.destroyPickers();
         containerEl.empty();
+        (containerEl as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-settings-tab");
+        (containerEl as HTMLElement & { classList?: DOMTokenList }).classList?.add("pa-settings-tab");
+        document.body?.classList.add("pa-settings-tab-open");
 
         // Sub-container refs were children of containerEl; empty() detached them.
         this.providerConfigContainer = null;
@@ -478,6 +484,8 @@ export class SettingTab extends PluginSettingTab {
         // Tear down Pickers explicitly so popup elements + listeners are not
         // orphaned when the tab DOM is detached.
         this.destroyPickers();
+        this.stopSecretPickerObserver();
+        document.body?.classList.remove("pa-settings-tab-open");
         // Flush any pending text-input save: the onChange handlers have
         // already mutated plugin.settings.* synchronously, so persisting
         // the current settings object captures the user's latest input.
@@ -490,6 +498,399 @@ export class SettingTab extends PluginSettingTab {
             try { picker.destroy(); } catch { /* picker may already be torn down */ }
         }
         this.activePickers = [];
+    }
+
+    private startSecretPickerObserver(): void {
+        this.stopSecretPickerObserver();
+        this.secretPickerEditClickHandler = (event: MouseEvent) => {
+            const target = event.target as HTMLElement | null;
+            const action = target?.closest<HTMLElement>(".modal .suggestion-item .clickable-icon");
+            const row = action?.closest<HTMLElement>(".suggestion-item");
+            if (!action || !row || !this.isSecretPickerRow(row)) {
+                return;
+            }
+
+            const actions = Array.from(row.querySelectorAll<HTMLElement>(".clickable-icon"));
+            if (actions.length < 2 || action !== actions[actions.length - 1]) {
+                return;
+            }
+
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            const secretId = this.getSecretIdFromPickerRow(row);
+            if (!secretId) {
+                new Notice("Could not determine which secret to edit.", 4000);
+                return;
+            }
+            this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
+        };
+        if (typeof document.addEventListener === "function") {
+            document.addEventListener("click", this.secretPickerEditClickHandler, true);
+        }
+        if (!document.body || typeof MutationObserver === "undefined") {
+            return;
+        }
+        this.secretPickerObserver = new MutationObserver(() => {
+            this.patchSecretPickerActions();
+        });
+        this.secretPickerObserver.observe(document.body, {
+            childList: true,
+            subtree: true,
+        });
+        this.scheduleSecretPickerPatch();
+    }
+
+    private stopSecretPickerObserver(): void {
+        this.secretPickerObserver?.disconnect();
+        this.secretPickerObserver = null;
+        if (this.secretPickerEditClickHandler) {
+            if (typeof document.removeEventListener === "function") {
+                document.removeEventListener("click", this.secretPickerEditClickHandler, true);
+            }
+            this.secretPickerEditClickHandler = null;
+        }
+        this.patchedSecretPickerEditButtons = new WeakSet<HTMLElement>();
+    }
+
+    private patchSecretPickerActions(): void {
+        const rows = document.querySelectorAll<HTMLElement>(
+            ".modal .suggestion-item",
+        );
+        rows.forEach((row) => {
+            if (!this.isSecretPickerRow(row)) {
+                return;
+            }
+            const actions = Array.from(row.querySelectorAll<HTMLElement>(".clickable-icon"));
+            if (actions.length < 2) {
+                return;
+            }
+            const editAction = actions[actions.length - 1];
+            if (!editAction) {
+                return;
+            }
+
+            editAction.classList.add("pa-secret-edit-action");
+            editAction.setAttribute("aria-label", "Edit secret");
+            editAction.setAttribute("title", "Edit secret");
+            if (!editAction.querySelector(".lucide-pencil, [data-icon='pencil']")) {
+                editAction.replaceChildren();
+                setIcon(editAction, "pencil");
+            }
+            if (this.patchedSecretPickerEditButtons.has(editAction)) {
+                return;
+            }
+
+            this.patchedSecretPickerEditButtons.add(editAction);
+            editAction.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                const secretId = this.getSecretIdFromPickerRow(row);
+                if (!secretId) {
+                    new Notice("Could not determine which secret to edit.", 4000);
+                    return;
+                }
+                this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
+            }, true);
+        });
+    }
+
+    private scheduleSecretPickerPatch(): void {
+        [0, 25, 75, 150, 300, 600, 1000].forEach((delay) => {
+            window.setTimeout(() => this.patchSecretPickerActions(), delay);
+        });
+    }
+
+    private isSecretPickerRow(row: HTMLElement): boolean {
+        return row.classList.contains("suggestion-secret-key")
+            || !!row.querySelector(".suggestion-secret-text")
+            || /\bpa-api-token(?:-[a-z0-9-]+)?\b/.test(row.textContent ?? "");
+    }
+
+    private getSecretIdFromPickerRow(row: HTMLElement): string | null {
+        const title = row.querySelector<HTMLElement>(".suggestion-title")?.textContent?.trim();
+        if (title && /^[a-z0-9-]+$/.test(title)) {
+            return title;
+        }
+        return row.textContent?.match(/\b[a-z0-9]+(?:-[a-z0-9]+)*\b/)?.[0] ?? null;
+    }
+
+    private openSecretEditorViaAddSecret(secretId: string, pickerModal?: HTMLElement | null): void {
+        const secretValue = this.app.secretStorage.getSecret(secretId) ?? "";
+        const modal = pickerModal ?? this.findSecretPickerModal();
+        const addSecretButton = modal ? this.findAddSecretButton(modal) : null;
+        if (!addSecretButton) {
+            new Notice(`Could not open the secret editor for ${secretId}.`, 4000);
+            return;
+        }
+
+        addSecretButton.click();
+        this.prefillAddSecretModal(secretId, secretValue, 0);
+    }
+
+    private findAddSecretButton(modal: HTMLElement): HTMLElement | null {
+        return Array.from(modal.querySelectorAll<HTMLElement>("button, .clickable-icon"))
+            .find((element) => {
+                const text = element.textContent?.trim();
+                return text === "Add secret..." || text === "Add secret…";
+            }) ?? null;
+    }
+
+    private findSecretPickerModal(): HTMLElement | null {
+        return Array.from(document.querySelectorAll<HTMLElement>("body.pa-settings-tab-open .modal"))
+            .reverse()
+            .find((modal) => Array.from(modal.querySelectorAll<HTMLElement>(".suggestion-item")).some((row) => this.isSecretPickerRow(row))) ?? null;
+    }
+
+    private prefillAddSecretModal(secretId: string, secretValue: string, attempt: number): void {
+        const maxAttempts = 12;
+        const modal = this.findAddSecretModal();
+        if (modal) {
+            const inputs = Array.from(modal.querySelectorAll<HTMLInputElement>("input"));
+            const idInput = this.findSecretIdInput(inputs);
+            const secretInput = this.findSecretValueInput(inputs, idInput);
+            if (idInput && secretInput) {
+                this.setNativeInputValue(idInput, secretId);
+                this.setNativeInputValue(secretInput, secretValue);
+                idInput.readOnly = true;
+                idInput.addClass("pa-secret-edit-id-input");
+                secretInput.focus();
+                secretInput.select();
+                return;
+            }
+        }
+
+        if (attempt >= maxAttempts) {
+            new Notice(`Opened Add secret. Enter ${secretId} and update the secret value.`, 5000);
+            return;
+        }
+        window.setTimeout(() => this.prefillAddSecretModal(secretId, secretValue, attempt + 1), 100);
+    }
+
+    private findAddSecretModal(): HTMLElement | null {
+        return Array.from(document.querySelectorAll<HTMLElement>("body .modal"))
+            .reverse()
+            .find((modal) => {
+                const title = modal.querySelector("h1, h2, h3, .modal-title")?.textContent?.trim();
+                const inputs = modal.querySelectorAll("input");
+                const hasSecretIdInput = Array.from(inputs).some((input) => input.placeholder === "secret-name");
+                return inputs.length >= 2 && (hasSecretIdInput || title === "Add secret" || title === "Edit secret");
+            }) ?? null;
+    }
+
+    private findSecretIdInput(inputs: HTMLInputElement[]): HTMLInputElement | null {
+        return inputs.find((input) =>
+            input.placeholder === "secret-name"
+            || input.getAttr("aria-label")?.toLowerCase().includes("id")
+        ) ?? inputs[0] ?? null;
+    }
+
+    private findSecretValueInput(
+        inputs: HTMLInputElement[],
+        idInput: HTMLInputElement | null,
+    ): HTMLInputElement | null {
+        return inputs.find((input) =>
+            input !== idInput
+            && (
+                input.placeholder.startsWith("sk-")
+                || input.type === "password"
+                || input.getAttr("aria-label")?.toLowerCase().includes("secret")
+            )
+        ) ?? inputs.find((input) => input !== idInput) ?? null;
+    }
+
+    private setNativeInputValue(input: HTMLInputElement, value: string): void {
+        input.value = value;
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+        input.dispatchEvent(new Event("change", { bubbles: true }));
+    }
+
+    private openApiTokenSecretEditor(): void {
+        const plugin = this.plugin;
+        const app = this.app;
+        const secretId = plugin.getAPITokenSecretId();
+        const legacySecretId = plugin.getLegacyAPITokenSecretId();
+        const existing = app.secretStorage.getSecret(secretId)
+            || app.secretStorage.getSecret(legacySecretId)
+            || "";
+
+        class ApiTokenSecretModal extends Modal {
+            onOpen(): void {
+                const { contentEl } = this;
+                contentEl.empty();
+                contentEl.addClass("pa-api-token-secret-modal");
+                contentEl.createEl("h2", { text: existing ? "Edit API token" : "Add API token" });
+
+                new Setting(contentEl)
+                    .setName("ID")
+                    .setDesc("Vault-scoped secret ID used by Personal Assistant.")
+                    .addText((text) => {
+                        text.setValue(secretId);
+                        text.inputEl.readOnly = true;
+                        text.inputEl.addClass("pa-secret-edit-id-input");
+                    });
+
+                let secretValue = existing;
+                let secretInput: HTMLInputElement | null = null;
+                let revealed = false;
+                const secretSetting = new Setting(contentEl)
+                    .setName("Secret")
+                    .setDesc("Stored in your OS keychain. Leave empty and save to remove it.")
+                    .addText((text) => {
+                        secretInput = text.inputEl;
+                        text.inputEl.type = "password";
+                        text.setPlaceholder("sk-...");
+                        text.setValue(existing);
+                        text.onChange((value) => {
+                            secretValue = value;
+                        });
+                    });
+                secretSetting.addExtraButton((button) => {
+                    button
+                        .setIcon("eye-off")
+                        .setTooltip("Show secret")
+                        .onClick(() => {
+                            if (!secretInput) {
+                                return;
+                            }
+                            revealed = !revealed;
+                            secretInput.type = revealed ? "text" : "password";
+                            button.setIcon(revealed ? "eye" : "eye-off");
+                            button.setTooltip(revealed ? "Hide secret" : "Show secret");
+                        });
+                });
+
+                new Setting(contentEl)
+                    .addButton((button) => {
+                        button
+                            .setButtonText("Save")
+                            .setCta()
+                            .onClick(async () => {
+                                const value = secretValue.trim();
+                                if (value === "") {
+                                    if (!existing) {
+                                        this.close();
+                                        return;
+                                    }
+                                    const confirmed = await confirmUserAction(app, {
+                                        title: "Remove API token?",
+                                        message: "This will remove the API token stored in your OS keychain for Personal Assistant. Existing notes and settings are not changed.",
+                                        confirmText: "Remove token",
+                                        cancelText: "Keep token",
+                                    });
+                                    if (!confirmed) {
+                                        return;
+                                    }
+                                    app.secretStorage.setSecret(secretId, "");
+                                    app.secretStorage.setSecret(legacySecretId, "");
+                                    plugin.clearTokenCache();
+                                    this.close();
+                                    return;
+                                }
+                                app.secretStorage.setSecret(secretId, value);
+                                if (legacySecretId !== secretId) {
+                                    app.secretStorage.setSecret(legacySecretId, "");
+                                }
+                                plugin.clearTokenCache();
+                                this.close();
+                                new Notice("API token saved.", 3000);
+                            });
+                    })
+                    .addButton((button) => {
+                        button
+                            .setButtonText("Cancel")
+                            .onClick(() => this.close());
+                    });
+
+                window.setTimeout(() => {
+                    secretInput?.focus();
+                    secretInput?.select();
+                }, 0);
+            }
+        }
+
+        new ApiTokenSecretModal(this.app).open();
+    }
+
+    private renameSecretComponentLinkButton(container: HTMLElement): void {
+        const maybeContainer = container as HTMLElement & {
+            addClass?: (cls: string) => void;
+            closest?: (selector: string) => Element | null;
+        };
+        maybeContainer.addClass?.("pa-api-token-secret-component");
+
+        const root = (maybeContainer.closest?.(".setting-item") as HTMLElement | null) ?? container;
+        const maybeRoot = root as HTMLElement & {
+            querySelectorAll?: HTMLElement["querySelectorAll"];
+        };
+        if (typeof maybeRoot.querySelectorAll !== "function") {
+            return;
+        }
+
+        const bindKeychainButton = (button: HTMLElement) => {
+            if (button.dataset.paApiTokenKeychainPatched === "true") {
+                return;
+            }
+            button.dataset.paApiTokenKeychainPatched = "true";
+            button.addEventListener("click", (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                event.stopImmediatePropagation();
+                this.openApiTokenSecretEditor();
+            }, true);
+        };
+
+        const rename = () => {
+            const candidates = Array.from(maybeRoot.querySelectorAll<HTMLElement>(
+                "button, .clickable-icon, .setting-item-control *",
+            ));
+            let renamed = false;
+            candidates.forEach((element) => {
+                const text = element.textContent?.trim();
+                if (text !== "Link..." && text !== "Link…") {
+                    return;
+                }
+                const button = element.closest("button") as HTMLElement | null ?? element;
+                const setText = (button as HTMLElement & { setText?: (value: string) => void }).setText;
+                if (setText) {
+                    setText.call(button, "Keychain");
+                } else {
+                    button.textContent = "Keychain";
+                }
+                (button as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-api-token-keychain-button");
+                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("aria-label", "Open Keychain");
+                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("title", "Open Keychain");
+                button.classList.add("pa-api-token-keychain-button");
+                button.setAttribute("aria-label", "Open Keychain");
+                button.setAttribute("title", "Open Keychain");
+                bindKeychainButton(button);
+                renamed = true;
+            });
+            const keychainButtons = candidates.filter((element) => element.textContent?.trim() === "Keychain");
+            keychainButtons.forEach((element) => bindKeychainButton(element.closest("button") as HTMLElement | null ?? element));
+            return renamed || keychainButtons.length > 0;
+        };
+
+        rename();
+        [0, 50, 150, 300, 600].forEach((delay) => {
+            window.setTimeout(rename, delay);
+        });
+
+        if (typeof MutationObserver === "undefined") {
+            return;
+        }
+        const observer = new MutationObserver(() => {
+            if (rename()) {
+                observer.disconnect();
+            }
+        });
+        observer.observe(root, {
+            childList: true,
+            subtree: true,
+            characterData: true,
+        });
+        window.setTimeout(() => observer.disconnect(), 1500);
     }
 
     private renderHeader(parentEl: HTMLElement): void {
@@ -1094,15 +1495,37 @@ export class SettingTab extends PluginSettingTab {
             .addComponent((el) => {
                 const secret = new SecretComponent(this.app, el);
                 const secretId = plugin.getAPITokenSecretId();
+                const legacySecretId = plugin.getLegacyAPITokenSecretId();
                 const existing = this.app.secretStorage.getSecret(secretId)
-                    ?? this.app.secretStorage.getSecret(plugin.getLegacyAPITokenSecretId());
+                    || this.app.secretStorage.getSecret(legacySecretId);
                 if (existing) {
                     secret.setValue(existing);
                 }
-                secret.onChange((value: string) => {
-                    // SecretStorage exposes only setSecret — writing "" is
-                    // the equivalent of clearing the token. getAPIToken()
-                    // already treats empty strings as no-token.
+                this.renameSecretComponentLinkButton(el);
+                secret.onChange(async (value: string) => {
+                    if (value === "") {
+                        const stored = this.app.secretStorage.getSecret(secretId)
+                            || this.app.secretStorage.getSecret(legacySecretId);
+                        if (!stored) {
+                            return;
+                        }
+                        const confirmed = await confirmUserAction(this.app, {
+                            title: "Remove API token?",
+                            message: "This will remove the API token stored in your OS keychain for Personal Assistant. Existing notes and settings are not changed.",
+                            confirmText: "Remove token",
+                            cancelText: "Keep token",
+                        });
+                        if (!confirmed) {
+                            secret.setValue(stored);
+                            return;
+                        }
+                        // SecretStorage exposes only setSecret — writing "" is
+                        // the equivalent of clearing the token.
+                        this.app.secretStorage.setSecret(secretId, "");
+                        this.app.secretStorage.setSecret(legacySecretId, "");
+                        plugin.clearTokenCache();
+                        return;
+                    }
                     this.app.secretStorage.setSecret(secretId, value);
                     plugin.clearTokenCache();
                 });
@@ -1130,7 +1553,7 @@ export class SettingTab extends PluginSettingTab {
 
         new Setting(container)
             .setName("Chat Model Name")
-            .setDesc("Name of the chat model to use")
+            .setDesc("Name of the AI model to use")
             .addText((text) => {
                 text.setPlaceholder("gpt-4o-mini");
                 text.setValue(plugin.settings.chatModelName);
@@ -1141,9 +1564,11 @@ export class SettingTab extends PluginSettingTab {
                 });
             });
 
-        new Setting(container)
+        const policyModelSetting = new Setting(container);
+        (policyModelSetting as Setting & { settingEl?: HTMLElement }).settingEl?.addClass("pa-policy-model-setting");
+        policyModelSetting
             .setName("Policy model name")
-            .setDesc("Optional lightweight model used to classify whether Memory, current note context, or builtin WebSearch is needed. Your chat request and explicitly sent context may be sent to your configured AI provider; hidden vault content is not sent. Leave blank to use local fallback rules.")
+            .setDesc("Optional router model for Memory/WebSearch decisions. Sends your request and explicit context to your AI provider; hidden vault content is not sent. Blank uses local fallback rules.")
             .addText((text) => {
                 text.setPlaceholder(plugin.settings.chatModelName || "optional");
                 text.setValue(plugin.settings.policyModelName);
