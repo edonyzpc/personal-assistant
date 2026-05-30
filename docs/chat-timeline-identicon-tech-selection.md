@@ -57,28 +57,28 @@ Reason: the published package root exports the desired `minidenticon()` function
 
 Implementation shape:
 
-1. Keep a small helper in `src/chat/role-identicons.ts` that memoizes data URIs for role seeds such as `chat-role:user` and `chat-role:assistant`.
+1. Keep a small helper in `src/chat/role-identicons.ts` that generates role icon models. Append a random chat-view session seed only to the pixel shape seed, so shapes are stable within one open chat session and vary between sessions while role colors remain stable.
 2. Do not import the `minidenticons` package root unless a side-effect-free import path becomes available.
-3. Extend `createRoleLabel()` to accept a role or identicon option and insert an `img` before the role text.
+3. Extend `createRoleLabel()` to accept a role or identicon option and insert an inline SVG before the role text so CSS can transition fill, transform, and opacity.
 4. Keep the assistant loader as-is; when streaming, the role label can render identicon, loader, then text, or identicon, text, then loader depending on the desired visual order.
 5. Add scoped CSS:
-   - fixed 18-20px dimensions,
+   - fixed 24px desktop dimensions with a slightly larger compact/mobile pane size,
    - `aria-hidden="true"` and empty `alt`,
    - no layout shift,
    - optional CSS-only pulse/ring for live assistant generation,
-   - disabled animation under `prefers-reduced-motion: reduce`.
+   - disabled motion/transition under `prefers-reduced-motion: reduce`.
 6. Cover with focused `chat-view` tests asserting the user and assistant role labels include identicons, the live assistant loader still appears, and reduced-motion CSS disables identicon animation.
 
 ## Animation Direction
 
-Do not animate SVG generation. Generate each role identicon once per session and animate only compositor-friendly CSS properties on the surrounding element:
+Do not animate SVG generation. Generate role identicon shapes from the role plus a chat-view session seed, render the current message label as inline SVG, and animate only CSS state changes on the surrounding element and SVG color:
 
 - default/static state: no animation;
-- new message: reuse the existing message enter animation;
-- live assistant: subtle opacity/scale pulse on `.pa-chat-role-identicon-assistant` while `.llm-message[aria-busy="true"]`;
-- reduced motion: no animation.
+- new message: transition the role icon from a slightly lower-opacity translated state into rest;
+- live assistant: transition the role color, opacity, and a small vertical transform on `.pa-chat-role-identicon-assistant` while `.llm-message[aria-busy="true"]`;
+- reduced motion: no animation or transition.
 
-This keeps the feature cheap in long histories because old messages are static DOM plus an already memoized data URI.
+This keeps the feature cheap in long histories because old messages are static DOM with no repeating animation.
 
 ## Non-Goals
 
