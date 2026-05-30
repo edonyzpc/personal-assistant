@@ -90,6 +90,7 @@ export class ChatHistoryPickerModal extends Modal {
 
     onOpen() {
         const { contentEl } = this;
+        (this as unknown as { modalEl?: HTMLElement }).modalEl?.addClass('pa-chat-history-modal-shell');
         contentEl.empty();
         contentEl.addClass('pa-chat-history-modal');
         contentEl.createEl('h2', { text: 'Chat history' });
@@ -121,8 +122,9 @@ export class ChatHistoryPickerModal extends Modal {
             if (conversation.id === this.options.activeConversationId) {
                 title.createSpan({ cls: 'pa-chat-history-active-badge', text: ' (current)' });
             }
-            if (conversation.preview) {
-                button.createEl('div', { cls: 'pa-chat-history-preview', text: conversation.preview });
+            const preview = getDistinctChatHistoryPreview(conversation.title, conversation.preview);
+            if (preview) {
+                button.createEl('div', { cls: 'pa-chat-history-preview', text: preview });
             }
             button.createEl('div', {
                 cls: 'pa-chat-history-meta',
@@ -185,4 +187,26 @@ function formatRelativeTime(iso: string): string {
     const days = Math.floor(hours / 24);
     if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
     return new Date(timestamp).toLocaleDateString();
+}
+
+export function getDistinctChatHistoryPreview(title: string, preview: string): string {
+    const normalizedPreview = normalizeChatHistorySummary(preview);
+    if (!normalizedPreview) return '';
+
+    const normalizedTitle = normalizeChatHistorySummary(title);
+    if (!normalizedTitle) return normalizedPreview;
+
+    const titlePrefix = normalizedTitle.replace(/[.…]+$/u, '').trim();
+    if (
+        normalizedPreview === normalizedTitle
+        || normalizedPreview === titlePrefix
+        || (titlePrefix.length >= 24 && normalizedPreview.startsWith(titlePrefix))
+    ) {
+        return '';
+    }
+    return normalizedPreview;
+}
+
+function normalizeChatHistorySummary(value: string): string {
+    return (value ?? '').trim().replace(/\s+/g, ' ');
 }

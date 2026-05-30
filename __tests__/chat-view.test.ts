@@ -4,6 +4,7 @@ import { MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat/chat-view';
+import { getDistinctChatHistoryPreview } from '../src/chat/modals';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 
 jest.mock('obsidian');
@@ -2539,6 +2540,32 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.llm-view\s+\.pa-chat-mermaid-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
         expect(css).toMatch(/\.llm-view\.is-narrow\s+\.pa-chat-mermaid-open-button\s*{[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;[\s\S]*?min-width:\s*40px;[\s\S]*?min-height:\s*40px;/);
         expect(css).toMatch(/\.pa-chat-mermaid-modal-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
+    });
+
+    it('keeps chat history rows inside the modal width on mobile', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+
+        expect(css).toMatch(/\.pa-chat-history-modal-shell\s*{[\s\S]*?width:\s*min\(720px,\s*calc\(100vw - 32px\)\);[\s\S]*?overflow-x:\s*hidden;/);
+        expect(css).toMatch(/\.pa-chat-history-list\s*{[\s\S]*?list-style:\s*none;[\s\S]*?max-width:\s*100%;[\s\S]*?overflow-x:\s*hidden;/);
+        expect(css).toMatch(/\.pa-chat-history-item\s*{[\s\S]*?grid-template-columns:\s*minmax\(0,\s*1fr\)\s*44px;[\s\S]*?min-width:\s*0;/);
+        expect(css).toMatch(/\.pa-chat-history-open\s*{[\s\S]*?max-width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?overflow:\s*hidden;/);
+        expect(css).toMatch(/\.pa-chat-history-title,\s*\n\.pa-chat-history-preview,\s*\n\.pa-chat-history-meta\s*{[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?white-space:\s*nowrap;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-history-modal-shell\s*{[\s\S]*?max-width:\s*calc\(100vw - 24px\);/);
+    });
+
+    it('hides chat history previews that duplicate the title', () => {
+        expect(getDistinctChatHistoryPreview(
+            '移动端 smoke： 请用一句话说明当前笔记标题，并提到 pa-p…',
+            '移动端 smoke： 请用一句话说明当前笔记标题，并提到 pa-positive-snippet-token-1701。',
+        )).toBe('');
+        expect(getDistinctChatHistoryPreview(
+            'Smoke test only. Reply exactly: PA_SMOKE_OK',
+            'Smoke test only. Reply exactly: PA_SMOKE_OK',
+        )).toBe('');
+        expect(getDistinctChatHistoryPreview(
+            'Memory setup',
+            'Different note context was used.',
+        )).toBe('Different note context was used.');
     });
 
     it('keeps message bubble enter animation opt-in', () => {
