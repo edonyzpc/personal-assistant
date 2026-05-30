@@ -185,10 +185,16 @@ describe('Keychain Migration - SecretStorage', () => {
         });
 
         it('deletes legacy apiToken after decryption failure', async () => {
-            plugin.settings.apiToken = 'invalid-not-base64-encrypted-data';
-            await plugin.migrateSettings();
-            expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalled();
-            expect(plugin.settings).not.toHaveProperty('apiToken');
+            const consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation(() => undefined);
+            try {
+                plugin.settings.apiToken = 'invalid-not-base64-encrypted-data';
+                await plugin.migrateSettings();
+                expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalled();
+                expect(plugin.settings).not.toHaveProperty('apiToken');
+                expect(consoleErrorSpy).not.toHaveBeenCalled();
+            } finally {
+                consoleErrorSpy.mockRestore();
+            }
         });
 
         it('copies an existing legacy keychain token into the vault-scoped id when scoped is missing', async () => {

@@ -267,8 +267,7 @@ export class CryptoHelper {
             // convert bytes to text
             const decryptedText = utf8Decoder.decode(decryptedBytes);
             return decryptedText;
-        } catch (e) {
-            console.error(e);
+        } catch {
             return null;
         }
     }
@@ -298,8 +297,7 @@ export class CryptoHelper {
             // // convert bytes to text
             // let decryptedText = utf8Decoder.decode(decryptedBytes);
             // return decryptedText;
-        } catch (e) {
-            console.error(e);
+        } catch {
             return null;
         }
     }
