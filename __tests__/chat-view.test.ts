@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
 import { MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
-import type { ChatAgentStatus, StreamLLMOptions } from '../src/ai-services/chat-service';
+import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat/chat-view';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
@@ -520,7 +520,7 @@ function mockRenderedMemoryCallout() {
     });
 }
 
-function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number } = {}) {
+function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; chatHistoryManager?: unknown } = {}) {
     const containerEl = new MockElement('div');
     containerEl.clientWidth = options.panelWidth ?? 600;
     const workspaceHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
@@ -572,6 +572,7 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number }
                 'pa-plugin-config-review',
             ],
         },
+        chatHistoryManager: options.chatHistoryManager,
         memoryManager: {
             getMaintenancePlan: jest.fn(async (): Promise<MemoryMaintenancePlan> => ({
                 reason: 'ready',
@@ -878,9 +879,21 @@ describe('LLMView turn lifecycle', () => {
         expect(liveAssistantMessages).toHaveLength(1);
         const liveAssistantMessage = liveAssistantMessages[0];
         expect(allText(liveAssistantMessages[0])).toContain('Assistant');
+        const userRole = getElementByClass(liveUserMessage, 'message-role');
+        const userIdenticon = getElementByClass(userRole, 'pa-chat-role-identicon-user');
+        expect(userIdenticon.tagName).toBe('img');
+        expect(userIdenticon.getAttribute('alt')).toBe('');
+        expect(userIdenticon.getAttribute('aria-hidden')).toBe('true');
+        expect(userIdenticon.getAttribute('src')).toMatch(/^data:image\/svg\+xml;utf8,/);
+        expect(userRole.children[0]).toBe(userIdenticon);
         const assistantRole = getElementByClass(liveAssistantMessages[0], 'message-role');
+        const assistantIdenticon = getElementByClass(assistantRole, 'pa-chat-role-identicon-assistant');
         const assistantLoader = getElementByClass(assistantRole, 'pa-chat-role-loader-assistant');
-        expect(assistantRole.children[0]).toBe(assistantLoader);
+        expect(assistantIdenticon.tagName).toBe('img');
+        expect(assistantIdenticon.getAttribute('src')).toMatch(/^data:image\/svg\+xml;utf8,/);
+        expect(assistantIdenticon.getAttribute('src')).not.toBe(userIdenticon.getAttribute('src'));
+        expect(assistantRole.children[0]).toBe(assistantIdenticon);
+        expect(assistantRole.children[2]).toBe(assistantLoader);
         expect(walk(liveAssistantMessages[0], (el) => el.tagName === 'l-bouncy-arc')).not.toBeNull();
         expect(liveUserMessage.classList.contains('llm-message-enter')).toBe(true);
         expect(liveAssistantMessage.classList.contains('llm-message-enter')).toBe(true);
@@ -2059,6 +2072,65 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('first prompt');
         expect(allText(containerEl)).toContain('second prompt');
         expect(getElementsByClass(containerEl, 'llm-message-enter')).toHaveLength(0);
+        const redrawnUserMessage = getElementByClass(containerEl, 'user');
+        const redrawnAssistantMessage = getElementByClass(containerEl, 'assistant');
+        const redrawnUserRole = getElementByClass(redrawnUserMessage, 'message-role');
+        const redrawnAssistantRole = getElementByClass(redrawnAssistantMessage, 'message-role');
+        expect(getElementByClass(redrawnUserRole, 'pa-chat-role-identicon-user').tagName).toBe('img');
+        expect(getElementByClass(redrawnAssistantRole, 'pa-chat-role-identicon-assistant').tagName).toBe('img');
+        expect(redrawnUserMessage.getAttribute('aria-busy')).toBeNull();
+        expect(redrawnAssistantMessage.getAttribute('aria-busy')).toBeNull();
+    });
+
+    it('restores persisted history with static role identicons', async () => {
+        const restoredUser: ChatMessage = { role: 'user', content: 'restored prompt' };
+        const restoredAssistant: ChatMessage = { role: 'assistant', content: 'restored answer' };
+        const restoredEntry = {
+            kind: 'history' as const,
+            user: restoredUser,
+            assistant: restoredAssistant,
+        };
+        const chatHistoryManager = {
+            initialize: jest.fn(async () => undefined),
+            isAvailable: jest.fn(() => true),
+            getActiveConversationId: jest.fn(async () => 'conv_restored'),
+            findConversation: jest.fn(async () => ({
+                id: 'conv_restored',
+                title: 'Restored',
+                createdAt: '2026-01-01T00:00:00.000Z',
+                updatedAt: '2026-01-01T00:00:00.000Z',
+                turnCount: 1,
+                preview: 'restored prompt',
+            })),
+            getTurns: jest.fn(async () => [{
+                conversationId: 'conv_restored',
+                turnIndex: 0,
+                user: { role: 'user' as const, content: 'restored prompt' },
+                assistant: { role: 'assistant' as const, content: 'restored answer' },
+            }]),
+            deserializeTurn: jest.fn(() => ({
+                userMessage: restoredUser,
+                assistantMessage: restoredAssistant,
+                historyEntry: restoredEntry,
+            })),
+            setActiveConversationId: jest.fn(async () => undefined),
+        };
+        const { view, containerEl } = createView({ chatHistoryManager });
+
+        await view.onOpen();
+        await flushPromises();
+        await flushPromises();
+
+        expect(chatHistoryManager.deserializeTurn).toHaveBeenCalledTimes(1);
+        expect(view.chatHistory).toEqual([restoredUser, restoredAssistant]);
+        const restoredUserMessage = getElementByClass(containerEl, 'user');
+        const restoredAssistantMessage = getElementByClass(containerEl, 'assistant');
+        const restoredUserRole = getElementByClass(restoredUserMessage, 'message-role');
+        const restoredAssistantRole = getElementByClass(restoredAssistantMessage, 'message-role');
+        expect(getElementByClass(restoredUserRole, 'pa-chat-role-identicon-user').tagName).toBe('img');
+        expect(getElementByClass(restoredAssistantRole, 'pa-chat-role-identicon-assistant').tagName).toBe('img');
+        expect(restoredUserMessage.getAttribute('aria-busy')).toBeNull();
+        expect(restoredAssistantMessage.getAttribute('aria-busy')).toBeNull();
     });
 
     it('ignores stale clear and delete confirmations after the view session changes', async () => {
@@ -2544,10 +2616,18 @@ describe('LLMView turn lifecycle', () => {
     it('keeps message bubble enter animation opt-in', () => {
         const css = readFileSync('src/custom.css', 'utf8');
         const messageBaseRule = css.match(/\.llm-message\s*{([\s\S]*?)\n}/);
+        const identiconLiveStart = css.indexOf('@keyframes pa-chat-identicon-live');
+        const identiconLiveEnd = css.indexOf('.llm-view .thinking-status-header', identiconLiveStart);
+        const identiconLiveBlock = css.slice(identiconLiveStart, identiconLiveEnd);
 
         expect(messageBaseRule?.[1]).not.toMatch(/\banimation\s*:/);
+        expect(identiconLiveStart).toBeGreaterThanOrEqual(0);
+        expect(identiconLiveEnd).toBeGreaterThan(identiconLiveStart);
+        expect(identiconLiveBlock).not.toMatch(/\bbox-shadow\s*:/);
         expect(css).toMatch(/\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*message-fade-in 160ms ease-out;/);
+        expect(css).toMatch(/\.llm-message\[aria-busy="true"\]\s+\.pa-chat-role-identicon-assistant\s*{[\s\S]*?animation:\s*pa-chat-identicon-live 1\.8s ease-in-out infinite;/);
         expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*none;/);
+        expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-message\[aria-busy="true"\]\s+\.pa-chat-role-identicon-assistant\s*{[\s\S]*?animation:\s*none;/);
     });
 
     it('anchors Memory and More menus inside their composer action controls', async () => {
