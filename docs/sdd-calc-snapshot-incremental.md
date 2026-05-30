@@ -1,13 +1,21 @@
 # SDD: calcSnapshot() 增量优化
 
-**Status:** Accepted design record
+**Status:** Implemented; historical design record
 **Phase:** 3.2
+
+---
+
+## Implementation Status (2026-05-30)
+
+This SDD has been implemented in current code. `src/stats/stats-local-store.ts` defines and persists `fileCountCache`, while `src/stats/stats-manager.ts` loads, validates, invalidates, and updates cache entries around vault create/modify/delete/rename events before incremental snapshot calculation.
+
+Regression coverage exists in `__tests__/stats-local-store.test.ts` and `__tests__/stats-manager.test.ts`. This document is retained as a historical design record, not as an open implementation plan.
 
 ---
 
 ## 1. Context
 
-`StatsManager.calcSnapshot()` 在插件启动 3 秒后被调用一次（`scheduleSnapshotRefresh()` → `refreshSnapshotInBackground()`），同步遍历 vault 所有 `.md` 文件，对每个文件执行 `vault.cachedRead()` + `countText()`（6 个正则密集函数）。所有逻辑跑在单个 event loop turn，导致 UI 卡顿。
+设计时 `StatsManager.calcSnapshot()` 在插件启动 3 秒后被调用一次（`scheduleSnapshotRefresh()` → `refreshSnapshotInBackground()`），同步遍历 vault 所有 `.md` 文件，对每个文件执行 `vault.cachedRead()` + `countText()`（6 个正则密集函数）。当前代码已引入本地文件计数缓存和增量路径。
 
 **已知影响:**
 - 桌面 500 笔记 vault：1-3 秒主线程阻塞
@@ -385,14 +393,16 @@ async calcSnapshot(shouldCancel: CancelCheck = () => false): Promise<SnapshotCou
 
 ## 9. Verification Checklist
 
-- [ ] `tsc -noEmit -skipLibCheck`
-- [ ] `npm test -- --testPathPattern=stats-manager`
-- [ ] `npm test -- --testPathPattern=stats-local-store`
-- [ ] `npm run build`
-- [ ] `npm run audit:bundle`
-- [ ] 真实 500 笔记 vault 实测（冷/暖/iCloud 场景）
-- [ ] iOS Obsidian 实测
-- [ ] Android Obsidian 实测
+Historical SDD checklist. Current code/test status is tracked in `docs/v2-fix-plan.md`; do not treat unchecked boxes here as current release blockers without re-auditing the code.
+
+- `tsc -noEmit -skipLibCheck`
+- `npm test -- --testPathPattern=stats-manager`
+- `npm test -- --testPathPattern=stats-local-store`
+- `npm run build`
+- `npm run audit:bundle`
+- 真实 500 笔记 vault 实测（冷/暖/iCloud 场景）
+- iOS Obsidian 实测
+- Android Obsidian 实测
 
 ---
 

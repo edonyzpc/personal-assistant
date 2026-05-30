@@ -1,13 +1,21 @@
 # SDD: RequiredCapabilityClassification 重构简化
 
-**Status:** Accepted design record
+**Status:** Implemented; historical design record
 **Phase:** 3.6
+
+---
+
+## Implementation Status (2026-05-30)
+
+This SDD has been implemented in current code. `src/ai-services/pa-agent-required-capability-policy.ts` removes the old `ignore` level, uses a unified `scoreCapability()` table with English regex and CJK token signals, and models runtime recovery with explicit phases instead of the older boolean-state shape.
+
+Regression coverage exists in `__tests__/pa-agent-required-capability-policy.test.ts`. This document is retained as a historical design record, not as an open implementation plan.
 
 ---
 
 ## 1. Context
 
-`pa-agent-required-capability-policy.ts`（582 行）实现 RequiredCapability 分类与运行时执行策略，是 PA Agent 控制循环的关键组件。当前实现存在以下问题：
+设计时 `pa-agent-required-capability-policy.ts`（582 行）实现 RequiredCapability 分类与运行时执行策略，是 PA Agent 控制循环的关键组件。当时存在以下问题：
 
 ### 1.1 类型层冗余
 当前导出 10 个类型/接口：
@@ -495,14 +503,16 @@ export interface RequiredCapabilityHostPolicyOptions {
 
 ## 9. Verification Checklist
 
-- [ ] `tsc -noEmit -skipLibCheck`
-- [ ] `npm test -- --testPathPattern=pa-agent-required-capability-policy`
-- [ ] `npm test -- --testPathPattern=pa-agent-runtime`（消费者回归）
-- [ ] `npm test`（全量）
-- [ ] `npm run build`
-- [ ] `grep -rn "policyModelAvailable\|classifierUsed\|classifierTimedOut\|fallbackUsed" src/` 应无业务代码命中
-- [ ] 真实 vault 测试中文输入 → 工具触发
-- [ ] 真实 vault 测试英文输入 → 行为不退化
+Historical SDD checklist. Current code/test status is tracked in `docs/v2-fix-plan.md`; do not treat unchecked boxes here as current release blockers without re-auditing the code.
+
+- `tsc -noEmit -skipLibCheck`
+- `npm test -- --testPathPattern=pa-agent-required-capability-policy`
+- `npm test -- --testPathPattern=pa-agent-runtime`（消费者回归）
+- `npm test`（全量）
+- `npm run build`
+- `grep -rn "policyModelAvailable\|classifierUsed\|classifierTimedOut\|fallbackUsed" src/` 应无业务代码命中
+- 真实 vault 测试中文输入 → 工具触发
+- 真实 vault 测试英文输入 → 行为不退化
 
 ---
 
@@ -517,8 +527,10 @@ export interface RequiredCapabilityHostPolicyOptions {
 
 ---
 
-## 11. 工作流程
+## 11. Historical Workflow
 
 1. 设计记录定稿并通过 review。
 2. 按 Phase A→B→C→D 顺序实施，每阶段保持可独立 review。
 3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。
+
+This workflow is historical because the required-capability refactor is implemented in current code.

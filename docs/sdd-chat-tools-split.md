@@ -1,13 +1,21 @@
 # SDD: chat-tools.ts 模块拆分
 
-**Status:** Accepted design record
+**Status:** Implemented; historical design record
 **Phase:** 3.1
+
+---
+
+## Implementation Status (2026-05-30)
+
+This SDD has been implemented in current code. `src/ai-services/chat-tools.ts` is now a barrel re-export; implementation is split across `chat-tool-types.ts`, `chat-tool-constants.ts`, `chat-tool-registry.ts`, `chat-tool-factories.ts`, `chat-tool-guards.ts`, `chat-tool-prepare-helpers.ts`, and `chat-tool-execution-helpers.ts`.
+
+This document is retained as a historical design record and module-boundary reference, not as an open implementation plan.
 
 ---
 
 ## 1. Context
 
-`src/ai-services/chat-tools.ts` 当前 3043 行，承载了：类型定义、常量、`ToolRegistry` 类、9 个工具工厂、参数验证、类型守卫、vault 访问/解析/搜索辅助、错误处理。文件过大导致：
+设计时 `src/ai-services/chat-tools.ts` 有 3043 行，承载了：类型定义、常量、`ToolRegistry` 类、9 个工具工厂、参数验证、类型守卫、vault 访问/解析/搜索辅助、错误处理。当前代码已经拆分，文件过大问题不再作为待办记录。
 
 - 阅读/导航成本高
 - 任何改动都触发整个文件重新评估
@@ -301,12 +309,14 @@ D (factories)    : A, B, E, F  (+ obsidian-operations-capability-catalog)
 
 ## 8. Verification Checklist
 
-- [ ] `tsc -noEmit -skipLibCheck`
-- [ ] `npm test`（全量）
-- [ ] `npm run build`
-- [ ] `npm run audit:bundle`（确认 gzip 不变）
-- [ ] 手动启动测 vault 跑一遍 9 个工具的 happy path
-- [ ] grep 搜索 `from "./chat-tools"` 确认所有消费者仍通过 barrel
+Historical SDD checklist. Current code/test status is tracked in `docs/v2-fix-plan.md`; do not treat unchecked boxes here as current release blockers without re-auditing the code.
+
+- `tsc -noEmit -skipLibCheck`
+- `npm test`（全量）
+- `npm run build`
+- `npm run audit:bundle`（确认 gzip 不变）
+- 手动启动测 vault 跑一遍 9 个工具的 happy path
+- grep 搜索 `from "./chat-tools"` 确认所有消费者仍通过 barrel
 
 ---
 
@@ -320,8 +330,10 @@ D (factories)    : A, B, E, F  (+ obsidian-operations-capability-catalog)
 
 ---
 
-## 10. 工作流程
+## 10. Historical Workflow
 
 1. 设计记录定稿并通过 review。
-2. 在独立开发分支或 worktree 中实施，保持每个阶段可独立验证。
+2. 原计划通过独立开发分支或 worktree 实施，保持每个阶段可独立验证。
 3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。
+
+This workflow is historical because the split is implemented in current code.

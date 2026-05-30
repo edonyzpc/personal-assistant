@@ -1,13 +1,21 @@
 # SDD: WASM 懒加载
 
-**Status:** Accepted design record
+**Status:** Implemented; historical design record
 **Phase:** 3.3
+
+---
+
+## Implementation Status (2026-05-30)
+
+This SDD has been implemented in current code. `esbuild.config.mjs` uses `lazyBinaryPlugin`, and `src/vss/sqlite-inline-assets.ts` obtains the WASM bytes through `getSqliteWasmBinary()` only when building the inline SQLite WASM URL.
+
+Regression coverage exists in `__tests__/sqlite-inline-assets.test.ts`. This document is retained as a historical design record, not as an open implementation plan.
 
 ---
 
 ## 1. Context
 
-插件包含 SQLite WASM 二进制（~941KB）用于向量相似度搜索（Memory）。当前打包/加载方式：
+插件包含 SQLite WASM 二进制（~941KB）用于向量相似度搜索（Memory）。设计时的打包/加载方式是：
 
 - esbuild `binary` loader 处理 `.wasm` import
 - 构建期生成 `NM("AGFzbQ...")` 调用，模块评估时立即解码为 `Uint8Array`
@@ -338,14 +346,16 @@ esbuild `splitting: false` 把 dynamic import 退化为 require，需要类似 `
 
 ## 11. Verification Checklist
 
-- [ ] `tsc -noEmit -skipLibCheck`
-- [ ] `npm test`
-- [ ] `npm run build`
-- [ ] `npm run audit:bundle`
-- [ ] DevTools heap snapshot 对比（cold/warm 各取一次）
-- [ ] iOS Obsidian 实测 Memory 流程
-- [ ] Android Obsidian 实测 Memory 流程
-- [ ] 验证 `dist/main.js` 中 `_b64 = "..."` 字符串存在 + `getSqliteWasmBinary` 函数存在
+Historical SDD checklist. Current code/test status is tracked in `docs/v2-fix-plan.md`; do not treat unchecked boxes here as current release blockers without re-auditing the code.
+
+- `tsc -noEmit -skipLibCheck`
+- `npm test`
+- `npm run build`
+- `npm run audit:bundle`
+- DevTools heap snapshot 对比（cold/warm 各取一次）
+- iOS Obsidian 实测 Memory 流程
+- Android Obsidian 实测 Memory 流程
+- 验证 `dist/main.js` 中 `_b64 = "..."` 字符串存在 + `getSqliteWasmBinary` 函数存在
 
 ---
 
@@ -368,8 +378,10 @@ esbuild `splitting: false` 把 dynamic import 退化为 require，需要类似 `
 
 ---
 
-## 13. 工作流程
+## 13. Historical Workflow
 
 1. 设计记录定稿并通过 review。
-2. 在独立开发分支或 worktree 中实施，避免与其他 Phase 3 项目互相阻塞。
+2. 原计划通过独立开发分支或 worktree 实施，避免与其他 Phase 3 项目互相阻塞。
 3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。
+
+This workflow is historical because WASM lazy loading is implemented in current code.

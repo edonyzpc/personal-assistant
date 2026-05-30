@@ -1,13 +1,21 @@
 # SDD: 聊天历史持久化
 
-**Status:** Accepted design record
+**Status:** Implemented; historical design record
 **Phase:** 3.5
+
+---
+
+## Implementation Status (2026-05-30)
+
+This SDD has been implemented in current code. The implementation uses `src/chat/chat-history-store.ts` for IndexedDB/Memory/Unavailable stores, `src/chat/chat-history-manager.ts` for conversation/turn lifecycle, `src/plugin.ts` for plugin-level initialization/disposal, and `src/chat/chat-view.ts` for restore, conversation switching, delete/clear, and finalize-time persistence.
+
+Regression coverage exists in `__tests__/chat-history-store.test.ts`, `__tests__/chat-history-manager.test.ts`, and `__tests__/pa-agent-history.test.ts`. This document is retained as a historical design record, not as an open implementation plan.
 
 ---
 
 ## 1. Context
 
-当前 AI Chat 的对话历史完全存活在 `LLMView` 实例的内存中（`chatHistory: ChatMessage[]` + `timelineEntries: TimelineEntry[]`），sidebar 关闭、插件 reload、Obsidian 重启都会清空所有对话。用户反复指出"刚才的对话怎么没了"是高频投诉。
+设计时 AI Chat 的对话历史完全存活在 `LLMView` 实例的内存中（`chatHistory: ChatMessage[]` + `timelineEntries: TimelineEntry[]`），sidebar 关闭、插件 reload、Obsidian 重启都会清空所有对话。这个问题已按本设计在当前代码中落地修复。
 
 **关键约束:**
 - Obsidian plugin 跨 desktop/mobile，需要在 iOS/Android WebView 也能工作
@@ -406,14 +414,16 @@ async switchActiveConversation(newId: string): Promise<void> {
 
 ## 14. Verification Checklist
 
-- [ ] `tsc -noEmit -skipLibCheck`
-- [ ] `npm test -- --testPathPattern=chat-history`
-- [ ] `npm test`（全量）
-- [ ] `npm run build`
-- [ ] `npm run audit:bundle`
-- [ ] 真实 vault 手动 21 项测试
-- [ ] iOS Obsidian 实测
-- [ ] Android Obsidian 实测
+Historical SDD checklist. Current code/test status is tracked in `docs/v2-fix-plan.md`; do not treat unchecked boxes here as current release blockers without re-auditing the code.
+
+- `tsc -noEmit -skipLibCheck`
+- `npm test -- --testPathPattern=chat-history`
+- `npm test`（全量）
+- `npm run build`
+- `npm run audit:bundle`
+- 真实 vault 手动 21 项测试
+- iOS Obsidian 实测
+- Android Obsidian 实测
 
 ---
 
@@ -432,8 +442,10 @@ async switchActiveConversation(newId: string): Promise<void> {
 
 ---
 
-## 16. 工作流程
+## 16. Historical Workflow
 
 1. 设计记录定稿并通过 review。
-2. 在独立开发分支或 worktree 中实施，避免与其他 Phase 3 项目互相阻塞。
+2. 原计划通过独立开发分支或 worktree 实施，避免与其他 Phase 3 项目互相阻塞。
 3. 完成 TypeScript、Jest、lint/build 与必要的 Obsidian smoke 验证后合入。
+
+This workflow is historical because chat history persistence is implemented in current code.
