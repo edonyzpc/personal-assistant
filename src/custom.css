@@ -685,6 +685,26 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 	line-height: 1.25;
 }
 
+.llm-view .pa-chat-role-identicon {
+	display: inline-block;
+	flex: 0 0 20px;
+	width: 20px;
+	height: 20px;
+	box-sizing: border-box;
+	padding: 2px;
+	border-radius: 50%;
+	background: var(--background-modifier-hover);
+	box-shadow: inset 0 0 0 1px var(--background-modifier-border);
+	object-fit: contain;
+	transform-origin: center;
+	user-select: none;
+	-webkit-user-drag: none;
+}
+
+.llm-message[aria-busy="true"] .pa-chat-role-identicon-assistant {
+	animation: pa-chat-identicon-live 1.8s ease-in-out infinite;
+}
+
 .llm-view .pa-chat-role-loader {
 	--pa-chat-loader-color-rose: #ff2d55;
 	--pa-chat-loader-color-orange: #ff9500;
@@ -774,6 +794,18 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 	}
 	80% {
 		color: var(--pa-chat-loader-color-violet);
+	}
+}
+
+@keyframes pa-chat-identicon-live {
+	0%,
+	100% {
+		opacity: 0.9;
+		transform: scale(1);
+	}
+	50% {
+		opacity: 1;
+		transform: scale(1.06);
 	}
 }
 
@@ -1579,6 +1611,12 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 	.llm-view .pa-chat-role-loader-assistant {
 		animation: none;
 		color: var(--pa-chat-loader-color-rose);
+	}
+
+	.llm-message[aria-busy="true"] .pa-chat-role-identicon-assistant {
+		animation: none;
+		opacity: 1;
+		transform: none;
 	}
 
 	.llm-view .pa-chat-role-loader-fallback span {

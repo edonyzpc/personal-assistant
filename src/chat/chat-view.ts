@@ -13,6 +13,7 @@ import type { PersistedConversation, PersistedTurn } from './chat-history-store'
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
+import { getChatRoleIdenticonSrc, type ChatRoleIdenticon } from './role-identicons';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
 export type { ChatMessage };
@@ -536,15 +537,31 @@ export class LLMView extends ItemView {
             text: string,
             options: {
                 extraClass?: string;
+                identicon?: ChatRoleIdenticon;
                 loader?: 'thinking' | 'assistant';
             } = {},
         ): { roleEl: HTMLElement; loaderEl?: HTMLElement } => {
             const roleEl = parent.createDiv({
                 cls: ['message-role', options.extraClass ?? ''].filter(Boolean).join(' '),
             });
-            const loaderEl = options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
+            if (options.identicon) {
+                roleEl.createEl('img', {
+                    cls: `pa-chat-role-identicon pa-chat-role-identicon-${options.identicon}`,
+                    attr: {
+                        src: getChatRoleIdenticonSrc(options.identicon),
+                        alt: '',
+                        'aria-hidden': 'true',
+                        draggable: 'false',
+                        decoding: 'async',
+                    },
+                });
+            }
+            const loaderEl = !options.identicon && options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
             roleEl.createSpan({ cls: 'pa-chat-role-text', text });
-            return { roleEl, loaderEl };
+            return {
+                roleEl,
+                loaderEl: options.identicon && options.loader ? createRoleLoader(roleEl, options.loader) : loaderEl,
+            };
         };
         const stopThinkingLoader = (statusView?: ThinkingStatusView) => {
             removeElement(statusView?.loaderEl);
@@ -906,6 +923,7 @@ export class LLMView extends ItemView {
                 messageDiv.setAttribute('aria-busy', 'true');
             }
             const { roleEl, loaderEl } = createRoleLabel(messageDiv, message.role === 'user' ? 'You' : 'Assistant', {
+                identicon: message.role,
                 loader: options.showAssistantLoader ? 'assistant' : undefined,
             });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
