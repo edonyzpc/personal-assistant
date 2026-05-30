@@ -501,6 +501,8 @@ describe('VSS status performance notices', () => {
             storagePersisted: false,
             fallbackMode: false,
             lastErrorCode: 'opfs-sahpool-locked',
+            opfsDirectory: '/personal-assistant-vss-v2/test-e50kp6',
+            opfsVfsName: 'opfs-sahpool-test-e50kp6',
         }, {
             dirtyCount: 2,
             verificationPending: 1,
@@ -512,6 +514,8 @@ describe('VSS status performance notices', () => {
             { label: 'Storage', value: 'Best-effort storage', tone: 'warning' },
             { label: 'Maintenance', value: '2 dirty, 1 verification pending', tone: 'warning' },
             { label: 'Last error', value: 'opfs-sahpool-locked', tone: 'danger' },
+            { label: 'OPFS scope', value: '/personal-assistant-vss-v2/test-e50kp6', tone: 'warning' },
+            { label: 'OPFS VFS', value: 'opfs-sahpool-test-e50kp6', tone: 'warning' },
         ]));
         expect(model.notes).toHaveLength(1);
         expect(model.notes[0]).toContain('above 50k chunks');

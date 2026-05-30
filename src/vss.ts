@@ -55,9 +55,9 @@ const VSS_MOBILE_VERIFY_MAX_WALL_CLOCK_MS = 100;
 const VSS_MOBILE_CHAT_VERIFY_MAX_FILES = 1;
 const VSS_MOBILE_CHAT_VERIFY_MAX_BYTES = 512 * 1024;
 const VSS_MOBILE_CHAT_VERIFY_MAX_WALL_CLOCK_MS = 100;
-const VSS_FOREGROUND_LOCKED_WAIT_MS = 400;
+const VSS_FOREGROUND_LOCKED_WAIT_MS = 1_500;
 const VSS_MANUAL_LOCKED_WAIT_MS = 3_000;
-const VSS_INDEX_DISPOSE_TIMEOUT_MS = 1_000;
+const VSS_INDEX_DISPOSE_TIMEOUT_MS = 4_000;
 const VSS_RECOVERY_COOLDOWN_MS = 5_000;
 const VSS_GLOBAL_SHUTDOWN_KEY = "__personalAssistantVssShutdownBarriers";
 const VSS_LOCAL_STATE_UNAVAILABLE_CODE = "vss-local-state-unavailable";
@@ -273,8 +273,12 @@ export class VSS {
         this.storageStatus = await this.getStoragePersistenceStatus();
         if (this.disposed) return;
 
-        if (!this.marker && !this.markerRecoverySuppressed) {
-            await this.tryRecoverMarkerFromSqlite();
+        if (!this.marker) {
+            this.status = "uninitialized";
+            this.initialized = true;
+            return;
+        }
+        if (this.status === "stale") {
             this.initialized = true;
             return;
         }
@@ -312,8 +316,8 @@ export class VSS {
         if (!this.localStateHydrated && !this.hasPendingLocalStateWrites()) {
             await this.hydrateLocalStateFromStore();
         }
-        if (!this.marker && !this.markerRecoverySuppressed) {
-            await this.tryRecoverMarkerFromSqlite();
+        if (!this.marker) {
+            this.status = "uninitialized";
         }
         await this.flushPendingLocalStateWrites();
         if (this.marker && !this.index && this.status === "uninitialized") {
@@ -354,16 +358,25 @@ export class VSS {
 
     dispose(): Promise<void> {
         if (this.disposePromise) return this.disposePromise;
+        const pendingInitialization = this.initializationPromise;
+        const pendingEnsureIndex = this.ensureIndexPromise;
+        const pendingRecovery = this.sqliteRecoveryPromise;
         this.disposed = true;
         this.initialized = false;
         this.initializationPromise = null;
         this.ensureIndexPromise = null;
-        this.disposePromise = this.disposeUnlocked();
+        this.sqliteRecoveryPromise = null;
+        this.disposePromise = this.disposeUnlocked([
+            pendingInitialization,
+            pendingEnsureIndex,
+            pendingRecovery,
+        ]);
         this.registerShutdownBarrier(this.disposePromise);
         return this.disposePromise;
     }
 
-    private async disposeUnlocked(): Promise<void> {
+    private async disposeUnlocked(pendingOperations: Array<Promise<unknown> | null>): Promise<void> {
+        await Promise.allSettled(pendingOperations.filter((operation): operation is Promise<unknown> => Boolean(operation)));
         const index = this.index;
         this.index = null;
         this.status = "uninitialized";
@@ -385,36 +398,46 @@ export class VSS {
         const opfsScope = this.getVaultStorageScope().safeName;
         if (marker.opfsScope && marker.opfsScope !== opfsScope) return null;
         const profile = this.profile ?? this.createEmbeddingProfile();
-        if (marker.profileSignature !== getEmbeddingProfileSignature(profile)) return null;
+        if (marker.profileSignature !== getEmbeddingProfileSignature(profile)) {
+            this.status = "stale";
+        }
         return marker;
     }
 
-    private async tryRecoverMarkerFromSqlite(): Promise<void> {
+    private async tryRecoverMarkerFromSqlite(mode: VSSIndexOpenMode): Promise<void> {
         if (!this.profile || this.disposed) {
             this.status = "uninitialized";
             return;
         }
         let sqliteIndex: SqliteVectorIndex | null = null;
         try {
-            const opened = await this.openSqliteIndex(this.profile, "foreground");
+            const opened = await this.openSqliteIndex(this.profile, mode);
             sqliteIndex = opened.index;
+            this.assertActive();
             if (opened.status === "stale") {
                 this.index = sqliteIndex;
+                sqliteIndex = null;
                 this.status = "stale";
                 return;
             }
             const stats = await sqliteIndex.getStats();
+            this.assertActive();
             if (stats.status === "ready" && stats.chunkCount > 0) {
                 this.index = sqliteIndex;
+                sqliteIndex = null;
                 this.status = "ready";
                 await this.writeLocalIndexState();
                 return;
             }
             await this.disposeIndex(sqliteIndex);
+            sqliteIndex = null;
             this.status = "uninitialized";
         } catch (error) {
             if (sqliteIndex) {
                 await this.disposeIndex(sqliteIndex);
+            }
+            if (this.disposed || getErrorCode(error) === "vss-disposed") {
+                return;
             }
             this.recordIndexError(error);
             this.status = "disabled";
@@ -1417,9 +1440,13 @@ export class VSS {
         if (this.disposed) {
             return this.createUnavailableStats("uninitialized");
         }
+        const mode = options.mode ?? "foreground";
         await this.initialize();
-        if (this.index || this.shouldEnsureStatsIndex(options.mode ?? "foreground")) {
-            await this.ensureIndex({ allowFallback: false, mode: options.mode ?? "foreground" });
+        if (this.shouldRecoverMarkerForStats(mode)) {
+            await this.tryRecoverMarkerFromSqlite(mode);
+        }
+        if (this.index || this.shouldEnsureStatsIndex(mode)) {
+            await this.ensureIndex({ allowFallback: false, mode });
         }
         if (!this.index) {
             return this.createUnavailableStats(this.status);
@@ -1432,7 +1459,18 @@ export class VSS {
             storageUsage: this.storageStatus.usage,
             storageQuota: this.storageStatus.quota,
             lastErrorCode: stats.lastErrorCode ?? this.lastErrorCode,
+            databaseName: this.getDatabaseName(),
+            opfsDirectory: this.getOpfsDirectory(),
+            opfsVfsName: this.getOpfsVfsName(),
         };
+    }
+
+    private shouldRecoverMarkerForStats(mode: VSSIndexOpenMode): boolean {
+        return mode === "manual"
+            && !this.index
+            && !this.marker
+            && !this.markerRecoverySuppressed
+            && (this.status === "uninitialized" || this.status === "disabled" || this.status === "error");
     }
 
     private shouldEnsureStatsIndex(mode: VSSIndexOpenMode): boolean {
@@ -1566,6 +1604,9 @@ export class VSS {
             storageUsage: this.storageStatus.usage,
             storageQuota: this.storageStatus.quota,
             lastErrorCode: this.lastErrorCode,
+            databaseName: this.getDatabaseName(),
+            opfsDirectory: this.getOpfsDirectory(),
+            opfsVfsName: this.getOpfsVfsName(),
         };
     }
 
@@ -1772,6 +1813,9 @@ export class VSS {
             if (sqliteIndex) {
                 await this.disposeIndex(sqliteIndex);
             }
+            if (this.disposed || getErrorCode(error) === "vss-disposed") {
+                return;
+            }
             this.recordIndexError(error);
             this.plugin.log("SQLite VSS index unavailable", error);
             if (mode === "manual" && !options.allowFallback) {
@@ -1806,11 +1850,17 @@ export class VSS {
             const sqliteIndex = this.createSqliteIndex();
             try {
                 const status = await sqliteIndex.initialize(profile);
+                this.assertActive();
                 return { index: sqliteIndex, status };
             } catch (error) {
                 lastError = error;
                 await this.disposeIndex(sqliteIndex);
-                this.recordIndexError(error);
+                if (!this.disposed) {
+                    this.recordIndexError(error);
+                }
+                if (this.disposed || getErrorCode(error) === "vss-disposed") {
+                    throw error;
+                }
                 if (!isOpfsSahpoolLockedError(error) || mode === "foreground") {
                     throw error;
                 }
@@ -1865,6 +1915,7 @@ export class VSS {
         try {
             this.assertActive();
             const stats = await sqliteIndex.getStats();
+            this.assertActive();
             if (opened.status === "stale") {
                 this.index = sqliteIndex;
                 this.status = "stale";

@@ -187,7 +187,8 @@ SQLite DB 存放在设备本地 OPFS 中，不进入 vault，也不参与 Obsidi
 - 串行化 DB 操作，避免多连接竞争。
 - 不把其他文件放进 `opfs-sahpool` 管理目录。
 - 不依赖复制底层 OPFS 文件作为迁移或备份方式。
-- 插件 disable/enable、升级或热重载时，旧实例进入 terminal shutdown；新实例在打开同一个 vault-scoped SQLite scope 前只短等待同 scope 的旧 shutdown barrier，避免旧 Worker 尚未释放 `opfs-sahpool` 锁时马上降级。
+- 插件 disable/enable、升级或热重载时，旧实例进入 terminal shutdown；dispose 会等待正在进行的初始化/恢复收尾并关闭 worker，新实例在打开同一个 vault-scoped SQLite scope 前只短等待同 scope 的旧 shutdown barrier，避免旧 Worker 尚未释放 `opfs-sahpool` 锁时马上降级。
+- Worker 端请求也必须串行化；如果主线程在 `initialize` 仍在安装/打开 `opfs-sahpool` 时发送 `dispose`，worker 必须等初始化请求完成到可释放状态后再 close DB 并 pause VFS，避免遗留 OPFS `SyncAccessHandle`。
 - `opfs-sahpool-locked` 只作为锁竞争处理：Chat/status foreground 路径最多短等待，不同步等待完整恢复，也不加载旧 JSON fallback；manual/technical prepare 路径允许约 3 秒 bounded retry。
 
 ### Lifecycle 与 Locked Recovery
@@ -199,6 +200,8 @@ VSS 的生命周期是单向的：`dispose()` 后旧实例不会再通过 `initi
 Locked 恢复策略按用户路径分层：
 
 - **Foreground chat/search/status**：短等待旧 shutdown；如果仍然 `opfs-sahpool-locked`，本轮不生成 query embedding、不加载 legacy JSON fallback，直接以无 Memory 状态继续。
+- **Missing local marker startup**：foreground 初始化不会为了恢复丢失的 IndexedDB marker 主动打开 OPFS。这样启动、file-open 和 chat readiness 不会仅因探测本地 cache 而创建/持有 `opfs-sahpool` handles；如需从已有 OPFS index 恢复 marker，只在用户手动进入 technical diagnostics 的 manual 路径中尝试。
+- **Profile/settings stale**：如果本地 marker 存在但 embedding profile 已变更，foreground 直接标记 `stale`，等待用户确认 rebuild；不为了确认 stale 再打开 OPFS。
 - **Manual prepare/update 和 technical diagnostics**：允许 bounded retry；retry 只重新打开 SQLite，不触发 rebuild、refresh、reconcile 或额外 embedding 调用。
 - **Locked 或 SQLite unavailable**：记录 `lastErrorCode`，供 technical diagnostics 展示，普通聊天和设置文案仍避免暴露 SQLite/OPFS 术语。
 

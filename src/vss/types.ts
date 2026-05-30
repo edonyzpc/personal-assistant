@@ -61,6 +61,9 @@ export interface VSSIndexStats {
     fallbackMode: boolean;
     lastErrorCode?: string;
     lastVerifiedAt?: string;
+    databaseName?: string;
+    opfsDirectory?: string;
+    opfsVfsName?: string;
 }
 
 export interface VSSFileRecord {

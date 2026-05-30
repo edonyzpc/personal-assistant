@@ -10,8 +10,8 @@ import type {
 } from "./types";
 import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-protocol";
 
-const SQLITE_DISPOSE_WORKER_READY_TIMEOUT_MS = 400;
-const SQLITE_DISPOSE_MESSAGE_TIMEOUT_MS = 400;
+const SQLITE_DISPOSE_WORKER_READY_TIMEOUT_MS = 2_000;
+const SQLITE_DISPOSE_MESSAGE_TIMEOUT_MS = 2_000;
 
 export interface SqliteVectorIndexOptions {
     workerUrl: string;

@@ -455,14 +455,14 @@ export class PluginManager extends Plugin {
         this.addSettingTab(this.settingTab);
     }
 
-    onunload() {
+    async onunload() {
         const statsManager = this.statsManager;
         if (this.resizeDebounceTimer !== null) clearTimeout(this.resizeDebounceTimer);
         this.resizeDebounceTimer = null;
         this.hoverPopoverObserver?.disconnect();
         this.hoverPopoverObserver = null;
         this.memoryManager?.stopAutoMaintenance();
-        this.vss?.dispose();
+        await this.vss?.dispose().catch((error) => this.log("Failed to dispose Memory local index", error));
         if (statsManager) {
             const flush = statsManager.flush();
             statsManager.dispose();
@@ -834,6 +834,12 @@ export class PluginManager extends Plugin {
 
         if (stats.lastErrorCode) {
             details.push({ label: "Last error", value: stats.lastErrorCode, tone: "danger" });
+        }
+        if (stats.lastErrorCode === "opfs-sahpool-locked" && stats.opfsDirectory) {
+            details.push({ label: "OPFS scope", value: stats.opfsDirectory, tone: "warning" });
+        }
+        if (stats.lastErrorCode === "opfs-sahpool-locked" && stats.opfsVfsName) {
+            details.push({ label: "OPFS VFS", value: stats.opfsVfsName, tone: "warning" });
         }
 
         const performanceText = this.getVssPerformanceNotice(stats.chunkCount).trim();

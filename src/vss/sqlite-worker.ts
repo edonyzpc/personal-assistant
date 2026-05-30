@@ -16,6 +16,9 @@ import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-
 
 type SQLiteDatabase = any; // sqlite-wasm's OO API is runtime-shaped and broad.
 type SQLiteModule = any;
+type OpfsSahPool = {
+    pauseVfs?: () => unknown;
+};
 type SqliteApiConfig = {
     warn?: (...args: unknown[]) => void;
     error?: (...args: unknown[]) => void;
@@ -31,36 +34,48 @@ interface OpfsDatabaseOptions {
 
 let sqlite3: SQLiteModule | null = null;
 let db: SQLiteDatabase | null = null;
+let activePool: OpfsSahPool | null = null;
 let activeProfile: EmbeddingProfile | null = null;
 let status: VSSIndexStats["status"] = "uninitialized";
 let initDurationMs: number | undefined;
 let lastRefreshDurationMs: number | undefined;
 let lastSearchDurationMs: number | undefined;
 let lastErrorCode: string | undefined;
+let requestQueue: Promise<void> = Promise.resolve();
+let disposed = false;
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
 ctx.onmessage = (event: MessageEvent<SqliteWorkerRequest>) => {
     const request = event.data;
-    void handleRequest(request)
-        .then((result) => {
-            ctx.postMessage({ id: request.id, ok: true, result } as SqliteWorkerResponse);
-        })
-        .catch((error) => {
-            const code = getErrorCode(error);
-            lastErrorCode = code;
-            ctx.postMessage({
-                id: request.id,
-                ok: false,
-                error: {
-                    code,
-                    message: error instanceof Error ? error.message : String(error),
-                },
-            } as SqliteWorkerResponse);
-        });
+    requestQueue = requestQueue.then(
+        () => handleAndPostRequest(request),
+        () => handleAndPostRequest(request),
+    );
 };
 
+async function handleAndPostRequest(request: SqliteWorkerRequest): Promise<void> {
+    try {
+        const result = await handleRequest(request);
+        ctx.postMessage({ id: request.id, ok: true, result } as SqliteWorkerResponse);
+    } catch (error) {
+        const code = getErrorCode(error);
+        lastErrorCode = code;
+        ctx.postMessage({
+            id: request.id,
+            ok: false,
+            error: {
+                code,
+                message: error instanceof Error ? error.message : String(error),
+            },
+        } as SqliteWorkerResponse);
+    }
+}
+
 async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
+    if (disposed && request.type !== "dispose") {
+        throw createWorkerError("sqlite-worker-disposed", "SQLite worker has been disposed.");
+    }
     switch (request.type) {
         case "initialize":
             return await initialize(request.payload.profile, request.payload.databaseName, request.payload.wasmUrl, {
@@ -111,6 +126,7 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
             reset();
             return null;
         case "dispose":
+            disposed = true;
             dispose();
             return null;
     }
@@ -123,6 +139,7 @@ async function initialize(
     opfsOptions: OpfsDatabaseOptions = {},
 ): Promise<VSSIndexStats["status"]> {
     const startedAt = performance.now();
+    assertWorkerActive();
     activeProfile = profile;
     status = "initializing";
 
@@ -139,10 +156,13 @@ async function initialize(
                 }
             },
         });
+        assertWorkerActive();
 
         if (!db) {
             db = await openOpfsDatabase(sqlite3, databaseName, opfsOptions);
+            assertWorkerActive();
             await cleanupLegacyOpfsDirectory(opfsOptions.legacyDirectory, opfsOptions.directory);
+            assertWorkerActive();
         }
 
         createSchema(db);
@@ -164,9 +184,16 @@ async function initialize(
         lastErrorCode = undefined;
         return status;
     } catch (error) {
+        dispose();
         status = "error";
         lastErrorCode = getErrorCode(error);
         throw error;
+    }
+}
+
+function assertWorkerActive(): void {
+    if (disposed) {
+        throw createWorkerError("sqlite-worker-disposed", "SQLite worker has been disposed.");
     }
 }
 
@@ -204,7 +231,9 @@ async function openOpfsDatabase(
     if (!DbCtor) {
         throw createWorkerError("opfs-sahpool-unavailable", "opfs-sahpool database constructor is unavailable.");
     }
-    return new DbCtor(databaseName, "c");
+    activePool = pool;
+    const openedDb = new DbCtor(databaseName, "c");
+    return openedDb;
 }
 
 function configureSqliteLogging(): void {
@@ -740,9 +769,33 @@ function reset(): void {
 }
 
 function dispose(): void {
-    if (db) {
-        db.close();
-        db = null;
+    const database = db;
+    const pool = activePool;
+    db = null;
+    activePool = null;
+    try {
+        database?.close();
+    } finally {
+        pausePool(pool);
+    }
+}
+
+function pausePool(pool: OpfsSahPool | null): void {
+    if (!pool?.pauseVfs || isPoolPaused(pool)) return;
+    try {
+        pool.pauseVfs();
+    } catch (error) {
+        console.warn("Failed to pause OPFS SAH pool during Memory shutdown:", error);
+    }
+}
+
+function isPoolPaused(pool: OpfsSahPool): boolean {
+    const maybePool = pool as OpfsSahPool & { isPaused?: () => boolean };
+    if (!maybePool.isPaused) return false;
+    try {
+        return maybePool.isPaused();
+    } catch {
+        return false;
     }
 }
 
