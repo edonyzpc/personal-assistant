@@ -246,7 +246,7 @@ CREATE TABLE IF NOT EXISTS vss_chunks (
 
 ### Local Index Marker
 
-OPFS 可能被系统或 WebView 清理。为了检测“本机曾有索引但 OPFS DB 丢失”，VSS 在 IndexedDB local state store 中保存轻量 marker。marker 只在同一 device id、embedding profile signature 和 OPFS scope 下有效；复制 vault 或更换本地路径后，IndexedDB scope 不共享，旧 marker 不会影响新位置的 Memory 行为。marker 不是 OPFS 数据的备份；IndexedDB 被清理或暂时打不开时，VSS 可通过 cheap OPFS verify 重建 marker，或在本次进程内先保留内存 marker，稍后再持久化。
+OPFS 可能被系统或 WebView 清理。为了检测“本机曾有索引但 OPFS DB 丢失”，VSS 在 IndexedDB local state store 中保存轻量 marker。marker 只在同一 device id、embedding profile signature 和 OPFS scope 下有效；复制 vault 或更换本地路径后，IndexedDB scope 不共享，旧 marker 不会影响新位置的 Memory 行为。marker 不是 OPFS 数据的备份；IndexedDB 被清理或暂时打不开时，foreground 启动、file-open、chat readiness 和普通 status 不会打开 OPFS 来补 marker。用户触发的 technical diagnostics/manual stats 可以 bounded-retry OPFS SQLite，并在 index 兼容且有效时重建 marker；已获用户确认的 Prepare/Update memory 也可以先在进程内保留 marker，稍后再持久化。
 
 marker 包含：
 

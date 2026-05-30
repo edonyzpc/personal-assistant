@@ -31,7 +31,7 @@ Existing legacy files are read-only compatibility artifacts. The plugin does not
 | User-facing vocabulary | Memory, Prepare memory, Update memory |
 | Internal vocabulary | VSS, SQLite, OPFS, marker, dirty journal, fallback only in code/docs/diagnostics |
 
-If local app storage is cleared, Memory may reconstruct the VSS marker from a valid OPFS index. If neither local state nor usable OPFS Memory exists, the user is asked to prepare Memory again. Notes are not modified or deleted.
+If local app storage is cleared, foreground startup, chat readiness, and normal status checks do not open OPFS merely to reconstruct the VSS marker. Manual technical diagnostics may bounded-retry OPFS SQLite and reconstruct the marker from a valid index. If neither local state nor manually recoverable OPFS Memory exists, the user is asked to prepare Memory again. Notes are not modified or deleted.
 
 ## Storage Architecture
 
@@ -65,10 +65,16 @@ The IndexedDB database name is scoped like Statistics v3: plugin id, `statistics
 On first local-state initialization:
 
 1. Read local IndexedDB marker and dirty journal.
-2. If local marker is absent, try a cheap OPFS verify/open and reconstruct marker when the SQLite index is valid.
+2. If local marker is absent, do not open OPFS on the foreground path. Startup, file-open, chat readiness, and ordinary status calls must not create or hold OPFS SQLite handles just to probe local cache state.
 3. Optionally read legacy marker/manifest for diagnostics, but never override local state.
 4. Ignore legacy dirty journal by default.
 5. Do not delete legacy files.
+
+Manual recovery path:
+
+1. A user-triggered technical diagnostics/status action may call stats in `manual` mode.
+2. Manual mode may bounded-retry OPFS SQLite and reconstruct the local marker when the existing index is valid and compatible.
+3. `opfs-sahpool-locked` on foreground paths records diagnostics and keeps Memory unavailable/disabled for that turn instead of loading legacy JSON or creating query embeddings.
 
 ## Acceptance
 
@@ -76,3 +82,4 @@ On first local-state initialization:
 - SQLite unavailable with old JSON cache present does not scan the cache, create query embeddings, or load `MemoryVectorIndex`.
 - IndexedDB unavailable before prepare/update causes no vault state writes and does not block a user-approved Memory update; VSS uses temporary in-memory state and retries IndexedDB persistence on later update/status paths.
 - Memory reset removes the local Memory copy from OPFS and clears VSS maintenance state without touching old vault files.
+- Foreground startup/chat/readiness does not recover a missing marker by opening OPFS; marker reconstruction is limited to manual technical diagnostics/status paths.

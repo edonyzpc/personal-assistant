@@ -2,6 +2,14 @@
 
 ## Active Release Gates
 
+- [ ] Close v2 review follow-up stabilization before release.
+  - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.
+  - Completed so far: API token migration clears `data.json`; scoped/legacy keychain fallback is in place; API Token editor/clear confirmation works; provider switching confirms preset replacement; Settings data-safety fixes are covered by tests; chat history modal overflow/duplicate preview issues are fixed; foreground OPFS marker recovery is removed and manual technical recovery is bounded.
+  - Evidence so far: focused VSS/SQLite tests passed; full serialized Jest passed 51 suites / 864 tests; `npm run lint`; `npm run build`; `git diff --check`; `make deploy`; Obsidian test-vault `Update memory now` smoke completed with Memory diagnostics Ready and notes unchanged.
+  - Remaining decisions: accept/defer open original v2 Phase 1-2 items (`prompt` lines, `getVSSFiles()` optimization, strict mode, coverage threshold, rerank excerpt length, prompt token de-dup, chat-history sandbox, catalog simplification, rewrite+embedding parallelization) before cutting a release.
+  - Remaining high-risk smoke: `Update plugins`, `Update themes`, AI Featured Images, actual Memory reset/delete-old-cache execution. Run only after explicit confirmation because these modify installed assets, call network/API, or delete local cache.
+  - Exit criteria: status docs stay aligned with code, open v2 items are explicitly accepted/deferred or implemented, and remaining high-risk smoke is either executed with confirmation or recorded as a release deferral.
+
 - [x] Fix structured vault tool argument extraction exposed by broad PA Agent desktop smoke.
   - Context: 2026-05-24 Computer Use smoke in the Obsidian `test` vault passed core PA Agent paths but found that several structured read tools can be selected while required model-provided arguments are lost before execution.
   - Result: host tool normalization now repairs omitted `query` / `path` inputs for `search_vault_snippets`, `search_vault_metadata`, `read_note_outline`, `read_canvas_summary`, and path-specific `inspect_obsidian_note`; successful `inspect_obsidian_note` also satisfies current-note required-capability policy to avoid the false warning.

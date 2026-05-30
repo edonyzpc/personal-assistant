@@ -1,6 +1,6 @@
 # v2.0.0 代码审查修复方案
 
-**Status:** Approved, in progress
+**Status:** Code-led status reconciled on 2026-05-30; original Phase 1-2 remains mostly open
 **Source:** `docs/v2-comprehensive-code-review.md`
 **Plan file mirror:** `~/.claude/plans/breezy-wiggling-gem.md`
 
@@ -9,6 +9,70 @@
 基于 `docs/v2-comprehensive-code-review.md` 审查报告和讨论确认的决策，制定从简单到复杂的分阶段修复方案。
 
 **不动的项：** 三层工具管线 / PolicyEngine / 双事件系统（action mode 预留）、Skill 系统基础设施（计划扩展）、LangChain 依赖（保留）、React 19（不降级）。
+
+## 2026-05-30 Code-Led Status
+
+当前代码已经偏离本文件最初的顺序执行计划：本轮实际优先完成了 Settings/Keychain、Chat history UI、Memory OPFS lock recovery 以及相关 smoke/回归验证。下面状态以当前代码为准。
+
+### 已在当前代码中完成
+
+| Area | Status | Code evidence |
+| --- | --- | --- |
+| API token migration and storage cleanup | Done | `src/plugin.ts` deletes legacy `settings.apiToken` after migration/failure/empty value, migrates legacy `pa-api-token` into vault-scoped secret id when needed, and keeps `getAPIToken()` fallback/copy logic. |
+| API Token settings UX | Done | `src/settings.ts` uses scoped/legacy secret fallback, confirms token removal, labels the control as `Keychain`, and uses the Add secret-style editor for API token edits. |
+| Provider presets and confirmation | Done | `src/settings.ts` includes Qwen, Qwen International, OpenAI, and Custom presets; switching providers shows a confirmation before replacing URL/model defaults. |
+| Settings data-safety fixes | Done | `safeParseInt()`, `mergeLoadedSettings()`, metadata add-form defaults/validation, runtime-only `isEnabledMetadataUpdating`, and fresh-install explicit provider choice are in code. |
+| Settings layout polish | Partially done | AI settings are grouped near the top; Memory child controls hide behind the master toggle; text inputs have scoped alignment/width CSS. Full IA simplification is still not a complete redesign. |
+| Chat history modal overflow/duplicate preview | Done | `src/chat/modals.ts` hides duplicate previews; `src/custom.css` constrains modal/list row width and keeps delete controls aligned. |
+| Memory OPFS locked recovery | Done | Foreground startup/chat/status no longer opens OPFS just to recover a missing marker; manual technical stats can bounded-retry/recover. `opfs-sahpool-locked` records diagnostics without falling back to legacy JSON. |
+| Memory update smoke | Done | Obsidian test-vault smoke after deploy recovered Memory diagnostics to Ready and completed `Update memory now` with notes unchanged. |
+
+### 原 Phase 1-2 仍未完成或仅部分完成
+
+| Item | Current code status | Notes |
+| --- | --- | --- |
+| 1.1 Prompt same-language/citation/no-guess lines | Open | `PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES` does not contain the three planned lines. |
+| 1.2 `getVSSFiles()` Set/filter optimization | Open | Current code still builds `excludeFiles` and checks `includes()`. |
+| 1.3 `getReadOnlyToolContextInfo` lookup map | Open | No code-led evidence that the if-chain refactor was completed. |
+| 1.4 `tsconfig` `strict: true` | Open | `tsconfig.json` still uses selected strict flags instead of `"strict": true`. |
+| 1.5 Jest `coverageThreshold` | Open | `jest.config.js` still leaves `coverageThreshold` commented out. |
+| 1.6 Rerank excerpt 200 -> 400 | Open | Rerank prompt still uses `c.excerpt.slice(0, 200)`. |
+| 1.7 Chinese capability signals | Done, adjusted | Implemented as structured strong/weak CJK signal tables in `pa-agent-required-capability-policy.ts`; intentionally avoids broad generic words such as `今天` or `最新` by themselves. |
+| 2.1 Planner tool definition de-dup | Open | `formatPlannerToolDefinitions()` still serializes the full definition JSON. |
+| 2.2 Canonical chat history sandbox/limit | Open | `formatCanonicalChatHistory()` is still unbounded joined text without a `<chat_history>` wrapper. |
+| 2.3 Operations capability catalog simplification | Open | Original catalog simplification was not verified as completed in current code. |
+| 2.4 Rewrite + embedding parallelization | Open | `searchHybrid()` accepts `ftsQueryOverride`, not `ftsQueryOverridePromise`; embedding still starts after rewrite override is available. |
+
+### Smoke status and remaining high-risk checks
+
+Completed validation in this code state:
+
+- Focused VSS/SQLite tests: `npm test -- --runInBand __tests__/vss.test.ts __tests__/sqlite-worker.test.ts __tests__/sqlite-vector-index.test.ts`.
+- Expanded Memory tests, then full `npm test -- --runInBand`.
+- `npm run lint`, `npm run build`, `git diff --check`, and `make deploy`.
+- Obsidian test-vault smoke: Memory diagnostics Ready, manual `Update memory now` succeeded, metadata command disabled path showed the expected Notice, Memory reset/delete confirmations opened and were cancelled.
+
+Not executed because they modify the vault, call network/API, update installed assets, or delete local cache:
+
+- `Update plugins`
+- `Update themes`
+- AI Featured Images
+- Actual Memory reset/delete old cache confirmation
+
+### Status document ownership
+
+The current code-led status is split by document so release checks can find the source of truth quickly:
+
+| File | Current role |
+| --- | --- |
+| `docs/v2-fix-plan.md` | Tracks the original v2 review plan against current code and keeps the still-open Phase 1-2 items visible. |
+| `docs/settings-ui-review.md` | Preserves the historical Settings review and adds the current fixed/partial/open status for each finding. |
+| `docs/vss-local-state-plan.md` | Defines the current local-state boundary: no foreground marker recovery; manual diagnostics can recover a compatible OPFS index. |
+| `docs/vss-local-state-development-tracker.md` | Records the OPFS-lock follow-up verification, Obsidian smoke evidence, and deferred high-risk manual checks. |
+| `docs/vss-sqlite-wasm-architecture.md` | Documents the runtime OPFS/marker lifecycle, including foreground lock handling and manual-only missing-marker reconstruction. |
+| `docs/todo.md` | Holds the release gate for accepting/deferring remaining v2 review items and high-risk smoke checks. |
+
+The runtime/test changes were committed by module (`vss`, `settings`, `chat-history`, `ui styles`) and the document files above are kept in the final docs synchronization commit.
 
 ## 开发方法：Spec-Driven Development (SDD) + Worktree 并行
 
