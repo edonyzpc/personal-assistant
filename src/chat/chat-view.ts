@@ -13,7 +13,12 @@ import type { PersistedConversation, PersistedTurn } from './chat-history-store'
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
-import { getChatRoleIdenticonSrc, type ChatRoleIdenticon } from './role-identicons';
+import {
+    createChatRoleIdenticonSessionSeed,
+    getChatRoleIdenticonModel,
+    type ChatRoleIdenticon,
+    type ChatRoleIdenticonModel,
+} from './role-identicons';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
 export type { ChatMessage };
@@ -161,6 +166,7 @@ export class LLMView extends ItemView {
 
     async onOpen() {
         const sessionId = this.startViewSession();
+        const roleIdenticonSessionSeed = createChatRoleIdenticonSessionSeed();
         ensureChatLoadersRegistered((message, error) => this.plugin.log(message, error));
         const { containerEl } = this;
         containerEl.empty();
@@ -532,6 +538,48 @@ export class LLMView extends ItemView {
             fallback.createSpan({ text: '' });
             return wrapper;
         };
+        const createSvgChild = (parent: Element, tagName: string): Element => {
+            if (typeof document !== 'undefined' && typeof document.createElementNS === 'function') {
+                return document.createElementNS('http://www.w3.org/2000/svg', tagName);
+            }
+            const fallbackParent = parent as Element & { createEl?: (tagName: string) => HTMLElement };
+            if (typeof fallbackParent.createEl === 'function') {
+                return fallbackParent.createEl(tagName) as unknown as Element;
+            }
+            return document.createElement(tagName);
+        };
+        const createRoleIdenticon = (
+            parent: HTMLElement,
+            role: ChatRoleIdenticon,
+            model: ChatRoleIdenticonModel,
+        ) => {
+            const identiconEl = parent.createSpan({
+                cls: `pa-chat-role-identicon pa-chat-role-identicon-${role}`,
+                attr: { 'aria-hidden': 'true' },
+            });
+            identiconEl.style.setProperty('--pa-chat-role-identicon-fill', model.fill);
+            identiconEl.style.setProperty('--pa-chat-role-identicon-active-fill', model.activeFill);
+
+            const svgEl = createSvgChild(identiconEl, 'svg');
+            svgEl.classList.add('pa-chat-role-identicon-svg');
+            svgEl.setAttribute('class', 'pa-chat-role-identicon-svg');
+            svgEl.setAttribute('viewBox', model.viewBox);
+            svgEl.setAttribute('fill', 'currentColor');
+            svgEl.setAttribute('focusable', 'false');
+            identiconEl.appendChild(svgEl);
+
+            for (const cell of model.cells) {
+                const rectEl = createSvgChild(svgEl, 'rect');
+                rectEl.classList.add('pa-chat-role-identicon-cell');
+                rectEl.setAttribute('class', 'pa-chat-role-identicon-cell');
+                rectEl.setAttribute('x', String(cell.x));
+                rectEl.setAttribute('y', String(cell.y));
+                rectEl.setAttribute('width', '1');
+                rectEl.setAttribute('height', '1');
+                rectEl.setAttribute('fill', 'currentColor');
+                svgEl.appendChild(rectEl);
+            }
+        };
         const createRoleLabel = (
             parent: HTMLElement,
             text: string,
@@ -545,16 +593,11 @@ export class LLMView extends ItemView {
                 cls: ['message-role', options.extraClass ?? ''].filter(Boolean).join(' '),
             });
             if (options.identicon) {
-                roleEl.createEl('img', {
-                    cls: `pa-chat-role-identicon pa-chat-role-identicon-${options.identicon}`,
-                    attr: {
-                        src: getChatRoleIdenticonSrc(options.identicon),
-                        alt: '',
-                        'aria-hidden': 'true',
-                        draggable: 'false',
-                        decoding: 'async',
-                    },
-                });
+                createRoleIdenticon(
+                    roleEl,
+                    options.identicon,
+                    getChatRoleIdenticonModel(options.identicon, roleIdenticonSessionSeed),
+                );
             }
             const loaderEl = !options.identicon && options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
             roleEl.createSpan({ cls: 'pa-chat-role-text', text });
