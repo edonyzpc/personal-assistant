@@ -373,6 +373,79 @@ body {
 	color: var(--text-normal);
 }
 
+.pa-chat-history-modal-shell {
+	box-sizing: border-box;
+	width: min(720px, calc(100vw - 32px));
+	max-width: calc(100vw - 32px);
+	overflow-x: hidden;
+}
+
+.pa-chat-history-modal {
+	box-sizing: border-box;
+	max-width: 100%;
+	overflow-x: hidden;
+}
+
+.pa-chat-history-list {
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+	list-style: none;
+	margin: 16px 0 20px;
+	max-width: 100%;
+	overflow-x: hidden;
+	padding: 0;
+}
+
+.pa-chat-history-item {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) 44px;
+	align-items: center;
+	gap: 8px;
+	max-width: 100%;
+	min-width: 0;
+}
+
+.pa-chat-history-open {
+	box-sizing: border-box;
+	display: grid;
+	gap: 4px;
+	justify-items: start;
+	max-width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	text-align: left;
+	width: 100%;
+}
+
+.pa-chat-history-title,
+.pa-chat-history-preview,
+.pa-chat-history-meta {
+	display: block;
+	max-width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.pa-chat-history-delete {
+	align-items: center;
+	align-self: center;
+	display: inline-flex;
+	height: 44px;
+	justify-content: center;
+	justify-self: end;
+	min-width: 44px;
+	padding: 0;
+	width: 44px;
+}
+
+body.is-mobile .pa-chat-history-modal-shell {
+	width: min(520px, calc(100vw - 24px));
+	max-width: calc(100vw - 24px);
+}
+
 .llm-view {
 	--pa-chat-status-bar-clearance: 0px;
 	--pa-chat-keyboard-clearance: 0px;
@@ -1799,4 +1872,194 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 	display: flex;
 	flex-direction: column;
 	gap: 4px;
+}
+
+.pa-settings-tab h2,
+.pa-settings-tab h3 {
+	margin-left: 0;
+	margin-inline-start: 0;
+	padding-left: 0;
+	padding-inline-start: 0;
+}
+
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]),
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]),
+.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])),
+.pa-settings-tab .setting-item:has(.setting-item-control select) {
+	align-items: center;
+	gap: clamp(20px, 4vw, 64px);
+}
+
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-info,
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-info,
+.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-info,
+.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-info {
+	flex: 1 1 auto;
+	min-width: 0;
+}
+
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-control,
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-control,
+.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-control,
+.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-control {
+	display: flex;
+	flex: 0 0 clamp(280px, 44%, 560px);
+	justify-content: flex-end;
+	max-width: 560px;
+	min-width: 240px;
+}
+
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-control input,
+.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-control input,
+.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-control input,
+.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-control select {
+	box-sizing: border-box;
+	max-width: 100%;
+	min-width: 0;
+	width: 100%;
+}
+
+.pa-settings-tab .pa-policy-model-setting .setting-item-description {
+	max-width: 62ch;
+}
+
+@media (max-width: 700px) {
+	.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]),
+	.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]),
+	.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])),
+	.pa-settings-tab .setting-item:has(.setting-item-control select) {
+		align-items: stretch;
+		flex-direction: column;
+		gap: 10px;
+	}
+
+	.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-control,
+	.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-control,
+	.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-control,
+	.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-control {
+		flex: 0 1 auto;
+		justify-content: stretch;
+		max-width: 100%;
+		min-width: 0;
+		width: 100%;
+	}
+}
+
+/* Obsidian SecretComponent modal: constrain long secret names/tokens without
+   replacing the native picker behavior. */
+@media (min-width: 700px) {
+	body.pa-settings-tab-open .modal:has(.suggestion-item.mod-complex.suggestion-secret-key) {
+		width: min(820px, calc(100vw - 96px));
+		max-width: calc(100vw - 96px);
+	}
+}
+
+body.pa-settings-tab-open .modal .modal-content.keychain-list-results {
+	overflow-x: hidden;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: var(--size-4-1);
+	width: 100%;
+	max-width: 100%;
+	min-width: 0;
+	overflow: hidden;
+	touch-action: manipulation;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key > * {
+	min-width: 0;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .suggestion-content {
+	flex: 1 1 auto;
+	min-width: 0;
+	overflow: hidden;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .suggestion-title,
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .suggestion-note,
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .suggestion-secret-text,
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .suggestion-aux > :not(.clickable-icon):not(.flair) {
+	min-width: 0;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .suggestion-aux {
+	display: flex;
+	align-items: center;
+	flex: 0 0 auto;
+	gap: var(--size-4-1);
+	margin-left: auto;
+	min-width: calc(7ch + 84px);
+	max-width: none;
+	overflow: hidden;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .suggestion-secret-text {
+	flex: 0 1 18ch;
+	max-width: min(18ch, 40vw);
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .clickable-icon {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	flex: 0 0 40px;
+	width: 40px;
+	height: 40px;
+	pointer-events: auto;
+	position: relative;
+	z-index: 1;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .pa-secret-edit-action {
+	color: var(--text-muted);
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .flair {
+	display: none;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-content,
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-content {
+	flex: 0 1 10ch;
+	max-width: 10ch;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-aux,
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-aux {
+	flex: 1 1 auto;
+	margin-left: 0;
+	min-width: 0;
+	max-width: 100%;
+}
+
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-secret-text,
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-secret-text {
+	flex: 1 1 auto;
+	max-width: 100%;
+}
+
+@media (max-width: 600px) {
+	body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key {
+		gap: 2px;
+	}
+
+	body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key .clickable-icon {
+		flex-basis: 40px;
+		width: 40px;
+		height: 40px;
+	}
+
+	body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-content,
+	body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-content {
+		flex-basis: 8ch;
+		max-width: 8ch;
+	}
 }
