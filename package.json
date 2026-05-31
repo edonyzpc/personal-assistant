@@ -34,8 +34,8 @@
     "@jest/globals": "^30.3.0",
     "@types/jest": "^30.0.0",
     "@types/node": "^22.0.0",
-    "@types/react": "^19.0.0",
-    "@types/react-dom": "^19.0.0",
+    "@types/react": "18.3.28",
+    "@types/react-dom": "18.3.7",
     "@types/semver": "^7.5.8",
     "@typescript-eslint/eslint-plugin": "8.58.2",
     "@typescript-eslint/parser": "8.58.2",
@@ -59,9 +59,9 @@
     "ldrs": "^1.1.7",
     "nanoid": "^5.0.7",
     "obsidian-callout-manager": "^1.0.2-alpha1",
-    "react": "^19.0.0",
+    "react": "18.3.1",
     "react-chartjs-2": "^5.3.0",
-    "react-dom": "^19.0.0",
+    "react-dom": "18.3.1",
     "semver": "^7.5.2",
     "vanilla-picker": "2.12.3"
   }
