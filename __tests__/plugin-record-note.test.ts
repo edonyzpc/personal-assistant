@@ -62,7 +62,10 @@ jest.mock('../src/modal', () => ({ PluginControlModal: class { } }));
 jest.mock('../src/batch-modal', () => ({ BatchPluginControlModal: class { } }));
 jest.mock('../src/settings', () => ({
     SettingTab: class { },
-    DEFAULT_SETTINGS: { enabledSkillIds: mockBundledSkillIds },
+    DEFAULT_SETTINGS: {
+        chatModelName: 'qwen3.6-plus',
+        enabledSkillIds: mockBundledSkillIds,
+    },
     normalizeEnabledSkillIds: (value: unknown) => {
         if (!Array.isArray(value)) return [...mockBundledSkillIds];
         return [...new Set(value.filter((entry): entry is string => (
@@ -387,8 +390,43 @@ describe('settings migration', () => {
 
         expect(plugin.settings.aiProvider).toBe('qwen');
         expect(plugin.settings.baseURL).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
-        expect(plugin.settings.chatModelName).toBe('qwen-plus');
+        expect(plugin.settings.chatModelName).toBe('qwen3.6-plus');
         expect(plugin.settings.embeddingModelName).toBe('text-embedding-v4');
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+    });
+
+    it('migrates legacy modelName into chatModelName and removes the stale field', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
+        plugin.settings = {
+            aiProvider: 'qwen',
+            baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+            chatModelName: 'qwen3.6-plus',
+            modelName: 'qwen-turbo',
+            embeddingModelName: 'text-embedding-v4',
+            embeddingV4MigrationNoticeDismissed: true,
+            statisticsType: 'overview',
+            statsPath: '.obsidian/stats.json',
+            memoryEnabled: true,
+            memoryAutoCheckBeforeChat: true,
+            memoryApprovalPolicy: 'always',
+            showAdvancedMemoryControls: false,
+            qwenThinkingEnabled: false,
+            webSearchEnabled: false,
+            policyModelName: '',
+            shareAnonymousCapabilityUsage: false,
+            skillContextEnabled: true,
+            enabledSkillIds: mockBundledSkillIds,
+            statisticsVaultId: 'vault-id',
+            vssCacheExcludePath: [],
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        await plugin.migrateSettings();
+
+        expect(plugin.settings.chatModelName).toBe('qwen-turbo');
+        expect(plugin.settings).not.toHaveProperty('modelName');
         expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
     });
 

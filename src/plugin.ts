@@ -1006,6 +1006,10 @@ export class PluginManager extends Plugin {
     private async migrateSettings(): Promise<void> {
         try {
             let changed = false;
+            const settingsWithLegacyModel = this.settings as PluginManagerSettings & { modelName?: unknown };
+            const legacyModelName = typeof settingsWithLegacyModel.modelName === "string"
+                ? settingsWithLegacyModel.modelName.trim()
+                : "";
             // Legacy v1.x migration: pre-Provider users had no aiProvider field
             // and stored their model in `modelName`. Detected by the *shape* of
             // the persisted blob (non-empty AND lacking aiProvider) rather than
@@ -1016,9 +1020,21 @@ export class PluginManager extends Plugin {
                 this.log("Migrating settings from old version");
                 this.settings.aiProvider = 'qwen';
                 this.settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-                this.settings.chatModelName = this.settings.modelName || 'qwen-plus';
+                this.settings.chatModelName = legacyModelName || DEFAULT_SETTINGS.chatModelName;
                 this.settings.embeddingModelName = 'text-embedding-v3';
                 this.needsLegacyAiProviderMigration = false;
+                changed = true;
+            }
+            if (
+                legacyModelName
+                && legacyModelName !== "qwen-plus"
+                && this.settings.chatModelName === DEFAULT_SETTINGS.chatModelName
+            ) {
+                this.settings.chatModelName = legacyModelName;
+                changed = true;
+            }
+            if ("modelName" in settingsWithLegacyModel) {
+                delete settingsWithLegacyModel.modelName;
                 changed = true;
             }
             const normalizedStatisticsType = normalizeStatisticsView(this.settings.statisticsType);
@@ -1084,7 +1100,7 @@ export class PluginManager extends Plugin {
             if (this.settings.aiProvider === "ollama") {
                 this.settings.aiProvider = "qwen";
                 this.settings.baseURL = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-                this.settings.chatModelName = "qwen-plus";
+                this.settings.chatModelName = DEFAULT_SETTINGS.chatModelName;
                 this.settings.embeddingModelName = "text-embedding-v4";
                 changed = true;
             }

@@ -73,8 +73,6 @@ export interface PluginManagerSettings {
     shareAnonymousCapabilityUsage: boolean;
     skillContextEnabled: boolean;
     enabledSkillIds: string[];
-    // 兼容旧版本
-    modelName: string;
     featuredImagePath: string;
     numFeaturedImages: number;
     vssCacheExcludePath: string[];
@@ -87,7 +85,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     previewLimits: 5,
     previewTags: [],
     localGraph: {
-        notice: "show current note grah view",
+        notice: "Opened local graph for current note.",
         type: "popover",
         depth: 2,
         showTags: true,
@@ -131,7 +129,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     // AI模型配置
     aiProvider: "qwen",
     baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-    chatModelName: "qwen-plus",
+    chatModelName: "qwen3.6-plus",
     policyModelName: "",
     embeddingModelName: "text-embedding-v4",
     embeddingV4MigrationNoticeDismissed: false,
@@ -145,8 +143,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     shareAnonymousCapabilityUsage: false,
     skillContextEnabled: true,
     enabledSkillIds: [...BUNDLED_SKILL_IDS],
-    // 兼容旧版本
-    modelName: "qwen-plus",
     featuredImagePath: "",
     numFeaturedImages: 2,
     // Generic default — the prior list ("8.template", "9.src", "a.subjects",
@@ -251,7 +247,7 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     qwen: {
         label: "Qwen (Alibaba Cloud DashScope)",
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        chatModelName: "qwen-plus",
+        chatModelName: "qwen3.6-plus",
         embeddingModelName: "text-embedding-v4",
         description: "Qwen models via Alibaba Cloud. Also hosts DeepSeek, Kimi, GLM, and other models.",
         runtimeProvider: "qwen",
@@ -259,7 +255,7 @@ export const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     "qwen-intl": {
         label: "Qwen (DashScope International)",
         baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        chatModelName: "qwen-plus",
+        chatModelName: "qwen3.6-plus",
         embeddingModelName: "text-embedding-v4",
         description: "Qwen models via the DashScope International endpoint.",
         runtimeProvider: "qwen",
@@ -1951,9 +1947,9 @@ export class SettingTab extends PluginSettingTab {
 
         new Setting(container)
             .setName("AI Featured Image Path")
-            .setDesc("AI feautured image helper will download the images and save them to this path.")
+            .setDesc("AI featured image helper will download images and save them to this path.")
             .addText((text) => {
-                text.setPlaceholder("9.src");
+                text.setPlaceholder("attachments/ai-images");
                 text.setValue(plugin.settings.featuredImagePath.toString());
                 text.onChange((value: string) => {
                     plugin.settings.featuredImagePath = value;

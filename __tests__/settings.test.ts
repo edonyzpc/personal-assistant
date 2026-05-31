@@ -1022,6 +1022,12 @@ describe('PROVIDER_PRESETS catalog', () => {
         expect(PROVIDER_PRESETS.openai.embeddingModelName).toBe('text-embedding-3-small');
     });
 
+    it('uses qwen3.6-plus as the Qwen default chat model', () => {
+        expect(DEFAULT_SETTINGS.chatModelName).toBe('qwen3.6-plus');
+        expect(PROVIDER_PRESETS.qwen.chatModelName).toBe('qwen3.6-plus');
+        expect(PROVIDER_PRESETS['qwen-intl'].chatModelName).toBe('qwen3.6-plus');
+    });
+
     it('maps qwen-intl to a different baseURL but same runtime provider', () => {
         expect(PROVIDER_PRESETS['qwen-intl'].runtimeProvider).toBe('qwen');
         expect(PROVIDER_PRESETS['qwen-intl'].baseURL).not.toBe(PROVIDER_PRESETS.qwen.baseURL);
@@ -1139,6 +1145,10 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(debugIdx).toBeGreaterThan(-1);
         expect(featuredIdx).toBeGreaterThan(metadataIdx);
         expect(featuredIdx).toBeLessThan(debugIdx);
+
+        const featuredSetting = getMockSettingRecords()[featuredIdx];
+        expect(featuredSetting.desc).toContain('AI featured image helper');
+        expect(featuredSetting.texts[0].placeholder).toBe('attachments/ai-images');
     });
 
     it('hides Featured Image settings when Qwen uses a non-DashScope custom endpoint', () => {
@@ -1430,6 +1440,13 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
         const fresh = isFreshInstall(loaded);
         const needsLegacyMigration = isLegacyV1Install(loaded);
         const settings = mergeLoadedSettings(loaded);
+        const loadedObject = loaded && typeof loaded === 'object' && !Array.isArray(loaded)
+            ? loaded as { modelName?: unknown }
+            : {};
+        const settingsWithLegacyModel = settings as typeof settings & { modelName?: unknown };
+        const legacyModelName = typeof loadedObject.modelName === 'string'
+            ? loadedObject.modelName.trim()
+            : '';
         if (fresh) {
             settings.aiProvider = '';
         }
@@ -1438,8 +1455,20 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
         if (needsLegacyMigration) {
             settings.aiProvider = 'qwen';
             settings.baseURL = 'https://dashscope.aliyuncs.com/compatible-mode/v1';
-            settings.chatModelName = settings.modelName || 'qwen-plus';
+            settings.chatModelName = legacyModelName || DEFAULT_SETTINGS.chatModelName;
             settings.embeddingModelName = 'text-embedding-v3';
+            migrationApplied = true;
+        }
+        if (
+            legacyModelName
+            && legacyModelName !== 'qwen-plus'
+            && settings.chatModelName === DEFAULT_SETTINGS.chatModelName
+        ) {
+            settings.chatModelName = legacyModelName;
+            migrationApplied = true;
+        }
+        if ('modelName' in settingsWithLegacyModel) {
+            delete settingsWithLegacyModel.modelName;
             migrationApplied = true;
         }
         return { settings, migrationApplied };
@@ -1468,15 +1497,17 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
         expect(migrationApplied).toBe(true);
         expect(settings.aiProvider).toBe('qwen');
         expect(settings.baseURL).toBe('https://dashscope.aliyuncs.com/compatible-mode/v1');
-        // The legacy modelName field is preferred over the qwen-plus fallback.
+        // The legacy modelName field is preferred over the current default fallback.
         expect(settings.chatModelName).toBe('qwen-turbo');
         expect(settings.embeddingModelName).toBe('text-embedding-v3');
+        expect(settings).not.toHaveProperty('modelName');
     });
 
-    it('legacy v1.x install with no modelName falls back to qwen-plus', () => {
+    it('legacy v1.x install with no modelName falls back to the current Qwen default', () => {
         const { settings, migrationApplied } = simulate({ debug: false });
         expect(migrationApplied).toBe(true);
-        expect(settings.chatModelName).toBe('qwen-plus');
+        expect(settings.chatModelName).toBe('qwen3.6-plus');
+        expect(settings).not.toHaveProperty('modelName');
     });
 
     it('post-fresh second launch: persisted aiProvider:"" must NOT re-trigger migration', () => {
@@ -1500,13 +1531,13 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
         const persistedAfterMigration = {
             aiProvider: 'qwen',
             baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-            chatModelName: 'qwen-plus',
+            chatModelName: 'qwen3.6-plus',
             embeddingModelName: 'text-embedding-v3',
         };
         const { settings, migrationApplied } = simulate(persistedAfterMigration);
         expect(migrationApplied).toBe(false);
         expect(settings.aiProvider).toBe('qwen');
-        expect(settings.chatModelName).toBe('qwen-plus');
+        expect(settings.chatModelName).toBe('qwen3.6-plus');
     });
 
     it('user picks openai then re-launches: aiProvider stays "openai", no migration', () => {
@@ -1789,6 +1820,8 @@ describe('Phase 4 P1 UX', () => {
             // "a.subjects", "b.notion") that made no sense as fresh-install seeds.
             expect(DEFAULT_SETTINGS.featuredImagePath).toBe('');
             expect(DEFAULT_SETTINGS.vssCacheExcludePath).toEqual(['.obsidian']);
+            expect(DEFAULT_SETTINGS).not.toHaveProperty('modelName');
+            expect(DEFAULT_SETTINGS.localGraph.notice).toBe('Opened local graph for current note.');
         });
 
         it('mergeLoadedSettings preserves a user\'s configured exclusions', () => {
