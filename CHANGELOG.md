@@ -4,6 +4,100 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [2.1.0](https://github.com/edonyzpc/personal-assistant/compare/2.0.0...2.1.0) (2026-05-31)
+
+### Features
+- chat-view: mobile drawer polish — unified background, tab bar auto-hide with handle toggle
+- vss: FTS5 hybrid retrieval with RRF fusion
+- vss: add ftsQueryOverride option to searchHybrid
+- pa-agent: add LLM query rewriter for FTS keyword extraction
+- pa-agent: integrate LLM reranker for memory search candidates
+- security: migrate API key storage to Obsidian SecretStorage (OS Keychain)
+- security: migrate API key to Obsidian SecretStorage (Keychain)
+- chat: persist chat history to IndexedDB per Phase 3.5 SDD
+- settings: Phase 3 IA reorder + Provider UX (preset chooser, fresh-install handling)
+- wasm: defer SQLite WASM decode to first use (lazy binary loader)
+- settings: Phase 4 P1 UX — debounced save, Memory sub-toggle, Statistics counters, copy polish
+- chat: add timeline role identicons
+- chat: render session-scoped role identicons
+- chat: add deterministic role identicons
+- chat: move message actions to inline toolbar
+
+### Fix
+- pa-agent: harden canonical runtime tool loop
+- chat-tools: yield during vault tag scans
+- pa-agent: resolve streaming tool call argument loss via id/index key mismatch
+- settings: Phase 2 P0 data integrity — safeParseInt, keychain clear, metadata init, deep-merge load
+- chat: address concurrency, atomicity, and lifecycle review findings
+- address confirmed review findings
+- use valid vault scoped secret ids
+- vss: avoid foreground OPFS marker recovery
+- settings: improve API token keychain handling
+- chat-history: prevent history modal overflow
+- keychain: suppress failed legacy token decrypt logs
+- chat: improve role identicon sizing and motion
+- chat: smooth streaming markdown rendering
+- chat: stabilize mobile keyboard composer layout
+- core: harden provider and secret edge cases
+- ui: clean up chat and view lifecycle leaks
+- vss: avoid ready-state rebuild races
+- release: require tagged release baseline
+- chat: stabilize thinking status toggle
+
+### Improvements
+- docs: prune superseded PA Agent and Chat UI docs
+- pa-agent: retire legacy skill routing helpers
+- vss: cache sqlite wasm blob url
+- build: remove 9 ghost dependencies, move fflate to dependencies, unify es2020 target
+- ai-utils: remove dead methods and fix cleanMarkdownContent code block handling
+- pa-agent: filter low-score memory search candidates
+- obsidian-internals: replace as-any internal API accesses with typed runtime guards
+- chat-view: extract 3518-line God Object into src/chat/ modules
+- vss: extract rrf and fts-query-builder into standalone modules
+- settings: decompose display() into section methods with sub-containers (Phase 1)
+- chat-tools: extract types, constants, execution helpers (1/3)
+- chat-tools: extract registry, guards, factories (2/3)
+- chat-tools: replace monolith with barrel re-export (3/3)
+- capability: unify score functions + add CJK keyword tables (Phase A+B)
+- capability: replace 2-boolean state machine with 4-phase union (Phase C)
+- capability: drop classification.metadata + deprecate transitional types (Phase D)
+- chat-tools: tighten module boundaries to match SDD §3
+- settings: close Phase 1 — Picker hide() teardown + invariant tests
+- capability: apply subagent review fixes per SDD spec + user direction
+- Merge branch 'worktree-capability-refactor' — RequiredCapability policy refactor (SDD Phase 3.6)
+- statistics: incremental calcSnapshot with file-count cache (SDD §3)
+- Merge branch 'worktree-calc-snapshot-incr' — incremental calcSnapshot (SDD Phase 3.2)
+- Merge branch 'worktree-chat-history-persist' — chat history persistence (SDD Phase 3.5)
+- Merge branch 'worktree-settings-ui-review' — Settings UI review (SDD Phases 1–4 + 6 partial)
+- ai-utils: silence no-control-regex for code-block placeholder
+- plugin-manifest: drop unused PluginManifest type import
+- review confirmed fixes
+- ui: constrain settings and history layouts
+- add chat timeline role identicons
+- styles: regenerate chat stylesheet
+- codex: add commit helper wrapper
+- codex: remove commit helper wrapper
+
+### Docs
+- pa-agent: finalize plan amendments and add completion audit
+- pa-agent: update canonical runtime architecture notes
+- rag: add hybrid retrieval plan for FTS5 + RRF fusion
+- rag: update Phase 3 plan with parallel rewrite + reranker design
+- rag: sync plan with actual implementation — Phase 3 done, fix file layout & timeouts
+- settings-ui: add review report and refactor SDD
+- v2-review: add fix plan and 5 Phase-3 SDD documents
+- sdd: fix two stale snippets the final review surfaced
+- sdd: amend wasm-lazy-load spec per implementation review
+- add pa-agent LangChain architecture diagram (PNG + SVG)
+- review: sync v2 stabilization status
+- sdd: mark implemented designs as historical
+- v2: reconcile release gate status
+- chat: update role identicon design notes
+
+### Tests
+- settings: Phase 6 partial — pin radix-10 + malformed-array passthrough contracts
+- chat: cover role identicon behavior
+
 ## [2.0.0](https://github.com/edonyzpc/personal-assistant/compare/1.11.0...2.0.0) (2026-05-25)
 
 > Breaking release. The PA Agent canonical runtime is now the only chat path; Ollama support and the `paAgentAnswerStreamEnabled` toggle have been removed. Vault and chat behavior continue unchanged for OpenAI and Qwen/DashScope users.
