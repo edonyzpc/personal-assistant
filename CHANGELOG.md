@@ -4,6 +4,14 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## Unreleased
 
+## [2.1.1](https://github.com/edonyzpc/personal-assistant/compare/2.1.0...2.1.1) (2026-05-31)
+
+### Fix
+- scanner: block dynamic script element creation in bundle audit
+
+### Improvements
+- dependencies: pin React to 18.3.1 type-compatible versions
+
 ## [2.1.0](https://github.com/edonyzpc/personal-assistant/compare/2.0.0...2.1.0) (2026-05-31)
 
 ### Features
