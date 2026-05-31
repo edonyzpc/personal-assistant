@@ -968,16 +968,23 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	display: flex;
 	align-items: center;
 	gap: 8px;
+	justify-content: flex-start;
 	min-width: 0;
 }
 
-.llm-view .thinking-status-toggle {
+.llm-view .thinking-status-header > button.thinking-status-toggle {
+	appearance: none;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	flex: 0 0 22px;
 	width: 22px;
+	min-width: 22px;
+	max-width: 22px;
 	height: 22px;
+	min-height: 22px;
+	max-height: 22px;
+	margin: 0;
 	padding: 2px;
 	border: 1px solid transparent;
 	border-radius: 4px;
@@ -985,20 +992,33 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	color: var(--text-muted);
 	box-shadow: none;
 	cursor: pointer;
+	font-size: 0;
+	line-height: 1;
 }
 
-.llm-view .thinking-status-toggle:hover {
+.llm-view .thinking-status-header > button.thinking-status-toggle:hover {
 	background: var(--background-modifier-hover);
 	color: var(--text-normal);
 }
 
-.llm-view .thinking-status-toggle svg {
+.llm-view .thinking-status-header > button.thinking-status-toggle > svg.svg-icon {
+	display: block;
+	flex: 0 0 14px;
 	width: 14px;
+	min-width: 14px;
+	max-width: 14px;
 	height: 14px;
+	min-height: 14px;
+	max-height: 14px;
+	margin: 0;
+	color: currentColor;
+	stroke: currentColor;
 }
 
 .llm-view .thinking-status-role {
 	flex: 0 0 auto;
+	width: auto;
+	max-width: none;
 	margin: 0;
 	color: var(--text-normal);
 	font-size: 0.85em;

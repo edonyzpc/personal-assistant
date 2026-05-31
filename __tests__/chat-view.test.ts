@@ -2840,6 +2840,33 @@ describe('LLMView turn lifecycle', () => {
         expect(colorCycleBlock).not.toContain('--color-yellow');
     });
 
+    it('pins the Thinking status toggle so theme button defaults cannot add leading space', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+        const headerBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header');
+        const toggleBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header > button.thinking-status-toggle');
+        const toggleSvgBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header > button.thinking-status-toggle > svg.svg-icon');
+        const roleBlock = getCssRuleBlock(css, '.llm-view .thinking-status-role');
+
+        expect(headerBlock).toContain('justify-content: flex-start;');
+        expect(toggleBlock).toContain('appearance: none;');
+        expect(toggleBlock).toContain('flex: 0 0 22px;');
+        expect(toggleBlock).toContain('min-width: 22px;');
+        expect(toggleBlock).toContain('max-width: 22px;');
+        expect(toggleBlock).toContain('min-height: 22px;');
+        expect(toggleBlock).toContain('max-height: 22px;');
+        expect(toggleBlock).toContain('margin: 0;');
+        expect(toggleBlock).toContain('padding: 2px;');
+        expect(toggleSvgBlock).toContain('display: block;');
+        expect(toggleSvgBlock).toContain('flex: 0 0 14px;');
+        expect(toggleSvgBlock).toContain('min-width: 14px;');
+        expect(toggleSvgBlock).toContain('max-width: 14px;');
+        expect(toggleSvgBlock).toContain('min-height: 14px;');
+        expect(toggleSvgBlock).toContain('max-height: 14px;');
+        expect(toggleSvgBlock).toContain('stroke: currentColor;');
+        expect(roleBlock).toContain('width: auto;');
+        expect(roleBlock).toContain('max-width: none;');
+    });
+
     it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
         const css = readFileSync('src/custom.css', 'utf8');
         const drawerInnerBlock = getCssRuleBlock(css, '.workspace-drawer-inner:has(.llm-view)');
