@@ -14,6 +14,7 @@ const NODE_BUILTIN_PATTERN = new RegExp(
     `(?:from\\s+["'](?:node:)?(?:${NODE_BUILTIN_NAMES})["']|require\\(\\s*["'](?:node:)?(?:${NODE_BUILTIN_NAMES})["']\\s*\\))`,
     "g",
 );
+const DYNAMIC_SCRIPT_ELEMENT_PATTERN = /\b(?:createElement|createEl)\(\s*["']script["']|\bcreateElementNS\([^)]*,\s*["']script["']/g;
 
 async function main() {
     const options = parseArgs(process.argv.slice(2));
@@ -42,10 +43,12 @@ export async function auditBundle(options = {}) {
     }
 
     const nodeBuiltinMatches = [...text.matchAll(NODE_BUILTIN_PATTERN)].map((match) => match[0]);
+    const dynamicScriptElementMatches = [...text.matchAll(DYNAMIC_SCRIPT_ELEMENT_PATTERN)].map((match) => match[0]);
     const bytes = Buffer.byteLength(text);
     const gzipBytes = gzipSync(text).byteLength;
     const overBudget = gzipBytes > gzipBudgetBytes;
     const hasNodeBuiltins = nodeBuiltinMatches.length > 0;
+    const hasDynamicScriptElementCreations = dynamicScriptElementMatches.length > 0;
     const resourceAudit = options.resourceDir
         ? await auditResourceDir(options.resourceDir, options.resourceGzipBudgetBytes)
         : undefined;
@@ -53,6 +56,7 @@ export async function auditBundle(options = {}) {
     return {
         ok: !overBudget
             && !(failOnNodeBuiltins && hasNodeBuiltins)
+            && !hasDynamicScriptElementCreations
             && (resourceAudit ? !resourceAudit.overBudget : true),
         input,
         exists: true,
@@ -61,6 +65,7 @@ export async function auditBundle(options = {}) {
         gzipBudgetBytes,
         overBudget,
         nodeBuiltinReferences: nodeBuiltinMatches,
+        dynamicScriptElementCreations: dynamicScriptElementMatches,
         ...(resourceAudit ? { resourceAudit } : {}),
     };
 }

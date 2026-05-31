@@ -21,6 +21,7 @@ describe("scripts/audit-bundle.mjs", () => {
             exists: true,
             overBudget: false,
             nodeBuiltinReferences: [],
+            dynamicScriptElementCreations: [],
         });
     });
 
@@ -47,6 +48,18 @@ describe("scripts/audit-bundle.mjs", () => {
             ok: true,
             nodeBuiltinReferences: ["require('fs')"],
         });
+    });
+
+    it("fails JSON report when dynamic script element creation is present", () => {
+        const file = writeTempBundle("document.createElement('script');");
+
+        expect(() => execFileSync("node", [
+            "scripts/audit-bundle.mjs",
+            "--input",
+            file,
+            "--budget-gzip-bytes",
+            "1024",
+        ], { encoding: "utf8" })).toThrow();
     });
 
     it("reports resource directory gzip budget separately", () => {
