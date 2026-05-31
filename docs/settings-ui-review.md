@@ -35,12 +35,14 @@ This review is historical. The current branch has addressed the highest-risk Set
 | P1-10 OpenAI default model stale | Fixed | OpenAI preset and chat model placeholder use `gpt-4o-mini`. |
 | P1-11 Memory approval copy mismatch | Fixed | The setting is now `Ask before using AI credits` with matching description. |
 | P1-12 Memory child settings visible while off | Fixed | Memory sub-settings render only when `memoryEnabled` is true. |
-| P1-13 Private default paths | Fixed | `featuredImagePath` defaults to empty string; `vssCacheExcludePath` defaults to `.obsidian`. |
+| P1-13 Private default paths | Fixed | `featuredImagePath` defaults to empty string; `vssCacheExcludePath` defaults to `.obsidian`; Featured Image placeholder no longer uses the original developer's `9.src` path. |
 | P1-14 Statistics hidden settings | Still open | `displaySectionCounts` and `countComments` remain non-UI fields. |
 | P1-15 Text input save churn | Partially fixed | Several text inputs now use debounced saves, but not every setting path has been audited end-to-end. |
 | P1-16 Metadata form UX | Partially fixed | Data safety and dropdown labels are improved; full narrow-screen UX redesign remains open. |
 | P1-17 First-run provider choice | Fixed | Fresh installs clear `aiProvider` after loading defaults so users must choose a provider. |
 | P1-18 Settings tests | Partially fixed | New tests cover parse safety, merge defaults, provider confirmation, API token clear/migration, and layout CSS. Broader interaction coverage remains useful. |
+| P2-19 Settings copy typos | Partially fixed | The default Local Graph notice and Featured Image settings copy have been cleaned up; a broader copy pass is still useful. |
+| P2-29 Legacy `modelName` field | Fixed | `modelName` has been removed from default settings and is deleted during migration after preserving a non-default legacy value in `chatModelName`. |
 
 API Token now uses a dedicated Add secret-style editor for edits from Settings. Native SecretComponent picker CSS is still scoped as a mitigation for long secret rows, but generic keychain-picker reveal behavior on real iPhone should remain a manual smoke item if that picker is used outside the API Token editor.
 

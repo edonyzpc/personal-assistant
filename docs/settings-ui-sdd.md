@@ -341,7 +341,7 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     qwen: {
         label: "Qwen (Alibaba Cloud DashScope)",
         baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1",
-        chatModelName: "qwen-plus",
+        chatModelName: "qwen3.6-plus",
         embeddingModelName: "text-embedding-v4",
         description: "Qwen models via Alibaba Cloud. Also hosts DeepSeek, Kimi, GLM, and other models.",
         runtimeProvider: "qwen",
@@ -349,7 +349,7 @@ const PROVIDER_PRESETS: Record<string, ProviderPreset> = {
     "qwen-intl": {
         label: "Qwen (DashScope International)",
         baseURL: "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-        chatModelName: "qwen-plus",
+        chatModelName: "qwen3.6-plus",
         embeddingModelName: "text-embedding-v4",
         description: "Qwen models via DashScope International endpoint.",
         runtimeProvider: "qwen",
@@ -580,9 +580,9 @@ featuredImagePath: "",                 // 原: "9.src"
 
 | 位置 | Before | After |
 |------|--------|-------|
-| `DEFAULT_SETTINGS.localGraph.notice` | `"grah"` | `"graph"` |
+| `DEFAULT_SETTINGS.localGraph.notice` | `"grah"` | `"Opened local graph for current note."` |
 | Metadata desc | `"only upport"` | `"only support"` (Phase 4e) |
-| Featured Image desc | `"feautured"` | `"featured"` |
+| Featured Image desc / placeholder | `"feautured"` / `"9.src"` | `"featured"` / `"attachments/ai-images"` |
 | Comment L246 | `"settiong"` | `"setting"` |
 | AI section desc | `"AI Helper"` | `"AI Assistant"` |
 | Telemetry desc | `"PA Agent"` | `"assistant"` |
@@ -671,7 +671,7 @@ private async migrateSettings(): Promise<void> {
 ```typescript
 const rawSettings = this.settings as any;
 if (rawSettings.modelName && rawSettings.modelName !== "qwen-plus") {
-    if (this.settings.chatModelName === "qwen-plus") {
+    if (this.settings.chatModelName === DEFAULT_SETTINGS.chatModelName) {
         this.settings.chatModelName = rawSettings.modelName;
     }
     changed = true;
