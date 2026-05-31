@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from '@jest/globals';
 import { readFileSync } from 'node:fs';
-import { MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
+import { Component, MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat/chat-view';
@@ -1305,6 +1305,36 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('Selected Memory');
         expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
         expect(getElementsByClass(containerEl, 'pa-chat-role-loader-thinking')).toHaveLength(0);
+    });
+
+    it('unloads assistant markdown render owners when a streamed answer becomes a terminal row', async () => {
+        const unloadSpy = jest.spyOn(Component.prototype, 'unload');
+        try {
+            const { view, containerEl } = createView();
+            await view.onOpen();
+
+            getTextArea(containerEl).value = 'cancel after partial render';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+
+            streamCalls[0].onChunk('partial **answer**');
+            await flushPromises();
+            await flushPromises();
+            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
+            expect((view as any).markdownRenderOwners.size).toBeGreaterThanOrEqual(2); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+            getButtonByClass(containerEl, 'cancel-button').click();
+            streamCalls[0].reject(new DOMException('Aborted', 'AbortError'));
+            await flushPromises();
+            await flushPromises();
+
+            expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(0);
+            expect(allText(containerEl)).toContain('Generation cancelled');
+            expect((view as any).markdownRenderOwners.size).toBe(1); // eslint-disable-line @typescript-eslint/no-explicit-any
+            expect(unloadSpy).toHaveBeenCalled();
+        } finally {
+            unloadSpy.mockRestore();
+        }
     });
 
     it('keeps successful Thinking status as a completed timeline summary', async () => {
@@ -2886,8 +2916,14 @@ describe('LLMView turn lifecycle', () => {
         expect(keyboardSpacerBlock).toContain('contain: layout paint size;');
         expect(keyboardSpacerBlock).not.toContain('transition:');
         expect(mobileKeyboardSpacerBlock).toContain('display: block;');
+        expect(mobileKeyboardSpacerBlock).toContain('flex-basis: var(--pa-chat-keyboard-clearance, 0px);');
+        expect(mobileKeyboardSpacerBlock).toContain('height: var(--pa-chat-keyboard-clearance, 0px);');
         expect(mobileOpenKeyboardSpacerBlock).toContain('flex-basis: var(--pa-chat-keyboard-clearance, 0px);');
         expect(mobileOpenKeyboardSpacerBlock).toContain('height: var(--pa-chat-keyboard-clearance, 0px);');
+        expect(css).not.toMatch(/(?:^|\n)\.notice\s*{/);
+        expect(css).toMatch(/\.pa-notice-shell\s*{[\s\S]*?background-color:\s*var\(--pa-background-primary\);/);
+        expect(css).not.toMatch(/\.popover\s+\.popover-content\s*{[\s\S]*?width:\s*100% !important;/);
+        expect(css).toMatch(/\.popover\.resize-popover-width\s+\.popover-content\s*{[\s\S]*?width:\s*var\(--resize-popover-width\) !important;/);
         expect(css).not.toMatch(/\.llm-view\.is-keyboard-native-fallback\s*{[\s\S]*?--pa-chat-keyboard-accessory-clearance:/);
         expect(css).not.toMatch(/\.is-keyboard-native-fallback\s+\.pa-chat-keyboard-spacer\s*{[\s\S]*?transition:/);
         expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-input\s*{[\s\S]*?transition:\s*none;/);

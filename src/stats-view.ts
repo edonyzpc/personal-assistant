@@ -16,6 +16,8 @@ export class Stat extends ItemView {
     app: App;
     plugin: PluginManager;
     dashboardData: StatsDashboardData;
+    private isOpen = false;
+    private openRunId = 0;
 
     constructor(app: App, plugin: PluginManager, leaf: WorkspaceLeaf) {
         super(leaf);
@@ -38,13 +40,18 @@ export class Stat extends ItemView {
     }
 
     async onOpen() {
+        this.isOpen = true;
+        const openRunId = ++this.openRunId;
         this.dashboardData = await this.loadDashboardData();
+        if (!this.isOpen || openRunId !== this.openRunId) return;
         const el = this.containerEl.getElementsByClassName("view-content")[0] as HTMLElement;
         this.componentRoot = createRoot(el);
         this.renderStatistics();
     }
 
     async onClose() {
+        this.isOpen = false;
+        this.openRunId++;
         this.componentRoot?.unmount();
         this.componentRoot = null;
     }

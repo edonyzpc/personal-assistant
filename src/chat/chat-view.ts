@@ -1022,6 +1022,21 @@ export class LLMView extends ItemView {
             state.pendingForceScroll = Boolean(state.pendingForceScroll || options.forceScroll);
             runLiveMarkdownRender(rendered, state, isLive, options);
         };
+        const cancelLiveMarkdownRender = (rendered?: RenderedMessage | null) => {
+            if (!rendered) return;
+            rendered.renderToken += 1;
+            const state = liveMarkdownRenderStates.get(rendered);
+            if (state) {
+                clearScheduledLiveMarkdownDrain(state);
+                state.pendingContent = undefined;
+                state.pendingForceScroll = false;
+                state.inFlightContent = undefined;
+                state.inFlightPromise = undefined;
+                state.inFlight = false;
+            }
+            this.unloadMarkdownRenderOwner(rendered.renderOwner);
+            rendered.renderOwner = undefined;
+        };
         const settleLiveMarkdownRenderBeforeFinal = async (
             rendered: RenderedMessage,
             finalContent: string,
@@ -1352,6 +1367,7 @@ export class LLMView extends ItemView {
             terminalKind: TerminalTurnEntry['terminalKind'],
             errorDetail?: string,
         ) => {
+            cancelLiveMarkdownRender(turn.assistantMessage);
             removeElement(turn.assistantMessage?.messageDiv);
             stopThinkingLoader(turn.statusView);
             const entry: TerminalTurnEntry = {

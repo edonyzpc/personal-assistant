@@ -17,6 +17,7 @@ export class RecordPreview extends ItemView {
     files: string[];
     private vaultEventRefs: EventRef[] = [];
     private isOpen = false;
+    private openRunId = 0;
     private refreshRunId = 0;
     private debouncedRefresh: Debouncer<[], void>;
 
@@ -48,12 +49,15 @@ export class RecordPreview extends ItemView {
 
     async onOpen() {
         this.isOpen = true;
+        const openRunId = ++this.openRunId;
         await this.refreshFiles();
+        if (!this.isOpen || openRunId !== this.openRunId) return;
         this.registerVaultEvents();
     }
 
     async onClose() {
         this.isOpen = false;
+        this.openRunId++;
         this.refreshRunId++;
         this.debouncedRefresh.cancel();
         this.unregisterVaultEvents();

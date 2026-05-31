@@ -103,6 +103,7 @@ export const MarkdownRenderer = {
 };
 
 export const setIcon = jest.fn();
+export const addIcon = jest.fn();
 
 type MockAdapter = {
     write: jest.Mock;
