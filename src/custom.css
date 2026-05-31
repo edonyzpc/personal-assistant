@@ -449,6 +449,7 @@ body.is-mobile .pa-chat-history-modal-shell {
 .llm-view {
 	--pa-chat-status-bar-clearance: 0px;
 	--pa-chat-keyboard-clearance: 0px;
+	--pa-chat-keyboard-accessory-clearance: 0px;
 	--pa-chat-keyboard-offset: 0px;
 	--pa-chat-composer-height: 0px;
 	--pa-chat-keyboard-motion: 180ms cubic-bezier(0.22, 1, 0.36, 1);
@@ -461,6 +462,10 @@ body.is-mobile .pa-chat-history-modal-shell {
 	padding: 0 0 var(--pa-chat-keyboard-clearance, 0px);
 	position: relative;
 	background: var(--background-primary);
+}
+
+body.is-mobile .llm-view {
+	padding-bottom: 0;
 }
 
 /* ── Chat view host containers ──
@@ -478,6 +483,12 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 	background: var(--background-primary);
 	padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));
 }
+
+body.is-mobile .workspace-drawer-inner:has(.llm-view) {
+	--pa-chat-drawer-top-clearance: clamp(10px, calc(env(safe-area-inset-top, 0px) - 24px), 24px);
+	padding-top: var(--pa-chat-drawer-top-clearance);
+}
+
 .workspace-drawer-inner:has(.llm-view) > .workspace-drawer-header {
 	display: none;
 }
@@ -522,6 +533,68 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 .pa-tab-bar-handle svg {
 	width: 20px;
 	height: 20px;
+}
+
+body.is-mobile .pa-tab-bar-handle {
+	--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 72%, var(--text-muted));
+	--pa-tab-bar-handle-expanded-color: color-mix(in srgb, var(--interactive-accent) 78%, var(--text-normal));
+	position: relative;
+	min-height: 20px;
+	padding: 0;
+	color: var(--pa-tab-bar-handle-color);
+	opacity: 0.82;
+}
+
+body.theme-light.is-mobile .pa-tab-bar-handle {
+	--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 76%, var(--text-muted));
+}
+
+body.theme-dark.is-mobile .pa-tab-bar-handle {
+	--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 82%, var(--text-muted));
+}
+
+body.is-mobile .pa-tab-bar-handle[aria-expanded="true"] {
+	color: var(--pa-tab-bar-handle-expanded-color);
+	opacity: 0.92;
+}
+
+body.is-mobile .pa-tab-bar-handle::before {
+	content: "";
+	position: absolute;
+	inset: -10px 0;
+}
+
+body.is-mobile .pa-tab-bar-handle svg {
+	width: 14px;
+	height: 14px;
+	stroke-width: 2.4px;
+}
+
+.pa-chat-keyboard-spacer {
+	display: none;
+	flex: 0 0 0px;
+	height: 0;
+	min-height: 0;
+	contain: layout paint size;
+	pointer-events: none;
+}
+
+body.is-mobile .pa-chat-keyboard-spacer {
+	display: block;
+}
+
+body.is-mobile .llm-view.is-keyboard-open .pa-chat-keyboard-spacer {
+	flex-basis: var(--pa-chat-keyboard-clearance, 0px);
+	height: var(--pa-chat-keyboard-clearance, 0px);
+}
+
+body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle {
+	min-height: 12px;
+}
+
+body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
+	width: 11px;
+	height: 11px;
 }
 
 .llm-chat-container {
@@ -1208,6 +1281,49 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 	transition: color 0.2s ease;
 }
 
+body.is-mobile .llm-input {
+	position: relative;
+	left: auto;
+	right: auto;
+	bottom: auto;
+	flex: 0 0 auto;
+	padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));
+	transform: translate3d(0, 0, 0);
+	transition: none;
+	will-change: auto;
+	z-index: 3;
+}
+
+body.is-mobile .llm-view.is-keyboard-open .llm-input {
+	position: relative;
+	left: auto;
+	right: auto;
+	bottom: auto;
+	transform: translate3d(0, 0, 0);
+	will-change: auto;
+	z-index: 3;
+}
+
+body.is-mobile .llm-view.is-keyboard-open .llm-chat-container {
+	padding-bottom: 14px;
+}
+
+body.is-mobile .llm-input textarea {
+	box-sizing: border-box;
+	height: 72px;
+	min-height: 72px;
+	max-height: min(26vh, 124px);
+	overflow-y: auto;
+	padding: 8px 10px 42px;
+	-webkit-overflow-scrolling: touch;
+}
+
+body.is-mobile .llm-buttons {
+	gap: 4px;
+	right: 7px;
+	bottom: 7px;
+}
+
 .pa-chat-composer-row:focus-within {
 	border-color: var(--text-normal);
 	box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.1);
@@ -1370,6 +1486,26 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 .llm-buttons button.pa-chat-memory-chip svg {
 	width: 16px;
 	height: 16px;
+}
+
+body.is-mobile .llm-buttons button.pa-chat-icon-button {
+	position: relative;
+	width: 30px;
+	height: 30px;
+	flex: 0 0 30px;
+	border-radius: 9px;
+}
+
+body.is-mobile .llm-buttons button.pa-chat-icon-button::before {
+	content: "";
+	position: absolute;
+	inset: -7px;
+	border-radius: 14px;
+}
+
+body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
+	width: 14px;
+	height: 14px;
 }
 
 .pa-chat-composer-hint {
@@ -1713,6 +1849,17 @@ body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
 .llm-view.is-compact .llm-input textarea {
 	min-height: 116px;
 	padding-bottom: 54px;
+}
+
+body.is-mobile .llm-view.is-compact .llm-input {
+	padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));
+}
+
+body.is-mobile .llm-view.is-compact .llm-input textarea {
+	height: 66px;
+	min-height: 66px;
+	max-height: min(26vh, 116px);
+	padding-bottom: 40px;
 }
 
 .pa-notice {

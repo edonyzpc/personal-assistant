@@ -25,6 +25,7 @@ export type { ChatMessage };
 
 const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
 const LIVE_MARKDOWN_RENDER_COOLDOWN_MS = 32;
+const KEYBOARD_LAYOUT_RESIZE_THRESHOLD_PX = 80;
 
 const getMonotonicTimeMs = () => {
     const performanceApi = globalThis.performance;
@@ -56,6 +57,7 @@ let ldrsLoadersRequested = false;
 
 type KeyboardPluginEventName = 'keyboardWillShow' | 'keyboardDidShow' | 'keyboardWillHide' | 'keyboardDidHide';
 type KeyboardWindowEventName = KeyboardPluginEventName | 'resize' | 'orientationchange';
+type KeyboardClearanceSource = 'native' | 'none' | 'visualViewport';
 
 interface KeyboardPluginInfo {
     keyboardHeight?: number;
@@ -65,12 +67,8 @@ interface KeyboardPluginListenerHandle {
     remove?: () => Promise<void> | void;
 }
 
-// Capacitor Keyboard plugin facade. We rely on:
-//   - addListener: observe keyboard show/hide for diagnostics + immediate JS-side scheduleUpdate
-//   - setResizeMode({mode: 'body'}): let Capacitor itself manage layout viewport resize so the
-//     250-400ms race between keyboardWillShow and visualViewport.resize is owned by the WebView.
-// Combined with CSS env(keyboard-inset-height, 0px) fallback in setKeyboardClearanceStyles, this
-// eliminates the need for JS-side keyboard height estimation.
+// Capacitor Keyboard plugin facade. We let the WebView/layout viewport handle mobile keyboard
+// geometry where possible, and only use native height as a fallback measurement.
 interface KeyboardPluginFacade {
     addListener?: (
         eventName: KeyboardPluginEventName,
@@ -115,7 +113,9 @@ export class LLMView extends ItemView {
     private keyboardUpdateFrame: number | null = null;
     private keyboardWindowListeners: Array<{ type: KeyboardWindowEventName; listener: EventListener }> = [];
     private keyboardPluginListenerHandles: KeyboardPluginListenerHandle[] = [];
+    private keyboardLayoutBaselineHeight = 0;
     private nativeKeyboardHeight = 0;
+    private nativeKeyboardVisible = false;
     private memoryStatusUnsubscribe: (() => void) | null = null;
     private markdownRenderOwners = new Set<Component>();
     private mobileTabBarHandle: HTMLElement | null = null;
@@ -187,6 +187,10 @@ export class LLMView extends ItemView {
 
         const inputDiv = containerEl.createDiv({ cls: 'llm-input' });
         this.setupMobileTabBarAutoHide(containerEl);
+        containerEl.createDiv({
+            cls: 'pa-chat-keyboard-spacer',
+            attr: { 'aria-hidden': 'true' },
+        });
         const composerRow = inputDiv.createDiv({ cls: 'pa-chat-composer-row' });
         const textArea = composerRow.createEl('textarea', {
             attr: { rows: '3', placeholder: 'Ask about your notes...' }
@@ -2581,13 +2585,30 @@ export class LLMView extends ItemView {
         this.disconnectKeyboardClearance();
 
         let previousClearance = -1;
+        let previousAccessoryClearance = -1;
+        let previousComposerHeight = -1;
+        let previousSource: KeyboardClearanceSource = 'none';
+        let previousKeyboardVisible = false;
+        this.keyboardLayoutBaselineHeight = this.getLayoutViewportHeight();
         const applyClearance = (notify: boolean) => {
             const measurement = this.measureKeyboardClearance(containerEl, inputEl);
             const clearance = measurement.realClearance;
-            if (clearance === previousClearance) return;
+            if (
+                clearance === previousClearance
+                && measurement.accessoryClearance === previousAccessoryClearance
+                && measurement.composerHeight === previousComposerHeight
+                && measurement.source === previousSource
+                && measurement.keyboardVisible === previousKeyboardVisible
+            ) {
+                return;
+            }
             previousClearance = clearance;
-            this.setKeyboardClearanceStyles(containerEl, clearance);
-            this.syncKeyboardComposerOverlay(containerEl, clearance, measurement.composerHeight);
+            previousAccessoryClearance = measurement.accessoryClearance;
+            previousComposerHeight = measurement.composerHeight;
+            previousSource = measurement.source;
+            previousKeyboardVisible = measurement.keyboardVisible;
+            this.setKeyboardClearanceStyles(containerEl, clearance, measurement.keyboardVisible);
+            this.syncKeyboardComposerOverlay(containerEl, clearance, measurement.accessoryClearance, measurement.composerHeight, measurement.source, measurement.keyboardVisible);
             if (notify) {
                 onClearanceChange?.();
             }
@@ -2650,7 +2671,9 @@ export class LLMView extends ItemView {
         this.keyboardVisualViewport = null;
         this.keyboardUpdateHandler = null;
         this.nativeKeyboardHeight = 0;
-        this.setKeyboardClearanceStyles(this.containerEl, 0);
+        this.nativeKeyboardVisible = false;
+        this.keyboardLayoutBaselineHeight = 0;
+        this.setKeyboardClearanceStyles(this.containerEl, 0, false);
         this.clearKeyboardComposerOverlay(this.containerEl);
     }
 
@@ -2661,31 +2684,59 @@ export class LLMView extends ItemView {
 
     private measureKeyboardClearance(containerEl: HTMLElement, inputEl: HTMLElement): {
         realClearance: number;
+        accessoryClearance: number;
         composerHeight: number;
+        source: KeyboardClearanceSource;
+        keyboardVisible: boolean;
     } {
         if (!containerEl.getBoundingClientRect) {
             return {
                 realClearance: 0,
+                accessoryClearance: 0,
                 composerHeight: 0,
+                source: 'none',
+                keyboardVisible: false,
             };
         }
 
         const viewRect = containerEl.getBoundingClientRect();
-        const viewportOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, this.getVisualViewport());
+        const visualViewport = this.getVisualViewport();
+        const viewportOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, visualViewport);
         const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.nativeKeyboardHeight);
         const realClearance = Math.max(viewportOverlap, nativeOverlap);
-        let composerHeight = 0;
-        if (realClearance > 0) {
-            const composerRect = inputEl.getBoundingClientRect?.();
-            composerHeight = composerRect?.height && Number.isFinite(composerRect.height)
-                ? Math.ceil(composerRect.height)
-                : 0;
+        const composerHeight = this.measureComposerHeight(inputEl);
+        const nativeFallbackPreferred = this.nativeKeyboardVisible
+            && nativeOverlap > 0
+            && nativeOverlap >= viewportOverlap;
+        const source = realClearance <= 0
+            ? 'none'
+            : nativeFallbackPreferred
+                ? 'native'
+                : viewportOverlap >= nativeOverlap
+                    ? 'visualViewport'
+                    : 'native';
+        const keyboardVisible = realClearance > 0
+            || this.nativeKeyboardVisible
+            || this.isVisualViewportKeyboardLikelyVisible(visualViewport);
+        const accessoryClearance = 0;
+        if (!keyboardVisible) {
+            this.refreshKeyboardLayoutBaselineHeight();
         }
 
         return {
             realClearance,
+            accessoryClearance,
             composerHeight,
+            source,
+            keyboardVisible,
         };
+    }
+
+    private measureComposerHeight(inputEl: HTMLElement): number {
+        const composerRect = inputEl.getBoundingClientRect?.();
+        return composerRect?.height && Number.isFinite(composerRect.height)
+            ? Math.ceil(composerRect.height)
+            : 0;
     }
 
     private calculateVisualViewportKeyboardOverlap(viewRect: DOMRect, viewport: VisualViewport | null): number {
@@ -2702,6 +2753,15 @@ export class LLMView extends ItemView {
         if (keyboardHeight <= 0) return 0;
 
         const layoutHeight = this.getLayoutViewportHeight();
+        if (
+            layoutHeight > 0
+            && this.keyboardLayoutBaselineHeight > 0
+            && layoutHeight < this.keyboardLayoutBaselineHeight - KEYBOARD_LAYOUT_RESIZE_THRESHOLD_PX
+        ) {
+            const residualOverlap = viewRect.bottom - layoutHeight;
+            if (residualOverlap <= 1) return 0;
+            return Math.ceil(Math.min(residualOverlap, viewRect.height));
+        }
         if (layoutHeight <= 0) return Math.ceil(Math.min(keyboardHeight, viewRect.height));
 
         const keyboardTop = layoutHeight - keyboardHeight;
@@ -2710,30 +2770,62 @@ export class LLMView extends ItemView {
         return Math.ceil(Math.min(overlap, keyboardHeight, viewRect.height));
     }
 
-    private syncKeyboardComposerOverlay(containerEl: HTMLElement, clearance: number, composerHeight: number) {
-        if (clearance <= 0) {
+    private isVisualViewportKeyboardLikelyVisible(viewport: VisualViewport | null): boolean {
+        if (!viewport) return false;
+        const layoutHeight = this.getLayoutViewportHeight();
+        const viewportBottom = viewport.offsetTop + viewport.height;
+        if (!Number.isFinite(viewportBottom) || viewportBottom <= 0 || layoutHeight <= 0) return false;
+        return viewportBottom < layoutHeight - 1;
+    }
+
+    private refreshKeyboardLayoutBaselineHeight() {
+        const layoutHeight = this.getLayoutViewportHeight();
+        if (layoutHeight > 0) {
+            this.keyboardLayoutBaselineHeight = layoutHeight;
+        }
+    }
+
+    private syncKeyboardComposerOverlay(
+        containerEl: HTMLElement,
+        clearance: number,
+        accessoryClearance: number,
+        composerHeight: number,
+        source: KeyboardClearanceSource,
+        keyboardVisible: boolean,
+    ) {
+        if (!keyboardVisible) {
             this.clearKeyboardComposerOverlay(containerEl);
             return;
         }
 
         containerEl.style?.setProperty('--pa-chat-composer-height', `${composerHeight}px`);
+        containerEl.style?.setProperty('--pa-chat-keyboard-accessory-clearance', `${accessoryClearance}px`);
         containerEl.classList.add('is-keyboard-open');
+        if (source === 'native' && clearance > 0) {
+            containerEl.classList.add('is-keyboard-native-fallback');
+        } else {
+            containerEl.classList.remove('is-keyboard-native-fallback');
+        }
     }
 
     private clearKeyboardComposerOverlay(containerEl: HTMLElement) {
         containerEl.classList.remove('is-keyboard-open');
+        containerEl.classList.remove('is-keyboard-native-fallback');
         containerEl.style?.setProperty('--pa-chat-composer-height', '0px');
+        containerEl.style?.setProperty('--pa-chat-keyboard-accessory-clearance', '0px');
     }
 
-    private setKeyboardClearanceStyles(containerEl: HTMLElement, clearance: number) {
+    private setKeyboardClearanceStyles(containerEl: HTMLElement, clearance: number, keyboardVisible: boolean) {
         // When JS has measured a real overlap (visualViewport or Capacitor keyboard event),
-        // pin the explicit pixel value. When clearance is 0 we defer to CSS
-        // env(keyboard-inset-height, 0px), which the browser/WebView fills in as soon as the
-        // keyboard begins to show — bridging the 250-400 ms gap before our JS observers fire.
-        // No more JS-side fallback estimation.
+        // pin the explicit pixel value. A visible keyboard with no residual overlap gets an
+        // explicit zero so the mobile spacer does not consume env(keyboard-inset-height).
+        // Once the keyboard is closed, reset to the CSS env() fallback for the next show.
         if (clearance > 0) {
             containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
             containerEl.style?.setProperty('--pa-chat-keyboard-offset', `-${clearance}px`);
+        } else if (keyboardVisible) {
+            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', '0px');
+            containerEl.style?.setProperty('--pa-chat-keyboard-offset', '0px');
         } else {
             containerEl.style?.setProperty('--pa-chat-keyboard-clearance', 'env(keyboard-inset-height, 0px)');
             containerEl.style?.setProperty('--pa-chat-keyboard-offset', 'calc(0px - env(keyboard-inset-height, 0px))');
@@ -2755,12 +2847,14 @@ export class LLMView extends ItemView {
     private observeNativeKeyboardEvents(scheduleUpdate: () => void) {
         const handleShow = (source: unknown) => {
             const keyboardHeight = this.readKeyboardHeight(source);
+            this.nativeKeyboardVisible = true;
             if (keyboardHeight > 0) {
                 this.nativeKeyboardHeight = keyboardHeight;
             }
             scheduleUpdate();
         };
         const handleHide = () => {
+            this.nativeKeyboardVisible = false;
             this.nativeKeyboardHeight = 0;
             scheduleUpdate();
         };
@@ -2772,9 +2866,8 @@ export class LLMView extends ItemView {
 
         const keyboardPlugin = this.getNativeKeyboardPlugin();
         if (!keyboardPlugin?.addListener) return;
-        // Hand layout management off to Capacitor so the WebView itself resizes the layout
-        // viewport above the keyboard. Combined with env(keyboard-inset-height) CSS, this
-        // removes the need for JS-side height estimation entirely.
+        // Let Capacitor resize the layout viewport; native events only provide fallback
+        // keyboard height when the viewport has not reflected the keyboard yet.
         this.safeInvokeKeyboardPlugin(
             () => keyboardPlugin.setResizeMode?.({ mode: 'body' }),
             'Could not set native keyboard resize mode',

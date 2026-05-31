@@ -427,6 +427,19 @@ function allText(root: MockElement): string {
     return [root.textContent, ...root.children.map(allText)].join('');
 }
 
+function getCssRuleBlock(css: string, selector: string): string {
+    const start = css.indexOf(`${selector} {`);
+    if (start === -1) {
+        throw new Error(`CSS rule not found: ${selector}`);
+    }
+    const blockStart = css.indexOf('{', start);
+    const blockEnd = css.indexOf('\n}', blockStart);
+    if (blockStart === -1 || blockEnd === -1) {
+        throw new Error(`CSS rule block not found: ${selector}`);
+    }
+    return css.slice(blockStart + 1, blockEnd);
+}
+
 function expectVisible(button: MockElement, visibleClass: string, hiddenClass: string) {
     expect(button.classList.contains(visibleClass)).toBe(true);
     expect(button.classList.contains(hiddenClass)).toBe(false);
@@ -2778,10 +2791,38 @@ describe('LLMView turn lifecycle', () => {
 
     it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
         const css = readFileSync('src/custom.css', 'utf8');
+        const drawerInnerBlock = getCssRuleBlock(css, '.workspace-drawer-inner:has(.llm-view)');
+        const mobileDrawerInnerBlock = getCssRuleBlock(css, 'body.is-mobile .workspace-drawer-inner:has(.llm-view)');
+        const mobileViewBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view');
+        const mobileInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input');
+        const mobileTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input textarea');
+        const mobileButtonsBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons');
+        const mobileIconButtonBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button');
+        const mobileIconButtonHitAreaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button::before');
+        const mobileIconButtonSvgBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button svg');
+        const mobileCompactInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-compact .llm-input');
+        const mobileCompactTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-compact .llm-input textarea');
+        const mobileKeyboardInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .llm-input');
+        const mobileKeyboardChatBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .llm-chat-container');
+        const mobileHandleBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle');
+        const mobileLightHandleBlock = getCssRuleBlock(css, 'body.theme-light.is-mobile .pa-tab-bar-handle');
+        const mobileDarkHandleBlock = getCssRuleBlock(css, 'body.theme-dark.is-mobile .pa-tab-bar-handle');
+        const mobileExpandedHandleBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle[aria-expanded="true"]');
+        const mobileHandleHitAreaBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle::before');
+        const mobileHandleIconBlock = getCssRuleBlock(css, 'body.is-mobile .pa-tab-bar-handle svg');
+        const mobileKeyboardHandleBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle');
+        const mobileKeyboardHandleIconBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg');
+        const keyboardSpacerBlock = getCssRuleBlock(css, '.pa-chat-keyboard-spacer');
+        const mobileKeyboardSpacerBlock = getCssRuleBlock(css, 'body.is-mobile .pa-chat-keyboard-spacer');
+        const mobileOpenKeyboardSpacerBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view.is-keyboard-open .pa-chat-keyboard-spacer');
 
-        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-offset:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?--pa-chat-keyboard-motion:\s*180ms cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
+        expect(css).toMatch(/\.llm-view\s*{[\s\S]*?--pa-chat-keyboard-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-accessory-clearance:\s*0px;[\s\S]*?--pa-chat-keyboard-offset:\s*0px;[\s\S]*?--pa-chat-composer-height:\s*0px;[\s\S]*?--pa-chat-keyboard-motion:\s*180ms cubic-bezier\(0\.22,\s*1,\s*0\.36,\s*1\);[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*0;[\s\S]*?overflow:\s*hidden;[\s\S]*?padding:\s*0 0 var\(--pa-chat-keyboard-clearance,\s*0px\);[\s\S]*?position:\s*relative;/);
         expect(css).not.toMatch(/\.llm-view\s*{[^}]*transition:\s*padding-bottom/);
         expect(css).not.toMatch(/\.llm-view\.is-keyboard-open\s*{[\s\S]*?padding-bottom:\s*0;/);
+        expect(drawerInnerBlock).toContain('padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));');
+        expect(mobileDrawerInnerBlock).toContain('--pa-chat-drawer-top-clearance: clamp(10px, calc(env(safe-area-inset-top, 0px) - 24px), 24px);');
+        expect(mobileDrawerInnerBlock).toContain('padding-top: var(--pa-chat-drawer-top-clearance);');
+        expect(mobileViewBlock).toContain('padding-bottom: 0;');
         expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
         expect(css).not.toMatch(/\.llm-chat-container\s*{[^}]*transition:\s*padding-bottom/);
         expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-chat-container\s*{[\s\S]*?padding-bottom:\s*calc\(14px \+ var\(--pa-chat-composer-height,\s*0px\)\);/);
@@ -2790,6 +2831,65 @@ describe('LLMView turn lifecycle', () => {
         const baseInputBlock = css.match(/(?:^|\n)\.llm-input\s*{[^}]*}/)?.[0] ?? '';
         expect(baseInputBlock).not.toContain('will-change: transform');
         expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-input\s*{[\s\S]*?position:\s*absolute;[\s\S]*?bottom:\s*0;[\s\S]*?transform:\s*translate3d\(0,\s*var\(--pa-chat-keyboard-offset,\s*0px\),\s*0\);[\s\S]*?will-change:\s*transform;[\s\S]*?z-index:\s*30;/);
+        expect(mobileInputBlock).toContain('padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));');
+        expect(mobileInputBlock).toContain('transition: none;');
+        expect(mobileTextareaBlock).toContain('box-sizing: border-box;');
+        expect(mobileTextareaBlock).toContain('height: 72px;');
+        expect(mobileTextareaBlock).toContain('min-height: 72px;');
+        expect(mobileTextareaBlock).toContain('max-height: min(26vh, 124px);');
+        expect(mobileTextareaBlock).toContain('overflow-y: auto;');
+        expect(mobileTextareaBlock).toContain('padding: 8px 10px 42px;');
+        expect(mobileButtonsBlock).toContain('gap: 4px;');
+        expect(mobileButtonsBlock).toContain('right: 7px;');
+        expect(mobileButtonsBlock).toContain('bottom: 7px;');
+        expect(mobileIconButtonBlock).toContain('width: 30px;');
+        expect(mobileIconButtonBlock).toContain('height: 30px;');
+        expect(mobileIconButtonBlock).toContain('flex: 0 0 30px;');
+        expect(mobileIconButtonBlock).toContain('border-radius: 9px;');
+        expect(mobileIconButtonHitAreaBlock).toContain('content: "";');
+        expect(mobileIconButtonHitAreaBlock).toContain('inset: -7px;');
+        expect(mobileIconButtonHitAreaBlock).toContain('border-radius: 14px;');
+        expect(mobileIconButtonSvgBlock).toContain('width: 14px;');
+        expect(mobileIconButtonSvgBlock).toContain('height: 14px;');
+        expect(mobileCompactInputBlock).toContain('padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));');
+        expect(mobileCompactTextareaBlock).toContain('height: 66px;');
+        expect(mobileCompactTextareaBlock).toContain('min-height: 66px;');
+        expect(mobileCompactTextareaBlock).toContain('max-height: min(26vh, 116px);');
+        expect(mobileCompactTextareaBlock).toContain('padding-bottom: 40px;');
+        expect(mobileKeyboardInputBlock).toContain('position: relative;');
+        expect(mobileKeyboardInputBlock).toContain('bottom: auto;');
+        expect(mobileKeyboardInputBlock).toContain('transform: translate3d(0, 0, 0);');
+        expect(mobileKeyboardInputBlock).toContain('will-change: auto;');
+        expect(mobileKeyboardInputBlock).toContain('z-index: 3;');
+        expect(mobileKeyboardChatBlock).toContain('padding-bottom: 14px;');
+        expect(mobileHandleBlock).toContain('--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 72%, var(--text-muted));');
+        expect(mobileHandleBlock).toContain('--pa-tab-bar-handle-expanded-color: color-mix(in srgb, var(--interactive-accent) 78%, var(--text-normal));');
+        expect(mobileHandleBlock).toContain('position: relative;');
+        expect(mobileHandleBlock).toContain('min-height: 20px;');
+        expect(mobileHandleBlock).toContain('padding: 0;');
+        expect(mobileHandleBlock).toContain('color: var(--pa-tab-bar-handle-color);');
+        expect(mobileHandleBlock).toContain('opacity: 0.82;');
+        expect(mobileLightHandleBlock).toContain('--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 76%, var(--text-muted));');
+        expect(mobileDarkHandleBlock).toContain('--pa-tab-bar-handle-color: color-mix(in srgb, var(--text-normal) 82%, var(--text-muted));');
+        expect(mobileExpandedHandleBlock).toContain('color: var(--pa-tab-bar-handle-expanded-color);');
+        expect(mobileExpandedHandleBlock).toContain('opacity: 0.92;');
+        expect(mobileHandleHitAreaBlock).toContain('inset: -10px 0;');
+        expect(mobileHandleIconBlock).toContain('width: 14px;');
+        expect(mobileHandleIconBlock).toContain('height: 14px;');
+        expect(mobileHandleIconBlock).toContain('stroke-width: 2.4px;');
+        expect(mobileKeyboardHandleBlock).toContain('min-height: 12px;');
+        expect(mobileKeyboardHandleIconBlock).toContain('width: 11px;');
+        expect(mobileKeyboardHandleIconBlock).toContain('height: 11px;');
+        expect(keyboardSpacerBlock).toContain('display: none;');
+        expect(keyboardSpacerBlock).toContain('flex: 0 0 0px;');
+        expect(keyboardSpacerBlock).toContain('height: 0;');
+        expect(keyboardSpacerBlock).toContain('contain: layout paint size;');
+        expect(keyboardSpacerBlock).not.toContain('transition:');
+        expect(mobileKeyboardSpacerBlock).toContain('display: block;');
+        expect(mobileOpenKeyboardSpacerBlock).toContain('flex-basis: var(--pa-chat-keyboard-clearance, 0px);');
+        expect(mobileOpenKeyboardSpacerBlock).toContain('height: var(--pa-chat-keyboard-clearance, 0px);');
+        expect(css).not.toMatch(/\.llm-view\.is-keyboard-native-fallback\s*{[\s\S]*?--pa-chat-keyboard-accessory-clearance:/);
+        expect(css).not.toMatch(/\.is-keyboard-native-fallback\s+\.pa-chat-keyboard-spacer\s*{[\s\S]*?transition:/);
         expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-input\s*{[\s\S]*?transition:\s*none;/);
     });
 
@@ -2941,9 +3041,10 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('reserves keyboard clearance from the mobile visual viewport and disconnects listeners', async () => {
+        jest.useFakeTimers();
         const { view, containerEl } = createView({ panelWidth: 430 });
         containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
-        const viewportState = { offsetTop: 0, height: 540 };
+        const viewportState = { offsetTop: 0, height: 900 };
         const viewportListeners = new Map<string, Array<() => void>>();
         const visualViewport = {
             get offsetTop() {
@@ -2966,10 +3067,20 @@ describe('LLMView turn lifecycle', () => {
 
         await view.onOpen();
 
-        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
-        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-360px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('env(keyboard-inset-height, 0px)');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
         expect(visualViewport.addEventListener).toHaveBeenCalledWith('resize', expect.any(Function));
         expect(visualViewport.addEventListener).toHaveBeenCalledWith('scroll', expect.any(Function));
+
+        viewportState.height = 540;
+        viewportListeners.get('resize')?.forEach((listener) => listener());
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('360px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-360px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(false);
 
         viewportState.height = 900;
         viewportListeners.get('resize')?.forEach((listener) => listener());
@@ -2979,6 +3090,10 @@ describe('LLMView turn lifecycle', () => {
         // so the browser/WebView bridges the gap before our observers fire on the next show.
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('env(keyboard-inset-height, 0px)');
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('calc(0px - env(keyboard-inset-height, 0px))');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(false);
+        expect(containerEl.style.getPropertyValue('--pa-chat-composer-height')).toBe('0px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
 
         await view.onClose();
 
@@ -2987,6 +3102,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('uses native mobile keyboard events when the visual viewport does not report keyboard overlap', async () => {
+        jest.useFakeTimers();
         const { view, containerEl } = createView({ panelWidth: 430 });
         containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
         const windowListeners = new Map<string, Array<EventListener>>();
@@ -3010,12 +3126,15 @@ describe('LLMView turn lifecycle', () => {
         expect(windowWithKeyboardEvents.addEventListener).toHaveBeenCalledWith('keyboardWillShow', expect.any(Function));
 
         windowListeners.get('keyboardWillShow')?.forEach((listener) => {
-            listener({ keyboardHeight: 336 } as Event & { keyboardHeight: number });
+            listener({ detail: { keyboardHeight: 336 } } as Event & { detail: { keyboardHeight: number } });
         });
         runAnimationFrames();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-336px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(true);
 
         windowListeners.get('keyboardWillHide')?.forEach((listener) => {
             listener({} as Event);
@@ -3026,11 +3145,153 @@ describe('LLMView turn lifecycle', () => {
         // in immediately on the next show, bridging the JS observer latency window.
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('env(keyboard-inset-height, 0px)');
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('calc(0px - env(keyboard-inset-height, 0px))');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(false);
 
         await view.onClose();
 
         expect(windowWithKeyboardEvents.removeEventListener).toHaveBeenCalledWith('keyboardWillShow', expect.any(Function));
         expect(windowWithKeyboardEvents.removeEventListener).toHaveBeenCalledWith('keyboardWillHide', expect.any(Function));
+    });
+
+    it('keeps native fallback active when the visual viewport only matches native keyboard height', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const viewportState = { offsetTop: 0, height: 900 };
+        const viewportListeners = new Map<string, Array<() => void>>();
+        const visualViewport = {
+            get offsetTop() {
+                return viewportState.offsetTop;
+            },
+            get height() {
+                return viewportState.height;
+            },
+            addEventListener: jest.fn((type: string, listener: () => void) => {
+                const listeners = viewportListeners.get(type) ?? [];
+                listeners.push(listener);
+                viewportListeners.set(type, listeners);
+            }),
+            removeEventListener: jest.fn(),
+        } as unknown as VisualViewport;
+        Object.defineProperty(globalThis.window, 'visualViewport', {
+            configurable: true,
+            value: visualViewport,
+        });
+        const windowListeners = new Map<string, Array<EventListener>>();
+        const windowWithKeyboardEvents = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+            addEventListener: jest.Mock;
+            removeEventListener: jest.Mock;
+        };
+        windowWithKeyboardEvents.innerHeight = 900;
+        windowWithKeyboardEvents.innerWidth = 430;
+        windowWithKeyboardEvents.addEventListener = jest.fn((type: string, listener: EventListener) => {
+            const listeners = windowListeners.get(type) ?? [];
+            listeners.push(listener);
+            windowListeners.set(type, listeners);
+        });
+        windowWithKeyboardEvents.removeEventListener = jest.fn();
+
+        await view.onOpen();
+
+        viewportState.height = 564;
+        windowListeners.get('keyboardWillShow')?.forEach((listener) => {
+            listener({ detail: { keyboardHeight: 336 } } as Event & { detail: { keyboardHeight: number } });
+        });
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(true);
+
+        viewportState.height = 600;
+        viewportListeners.get('resize')?.forEach((listener) => listener());
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(true);
+
+        viewportState.height = 508;
+        viewportListeners.get('resize')?.forEach((listener) => listener());
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('392px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(false);
+
+        await view.onClose();
+    });
+
+    it('keeps native clearance until the chat view has resized above the keyboard', async () => {
+        jest.useFakeTimers();
+        const { view, containerEl } = createView({ panelWidth: 430 });
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+        const windowListeners = new Map<string, Array<EventListener>>();
+        const windowWithKeyboardEvents = globalThis.window as typeof globalThis.window & {
+            innerHeight: number;
+            innerWidth: number;
+            addEventListener: jest.Mock;
+            removeEventListener: jest.Mock;
+        };
+        windowWithKeyboardEvents.innerHeight = 900;
+        windowWithKeyboardEvents.innerWidth = 430;
+        windowWithKeyboardEvents.addEventListener = jest.fn((type: string, listener: EventListener) => {
+            const listeners = windowListeners.get(type) ?? [];
+            listeners.push(listener);
+            windowListeners.set(type, listeners);
+        });
+        windowWithKeyboardEvents.removeEventListener = jest.fn();
+
+        await view.onOpen();
+
+        windowListeners.get('keyboardWillShow')?.forEach((listener) => {
+            listener({ keyboardHeight: 336 } as Event & { keyboardHeight: number });
+        });
+        runAnimationFrames();
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(true);
+
+        windowWithKeyboardEvents.innerHeight = 560;
+        windowListeners.get('resize')?.forEach((listener) => listener({} as Event));
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('340px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-340px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(true);
+
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 560, width: 430, height: 560 };
+        windowListeners.get('resize')?.forEach((listener) => listener({} as Event));
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('0px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('0px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(false);
+
+        windowListeners.get('keyboardWillHide')?.forEach((listener) => {
+            listener({} as Event);
+        });
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('env(keyboard-inset-height, 0px)');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('calc(0px - env(keyboard-inset-height, 0px))');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(false);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(false);
+        expect(containerEl.style.getPropertyValue('--pa-chat-composer-height')).toBe('0px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+
+        await view.onClose();
     });
 
     it('hands keyboard layout to Capacitor via setResizeMode body mode when the plugin is available', async () => {
@@ -3085,11 +3346,13 @@ describe('LLMView turn lifecycle', () => {
         });
         runAnimationFrames();
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('400px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
 
         // Hide
         windowListeners.get('keyboardWillHide')?.forEach((listener) => listener({} as Event));
         runAnimationFrames();
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('env(keyboard-inset-height, 0px)');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
 
         // Show 2: short keyboard — must reflect new value, not the previous 400
         windowListeners.get('keyboardWillShow')?.forEach((listener) => {
@@ -3098,6 +3361,7 @@ describe('LLMView turn lifecycle', () => {
         runAnimationFrames();
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('250px');
         expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-offset')).toBe('-250px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
 
         await view.onClose();
     });
@@ -3987,6 +4251,14 @@ describe('mobile tab bar auto-hide', () => {
 
         const handle = walk(containerEl, (el) => el.classList.contains('pa-tab-bar-handle'));
         expect(handle).not.toBeNull();
+        const keyboardSpacer = walk(containerEl, (el) => el.classList.contains('pa-chat-keyboard-spacer'));
+        expect(keyboardSpacer).not.toBeNull();
+        expect(keyboardSpacer!.getAttribute('aria-hidden')).toBe('true');
+        expect(containerEl.children).toHaveLength(4);
+        expect(containerEl.children[0].classList.contains('llm-chat-container')).toBe(true);
+        expect(containerEl.children[1].classList.contains('llm-input')).toBe(true);
+        expect(containerEl.children[2]).toBe(handle);
+        expect(containerEl.children[3]).toBe(keyboardSpacer);
 
         const listenersBefore = tabOptions.listeners.get('click')?.length ?? 0;
         expect(listenersBefore).toBeGreaterThan(0);
@@ -3996,6 +4268,62 @@ describe('mobile tab bar auto-hide', () => {
         const listenersAfter = tabOptions.listeners.get('click')?.length ?? 0;
         expect(listenersAfter).toBe(listenersBefore - 1);
         expect(handle!.parentElement).toBeNull();
+    });
+
+    it('keeps the mobile shell ordered while the native keyboard spacer is active', async () => {
+        const windowListeners = new Map<string, Array<EventListener>>();
+        let nextFrameId = 1;
+        let frames: AnimationFrameCall[] = [];
+        const runLocalAnimationFrames = () => {
+            const pending = [...frames];
+            frames = [];
+            for (const frame of pending) {
+                if (!frame.cancelled) frame.callback(frame.id);
+            }
+        };
+        Object.defineProperty(globalThis, 'window', {
+            configurable: true,
+            value: {
+                innerHeight: 900,
+                innerWidth: 430,
+                requestAnimationFrame: jest.fn((callback: FrameRequestCallback) => {
+                    const id = nextFrameId;
+                    nextFrameId += 1;
+                    frames.push({ id, callback, cancelled: false });
+                    return id;
+                }),
+                cancelAnimationFrame: jest.fn((id: number) => {
+                    const frame = frames.find((candidate) => candidate.id === id);
+                    if (frame) frame.cancelled = true;
+                }),
+                addEventListener: jest.fn((type: string, listener: EventListener) => {
+                    const listeners = windowListeners.get(type) ?? [];
+                    listeners.push(listener);
+                    windowListeners.set(type, listeners);
+                }),
+                removeEventListener: jest.fn(),
+            },
+        });
+        const { view, containerEl } = createMobileView();
+        containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
+
+        await view.onOpen();
+        windowListeners.get('keyboardWillShow')?.forEach((listener) => {
+            listener({ detail: { keyboardHeight: 336 } } as Event & { detail: { keyboardHeight: number } });
+        });
+        runLocalAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-clearance')).toBe('336px');
+        expect(containerEl.style.getPropertyValue('--pa-chat-keyboard-accessory-clearance')).toBe('0px');
+        expect(containerEl.classList.contains('is-keyboard-open')).toBe(true);
+        expect(containerEl.classList.contains('is-keyboard-native-fallback')).toBe(true);
+        expect(containerEl.children).toHaveLength(4);
+        expect(containerEl.children[0].classList.contains('llm-chat-container')).toBe(true);
+        expect(containerEl.children[1].classList.contains('llm-input')).toBe(true);
+        expect(containerEl.children[2].classList.contains('pa-tab-bar-handle')).toBe(true);
+        expect(containerEl.children[3].classList.contains('pa-chat-keyboard-spacer')).toBe(true);
+
+        await view.onClose();
     });
 
     it('toggles aria-label and aria-expanded on handle click', async () => {
