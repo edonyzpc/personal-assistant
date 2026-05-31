@@ -6,6 +6,7 @@ import { nanoid } from 'nanoid'
 import { SystemMessage, HumanMessage } from "@langchain/core/messages";
 
 import { AIUtils, getDashScopeImageSynthesisUrl, getDashScopeTasksUrl } from './ai-utils';
+import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from './featured-image-path';
 import type { PluginManager } from '../plugin'
 import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
 
@@ -651,13 +652,15 @@ export class AIService {
             // 从 URL 中提取文件名
             const filename = imageUrl.split('/').pop()?.split('?')[0] || 'image.png';
 
-            // 构建完整的保存路径
-            const savePath = `${folderPath}/${filename}`;
+            const normalizedFolderPath = normalizeFeaturedImageFolderPath(folderPath);
+            const savePath = getFeaturedImageSavePath(folderPath, filename);
 
             // 确保目标文件夹存在
-            const folder = app.vault.getAbstractFileByPath(folderPath);
-            if (!folder) {
-                await app.vault.createFolder(folderPath);
+            if (normalizedFolderPath) {
+                const folder = app.vault.getAbstractFileByPath(normalizedFolderPath);
+                if (!folder) {
+                    await app.vault.createFolder(normalizedFolderPath);
+                }
             }
 
             // 下载图片

@@ -140,6 +140,10 @@ const salt = utf8Encoder.encode('XHWnDAT6ehMVY2zD');
 export const KEYCHAIN_API_TOKEN_ID = "pa-api-token";
 const SECRET_STORAGE_ID_MAX_LENGTH = 64;
 
+export interface SecretReader {
+    getSecret(id: string): string | null;
+}
+
 function hashSecretScope(value: string): string {
     let hash = 2166136261;
     for (let i = 0; i < value.length; i += 1) {
@@ -166,6 +170,20 @@ export function getVaultApiTokenId(vaultId?: string): string {
     const suffix = `-${hash}`;
     const head = scope.slice(0, maxScopeLength - suffix.length).replace(/-+$/g, "");
     return `${prefix}${head}${suffix}`;
+}
+
+export function getVaultScopedSecret(
+    secretStorage: SecretReader,
+    scopedId: string,
+    legacyId: string,
+): string | null {
+    const scoped = secretStorage.getSecret(scopedId);
+    if (scoped !== null || scopedId === legacyId) return scoped;
+    return secretStorage.getSecret(legacyId);
+}
+
+export function hasSecretValue(secret: string | null): secret is string {
+    return secret !== null && secret !== "";
 }
 
 /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */

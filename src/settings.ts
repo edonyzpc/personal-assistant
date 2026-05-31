@@ -9,6 +9,7 @@ import { getDashScopeImageSynthesisUrl, isDashScopeCompatibleBaseURL } from "./a
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { confirmUserAction } from "./confirm";
+import { getVaultScopedSecret, hasSecretValue } from "./utils";
 
 export interface ResizeStyle {
     width: number,
@@ -711,9 +712,7 @@ export class SettingTab extends PluginSettingTab {
         const app = this.app;
         const secretId = plugin.getAPITokenSecretId();
         const legacySecretId = plugin.getLegacyAPITokenSecretId();
-        const existing = app.secretStorage.getSecret(secretId)
-            || app.secretStorage.getSecret(legacySecretId)
-            || "";
+        const existing = getVaultScopedSecret(app.secretStorage, secretId, legacySecretId) ?? "";
 
         class ApiTokenSecretModal extends Modal {
             onOpen(): void {
@@ -1496,17 +1495,15 @@ export class SettingTab extends PluginSettingTab {
                 const secret = new SecretComponent(this.app, el);
                 const secretId = plugin.getAPITokenSecretId();
                 const legacySecretId = plugin.getLegacyAPITokenSecretId();
-                const existing = this.app.secretStorage.getSecret(secretId)
-                    || this.app.secretStorage.getSecret(legacySecretId);
-                if (existing) {
+                const existing = getVaultScopedSecret(this.app.secretStorage, secretId, legacySecretId);
+                if (hasSecretValue(existing)) {
                     secret.setValue(existing);
                 }
                 this.renameSecretComponentLinkButton(el);
                 secret.onChange(async (value: string) => {
                     if (value === "") {
-                        const stored = this.app.secretStorage.getSecret(secretId)
-                            || this.app.secretStorage.getSecret(legacySecretId);
-                        if (!stored) {
+                        const stored = getVaultScopedSecret(this.app.secretStorage, secretId, legacySecretId);
+                        if (!hasSecretValue(stored)) {
                             return;
                         }
                         const confirmed = await confirmUserAction(this.app, {
@@ -1527,6 +1524,9 @@ export class SettingTab extends PluginSettingTab {
                         return;
                     }
                     this.app.secretStorage.setSecret(secretId, value);
+                    if (legacySecretId !== secretId) {
+                        this.app.secretStorage.setSecret(legacySecretId, "");
+                    }
                     plugin.clearTokenCache();
                 });
                 return secret;

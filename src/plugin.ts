@@ -11,7 +11,7 @@ import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
-import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, icons, personalAssitant } from './utils';
+import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, hasSecretValue, icons, personalAssitant } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
@@ -1178,9 +1178,9 @@ export class PluginManager extends Plugin {
                 delete this.settings.apiToken;
                 changed = true;
             }
-            if (!this.app.secretStorage.getSecret(scopedTokenId)) {
+            if (this.app.secretStorage.getSecret(scopedTokenId) === null) {
                 const legacyToken = this.app.secretStorage.getSecret(legacySecretId);
-                if (legacyToken) {
+                if (hasSecretValue(legacyToken)) {
                     this.app.secretStorage.setSecret(scopedTokenId, legacyToken);
                     this.token = legacyToken;
                     this.log("API token migrated from legacy keychain id to vault-scoped id");
@@ -1205,10 +1205,9 @@ export class PluginManager extends Plugin {
     }
 
     hasConfiguredAPIToken(): boolean {
-        return Boolean(
-            this.app.secretStorage.getSecret(this.getAPITokenSecretId())
-            || this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId())
-        );
+        const scopedToken = this.app.secretStorage.getSecret(this.getAPITokenSecretId());
+        if (scopedToken !== null) return scopedToken !== "";
+        return hasSecretValue(this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId()));
     }
 
     getAISetupIssue(): string | null {
@@ -1231,12 +1230,14 @@ export class PluginManager extends Plugin {
         const scopedTokenId = this.getAPITokenSecretId();
         const legacySecretId = this.getLegacyAPITokenSecretId();
         const scopedToken = this.app.secretStorage.getSecret(scopedTokenId);
-        const token = scopedToken || this.app.secretStorage.getSecret(legacySecretId);
-        if (!token) {
+        const token = scopedToken !== null
+            ? scopedToken
+            : this.app.secretStorage.getSecret(legacySecretId);
+        if (!hasSecretValue(token)) {
             new Notice("API token not configured. Please set it in Settings → Personal Assistant.", 5000);
             return "";
         }
-        if (!scopedToken) {
+        if (scopedToken === null) {
             this.app.secretStorage.setSecret(scopedTokenId, token);
             this.log("API token copied from legacy keychain id to vault-scoped id");
         }

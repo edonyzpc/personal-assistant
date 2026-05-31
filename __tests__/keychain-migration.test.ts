@@ -2,7 +2,13 @@ import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 
 jest.mock('obsidian');
 
-import { KEYCHAIN_API_TOKEN_ID, CryptoHelper, getVaultApiTokenId, personalAssitant } from '../src/utils';
+import {
+    KEYCHAIN_API_TOKEN_ID,
+    CryptoHelper,
+    getVaultApiTokenId,
+    hasSecretValue,
+    personalAssitant,
+} from '../src/utils';
 
 describe('Keychain Migration - SecretStorage', () => {
     let plugin: {
@@ -48,11 +54,13 @@ describe('Keychain Migration - SecretStorage', () => {
                 }
                 const scopedId = this.getAPITokenSecretId();
                 const scopedToken = this.app.secretStorage.getSecret(scopedId);
-                const token = scopedToken || this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId());
-                if (!token) {
+                const token = scopedToken !== null
+                    ? scopedToken
+                    : this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId());
+                if (!hasSecretValue(token)) {
                     return '';
                 }
-                if (!scopedToken) {
+                if (scopedToken === null) {
                     this.app.secretStorage.setSecret(scopedId, token);
                 }
                 this.token = token;
@@ -79,9 +87,9 @@ describe('Keychain Migration - SecretStorage', () => {
                     delete this.settings.apiToken;
                     await this.saveSettings();
                 }
-                if (!this.app.secretStorage.getSecret(scopedId)) {
+                if (this.app.secretStorage.getSecret(scopedId) === null) {
                     const legacyToken = this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId());
-                    if (legacyToken) {
+                    if (hasSecretValue(legacyToken)) {
                         this.app.secretStorage.setSecret(scopedId, legacyToken);
                         this.token = legacyToken;
                     }
@@ -120,12 +128,12 @@ describe('Keychain Migration - SecretStorage', () => {
             expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith(plugin.getAPITokenSecretId(), 'sk-legacy-token');
         });
 
-        it('treats an empty vault-scoped secret as missing and falls back to legacy', () => {
+        it('treats an empty vault-scoped secret as an explicit clear and does not fall back to legacy', () => {
             secretValues.set(plugin.getAPITokenSecretId(), '');
             secretValues.set(KEYCHAIN_API_TOKEN_ID, 'sk-legacy-token');
             const result = plugin.getAPIToken();
-            expect(result).toBe('sk-legacy-token');
-            expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith(plugin.getAPITokenSecretId(), 'sk-legacy-token');
+            expect(result).toBe('');
+            expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalledWith(plugin.getAPITokenSecretId(), 'sk-legacy-token');
         });
 
         it('returns cached token without calling secretStorage', () => {
@@ -205,6 +213,18 @@ describe('Keychain Migration - SecretStorage', () => {
 
             expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith(plugin.getAPITokenSecretId(), 'sk-legacy-token');
             expect(plugin.token).toBe('sk-legacy-token');
+        });
+
+        it('does not migrate a stale legacy keychain token over an explicitly cleared scoped id', async () => {
+            delete plugin.settings.apiToken;
+            secretValues.set(plugin.getAPITokenSecretId(), '');
+            secretValues.set(KEYCHAIN_API_TOKEN_ID, 'sk-legacy-token');
+
+            await plugin.migrateSettings();
+
+            expect(secretValues.get(plugin.getAPITokenSecretId())).toBe('');
+            expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalledWith(plugin.getAPITokenSecretId(), 'sk-legacy-token');
+            expect(plugin.token).toBe('');
         });
     });
 

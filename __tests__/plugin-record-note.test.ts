@@ -75,6 +75,7 @@ jest.mock('../src/utils', () => ({
     KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
     CryptoHelper: class { },
     getVaultApiTokenId: (vaultId?: string) => vaultId ? `pa-api-token-${vaultId}` : 'pa-api-token',
+    hasSecretValue: (value: string | null) => value !== null && value !== '',
     icons: {},
     personalAssitant: '',
 }));

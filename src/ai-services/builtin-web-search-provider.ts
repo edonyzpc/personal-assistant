@@ -33,6 +33,7 @@ export const BUILTIN_WEB_SEARCH_PROVIDER_ID = "builtin-web-search";
 export const BUILTIN_WEB_SEARCH_TOOL_NAME = "webSearch";
 export const WEB_SEARCH_CANCELLED_MESSAGE = "Web search cancelled - request was already sent to the provider";
 export const BAILIAN_WEB_SEARCH_MCP_ENDPOINT = "https://dashscope.aliyuncs.com/api/v1/mcps/WebSearch/mcp";
+export const BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT = "https://dashscope-intl.aliyuncs.com/api/v1/mcps/WebSearch/mcp";
 
 const MCP_PROTOCOL_VERSION = "2025-06-18";
 
@@ -70,10 +71,10 @@ const WEB_SEARCH_DEFAULT_LIMIT = 5;
 const WEB_SEARCH_MAX_LIMIT = 10;
 const WEB_SEARCH_TIMEOUT_MS = 20_000;
 
-export function createBailianWebSearchNetworkPolicy(): AgentNetworkPolicy {
+export function createBailianWebSearchNetworkPolicy(endpoint = BAILIAN_WEB_SEARCH_MCP_ENDPOINT): AgentNetworkPolicy {
     return {
         transport: "streamable-http",
-        allowedEndpoints: [BAILIAN_WEB_SEARCH_MCP_ENDPOINT],
+        allowedEndpoints: [endpoint],
         authKeyId: "dashscope-api-key",
         redactHeaders: ["authorization"],
         redactQueryParams: ["api_key", "access_token"],

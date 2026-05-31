@@ -275,6 +275,16 @@ jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 jest.mock('../src/utils', () => ({
     KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
+    getVaultScopedSecret: (
+        secretStorage: { getSecret: (id: string) => string | null },
+        scopedId: string,
+        legacyId: string,
+    ) => {
+        const scoped = secretStorage.getSecret(scopedId);
+        if (scoped !== null || scopedId === legacyId) return scoped;
+        return secretStorage.getSecret(legacyId);
+    },
+    hasSecretValue: (secret: string | null) => secret !== null && secret !== '',
 }));
 
 import {

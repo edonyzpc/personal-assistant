@@ -2,6 +2,7 @@
 import { Platform } from 'obsidian';
 import {
     AIUtils,
+    DASHSCOPE_INTL_COMPATIBLE_BASE_URL,
     isDashScopeCompatibleBaseURL,
     type QwenRequestOptions,
     SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
@@ -14,6 +15,8 @@ import {
 } from './pa-agent-runtime';
 import {
     BuiltinWebSearchProvider,
+    BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
+    BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
     createBailianWebSearchNetworkPolicy,
     requestBailianWebSearchMcp,
 } from './builtin-web-search-provider';
@@ -22,6 +25,13 @@ import type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, Cha
 
 export type { AgentEvent, ChatAgentStatus, ChatContextUsedItem, ChatMessage, ChatTurnMemoryMetadata, LegacyAgentEvent };
 export { canFallbackToNonStreaming };
+
+export function getBailianWebSearchEndpointForBaseURL(baseURL: string): string {
+    const normalizedBaseURL = baseURL.trim().replace(/\/+$/, "");
+    return normalizedBaseURL === DASHSCOPE_INTL_COMPATIBLE_BASE_URL
+        ? BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT
+        : BAILIAN_WEB_SEARCH_MCP_ENDPOINT;
+}
 
 export interface StreamLLMOptions {
     memoryMode?: MemoryMode;
@@ -67,10 +77,14 @@ export class ChatService {
         if (!this.shouldLoadBuiltinWebSearchProvider()) return [];
         const apiKey = await this.aiUtils.getAPIToken();
         return [new BuiltinWebSearchProvider({
-            policy: createBailianWebSearchNetworkPolicy(),
+            policy: createBailianWebSearchNetworkPolicy(this.getBuiltinWebSearchEndpoint()),
             apiKey,
             request: requestBailianWebSearchMcp,
         })];
+    }
+
+    private getBuiltinWebSearchEndpoint(): string {
+        return getBailianWebSearchEndpointForBaseURL(this.plugin.settings.baseURL);
     }
 
 

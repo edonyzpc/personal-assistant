@@ -1,7 +1,7 @@
 import { beforeEach, describe, it, expect, jest } from '@jest/globals';
 import { SystemMessagePromptTemplate } from '@langchain/core/prompts';
 import { Platform } from 'obsidian';
-import { ChatService, canFallbackToNonStreaming } from '../src/ai-services/chat-service';
+import { ChatService, canFallbackToNonStreaming, getBailianWebSearchEndpointForBaseURL } from '../src/ai-services/chat-service';
 import {
     PaAgentRuntime,
     MAX_READ_ONLY_TOOL_CONTEXT_CHARS,
@@ -12,6 +12,10 @@ import {
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 import { ToolRegistry, type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 import type { AgentEvent as CanonicalAgentEvent, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
+import {
+    BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
+    BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
+} from '../src/ai-services/builtin-web-search-provider';
 
 jest.mock('obsidian');
 
@@ -24,6 +28,7 @@ jest.mock('../src/ai-services/ai-utils', () => ({
         getAPIToken: jest.fn(async () => 'sk-SECRET_TOKEN_SENTINEL'),
         getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
     })),
+    DASHSCOPE_INTL_COMPATIBLE_BASE_URL: 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1',
     isDashScopeCompatibleBaseURL: (baseURL: string) => {
         const normalized = baseURL.replace(/\/+$/, '').toLowerCase();
         return normalized === 'https://dashscope.aliyuncs.com/compatible-mode/v1'
@@ -536,6 +541,11 @@ describe('native tool call fixtures', () => {
 });
 
 describe('ChatService.streamLLM integration', () => {
+    it('uses the matching regional WebSearch MCP endpoint for DashScope-compatible base URLs', () => {
+        expect(getBailianWebSearchEndpointForBaseURL('https://dashscope.aliyuncs.com/compatible-mode/v1')).toBe(BAILIAN_WEB_SEARCH_MCP_ENDPOINT);
+        expect(getBailianWebSearchEndpointForBaseURL('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/')).toBe(BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT);
+    });
+
     it('routes a simple PA canonical turn from model chunk to onChunk callback', async () => {
         const model = createStreamModel('Hello there.');
         mockCreateChatModel.mockResolvedValue(model);

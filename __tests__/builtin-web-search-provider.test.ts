@@ -3,9 +3,11 @@ import { requestUrl } from "obsidian";
 
 import {
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
+    BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
     BUILTIN_WEB_SEARCH_TOOL_NAME,
     BuiltinWebSearchProvider,
     WEB_SEARCH_CANCELLED_MESSAGE,
+    createBailianWebSearchNetworkPolicy,
     requestBailianWebSearchMcp,
     type BuiltinWebSearchHttpResponse,
     type BuiltinWebSearchRequest,
@@ -19,6 +21,15 @@ const ENDPOINT = "https://example.com/mcp/web-search";
 type MockRequestUrlParam = { body?: unknown; headers?: Record<string, string> };
 
 describe("BuiltinWebSearchProvider", () => {
+    it("can scope the DashScope WebSearch allowlist to the international endpoint", () => {
+        expect(createBailianWebSearchNetworkPolicy(BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT)).toMatchObject({
+            allowedEndpoints: [BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT],
+        });
+        expect(createBailianWebSearchNetworkPolicy()).toMatchObject({
+            allowedEndpoints: [BAILIAN_WEB_SEARCH_MCP_ENDPOINT],
+        });
+    });
+
     it("loads unavailable when the API key is missing", async () => {
         const provider = createProvider({ apiKey: undefined });
 

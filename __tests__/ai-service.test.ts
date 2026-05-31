@@ -1,5 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
+import {
+    getFeaturedImageSavePath,
+    normalizeFeaturedImageFolderPath,
+} from '../src/ai-services/featured-image-path';
+
 jest.mock('obsidian');
 jest.mock('nanoid', () => ({ nanoid: () => 'test-id' }));
 
@@ -96,5 +101,17 @@ describe('AI summary generation', () => {
             "AI Summary": 'Generated summary',
             tags: ['daily', 'notes', 'ai'],
         });
+    });
+});
+
+describe('AIService featured image vault paths', () => {
+    it('saves to the vault root when the featured image folder is empty', () => {
+        expect(normalizeFeaturedImageFolderPath('')).toBe('');
+        expect(getFeaturedImageSavePath('', 'image.png')).toBe('image.png');
+    });
+
+    it('normalizes configured featured image folders as vault-relative paths', () => {
+        expect(normalizeFeaturedImageFolderPath('/attachments/ai/')).toBe('attachments/ai');
+        expect(getFeaturedImageSavePath('/attachments/ai/', 'image.png')).toBe('attachments/ai/image.png');
     });
 });
