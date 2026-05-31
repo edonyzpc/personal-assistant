@@ -908,6 +908,8 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].onChunk('partial answer');
         await flushPromises();
         await flushPromises();
+        runAnimationFrames();
+        await flushPromises();
 
         expect(getElementsByClass(containerEl, 'assistant')).toHaveLength(1);
         expect(allText(containerEl)).toContain('partial answer');
@@ -965,6 +967,8 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].onChunk('```mermaid\ngraph TD\nA -->');
         await flushPromises();
         await flushPromises();
+        runAnimationFrames();
+        await flushPromises();
 
         expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```text');
         expect(renderedMarkdown[renderedMarkdown.length - 1]).not.toContain('```mermaid');
@@ -972,6 +976,8 @@ describe('LLMView turn lifecycle', () => {
 
         streamCalls[0].onChunk('```mermaid\ngraph TD\nA --> B\n```');
         await flushPromises();
+        await flushPromises();
+        runAnimationFrames();
         await flushPromises();
 
         expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```text');
@@ -1198,6 +1204,9 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].onChunk('plain answer');
         await flushPromises();
         await flushPromises();
+        runAnimationFrames();
+        await flushPromises();
+        expect(allText(containerEl)).toContain('plain answer');
         const renderCountAfterChunk = renderedMarkdown.length;
 
         streamCalls[0].resolve();
@@ -1330,6 +1339,8 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].onChunk('final answer only');
         await flushPromises();
         await flushPromises();
+        runAnimationFrames();
+        await flushPromises();
 
         const responseDiv = getResponseDiv(view);
         expect(getElementsByClass(responseDiv, 'thinking-status')).toHaveLength(1);
@@ -1420,6 +1431,8 @@ describe('LLMView turn lifecycle', () => {
             update: { kind: 'text_delta', text: 'Draft answer before tools.' },
         }));
         await flushPromises();
+        await flushPromises();
+        runAnimationFrames();
         await flushPromises();
 
         expect(allText(getElementByClass(responseDiv, 'assistant'))).toContain('Draft answer before tools.');
@@ -2284,7 +2297,7 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonByText(containerEl, 'Summarize current note').disabled).toBe(false);
     });
 
-    it('ignores delayed stale markdown renders after a newer stream chunk', async () => {
+    it('coalesces overlapping live markdown renders before the final markdown render', async () => {
         const { view, containerEl } = createView();
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
         Object.defineProperty(globalThis, 'document', {
@@ -2313,11 +2326,13 @@ describe('LLMView turn lifecycle', () => {
 
         streamCalls[0].onChunk('old chunk');
         streamCalls[0].onChunk('new chunk');
-        expect(renderJobs.map((job) => job.markdown)).toEqual(['stream', 'old chunk', 'new chunk']);
+        expect(renderJobs.map((job) => job.markdown)).toEqual(['stream', 'old chunk']);
+        expect(allText(containerEl)).not.toContain('old chunk');
 
         renderJobs[1].resolve();
         await flushPromises();
         expect(allText(containerEl)).not.toContain('old chunk');
+        expect(renderJobs.map((job) => job.markdown)).toEqual(['stream', 'old chunk', 'new chunk']);
 
         renderJobs[2].resolve();
         await flushPromises();
@@ -2325,7 +2340,51 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('old chunk');
     });
 
-    it('waits for the final markdown render before committing a successful live turn', async () => {
+    it('uses a cost-aware latest-only drain after a slow synchronous live render', async () => {
+        const { view, containerEl } = createView();
+        const renderedMarkdown: string[] = [];
+        let nowMs = 0;
+        const performanceNowSpy = jest.spyOn(globalThis.performance, 'now').mockImplementation(() => nowMs);
+        try {
+            (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+                renderedMarkdown.push(markdown);
+                if (markdown.startsWith('slow')) {
+                    nowMs += 20;
+                }
+                el.setText(markdown);
+            });
+            await view.onOpen();
+
+            getTextArea(containerEl).value = 'cost prompt';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+
+            streamCalls[0].onChunk('slow one');
+            await flushPromises();
+            await flushPromises();
+            expect(renderedMarkdown).toEqual(['cost prompt', 'slow one']);
+            expect(allText(containerEl)).toContain('slow one');
+
+            streamCalls[0].onChunk('slow two');
+            streamCalls[0].onChunk('slow three');
+            await flushPromises();
+            expect(renderedMarkdown).toEqual(['cost prompt', 'slow one']);
+            expect(allText(containerEl)).not.toContain('slow three');
+
+            nowMs = 52;
+            await new Promise((resolve) => setTimeout(resolve, 40));
+            await flushPromises();
+            await flushPromises();
+
+            expect(renderedMarkdown).toEqual(['cost prompt', 'slow one', 'slow three']);
+            expect(renderedMarkdown).not.toContain('slow two');
+            expect(allText(containerEl)).toContain('slow three');
+        } finally {
+            performanceNowSpy.mockRestore();
+        }
+    });
+
+    it('reuses the in-flight final live markdown render before committing a successful turn', async () => {
         const { view, containerEl } = createView();
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
         Object.defineProperty(globalThis, 'document', {
@@ -2357,14 +2416,14 @@ describe('LLMView turn lifecycle', () => {
 
         streamCalls[0].resolve();
         await flushPromises();
-        expect(renderJobs.map((job) => job.markdown)).toEqual(['async prompt', 'async answer', 'async answer']);
+        expect(renderJobs.map((job) => job.markdown)).toEqual(['async prompt', 'async answer']);
         expect(view.chatHistory).toEqual([]);
+        expectHidden(getButtonByClass(containerEl, 'cancel-button'), 'cancel-button-visible', 'cancel-button-hidden');
+        getButtonByClass(containerEl, 'cancel-button').click();
+        expect(streamCalls[0].signal?.aborted).toBe(false);
 
         renderJobs[1].resolve();
         await flushPromises();
-        expect(allText(containerEl)).not.toContain('async answer');
-
-        renderJobs[2].resolve();
         await flushPromises();
         await flushPromises();
 
@@ -2374,6 +2433,100 @@ describe('LLMView turn lifecycle', () => {
             { role: 'assistant', content: 'async answer' },
         ]);
         expect(allText(containerEl)).toContain('async answer');
+    });
+
+    it('restores cancel controls after clearing while final markdown rendering is in flight', async () => {
+        const { view, containerEl } = createView();
+        const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            return new Promise<void>((resolve) => {
+                renderJobs.push({
+                    markdown,
+                    el,
+                    resolve: () => {
+                        el.setText(markdown);
+                        resolve();
+                    },
+                });
+            });
+        });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'first prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('first answer');
+        streamCalls[0].resolve();
+        await flushPromises();
+        expectHidden(getButtonByClass(containerEl, 'cancel-button'), 'cancel-button-visible', 'cancel-button-hidden');
+
+        getButtonByText(containerEl, 'Clear Chat').click();
+        await flushPromises();
+        await flushPromises();
+        expect(streamCalls[0].signal?.aborted).toBe(true);
+
+        getTextArea(containerEl).value = 'second prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        expectVisible(getButtonByClass(containerEl, 'cancel-button'), 'cancel-button-visible', 'cancel-button-hidden');
+
+        getButtonByClass(containerEl, 'cancel-button').click();
+        expect(streamCalls[1].signal?.aborted).toBe(true);
+        streamCalls[1].reject(new DOMException('Aborted', 'AbortError'));
+        await flushPromises();
+
+        renderJobs.find((job) => job.markdown === 'first answer')?.resolve();
+        await flushPromises();
+        expect(view.chatHistory).toEqual([]);
+    });
+
+    it('does not revive an in-flight assistant markdown render after cancellation', async () => {
+        const { view, containerEl } = createView();
+        const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockElement(tagName),
+            },
+        });
+        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            return new Promise<void>((resolve) => {
+                renderJobs.push({
+                    markdown,
+                    el,
+                    resolve: () => {
+                        el.setText(markdown);
+                        resolve();
+                    },
+                });
+            });
+        });
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'cancel prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        const call = streamCalls[0];
+        call.onChunk('partial **answer**');
+        await flushPromises();
+
+        getButtonByClass(containerEl, 'cancel-button').click();
+        call.reject(new DOMException('Aborted', 'AbortError'));
+        await flushPromises();
+        await flushPromises();
+
+        expect(allText(containerEl)).toContain('Generation cancelled');
+        expect(allText(containerEl)).not.toContain('partial **answer**');
+        expect(getButtonsByClass(containerEl, 'add-to-editor-message-button')).toHaveLength(0);
+
+        renderJobs.find((job) => job.markdown === 'partial **answer**')?.resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([]);
+        expect(allText(containerEl)).toContain('Generation cancelled');
+        expect(allText(containerEl)).not.toContain('partial **answer**');
+        expect(getButtonsByClass(containerEl, 'add-to-editor-message-button')).toHaveLength(0);
     });
 
     it('keeps the cancelled user prompt when markdown rendering resolves after cancel', async () => {
@@ -3127,6 +3280,8 @@ describe('LLMView turn lifecycle', () => {
         streamCalls[0].onChunk(answer);
         await flushPromises();
         await flushPromises();
+        runAnimationFrames();
+        await flushPromises();
 
         expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
         expect(allText(containerEl)).toContain('Memory references');
@@ -3146,6 +3301,9 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
         expect(allText(containerEl)).not.toContain('Memory used');
         expect(allText(containerEl)).toContain('Memory references');
+        const callout = getElementByClass(containerEl, 'callout');
+        expect(callout.getAttribute('data-callout')).toBe('personal-assistant-ai');
+        expect(getElementByClass(callout, 'internal-link').getAttribute('data-href')).toBe('memory/late.md');
     });
 
     it('opens Memory reference note links in a new tab even when a Markdown leaf is available', async () => {

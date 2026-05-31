@@ -23,9 +23,18 @@ import {
 export const VIEW_TYPE_LLM = "sidellm-view";
 export type { ChatMessage };
 
+const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
+const LIVE_MARKDOWN_RENDER_COOLDOWN_MS = 32;
+
+const getMonotonicTimeMs = () => {
+    const performanceApi = globalThis.performance;
+    return typeof performanceApi?.now === 'function' ? performanceApi.now() : Date.now();
+};
+
 type MarkdownRenderOptions = {
     forceScroll?: boolean;
     deferMermaid?: boolean;
+    onSynchronousRenderComplete?: (durationMs: number) => void;
 };
 
 type MemoryChipState = {
@@ -370,6 +379,7 @@ export class LLMView extends ItemView {
         let timelineEntries: TimelineEntry[] = [];
         let emptyStateEl: HTMLElement | null = null;
         let isStopping = false;
+        let isFinalizing = false;
 
         const isGenerating = () => this.abortController !== null;
         const createCanonicalLifecycleState = (): CanonicalLifecycleUiState => ({
@@ -492,7 +502,7 @@ export class LLMView extends ItemView {
             const hasDraft = textArea.value.trim().length > 0;
             const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
             sendButton.disabled = generating || !hasDraft || setupIssue !== null;
-            if (generating && !isStopping) {
+            if (generating && !isStopping && !isFinalizing) {
                 textArea.setAttribute('placeholder', 'Draft next message');
                 sendButton.classList.replace('send-button-visible', 'send-button-hidden');
                 cancelButton.classList.replace('cancel-button-hidden', 'cancel-button-visible');
@@ -820,7 +830,11 @@ export class LLMView extends ItemView {
                 : { markdown: content, deferred: false, sources: getMermaidFenceSources(content) };
             const renderOwner = this.createMarkdownRenderOwner();
 
-            return renderMarkdownWithOwner(this.plugin, mermaidTransform.markdown, buffer, renderOwner)
+            const renderStartedAt = getMonotonicTimeMs();
+            const renderPromise = renderMarkdownWithOwner(this.plugin, mermaidTransform.markdown, buffer, renderOwner);
+            options.onSynchronousRenderComplete?.(getMonotonicTimeMs() - renderStartedAt);
+
+            return renderPromise
                 .then(() => {
                     if (rendered.renderToken !== renderToken || !isLive()) {
                         this.unloadMarkdownRenderOwner(renderOwner);
@@ -900,6 +914,134 @@ export class LLMView extends ItemView {
                     scrollToBottom({ force: options.forceScroll, behavior: 'auto' });
                     return true;
                 });
+        };
+
+        type LiveMarkdownRenderState = {
+            inFlight: boolean;
+            inFlightContent?: string;
+            inFlightPromise?: Promise<boolean>;
+            pendingContent?: string;
+            pendingForceScroll?: boolean;
+            scheduledDrainTimer?: ReturnType<typeof setTimeout>;
+            nextRenderAfterMs?: number;
+        };
+        const liveMarkdownRenderStates = new WeakMap<RenderedMessage, LiveMarkdownRenderState>();
+        const getLiveMarkdownRenderState = (rendered: RenderedMessage): LiveMarkdownRenderState => {
+            let state = liveMarkdownRenderStates.get(rendered);
+            if (!state) {
+                state = { inFlight: false };
+                liveMarkdownRenderStates.set(rendered, state);
+            }
+            return state;
+        };
+        function clearScheduledLiveMarkdownDrain(state: LiveMarkdownRenderState) {
+            if (state.scheduledDrainTimer === undefined) return;
+            clearTimeout(state.scheduledDrainTimer);
+            state.scheduledDrainTimer = undefined;
+        }
+        function scheduleLiveMarkdownDrain(
+            rendered: RenderedMessage,
+            state: LiveMarkdownRenderState,
+            isLive: () => boolean,
+            delayMs: number,
+            options: { forceScroll?: boolean } = {},
+        ) {
+            if (state.scheduledDrainTimer !== undefined) return;
+            state.scheduledDrainTimer = setTimeout(() => {
+                state.scheduledDrainTimer = undefined;
+                runLiveMarkdownRender(rendered, state, isLive, options);
+            }, delayMs);
+        }
+        function runLiveMarkdownRender(
+            rendered: RenderedMessage,
+            state: LiveMarkdownRenderState,
+            isLive: () => boolean,
+            options: { forceScroll?: boolean } = {},
+        ) {
+            if (state.inFlight || !isLive()) return;
+            if (state.scheduledDrainTimer !== undefined) return;
+            const content = state.pendingContent;
+            if (content === undefined) return;
+            const delayMs = Math.max(0, (state.nextRenderAfterMs ?? 0) - getMonotonicTimeMs());
+            if (delayMs > 0) {
+                scheduleLiveMarkdownDrain(rendered, state, isLive, delayMs, options);
+                return;
+            }
+            state.pendingContent = undefined;
+            const forceScroll = state.pendingForceScroll || options.forceScroll;
+            state.pendingForceScroll = false;
+            state.inFlight = true;
+            state.inFlightContent = content;
+            let synchronousRenderDurationMs = 0;
+            const isCurrentLiveMarkdownRender = () => {
+                if (!isLive()) return false;
+                const pending = state.pendingContent;
+                return pending === undefined || pending.startsWith(content);
+            };
+            const renderPromise = renderMarkdownInto(rendered, content, isCurrentLiveMarkdownRender, {
+                deferMermaid: true,
+                forceScroll,
+                onSynchronousRenderComplete: (durationMs) => {
+                    synchronousRenderDurationMs = durationMs;
+                },
+            });
+            state.inFlightPromise = renderPromise;
+            void renderPromise.finally(() => {
+                state.inFlight = false;
+                state.inFlightContent = undefined;
+                state.inFlightPromise = undefined;
+                if (synchronousRenderDurationMs >= LIVE_MARKDOWN_SLOW_RENDER_MS) {
+                    state.nextRenderAfterMs = getMonotonicTimeMs() + LIVE_MARKDOWN_RENDER_COOLDOWN_MS;
+                } else if ((state.nextRenderAfterMs ?? 0) <= getMonotonicTimeMs()) {
+                    state.nextRenderAfterMs = undefined;
+                }
+                if (!isLive()) {
+                    clearScheduledLiveMarkdownDrain(state);
+                    state.pendingContent = undefined;
+                    state.pendingForceScroll = false;
+                    return;
+                }
+                if (state.pendingContent !== undefined && state.pendingContent !== rendered.renderedContent) {
+                    runLiveMarkdownRender(rendered, state, isLive, options);
+                }
+            });
+        }
+        const renderLiveMarkdownInto = (
+            rendered: RenderedMessage,
+            content: string,
+            isLive: () => boolean,
+            options: { forceScroll?: boolean } = {},
+        ) => {
+            rendered.copyContent = content;
+            const state = getLiveMarkdownRenderState(rendered);
+            state.pendingContent = content;
+            state.pendingForceScroll = Boolean(state.pendingForceScroll || options.forceScroll);
+            runLiveMarkdownRender(rendered, state, isLive, options);
+        };
+        const settleLiveMarkdownRenderBeforeFinal = async (
+            rendered: RenderedMessage,
+            finalContent: string,
+            isLive: () => boolean,
+        ) => {
+            const state = liveMarkdownRenderStates.get(rendered);
+            if (!state) return true;
+            clearScheduledLiveMarkdownDrain(state);
+            state.pendingContent = undefined;
+            state.pendingForceScroll = false;
+            state.nextRenderAfterMs = undefined;
+            const inFlightPromise = state.inFlightPromise;
+            if (!inFlightPromise || state.inFlightContent !== finalContent) return true;
+            const renderedLive = await inFlightPromise;
+            return renderedLive && isLive();
+        };
+        const cancelPendingLiveMarkdownRender = (rendered?: RenderedMessage) => {
+            if (!rendered) return;
+            const state = liveMarkdownRenderStates.get(rendered);
+            if (!state) return;
+            clearScheduledLiveMarkdownDrain(state);
+            state.pendingContent = undefined;
+            state.pendingForceScroll = false;
+            state.nextRenderAfterMs = undefined;
         };
 
         const ensureCompletedMessageActions = (
@@ -1685,6 +1827,13 @@ export class LLMView extends ItemView {
 
             assistantRendered.memoryMetadata = turn.memoryMetadata;
             assistantRendered.canonicalTurn = canonicalTurn;
+            const liveRenderSettled = await settleLiveMarkdownRenderBeforeFinal(
+                assistantRendered,
+                responseContent,
+                isLiveTurn,
+            );
+            if (!liveRenderSettled || !isLiveTurn()) return false;
+            cancelPendingLiveMarkdownRender(assistantRendered);
             if (
                 responseContent
                 && (
@@ -1774,6 +1923,7 @@ export class LLMView extends ItemView {
                 return;
             }
             isStopping = false;
+            isFinalizing = false;
             removeElement(emptyStateEl);
             emptyStateEl = null;
             sendButton.disabled = true;
@@ -1840,14 +1990,17 @@ export class LLMView extends ItemView {
                     if (!turn.assistantMessage) {
                         turn.assistantMessage = createMessageElement(
                             { role: 'assistant', content: responseContent },
-                            { animate: true, isLive: isLiveTurn, memoryMetadata: turn.memoryMetadata },
+                            {
+                                animate: true,
+                                isLive: isLiveTurn,
+                                memoryMetadata: turn.memoryMetadata,
+                                skipInitialRender: true,
+                            },
                         );
                     } else {
                         turn.assistantMessage.memoryMetadata = turn.memoryMetadata;
-                        void renderMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn, {
-                            deferMermaid: true,
-                        });
                     }
+                    renderLiveMarkdownInto(turn.assistantMessage, responseContent, isLiveTurn);
                 };
 
                 await this.chatService.streamLLM(
@@ -1899,6 +2052,8 @@ export class LLMView extends ItemView {
                 );
 
                 if (!isLiveTurn()) return;
+                isFinalizing = true;
+                syncComposerControls();
                 await finalizeSuccessfulTurn(turn, prompt, responseContent, isLiveTurn);
 
             } catch (error) {
@@ -1915,6 +2070,7 @@ export class LLMView extends ItemView {
                     this.abortController = null;
                     this.activeTurnCancelled = false;
                     isStopping = false;
+                    isFinalizing = false;
                     setHistoryDeleteButtonsDisabled(false);
                     syncComposerControls();
                 }
@@ -1922,7 +2078,7 @@ export class LLMView extends ItemView {
         };
 
         cancelButton.onclick = () => {
-            if (this.abortController) {
+            if (this.abortController && !isFinalizing) {
                 this.activeTurnCancelled = true;
                 isStopping = true;
                 this.abortController.abort();
@@ -1946,6 +2102,8 @@ export class LLMView extends ItemView {
             if (!isCurrentSession()) return;
             await this.persistChain.catch(() => undefined);
             this.invalidateActiveTurn();
+            isStopping = false;
+            isFinalizing = false;
             this.cancelScheduledScroll();
             const conversationIdToDelete = this.activeConversationId;
             this.chatHistory = [];
@@ -2026,6 +2184,8 @@ export class LLMView extends ItemView {
             const manager = this.getChatHistoryManager();
             if (!manager) return;
             this.invalidateActiveTurn();
+            isStopping = false;
+            isFinalizing = false;
             this.cancelScheduledScroll();
             this.chatHistory = [];
             timelineEntries = [];
@@ -2119,6 +2279,8 @@ export class LLMView extends ItemView {
             }
             await this.persistChain.catch(() => undefined);
             this.invalidateActiveTurn();
+            isStopping = false;
+            isFinalizing = false;
             this.cancelScheduledScroll();
             this.chatHistory = [];
             timelineEntries = [];
