@@ -26,7 +26,7 @@ function createPlugin(settings: {
     return {
         settings: {
             aiProvider: settings.aiProvider ?? 'qwen',
-            chatModelName: settings.chatModelName ?? 'qwen-plus',
+            chatModelName: settings.chatModelName ?? 'qwen3.6-plus',
             baseURL: settings.baseURL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         },
     };
@@ -111,7 +111,7 @@ describe('native tool calling capability', () => {
             supported: false,
             status: 'disabled',
             provider: 'qwen',
-            model: 'qwen-plus',
+            model: 'qwen3.6-plus',
             baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             reason: 'Native tool calling is disabled by the internal gate.',
         });
@@ -124,7 +124,7 @@ describe('native tool calling capability', () => {
             supported: true,
             status: 'supported',
             provider: 'qwen',
-            model: 'qwen-plus',
+            model: 'qwen3.6-plus',
             baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             reason: 'Provider/model/baseURL is validated for native tool calling.',
         });

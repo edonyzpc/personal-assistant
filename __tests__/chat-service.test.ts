@@ -36,7 +36,7 @@ jest.mock('../src/ai-services/ai-utils', () => ({
     },
     SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: [{
         provider: 'qwen',
-        model: 'qwen-plus',
+        model: 'qwen3.6-plus',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
     }],
 }));
@@ -64,7 +64,7 @@ beforeEach(() => {
         supported: true,
         status: 'supported',
         provider: 'qwen',
-        model: 'qwen-plus',
+        model: 'qwen3.6-plus',
         baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
         reason: 'Provider/model/baseURL is validated for native tool calling.',
     });
@@ -204,7 +204,7 @@ function createPlugin(overrides: {
         settings: {
             nativeToolPlanningSmokeEnabled: overrides.nativeToolPlanningSmokeEnabled ?? false,
             aiProvider: overrides.aiProvider ?? 'qwen',
-            chatModelName: overrides.chatModelName ?? 'qwen-plus',
+            chatModelName: overrides.chatModelName ?? 'qwen3.6-plus',
             baseURL: overrides.baseURL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
             apiToken: 'sk-SECRET_TOKEN_SENTINEL',
             qwenThinkingEnabled: overrides.qwenThinkingEnabled ?? false,
