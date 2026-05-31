@@ -16,7 +16,6 @@
     "version": "node version-bump.mjs && git add manifest-beta.json manifest.json versions.json CHANGELOG.md",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"__mocks__/**/*.ts\"",
     "audit:bundle": "node scripts/audit-bundle.mjs --input dist/main.js --allow-node-builtins",
-    "codex:commit": "node scripts/codex-commit.mjs",
     "release": "node scripts/release.mjs",
     "release:dry-run": "node scripts/release.mjs --dry-run",
     "release:publish": "node scripts/publish-release.mjs",
