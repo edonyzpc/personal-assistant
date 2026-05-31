@@ -829,6 +829,65 @@ describe('VSS SQLite/WASM lifecycle', () => {
         vss.dispose();
     });
 
+    it('does not report ready memory while a rebuild is still writing the local index', async () => {
+        const file = createTFile('note.md', { size: 18, mtime: 1, ctime: 1 }, 'md', 'note.md');
+        const { plugin, mockAdapter } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        mockAdapter.read.mockResolvedValue('memory text for rebuild');
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        const embedStarted = createDeferred<void>();
+        const embedRelease = createDeferred<number[][]>();
+        const embedDocuments = jest.fn(async () => {
+            embedStarted.resolve();
+            return embedRelease.promise;
+        });
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        const rebuild = vss.rebuildLocalIndex({ silent: true });
+        await embedStarted.promise;
+
+        expect((vss as any).status).toBe('initializing'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        await expect(vss.searchSimilarity('query')).resolves.toEqual([]);
+        await expect(vss.getMemoryReadiness()).resolves.toMatchObject({
+            reason: 'unavailable',
+            action: 'none',
+        });
+
+        embedRelease.resolve([[1, 0]]);
+        await rebuild;
+        expect((vss as any).status).toBe('ready'); // eslint-disable-line @typescript-eslint/no-explicit-any
+        vss.dispose();
+    });
+
+    it('revalidates the active index after query embedding work before searching', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        const embedStarted = createDeferred<void>();
+        const embedRelease = createDeferred<number[]>();
+        const embedQuery = jest.fn(async () => {
+            embedStarted.resolve();
+            return embedRelease.promise;
+        });
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments: jest.fn(), embedQuery });
+
+        const search = vss.searchSimilarity('query');
+        await embedStarted.promise;
+        await vss.resetLocalIndex();
+        embedRelease.resolve([1, 0]);
+
+        await expect(search).resolves.toEqual([]);
+        expect(index.search).not.toHaveBeenCalled();
+        vss.dispose();
+    });
+
     it('keeps rebuilt chunks grouped by file when batches span files', async () => {
         const { plugin, mockAdapter } = createPlugin();
         const vss = new VSS(plugin, 'cache');

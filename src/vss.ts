@@ -697,7 +697,7 @@ export class VSS {
 
         const index = this.index;
         await index.reset();
-        this.status = "ready";
+        this.status = "initializing";
         this.dirty.clear();
         this.verifyQueue.clear();
         this.nextEmbeddingRequestAt = 0;
@@ -1397,10 +1397,22 @@ export class VSS {
         }
 
         const profile = this.profile ?? this.createEmbeddingProfile();
+        const profileSignature = getEmbeddingProfileSignature(profile);
         const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
         const queryEmbedding = await embeddings.embedQuery(prompt);
-        const results = await this.index.search(queryEmbedding, 8);
-        return results.map(normalizeSearchResult);
+        return this.runExclusive(async () => {
+            if (this.disposed) return [];
+            if (this.index) {
+                await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+            }
+            if (!this.index || this.status !== "ready" || !this.profile) return [];
+            if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
+            const results = await this.index.search(queryEmbedding, 8);
+            return results.map(normalizeSearchResult);
+        }).catch((error) => {
+            if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
+            throw error;
+        });
     }
 
     async searchHybrid(prompt: string, options?: { ftsQueryOverride?: string | null }) {
@@ -1421,19 +1433,32 @@ export class VSS {
         }
 
         const profile = this.profile ?? this.createEmbeddingProfile();
+        const profileSignature = getEmbeddingProfileSignature(profile);
         const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
         const ftsQuery = options?.ftsQueryOverride != null
             ? buildFtsQuery(options.ftsQueryOverride)
             : buildFtsQuery(prompt);
         const queryEmbedding = await embeddings.embedQuery(prompt);
 
-        if (!(this.index instanceof SqliteVectorIndex)) {
-            const results = await this.index.search(queryEmbedding, 8);
-            return results.map(normalizeSearchResult);
-        }
+        return this.runExclusive(async () => {
+            if (this.disposed) return [];
+            if (this.index) {
+                await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+            }
+            if (!this.index || this.status !== "ready" || !this.profile) return [];
+            if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
 
-        const results = await this.index.searchHybrid(queryEmbedding, ftsQuery, 8, 12);
-        return results.map(normalizeSearchResult);
+            if (!(this.index instanceof SqliteVectorIndex)) {
+                const results = await this.index.search(queryEmbedding, 8);
+                return results.map(normalizeSearchResult);
+            }
+
+            const results = await this.index.searchHybrid(queryEmbedding, ftsQuery, 8, 12);
+            return results.map(normalizeSearchResult);
+        }).catch((error) => {
+            if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
+            throw error;
+        });
     }
 
     async getStats(options: { mode?: VSSIndexOpenMode } = {}): Promise<VSSIndexStats> {
@@ -1775,6 +1800,9 @@ export class VSS {
         this.assertActive();
 
         if (this.index && (this.status === "ready" || this.status === "stale")) {
+            return;
+        }
+        if (this.index && this.status === "initializing") {
             return;
         }
         if (this.index && this.status === "missing-local-index") {
