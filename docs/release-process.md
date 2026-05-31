@@ -63,7 +63,7 @@ The GitHub workflow builds from the pushed tag and creates a GitHub Release with
 - `manifest.json`
 - `styles.css`
 
-The release workflow builds and audits the bundle before staging those three files in `release-assets/`, generates GitHub artifact attestations for the same staged files, then uploads that exact asset set. `manifest-beta.json` may still be copied by local or beta deployment flows, but it is not a supported asset in the formal GitHub Release.
+The release workflow installs the Node version declared in `package.json`, builds and audits the bundle before staging those three files in `release-assets/`, generates GitHub artifact attestations for the same staged files, then uploads that exact asset set. `manifest-beta.json` may still be copied by local or beta deployment flows, but it is not a supported asset in the formal GitHub Release.
 
 ## Recovery
 
