@@ -5,10 +5,7 @@ import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-s
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat/chat-view';
 import { getDistinctChatHistoryPreview } from '../src/chat/modals';
-import {
-    createChatRoleIdenticonSessionSeed,
-    getChatRoleIdenticonModel,
-} from '../src/chat/role-identicons';
+import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 
 jest.mock('obsidian');
@@ -104,6 +101,11 @@ class MockElement {
         values: new Map<string, string>(),
         setProperty: (name: string, value: string) => {
             this.style.values.set(name, value);
+        },
+        removeProperty: (name: string) => {
+            const value = this.style.values.get(name) ?? '';
+            this.style.values.delete(name);
+            return value;
         },
         getPropertyValue: (name: string) => this.style.values.get(name) ?? '',
     };
@@ -265,6 +267,9 @@ class MockElement {
         }
         if (selector === 'a.internal-link') {
             return walkAll(this, (el) => el.tagName === 'a' && el.classList.contains('internal-link'));
+        }
+        if (selector.startsWith('.') && !selector.includes(',') && !selector.includes(' ')) {
+            return walkAll(this, (el) => el.classList.contains(selector.slice(1)));
         }
         return [] as MockElement[];
     }
@@ -901,17 +906,26 @@ describe('LLMView turn lifecycle', () => {
         const userIdenticon = getElementByClass(userRole, 'pa-chat-role-identicon-user');
         expect(userIdenticon.tagName).toBe('span');
         expect(userIdenticon.getAttribute('aria-hidden')).toBe('true');
-        expect(userIdenticon.style.getPropertyValue('--pa-chat-role-identicon-fill')).toMatch(/^hsl\(/);
-        expect(getElementByClass(userIdenticon, 'pa-chat-role-identicon-svg').tagName).toBe('svg');
+        expect(userIdenticon.style.getPropertyValue('--pa-chat-role-identicon-fill')).toMatch(/^var\(--pa-chat-role-identicon-/);
+        const userIdenticonSvg = getElementByClass(userIdenticon, 'pa-chat-role-identicon-svg');
+        expect(userIdenticonSvg.tagName).toBe('svg');
+        expect(userIdenticonSvg.getAttribute('shape-rendering')).toBe('crispEdges');
+        expect(userIdenticonSvg.getAttribute('fill')).toBe('none');
         expect(getElementsByClass(userIdenticon, 'pa-chat-role-identicon-cell').length).toBeGreaterThan(0);
+        expect(getElementsByClass(userIdenticon, 'pa-chat-role-identicon-empty-scan')).toHaveLength(0);
         expect(userRole.children[0]).toBe(userIdenticon);
         const assistantRole = getElementByClass(liveAssistantMessages[0], 'message-role');
         const assistantIdenticon = getElementByClass(assistantRole, 'pa-chat-role-identicon-assistant');
         const assistantLoader = getElementByClass(assistantRole, 'pa-chat-role-loader-assistant');
         expect(assistantIdenticon.tagName).toBe('span');
-        expect(assistantIdenticon.style.getPropertyValue('--pa-chat-role-identicon-fill')).toMatch(/^hsl\(/);
-        expect(assistantIdenticon.style.getPropertyValue('--pa-chat-role-identicon-active-fill')).toMatch(/^hsl\(/);
-        expect(getElementByClass(assistantIdenticon, 'pa-chat-role-identicon-svg').tagName).toBe('svg');
+        expect(assistantIdenticon.classList.contains('pa-chat-role-identicon-active')).toBe(true);
+        expect(assistantIdenticon.style.getPropertyValue('--pa-chat-role-identicon-fill')).toMatch(/^var\(--pa-chat-role-identicon-/);
+        const assistantIdenticonSvg = getElementByClass(assistantIdenticon, 'pa-chat-role-identicon-svg');
+        expect(assistantIdenticonSvg.tagName).toBe('svg');
+        expect(assistantIdenticonSvg.getAttribute('shape-rendering')).toBe('crispEdges');
+        expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-filled-scan').length).toBeGreaterThan(0);
+        expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-empty-scan').length).toBeGreaterThan(0);
+        expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-cell')).toHaveLength(25);
         expect(assistantRole.children[0]).toBe(assistantIdenticon);
         expect(assistantRole.children[2]).toBe(assistantLoader);
         expect(walk(liveAssistantMessages[0], (el) => el.tagName === 'l-bouncy-arc')).not.toBeNull();
@@ -940,6 +954,9 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementByClass(containerEl, 'user')).toBe(liveUserMessage);
         expect(getElementsByClass(containerEl, 'pa-chat-role-loader-assistant')).toHaveLength(0);
         expect(liveAssistantMessage.getAttribute('aria-busy')).toBeNull();
+        expect(assistantIdenticon.classList.contains('pa-chat-role-identicon-active')).toBe(false);
+        expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-empty-scan')).toHaveLength(0);
+        expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-filled-scan')).toHaveLength(0);
         expect(getButtonsByClass(containerEl, 'delete-message-button')).toHaveLength(2);
         expect(getButtonsByClass(containerEl, 'add-to-editor-message-button')).toHaveLength(1);
     });
@@ -2767,25 +2784,29 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.llm-view\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*24px;[\s\S]*?--pa-chat-role-icon-padding:\s*2px;[\s\S]*?gap:\s*7px;/);
         expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon\s*{[\s\S]*?flex:\s*0 0 var\(--pa-chat-role-icon-size\);[\s\S]*?width:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?height:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?padding:\s*var\(--pa-chat-role-icon-padding\);/);
         expect(css).toMatch(/\.llm-view\.is-compact\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*26px;[\s\S]*?gap:\s*8px;/);
-        expect(assistantIdenticonModel.viewBox).toBe('-0.5 -0.5 6 6');
+        expect(assistantIdenticonModel.viewBox).toBe('-3 -3 26 26');
+        expect(assistantIdenticonModel.cellSize).toBe(4);
     });
 
-    it('varies role identicon shapes by chat view session seed while keeping role colors stable', () => {
-        const generatedSeed = createChatRoleIdenticonSessionSeed();
-        const firstAssistantModel = getChatRoleIdenticonModel('assistant', 'session-a');
-        const secondAssistantModel = getChatRoleIdenticonModel('assistant', 'session-a');
-        const nextSessionAssistantModel = getChatRoleIdenticonModel('assistant', 'session-b');
-        const sameSessionUserModel = getChatRoleIdenticonModel('user', 'session-a');
+    it('keeps role identicon shapes and palette colors stable by role seed', () => {
+        const firstAssistantModel = getChatRoleIdenticonModel('assistant');
+        const secondAssistantModel = getChatRoleIdenticonModel('assistant');
+        const userModel = getChatRoleIdenticonModel('user');
 
-        expect(generatedSeed).toEqual(expect.any(String));
-        expect(generatedSeed.length).toBeGreaterThan(0);
         expect(firstAssistantModel.cells).toEqual(secondAssistantModel.cells);
-        expect(nextSessionAssistantModel.cells).not.toEqual(firstAssistantModel.cells);
-        expect(nextSessionAssistantModel.fill).toBe(firstAssistantModel.fill);
-        expect(nextSessionAssistantModel.activeFill).toBe(firstAssistantModel.activeFill);
-        expect(sameSessionUserModel.fill).not.toBe(firstAssistantModel.fill);
-        expect(firstAssistantModel.activeFill).not.toBe(firstAssistantModel.fill);
+        expect(firstAssistantModel.emptyCells).toEqual(secondAssistantModel.emptyCells);
+        expect(userModel.cells).not.toEqual(firstAssistantModel.cells);
+        expect(firstAssistantModel.fill).toBe('var(--pa-chat-role-identicon-purple)');
+        expect(userModel.fill).toBe('var(--pa-chat-role-identicon-blue)');
         expect(firstAssistantModel.cells.length).toBeGreaterThan(0);
+        expect(firstAssistantModel.cells.length + firstAssistantModel.emptyCells.length).toBe(25);
+        for (const cell of firstAssistantModel.cells) {
+            expect(cell.col).toBeGreaterThanOrEqual(0);
+            expect(cell.col).toBeLessThan(5);
+            expect(cell.row).toBeGreaterThanOrEqual(0);
+            expect(cell.row).toBeLessThan(5);
+            expect(cell.delayMs).toBe(cell.row * 280);
+        }
     });
 
     it('keeps ldrs chat loaders visible when reduced motion is enabled', () => {
@@ -2969,20 +2990,28 @@ describe('LLMView turn lifecycle', () => {
         const identiconRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon\s*{([\s\S]*?)\n}/)?.[1] ?? '';
         const identiconSvgRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon-svg\s*{([\s\S]*?)\n}/)?.[1] ?? '';
         const identiconCellRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon-cell\s*{([\s\S]*?)\n}/)?.[1] ?? '';
+        const emptyScanRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon-empty-scan\s*{([\s\S]*?)\n}/)?.[1] ?? '';
 
         expect(messageBaseRule?.[1]).not.toMatch(/\banimation\s*:/);
-        expect(css).not.toMatch(/@keyframes\s+pa-chat-identicon-(enter|live)/);
-        expect(identiconRule).toMatch(/transition:[\s\S]*color 260ms ease,[\s\S]*opacity 180ms ease,[\s\S]*transform 240ms cubic-bezier/);
-        expect(identiconSvgRule).toMatch(/fill:\s*currentColor;/);
+        expect(css).toMatch(/--pa-chat-role-identicon-yellow:\s*#f6c445;/);
+        expect(css).toMatch(/@keyframes\s+pa-chat-role-identicon-empty-scan/);
+        expect(css).toMatch(/@keyframes\s+pa-chat-role-identicon-filled-scan/);
+        expect(identiconRule).toMatch(/transition:[\s\S]*background-color 220ms ease,[\s\S]*box-shadow 220ms ease,[\s\S]*opacity 180ms ease,[\s\S]*transform 240ms cubic-bezier/);
+        expect(identiconSvgRule).toMatch(/fill:\s*none;/);
+        expect(identiconSvgRule).toMatch(/shape-rendering:\s*crispEdges;/);
         expect(identiconSvgRule).toMatch(/transition:[\s\S]*opacity 200ms ease,[\s\S]*transform 240ms cubic-bezier/);
-        expect(identiconCellRule).toMatch(/fill:\s*currentColor;/);
+        expect(identiconCellRule).toMatch(/fill:\s*var\(--pa-chat-role-identicon-fill\);/);
         expect(identiconCellRule).not.toContain('transition:');
+        expect(emptyScanRule).toMatch(/opacity:\s*0;/);
         expect(css).toMatch(/\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*message-fade-in 160ms ease-out;/);
-        expect(css).toMatch(/\.llm-message\[aria-busy="true"\]\s+\.pa-chat-role-identicon-assistant\s*{[\s\S]*?color:\s*var\(--pa-chat-role-identicon-active-fill\);[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(-1px\);/);
+        expect(identiconRule).toMatch(/overflow:\s*hidden;/);
+        expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon-active\s+\.pa-chat-role-identicon-empty-scan\s*{[\s\S]*?animation:\s*pa-chat-role-identicon-empty-scan 1\.4s step-end infinite;/);
+        expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon-active\s+\.pa-chat-role-identicon-filled-scan\s*{[\s\S]*?animation:\s*pa-chat-role-identicon-filled-scan 1\.4s step-end infinite;/);
+        expect(css).toMatch(/\.llm-message\[aria-busy="true"\]\s+\.pa-chat-role-identicon-assistant\s*{[\s\S]*?opacity:\s*1;[\s\S]*?transform:\s*translateY\(-1px\);/);
         expect(css).toMatch(/@starting-style\s*{[\s\S]*?\.llm-message\.llm-message-enter\s+\.pa-chat-role-identicon\s*{[\s\S]*?opacity:\s*0\.72;[\s\S]*?transform:\s*translateY\(3px\);/);
-        expect(css).toMatch(/@starting-style\s*{[\s\S]*?\.llm-message\[aria-busy="true"\]\s+\.pa-chat-role-identicon-assistant\s*{[\s\S]*?color:\s*var\(--pa-chat-role-identicon-fill\);[\s\S]*?opacity:\s*0\.72;[\s\S]*?transform:\s*translateY\(2px\);/);
         expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-message\.llm-message-enter\s*{[\s\S]*?animation:\s*none;/);
         expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon,[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon-svg\s*{[\s\S]*?transition:\s*none;/);
+        expect(css).toMatch(/@media\s*\(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon-empty-scan,[\s\S]*?\.llm-view\s+\.pa-chat-role-identicon-filled-scan\s*{[\s\S]*?animation:\s*none;/);
     });
 
     it('anchors Memory and More menus inside their composer action controls', async () => {

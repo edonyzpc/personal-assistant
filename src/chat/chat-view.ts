@@ -14,7 +14,6 @@ import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getM
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
 import {
-    createChatRoleIdenticonSessionSeed,
     getChatRoleIdenticonModel,
     type ChatRoleIdenticon,
     type ChatRoleIdenticonModel,
@@ -175,7 +174,6 @@ export class LLMView extends ItemView {
 
     async onOpen() {
         const sessionId = this.startViewSession();
-        const roleIdenticonSessionSeed = createChatRoleIdenticonSessionSeed();
         ensureChatLoadersRegistered((message, error) => this.plugin.log(message, error));
         const { containerEl } = this;
         containerEl.empty();
@@ -566,33 +564,76 @@ export class LLMView extends ItemView {
             parent: HTMLElement,
             role: ChatRoleIdenticon,
             model: ChatRoleIdenticonModel,
+            active: boolean,
         ) => {
             const identiconEl = parent.createSpan({
-                cls: `pa-chat-role-identicon pa-chat-role-identicon-${role}`,
+                cls: [
+                    'pa-chat-role-identicon',
+                    `pa-chat-role-identicon-${role}`,
+                    active ? 'pa-chat-role-identicon-active' : '',
+                ].filter(Boolean).join(' '),
                 attr: { 'aria-hidden': 'true' },
             });
             identiconEl.style.setProperty('--pa-chat-role-identicon-fill', model.fill);
-            identiconEl.style.setProperty('--pa-chat-role-identicon-active-fill', model.activeFill);
 
             const svgEl = createSvgChild(identiconEl, 'svg');
             svgEl.classList.add('pa-chat-role-identicon-svg');
             svgEl.setAttribute('class', 'pa-chat-role-identicon-svg');
             svgEl.setAttribute('viewBox', model.viewBox);
-            svgEl.setAttribute('fill', 'currentColor');
+            svgEl.setAttribute('fill', 'none');
             svgEl.setAttribute('focusable', 'false');
+            svgEl.setAttribute('shape-rendering', 'crispEdges');
             identiconEl.appendChild(svgEl);
 
             for (const cell of model.cells) {
                 const rectEl = createSvgChild(svgEl, 'rect');
-                rectEl.classList.add('pa-chat-role-identicon-cell');
-                rectEl.setAttribute('class', 'pa-chat-role-identicon-cell');
-                rectEl.setAttribute('x', String(cell.x));
-                rectEl.setAttribute('y', String(cell.y));
-                rectEl.setAttribute('width', '1');
-                rectEl.setAttribute('height', '1');
-                rectEl.setAttribute('fill', 'currentColor');
+                const className = active
+                    ? 'pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell pa-chat-role-identicon-filled-scan'
+                    : 'pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell';
+                rectEl.classList.add(...className.split(' '));
+                if (active) {
+                    (rectEl as SVGElement).style.setProperty('animation-delay', `${cell.delayMs}ms`);
+                }
+                rectEl.setAttribute('class', className);
+                rectEl.setAttribute('x', String(cell.col * model.cellSize));
+                rectEl.setAttribute('y', String(cell.row * model.cellSize));
+                rectEl.setAttribute('width', String(model.cellSize));
+                rectEl.setAttribute('height', String(model.cellSize));
+                rectEl.setAttribute('fill', 'var(--pa-chat-role-identicon-fill)');
                 svgEl.appendChild(rectEl);
             }
+
+            if (!active) return;
+
+            for (const cell of model.emptyCells) {
+                const rectEl = createSvgChild(svgEl, 'rect');
+                const className = 'pa-chat-role-identicon-cell pa-chat-role-identicon-empty-scan';
+                rectEl.classList.add(...className.split(' '));
+                rectEl.setAttribute('class', className);
+                rectEl.setAttribute('x', String(cell.col * model.cellSize));
+                rectEl.setAttribute('y', String(cell.row * model.cellSize));
+                rectEl.setAttribute('width', String(model.cellSize));
+                rectEl.setAttribute('height', String(model.cellSize));
+                rectEl.setAttribute('fill', 'var(--pa-chat-role-identicon-fill)');
+                (rectEl as SVGElement).style.setProperty('animation-delay', `${cell.delayMs}ms`);
+                svgEl.appendChild(rectEl);
+            }
+        };
+        const stopRoleIdenticonScan = (roleEl?: HTMLElement | null) => {
+            const identiconEl = roleEl?.querySelector('.pa-chat-role-identicon-active');
+            if (!identiconEl) return;
+
+            identiconEl.classList.remove('pa-chat-role-identicon-active');
+            identiconEl
+                .querySelectorAll('.pa-chat-role-identicon-empty-scan')
+                .forEach((cell) => cell.parentElement?.removeChild(cell));
+            identiconEl
+                .querySelectorAll('.pa-chat-role-identicon-filled-scan')
+                .forEach((cell) => {
+                    cell.classList.remove('pa-chat-role-identicon-filled-scan');
+                    (cell as SVGElement).style.removeProperty?.('animation-delay');
+                    cell.setAttribute('class', 'pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell');
+                });
         };
         const createRoleLabel = (
             parent: HTMLElement,
@@ -610,7 +651,8 @@ export class LLMView extends ItemView {
                 createRoleIdenticon(
                     roleEl,
                     options.identicon,
-                    getChatRoleIdenticonModel(options.identicon, roleIdenticonSessionSeed),
+                    getChatRoleIdenticonModel(options.identicon),
+                    options.loader === 'assistant' && options.identicon === 'assistant',
                 );
             }
             const loaderEl = !options.identicon && options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
@@ -1905,6 +1947,7 @@ export class LLMView extends ItemView {
             removeElement(assistantRendered.loaderEl);
             assistantRendered.loaderEl = undefined;
             assistantRendered.messageDiv.removeAttribute('aria-busy');
+            stopRoleIdenticonScan(assistantRendered.roleEl);
             if (
                     turn.statusView
                     && (
