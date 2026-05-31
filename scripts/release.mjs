@@ -82,10 +82,25 @@ function assertCleanWorktree(label = "before release") {
 }
 
 function assertTagAvailable(targetVersion) {
-  const existing = capture("git", ["tag", "--list", targetVersion]);
+  const existing = existingTagForVersion(targetVersion);
   if (existing) {
-    throw new Error(`Tag already exists: ${targetVersion}`);
+    throw new Error(`Tag already exists: ${existing}`);
   }
+}
+
+function existingTagForVersion(version) {
+  for (const candidate of [version, `v${version}`]) {
+    const existing = capture("git", ["tag", "--list", candidate]);
+    if (existing) return candidate;
+  }
+  return "";
+}
+
+function assertCurrentVersionTagged(currentVersion) {
+  if (existingTagForVersion(currentVersion)) return;
+  throw new Error(
+    `Current package version ${currentVersion} is not tagged. Sync or create the ${currentVersion} tag before cutting the next release.`,
+  );
 }
 
 function validateVersion(targetVersion, currentVersion) {
@@ -136,6 +151,7 @@ async function main() {
   validateVersion(targetVersion, currentVersion);
   assertTagAvailable(targetVersion);
   assertCleanWorktree();
+  assertCurrentVersionTagged(currentVersion);
 
   const changelog = generateChangelog({ targetVersion, targetRef: "HEAD" });
 

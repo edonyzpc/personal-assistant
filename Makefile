@@ -1,4 +1,4 @@
-.PHONY: deploy deploy-icloud clean bin install changelog release-dry-run release publish tag test
+.PHONY: deploy deploy-icloud clean bin install changelog release-dry-run release publish test
 
 ICLOUD_PLUGIN_DIR ?= $(HOME)/Library/Mobile Documents/iCloud~md~obsidian/Documents/test/.obsidian/plugins/personal-assistant
 
@@ -43,7 +43,3 @@ changelog:
 
 publish:
 	node scripts/publish-release.mjs "$(VERSION)"
-
-tag:
-	git tag -a `node tag.mjs` -m "[release] v`node tag.mjs`, check the CHANGELOG.md for details"
-	git push --tags

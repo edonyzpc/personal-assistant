@@ -28,11 +28,12 @@ make publish VERSION=1.6.6
 
 1. Verifies the working tree is clean.
 2. Verifies the target version is valid, greater than `package.json`, and not already tagged.
-3. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
-4. Runs `git diff --check`, `npm test -- --runInBand`, `npm run lint`, and `npm run build`.
-5. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, and `CHANGELOG.md`.
-6. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
-7. Creates annotated tag `x.y.z`.
+3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
+4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
+5. Runs `git diff --check`, `npm test -- --runInBand`, `npm run lint`, and `npm run build`.
+6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, and `CHANGELOG.md`.
+7. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
+8. Creates annotated tag `x.y.z`.
 
 Set `SKIP_CHECKS=1` or pass `--skip-checks` only when checks have already been run in the same workspace and no files changed afterward.
 
