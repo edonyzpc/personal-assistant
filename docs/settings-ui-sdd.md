@@ -299,7 +299,7 @@ async loadSettings() {
 ### Phase 3: IA Reorder + Provider UX
 
 > 修复 #6, #17, #10, #9, #8
-> 文件: `src/settings.ts`, `src/plugin.ts`, `src/custom.css`, `src/ai-services/ai-utils.ts`(导入常量)
+> 文件: `src/settings.ts`, `src/plugin.ts`, `src/custom.pcss`, `src/ai-services/ai-utils.ts`(导入常量)
 
 #### 3a. Section 重排 (#6)
 
@@ -574,7 +574,7 @@ featuredImagePath: "",                 // 原: "9.src"
 ### Phase 5: P2 Polish
 
 > 修复 #19-#30
-> 文件: `src/settings.ts`, `src/plugin.ts`, `src/utils.ts`, `src/custom.css`
+> 文件: `src/settings.ts`, `src/plugin.ts`, `src/utils.ts`, `src/custom.pcss`
 
 #### 5a. Typos + 文案一致性 (#19)
 
@@ -618,7 +618,7 @@ plugin.settings.metadataExcludePath = value.split(",").map(p => p.trim()).filter
 
 #### 5f. 内联 style → CSS class (#25)
 
-新增 `src/custom.css`：
+新增 `src/custom.pcss`：
 ```css
 .pa-settings-section-desc {
     font-size: 14px;
@@ -825,7 +825,7 @@ Phase 1 (结构拆分)
 | `src/settings.ts` | 主重构目标 | 1-5 |
 | `src/plugin.ts` | migration, loadSettings, isEnabledMetadataUpdating | 2, 3, 5 |
 | `src/utils.ts` | safeParseInt, CryptoHelper 清理 | 2, 5 |
-| `src/custom.css` | .pa-settings-section-desc, .pa-settings-provider-prompt | 3, 5 |
+| `src/custom.pcss` | .pa-settings-section-desc, .pa-settings-provider-prompt | 3, 5 |
 | `__tests__/settings.test.ts` | 新增测试 | 6 |
 | `__tests__/keychain-migration.test.ts` | 新增测试 | 6 |
 | `src/confirm.ts` | 复用 confirmUserAction（不修改） | — |

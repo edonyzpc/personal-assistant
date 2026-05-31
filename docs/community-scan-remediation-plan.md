@@ -158,15 +158,15 @@ Verification completed for this remediation pass:
 - Popout compatibility changes should prefer Obsidian `activeDocument`/`activeWindow` where available.
 - Timer changes in service or test-heavy code need focused tests, because `window.setTimeout` can behave differently from Jest globals.
 
-## Phase 6: CSS And Remaining Lint Noise
+## Phase 6: CSS Scanner Cleanup
 
 ### Changes
 
-- Remove or justify remaining `!important` usages.
-- Replace short hex colors with six-digit hex where practical.
-- Resolve duplicate selectors/properties in source CSS rather than only in minified `styles.css`.
-- Keep Tailwind directives in source CSS if they are build-input only; do not chase scanner output from built/minified CSS unless it affects community review.
-- Review custom web component selectors such as `l-bouncy-arc` and `l-quantum`; document or wrap them if scanner keeps treating them as unknown type selectors.
+- Keep Tailwind directives in `src/custom.pcss` as build-input syntax; generated `styles.css` remains the scanner-facing release CSS.
+- Replace broad `:has()` selectors with runtime-scoped classes for chat drawer and settings/Secret picker layouts.
+- Remove remaining `!important` overrides from plugin-owned styles and keep equivalent specificity or inline notice shell styles where needed.
+- Resolve duplicate width/min-width fallback output by avoiding `fit-content` / `max-content` in the affected toolbar and Mermaid layout rules.
+- Avoid custom web component type selectors for `l-bouncy-arc` and `l-quantum`; style the existing loader class instead.
 
 ## Verification Plan
 
@@ -212,5 +212,5 @@ make release-dry-run VERSION=x.y.z
 - Full `activeDocument`/`activeWindow` refactor.
 - Broad timer helper rollout.
 - Deep type cleanup for imported third-party types reported as `error`/`any`.
-- Complete CSS lint cleanup of minified `styles.css` output.
+- Re-check community scanner output after the next release.
 - GitHub artifact attestation verification from the community scanner side after the next real release.

@@ -2764,16 +2764,17 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('keeps message actions discoverable in the bottom toolbar', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
 
-        expect(css).toMatch(/\.llm-view\s+\.message-actions\s*{[\s\S]*?position:\s*relative;[\s\S]*?gap:\s*6px;[\s\S]*?width:\s*fit-content;[\s\S]*?margin-top:\s*10px;[\s\S]*?opacity:\s*0\.72;/);
-        expect(css).toMatch(/\.llm-view\s+\.llm-message\.user\s+\.message-actions\s*{[\s\S]*?margin-left:\s*auto;/);
+        expect(css).toMatch(/\.llm-view\s+\.message-actions\s*{[\s\S]*?position:\s*relative;[\s\S]*?display:\s*flex;[\s\S]*?gap:\s*6px;[\s\S]*?max-width:\s*100%;[\s\S]*?margin-top:\s*10px;[\s\S]*?opacity:\s*0\.72;/);
+        expect(css).not.toMatch(/\.llm-view\s+\.message-actions\s*{[\s\S]*?width:\s*fit-content;/);
+        expect(css).toMatch(/\.llm-view\s+\.llm-message\.user\s+\.message-actions\s*{[\s\S]*?justify-content:\s*flex-end;/);
         expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
         expect(css).toMatch(/\.llm-view\.is-narrow\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
     });
 
     it('pins message action buttons to icon size in mobile button styles', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
 
         expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s*{[\s\S]*?appearance:\s*none;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?background:\s*transparent;[\s\S]*?flex:\s*0 0 28px;[\s\S]*?min-width:\s*28px;[\s\S]*?min-height:\s*28px;[\s\S]*?max-width:\s*28px;[\s\S]*?max-height:\s*28px;[\s\S]*?box-shadow:\s*none;/);
         expect(css).toMatch(/\.llm-view\s+button\.message-action-button:focus\s*{[\s\S]*?outline:\s*none;/);
@@ -2784,7 +2785,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('opens message overflow menus upward from the bottom toolbar', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
         const sharedMenuItemBlock = getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item');
         const messageMenuItemBlock = getCssRuleBlock(css, '.pa-chat-message-menu .pa-chat-menu-item');
 
@@ -2797,7 +2798,7 @@ describe('LLMView turn lifecycle', () => {
         expect(sharedMenuItemBlock).toContain('box-sizing: border-box;');
         expect(sharedMenuItemBlock).toContain('grid-template-columns: 18px minmax(0, 1fr);');
         expect(sharedMenuItemBlock).toContain('min-height: 38px;');
-        expect(sharedMenuItemBlock).toContain('column-gap: 10px;');
+        expect(sharedMenuItemBlock).toContain('gap: 0 10px;');
         expect(css.indexOf('.pa-chat-message-menu .pa-chat-menu-item {')).toBeGreaterThan(css.indexOf('.pa-chat-menu .pa-chat-menu-item {'));
         expect(messageMenuItemBlock).toContain('grid-template-columns: 18px max-content;');
         expect(messageMenuItemBlock).toContain('justify-content: center;');
@@ -2806,7 +2807,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('sizes role identicons for desktop and compact chat panes', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
         const assistantIdenticonModel = getChatRoleIdenticonModel('assistant');
 
         expect(css).toMatch(/\.llm-view\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*24px;[\s\S]*?--pa-chat-role-icon-padding:\s*2px;[\s\S]*?gap:\s*7px;/);
@@ -2838,7 +2839,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('keeps ldrs chat loaders visible when reduced motion is enabled', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
         const reducedMotionStart = css.indexOf('@media (prefers-reduced-motion: reduce)');
         const reducedMotionEnd = css.indexOf('.llm-view.is-narrow', reducedMotionStart);
         const reducedMotionBlock = css.slice(reducedMotionStart, reducedMotionEnd);
@@ -2850,7 +2851,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('uses a bright vivid color cycle for ldrs chat loaders', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
         const colorCycleStart = css.indexOf('@keyframes pa-chat-loader-color-cycle');
         const colorCycleEnd = css.indexOf('.llm-view .thinking-status-header', colorCycleStart);
         const colorCycleBlock = css.slice(colorCycleStart, colorCycleEnd);
@@ -2869,7 +2870,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('pins the Thinking status toggle so theme button defaults cannot add leading space', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
         const headerBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header');
         const toggleBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header > button.thinking-status-toggle');
         const toggleSvgBlock = getCssRuleBlock(css, '.llm-view .thinking-status-header > button.thinking-status-toggle > svg.svg-icon');
@@ -2896,9 +2897,9 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('keeps the chat composer in the visible flex area when mobile keyboards shrink the visual viewport', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
-        const drawerInnerBlock = getCssRuleBlock(css, '.workspace-drawer-inner:has(.llm-view)');
-        const mobileDrawerInnerBlock = getCssRuleBlock(css, 'body.is-mobile .workspace-drawer-inner:has(.llm-view)');
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        const drawerInnerBlock = getCssRuleBlock(css, '.workspace-drawer-inner.pa-chat-drawer-host');
+        const mobileDrawerInnerBlock = getCssRuleBlock(css, 'body.is-mobile .workspace-drawer-inner.pa-chat-drawer-host');
         const mobileViewBlock = getCssRuleBlock(css, 'body.is-mobile .llm-view');
         const mobileInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input');
         const mobileTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input textarea');
@@ -2999,14 +3000,14 @@ describe('LLMView turn lifecycle', () => {
         expect(css).not.toMatch(/(?:^|\n)\.notice\s*{/);
         expect(css).toMatch(/\.pa-notice-shell\s*{[\s\S]*?background-color:\s*var\(--pa-background-primary\);/);
         expect(css).not.toMatch(/\.popover\s+\.popover-content\s*{[\s\S]*?width:\s*100% !important;/);
-        expect(css).toMatch(/\.popover\.resize-popover-width\s+\.popover-content\s*{[\s\S]*?width:\s*var\(--resize-popover-width\) !important;/);
+        expect(css).toMatch(/\.popover\.resize-popover-width\s+\.popover-content\s*{[\s\S]*?width:\s*var\(--resize-popover-width\);/);
         expect(css).not.toMatch(/\.llm-view\.is-keyboard-native-fallback\s*{[\s\S]*?--pa-chat-keyboard-accessory-clearance:/);
         expect(css).not.toMatch(/\.is-keyboard-native-fallback\s+\.pa-chat-keyboard-spacer\s*{[\s\S]*?transition:/);
         expect(css).toMatch(/@media \(prefers-reduced-motion:\s*reduce\)\s*{[\s\S]*?\.llm-input\s*{[\s\S]*?transition:\s*none;/);
     });
 
     it('keeps Mermaid preview controls usable on narrow mobile panes', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
 
         expect(css).toMatch(/\.llm-view\s+\.pa-chat-mermaid-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
         expect(css).toMatch(/\.llm-view\.is-narrow\s+\.pa-chat-mermaid-open-button\s*{[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;[\s\S]*?min-width:\s*40px;[\s\S]*?min-height:\s*40px;/);
@@ -3014,7 +3015,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('keeps chat history rows inside the modal width on mobile', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
 
         expect(css).toMatch(/\.pa-chat-history-modal-shell\s*{[\s\S]*?width:\s*min\(720px,\s*calc\(100vw - 32px\)\);[\s\S]*?overflow-x:\s*hidden;/);
         expect(css).toMatch(/\.pa-chat-history-list\s*{[\s\S]*?list-style:\s*none;[\s\S]*?max-width:\s*100%;[\s\S]*?overflow-x:\s*hidden;/);
@@ -3040,7 +3041,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('keeps message bubble enter animation opt-in and role icons transition fill and motion', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
         const messageBaseRule = css.match(/\.llm-message\s*{([\s\S]*?)\n}/);
         const identiconRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon\s*{([\s\S]*?)\n}/)?.[1] ?? '';
         const identiconSvgRule = css.match(/\.llm-view\s+\.pa-chat-role-identicon-svg\s*{([\s\S]*?)\n}/)?.[1] ?? '';
@@ -4539,11 +4540,12 @@ describe('mobile tab bar auto-hide', () => {
     });
 
     it('creates a handle and removes the click listener from tabOptions on teardown', async () => {
-        const { view, containerEl, tabOptions } = createMobileView();
+        const { view, containerEl, tabOptions, drawerInner } = createMobileView();
         await view.onOpen();
 
         const handle = walk(containerEl, (el) => el.classList.contains('pa-tab-bar-handle'));
         expect(handle).not.toBeNull();
+        expect(drawerInner.classList.contains('pa-chat-drawer-host')).toBe(true);
         const keyboardSpacer = walk(containerEl, (el) => el.classList.contains('pa-chat-keyboard-spacer'));
         expect(keyboardSpacer).not.toBeNull();
         expect(keyboardSpacer!.getAttribute('aria-hidden')).toBe('true');
@@ -4561,6 +4563,7 @@ describe('mobile tab bar auto-hide', () => {
         const listenersAfter = tabOptions.listeners.get('click')?.length ?? 0;
         expect(listenersAfter).toBe(listenersBefore - 1);
         expect(handle!.parentElement).toBeNull();
+        expect(drawerInner.classList.contains('pa-chat-drawer-host')).toBe(false);
     });
 
     it('keeps the mobile shell ordered while the native keyboard spacer is active', async () => {

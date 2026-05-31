@@ -120,6 +120,7 @@ function runChecks() {
   run("npm", ["test", "--", "--runInBand"]);
   run("npm", ["run", "lint"]);
   run("npm", ["run", "build"]);
+  run("npm", ["run", "audit:bundle"]);
   assertCleanWorktree("after validation checks");
 }
 

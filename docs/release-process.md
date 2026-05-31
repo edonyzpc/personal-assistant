@@ -30,7 +30,7 @@ make publish VERSION=1.6.6
 2. Verifies the target version is valid, greater than `package.json`, and not already tagged.
 3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
 4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
-5. Runs `git diff --check`, `npm test -- --runInBand`, `npm run lint`, and `npm run build`.
+5. Runs `git diff --check`, `npm test -- --runInBand`, `npm run lint`, `npm run build`, and `npm run audit:bundle`.
 6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, and `CHANGELOG.md`.
 7. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
 8. Creates annotated tag `x.y.z`.
@@ -63,7 +63,7 @@ The GitHub workflow builds from the pushed tag and creates a GitHub Release with
 - `manifest.json`
 - `styles.css`
 
-The release workflow stages those three files in `release-assets/`, generates GitHub artifact attestations for the same staged files, then uploads that exact asset set. `manifest-beta.json` may still be copied by local or beta deployment flows, but it is not a supported asset in the formal GitHub Release.
+The release workflow builds and audits the bundle before staging those three files in `release-assets/`, generates GitHub artifact attestations for the same staged files, then uploads that exact asset set. `manifest-beta.json` may still be copied by local or beta deployment flows, but it is not a supported asset in the formal GitHub Release.
 
 ## Recovery
 

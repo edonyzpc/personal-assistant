@@ -478,6 +478,8 @@ export class SettingTab extends PluginSettingTab {
         this.renderMetadataSection(containerEl);
         this.renderFeaturedImageSection(containerEl);
         this.renderAdvancedSection(containerEl);
+        this.markFormControlSettings(containerEl);
+        this.startSecretPickerObserver();
     }
 
     hide(): void {
@@ -562,6 +564,7 @@ export class SettingTab extends PluginSettingTab {
             if (!this.isSecretPickerRow(row)) {
                 return;
             }
+            this.markSecretPickerRow(row);
             const actions = Array.from(row.querySelectorAll<HTMLElement>(".clickable-icon"));
             if (actions.length < 2) {
                 return;
@@ -595,6 +598,39 @@ export class SettingTab extends PluginSettingTab {
                 this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
             }, true);
         });
+    }
+
+    private markFormControlSettings(containerEl: HTMLElement): void {
+        if (typeof containerEl.querySelectorAll !== "function") {
+            return;
+        }
+        const settings = Array.from(containerEl.querySelectorAll<HTMLElement>(".setting-item"));
+        settings.forEach((settingEl) => {
+            const controlEl = settingEl.querySelector<HTMLElement>(".setting-item-control");
+            if (!controlEl) {
+                return;
+            }
+            const controls = Array.from(controlEl.querySelectorAll<HTMLElement>(
+                "input[type='text'], input[type='number'], input:not([type]), select",
+            ));
+            if (!controls.length) {
+                return;
+            }
+            settingEl.classList.add("pa-setting-has-form-control");
+            settingEl.querySelector<HTMLElement>(".setting-item-info")?.classList.add("pa-setting-form-info");
+            controlEl.classList.add("pa-setting-form-control");
+            controls.forEach((control) => control.classList.add("pa-setting-form-input"));
+        });
+    }
+
+    private markSecretPickerRow(row: HTMLElement): void {
+        row.classList.add("pa-secret-picker-row");
+        row.closest<HTMLElement>(".modal")?.classList.add("pa-secret-picker-modal");
+        if (row.querySelector(".lucide-eye, [data-icon='eye']")) {
+            row.classList.add("pa-secret-row-has-eye");
+        } else {
+            row.classList.remove("pa-secret-row-has-eye");
+        }
     }
 
     private scheduleSecretPickerPatch(): void {
@@ -639,9 +675,11 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private findSecretPickerModal(): HTMLElement | null {
-        return Array.from(document.querySelectorAll<HTMLElement>("body.pa-settings-tab-open .modal"))
+        const modal = Array.from(document.querySelectorAll<HTMLElement>("body.pa-settings-tab-open .modal"))
             .reverse()
             .find((modal) => Array.from(modal.querySelectorAll<HTMLElement>(".suggestion-item")).some((row) => this.isSecretPickerRow(row))) ?? null;
+        modal?.classList.add("pa-secret-picker-modal");
+        return modal;
     }
 
     private prefillAddSecretModal(secretId: string, secretValue: string, attempt: number): void {
@@ -1166,6 +1204,7 @@ export class SettingTab extends PluginSettingTab {
                     this.rebuildGraphColors();
                 })
             });
+        this.markFormControlSettings(container);
     }
 
     private renderMetadataSection(parentEl: HTMLElement): void {
@@ -1304,6 +1343,7 @@ export class SettingTab extends PluginSettingTab {
                         this.debouncedSave();
                     })
             });
+        this.markFormControlSettings(container);
     }
 
     private renderStatisticsSection(parentEl: HTMLElement): void {
@@ -1577,6 +1617,7 @@ export class SettingTab extends PluginSettingTab {
                     this.debouncedSave();
                 });
             });
+        this.markFormControlSettings(container);
     }
 
     private rebuildQwenOptions(): void {
@@ -1890,6 +1931,7 @@ export class SettingTab extends PluginSettingTab {
                         this.debouncedSave();
                     })
             });
+        this.markFormControlSettings(container);
     }
 
     private renderFeaturedImageSection(parentEl: HTMLElement): void {
@@ -1928,6 +1970,7 @@ export class SettingTab extends PluginSettingTab {
                         this.debouncedSave();
                     })
             });
+        this.markFormControlSettings(container);
     }
 
     private findGraphColor(graphColor: GraphColor): number {

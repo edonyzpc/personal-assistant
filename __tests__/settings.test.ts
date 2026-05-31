@@ -561,13 +561,36 @@ describe('PA Agent telemetry settings', () => {
     });
 
     it('keeps settings text inputs right-aligned with consistent width', () => {
-        const css = readFileSync('src/custom.css', 'utf8');
+        const css = readFileSync('src/custom.pcss', 'utf8');
 
-        expect(css).toContain('.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"])');
-        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)[\s\S]*?align-items:\s*center;[\s\S]*?gap:\s*clamp\(20px,\s*4vw,\s*64px\);/);
-        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)\s+\.setting-item-control,[\s\S]*?flex:\s*0 0 clamp\(280px,\s*44%,\s*560px\);[\s\S]*?justify-content:\s*flex-end;[\s\S]*?min-width:\s*240px;/);
-        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)\s+\.setting-item-control input,[\s\S]*?width:\s*100%;/);
-        expect(css).toMatch(/@media\s+\(max-width:\s*700px\)\s*{[\s\S]*?\.pa-settings-tab\s+\.setting-item:has\(\.setting-item-control input\[type="text"\]\)[\s\S]*?flex-direction:\s*column;[\s\S]*?\.setting-item-control[\s\S]*?width:\s*100%;/);
+        expect(css).not.toContain(':has(');
+        expect(css).toContain('.pa-settings-tab .setting-item.pa-setting-has-form-control');
+        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s*{[\s\S]*?align-items:\s*center;[\s\S]*?gap:\s*clamp\(20px,\s*4vw,\s*64px\);/);
+        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s*{[\s\S]*?flex:\s*0 0 clamp\(280px,\s*44%,\s*560px\);[\s\S]*?justify-content:\s*flex-end;[\s\S]*?min-width:\s*240px;/);
+        expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s+input,[\s\S]*?\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s+select\s*{[\s\S]*?width:\s*100%;/);
+        expect(css).toMatch(/@media\s+\(max-width:\s*700px\)\s*{[\s\S]*?\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control[\s\S]*?flex-direction:\s*column;[\s\S]*?\.setting-item-control[\s\S]*?width:\s*100%;/);
+    });
+});
+
+describe('settings form-control styling hooks', () => {
+    it('reapplies form-control classes after dynamic settings rebuilds', () => {
+        const source = readFileSync('src/settings.ts', 'utf8');
+        const methodBody = (name: string) => {
+            const start = source.indexOf(`    private ${name}(`);
+            expect(start).toBeGreaterThanOrEqual(0);
+            const next = source.indexOf('\n    private ', start + 1);
+            return source.slice(start, next === -1 ? undefined : next);
+        };
+
+        for (const name of [
+            'rebuildProviderConfig',
+            'rebuildGraphColors',
+            'rebuildMetadataList',
+            'rebuildMemoryAdvanced',
+            'rebuildFeaturedImage',
+        ]) {
+            expect(methodBody(name)).toContain('this.markFormControlSettings(container);');
+        }
     });
 });
 

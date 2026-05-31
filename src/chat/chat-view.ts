@@ -25,6 +25,7 @@ export type { ChatMessage };
 const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
 const LIVE_MARKDOWN_RENDER_COOLDOWN_MS = 32;
 const KEYBOARD_LAYOUT_RESIZE_THRESHOLD_PX = 80;
+const CHAT_DRAWER_HOST_CLASS = 'pa-chat-drawer-host';
 
 const getMonotonicTimeMs = () => {
     const performanceApi = globalThis.performance;
@@ -137,6 +138,7 @@ export class LLMView extends ItemView {
     private mobileTabBarOptions: HTMLElement | null = null;
     private mobileTabBarOptionsHandler: (() => void) | null = null;
     private mobileTabBarDismissTimer: ReturnType<typeof setTimeout> | null = null;
+    private chatDrawerHost: HTMLElement | null = null;
     private activeConversationId: string | null = null;
     private activeConversation: PersistedConversation | null = null;
     private nextTurnIndex = 0;
@@ -194,6 +196,7 @@ export class LLMView extends ItemView {
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
+        this.markChatDrawerHost(containerEl);
         this.observePanelDensity(containerEl);
         this.observeStatusBarClearance(containerEl);
 
@@ -2530,6 +2533,7 @@ export class LLMView extends ItemView {
         this.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
         this.teardownMobileTabBarAutoHide();
+        this.clearChatDrawerHost();
     }
 
     private startViewSession(): number {
@@ -2605,6 +2609,19 @@ export class LLMView extends ItemView {
         this.mobileTabBarOptions = null;
         this.mobileTabBarHandle?.remove();
         this.mobileTabBarHandle = null;
+    }
+
+    private markChatDrawerHost(containerEl: HTMLElement) {
+        this.clearChatDrawerHost();
+        const drawerHost = containerEl.closest('.workspace-drawer-inner') as HTMLElement | null;
+        if (!drawerHost) return;
+        drawerHost.classList.add(CHAT_DRAWER_HOST_CLASS);
+        this.chatDrawerHost = drawerHost;
+    }
+
+    private clearChatDrawerHost() {
+        this.chatDrawerHost?.classList.remove(CHAT_DRAWER_HOST_CLASS);
+        this.chatDrawerHost = null;
     }
 
     private clearMobileTabBarDismissTimer() {

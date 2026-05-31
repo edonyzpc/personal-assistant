@@ -299,7 +299,7 @@ body {
 .progress-bar-grid {
 	display: grid;
 	grid-template-columns: 9fr 1fr;
-	column-gap: 8px;
+	gap: 0 8px;
 	margin-bottom: 8px;
 	width: 100%;
 }
@@ -310,7 +310,7 @@ body {
 }
 
 .progress-bar-notice {
-	max-width: 480px !important;
+	max-width: 480px;
 	background-color: var(--pa-background-primary);
 }
 
@@ -318,7 +318,7 @@ body {
 	display: grid;
 	grid-template-columns: 18px 9fr;
 	grid-template-rows: repeat(auto-fill, 37px);
-	column-gap: 8px;
+	gap: 0 8px;
 }
 
 .progress-bar-items-text {
@@ -348,7 +348,7 @@ body {
 }
 
 .popover.resize-popover-width .popover-content {
-	width: var(--resize-popover-width) !important;
+	width: var(--resize-popover-width);
 }
 
 #modulz-log-icon path {
@@ -479,30 +479,30 @@ body.is-mobile .llm-view {
    a different background), .workspace-drawer-header (top bar), and
    .workspace-drawer-tab-container (bottom tab switcher).
    Unify all host containers to --background-primary so the chat body
-   blends seamlessly across all themes. Scoped via :has(.llm-view)
+   blends seamlessly across all themes. Scoped via a runtime host class
    so other drawer tabs are unaffected. */
-body.is-mobile .workspace-leaf-content[data-type="sidellm-view"] {
-	background: var(--background-primary) !important;
+body.is-mobile .workspace-leaf-content.workspace-leaf-content[data-type="sidellm-view"] {
+	background: var(--background-primary);
 }
-.workspace-drawer-inner:has(.llm-view) {
+.workspace-drawer-inner.pa-chat-drawer-host {
 	background: var(--background-primary);
 	padding-bottom: max(6px, env(safe-area-inset-bottom, 6px));
 }
 
-body.is-mobile .workspace-drawer-inner:has(.llm-view) {
+body.is-mobile .workspace-drawer-inner.pa-chat-drawer-host {
 	--pa-chat-drawer-top-clearance: clamp(10px, calc(env(safe-area-inset-top, 0px) - 24px), 24px);
 	padding-top: var(--pa-chat-drawer-top-clearance);
 }
 
-.workspace-drawer-inner:has(.llm-view) > .workspace-drawer-header {
+.workspace-drawer-inner.pa-chat-drawer-host > .workspace-drawer-header {
 	display: none;
 }
-.workspace-drawer-inner:has(.llm-view) > .workspace-drawer-tab-container {
+.workspace-drawer-inner.pa-chat-drawer-host > .workspace-drawer-tab-container {
 	background: var(--background-primary);
 }
 
-/* ── Mobile tab bar auto-hide (scoped to PA chat via :has) ── */
-.workspace-drawer-inner:has(.llm-view) .workspace-drawer-tab-options {
+/* ── Mobile tab bar auto-hide ── */
+.workspace-drawer-inner.pa-chat-drawer-host .workspace-drawer-tab-options {
 	max-height: 0;
 	padding-top: 0;
 	padding-bottom: 0;
@@ -511,7 +511,7 @@ body.is-mobile .workspace-drawer-inner:has(.llm-view) {
 	pointer-events: none;
 	transition: max-height 0.2s ease, padding 0.2s ease, opacity 0.2s ease;
 }
-.workspace-drawer-inner:has(.llm-view) .workspace-drawer-tab-options.pa-tab-bar-visible {
+.workspace-drawer-inner.pa-chat-drawer-host .workspace-drawer-tab-options.pa-tab-bar-visible {
 	max-height: 60px;
 	padding-top: 4px;
 	padding-bottom: 4px;
@@ -692,7 +692,6 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	display: flex;
 	align-items: center;
 	gap: 6px;
-	width: fit-content;
 	max-width: 100%;
 	margin-top: 10px;
 	color: var(--text-muted);
@@ -704,7 +703,7 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 }
 
 .llm-view .llm-message.user .message-actions {
-	margin-left: auto;
+	justify-content: flex-end;
 }
 
 .llm-view .llm-message.assistant .message-actions,
@@ -809,10 +808,9 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 .llm-view .message-role {
 	--pa-chat-role-icon-size: 24px;
 	--pa-chat-role-icon-padding: 2px;
-	display: flex;
+	display: inline-flex;
 	align-items: center;
 	gap: 7px;
-	width: fit-content;
 	max-width: 100%;
 	color: var(--text-muted);
 	font-size: 0.85em;
@@ -988,8 +986,7 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	animation-delay: 0.3s;
 }
 
-.llm-view .pa-chat-role-loader l-quantum:not(:defined) + .pa-chat-role-loader-fallback,
-.llm-view .pa-chat-role-loader l-bouncy-arc:not(:defined) + .pa-chat-role-loader-fallback {
+.llm-view .pa-chat-role-loader .pa-chat-role-loader-element:not(:defined) + .pa-chat-role-loader-fallback {
 	display: inline-flex;
 }
 
@@ -1250,7 +1247,7 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 
 .llm-view .pa-chat-mermaid-viewport > .mermaid,
 .llm-view .pa-chat-mermaid-viewport > .block-language-mermaid {
-	width: max-content;
+	display: inline-block;
 	max-width: none;
 	min-width: 100%;
 }
@@ -1336,7 +1333,7 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 }
 
 .pa-chat-mermaid-modal-diagram {
-	width: max-content;
+	display: inline-block;
 	max-width: none;
 	min-width: 100%;
 }
@@ -1469,7 +1466,6 @@ body.is-mobile .llm-buttons {
 	cursor: pointer;
 	font-size: 0.85em;
 	white-space: nowrap;
-	min-width: fit-content;
 }
 
 .llm-buttons button:hover:not(:disabled) {
@@ -1762,7 +1758,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 	grid-template-columns: 18px minmax(0, 1fr);
 	min-height: 38px;
 	align-items: center;
-	column-gap: 10px;
+	gap: 0 10px;
 	padding: 0 11px;
 	color: var(--text-normal);
 	font-size: 0.95em;
@@ -1810,7 +1806,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 	min-height: 38px;
 	width: 100%;
 	align-items: center;
-	column-gap: 10px;
+	gap: 0 10px;
 	padding: 0 11px;
 	border: 0;
 	border-radius: 10px;
@@ -2209,14 +2205,14 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 }
 
 .pa-notice-shell {
-	background: transparent !important;
-	box-shadow: none !important;
-	border: none !important;
-	padding: 0 !important;
+	background: transparent;
+	box-shadow: none;
+	border: none;
+	padding: 0;
 }
 
 .pa-notice-shell .notice-body {
-	padding: 0 !important;
+	padding: 0;
 }
 
 .pa-notice--diagnostic {
@@ -2277,26 +2273,17 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 	padding-inline-start: 0;
 }
 
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]),
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]),
-.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])),
-.pa-settings-tab .setting-item:has(.setting-item-control select) {
+.pa-settings-tab .setting-item.pa-setting-has-form-control {
 	align-items: center;
 	gap: clamp(20px, 4vw, 64px);
 }
 
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-info,
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-info,
-.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-info,
-.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-info {
+.pa-settings-tab .setting-item.pa-setting-has-form-control .setting-item-info {
 	flex: 1 1 auto;
 	min-width: 0;
 }
 
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-control,
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-control,
-.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-control,
-.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-control {
+.pa-settings-tab .setting-item.pa-setting-has-form-control .setting-item-control {
 	display: flex;
 	flex: 0 0 clamp(280px, 44%, 560px);
 	justify-content: flex-end;
@@ -2304,10 +2291,8 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 	min-width: 240px;
 }
 
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-control input,
-.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-control input,
-.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-control input,
-.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-control select {
+.pa-settings-tab .setting-item.pa-setting-has-form-control .setting-item-control input,
+.pa-settings-tab .setting-item.pa-setting-has-form-control .setting-item-control select {
 	box-sizing: border-box;
 	max-width: 100%;
 	min-width: 0;
@@ -2319,19 +2304,13 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 }
 
 @media (max-width: 700px) {
-	.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]),
-	.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]),
-	.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])),
-	.pa-settings-tab .setting-item:has(.setting-item-control select) {
+	.pa-settings-tab .setting-item.pa-setting-has-form-control {
 		align-items: stretch;
 		flex-direction: column;
 		gap: 10px;
 	}
 
-	.pa-settings-tab .setting-item:has(.setting-item-control input[type="text"]) .setting-item-control,
-	.pa-settings-tab .setting-item:has(.setting-item-control input[type="number"]) .setting-item-control,
-	.pa-settings-tab .setting-item:has(.setting-item-control input:not([type])) .setting-item-control,
-	.pa-settings-tab .setting-item:has(.setting-item-control select) .setting-item-control {
+	.pa-settings-tab .setting-item.pa-setting-has-form-control .setting-item-control {
 		flex: 0 1 auto;
 		justify-content: stretch;
 		max-width: 100%;
@@ -2343,7 +2322,7 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 /* Obsidian SecretComponent modal: constrain long secret names/tokens without
    replacing the native picker behavior. */
 @media (min-width: 700px) {
-	body.pa-settings-tab-open .modal:has(.suggestion-item.mod-complex.suggestion-secret-key) {
+	body.pa-settings-tab-open .modal.pa-secret-picker-modal {
 		width: min(820px, calc(100vw - 96px));
 		max-width: calc(100vw - 96px);
 	}
@@ -2421,22 +2400,19 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	display: none;
 }
 
-body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-content,
-body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-content {
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key.pa-secret-row-has-eye .suggestion-content {
 	flex: 0 1 10ch;
 	max-width: 10ch;
 }
 
-body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-aux,
-body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-aux {
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key.pa-secret-row-has-eye .suggestion-aux {
 	flex: 1 1 auto;
 	margin-left: 0;
 	min-width: 0;
 	max-width: 100%;
 }
 
-body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-secret-text,
-body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-secret-text {
+body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key.pa-secret-row-has-eye .suggestion-secret-text {
 	flex: 1 1 auto;
 	max-width: 100%;
 }
@@ -2452,8 +2428,7 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 		height: 40px;
 	}
 
-	body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has(.lucide-eye) .suggestion-content,
-	body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key:has([data-icon="eye"]) .suggestion-content {
+	body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-key.pa-secret-row-has-eye .suggestion-content {
 		flex-basis: 8ch;
 		max-width: 8ch;
 	}
