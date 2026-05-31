@@ -688,14 +688,29 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 }
 
 .llm-view .message-actions {
-	position: absolute;
-	top: 8px;
-	right: 8px;
+	position: relative;
 	display: flex;
+	align-items: center;
 	gap: 6px;
-	opacity: 0;
-	transition: opacity 0.2s ease;
+	width: fit-content;
+	max-width: 100%;
+	margin-top: 10px;
+	color: var(--text-muted);
+	opacity: 0.72;
+	transition: opacity 0.16s ease;
 	z-index: 2;
+	--pa-chat-message-menu-arrow-left: auto;
+	--pa-chat-message-menu-arrow-right: 10px;
+}
+
+.llm-view .llm-message.user .message-actions {
+	margin-left: auto;
+}
+
+.llm-view .llm-message.assistant .message-actions,
+.llm-view .llm-message.system .message-actions {
+	--pa-chat-message-menu-arrow-left: 76px;
+	--pa-chat-message-menu-arrow-right: auto;
 }
 
 .llm-view .llm-message:hover .message-actions,
@@ -709,41 +724,86 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	}
 }
 
-.llm-view .message-action-button {
+.llm-view button.message-action-button {
 	-webkit-appearance: none;
 	appearance: none;
-	background: var(--background-modifier-hover);
+	box-sizing: border-box;
+	background: transparent;
 	background-image: none;
+	border: 0;
 	color: var(--text-muted);
-	border: none;
-	border-radius: 4px;
-	flex: 0 0 24px;
-	width: 24px;
-	height: 24px;
-	min-width: 24px;
-	min-height: 24px;
-	max-width: 24px;
-	max-height: 24px;
-	padding: 2px;
+	border-radius: 6px;
+	flex: 0 0 28px;
+	width: 28px;
+	height: 28px;
+	min-width: 28px;
+	min-height: 28px;
+	max-width: 28px;
+	max-height: 28px;
+	padding: 5px;
 	display: flex;
 	align-items: center;
 	justify-content: center;
 	cursor: pointer;
 	line-height: 1;
 	box-shadow: none;
-	transition: all 0.2s ease;
+	transition:
+		background-color 0.16s ease,
+		color 0.16s ease,
+		opacity 0.16s ease,
+		transform 0.12s ease;
 }
 
-.llm-view .message-action-button:hover {
-	background: var(--background-modifier-active);
+.llm-view button.message-action-button:hover:not(:disabled),
+.llm-view button.message-action-button:focus-visible:not(:disabled) {
+	background: var(--background-modifier-hover);
 	color: var(--text-normal);
 }
 
-.llm-view .message-action-button svg {
+.llm-view button.message-action-button:focus {
+	outline: none;
+}
+
+.llm-view button.message-action-button:focus-visible:not(:disabled) {
+	box-shadow: inset 0 0 0 1px var(--interactive-accent);
+}
+
+.llm-view button.message-action-button:active:not(:disabled) {
+	transform: translateY(1px);
+}
+
+.llm-view button.message-action-button:disabled {
+	cursor: not-allowed;
+	opacity: 0.38;
+}
+
+.llm-view button.message-action-button svg {
 	display: block;
 	flex: 0 0 auto;
-	width: 14px;
-	height: 14px;
+	width: 16px;
+	height: 16px;
+}
+
+@media (hover: none) {
+	.llm-view button.message-action-button {
+		flex-basis: 44px;
+		width: 44px;
+		height: 44px;
+		min-width: 44px;
+		min-height: 44px;
+		max-width: 44px;
+		max-height: 44px;
+		padding: 14px;
+	}
+
+	.llm-view .llm-message.assistant .message-actions,
+	.llm-view .llm-message.system .message-actions {
+		--pa-chat-message-menu-arrow-left: 116px;
+	}
+
+	.pa-chat-message-menu {
+		min-width: 144px;
+	}
 }
 
 .llm-view .message-role {
@@ -753,14 +813,14 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	align-items: center;
 	gap: 7px;
 	width: fit-content;
-	max-width: calc(100% - 34px);
+	max-width: 100%;
 	color: var(--text-muted);
 	font-size: 0.85em;
 	font-weight: 600;
 	margin-bottom: 6px;
 	text-transform: uppercase;
 	letter-spacing: 0;
-	margin-right: 30px;
+	margin-right: 0;
 }
 
 .llm-view .pa-chat-role-text {
@@ -1650,13 +1710,40 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 }
 
 .pa-chat-message-menu {
-	top: calc(100% + 8px);
-	bottom: auto;
+	top: auto;
+	bottom: calc(100% + 8px);
 	right: 0;
-	min-width: 178px;
+	min-width: 96px;
+	max-width: min(132px, calc(100vw - 24px));
+	padding: 3px;
+	border-radius: 9px;
+	box-shadow:
+		0 14px 28px rgba(0, 0, 0, 0.18),
+		0 3px 10px rgba(0, 0, 0, 0.1);
+}
+
+.llm-view .llm-message.assistant .pa-chat-message-menu,
+.llm-view .llm-message.system .pa-chat-message-menu {
+	right: auto;
+	left: 0;
 }
 
 .pa-chat-message-menu::after {
+	top: auto;
+	right: var(--pa-chat-message-menu-arrow-right);
+	left: var(--pa-chat-message-menu-arrow-left);
+	bottom: -6px;
+	border: 0;
+	border-right: 1px solid var(--background-modifier-border);
+	border-bottom: 1px solid var(--background-modifier-border);
+}
+
+.pa-chat-message-menu.pa-chat-message-menu-below {
+	top: calc(100% + 8px);
+	bottom: auto;
+}
+
+.pa-chat-message-menu.pa-chat-message-menu-below::after {
 	top: -6px;
 	bottom: auto;
 	border: 0;
@@ -1717,6 +1804,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 }
 
 .pa-chat-menu .pa-chat-menu-item {
+	box-sizing: border-box;
 	display: grid;
 	grid-template-columns: 18px minmax(0, 1fr);
 	min-height: 38px;
@@ -1738,8 +1826,14 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 	cursor: pointer;
 }
 
+.pa-chat-message-menu .pa-chat-menu-item {
+	grid-template-columns: 18px max-content;
+	justify-content: center;
+	padding: 0 8px;
+}
+
 .pa-chat-menu .pa-chat-menu-item:hover:not(:disabled),
-.pa-chat-menu .pa-chat-menu-item:focus-visible {
+.pa-chat-menu .pa-chat-menu-item:focus-visible:not(:disabled) {
 	background: var(--background-modifier-hover);
 	background-color: var(--background-modifier-hover);
 	border: 0;
@@ -1749,7 +1843,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 	transform: none;
 }
 
-.pa-chat-menu .pa-chat-menu-item:focus-visible {
+.pa-chat-menu .pa-chat-menu-item:focus-visible:not(:disabled) {
 	box-shadow: inset 0 0 0 1px var(--interactive-accent);
 }
 

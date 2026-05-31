@@ -2763,9 +2763,11 @@ describe('LLMView turn lifecycle', () => {
         expect(containerEl.classList.contains('is-compact')).toBe(true);
     });
 
-    it('keeps message actions discoverable on touch and narrow panes', () => {
+    it('keeps message actions discoverable in the bottom toolbar', () => {
         const css = readFileSync('src/custom.css', 'utf8');
 
+        expect(css).toMatch(/\.llm-view\s+\.message-actions\s*{[\s\S]*?position:\s*relative;[\s\S]*?gap:\s*6px;[\s\S]*?width:\s*fit-content;[\s\S]*?margin-top:\s*10px;[\s\S]*?opacity:\s*0\.72;/);
+        expect(css).toMatch(/\.llm-view\s+\.llm-message\.user\s+\.message-actions\s*{[\s\S]*?margin-left:\s*auto;/);
         expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
         expect(css).toMatch(/\.llm-view\.is-narrow\s+\.message-actions\s*{[\s\S]*?opacity:\s*1;/);
     });
@@ -2773,8 +2775,34 @@ describe('LLMView turn lifecycle', () => {
     it('pins message action buttons to icon size in mobile button styles', () => {
         const css = readFileSync('src/custom.css', 'utf8');
 
-        expect(css).toMatch(/\.llm-view\s+\.message-action-button\s*{[\s\S]*?appearance:\s*none;[\s\S]*?flex:\s*0 0 24px;[\s\S]*?min-width:\s*24px;[\s\S]*?min-height:\s*24px;[\s\S]*?max-width:\s*24px;[\s\S]*?max-height:\s*24px;[\s\S]*?box-shadow:\s*none;/);
-        expect(css).toMatch(/\.llm-view\s+\.message-action-button\s+svg\s*{[\s\S]*?display:\s*block;[\s\S]*?flex:\s*0 0 auto;/);
+        expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s*{[\s\S]*?appearance:\s*none;[\s\S]*?box-sizing:\s*border-box;[\s\S]*?background:\s*transparent;[\s\S]*?flex:\s*0 0 28px;[\s\S]*?min-width:\s*28px;[\s\S]*?min-height:\s*28px;[\s\S]*?max-width:\s*28px;[\s\S]*?max-height:\s*28px;[\s\S]*?box-shadow:\s*none;/);
+        expect(css).toMatch(/\.llm-view\s+button\.message-action-button:focus\s*{[\s\S]*?outline:\s*none;/);
+        expect(css).toMatch(/\.llm-view\s+button\.message-action-button:focus-visible:not\(:disabled\)\s*{[\s\S]*?box-shadow:\s*inset 0 0 0 1px var\(--interactive-accent\);/);
+        expect(css).toMatch(/\.llm-view\s+button\.message-action-button\s+svg\s*{[\s\S]*?display:\s*block;[\s\S]*?flex:\s*0 0 auto;[\s\S]*?width:\s*16px;[\s\S]*?height:\s*16px;/);
+        expect(css).toMatch(/\.llm-view\s+button\.message-action-button:hover:not\(:disabled\),[\s\S]*?\.llm-view\s+button\.message-action-button:focus-visible:not\(:disabled\)\s*{/);
+        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+button\.message-action-button\s*{[\s\S]*?flex-basis:\s*44px;[\s\S]*?min-width:\s*44px;[\s\S]*?min-height:\s*44px;/);
+    });
+
+    it('opens message overflow menus upward from the bottom toolbar', () => {
+        const css = readFileSync('src/custom.css', 'utf8');
+        const sharedMenuItemBlock = getCssRuleBlock(css, '.pa-chat-menu .pa-chat-menu-item');
+        const messageMenuItemBlock = getCssRuleBlock(css, '.pa-chat-message-menu .pa-chat-menu-item');
+
+        expect(css).toMatch(/\.pa-chat-message-menu\s*{[\s\S]*?top:\s*auto;[\s\S]*?bottom:\s*calc\(100% \+ 8px\);[\s\S]*?min-width:\s*96px;[\s\S]*?max-width:\s*min\(132px, calc\(100vw - 24px\)\);[\s\S]*?padding:\s*3px;/);
+        expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.pa-chat-message-menu,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.pa-chat-message-menu\s*{[\s\S]*?right:\s*auto;[\s\S]*?left:\s*0;/);
+        expect(css).toMatch(/\.llm-view\s+\.llm-message\.assistant\s+\.message-actions,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*76px;[\s\S]*?--pa-chat-message-menu-arrow-right:\s*auto;/);
+        expect(css).toMatch(/@media\s*\(hover:\s*none\)\s*{[\s\S]*?\.llm-view\s+\.llm-message\.assistant\s+\.message-actions,[\s\S]*?\.llm-view\s+\.llm-message\.system\s+\.message-actions\s*{[\s\S]*?--pa-chat-message-menu-arrow-left:\s*116px;[\s\S]*?\.pa-chat-message-menu\s*{[\s\S]*?min-width:\s*144px;/);
+        expect(css).toMatch(/\.pa-chat-message-menu::after\s*{[\s\S]*?top:\s*auto;[\s\S]*?right:\s*var\(--pa-chat-message-menu-arrow-right\);[\s\S]*?left:\s*var\(--pa-chat-message-menu-arrow-left\);[\s\S]*?bottom:\s*-6px;[\s\S]*?border-right:\s*1px solid var\(--background-modifier-border\);[\s\S]*?border-bottom:\s*1px solid var\(--background-modifier-border\);/);
+        expect(css).toMatch(/\.pa-chat-message-menu\.pa-chat-message-menu-below\s*{[\s\S]*?top:\s*calc\(100% \+ 8px\);[\s\S]*?bottom:\s*auto;/);
+        expect(sharedMenuItemBlock).toContain('box-sizing: border-box;');
+        expect(sharedMenuItemBlock).toContain('grid-template-columns: 18px minmax(0, 1fr);');
+        expect(sharedMenuItemBlock).toContain('min-height: 38px;');
+        expect(sharedMenuItemBlock).toContain('column-gap: 10px;');
+        expect(css.indexOf('.pa-chat-message-menu .pa-chat-menu-item {')).toBeGreaterThan(css.indexOf('.pa-chat-menu .pa-chat-menu-item {'));
+        expect(messageMenuItemBlock).toContain('grid-template-columns: 18px max-content;');
+        expect(messageMenuItemBlock).toContain('justify-content: center;');
+        expect(messageMenuItemBlock).toContain('padding: 0 8px;');
+        expect(messageMenuItemBlock).not.toContain('font-size');
     });
 
     it('sizes role identicons for desktop and compact chat panes', () => {
@@ -3912,6 +3940,179 @@ describe('LLMView turn lifecycle', () => {
         jest.advanceTimersByTime(CHAT_MENU_IDLE_CLOSE_MS);
         expect(messageMenu.hidden).toBe(true);
         expect(messageMenuButton.getAttribute('aria-expanded')).toBe('false');
+    });
+
+    it('flips message action menus below when there is not enough room above', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'hello';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('answer');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const assistantMessage = getElementsByClass(containerEl, 'llm-message')
+            .find((el) => el.classList.contains('assistant'));
+        if (!assistantMessage) throw new Error('assistant message not found');
+        const actions = getElementByClass(assistantMessage, 'message-actions');
+        const messageMenuButton = getButtonByClass(actions, 'message-more-button');
+        const messageMenu = getElementByClass(actions, 'pa-chat-message-menu');
+        getResponseDiv(view).boundingRect = {
+            left: 0,
+            top: 0,
+            right: 320,
+            bottom: 240,
+            width: 320,
+            height: 240,
+        };
+        actions.boundingRect = {
+            left: 12,
+            top: 6,
+            right: 120,
+            bottom: 40,
+            width: 108,
+            height: 34,
+        };
+        messageMenu.boundingRect = {
+            left: 0,
+            top: 0,
+            right: 108,
+            bottom: 88,
+            width: 108,
+            height: 88,
+        };
+
+        messageMenuButton.click();
+
+        expect(messageMenu.hidden).toBe(false);
+        expect(messageMenu.classList.contains('pa-chat-message-menu-below')).toBe(true);
+    });
+
+    it('copies finalized messages from the inline message toolbar', async () => {
+        const { view, containerEl } = createView();
+        const writeText = globalThis.navigator.clipboard.writeText as jest.MockedFunction<(text: string) => Promise<void>>;
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'copy prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('answer **markdown**');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const userMessage = getElementsByClass(containerEl, 'llm-message')
+            .find((el) => el.classList.contains('user'));
+        const assistantMessage = getElementsByClass(containerEl, 'llm-message')
+            .find((el) => el.classList.contains('assistant'));
+        if (!userMessage || !assistantMessage) throw new Error('messages not found');
+
+        getButtonByClass(userMessage, 'copy-message-button').click();
+        getButtonByClass(assistantMessage, 'copy-message-button').click();
+        await flushPromises();
+
+        expect(writeText).toHaveBeenNthCalledWith(1, 'copy prompt');
+        expect(writeText).toHaveBeenNthCalledWith(2, 'answer **markdown**');
+    });
+
+    it('disables live assistant copy until content is available', async () => {
+        const { view, containerEl } = createView();
+        const writeText = globalThis.navigator.clipboard.writeText as jest.MockedFunction<(text: string) => Promise<void>>;
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'stream prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+
+        const assistantMessage = getElementByClass(containerEl, 'assistant');
+        const copyButton = getButtonByClass(assistantMessage, 'copy-message-button');
+        expect(copyButton.disabled).toBe(true);
+        copyButton.click();
+        expect(writeText).not.toHaveBeenCalled();
+
+        streamCalls[0].onChunk('partial answer');
+        await flushPromises();
+        await flushPromises();
+
+        expect(copyButton.disabled).toBe(false);
+        copyButton.click();
+        await flushPromises();
+        expect(writeText).toHaveBeenCalledWith('partial answer');
+    });
+
+    it('deletes successful turns through the message overflow menu', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'first prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('first answer');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const assistantMessage = getElementsByClass(containerEl, 'llm-message')
+            .find((el) => el.classList.contains('assistant'));
+        if (!assistantMessage) throw new Error('assistant message not found');
+        const messageMenuButton = getButtonByClass(assistantMessage, 'message-more-button');
+        const messageMenu = getElementByClass(assistantMessage, 'pa-chat-message-menu');
+
+        messageMenuButton.click();
+        expect(messageMenu.hidden).toBe(false);
+        expect(messageMenuButton.getAttribute('aria-expanded')).toBe('true');
+        getButtonByClass(messageMenu, 'delete-message-button').click();
+        await flushPromises();
+        await flushPromises();
+
+        expect(view.chatHistory).toEqual([]);
+        expect(allText(containerEl)).not.toContain('first prompt');
+        expect(allText(containerEl)).not.toContain('first answer');
+    });
+
+    it('renders completed message actions as a bottom inline toolbar', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'hello';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].onChunk('answer');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        const assistantMessage = getElementsByClass(containerEl, 'llm-message')
+            .find((el) => el.classList.contains('assistant'));
+        if (!assistantMessage) throw new Error('assistant message not found');
+        const content = getElementByClass(assistantMessage, 'message-content');
+        const actions = getElementByClass(assistantMessage, 'message-actions');
+        const copyButton = getButtonByClass(actions, 'copy-message-button');
+        const addButton = getButtonByClass(actions, 'add-to-editor-message-button');
+        const menuButton = getButtonByClass(actions, 'message-more-button');
+        const messageMenu = getElementByClass(actions, 'pa-chat-message-menu');
+
+        expect(assistantMessage.children.indexOf(content)).toBeLessThan(assistantMessage.children.indexOf(actions));
+        expect(actions.getAttribute('role')).toBe('group');
+        expect(actions.getAttribute('aria-label')).toBe('Message actions');
+        expect(copyButton.parentElement).toBe(actions);
+        expect(copyButton.getAttribute('aria-label')).toBe('Copy message');
+        expect(addButton.parentElement).toBe(actions);
+        expect(addButton.getAttribute('aria-label')).toBe('Add to editor');
+        expect(menuButton.parentElement).toBe(actions);
+        expect(menuButton.getAttribute('aria-label')).toBe('More message actions');
+        expect(menuButton.getAttribute('aria-haspopup')).toBeNull();
+        expect(menuButton.hidden).toBe(false);
+        expect(actions.children.indexOf(copyButton)).toBeLessThan(actions.children.indexOf(addButton));
+        expect(actions.children.indexOf(addButton)).toBeLessThan(actions.children.indexOf(menuButton));
+        expect(messageMenu.parentElement).toBe(actions);
+        expect(messageMenu.hidden).toBe(true);
+        expect(getButtonsByClass(messageMenu, 'delete-message-button')).toHaveLength(1);
+        expect(getButtonsByClass(messageMenu, 'copy-message-button')).toHaveLength(0);
+        expect(getButtonsByClass(messageMenu, 'add-to-editor-message-button')).toHaveLength(0);
     });
 
     it('keeps the Memory chip menu and More menu mutually exclusive', async () => {

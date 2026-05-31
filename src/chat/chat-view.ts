@@ -44,6 +44,22 @@ type MemoryChipState = {
     actionKind?: "prepare" | "update";
 };
 
+function createMessageActionButton(
+    parent: HTMLElement,
+    { cls, icon, label }: { cls: string; icon: string; label: string },
+): HTMLButtonElement {
+    const button = parent.createEl('button', {
+        cls: `message-action-button ${cls}`,
+        attr: {
+            type: 'button',
+            'aria-label': label,
+            title: label,
+        },
+    });
+    setIcon(button, icon);
+    return button;
+}
+
 const MEMORY_CHIP_STATE_CLASSES = [
     "personal-assistant-ai-statusbar-ready",
     "personal-assistant-ai-statusbar-needs-update",
@@ -868,6 +884,7 @@ export class LLMView extends ItemView {
         ): Promise<boolean> => {
             rendered.renderToken += 1;
             rendered.copyContent = content;
+            syncMessageCopyButton(rendered);
             const renderToken = rendered.renderToken;
             const buffer = createRenderBuffer();
             buffer.classList.add('message-render-buffer');
@@ -1059,6 +1076,7 @@ export class LLMView extends ItemView {
             options: { forceScroll?: boolean } = {},
         ) => {
             rendered.copyContent = content;
+            syncMessageCopyButton(rendered);
             const state = getLiveMarkdownRenderState(rendered);
             state.pendingContent = content;
             state.pendingForceScroll = Boolean(state.pendingForceScroll || options.forceScroll);
@@ -1114,11 +1132,12 @@ export class LLMView extends ItemView {
             },
         ) => {
             if (options.onAddToEditor && !rendered.addMessageButton) {
-                const addMessageButton = createChatMenuItem(rendered.actionMenu, {
-                    text: 'Add to Editor',
+                const addMessageButton = createMessageActionButton(rendered.actionDiv, {
                     icon: 'file-plus',
                     cls: 'add-to-editor-message-button',
+                    label: 'Add to editor',
                 });
+                rendered.actionDiv.insertBefore(addMessageButton, rendered.actionMenuButton);
                 addMessageButton.onclick = () => {
                     void options.onAddToEditor?.(rendered.copyContent);
                 };
@@ -1132,6 +1151,7 @@ export class LLMView extends ItemView {
                     cls: 'pa-chat-menu-item-danger delete-message-button',
                 });
                 rendered.deleteButton = deleteButton;
+                rendered.actionMenuButton.hidden = false;
             }
 
             if (options.onDelete && rendered.deleteButton) {
@@ -1144,6 +1164,25 @@ export class LLMView extends ItemView {
                 if (options.disableDeleteWhileGenerating && !historyDeleteButtons.includes(deleteButton)) {
                     historyDeleteButtons.push(deleteButton);
                 }
+            }
+        };
+
+        const syncMessageCopyButton = (rendered: RenderedMessage) => {
+            if (!rendered.copyButton) return;
+            rendered.copyButton.disabled = rendered.copyContent.length === 0;
+        };
+
+        const positionMessageActionMenu = (actionDiv: HTMLElement, actionMenu: HTMLElement) => {
+            actionMenu.classList.remove('pa-chat-message-menu-below');
+            const container = actionDiv.closest('.llm-chat-container') ?? this.responseDiv;
+            const actionRect = actionDiv.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect();
+            const menuRect = actionMenu.getBoundingClientRect();
+            const menuGap = 8;
+            const roomAbove = actionRect.top - containerRect.top;
+            const roomBelow = containerRect.bottom - actionRect.bottom;
+            if (roomAbove < menuRect.height + menuGap && roomBelow > roomAbove) {
+                actionMenu.classList.add('pa-chat-message-menu-below');
             }
         };
 
@@ -1173,29 +1212,41 @@ export class LLMView extends ItemView {
                 loader: options.showAssistantLoader ? 'assistant' : undefined,
             });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
-            const actionDiv = messageDiv.createDiv({ cls: 'message-actions' });
-            const menuButton = actionDiv.createEl('button', {
-                cls: 'message-action-button message-more-button',
+            const actionDiv = messageDiv.createDiv({
+                cls: 'message-actions message-action-toolbar',
                 attr: {
-                    type: 'button',
+                    role: 'group',
                     'aria-label': 'Message actions',
-                    title: 'Message actions',
-                    'aria-expanded': 'false',
                 },
             });
-            setIcon(menuButton, 'ellipsis');
+            const copyButton = createMessageActionButton(actionDiv, {
+                cls: 'copy-message-button',
+                icon: 'copy',
+                label: 'Copy message',
+            });
+            const menuButton = createMessageActionButton(actionDiv, {
+                cls: 'message-more-button',
+                icon: 'ellipsis',
+                label: 'More message actions',
+            });
+            menuButton.setAttribute('aria-expanded', 'false');
+            menuButton.hidden = true;
             const actionMenu = actionDiv.createDiv({ cls: 'pa-chat-menu pa-chat-message-menu' });
             const rendered: RenderedMessage = {
                 messageDiv,
                 roleEl,
                 loaderEl,
                 contentDiv,
+                actionDiv,
                 actionMenu,
+                actionMenuButton: menuButton,
+                copyButton,
                 renderToken: 0,
                 copyContent: message.content,
                 memoryMetadata: options.memoryMetadata ?? message.memoryMetadata,
                 canonicalTurn: message.canonicalTurn,
             };
+            syncMessageCopyButton(rendered);
             rendered.actionMenu.hidden = true;
             const actionMenuAutoClose = createIdleMenuAutoClose(rendered.actionMenu, menuButton, () => {
                 rendered.actionMenu.hidden = true;
@@ -1204,18 +1255,15 @@ export class LLMView extends ItemView {
             menuButton.onclick = () => {
                 if (rendered.actionMenu.hidden) {
                     rendered.actionMenu.hidden = false;
+                    positionMessageActionMenu(actionDiv, rendered.actionMenu);
                     menuButton.setAttribute('aria-expanded', 'true');
                     actionMenuAutoClose.schedule();
                 } else {
                     actionMenuAutoClose.close();
                 }
             };
-            const copyButton = createChatMenuItem(rendered.actionMenu, {
-                text: 'Copy',
-                icon: 'copy',
-                cls: 'copy-message-button',
-            });
             copyButton.onclick = () => {
+                if (copyButton.disabled) return;
                 navigator.clipboard.writeText(rendered.copyContent).then(() => {
                     new Notice('Copied to clipboard');
                 }).catch(err => {

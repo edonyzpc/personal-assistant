@@ -25,7 +25,10 @@ export type RenderedMessage = {
     roleEl: HTMLElement;
     loaderEl?: HTMLElement;
     contentDiv: HTMLElement;
+    actionDiv: HTMLDivElement;
     actionMenu: HTMLDivElement;
+    actionMenuButton: HTMLButtonElement;
+    copyButton?: HTMLButtonElement;
     addMessageButton?: HTMLButtonElement;
     deleteButton?: HTMLButtonElement;
     renderToken: number;
