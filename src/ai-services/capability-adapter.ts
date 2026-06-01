@@ -11,7 +11,9 @@ import type {
     SourceRecord,
 } from "./capability-types";
 import type {
+    ChatToolContext,
     ChatToolCost,
+    ChatToolDefinition,
     ChatToolFailureBehavior,
     ChatToolInputSchema,
     ChatToolName,
@@ -20,6 +22,14 @@ import type {
     ChatToolResult,
     ChatToolSourceBoundary,
 } from "./chat-tools";
+import {
+    assertObsidianOperationsV1AToolPolicy,
+    buildPrepareRepairInfo,
+    enforceToolOutputBudget,
+} from "./chat-tool-registry";
+import { createToolFailureResult } from "./chat-tool-execution-helpers";
+import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
+import { getErrorType } from "./agent-utils";
 import type { ChatAgentSource } from "./chat-types";
 import { createSourceDedupKey } from "./source-store";
 
@@ -194,4 +204,120 @@ export function toAgentPermission(permission: ChatToolRegistryDefinition["permis
 
 export function toAgentCost(cost: ChatToolCost): AgentCapabilityCost {
     return cost;
+}
+
+/**
+ * Wrap a `ChatToolDefinition` directly into an `AgentCapability` (kind: "tool"),
+ * collapsing the legacy `ToolRegistry` + `CoreToolProvider` middle layers (SPEC-A5).
+ *
+ * Responsibilities (subsumed from chat-tool-registry.ts ToolRegistry):
+ * - register-time: assertObsidianOperationsV1AToolPolicy
+ * - prepareAndValidate: prepareArguments → validateInput → repair-info detection
+ * - execute: emit onToolRunning(statusMessage) → run definition.execute → enforce output budget
+ *   → recover from non-abort errors via createToolFailureResult; re-throw AbortError on abort
+ */
+export function createChatToolCapability<Input, Output>(
+    definition: ChatToolDefinition<Input, Output>,
+    options: {
+        providerId: string;
+        origin?: AgentCapability["origin"];
+        platform?: AgentCapability["platform"];
+        timeoutMs?: number;
+    },
+): AgentCapability {
+    assertObsidianOperationsV1AToolPolicy(definition);
+
+    const registryDef: ChatToolRegistryDefinition = {
+        name: definition.name,
+        description: definition.description,
+        inputSchema: cloneInputSchema(definition.inputSchema),
+        plannerGuidance: [...definition.plannerGuidance],
+        permission: definition.permission,
+        cost: definition.cost,
+        outputBudgetChars: definition.outputBudgetChars,
+        requiresConfirmation: definition.requiresConfirmation,
+        failureBehavior: definition.failureBehavior,
+        statusMessage: definition.statusMessageText,
+        sourceBoundary: definition.sourceBoundary,
+    };
+
+    return createCapabilityFromChatToolDefinition(registryDef, {
+        providerId: options.providerId,
+        origin: options.origin,
+        platform: options.platform,
+        timeoutMs: options.timeoutMs,
+        prepareAndValidate: (raw, ctx) => {
+            try {
+                const prepared = definition.prepareArguments
+                    ? definition.prepareArguments(raw, ctx)
+                    : raw;
+                definition.validateInput(prepared);
+                const repaired = buildPrepareRepairInfo(raw, prepared);
+                return repaired
+                    ? { ok: true, input: prepared, repaired }
+                    : { ok: true, input: prepared };
+            } catch (error) {
+                return {
+                    ok: false,
+                    error: error instanceof Error ? error : new Error(String(error)),
+                };
+            }
+        },
+        execute: async (input, context) => {
+            throwIfAborted(context.signal);
+            try {
+                const message = definition.statusMessage(input as Input);
+                context.onToolRunning?.(definition.name, message);
+            } catch {
+                // statusMessage callbacks should not throw; ignore defensively.
+            }
+            const chatContext: ChatToolContext = {
+                plugin: context.plugin,
+                signal: context.signal,
+                onBeforeVssSearch: context.onBeforeVssSearch,
+                onToolRunning: context.onToolRunning,
+            };
+            try {
+                const result = await definition.execute(input as Input, chatContext);
+                throwIfAborted(context.signal);
+                return enforceToolOutputBudget(registryDef, result);
+            } catch (error) {
+                if (isAbortError(error, context.signal)) {
+                    throw context.signal?.aborted ? createAbortError() : error;
+                }
+                context.plugin.log("Chat tool execution failed", {
+                    tool: definition.name,
+                    errorType: getErrorType(error),
+                });
+                return createToolFailureResult(
+                    definition.name,
+                    "execution failed",
+                    "Read-only tool was unavailable.",
+                );
+            }
+        },
+    });
+}
+
+/**
+ * Factory bundle for the 9 core read-only capabilities, formerly produced
+ * via `CoreToolProvider`. Direct entry point used by PaAgentRuntime in Phase B,
+ * and the canonical replacement after `core-tool-provider.ts` is removed in Phase C.
+ *
+ * The `factories` argument accepts `ChatToolDefinition<any, any>` because each
+ * core factory carries its own concrete Input/Output generics; `unknown` would
+ * be invariant-incompatible with the per-factory specific types.
+ */
+type AnyChatToolDefinition = ChatToolDefinition<any, any>;
+
+export function createCoreToolCapabilities(
+    factories: readonly AnyChatToolDefinition[],
+    options: { providerId?: string; origin?: AgentCapability["origin"]; platform?: AgentCapability["platform"] } = {},
+): AgentCapability[] {
+    const providerId = options.providerId ?? "core-tools";
+    return factories.map((definition) => createChatToolCapability(definition, {
+        providerId,
+        origin: options.origin ?? "core",
+        platform: options.platform ?? "both",
+    }));
 }

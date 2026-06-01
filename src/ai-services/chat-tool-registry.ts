@@ -216,7 +216,7 @@ function toRegistryDefinition<Input, Output>(
     };
 }
 
-function enforceToolOutputBudget(
+export function enforceToolOutputBudget(
     definition: ChatToolRegistryDefinition,
     result: ChatToolResult<unknown>,
 ): ChatToolResult<unknown> {
@@ -407,7 +407,7 @@ function cloneRegistryDefinition(definition: ChatToolRegistryDefinition): ChatTo
  * intentionally generic in path B — Phase B analytics use originalKeys to identify
  * which alias keys triggered, not a per-tool reason string.
  */
-function buildPrepareRepairInfo(raw: unknown, prepared: unknown): PrepareAndValidateRepair | undefined {
+export function buildPrepareRepairInfo(raw: unknown, prepared: unknown): PrepareAndValidateRepair | undefined {
     if (deepEqualJson(raw, prepared)) return undefined;
     const rawRecord = toInputRecord(raw);
     const originalKeys = rawRecord ? Object.keys(rawRecord).join(",") : typeof raw;
@@ -418,7 +418,7 @@ function buildPrepareRepairInfo(raw: unknown, prepared: unknown): PrepareAndVali
     };
 }
 
-function cloneInputSchema(schema: ChatToolInputSchema): ChatToolInputSchema {
+export function cloneInputSchema(schema: ChatToolInputSchema): ChatToolInputSchema {
     return {
         ...schema,
         properties: Object.fromEntries(Object.entries(schema.properties).map(([name, property]) => [
