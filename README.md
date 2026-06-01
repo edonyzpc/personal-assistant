@@ -16,6 +16,16 @@
 
 > ***NOTE***: New shiny feature: Support an LLM chat assistant that can use Memory from your notes. Before preparing memory, the assistant explains data flow, AI provider usage, and possible cost, then asks for your approval.
 
+## AI Chat in 60 seconds
+
+Three steps to get talking to your notes:
+
+1. Click the Personal Assistant icon on the left ribbon — it opens the AI Chat view directly. (Right-click the same icon for the older plugin controls modal.)
+2. The first time the chat opens with no AI configured, an inline banner shows what is missing and offers an **Open Settings** button that jumps straight to this plugin's settings tab.
+3. Pick an AI provider (Qwen, OpenAI, etc.), fill in the base URL, model, and API token, then return to the chat. The banner disappears and you can ask your first question.
+
+See the [AI Chat chapter in the Manual](Manual.md#ai-chat) for prompts, citations, web search, and Memory tips.
+
 <div align="center">
 
 https://github.com/user-attachments/assets/bbf8021c-9e94-4ba3-8e11-dc95be8b288d

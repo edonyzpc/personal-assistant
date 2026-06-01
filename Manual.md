@@ -9,6 +9,56 @@ Obsidian users who want to take good notes would prefer to spend their time reco
 
 This is the reason I developed the Personal Assistant plugin. The Personal Assistant plugin is an Obsidian platform plugin focused on helping you record more ideas and inspirations and better review your past notes, primarily through automation (reducing interactions, one-click management tasks), while also supporting plenty of personalized configurations and multi-plugin interactions.
 
+## AI Chat
+
+### 1. Description
+
+Personal Assistant ships an in-vault AI Chat view that can answer questions, summarize notes, and (optionally) ground its answers in Memory built from your vault. Chat is the marquee feature for new installs, so the empty state actively guides you through configuration.
+
+### 2. Entry points
+
+- **Ribbon icon (recommended)**: Left-click the Personal Assistant icon on the left ribbon to open the chat view. Right-click the same icon if you want the older plugin-controls modal.
+- **Command palette**: Search for `Personal Assistant: Open Chat` or any chat-related command listed under the plugin.
+- **Empty-state banner**: When the chat opens with an incomplete AI setup, the empty state shows the specific missing field plus an **Open Settings** button that jumps directly to this plugin's settings tab.
+
+### 3. Configuration
+
+Open the plugin settings (or use the empty-state **Open Settings** button) and fill in:
+
+- **AI provider** — Qwen / OpenAI / any compatible endpoint.
+- **Base URL** and **Model name** — provider defaults are pre-filled when you select a provider.
+- **API token** — stored locally via Obsidian's secret storage.
+
+Once all fields are set, the empty-state banner disappears and the default chat starting point (suggested prompt chips) renders instead.
+
+### 4. Sending messages
+
+- Type a prompt in the composer at the bottom and press `Enter` to send (`Shift+Enter` for newline).
+- A streaming reply appears inline. Use the stop button to interrupt; the partial answer is preserved.
+- Hover any reply and use the copy button to copy text or the full message tree.
+
+### 5. Citations and note references
+
+- Type `@` to insert a reference to a vault note; the chat will pull the referenced note's content into the prompt.
+- Drag-drop a note from the file explorer into the composer to attach it.
+- Select text inside a note and trigger the chat command from the editor menu to start a chat about the selection.
+
+### 6. Web search and tools
+
+- Enable the web-search toggle in the chat header to let the assistant fetch external pages while answering. Results are summarized in-line.
+- Other plugin-provided tools (record-note, search-memory, featured-image, etc.) are available via the assistant when relevant capabilities are enabled in settings.
+
+### 7. Memory integration
+
+- After Memory has been prepared (see the **Memory** chapter referenced from settings), the assistant can search your indexed notes before answering. The empty state and the chat header surface Memory status (ready / preparing / disabled).
+- Memory remains opt-in and runs locally via SQLite/WASM; Chat only sends content to the configured AI provider when you actually send a message.
+
+### 8. FAQ
+
+- **The banner stays after I added a token** — close and reopen the chat view (or send a message) to refresh; the empty state re-evaluates setup on next render.
+- **The right-click modal disappeared** — right-click works on desktop. On mobile, use the command palette `Open Personal Assistant Controls` instead.
+- **Chat answers are slow on the first request after install** — Memory and capability registries warm up lazily; subsequent requests are faster.
+
 ## Update Plugins
 
 ### 1. Description
