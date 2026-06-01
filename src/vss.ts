@@ -1415,7 +1415,18 @@ export class VSS {
         });
     }
 
-    async searchHybrid(prompt: string, options?: { ftsQueryOverride?: string | null }) {
+    async searchHybrid(
+        prompt: string,
+        options?: {
+            ftsQueryOverride?: string | null;
+            /**
+             * Optional promise yielding an FTS query override that runs concurrently with
+             * embedding. If both this and ftsQueryOverride are provided, the promise wins.
+             * Reject and `null`-resolve are both treated as "no override" (fall back to prompt).
+             */
+            ftsQueryOverridePromise?: Promise<string | null>;
+        },
+    ) {
         if (this.disposed) return [];
         await this.initialize();
         if (this.index) {
@@ -1435,10 +1446,19 @@ export class VSS {
         const profile = this.profile ?? this.createEmbeddingProfile();
         const profileSignature = getEmbeddingProfileSignature(profile);
         const embeddings = await this.aiUtils.createEmbeddings(profile.dimensions);
-        const ftsQuery = options?.ftsQueryOverride != null
-            ? buildFtsQuery(options.ftsQueryOverride)
+        // Parallel: kick off both rewrite override and embed; tolerate rewrite failures.
+        // Precedence: when both ftsQueryOverridePromise and ftsQueryOverride are passed,
+        // the promise wins (caller explicitly opted into parallel rewrite).
+        const safeOverridePromise: Promise<string | null> = options?.ftsQueryOverridePromise
+            ? options.ftsQueryOverridePromise.catch(() => null)
+            : Promise.resolve(options?.ftsQueryOverride ?? null);
+        const [ftsOverride, queryEmbedding] = await Promise.all([
+            safeOverridePromise,
+            embeddings.embedQuery(prompt),
+        ]);
+        const ftsQuery = ftsOverride != null
+            ? buildFtsQuery(ftsOverride)
             : buildFtsQuery(prompt);
-        const queryEmbedding = await embeddings.embedQuery(prompt);
 
         return this.runExclusive(async () => {
             if (this.disposed) return [];
