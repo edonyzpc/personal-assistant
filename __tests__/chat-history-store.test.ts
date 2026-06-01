@@ -437,7 +437,7 @@ class FakeObjectStore {
 
     get(key: IDBValidKey): IDBRequest<unknown | undefined> {
         const record = this.records.get(String(key));
-        return this.trackOperation(record ? cloneValue(record) : undefined);
+        return this.trackOperation<unknown>(record ? cloneValue(record) : undefined);
     }
 
     getAll(range?: IDBKeyRange): IDBRequest<unknown[]> {
@@ -454,7 +454,7 @@ class FakeObjectStore {
         const key = (record.key ?? record.id) as string | undefined;
         if (!key) throw new Error("Missing fake IndexedDB key.");
         this.records.set(key, cloneValue(record));
-        return this.trackOperation(key);
+        return this.trackOperation<IDBValidKey>(key);
     }
 
     delete(target: IDBValidKey | IDBKeyRange): IDBRequest<undefined> {

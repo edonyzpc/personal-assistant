@@ -257,7 +257,7 @@ class FakeObjectStore {
 
     get(key: IDBValidKey): IDBRequest<unknown | undefined> {
         const record = this.records.get(String(key));
-        return createAsyncRequest(record ? cloneValue(record) : undefined);
+        return createAsyncRequest<unknown>(record ? cloneValue(record) : undefined);
     }
 
     put(record: { key?: string }): IDBRequest<IDBValidKey> {
@@ -265,7 +265,7 @@ class FakeObjectStore {
         if (!key) throw new Error("Missing fake IndexedDB key.");
         this.records.set(key, cloneValue(record));
         queueMicrotask(() => this.transaction?.complete());
-        return createAsyncRequest(key);
+        return createAsyncRequest<IDBValidKey>(key);
     }
 
     delete(key: IDBValidKey): IDBRequest<undefined> {

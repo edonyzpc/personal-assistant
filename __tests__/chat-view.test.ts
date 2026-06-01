@@ -522,7 +522,7 @@ function toolResultMessage(
 }
 
 function mockRenderedMemoryCallout() {
-    (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+    (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
         el.setText(markdown.replace(/\n+---\s*\n>\s*\[!personal-assistant-ai\]-\s*Memory references\b[\s\S]*$/i, ''));
         if (/>\s*\[!personal-assistant-ai\]-\s*Memory references\b/i.test(markdown)) {
             const callout = el.createDiv({
@@ -664,8 +664,8 @@ describe('LLMView turn lifecycle', () => {
         animationFrames = [];
         nextAnimationFrameId = 1;
         mockStreamLLM.mockReset();
-        (MarkdownRenderer.render as jest.Mock).mockClear();
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockClear();
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             el.setText(markdown);
         });
         mockStreamLLM.mockImplementation((prompt, onChunk, signal, chatHistory, options = {}) => {
@@ -977,7 +977,7 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             renderedMarkdown.push(markdown);
             if (markdown.includes('```mermaid') && !markdown.includes('A --> B')) {
                 throw new Error('incomplete Mermaid');
@@ -1058,7 +1058,7 @@ describe('LLMView turn lifecycle', () => {
             configurable: true,
             value: MockMutationObserver,
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             el.setText(markdown);
             if (markdown.includes('```mermaid')) {
                 mermaidBuffer.current = el;
@@ -1124,7 +1124,7 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             renderedMarkdown.push(markdown);
             el.setText(markdown);
             const mermaidFenceCount = markdown.match(/```mermaid/g)?.length ?? 0;
@@ -1179,7 +1179,7 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             el.setText(markdown);
             if (markdown.includes('```mermaid')) {
                 el.createDiv({ cls: 'block-language-mermaid' });
@@ -1221,7 +1221,7 @@ describe('LLMView turn lifecycle', () => {
 
     it('does not rerender completed non-Mermaid answers after streaming', async () => {
         const renderedMarkdown: string[] = [];
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             renderedMarkdown.push(markdown);
             el.setText(markdown);
         });
@@ -1252,7 +1252,7 @@ describe('LLMView turn lifecycle', () => {
 
     it('falls back to Mermaid source when final Mermaid rendering throws synchronously', async () => {
         const renderedMarkdown: string[] = [];
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             renderedMarkdown.push(markdown);
             if (markdown.includes('```mermaid')) {
                 throw new Error('Mermaid render failed');
@@ -2366,7 +2366,7 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
                 renderJobs.push({
                     markdown,
@@ -2406,7 +2406,7 @@ describe('LLMView turn lifecycle', () => {
         let nowMs = 0;
         const performanceNowSpy = jest.spyOn(globalThis.performance, 'now').mockImplementation(() => nowMs);
         try {
-            (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+            (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
                 renderedMarkdown.push(markdown);
                 if (markdown.startsWith('slow')) {
                     nowMs += 20;
@@ -2453,7 +2453,7 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
                 renderJobs.push({
                     markdown,
@@ -2498,7 +2498,7 @@ describe('LLMView turn lifecycle', () => {
     it('restores cancel controls after clearing while final markdown rendering is in flight', async () => {
         const { view, containerEl } = createView();
         const renderJobs: Array<{ markdown: string; el: MockElement; resolve: () => void }> = [];
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
                 renderJobs.push({
                     markdown,
@@ -2549,7 +2549,7 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
                 renderJobs.push({
                     markdown,
@@ -2598,7 +2598,7 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as jest.Mock).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             return new Promise<void>((resolve) => {
                 renderJobs.push({
                     markdown,
@@ -3227,10 +3227,10 @@ describe('LLMView turn lifecycle', () => {
         const { view, containerEl } = createView({ panelWidth: 430 });
         containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
         const windowListeners = new Map<string, Array<EventListener>>();
-        const windowWithKeyboardEvents = globalThis.window as typeof globalThis.window & {
+        const windowWithKeyboardEvents = globalThis.window as Omit<typeof globalThis.window, 'addEventListener' | 'removeEventListener'> & {
             innerHeight: number;
             innerWidth: number;
-            addEventListener: jest.Mock;
+            addEventListener: jest.Mock<(type: string, listener: EventListener) => void>;
             removeEventListener: jest.Mock;
         };
         windowWithKeyboardEvents.innerHeight = 900;
@@ -3301,10 +3301,10 @@ describe('LLMView turn lifecycle', () => {
             value: visualViewport,
         });
         const windowListeners = new Map<string, Array<EventListener>>();
-        const windowWithKeyboardEvents = globalThis.window as typeof globalThis.window & {
+        const windowWithKeyboardEvents = globalThis.window as Omit<typeof globalThis.window, 'addEventListener' | 'removeEventListener'> & {
             innerHeight: number;
             innerWidth: number;
-            addEventListener: jest.Mock;
+            addEventListener: jest.Mock<(type: string, listener: EventListener) => void>;
             removeEventListener: jest.Mock;
         };
         windowWithKeyboardEvents.innerHeight = 900;
@@ -3355,10 +3355,10 @@ describe('LLMView turn lifecycle', () => {
         const { view, containerEl } = createView({ panelWidth: 430 });
         containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
         const windowListeners = new Map<string, Array<EventListener>>();
-        const windowWithKeyboardEvents = globalThis.window as typeof globalThis.window & {
+        const windowWithKeyboardEvents = globalThis.window as Omit<typeof globalThis.window, 'addEventListener' | 'removeEventListener'> & {
             innerHeight: number;
             innerWidth: number;
-            addEventListener: jest.Mock;
+            addEventListener: jest.Mock<(type: string, listener: EventListener) => void>;
             removeEventListener: jest.Mock;
         };
         windowWithKeyboardEvents.innerHeight = 900;
@@ -3444,10 +3444,10 @@ describe('LLMView turn lifecycle', () => {
         const { view, containerEl } = createView({ panelWidth: 430 });
         containerEl.boundingRect = { left: 0, top: 0, right: 430, bottom: 900, width: 430, height: 900 };
         const windowListeners = new Map<string, Array<EventListener>>();
-        const windowWithKeyboardEvents = globalThis.window as typeof globalThis.window & {
+        const windowWithKeyboardEvents = globalThis.window as Omit<typeof globalThis.window, 'addEventListener' | 'removeEventListener'> & {
             innerHeight: number;
             innerWidth: number;
-            addEventListener: jest.Mock;
+            addEventListener: jest.Mock<(type: string, listener: EventListener) => void>;
             removeEventListener: jest.Mock;
         };
         windowWithKeyboardEvents.innerHeight = 900;

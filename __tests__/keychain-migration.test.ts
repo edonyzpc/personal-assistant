@@ -12,7 +12,13 @@ import {
 
 describe('Keychain Migration - SecretStorage', () => {
     let plugin: {
-        app: { secretStorage: { setSecret: jest.Mock; getSecret: jest.Mock; listSecrets: jest.Mock } };
+        app: {
+            secretStorage: {
+                setSecret: jest.Mock<(id: string, value: string) => void>;
+                getSecret: jest.Mock<(id: string) => string | null>;
+                listSecrets: jest.Mock<() => string[]>;
+            };
+        };
         settings: { apiToken?: string; statisticsVaultId: string };
         token: string;
         cryptoHelper: CryptoHelper;
@@ -21,7 +27,7 @@ describe('Keychain Migration - SecretStorage', () => {
         getLegacyAPITokenSecretId: () => string;
         clearTokenCache: () => void;
         migrateSettings: () => Promise<void>;
-        saveSettings: jest.Mock;
+        saveSettings: jest.Mock<() => Promise<undefined>>;
     };
     let secretValues: Map<string, string>;
 
