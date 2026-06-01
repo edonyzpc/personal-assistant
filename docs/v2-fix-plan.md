@@ -59,6 +59,7 @@ Completed validation in this code state:
 - `npm run lint`, `npm run build`, `git diff --check`, and `make deploy`.
 - Obsidian test-vault smoke: Memory diagnostics Ready, manual `Update memory now` succeeded, metadata command disabled path showed the expected Notice, Memory reset/delete confirmations opened and were cancelled.
 - Later high-risk Obsidian smoke in this conversation passed after explicit confirmation: `Update plugins`, `Update themes`, AI Featured Images, and actual Memory reset/delete old cache confirmation.
+- **2026-06-01 SDD-driven 收尾批次 smoke (Wave 1/2)** — Obsidian test vault 中验证通过：PR-2 6 项（中文输入回中文、Memory 命中引用 note path、无证据明说不知道、25+ turn 对话 `<chat_history>` 块仅保留最后 20 turn、rerank candidate excerpt 长度可达 400、planner tool definitions 仅含 `name` + `planner_guidance`）+ PR-4 4 项（rewrite/embed 并行延迟下降、rewrite 模型名错误降级到 raw prompt、rewrite 超时降级、正常流程命中相同 candidates）。
 
 ### Status document ownership
 
@@ -335,7 +336,7 @@ PR 4 (Phase 2.4): "搜索延迟优化: rewrite+embedding 并行化"
 1. ✅ **已完成** — Phase 3 的 3.1、3.2、3.3、3.5、3.6 已按当前代码状态完成同步。
 2. ✅ **已完成** — 原 Phase 1-2 全部 10 项已在 2026-06-01 SDD-driven 收尾批次落地（详见上方 Done 表格）。
 3. 🔲 **Settings UX 决策** — 完整 Settings IA/组件化简化仍需单独 UX 设计，当前只完成高风险修复和局部 polish。
-4. 🔲 **Obsidian 手动 smoke** — push 到 origin 前需用户在 test vault 中验证 Wave 1/2 行为：详见各 SDD 的 smoke 章节。
+4. ✅ **已完成** — Obsidian 手动 smoke 已于 2026-06-01 在 test vault 中通过：PR-2 6 项（语言匹配 / 来源引用 / 不知道明说 / 超长对话截断 / rerank 摘要 400 / planner tool 定义精简）+ PR-4 4 项（延迟对比 / rewrite 失败降级 / rewrite 超时降级 / 正常流程不退化）。
 
 ## 验证清单
 
