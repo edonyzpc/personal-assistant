@@ -897,7 +897,7 @@ export class MemorySearchTool {
                 modelName: policyModelName,
             });
             const candidateList = candidates
-                .map((c, i) => `[${i}] ${c.path}: ${c.excerpt.slice(0, 200)}`)
+                .map((c, i) => `[${i}] ${c.path}: ${c.excerpt.slice(0, 400)}`)
                 .join("\n");
             const escapedRerankPrompt = RERANK_SYSTEM_PROMPT.replace(/\{/g, "{{").replace(/\}/g, "}}");
             const prompt = ChatPromptTemplate.fromMessages([
