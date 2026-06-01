@@ -18,6 +18,15 @@ import {
     isSearchVaultMetadataResult,
     isVaultSnippetSearchResult,
     isVaultTagsResult,
+    createCurrentNoteContextTool,
+    createInspectObsidianNoteTool,
+    createListRecentNotesTool,
+    createListVaultTagsTool,
+    createReadCanvasSummaryTool,
+    createReadNoteOutlineTool,
+    createSearchMemoryTool,
+    createSearchVaultMetadataTool,
+    createSearchVaultSnippetsTool,
     type ChatToolRegistryDefinition,
 } from "./chat-tools";
 import {
@@ -25,11 +34,11 @@ import {
 } from "./agent-runtime-primitives";
 import { BUNDLED_SKILL_RESOURCES } from "./bundled-skills";
 import { CapabilityRegistry } from "./capability-registry";
+import { createCoreToolCapabilities } from "./capability-adapter";
 import type {
     AgentRuntimePlatform,
     CapabilityProvider,
 } from "./capability-types";
-import { CoreToolProvider } from "./core-tool-provider";
 import { PolicyEngine } from "./policy-engine";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { errorMessage } from "./agent-utils";
@@ -482,10 +491,21 @@ export class PaAgentRuntime {
                 this.plugin.log("PA capability usage event", event);
             },
         });
-        const coreToolProvider = new CoreToolProvider((input, context) => {
-            return this.memoryTool.search(input.query, context.signal, context.onBeforeVssSearch);
-        });
-        this.toolRegistry.registerMany(coreToolProvider.loadCapabilities());
+        const memoryTool = this.memoryTool;
+        const coreCapabilities = createCoreToolCapabilities([
+            createSearchMemoryTool((input, context) => {
+                return memoryTool.search(input.query, context.signal, context.onBeforeVssSearch);
+            }),
+            createCurrentNoteContextTool(),
+            createSearchVaultMetadataTool(),
+            createListRecentNotesTool(),
+            createReadNoteOutlineTool(),
+            createInspectObsidianNoteTool(),
+            createReadCanvasSummaryTool(),
+            createSearchVaultSnippetsTool(),
+            createListVaultTagsTool(),
+        ]);
+        this.toolRegistry.registerMany(coreCapabilities);
         this.skillContextProvider = options.skillContextProvider === null
             ? null
             : options.skillContextProvider ?? new SkillContextProvider(BUNDLED_SKILL_RESOURCES);

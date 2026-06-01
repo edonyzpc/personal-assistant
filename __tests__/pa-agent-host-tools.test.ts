@@ -6,7 +6,20 @@ import {
 } from "../src/ai-services/builtin-web-search-provider";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { AgentNetworkPolicy, CapabilityProvider } from "../src/ai-services/capability-types";
-import { CoreToolProvider } from "../src/ai-services/core-tool-provider";
+import { createCoreToolCapabilities } from "../src/ai-services/capability-adapter";
+import {
+    createCurrentNoteContextTool,
+    createInspectObsidianNoteTool,
+    createListRecentNotesTool,
+    createListVaultTagsTool,
+    createReadCanvasSummaryTool,
+    createReadNoteOutlineTool,
+    createSearchMemoryTool,
+    createSearchVaultMetadataTool,
+    createSearchVaultSnippetsTool,
+    type ChatToolContext,
+    type SearchMemoryInput,
+} from "../src/ai-services/chat-tools";
 import {
     createPaAgentCapabilityToolExecutor,
 } from "../src/ai-services/pa-agent-host-tools";
@@ -169,7 +182,7 @@ describe("PA Agent canonical host tool executor", () => {
 
     it("normalizes search_memory query aliases before executing the Memory tool", async () => {
         const plugin = createPlugin();
-        const executeMemorySearch = jest.fn<ConstructorParameters<typeof CoreToolProvider>[0]>(async (input): Promise<MemorySearchResult> => ({
+        const executeMemorySearch = jest.fn<(input: SearchMemoryInput, context: ChatToolContext) => Promise<MemorySearchResult>>(async (input): Promise<MemorySearchResult> => ({
             usedMemory: true,
             query: input.query,
             documents: [{
@@ -217,7 +230,7 @@ describe("PA Agent canonical host tool executor", () => {
     it("fails loud with schema_invalid when search_memory tool call omits query (Phase A fail-loud)", async () => {
         const plugin = createPlugin();
         const userInput = "According to my Memory, what do my launch notes say?";
-        const executeMemorySearch = jest.fn<ConstructorParameters<typeof CoreToolProvider>[0]>(async (input): Promise<MemorySearchResult> => ({
+        const executeMemorySearch = jest.fn<(input: SearchMemoryInput, context: ChatToolContext) => Promise<MemorySearchResult>>(async (input): Promise<MemorySearchResult> => ({
             usedMemory: true,
             query: input.query,
             documents: [],
@@ -1070,7 +1083,7 @@ describe("registry.prepareAndValidate (Phase A pi-style per-tool prepareArgument
 });
 
 function createCoreRegistry(
-    executeMemorySearch: ConstructorParameters<typeof CoreToolProvider>[0] = async (input): Promise<MemorySearchResult> => ({
+    executeMemorySearch: (input: SearchMemoryInput, context: ChatToolContext) => Promise<MemorySearchResult> = async (input): Promise<MemorySearchResult> => ({
         usedMemory: false,
         query: input.query,
         documents: [],
@@ -1079,7 +1092,17 @@ function createCoreRegistry(
     }),
 ): CapabilityRegistry {
     const registry = new CapabilityRegistry();
-    registry.registerMany(new CoreToolProvider(executeMemorySearch).loadCapabilities());
+    registry.registerMany(createCoreToolCapabilities([
+        createSearchMemoryTool(executeMemorySearch),
+        createCurrentNoteContextTool(),
+        createSearchVaultMetadataTool(),
+        createListRecentNotesTool(),
+        createReadNoteOutlineTool(),
+        createInspectObsidianNoteTool(),
+        createReadCanvasSummaryTool(),
+        createSearchVaultSnippetsTool(),
+        createListVaultTagsTool(),
+    ]));
     return registry;
 }
 

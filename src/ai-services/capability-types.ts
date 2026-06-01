@@ -17,6 +17,9 @@ import type {
 } from "./chat-tools";
 import type { ChatAgentSource } from "./chat-types";
 
+// "tool" is the only active kind today.
+// "context" reserved (0 use) / "action" guarded by policy-engine until action mode lands.
+// See ./policy-engine.ts:35 and project memory `project_action_mode_roadmap`.
 export type AgentCapabilityKind = "tool" | "context" | "action";
 export type AgentCapabilityOrigin = "core" | "builtin-mcp" | "skill";
 export type AgentPermissionV1 = ChatToolPermission | "network-read";

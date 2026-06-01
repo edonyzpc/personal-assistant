@@ -118,7 +118,7 @@ export interface ChatToolDefinition<Input, Output> {
 }
 
 /**
- * Phase 4 preflight metadata for ToolRegistry.prepareAndValidate.
+ * Phase 4 preflight metadata for capability prepareAndValidate.
  * Mirrors `PrepareCapabilityArgumentsRepair` in capability-types.ts so the same
  * audit shape flows through ChatToolCapability bridge into Capability layer.
  */

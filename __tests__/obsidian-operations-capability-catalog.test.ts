@@ -5,7 +5,7 @@ import {
     buildObsidianOperationsPlannerGuidance,
     getObsidianOperationsCatalogSection,
 } from '../src/ai-services/obsidian-operations-capability-catalog';
-import { ToolRegistry } from '../src/ai-services/chat-tools';
+import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 
 describe('Obsidian Operations capability catalog', () => {
     it('contains the required local sections', () => {
@@ -79,7 +79,7 @@ describe('Obsidian Operations capability catalog', () => {
     });
 
     it('does not register Obsidian Operations tools during SPEC-01', () => {
-        const registry = new ToolRegistry();
+        const registry = new CapabilityRegistry();
 
         expect(registry.has('inspect_obsidian_note')).toBe(false);
         expect(registry.has('read_canvas_summary')).toBe(false);

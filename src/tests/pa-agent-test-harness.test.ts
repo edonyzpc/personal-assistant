@@ -4,7 +4,7 @@ import { AIMessageChunk } from "@langchain/core/messages";
 import { parseNativeToolCallsFromModelResponse } from "../ai-services/pa-agent-runtime";
 import {
     TEST_CHAT_TOOL_NAMES,
-    createTestToolRegistry,
+    createTestCapabilityRegistry,
 } from "./factories";
 import {
     FakeChatModelProvider,
@@ -85,8 +85,8 @@ describe("PA Agent SPEC-00b test harness", () => {
         });
     });
 
-    it("creates ToolRegistry fixtures with stable provider schema order", () => {
-        const registry = createTestToolRegistry();
+    it("creates CapabilityRegistry fixtures with stable provider schema order", () => {
+        const registry = createTestCapabilityRegistry();
         const schemaNamesByTurn = [
             registry.exportProviderSchemas().map((schema) => schema.function.name),
             registry.exportProviderSchemas().map((schema) => schema.function.name),

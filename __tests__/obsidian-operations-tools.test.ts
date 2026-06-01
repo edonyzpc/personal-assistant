@@ -1,9 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
+import { createChatToolCapability } from '../src/ai-services/capability-adapter';
+import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 import {
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES,
-    ToolRegistry,
     createInspectObsidianNoteTool,
     createListVaultTagsTool,
     createReadCanvasSummaryTool,
@@ -90,12 +91,12 @@ function createPlugin(overrides: {
     };
 }
 
-function createRegistry(): ToolRegistry {
-    const registry = new ToolRegistry();
-    registry.register(createInspectObsidianNoteTool());
-    registry.register(createReadCanvasSummaryTool());
-    registry.register(createSearchVaultSnippetsTool());
-    registry.register(createListVaultTagsTool());
+function createRegistry(): CapabilityRegistry {
+    const registry = new CapabilityRegistry();
+    registry.register(createChatToolCapability(createInspectObsidianNoteTool(), { providerId: 'test-v1a' }));
+    registry.register(createChatToolCapability(createReadCanvasSummaryTool(), { providerId: 'test-v1a' }));
+    registry.register(createChatToolCapability(createSearchVaultSnippetsTool(), { providerId: 'test-v1a' }));
+    registry.register(createChatToolCapability(createListVaultTagsTool(), { providerId: 'test-v1a' }));
     return registry;
 }
 

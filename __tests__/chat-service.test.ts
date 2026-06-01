@@ -10,7 +10,8 @@ import {
     parseNativeToolCallsFromModelResponse,
 } from '../src/ai-services/pa-agent-runtime';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
-import { ToolRegistry, type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
+import { createChatToolCapability } from '../src/ai-services/capability-adapter';
+import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 import type { AgentEvent as CanonicalAgentEvent, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
 import {
     BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
@@ -339,7 +340,7 @@ describe('streaming fallback policy', () => {
     });
 
     it('throws canonical abort errors when a tool failure races with cancellation', async () => {
-        const registry = new ToolRegistry();
+        const registry = new CapabilityRegistry();
         const controller = new AbortController();
         const execute = async (): Promise<ChatToolResult<string>> => {
             controller.abort();
@@ -366,7 +367,7 @@ describe('streaming fallback policy', () => {
             validateInput: () => ({}),
             execute,
         };
-        registry.register(definition);
+        registry.register(createChatToolCapability(definition, { providerId: 'test-cancel' }));
 
         await expect(registry.execute('get_current_note_context', {}, {
             plugin: createPlugin() as unknown as Parameters<typeof registry.execute>[2]['plugin'],
@@ -375,7 +376,7 @@ describe('streaming fallback policy', () => {
     });
 
     it('keeps registered tool metadata available for policy and provider schema export', () => {
-        const registry = new ToolRegistry();
+        const registry = new CapabilityRegistry();
         const definition: ChatToolDefinition<{ query: string }, string> = {
             name: 'search_memory',
             description: 'Search test memory.',
@@ -406,7 +407,7 @@ describe('streaming fallback policy', () => {
             }),
         };
 
-        registry.register(definition);
+        registry.register(createChatToolCapability(definition, { providerId: 'test-metadata' }));
 
         expect(registry.getDefinition('search_memory')).toMatchObject({
             name: 'search_memory',
