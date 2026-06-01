@@ -32,21 +32,23 @@
 | Memory OPFS locked recovery | Done | Foreground startup/chat/status no longer opens OPFS just to recover a missing marker; manual technical stats can bounded-retry/recover. `opfs-sahpool-locked` records diagnostics without falling back to legacy JSON. |
 | Memory update smoke | Done | Obsidian test-vault smoke after deploy recovered Memory diagnostics to Ready and completed `Update memory now` with notes unchanged. |
 
-### 原 Phase 1-2 仍未完成或仅部分完成
+### 原 Phase 1-2 — 全部完成（2026-06-01 SDD-driven 收尾）
 
-| Item | Current code status | Notes |
-| --- | --- | --- |
-| 1.1 Prompt same-language/citation/no-guess lines | Open | `PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES` does not contain the three planned lines. |
-| 1.2 `getVSSFiles()` Set/filter optimization | Open | Current code still builds `excludeFiles` and checks `includes()`. |
-| 1.3 `getReadOnlyToolContextInfo` lookup map | Open | No code-led evidence that the if-chain refactor was completed. |
-| 1.4 `tsconfig` `strict: true` | Open | `tsconfig.json` still uses selected strict flags instead of `"strict": true`. |
-| 1.5 Jest `coverageThreshold` | Open | `jest.config.js` still leaves `coverageThreshold` commented out. |
-| 1.6 Rerank excerpt 200 -> 400 | Open | Rerank prompt still uses `c.excerpt.slice(0, 200)`. |
-| 1.7 Chinese capability signals | Done, adjusted | Implemented as structured strong/weak CJK signal tables in `pa-agent-required-capability-policy.ts`; intentionally avoids broad generic words such as `今天` or `最新` by themselves. |
-| 2.1 Planner tool definition de-dup | Open | `formatPlannerToolDefinitions()` still serializes the full definition JSON. |
-| 2.2 Canonical chat history sandbox/limit | Open | `formatCanonicalChatHistory()` is still unbounded joined text without a `<chat_history>` wrapper. |
-| 2.3 Operations capability catalog simplification | Open | Original catalog simplification was not verified as completed in current code. |
-| 2.4 Rewrite + embedding parallelization | Open | `searchHybrid()` accepts `ftsQueryOverride`, not `ftsQueryOverridePromise`; embedding still starts after rewrite override is available. |
+| Item | Status | SDD | Commit |
+| --- | --- | --- | --- |
+| 1.1 Prompt same-language/citation/no-guess lines | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `7d84584` |
+| 1.2 `getVSSFiles()` filter optimization | ✅ Done | [sdd-trivial-cleanups](./sdd-trivial-cleanups.md) | `a9b48cd` |
+| 1.3 `getReadOnlyToolContextInfo` lookup map | ✅ Done | [sdd-trivial-cleanups](./sdd-trivial-cleanups.md) | `776812f` |
+| 1.4 `tsconfig` `strict: true` | ✅ Done | [sdd-strict-mode-and-coverage](./sdd-strict-mode-and-coverage.md) | `f2682f1` + `f87d5d7` + `7dfc275` |
+| 1.5 Jest `coverageThreshold` | ✅ Done | [sdd-strict-mode-and-coverage](./sdd-strict-mode-and-coverage.md) | `046774b` (baseline -5%: 75/71/74/75) |
+| 1.6 Rerank excerpt 200 → 400 | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `5980a47` |
+| 1.7 Chinese capability signals | Done, adjusted | (covered by Phase 3.6) | superseded by `pa-agent-required-capability-policy.ts` CJK tables |
+| 2.1 Planner tool definition de-dup | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `42126f4` |
+| 2.2 Canonical chat history sandbox/limit | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `5d58d55` (MAX_CHAT_HISTORY_TURNS=20) |
+| 2.3 Operations capability catalog simplification | ✅ Done | [sdd-trivial-cleanups](./sdd-trivial-cleanups.md) | `c858e5b` (359 → 76 lines, validator removed) |
+| 2.4 Rewrite + embedding parallelization | ✅ Done | [sdd-search-pipeline-parallelization](./sdd-search-pipeline-parallelization.md) | `a031185` + `178b7ac` |
+
+实施方式：SDD docs PR (`2ebf211`) + Wave 1 并行 worktrees (PR-1/PR-2/PR-4) + Wave 2 worktree (PR-3 strict + coverage)；全量门禁（tsc / 全量 test+coverage / lint / build）每 PR 单独通过 + 集成后再过一遍。Obsidian 手动 smoke 仍待用户验证（参见 [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) §4.6 / [sdd-search-pipeline-parallelization](./sdd-search-pipeline-parallelization.md) §4.5）。
 
 ### Smoke status and remaining high-risk checks
 
@@ -331,8 +333,9 @@ PR 4 (Phase 2.4): "搜索延迟优化: rewrite+embedding 并行化"
 ## 下一步行动
 
 1. ✅ **已完成** — Phase 3 的 3.1、3.2、3.3、3.5、3.6 已按当前代码状态完成同步。
-2. 🔲 **Release 决策** — 接受、延期或继续实现原 Phase 1-2 open 项。
+2. ✅ **已完成** — 原 Phase 1-2 全部 10 项已在 2026-06-01 SDD-driven 收尾批次落地（详见上方 Done 表格）。
 3. 🔲 **Settings UX 决策** — 完整 Settings IA/组件化简化仍需单独 UX 设计，当前只完成高风险修复和局部 polish。
+4. 🔲 **Obsidian 手动 smoke** — push 到 origin 前需用户在 test vault 中验证 Wave 1/2 行为：详见各 SDD 的 smoke 章节。
 
 ## 验证清单
 

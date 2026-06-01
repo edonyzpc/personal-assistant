@@ -338,26 +338,28 @@ Problems:
 
 ## 8. Prioritized Action Items
 
+> Status reconciled 2026-06-01. See `docs/v2-fix-plan.md` for the full Phase 1-2 Done table with commit links and SDD references.
+
 ### Immediate (High ROI)
 
-1. System prompt: add language matching + citation + "don't know" instructions
-2. `calcSnapshot()`: incremental/deferred loading
-3. WASM: lazy-load behind dynamic import
-4. Query pipeline: parallelize rewriter + embedding
-5. `getVSSFiles()`: Set-based filtering
+1. ✅ Done — System prompt: language matching + citation + "don't know" instructions (`7d84584`, SDD: `sdd-prompt-and-token-quality`)
+2. ✅ Done — `calcSnapshot()`: incremental/deferred loading (Phase 3.2, SDD: `sdd-calc-snapshot-incremental`)
+3. ✅ Done — WASM: lazy-load behind dynamic import (Phase 3.3, SDD: `sdd-wasm-lazy-load`)
+4. ✅ Done — Query pipeline: parallelize rewriter + embedding (`a031185` + `178b7ac`, SDD: `sdd-search-pipeline-parallelization`)
+5. ✅ Done — `getVSSFiles()`: filter-based optimization (`a9b48cd`, SDD: `sdd-trivial-cleanups`)
 
 ### Short-term (1-2 months)
 
-6. Remove LangChain dependencies
-7. Collapse triple-registry tool pipeline
-8. Retire v1 event system
-9. Simplify settings page (hide advanced options)
-10. Add chat history persistence
+6. ⏸️ Deferred — Remove LangChain dependencies (decision: keep, see [project_langchain_keep](../.claude/memory) memory)
+7. ⏸️ Deferred — Collapse triple-registry tool pipeline (reserved for action-mode roadmap)
+8. ⏸️ Deferred — Retire v1 event system (reserved for action-mode roadmap)
+9. 🔲 Partial — Simplify settings page (high-risk fixes done; full IA simplification still open)
+10. ✅ Done — Chat history persistence (Phase 3.5, SDD: `sdd-chat-history-persistence`)
 
 ### Medium-term (3-6 months)
 
-11. Product positioning: lead with AI Chat + Memory
-12. Inline PolicyEngine
-13. Flatten obsidian-operations-capability-catalog
-14. Add `[[note]]` referencing and token display
-15. Enable `strict: true`, configure coverage threshold
+11. ⏸️ Deferred — Product positioning decision (kept current dual positioning)
+12. ⏸️ Deferred — Inline PolicyEngine (reserved for action-mode roadmap)
+13. ✅ Done — Flatten obsidian-operations-capability-catalog (`c858e5b`, 359 → 76 lines, SDD: `sdd-trivial-cleanups`)
+14. 🔲 Open — `[[note]]` referencing and token display
+15. ✅ Done — `strict: true` + coverage threshold (`f2682f1` + `046774b`, SDD: `sdd-strict-mode-and-coverage`)
