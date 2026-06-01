@@ -25,10 +25,17 @@ module.exports = {
   // The directory where Jest should output its coverage files
   coverageDirectory: "dist/coverage",
 
-  // An array of regexp pattern strings used to skip coverage collection
-  // coveragePathIgnorePatterns: [
-  //   "/node_modules/"
-  // ],
+  // An array of regexp pattern strings used to skip coverage collection.
+  // Excludes mock / test scaffolding and pure type-only modules from the
+  // coverage denominator (these have no executable code worth measuring).
+  coveragePathIgnorePatterns: [
+    "/node_modules/",
+    "/dist/",
+    "/__mocks__/",
+    "/__tests__/",
+    "/scripts/",
+    "/src/types/",
+  ],
 
   // Indicates which provider should be used to instrument code for coverage
   coverageProvider: "v8",
@@ -41,8 +48,18 @@ module.exports = {
   //   "clover"
   // ],
 
-  // An object that configures minimum threshold enforcement for coverage results
-  // coverageThreshold: undefined,
+  // Minimum coverage floor — baseline (2026-06-01) minus 5%, intended as a
+  // "do not regress" gate rather than an aspirational target. Bump quarterly
+  // as coverage improves. See docs/sdd-strict-mode-and-coverage.md §3.2.
+  // Baseline: statements 80.04% / branches 76.54% / functions 79.16% / lines 80.04%.
+  coverageThreshold: {
+    global: {
+      statements: 75,
+      branches: 71,
+      functions: 74,
+      lines: 75,
+    },
+  },
 
   // A path to a custom dependency extractor
   // dependencyExtractor: undefined,
