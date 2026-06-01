@@ -831,6 +831,30 @@ export class LLMView extends ItemView {
             emptyStateEl = null;
             if (timelineEntries.length > 0 || isGenerating()) return;
 
+            const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
+            if (setupIssue) {
+                emptyStateEl = this.responseDiv.createDiv({ cls: 'pa-chat-empty-state pa-chat-config-banner' });
+                emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: 'Welcome to AI Chat' });
+                emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: setupIssue });
+                const actions = emptyStateEl.createDiv({ cls: 'pa-chat-empty-chips' });
+                const settingsButton = actions.createEl('button', {
+                    text: 'Open Settings',
+                    cls: 'pa-chat-empty-chip mod-cta',
+                    attr: { type: 'button' },
+                });
+                settingsButton.onclick = () => {
+                    const appWithSettings = this.app as typeof this.app & {
+                        setting?: {
+                            open: () => void;
+                            openTabById: (id: string) => void;
+                        };
+                    };
+                    appWithSettings.setting?.open();
+                    appWithSettings.setting?.openTabById('personal-assistant');
+                };
+                return;
+            }
+
             const hasNote = isMarkdownNoteAvailable();
             emptyStateEl = this.responseDiv.createDiv({ cls: 'pa-chat-empty-state' });
             emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: 'Ask about your notes' });
