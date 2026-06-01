@@ -2,12 +2,6 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## Unreleased
-
-### Removed (Breaking)
-- `paAgentAnswerStreamEnabled` setting field — already a no-op since v2.0.0; legacy answer-stream toggle has been deleted from settings type, defaults, and migration cleanup.
-- `nativeToolPlanningSmokeEnabled` setting field — internal smoke gate retired with v2.0 native tool planning becoming the default; field removed from settings type, defaults, and migration cleanup.
-
 ## [2.1.2](https://github.com/edonyzpc/personal-assistant/compare/2.1.1...2.1.2) (2026-05-31)
 
 ### Fix

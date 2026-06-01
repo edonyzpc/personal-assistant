@@ -117,7 +117,7 @@ function validateVersion(targetVersion, currentVersion) {
 
 function runChecks() {
   run("git", ["diff", "--check"]);
-  run("npm", ["test", "--", "--runInBand"]);
+  run("npm", ["test", "--", "--runInBand", "--coverage"]);
   run("npm", ["run", "lint"]);
   run("npm", ["run", "build"]);
   run("npm", ["run", "audit:bundle"]);

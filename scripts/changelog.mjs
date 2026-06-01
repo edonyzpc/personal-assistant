@@ -8,7 +8,7 @@ const repoUrl = "https://github.com/edonyzpc/personal-assistant";
 const semanticVersionPattern = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
 const releaseSubjectPattern = /^\[release\]\s+v?\d+\.\d+\.\d+/;
 const conventionalSubjectPattern = /^(?<type>[a-zA-Z]+)(?:\((?<scope>[^)]+)\))?(?<breaking>!)?:\s*(?<message>.+)$/;
-const categoryOrder = ["Features", "Fix", "Improvements", "Docs", "Tests"];
+const categoryOrder = ["Features", "Fix", "Removed (Breaking)", "Improvements", "Docs", "Tests"];
 const categoryByType = new Map([
   ["feat", "Features"],
   ["fix", "Fix"],
@@ -26,6 +26,12 @@ const categoryByType = new Map([
 const scopeLabels = new Map([
   ["deps", "dependencies"],
   ["stats", "statistics"],
+]);
+const breakingRemovalBySubject = new Map([
+  [
+    "refactor(settings): remove deprecated answer-stream and smoke flags",
+    "`paAgentAnswerStreamEnabled` and `nativeToolPlanningSmokeEnabled` setting fields; both were no-op/internal flags since v2.0.0.",
+  ],
 ]);
 
 function runGit(args) {
@@ -116,6 +122,10 @@ export function getCommitSubjects(previousTag, targetRef = "HEAD") {
 }
 
 function bulletFor(subject) {
+  const breakingRemoval = breakingRemovalBySubject.get(subject);
+  if (breakingRemoval) {
+    return ["Removed (Breaking)", breakingRemoval];
+  }
   const match = conventionalSubjectPattern.exec(subject);
   if (!match?.groups) {
     return ["Improvements", subject];
