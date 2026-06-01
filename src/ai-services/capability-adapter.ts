@@ -12,7 +12,6 @@ import type {
 } from "./capability-types";
 import type {
     ChatToolContext,
-    ChatToolCost,
     ChatToolDefinition,
     ChatToolFailureBehavior,
     ChatToolInputSchema,
@@ -80,7 +79,7 @@ export function chatToolResultToAgentCapabilityResult(
     };
 }
 
-export function chatSourcesToSourceRecords(
+function chatSourcesToSourceRecords(
     sources: readonly ChatAgentSource[],
     capabilityName: string,
     providerId: string,
@@ -99,7 +98,7 @@ export function chatSourcesToSourceRecords(
     }));
 }
 
-export function sourceBoundaryToSourceRecordKind(
+function sourceBoundaryToSourceRecordKind(
     sourceBoundary: AgentCapabilitySourceBoundary,
 ): AgentSourceRecordKind {
     if (sourceBoundary === "memory") return "memory-reference";
@@ -198,14 +197,6 @@ function cloneInputSchema(schema: ChatToolInputSchema): ChatToolInputSchema {
         ])),
         required: schema.required ? [...schema.required] : undefined,
     };
-}
-
-export function toAgentPermission(permission: ChatToolRegistryDefinition["permission"]): AgentPermissionV1 {
-    return permission;
-}
-
-export function toAgentCost(cost: ChatToolCost): AgentCapabilityCost {
-    return cost;
 }
 
 /**
