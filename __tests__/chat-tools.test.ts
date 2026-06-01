@@ -1,9 +1,10 @@
 import { describe, expect, it, jest } from '@jest/globals';
 
+import { createChatToolCapability } from '../src/ai-services/capability-adapter';
+import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 import {
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES,
-    ToolRegistry,
     createInspectObsidianNoteTool,
     createListVaultTagsTool,
     createReadCanvasSummaryTool,
@@ -54,9 +55,17 @@ function createV1AToolDefinition(
     };
 }
 
+function registerV1ATool<Input, Output>(
+    registry: CapabilityRegistry,
+    definition: ChatToolDefinition<Input, Output>,
+): void {
+    const capability = createChatToolCapability(definition, { providerId: 'test-v1a' });
+    registry.register(capability);
+}
+
 describe('Obsidian Operations v1A tool policy', () => {
     it('exposes v1A tool names as valid chat tool names without registering them by default', () => {
-        const registry = new ToolRegistry();
+        const registry = new CapabilityRegistry();
 
         expect(OBSIDIAN_OPERATIONS_V1A_TOOL_NAMES).toEqual([
             'inspect_obsidian_note',
@@ -72,11 +81,11 @@ describe('Obsidian Operations v1A tool policy', () => {
     });
 
     it('keeps provider schema export registration-driven for v1A tools', () => {
-        const registry = new ToolRegistry();
+        const registry = new CapabilityRegistry();
 
         expect(registry.exportProviderSchemas()).toEqual([]);
 
-        registry.register(createV1AToolDefinition());
+        registerV1ATool(registry, createV1AToolDefinition());
 
         expect(registry.exportProviderSchemas()).toEqual([
             expect.objectContaining({
@@ -90,9 +99,9 @@ describe('Obsidian Operations v1A tool policy', () => {
     });
 
     it('accepts v1A tools with strict read-only metadata', () => {
-        const registry = new ToolRegistry();
+        const registry = new CapabilityRegistry();
 
-        registry.register(createV1AToolDefinition({
+        registerV1ATool(registry, createV1AToolDefinition({
             outputBudgetChars: OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
         }));
 
@@ -108,11 +117,11 @@ describe('Obsidian Operations v1A tool policy', () => {
     });
 
     it('composes registered v1A tool guidance from the catalog safety sections', () => {
-        const registry = new ToolRegistry();
-        registry.register(createInspectObsidianNoteTool());
-        registry.register(createReadCanvasSummaryTool());
-        registry.register(createSearchVaultSnippetsTool());
-        registry.register(createListVaultTagsTool());
+        const registry = new CapabilityRegistry();
+        registerV1ATool(registry, createInspectObsidianNoteTool());
+        registerV1ATool(registry, createReadCanvasSummaryTool());
+        registerV1ATool(registry, createSearchVaultSnippetsTool());
+        registerV1ATool(registry, createListVaultTagsTool());
         const markdownSafetyGuidance = buildObsidianOperationsPlannerGuidance(['markdown', 'safety']);
         const canvasSafetyGuidance = buildObsidianOperationsPlannerGuidance(['canvas', 'safety']);
 
@@ -137,9 +146,9 @@ describe('Obsidian Operations v1A tool policy', () => {
             failureBehavior: 'fatal',
             sourceBoundary: 'memory',
         } as unknown as ChatToolDefinition<Record<string, never>, { kind: 'note-structure'; path: string }>;
-        const registry = new ToolRegistry();
+        const registry = new CapabilityRegistry();
 
-        expect(() => registry.register(invalidDefinition)).toThrow(
+        expect(() => createChatToolCapability(invalidDefinition, { providerId: 'test-v1a' })).toThrow(
             /permission must be read-only.*cost must be free.*requiresConfirmation must be false.*failureBehavior must be recoverable.*sourceBoundary must be read-only-tool/,
         );
         expect(registry.has('inspect_obsidian_note')).toBe(false);
@@ -147,10 +156,10 @@ describe('Obsidian Operations v1A tool policy', () => {
 
     it('rejects missing, non-positive, and oversized v1A output budgets', () => {
         for (const outputBudgetChars of [0, -1, Number.NaN, OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS + 1]) {
-            const registry = new ToolRegistry();
+            const registry = new CapabilityRegistry();
             const definition = createV1AToolDefinition({ outputBudgetChars });
 
-            expect(() => registry.register(definition)).toThrow(/outputBudgetChars/);
+            expect(() => createChatToolCapability(definition, { providerId: 'test-v1a' })).toThrow(/outputBudgetChars/);
             expect(registry.has('inspect_obsidian_note')).toBe(false);
         }
     });

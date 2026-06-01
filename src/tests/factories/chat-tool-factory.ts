@@ -1,13 +1,15 @@
-import {
-    ToolRegistry,
-    type ChatToolCost,
-    type ChatToolDefinition,
-    type ChatToolFailureBehavior,
-    type ChatToolInputSchema,
-    type ChatToolName,
-    type ChatToolPermission,
-    type ChatToolResult,
-    type ChatToolSourceBoundary,
+import { createChatToolCapability } from "../../ai-services/capability-adapter";
+import { CapabilityRegistry } from "../../ai-services/capability-registry";
+import type { AgentCapability } from "../../ai-services/capability-types";
+import type {
+    ChatToolCost,
+    ChatToolDefinition,
+    ChatToolFailureBehavior,
+    ChatToolInputSchema,
+    ChatToolName,
+    ChatToolPermission,
+    ChatToolResult,
+    ChatToolSourceBoundary,
 } from "../../ai-services/chat-tools";
 import type { ChatAgentSource } from "../../ai-services/chat-types";
 
@@ -92,14 +94,29 @@ export function createTestChatToolDefinition<Output = TestChatToolOutput>(
     };
 }
 
-export function createTestToolRegistry(
+/**
+ * Builds a CapabilityRegistry pre-populated with N test capabilities.
+ * Replaces the legacy `createTestToolRegistry` (SPEC-A5 ToolRegistry collapse).
+ * Each capability is wrapped via `createChatToolCapability`, which is the same
+ * canonical adapter used by `pa-agent-runtime` for the 9 core tools.
+ */
+export function createTestCapabilityRegistry(
     names: readonly ChatToolName[] = TEST_CHAT_TOOL_NAMES,
-): ToolRegistry {
-    const registry = new ToolRegistry();
-    for (const name of names) {
-        registry.register(createTestChatToolDefinition({ name }));
+): CapabilityRegistry {
+    const registry = new CapabilityRegistry();
+    for (const capability of createTestCapabilities(names)) {
+        registry.register(capability);
     }
     return registry;
+}
+
+export function createTestCapabilities(
+    names: readonly ChatToolName[] = TEST_CHAT_TOOL_NAMES,
+): AgentCapability[] {
+    return names.map((name) => createChatToolCapability(
+        createTestChatToolDefinition({ name }),
+        { providerId: "test-tools" },
+    ));
 }
 
 export function createEmptyInputSchema(): ChatToolInputSchema {

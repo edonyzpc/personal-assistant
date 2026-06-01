@@ -26,6 +26,8 @@ import {
     assertObsidianOperationsV1AToolPolicy,
     buildPrepareRepairInfo,
     enforceToolOutputBudget,
+    sanitizeToolErrorMessage,
+    summarizeInvalidToolInput,
 } from "./chat-tool-registry";
 import { createToolFailureResult } from "./chat-tool-execution-helpers";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
@@ -40,9 +42,9 @@ export interface ChatToolCapabilityAdapterOptions {
     timeoutMs?: number;
     execute: (input: unknown, context: AgentCapabilityContext) => Promise<ChatToolResult<unknown>>;
     /**
-     * Pre-validation pipeline bridging the underlying ToolRegistry's prepareArguments + validateInput.
-     * CoreToolProvider binds this from `legacyRegistry.prepareAndValidate(definitionName, raw, ctx)`.
-     * If omitted, the capability has no prepareAndValidate (CapabilityRegistry will pass through raw input).
+     * Pre-validation pipeline (prepareArguments → validateInput → repair-info detection).
+     * Bound by `createChatToolCapability` to bridge `ChatToolDefinition` into the capability.
+     * If omitted, the capability has no prepareAndValidate (CapabilityRegistry passes raw input through).
      */
     prepareAndValidate?: (raw: unknown, ctx: PrepareCapabilityArgumentsContext) => PrepareCapabilityArgumentsResult;
 }
@@ -265,8 +267,28 @@ export function createChatToolCapability<Input, Output>(
         },
         execute: async (input, context) => {
             throwIfAborted(context.signal);
+            // ToolRegistry.execute parity: when invoked directly without going through
+            // CapabilityRegistry.prepareAndValidate first, surface validateInput errors
+            // as ChatToolResult.error rather than letting bad input crash inside execute.
+            // Tests covering rejected paths (e.g. obsidian-operations-tools "rejects malformed
+            // note inspection input instead of falling back to the active note") rely on
+            // this exact error message.
+            let validatedInput: Input;
             try {
-                const message = definition.statusMessage(input as Input);
+                validatedInput = definition.validateInput(input);
+            } catch (error) {
+                context.plugin.log("Chat tool input validation failed", {
+                    tool: definition.name,
+                    errorType: getErrorType(error),
+                });
+                return createToolFailureResult(
+                    definition.name,
+                    summarizeInvalidToolInput(input),
+                    sanitizeToolErrorMessage(error, "Skipped a read-only tool because its input was invalid."),
+                );
+            }
+            try {
+                const message = definition.statusMessage(validatedInput);
                 context.onToolRunning?.(definition.name, message);
             } catch {
                 // statusMessage callbacks should not throw; ignore defensively.
@@ -278,7 +300,7 @@ export function createChatToolCapability<Input, Output>(
                 onToolRunning: context.onToolRunning,
             };
             try {
-                const result = await definition.execute(input as Input, chatContext);
+                const result = await definition.execute(validatedInput, chatContext);
                 throwIfAborted(context.signal);
                 return enforceToolOutputBudget(registryDef, result);
             } catch (error) {

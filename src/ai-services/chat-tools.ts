@@ -11,7 +11,7 @@
  *   - chat-tool-constants.ts   (B) numeric/string budget constants
  *   - chat-tool-execution-helpers.ts (E) vault I/O, parsers, *Like shapes
  *   - chat-tool-guards.ts      (F) type guards + validators + isChatToolName
- *   - chat-tool-registry.ts    (C) ToolRegistry + budget enforcement
+ *   - chat-tool-registry.ts    (C) V1A policy + budget enforcement helpers
  *   - chat-tool-factories.ts   (D) 9 create*Tool factories + alias normalizers
  */
 

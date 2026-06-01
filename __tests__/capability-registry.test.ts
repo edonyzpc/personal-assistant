@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 
 import {
     createCapabilityFromChatToolDefinition,
+    createCoreToolCapabilities,
     chatToolResultToAgentCapabilityResult,
 } from "../src/ai-services/capability-adapter";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
@@ -10,10 +11,8 @@ import type {
     CapabilityProvider,
     ProviderLoadContext,
 } from "../src/ai-services/capability-types";
-import { CoreToolProvider } from "../src/ai-services/core-tool-provider";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 import {
-    ToolRegistry,
     createCurrentNoteContextTool,
     createInspectObsidianNoteTool,
     createListRecentNotesTool,
@@ -24,6 +23,7 @@ import {
     createSearchVaultMetadataTool,
     createSearchVaultSnippetsTool,
     type ChatToolContext,
+    type ChatToolDefinition,
     type ChatToolRegistryDefinition,
     type ChatToolResult,
     type SearchMemoryInput,
@@ -43,19 +43,18 @@ const executeMemorySearch = async (
     sources: [{ path: "memory/source.md", chunkIndex: 0, score: 0.9 }],
 });
 
-describe("CapabilityRegistry and CoreToolProvider", () => {
-    it("exports identical provider schemas for the 9 core tools", () => {
-        const provider = new CoreToolProvider(executeMemorySearch);
+describe("CapabilityRegistry and core tool capabilities", () => {
+    it("exports the 9 core tools as provider schemas in canonical order", () => {
         const registry = new CapabilityRegistry();
-        registry.registerMany(provider.loadCapabilities());
+        registry.registerMany(createCoreCapabilities());
 
-        expect(registry.exportProviderSchemas()).toEqual(createLegacyToolRegistry().exportProviderSchemas());
+        expect(registry.exportProviderSchemas()).toEqual(buildExpectedCoreSchemas());
         expect(registry.exportProviderSchemas()).toHaveLength(9);
     });
 
     it("keeps provider schema ordering stable across sequential turns", () => {
         const registry = new CapabilityRegistry();
-        registry.registerMany(new CoreToolProvider(executeMemorySearch).loadCapabilities());
+        registry.registerMany(createCoreCapabilities());
         const namesByTurn = [
             registry.exportProviderSchemas().map((schema) => schema.function.name),
             registry.exportProviderSchemas().map((schema) => schema.function.name),
@@ -324,18 +323,22 @@ describe("Capability telemetry hook", () => {
 
 });
 
-function createLegacyToolRegistry(): ToolRegistry {
-    const registry = new ToolRegistry();
-    registry.register(createSearchMemoryTool(executeMemorySearch));
-    registry.register(createCurrentNoteContextTool());
-    registry.register(createSearchVaultMetadataTool());
-    registry.register(createListRecentNotesTool());
-    registry.register(createReadNoteOutlineTool());
-    registry.register(createInspectObsidianNoteTool());
-    registry.register(createReadCanvasSummaryTool());
-    registry.register(createSearchVaultSnippetsTool());
-    registry.register(createListVaultTagsTool());
-    return registry;
+function createCoreCapabilities(): AgentCapability[] {
+    return createCoreToolCapabilities([
+        createSearchMemoryTool(executeMemorySearch),
+        createCurrentNoteContextTool(),
+        createSearchVaultMetadataTool(),
+        createListRecentNotesTool(),
+        createReadNoteOutlineTool(),
+        createInspectObsidianNoteTool(),
+        createReadCanvasSummaryTool(),
+        createSearchVaultSnippetsTool(),
+        createListVaultTagsTool(),
+    ]);
+}
+
+function buildExpectedCoreSchemas() {
+    return createCoreCapabilities().map((capability) => capability.toProviderSchema());
 }
 
 function createOkToolResult(tool: string): ChatToolResult<{ ok: true }> {
@@ -394,14 +397,20 @@ function createPlugin() {
     } as unknown as Parameters<CapabilityRegistry["execute"]>[2]["plugin"];
 }
 
-function toRegistryDefinition(
-    tool: Parameters<ToolRegistry["register"]>[0],
+function toRegistryDefinition<Input, Output>(
+    tool: ChatToolDefinition<Input, Output>,
 ): ChatToolRegistryDefinition {
-    const registry = new ToolRegistry();
-    registry.register(tool);
-    const definition = registry.getDefinition(tool.name);
-    if (!definition) {
-        throw new Error(`Missing test definition for ${tool.name}`);
-    }
-    return definition;
+    return {
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema,
+        plannerGuidance: [...tool.plannerGuidance],
+        permission: tool.permission,
+        cost: tool.cost,
+        outputBudgetChars: tool.outputBudgetChars,
+        requiresConfirmation: tool.requiresConfirmation,
+        failureBehavior: tool.failureBehavior,
+        statusMessage: tool.statusMessageText,
+        sourceBoundary: tool.sourceBoundary,
+    };
 }
