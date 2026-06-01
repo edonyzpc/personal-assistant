@@ -42,4 +42,31 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(joined).toContain("{tool_definitions}");
         expect(joined).toContain("{tool_observations}");
     });
+
+    it("instructs the model to respond in the user's input language by default (#1.1)", () => {
+        // #1.1 motivation: Chinese users were getting English replies because the prompt had
+        // no language-match rule. The "most recent input" wording covers the case where the
+        // user switches languages mid-conversation; the explicit "unless the user explicitly
+        // asks" clause leaves room for cross-language requests like "translate this to French".
+        const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
+        expect(joined).toContain("Respond in the same language");
+        expect(joined.toLowerCase()).toContain("most recent input");
+    });
+
+    it("instructs the model to cite source note paths when using tool evidence (#1.1)", () => {
+        // #1.1 motivation: Memory-hit replies were not surfacing which note backed the claim,
+        // making fact-check expensive. The rule is conditional ("when your answer relies on
+        // facts from tool observations") so off-topic replies do not become noisily verbose.
+        const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
+        expect(joined).toContain("cite the source note path");
+    });
+
+    it("instructs the model to admit insufficient evidence rather than guess (#1.1)", () => {
+        // #1.1 motivation: hallucination guard. "Explicitly" is asserted so a paraphrase that
+        // softens the rule into hedging language ("I am not sure but...") would surface as a
+        // test failure instead of silently regressing.
+        const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
+        expect(joined).toContain("insufficient");
+        expect(joined.toLowerCase()).toContain("instead of guessing");
+    });
 });
