@@ -782,7 +782,7 @@ const RERANK_SYSTEM_PROMPT = [
     'Return ONLY valid JSON: {"ranking":[...]} with 0-based candidate indices.',
 ].join("\n");
 
-class MemorySearchTool {
+export class MemorySearchTool {
     private readonly plugin: PluginManager;
     private readonly aiUtils: AIUtils;
 
