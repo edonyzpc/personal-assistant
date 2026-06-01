@@ -819,14 +819,15 @@ class MemorySearchTool {
 
         const policyModelName = this.plugin.settings.policyModelName.trim();
 
-        // Parallel: rewrite runs alongside embed inside searchHybrid
-        const rewritePromise = policyModelName
+        // Truly parallel: rewrite (if enabled) runs concurrently with embed inside searchHybrid.
+        // If rewrite fails or times out, the override resolves null and searchHybrid falls back
+        // to building the FTS query from the raw prompt — preserving prior error-isolation.
+        const ftsQueryOverridePromise: Promise<string | null> = policyModelName
             ? this.rewriteQueryWithTimeout(query, policyModelName, signal)
             : Promise.resolve(null);
 
-        const ftsQueryOverride = await rewritePromise;
         const rawResults = await this.plugin.vss.searchHybrid(query, {
-            ftsQueryOverride,
+            ftsQueryOverridePromise,
         }) as RawSearchResult[];
 
         throwIfAborted(signal);
