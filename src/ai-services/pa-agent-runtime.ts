@@ -941,20 +941,15 @@ export function parseRerankResponse(content: string, candidates: MemoryCandidate
     return result;
 }
 
-function formatPlannerToolDefinitions(definitions: ChatToolRegistryDefinition[]): string {
+// Exported so __tests__/pa-agent-runtime-tool-definitions.test.ts can assert that the
+// trimmed payload still surfaces planner_guidance (the only project-specific field that
+// `bindTools(schemas)` does NOT pass through to the model) without spinning up the full
+// runtime. See SDD §3.3 / item 2.1 for the token-saving rationale.
+export function formatPlannerToolDefinitions(definitions: ChatToolRegistryDefinition[]): string {
     if (definitions.length === 0) return "None";
-        return definitions.map((definition) => JSON.stringify({
-            name: definition.name,
-            description: definition.description,
-            input_schema: definition.inputSchema,
-            planner_guidance: definition.plannerGuidance,
-            permission: definition.permission,
-        cost: definition.cost,
-        output_budget_chars: definition.outputBudgetChars,
-        requires_confirmation: definition.requiresConfirmation,
-        failure_behavior: definition.failureBehavior,
-        status_message: definition.statusMessage,
-        source_boundary: definition.sourceBoundary,
+    return definitions.map((definition) => JSON.stringify({
+        name: definition.name,
+        planner_guidance: definition.plannerGuidance,
     }, null, 0)).join("\n");
 }
 
