@@ -297,80 +297,63 @@ function createUnavailableContextUsed(result: ChatToolResult<unknown>): ChatCont
     };
 }
 
+const READ_ONLY_TOOL_CONTEXT_INFO: Record<string, Pick<ChatContextUsedItem, "category" | "label" | "detail">> = {
+    search_memory: {
+        category: "memory",
+        label: "Selected Memory",
+        detail: "Memory search",
+    },
+    get_current_note_context: {
+        category: "current-note",
+        label: "Current note",
+        detail: "Read-only current note context",
+    },
+    [BUILTIN_WEB_SEARCH_TOOL_NAME]: {
+        category: "read-only-tool",
+        label: "WebSearch",
+        detail: "External web search",
+    },
+    search_vault_metadata: {
+        category: "vault-metadata",
+        label: "Vault metadata",
+        detail: "Read-only metadata search results",
+    },
+    list_recent_notes: {
+        category: "recent-notes",
+        label: "Recent notes",
+        detail: "Read-only recent note list",
+    },
+    read_note_outline: {
+        category: "note-outline",
+        label: "Note outline",
+        detail: "Read-only note outline",
+    },
+    inspect_obsidian_note: {
+        category: "read-only-tool",
+        label: "Note structure",
+        detail: "Read-only note structure, links/backlinks, tasks, and properties",
+    },
+    read_canvas_summary: {
+        category: "read-only-tool",
+        label: "Canvas structure",
+        detail: "Read-only canvas structure",
+    },
+    search_vault_snippets: {
+        category: "read-only-tool",
+        label: "Note snippets",
+        detail: "Bounded note snippet search results",
+    },
+    list_vault_tags: {
+        category: "read-only-tool",
+        label: "Vault tags",
+        detail: "Read-only vault tag counts",
+    },
+};
+
 function getReadOnlyToolContextInfo(
     tool: string,
 ): Pick<ChatContextUsedItem, "category" | "label" | "detail"> {
-    if (tool === "search_memory") {
-        return {
-            category: "memory",
-            label: "Selected Memory",
-            detail: "Memory search",
-        };
-    }
-    if (tool === "get_current_note_context") {
-        return {
-            category: "current-note",
-            label: "Current note",
-            detail: "Read-only current note context",
-        };
-    }
-    if (tool === BUILTIN_WEB_SEARCH_TOOL_NAME) {
-        return {
-            category: "read-only-tool",
-            label: "WebSearch",
-            detail: "External web search",
-        };
-    }
-    if (tool === "search_vault_metadata") {
-        return {
-            category: "vault-metadata",
-            label: "Vault metadata",
-            detail: "Read-only metadata search results",
-        };
-    }
-    if (tool === "list_recent_notes") {
-        return {
-            category: "recent-notes",
-            label: "Recent notes",
-            detail: "Read-only recent note list",
-        };
-    }
-    if (tool === "read_note_outline") {
-        return {
-            category: "note-outline",
-            label: "Note outline",
-            detail: "Read-only note outline",
-        };
-    }
-    if (tool === "inspect_obsidian_note") {
-        return {
-            category: "read-only-tool",
-            label: "Note structure",
-            detail: "Read-only note structure, links/backlinks, tasks, and properties",
-        };
-    }
-    if (tool === "read_canvas_summary") {
-        return {
-            category: "read-only-tool",
-            label: "Canvas structure",
-            detail: "Read-only canvas structure",
-        };
-    }
-    if (tool === "search_vault_snippets") {
-        return {
-            category: "read-only-tool",
-            label: "Note snippets",
-            detail: "Bounded note snippet search results",
-        };
-    }
-    if (tool === "list_vault_tags") {
-        return {
-            category: "read-only-tool",
-            label: "Vault tags",
-            detail: "Read-only vault tag counts",
-        };
-    }
-    return {
+    return READ_ONLY_TOOL_CONTEXT_INFO[tool] ?? {
         category: "read-only-tool",
         label: "Read-only tool",
         detail: `${tool} output`,
