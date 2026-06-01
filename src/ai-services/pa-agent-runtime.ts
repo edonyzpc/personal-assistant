@@ -121,6 +121,7 @@ const MAX_MEMORY_RERANK_CANDIDATES = 6;
 const MAX_MEMORY_CANDIDATE_CHUNKS = 2;
 const MAX_MEMORY_CANDIDATE_EXCERPT_CHARS = 500;
 const MIN_MEMORY_SCORE = 0.01;
+const MAX_CHAT_HISTORY_TURNS = 20;
 export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 12000;
 export const canFallbackToNonStreaming = (
     error: unknown,
@@ -1253,9 +1254,18 @@ function isToolAllowedByToolUseConstraints(
     return true;
 }
 
-function formatCanonicalChatHistory(history: ChatMessage[] | undefined): string {
+// Exported so __tests__/pa-agent-runtime-chat-history.test.ts can pin both the
+// MAX_CHAT_HISTORY_TURNS truncation contract and the <chat_history> sandbox tag without
+// reaching into the full runtime. See SDD §3.4 / item 2.2 for the prompt-injection /
+// token-budget rationale (the tag mirrors the existing <untrusted> pattern so the LLM
+// treats history as data rather than instructions).
+export function formatCanonicalChatHistory(history: ChatMessage[] | undefined): string {
     if (!history || history.length === 0) return "";
-    return history.map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`).join("\n");
+    const recent = history.slice(-MAX_CHAT_HISTORY_TURNS);
+    const body = recent
+        .map((message) => `${message.role === "user" ? "User" : "Assistant"}: ${message.content}`)
+        .join("\n");
+    return `<chat_history context_only="true">\n${body}\n</chat_history>`;
 }
 
 function formatCanonicalHostContext(_hostContext: Record<string, unknown> | undefined): string {
