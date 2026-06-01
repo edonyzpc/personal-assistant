@@ -1,0 +1,329 @@
+import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals';
+import { VSS } from '../src/vss';
+import { type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
+import { MemoryVSSIndexStateStore } from '../src/vss/local-state-store';
+import { getVSSDeviceId } from '../src/vss/state';
+import { TFile } from 'obsidian';
+
+// Holders that allow each test to configure the embed and rewrite delays without
+// re-instantiating the AIUtils mock. embed delay: configurable per test; embed
+// resolves to a fixed vector. createEmbeddings is async so embedQuery is reset
+// each call.
+const embedDelayHolder = { current: 0 };
+const embedQueryCalls: { count: number; lastPrompt: string | null } = { count: 0, lastPrompt: null };
+
+jest.mock('obsidian', () => {
+    class MockTFile {
+        path: string;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        stat: any;
+        extension: string;
+        name: string;
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        constructor(path: string, stat: any = {}, extension: string = 'md', name: string = path) {
+            this.path = path;
+            this.stat = stat;
+            this.extension = extension;
+            this.name = name;
+        }
+    }
+    return {
+        TFile: MockTFile,
+        TAbstractFile: MockTFile,
+        Notice: class {
+            constructor(_message?: unknown) { /* noop */ }
+        },
+        normalizePath: (p: string) => p,
+        Platform: { isMobile: false },
+    };
+});
+
+jest.mock('../src/ai-services/service', () => {
+    return {
+        AIService: class {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+            constructor(..._args: any[]) { }
+        },
+    };
+});
+
+jest.mock('../src/ai-services/ai-utils', () => {
+    return {
+        AIUtils: class {
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars
+            constructor(..._args: any[]) { }
+            getDocumentContent(markdown: string) { return { content: markdown }; }
+            cleanMarkdownContent(content: string) { return content; }
+            async createEmbeddings() {
+                return {
+                    embedDocuments: async (texts: string[]) => texts.map(() => [0.1, 0.2]),
+                    embedQuery: async (prompt: string) => {
+                        embedQueryCalls.count++;
+                        embedQueryCalls.lastPrompt = prompt;
+                        if (embedDelayHolder.current > 0) {
+                            await new Promise<void>(r => setTimeout(r, embedDelayHolder.current));
+                        }
+                        return [0.1, 0.2];
+                    },
+                };
+            }
+        },
+    };
+});
+
+jest.mock('../src/vss/sqlite-vector-index', () => ({
+    SqliteVectorIndex: jest.fn().mockImplementation(() => {
+        const factory = (globalThis as { __mockSqliteVectorIndexFactory?: () => unknown }).__mockSqliteVectorIndexFactory;
+        if (!factory) throw new Error('No mock SqliteVectorIndex factory configured');
+        return factory();
+    }),
+}));
+
+jest.mock('../src/confirm', () => ({
+    confirmUserAction: jest.fn(async () => true),
+}));
+
+const buildFtsQueryMock = jest.fn((q: string) => `FTS:${q}`);
+jest.mock('../src/vss/fts-query-builder', () => ({
+    buildFtsQuery: (q: string) => buildFtsQueryMock(q),
+}));
+
+class FakeVectorIndex implements VectorIndex {
+    status: VectorIndexStatus = 'ready';
+    records = new Map<string, VSSFileRecord>();
+    deleteFile = jest.fn<(path: string) => Promise<void>>(async (path) => {
+        this.records.delete(path);
+    });
+    listFilePaths = jest.fn<() => Promise<string[]>>(async () => Array.from(this.records.keys()).sort());
+    listFileRecords = jest.fn<() => Promise<VSSFileRecord[]>>(async () => Array.from(this.records.values()));
+    upsertFile = jest.fn<(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]) => Promise<void>>(async () => undefined);
+    updateFileMetadata = jest.fn<(fileState: VSSFileState) => Promise<void>>(async () => undefined);
+    initialize = jest.fn<(profile: EmbeddingProfile) => Promise<VectorIndexStatus>>(async () => this.status);
+    search = jest.fn<(queryEmbedding: number[], k: number) => Promise<VectorSearchResult[]>>(async () => []);
+    getFileRecord = jest.fn<(path: string) => Promise<VSSFileRecord | null>>(async () => null);
+    getStats = jest.fn<() => Promise<VSSIndexStats>>(async () => ({
+        status: this.status,
+        backend: 'sqlite-wasm-opfs-sahpool',
+        chunkCount: this.records.size,
+        fileCount: this.records.size,
+        fallbackMode: false,
+    }));
+    verify = jest.fn<() => Promise<VectorIndexStatus>>(async () => this.status);
+    reset = jest.fn<() => Promise<void>>(async () => { this.records.clear(); });
+    dispose = jest.fn<() => Promise<void>>(async () => undefined);
+}
+
+const createMissingFileError = (): NodeJS.ErrnoException => {
+    const enoent = new Error('missing') as NodeJS.ErrnoException;
+    enoent.code = 'ENOENT';
+    return enoent;
+};
+
+const createPlugin = () => {
+    const vssStateStore = new MemoryVSSIndexStateStore();
+    const mockAdapter = {
+        write: jest.fn<(path: string, data: string) => Promise<void>>(),
+        read: jest.fn<(path: string) => Promise<string>>(async () => { throw createMissingFileError(); }),
+        exists: jest.fn<(path: string) => Promise<boolean>>(async () => true),
+        list: jest.fn<(path: string) => Promise<{ files: string[]; folders: string[] }>>(async () => ({ files: [], folders: [] })),
+        remove: jest.fn<(path: string) => Promise<void>>(),
+        mkdir: jest.fn<(path: string) => Promise<void>>(),
+        getBasePath: jest.fn(() => '/vaults/Test Vault'),
+        getResourcePath: jest.fn((path: string) => path),
+    };
+
+    const mockVault = {
+        adapter: mockAdapter,
+        getName: jest.fn(() => 'Test Vault'),
+        getAbstractFileByPath: jest.fn<(path: string) => TFile | null>(),
+        getMarkdownFiles: jest.fn(() => []),
+    };
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const plugin: any = {
+        settings: {
+            apiToken: 'token',
+            vssCacheExcludePath: [],
+            aiProvider: 'openai',
+            embeddingModelName: 'model',
+            baseURL: '',
+            chatModelName: '',
+            statisticsVaultId: 'vault-id',
+        },
+        manifest: { dir: '.obsidian/plugins/personal-assistant' },
+        app: { vault: mockVault },
+        join: (...parts: string[]) => parts.join('/'),
+        getVSSFiles: jest.fn(() => []),
+        createVSSIndexStateStore: jest.fn(() => vssStateStore),
+        log: jest.fn(),
+    };
+
+    return { plugin };
+};
+
+function createReadyMarker(overrides: Partial<VSSIndexMarker> = {}): VSSIndexMarker {
+    return {
+        schemaVersion: 1,
+        deviceId: getVSSDeviceId(),
+        indexId: 'index-1',
+        profileSignature: 'openai||model|1024|COSINE',
+        backend: 'sqlite-wasm-opfs-sahpool',
+        chunkCount: 1,
+        fileCount: 1,
+        builtAt: '2026-05-02T00:00:00.000Z',
+        lastVerifiedAt: '2026-05-02T00:00:00.000Z',
+        storagePersisted: true,
+        ...overrides,
+    };
+}
+
+function attachReadyIndex(vss: VSS, index: FakeVectorIndex): void {
+    /* eslint-disable @typescript-eslint/no-explicit-any */
+    (vss as any).initialized = true;
+    (vss as any).deviceId = 'device-1';
+    (vss as any).profile = {
+        provider: 'openai',
+        baseURL: '',
+        model: 'model',
+        dimensions: 1024,
+        distanceMetric: 'COSINE',
+    };
+    (vss as any).index = index;
+    (vss as any).status = 'ready';
+    (vss as any).localStateReady = true;
+    (vss as any).marker = createReadyMarker({ deviceId: 'device-1' });
+    /* eslint-enable @typescript-eslint/no-explicit-any */
+}
+
+describe('VSS searchHybrid parallel rewrite + embed', () => {
+    const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
+
+    beforeEach(() => {
+        // Real timers required for parallel timing assertions; CI jitter is
+        // accommodated via generous buffers documented in SDD §4.3.
+        jest.useRealTimers();
+        embedDelayHolder.current = 0;
+        embedQueryCalls.count = 0;
+        embedQueryCalls.lastPrompt = null;
+        buildFtsQueryMock.mockClear();
+        Object.defineProperty(globalThis, 'localStorage', {
+            configurable: true,
+            value: {
+                getItem: jest.fn(() => 'device-1'),
+                setItem: jest.fn(),
+            },
+        });
+    });
+
+    afterEach(() => {
+        if (originalLocalStorage) {
+            Object.defineProperty(globalThis, 'localStorage', originalLocalStorage);
+        } else {
+            delete (globalThis as { localStorage?: Storage }).localStorage;
+        }
+    });
+
+    it('runs ftsQueryOverridePromise and embedQuery concurrently (≤ 150ms when each takes 100ms)', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+
+        embedDelayHolder.current = 100;
+        const ftsQueryOverridePromise = new Promise<string>((resolve) => {
+            setTimeout(() => resolve('rewritten'), 100);
+        });
+
+        const start = performance.now();
+        await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+        const elapsed = performance.now() - start;
+
+        // Parallel: max(R, E) ≈ 100ms; serial would be R + E ≈ 200ms.
+        expect(elapsed).toBeLessThan(150);
+
+        vss.dispose();
+    });
+
+    it('uses the rewritten override when the promise resolves with a string', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+
+        const ftsQueryOverridePromise = Promise.resolve('rewritten-query');
+        await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+
+        expect(buildFtsQueryMock).toHaveBeenCalledWith('rewritten-query');
+        expect(buildFtsQueryMock).not.toHaveBeenCalledWith('raw prompt');
+
+        vss.dispose();
+    });
+
+    it('falls back to raw prompt when the override promise rejects (no rethrow)', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+
+        const ftsQueryOverridePromise = Promise.reject(new Error('rewrite blew up'));
+        // .catch() registered upstream avoids unhandled-rejection warnings.
+        ftsQueryOverridePromise.catch(() => undefined);
+
+        const result = await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+
+        expect(buildFtsQueryMock).toHaveBeenCalledWith('raw prompt');
+        // Did NOT call buildFtsQuery on a thrown value.
+        expect(buildFtsQueryMock).not.toHaveBeenCalledWith(expect.any(Error));
+        expect(result).toEqual([]);
+
+        vss.dispose();
+    });
+
+    it('falls back to raw prompt when the override promise resolves null', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+
+        const ftsQueryOverridePromise = Promise.resolve<string | null>(null);
+        await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+
+        expect(buildFtsQueryMock).toHaveBeenCalledWith('raw prompt');
+        expect(buildFtsQueryMock).not.toHaveBeenCalledWith('rewritten-query');
+
+        vss.dispose();
+    });
+
+    it('promise wins over legacy ftsQueryOverride when both are passed', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+
+        const ftsQueryOverridePromise = Promise.resolve('from-promise');
+        await vss.searchHybrid('raw prompt', {
+            ftsQueryOverride: 'from-string',
+            ftsQueryOverridePromise,
+        });
+
+        expect(buildFtsQueryMock).toHaveBeenCalledWith('from-promise');
+        expect(buildFtsQueryMock).not.toHaveBeenCalledWith('from-string');
+
+        vss.dispose();
+    });
+
+    it('treats override promise rejected with AbortError the same as any rejection (no leak, fallback applied)', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        attachReadyIndex(vss, new FakeVectorIndex());
+
+        const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' });
+        const ftsQueryOverridePromise = Promise.reject(abortError);
+        ftsQueryOverridePromise.catch(() => undefined);
+
+        // searchHybrid itself does not consume a signal; aborts surface from
+        // pa-agent-runtime's throwIfAborted. At this layer the rejection must
+        // be swallowed and the call must fall back to raw prompt.
+        const result = await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+
+        expect(buildFtsQueryMock).toHaveBeenCalledWith('raw prompt');
+        expect(result).toEqual([]);
+
+        vss.dispose();
+    });
+});
