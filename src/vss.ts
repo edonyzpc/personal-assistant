@@ -28,6 +28,7 @@ import {
 import type { MemoryMaintenancePlan } from './memory-manager';
 import { confirmUserAction } from './confirm';
 import { buildFtsQuery } from './vss/fts-query-builder';
+import { throwIfAborted } from './ai-services/chat-utils';
 
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
@@ -198,6 +199,42 @@ interface VSSShutdownEntry {
 type VSSGlobalScope = typeof globalThis & {
     [VSS_GLOBAL_SHUTDOWN_KEY]?: Map<string, VSSShutdownEntry>;
 };
+
+async function waitForAbortablePromise<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return promise;
+    throwIfAborted(signal);
+    return new Promise<T>((resolve, reject) => {
+        const cleanup = () => {
+            signal.removeEventListener("abort", onAbort);
+        };
+        const onAbort = () => {
+            cleanup();
+            try {
+                throwIfAborted(signal);
+            } catch (error) {
+                reject(error);
+            }
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        try {
+            throwIfAborted(signal);
+        } catch (error) {
+            cleanup();
+            reject(error);
+            return;
+        }
+        promise.then(
+            (value) => {
+                cleanup();
+                resolve(value);
+            },
+            (error) => {
+                cleanup();
+                reject(error);
+            },
+        );
+    });
+}
 
 export class VSS {
     private plugin: PluginManager;
@@ -1425,13 +1462,21 @@ export class VSS {
              * Reject and `null`-resolve are both treated as "no override" (fall back to prompt).
              */
             ftsQueryOverridePromise?: Promise<string | null>;
+            signal?: AbortSignal;
         },
     ) {
+        const safeOverridePromise: Promise<string | null> = options?.ftsQueryOverridePromise
+            ? options.ftsQueryOverridePromise.catch(() => null)
+            : Promise.resolve(options?.ftsQueryOverride ?? null);
+        const signal = options?.signal;
+        throwIfAborted(signal);
         if (this.disposed) return [];
         await this.initialize();
+        throwIfAborted(signal);
         if (this.index) {
             await this.ensureIndex({ allowFallback: false, mode: "foreground" });
         }
+        throwIfAborted(signal);
         if (!this.index || this.status === "uninitialized") {
             return [];
         }
@@ -1449,22 +1494,21 @@ export class VSS {
         // Parallel: kick off both rewrite override and embed; tolerate rewrite failures.
         // Precedence: when both ftsQueryOverridePromise and ftsQueryOverride are passed,
         // the promise wins (caller explicitly opted into parallel rewrite).
-        const safeOverridePromise: Promise<string | null> = options?.ftsQueryOverridePromise
-            ? options.ftsQueryOverridePromise.catch(() => null)
-            : Promise.resolve(options?.ftsQueryOverride ?? null);
-        const [ftsOverride, queryEmbedding] = await Promise.all([
+        const [ftsOverride, queryEmbedding] = await waitForAbortablePromise(Promise.all([
             safeOverridePromise,
             embeddings.embedQuery(prompt),
-        ]);
+        ]), signal);
         const ftsQuery = ftsOverride != null
             ? buildFtsQuery(ftsOverride)
             : buildFtsQuery(prompt);
 
         return this.runExclusive(async () => {
+            throwIfAborted(signal);
             if (this.disposed) return [];
             if (this.index) {
                 await this.ensureIndex({ allowFallback: false, mode: "foreground" });
             }
+            throwIfAborted(signal);
             if (!this.index || this.status !== "ready" || !this.profile) return [];
             if (getEmbeddingProfileSignature(this.profile) !== profileSignature) return [];
 

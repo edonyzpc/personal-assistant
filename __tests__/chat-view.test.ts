@@ -543,11 +543,13 @@ function mockRenderedMemoryCallout() {
     });
 }
 
-function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; chatHistoryManager?: unknown } = {}) {
+function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; chatHistoryManager?: unknown; setupIssue?: string | null } = {}) {
     const containerEl = new MockElement('div');
     containerEl.clientWidth = options.panelWidth ?? 600;
     const workspaceHandlers = new Map<string, Array<(...args: unknown[]) => void>>();
     const memoryStatusListeners = new Set<() => void | Promise<void>>();
+    const settingsChangeListeners = new Set<() => void | Promise<void>>();
+    let setupIssue = options.setupIssue ?? null;
     const editor = {
         getCursor: jest.fn(() => ({ line: 0, ch: 0 })),
         replaceRange: jest.fn(),
@@ -608,10 +610,17 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
             updateFromCommand: jest.fn(async () => undefined),
         },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
+        getAISetupIssue: jest.fn(() => setupIssue),
         onMemoryStatusChanged: jest.fn((listener: () => void | Promise<void>) => {
             memoryStatusListeners.add(listener);
             return () => {
                 memoryStatusListeners.delete(listener);
+            };
+        }),
+        onSettingsChanged: jest.fn((listener: () => void | Promise<void>) => {
+            settingsChangeListeners.add(listener);
+            return () => {
+                settingsChangeListeners.delete(listener);
             };
         }),
         log: jest.fn(),
@@ -630,7 +639,14 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
     const emitMemoryStatusChanged = async () => {
         await Promise.all(Array.from(memoryStatusListeners, (listener) => listener()));
     };
+    const emitSettingsChanged = async () => {
+        await Promise.all(Array.from(settingsChangeListeners, (listener) => listener()));
+    };
     const getMemoryStatusListenerCount = () => memoryStatusListeners.size;
+    const getSettingsChangeListenerCount = () => settingsChangeListeners.size;
+    const setAISetupIssue = (value: string | null) => {
+        setupIssue = value;
+    };
     return {
         view,
         containerEl,
@@ -641,7 +657,10 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
         markdownFile,
         emitWorkspaceEvent,
         emitMemoryStatusChanged,
+        emitSettingsChanged,
         getMemoryStatusListenerCount,
+        getSettingsChangeListenerCount,
+        setAISetupIssue,
     };
 }
 
@@ -2755,6 +2774,25 @@ describe('LLMView turn lifecycle', () => {
         expect(getButtonByText(containerEl, 'Ask').disabled).toBe(false);
     });
 
+    it('refreshes the setup banner when settings become complete', async () => {
+        const { view, containerEl, emitSettingsChanged, setAISetupIssue } = createView({
+            withMarkdownLeaf: true,
+            setupIssue: 'Add your API token in Settings first.',
+        });
+        await view.onOpen();
+
+        expect(allText(containerEl)).toContain('Welcome to AI Chat');
+        expect(allText(containerEl)).toContain('Add your API token in Settings first.');
+
+        setAISetupIssue(null);
+        await emitSettingsChanged();
+
+        expect(allText(containerEl)).not.toContain('Welcome to AI Chat');
+        expect(allText(containerEl)).not.toContain('Add your API token in Settings first.');
+        expect(allText(containerEl)).toContain('Ask about your notes');
+        expect(getButtonByText(containerEl, 'Summarize current note').disabled).toBe(false);
+    });
+
     it('uses panel-width density classes instead of viewport media queries', async () => {
         const { view, containerEl } = createView({ panelWidth: 340 });
         await view.onOpen();
@@ -4211,14 +4249,16 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryChip.getAttribute('aria-label')).toBe('Memory ready');
     });
 
-    it('unsubscribes Memory chip status refresh on close', async () => {
-        const { view, getMemoryStatusListenerCount } = createView();
+    it('unsubscribes Memory and settings refresh listeners on close', async () => {
+        const { view, getMemoryStatusListenerCount, getSettingsChangeListenerCount } = createView();
 
         await view.onOpen();
         expect(getMemoryStatusListenerCount()).toBe(1);
+        expect(getSettingsChangeListenerCount()).toBe(1);
 
         await view.onClose();
         expect(getMemoryStatusListenerCount()).toBe(0);
+        expect(getSettingsChangeListenerCount()).toBe(0);
     });
 
     it('keeps Memory diagnostics and settings behind menu entries', async () => {

@@ -15,6 +15,7 @@ interface SearchHybridArgs {
     options?: {
         ftsQueryOverride?: string | null;
         ftsQueryOverridePromise?: Promise<string | null>;
+        signal?: AbortSignal;
     };
 }
 
@@ -166,6 +167,33 @@ describe("MemorySearchTool searchVss contract", () => {
         });
         // searchHybrid must NOT have been touched — abort fires before it.
         expect(plugin.vss.searchHybrid).not.toHaveBeenCalled();
+    });
+
+    it("passes the abort signal into searchHybrid for mid-flight cancellation", async () => {
+        let receivedSignal: AbortSignal | undefined;
+        const { plugin } = makePlugin({
+            policyModelName: "",
+            searchHybrid: async ({ options }) => {
+                receivedSignal = options?.signal;
+                return new Promise((_resolve, reject) => {
+                    receivedSignal?.addEventListener("abort", () => {
+                        reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+                    }, { once: true });
+                });
+            },
+        });
+        const aiUtils = makeAIUtils();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tool = new MemorySearchTool(plugin as any, aiUtils as any);
+        const controller = new AbortController();
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = (tool as any).searchVss("hello world", controller.signal) as Promise<unknown>;
+        await Promise.resolve();
+        expect(receivedSignal).toBe(controller.signal);
+
+        controller.abort();
+        await expect(result).rejects.toMatchObject({ name: "AbortError" });
     });
 
     it("propagates errors thrown by searchHybrid (preserves current behavior)", async () => {

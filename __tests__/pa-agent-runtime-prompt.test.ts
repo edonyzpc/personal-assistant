@@ -53,12 +53,12 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(joined.toLowerCase()).toContain("most recent input");
     });
 
-    it("instructs the model to cite source note paths when using tool evidence (#1.1)", () => {
+    it("instructs the model to cite source paths or URLs when using tool evidence (#1.1)", () => {
         // #1.1 motivation: Memory-hit replies were not surfacing which note backed the claim,
-        // making fact-check expensive. The rule is conditional ("when your answer relies on
-        // facts from tool observations") so off-topic replies do not become noisily verbose.
+        // making fact-check expensive. WebSearch returns URLs rather than note paths, so the
+        // rule must cover both evidence kinds without nudging the model to invent note paths.
         const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
-        expect(joined).toContain("cite the source note path");
+        expect(joined).toContain("cite the source note path or URL");
     });
 
     it("instructs the model to admit insufficient evidence rather than guess (#1.1)", () => {

@@ -199,8 +199,6 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
     const originalLocalStorage = Object.getOwnPropertyDescriptor(globalThis, 'localStorage');
 
     beforeEach(() => {
-        // Real timers required for parallel timing assertions; CI jitter is
-        // accommodated via generous buffers documented in SDD §4.3.
         jest.useRealTimers();
         embedDelayHolder.current = 0;
         embedQueryCalls.count = 0;
@@ -223,22 +221,27 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         }
     });
 
-    it('runs ftsQueryOverridePromise and embedQuery concurrently (≤ 150ms when each takes 100ms)', async () => {
+    it('starts embedQuery before ftsQueryOverridePromise resolves', async () => {
         const { plugin } = createPlugin();
         const vss = new VSS(plugin, 'cache');
         attachReadyIndex(vss, new FakeVectorIndex());
 
-        embedDelayHolder.current = 100;
+        let resolveOverride: ((value: string) => void) | undefined;
         const ftsQueryOverridePromise = new Promise<string>((resolve) => {
-            setTimeout(() => resolve('rewritten'), 100);
+            resolveOverride = resolve;
         });
 
-        const start = performance.now();
-        await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
-        const elapsed = performance.now() - start;
+        const searchPromise = vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+        for (let i = 0; i < 20 && embedQueryCalls.count === 0; i++) {
+            await Promise.resolve();
+        }
 
-        // Parallel: max(R, E) ≈ 100ms; serial would be R + E ≈ 200ms.
-        expect(elapsed).toBeLessThan(150);
+        expect(embedQueryCalls.count).toBe(1);
+        expect(embedQueryCalls.lastPrompt).toBe('raw prompt');
+        expect(buildFtsQueryMock).not.toHaveBeenCalled();
+
+        resolveOverride?.('rewritten');
+        await searchPromise;
 
         vss.dispose();
     });
@@ -263,8 +266,6 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
         attachReadyIndex(vss, new FakeVectorIndex());
 
         const ftsQueryOverridePromise = Promise.reject(new Error('rewrite blew up'));
-        // .catch() registered upstream avoids unhandled-rejection warnings.
-        ftsQueryOverridePromise.catch(() => undefined);
 
         const result = await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
 
@@ -314,15 +315,31 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
 
         const abortError = Object.assign(new Error('aborted'), { name: 'AbortError' });
         const ftsQueryOverridePromise = Promise.reject(abortError);
-        ftsQueryOverridePromise.catch(() => undefined);
 
-        // searchHybrid itself does not consume a signal; aborts surface from
-        // pa-agent-runtime's throwIfAborted. At this layer the rejection must
-        // be swallowed and the call must fall back to raw prompt.
+        // Override abort rejections are still treated as rewrite failures at
+        // this layer; caller signals use the separate options.signal path.
         const result = await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
 
         expect(buildFtsQueryMock).toHaveBeenCalledWith('raw prompt');
         expect(result).toEqual([]);
+
+        vss.dispose();
+    });
+
+    it('handles override rejections before readiness early returns', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        /* eslint-disable @typescript-eslint/no-explicit-any */
+        (vss as any).initialized = true;
+        (vss as any).index = null;
+        (vss as any).status = 'uninitialized';
+        /* eslint-enable @typescript-eslint/no-explicit-any */
+
+        const ftsQueryOverridePromise = Promise.reject(new Error('rewrite blew up early'));
+        const result = await vss.searchHybrid('raw prompt', { ftsQueryOverridePromise });
+
+        expect(result).toEqual([]);
+        expect(buildFtsQueryMock).not.toHaveBeenCalled();
 
         vss.dispose();
     });

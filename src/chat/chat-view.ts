@@ -133,6 +133,7 @@ export class LLMView extends ItemView {
     private nativeKeyboardHeight = 0;
     private nativeKeyboardVisible = false;
     private memoryStatusUnsubscribe: (() => void) | null = null;
+    private settingsChangeUnsubscribe: (() => void) | null = null;
     private markdownRenderOwners = new Set<Component>();
     private mobileTabBarHandle: HTMLElement | null = null;
     private mobileTabBarOptions: HTMLElement | null = null;
@@ -2541,6 +2542,11 @@ export class LLMView extends ItemView {
             if (!isCurrentSession()) return;
             await refreshMemoryChipState();
         }) ?? null;
+        this.settingsChangeUnsubscribe = this.plugin.onSettingsChanged?.(() => {
+            if (!isCurrentSession()) return;
+            syncComposerControls();
+            renderEmptyState();
+        }) ?? null;
         void refreshMemoryChipState();
 
         // vss cache updates are now handled globally in the plugin
@@ -2556,6 +2562,7 @@ export class LLMView extends ItemView {
         this.disconnectStatusBarClearance();
         this.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
+        this.disconnectSettingsChangeListener();
         this.teardownMobileTabBarAutoHide();
         this.clearChatDrawerHost();
     }
@@ -2564,6 +2571,7 @@ export class LLMView extends ItemView {
         this.cancelScheduledScroll();
         this.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
+        this.disconnectSettingsChangeListener();
         this.viewSessionId += 1;
         return this.viewSessionId;
     }
@@ -2571,6 +2579,11 @@ export class LLMView extends ItemView {
     private disconnectMemoryStatusListener() {
         this.memoryStatusUnsubscribe?.();
         this.memoryStatusUnsubscribe = null;
+    }
+
+    private disconnectSettingsChangeListener() {
+        this.settingsChangeUnsubscribe?.();
+        this.settingsChangeUnsubscribe = null;
     }
 
     private setupMobileTabBarAutoHide(containerEl: HTMLElement) {

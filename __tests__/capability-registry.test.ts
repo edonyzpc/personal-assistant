@@ -110,6 +110,23 @@ describe("CapabilityRegistry and core tool capabilities", () => {
         }]);
     });
 
+    it("rejects direct Obsidian Operations capabilities that bypass v1A policy", () => {
+        const registry = new CapabilityRegistry();
+        const invalidCapability = {
+            ...createTestCapability("inspect_obsidian_note"),
+            sourceBoundary: "memory",
+        } satisfies AgentCapability;
+
+        expect(registry.register(invalidCapability)).toBe(false);
+        expect(registry.exportProviderSchemas()).toEqual([]);
+        expect(registry.listDiagnostics()).toEqual([{
+            type: "policy",
+            capabilityName: "inspect_obsidian_note",
+            providerId: "test-provider",
+            reason: "invalid Obsidian Operations v1A capability policy: sourceBoundary must be read-only-tool",
+        }]);
+    });
+
     it("filters action and write capabilities before schema export and execution", async () => {
         const base = createCapabilityFromChatToolDefinition(
             toRegistryDefinition(createTestChatToolDefinition({ name: "search_vault_metadata" })),

@@ -118,6 +118,7 @@ export class PluginManager extends Plugin {
     private cryptoHelper: CryptoHelper = new CryptoHelper();
     private token: string = "";
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
+    private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private hoverPopoverObserver: MutationObserver | null = null;
     private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -236,7 +237,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'switch-on-or-off-plugin',
-            name: 'switch on/off plugin according to its status',
+            name: 'Open Personal Assistant Controls',
             callback: () => {
                 const modal = new PluginControlModal(this.app);
                 modal.setPlaceholder("Type plugin name to find it");
@@ -497,6 +498,7 @@ export class PluginManager extends Plugin {
 
     async saveSettings() {
         await this.saveData(this.settings);
+        await this.notifySettingsChanged();
     }
 
     log(...msg: any) { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -771,6 +773,19 @@ export class PluginManager extends Plugin {
         return () => {
             this.memoryStatusListeners.delete(listener);
         };
+    }
+
+    onSettingsChanged(listener: () => void | Promise<void>): () => void {
+        this.settingsChangeListeners.add(listener);
+        return () => {
+            this.settingsChangeListeners.delete(listener);
+        };
+    }
+
+    private async notifySettingsChanged() {
+        await Promise.allSettled(
+            Array.from(this.settingsChangeListeners, (listener) => Promise.resolve().then(listener)),
+        );
     }
 
     async updateMemoryStatusBar() {

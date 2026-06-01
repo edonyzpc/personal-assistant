@@ -18,6 +18,10 @@ import type {
     ChatToolRegistryDefinition,
     ChatToolResult,
 } from "./chat-tools";
+import {
+    OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
+    isObsidianOperationsV1AToolName,
+} from "./chat-tools";
 import { PolicyEngine } from "./policy-engine";
 import { getErrorType } from "./agent-utils";
 
@@ -55,6 +59,16 @@ export class CapabilityRegistry {
                 capabilityName: capability.name,
                 providerId: capability.providerId,
                 reason: "duplicate capability name rejected; earlier registration kept",
+            });
+            return false;
+        }
+        const v1aPolicyError = getObsidianOperationsV1ACapabilityPolicyError(capability);
+        if (v1aPolicyError) {
+            this.diagnostics.push({
+                type: "policy",
+                capabilityName: capability.name,
+                providerId: capability.providerId,
+                reason: v1aPolicyError,
             });
             return false;
         }
@@ -254,6 +268,25 @@ export class CapabilityRegistry {
         if (!this.telemetryEnabled) return;
         this.onCapabilityEvent?.({ ...event });
     }
+}
+
+function getObsidianOperationsV1ACapabilityPolicyError(capability: AgentCapability): string | null {
+    if (!isObsidianOperationsV1AToolName(capability.name)) return null;
+    const errors: string[] = [];
+    if (capability.kind !== "tool") errors.push("kind must be tool");
+    if (capability.permission !== "read-only") errors.push("permission must be read-only");
+    if (capability.cost !== "free") errors.push("cost must be free");
+    if (!Number.isFinite(capability.outputBudgetChars) || capability.outputBudgetChars <= 0) {
+        errors.push("outputBudgetChars must be positive");
+    } else if (capability.outputBudgetChars > OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS) {
+        errors.push(`outputBudgetChars must be <= ${OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS}`);
+    }
+    if (capability.requiresConfirmation !== false) errors.push("requiresConfirmation must be false");
+    if (capability.failureBehavior !== "recoverable") errors.push("failureBehavior must be recoverable");
+    if (capability.sourceBoundary !== "read-only-tool") errors.push("sourceBoundary must be read-only-tool");
+    return errors.length > 0
+        ? `invalid Obsidian Operations v1A capability policy: ${errors.join("; ")}`
+        : null;
 }
 
 function createCapabilityFailureResult(
