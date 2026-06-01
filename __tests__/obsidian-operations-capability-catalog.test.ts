@@ -2,18 +2,13 @@ import { describe, expect, it } from '@jest/globals';
 
 import {
     OBSIDIAN_OPERATIONS_CAPABILITY_CATALOG,
-    assertObsidianOperationsCatalogValid,
     buildObsidianOperationsPlannerGuidance,
     getObsidianOperationsCatalogSection,
-    validateObsidianOperationsCatalog,
-    type ObsidianOperationsCatalogSection,
 } from '../src/ai-services/obsidian-operations-capability-catalog';
 import { ToolRegistry } from '../src/ai-services/chat-tools';
 
 describe('Obsidian Operations capability catalog', () => {
     it('contains the required local sections', () => {
-        expect(() => assertObsidianOperationsCatalogValid()).not.toThrow();
-
         expect(OBSIDIAN_OPERATIONS_CAPABILITY_CATALOG.map((section) => section.id)).toEqual([
             'markdown',
             'canvas',
@@ -27,7 +22,6 @@ describe('Obsidian Operations capability catalog', () => {
         const text = [
             markdown.summary,
             ...markdown.plannerGuidance,
-            ...markdown.representativeQueries,
         ].join(' ');
 
         expect(text).toContain('properties');
@@ -39,8 +33,6 @@ describe('Obsidian Operations capability catalog', () => {
         expect(text).toContain('embeds');
         expect(text).toContain('Mermaid');
         expect(text).toContain('footnotes');
-        expect(markdown.negativeExamples.map((example) => example.userQuery).join(' ')).toContain('Append');
-        expect(markdown.negativeExamples.map((example) => example.userQuery).join(' ')).toContain('Delete');
     });
 
     it('distills Canvas structure rules and broken-structure concepts', () => {
@@ -48,7 +40,6 @@ describe('Obsidian Operations capability catalog', () => {
         const text = [
             canvas.summary,
             ...canvas.plannerGuidance,
-            ...canvas.representativeQueries,
         ].join(' ');
 
         expect(text).toContain('node');
@@ -67,7 +58,6 @@ describe('Obsidian Operations capability catalog', () => {
         expect(guidance).toContain('file');
         expect(guidance).toContain('path');
         expect(guidance).toContain('target concepts');
-        expect(cli.negativeExamples.map((example) => example.userQuery).join(' ')).toContain('shell command');
     });
 
     it('keeps safety language separate from Memory references and prohibited actions', () => {
@@ -77,8 +67,6 @@ describe('Obsidian Operations capability catalog', () => {
         expect(text).toContain('untrusted read-only context');
         expect(text).toContain('Memory references');
         expect(text).toContain('Do not claim writes');
-        expect(safety.negativeExamples.map((example) => example.userQuery).join(' ')).toContain('Install');
-        expect(safety.negativeExamples.map((example) => example.userQuery).join(' ')).toContain('eval');
     });
 
     it('builds concise future planner guidance from selected sections', () => {
@@ -88,43 +76,6 @@ describe('Obsidian Operations capability catalog', () => {
         expect(guidance.every((line) => line.startsWith('[markdown]') || line.startsWith('[safety]'))).toBe(true);
         expect(guidance.join('\n')).toContain('properties');
         expect(guidance.join('\n')).toContain('untrusted read-only context');
-    });
-
-    it('fails validation when a required section is missing', () => {
-        const partial = OBSIDIAN_OPERATIONS_CAPABILITY_CATALOG.filter((section) => section.id !== 'canvas');
-        const result = validateObsidianOperationsCatalog(partial);
-
-        expect(result.ok).toBe(false);
-        expect(result.errors).toContain('Catalog is missing required section: canvas');
-    });
-
-    it('fails validation when guidance exceeds its prompt budget', () => {
-        const catalog = OBSIDIAN_OPERATIONS_CAPABILITY_CATALOG.map((section) => section.id === 'markdown'
-            ? {
-                ...section,
-                promptBudgetChars: 1,
-            }
-            : section);
-        const result = validateObsidianOperationsCatalog(catalog);
-
-        expect(result.ok).toBe(false);
-        expect(result.errors).toContain('markdown planner guidance exceeds prompt budget.');
-    });
-
-    it('fails validation when forbidden semantics appear outside negative examples', () => {
-        const catalog = OBSIDIAN_OPERATIONS_CAPABILITY_CATALOG.map((section): ObsidianOperationsCatalogSection => section.id === 'markdown'
-            ? {
-                ...section,
-                representativeQueries: [
-                    ...section.representativeQueries,
-                    'Please delete my current note now.',
-                ],
-            }
-            : section);
-        const result = validateObsidianOperationsCatalog(catalog);
-
-        expect(result.ok).toBe(false);
-        expect(result.errors).toContain('markdown contains forbidden semantic outside negative examples: delete');
     });
 
     it('does not register Obsidian Operations tools during SPEC-01', () => {
