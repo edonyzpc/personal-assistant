@@ -1054,13 +1054,6 @@ export class PluginManager extends Plugin {
                 this.settings.showAdvancedMemoryControls = false;
                 changed = true;
             }
-            if (
-                "nativeToolPlanningSmokeEnabled" in this.settings
-                && typeof this.settings.nativeToolPlanningSmokeEnabled !== "boolean"
-            ) {
-                this.settings.nativeToolPlanningSmokeEnabled = false;
-                changed = true;
-            }
             if (typeof this.settings.qwenThinkingEnabled !== "boolean") {
                 this.settings.qwenThinkingEnabled = false;
                 changed = true;
@@ -1075,10 +1068,6 @@ export class PluginManager extends Plugin {
             }
             if ("qwenWebSearchEnabled" in this.settings) {
                 delete (this.settings as Partial<PluginManagerSettings> & { qwenWebSearchEnabled?: unknown }).qwenWebSearchEnabled;
-                changed = true;
-            }
-            if ("paAgentAnswerStreamEnabled" in this.settings) {
-                delete (this.settings as Partial<PluginManagerSettings> & { paAgentAnswerStreamEnabled?: unknown }).paAgentAnswerStreamEnabled;
                 changed = true;
             }
             // isEnabledMetadataUpdating used to be persisted alongside the user-facing

@@ -67,7 +67,6 @@ export interface PluginManagerSettings {
     memoryAutoCheckBeforeChat: boolean;
     memoryApprovalPolicy: "always" | "auto-refresh-after-prepare";
     showAdvancedMemoryControls: boolean;
-    nativeToolPlanningSmokeEnabled: boolean;
     qwenThinkingEnabled: boolean;
     webSearchEnabled: boolean;
     shareAnonymousCapabilityUsage: boolean;
@@ -137,7 +136,6 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     memoryAutoCheckBeforeChat: true,
     memoryApprovalPolicy: "always",
     showAdvancedMemoryControls: false,
-    nativeToolPlanningSmokeEnabled: false,
     qwenThinkingEnabled: false,
     webSearchEnabled: false,
     shareAnonymousCapabilityUsage: false,

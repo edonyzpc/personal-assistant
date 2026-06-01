@@ -5,7 +5,6 @@ import {
     DASHSCOPE_INTL_COMPATIBLE_BASE_URL,
     isDashScopeCompatibleBaseURL,
     type QwenRequestOptions,
-    SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
 } from './ai-utils';
 import type { PluginManager } from '../plugin'
 import type { MemoryMode } from '../memory-manager';
@@ -99,14 +98,9 @@ export class ChatService {
         options: StreamLLMOptions = {},
     ): Promise<void> {
         const memoryMode = options.memoryMode ?? "auto";
-        const nativeToolPlanningOptions = this.plugin.settings.nativeToolPlanningSmokeEnabled
-            ? {
-                nativeToolPlanningInternalGate: true,
-                nativeToolCallingValidatedModels: SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS,
-            }
-            : {
-                nativeToolPlanningInternalGate: true,
-            };
+        const nativeToolPlanningOptions = {
+            nativeToolPlanningInternalGate: true,
+        };
         const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
         const runtime = new PaAgentRuntime(
             this.plugin,

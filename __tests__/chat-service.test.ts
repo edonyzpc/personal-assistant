@@ -35,11 +35,6 @@ jest.mock('../src/ai-services/ai-utils', () => ({
         return normalized === 'https://dashscope.aliyuncs.com/compatible-mode/v1'
             || normalized === 'https://dashscope-intl.aliyuncs.com/compatible-mode/v1';
     },
-    SMOKE_NATIVE_TOOL_CALLING_VALIDATIONS: [{
-        provider: 'qwen',
-        model: 'qwen3.6-plus',
-        baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
-    }],
 }));
 
 jest.mock('@langchain/core/prompts', () => ({
@@ -192,7 +187,6 @@ function createPlugin(overrides: {
     }>;
     resolvedLinks?: Record<string, Record<string, number>>;
     unresolvedLinks?: Record<string, Record<string, number>>;
-    nativeToolPlanningSmokeEnabled?: boolean;
     aiProvider?: string;
     chatModelName?: string;
     baseURL?: string;
@@ -203,7 +197,6 @@ function createPlugin(overrides: {
     const abstractFiles = [...markdownFiles, ...(overrides.abstractFiles ?? [])];
     return {
         settings: {
-            nativeToolPlanningSmokeEnabled: overrides.nativeToolPlanningSmokeEnabled ?? false,
             aiProvider: overrides.aiProvider ?? 'qwen',
             chatModelName: overrides.chatModelName ?? 'qwen3.6-plus',
             baseURL: overrides.baseURL ?? 'https://dashscope.aliyuncs.com/compatible-mode/v1',
