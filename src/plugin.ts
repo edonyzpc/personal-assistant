@@ -714,20 +714,13 @@ export class PluginManager extends Plugin {
 
     getVSSFiles() {
         const files = this.app.vault.getMarkdownFiles();
-        const excludePaths = this.settings.vssCacheExcludePath || [];
-        const normalizedExcludePaths = excludePaths.map((path) => path.trim()).filter(Boolean);
-        const excludeFiles: TFile[] = [];
-        // filter all markdown files which are in exclude-paths
-        for (const file of files) {
-            for (const exclude of normalizedExcludePaths) {
-                if (file.path.startsWith(exclude)) {
-                    excludeFiles.push(file);
-                }
-            }
-        }
-        const vssFiles = files.filter(file => !excludeFiles.includes(file));
-
-        return vssFiles;
+        const normalizedExcludePaths = (this.settings.vssCacheExcludePath ?? [])
+            .map((path) => path.trim())
+            .filter(Boolean);
+        if (normalizedExcludePaths.length === 0) return files;
+        return files.filter((file) =>
+            !normalizedExcludePaths.some((prefix) => file.path.startsWith(prefix))
+        );
     }
 
     private initVss() {
