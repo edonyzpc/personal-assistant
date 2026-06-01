@@ -1,5 +1,6 @@
 import type {
     ChatMessage,
+    ChatRuntimeWarning,
     ChatTurnMemoryMetadata,
     PaAgentPersistedTurn,
     SourceRecord,
@@ -361,14 +362,14 @@ function cloneSourceRecord(record: SourceRecord): SourceRecord {
     };
 }
 
-function cloneRuntimeWarning(warning: { type: string } & Record<string, unknown>) {
+function cloneRuntimeWarning(warning: ChatRuntimeWarning): ChatRuntimeWarning {
     return {
         ...warning,
         metadata:
             warning.metadata && typeof warning.metadata === "object"
-                ? { ...(warning.metadata as Record<string, unknown>) }
+                ? { ...warning.metadata }
                 : undefined,
-    } as typeof warning;
+    };
 }
 
 function generateUuid(): string {
