@@ -159,11 +159,14 @@ export class PluginManager extends Plugin {
 
         // This creates an icon in the left ribbon.
         addIcon('PluginAST', icons['PluginAST']);
-        const ribbonIconEl = this.addRibbonIcon('PluginAST', 'Obsidian Assistant', (evt: MouseEvent) => {
-            // Called when the user clicks the icon.
-            new PluginControlModal(this.app).open();
+        const ribbonIconEl = this.addRibbonIcon('PluginAST', 'Open AI Chat (right-click for plugin controls)', () => {
+            void this.activeChatView();
         });
         ribbonIconEl.addClass('plugin-manager-ribbon-class');
+        ribbonIconEl.addEventListener('contextmenu', (evt: MouseEvent) => {
+            evt.preventDefault();
+            new PluginControlModal(this.app).open();
+        });
 
         if (Platform.isDesktop) {
             // This adds a status bar item to the bottom of the app.

@@ -242,7 +242,7 @@ describe('plugin startup view registration', () => {
         plugin.registerView = registerView;
         plugin.updateMemoryStatusBar = jest.fn(async () => undefined);
         plugin.initializeCalloutManager = jest.fn(async () => undefined);
-        plugin.addRibbonIcon = jest.fn(() => ({ addClass: jest.fn() }));
+        plugin.addRibbonIcon = jest.fn(() => ({ addClass: jest.fn(), addEventListener: jest.fn() }));
         plugin.addCommand = jest.fn();
         plugin.registerEvent = jest.fn();
         plugin.registerEditorExtension = jest.fn();
