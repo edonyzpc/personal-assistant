@@ -1,6 +1,6 @@
 # SDD: 三层 ToolRegistry → CapabilityRegistry 塌缩重构
 
-**Status:** [D] Drafting
+**Status:** [x] Done
 **Phase:** v2.2（可顺延 v2.3，视 v2.2 P0 完成度）
 
 ---

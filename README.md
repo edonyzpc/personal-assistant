@@ -86,7 +86,7 @@ https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 1. automatically create note in the specified directory with the configured file name
 2. automatically open current note related graph view
 3. automatically open Memos like quick note in macOS
-4. switch on/off plugin in command palette
+4. open Personal Assistant controls from the command palette
 5. automatically update plugins with one command
 6. automatically update themes with one command
 7. automatically set color of graph view

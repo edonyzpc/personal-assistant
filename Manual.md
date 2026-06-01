@@ -37,26 +37,26 @@ Once all fields are set, the empty-state banner disappears and the default chat 
 - A streaming reply appears inline. Use the stop button to interrupt; the partial answer is preserved.
 - Hover any reply and use the copy button to copy text or the full message tree.
 
-### 5. Citations and note references
+### 5. Citations and note context
 
-- Type `@` to insert a reference to a vault note; the chat will pull the referenced note's content into the prompt.
-- Drag-drop a note from the file explorer into the composer to attach it.
-- Select text inside a note and trigger the chat command from the editor menu to start a chat about the selection.
+- Open a Markdown note before opening chat to use the empty-state prompt chips for current-note summaries, related-note discovery, and drafting from the current note.
+- When Memory or read-only vault tools are used, the assistant reports the selected note paths or context it used so you can verify the answer.
+- Use Memory preparation/update controls when you want chat to search indexed notes beyond the current note.
 
 ### 6. Web search and tools
 
-- Enable the web-search toggle in the chat header to let the assistant fetch external pages while answering. Results are summarized in-line.
-- Other plugin-provided tools (record-note, search-memory, featured-image, etc.) are available via the assistant when relevant capabilities are enabled in settings.
+- Enable WebSearch in plugin settings to let the assistant fetch external pages while answering when the configured provider supports it. Web results are summarized inline with URLs when available.
+- Chat tools are read-only in this release: Memory search, current-note context, bounded vault metadata/snippet reads, canvas summaries, tag lists, skill guides, and WebSearch when enabled.
 
 ### 7. Memory integration
 
-- After Memory has been prepared (see the **Memory** chapter referenced from settings), the assistant can search your indexed notes before answering. The empty state and the chat header surface Memory status (ready / preparing / disabled).
+- After Memory has been prepared (see the **Memory** chapter referenced from settings), the assistant can search your indexed notes before answering. The composer Memory button surfaces Memory status (ready / preparing / disabled).
 - Memory remains opt-in and runs locally via SQLite/WASM; Chat only sends content to the configured AI provider when you actually send a message.
 
 ### 8. FAQ
 
-- **The banner stays after I added a token** — close and reopen the chat view (or send a message) to refresh; the empty state re-evaluates setup on next render.
-- **The right-click modal disappeared** — right-click works on desktop. On mobile, use the command palette `Open Personal Assistant Controls` instead.
+- **The banner stays after I added a token** — wait for the settings save to finish; the open chat view refreshes when settings change.
+- **The right-click modal disappeared** — right-click works on desktop. On mobile, use the command palette `Open Personal Assistant Controls`.
 - **Chat answers are slow on the first request after install** — Memory and capability registries warm up lazily; subsequent requests are faster.
 
 ## Update Plugins

@@ -1,6 +1,6 @@
 # SDD: AI Chat 首次接触体验改善
 
-**Status:** [D] Drafting
+**Status:** [x] Done
 **Phase:** v2.2（批 1，同 PR 串行 commit）
 
 ---

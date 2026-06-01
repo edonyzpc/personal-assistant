@@ -1,6 +1,6 @@
 # SDD: 无消费者 flag 清理（v2.2）
 
-**Status:** [D] Drafting
+**Status:** [x] Done
 **Phase:** v2.2
 
 ---
