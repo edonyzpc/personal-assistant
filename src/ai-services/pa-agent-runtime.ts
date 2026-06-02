@@ -35,16 +35,30 @@ import {
 import { BUNDLED_SKILL_RESOURCES } from "./bundled-skills";
 import { CapabilityRegistry } from "./capability-registry";
 import { createCoreToolCapabilities } from "./capability-adapter";
-import type {
-    AgentRuntimePlatform,
-    CapabilityProvider,
+import {
+    agentResultToChatToolResult,
+    type AgentCapabilityContext,
+    type AgentRuntimePlatform,
+    type CapabilityProvider,
 } from "./capability-types";
-import { PolicyEngine } from "./policy-engine";
+import { PolicyEngine, type PolicyEngineOptions } from "./policy-engine";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { errorMessage } from "./agent-utils";
 import { SkillContextProvider } from "./skill-context-provider";
-import { createPaAgentCapabilityToolExecutor } from "./pa-agent-host-tools";
+import { chatToolResultToPaAgentToolExecutionResult, createPaAgentCapabilityToolExecutor } from "./pa-agent-host-tools";
 import { extractCanonicalTurnMetadata } from "./pa-agent-history";
+import {
+    ConsoleDebugObserver,
+    createActionExecutor,
+    createSelfWriteRegistry,
+    NOOP_DEBUG_OBSERVER,
+    type ActionExecutor,
+    type DebugObserver,
+    type FsProbe,
+    type PreviewRenderer,
+    type SelfWriteRegistry,
+    type WriteActionCapability,
+} from "./write-action-framework";
 import {
     createRequiredCapabilityHostPolicy,
     getExplicitlySuppressedRequiredCapabilities,
@@ -58,6 +72,7 @@ import {
     type PaAgentModel,
     type PaAgentModelInput,
     type PaAgentModelStreamChunk,
+    type PaAgentToolExecutor,
 } from "./pa-agent-loop";
 import type {
     AgentEvent,
@@ -111,6 +126,39 @@ export interface PaAgentRuntimeOptions {
     runtimePlatform?: AgentRuntimePlatform;
     additionalCapabilityProviders?: readonly CapabilityProvider[];
     skillContextProvider?: SkillContextProvider | null;
+    /**
+     * Write Action Framework v1 PolicyEngine parameters (SDD §4 + §5.1).
+     *
+     * Omit (chat runtime default) → PolicyEngine stays in strict chat mode
+     * (kind="action" rejected, only read-only/network-read non-action allowed).
+     *
+     * Provide `runKind: "review"` + `allowWrite: true` + an
+     * `allowedActionPermissions` allowlist (e.g., `["local-filesystem-write"]`)
+     * to unlock WriteActionCapability registration — used by Pagelet's
+     * PaReviewRuntime caller.
+     */
+    policyOptions?: Pick<PolicyEngineOptions, "runKind" | "allowWrite" | "allowedActionPermissions">;
+    /**
+     * Write Action Framework v1 runtime wiring (SDD §5.2 + §5.3).
+     *
+     * Omit → the framework is inert; `kind="action"` tool calls fall through
+     * to {@link CapabilityRegistry.execute} which will reject them per
+     * PolicyEngine (default-deny). Chat runtime callers should NOT set this.
+     *
+     * Provide a {@link PreviewRenderer} to enable the 4-gate orchestrator:
+     * toolExecutor dispatches `kind="action"` capabilities through
+     * {@link ActionExecutor} (target-confinement → preview-confirmation →
+     * stale-reread → executeWrite). `fsProbe` enables Gate 1 collision/folder
+     * checks and Gate 3 snapshot drift detection; omit on platforms where the
+     * vault adapter is unreachable. `debugObserver` defaults to
+     * {@link ConsoleDebugObserver} when `plugin.settings.debug` is true,
+     * otherwise {@link NOOP_DEBUG_OBSERVER}.
+     */
+    writeAction?: {
+        previewRenderer: PreviewRenderer;
+        fsProbe?: FsProbe;
+        debugObserver?: DebugObserver;
+    };
 }
 
 type ReadOnlyToolContextAvailability = "available" | "partial" | "unavailable";
@@ -469,6 +517,119 @@ class CanonicalToLegacyEventAdapter {
     }
 }
 
+/**
+ * Options for the Write Action Framework aware tool executor (SDD §5.2).
+ */
+export interface WriteActionAwareToolExecutorOptions {
+    /** Base executor used for `kind="tool"` capabilities (chat-runtime path). */
+    baseExecutor: PaAgentToolExecutor;
+    /** 4-gate orchestrator used for `kind="action"` capabilities. */
+    actionExecutor: ActionExecutor;
+    /** Registry source for capability lookup + prepareAndValidate. */
+    registry: CapabilityRegistry;
+    plugin: PluginManager;
+    platform?: AgentRuntimePlatform;
+    onToolRunning?: (tool: string, message: string) => void;
+}
+
+/**
+ * Wrap the standard chat-runtime tool executor so {@link WriteActionCapability}
+ * calls are routed through the framework's 4-gate {@link ActionExecutor}
+ * instead of {@link CapabilityRegistry.execute}.
+ *
+ * Why a wrapping executor (vs mutating capability.execute as the SDD §5.2
+ * pseudocode suggests): the chat-runtime path in
+ * `createPaAgentCapabilityToolExecutor` already owns input gating
+ * (allowed/blocked names), `prepareAndValidate`, host-tool preflight, and
+ * result conversion. Wrapping at this seam keeps all that logic in one place
+ * and avoids cross-cutting side effects on registered capabilities.
+ *
+ * Routing flow (per tool call):
+ *   1. Tool not in registry, or `kind !== "action"` → delegate to baseExecutor
+ *      verbatim (chat tools, builtin web search, skill context, …).
+ *   2. `kind === "action"`:
+ *      a. Run {@link CapabilityRegistry.prepareAndValidate} to honor
+ *         schema_invalid outcome ordering (matches chat-runtime semantics).
+ *      b. Call `ActionExecutor.execute(capability, input, ctx)` — the
+ *         framework drives the 4 gates + execute + (optional) rollback and
+ *         returns an {@link AgentCapabilityResult}.
+ *      c. Convert through `agentResultToChatToolResult` →
+ *         {@link chatToolResultToPaAgentToolExecutionResult} so the loop sees
+ *         the same `PaAgentToolExecutionResult` shape as a tool call.
+ *
+ * Implements `getExecutionMode` by forwarding to the base executor, which in
+ * turn reads the registry. WriteActionCapability declares
+ * `executionMode: "sequential"` per framework type contract, so the loop's
+ * hybrid dispatch correctly serializes the batch.
+ */
+export function createWriteActionAwareToolExecutor(
+    options: WriteActionAwareToolExecutorOptions,
+): PaAgentToolExecutor {
+    return {
+        getExecutionMode: (toolName: string) => {
+            return options.baseExecutor.getExecutionMode?.(toolName);
+        },
+        execute: async (input) => {
+            const toolCall = input.toolCall;
+            const capability = options.registry.get(toolCall.name);
+            if (!capability || capability.kind !== "action") {
+                // Non-action tool → standard chat-runtime path.
+                return options.baseExecutor.execute(input);
+            }
+            const writeCapability = capability as WriteActionCapability;
+            const preparedResult = options.registry.prepareAndValidate(
+                toolCall.name,
+                toolCall.input,
+                { userInput: input.userInput },
+            );
+            if (!preparedResult.ok) {
+                const message = preparedResult.error.message;
+                return {
+                    outcome: "schema_invalid",
+                    promptText: `Tool ${toolCall.name} input invalid: ${message}. Retry with the correct schema.`,
+                    previewText: `Schema validation failed for ${toolCall.name}.`,
+                    metadata: {
+                        outcome: "schema_invalid",
+                        reason: "input_validation_failed",
+                        tool: toolCall.name,
+                    },
+                };
+            }
+            options.onToolRunning?.(toolCall.name, `Running ${toolCall.name}`);
+            const ctx: AgentCapabilityContext = {
+                plugin: options.plugin,
+                turnId: input.turnId,
+                signal: input.signal,
+                platform: options.platform ?? "desktop",
+            };
+            const agentResult = await options.actionExecutor.execute(
+                writeCapability,
+                preparedResult.input,
+                ctx,
+            );
+            const chatToolResult = agentResultToChatToolResult(writeCapability.name, agentResult);
+            const canonicalResult = chatToolResultToPaAgentToolExecutionResult(toolCall, chatToolResult);
+            const augmentedMetadata = preparedResult.repaired
+                ? {
+                    ...(canonicalResult.metadata ?? {}),
+                    inputRepaired: true,
+                    repairReason: preparedResult.repaired.reason,
+                    originalInputSummary: preparedResult.repaired.originalInputSummary,
+                    originalInputKeys: preparedResult.repaired.originalKeys,
+                }
+                : canonicalResult.metadata;
+            return {
+                ...canonicalResult,
+                metadata: augmentedMetadata,
+                sourceRecords: canonicalResult.sourceRecords?.map((record) => ({
+                    ...record,
+                    turnId: record.turnId ?? input.turnId,
+                })),
+            };
+        },
+    };
+}
+
 export class PaAgentRuntime {
     private readonly plugin: PluginManager;
     private readonly planner: ChatPlanner;
@@ -477,6 +638,15 @@ export class PaAgentRuntime {
     private readonly skillContextProvider: SkillContextProvider | null;
     private skillContextProviderRegistered = false;
     private readonly options: PaAgentRuntimeOptions;
+    /**
+     * Write Action Framework v1 per-runtime singletons (SDD §5.2 + §5.3).
+     * Null when {@link PaAgentRuntimeOptions.writeAction} is omitted (chat
+     * runtime default — framework inert). Owned by the runtime so the TTL
+     * timers in {@link SelfWriteRegistry} share the runtime's lifecycle;
+     * {@link PaAgentRuntime.dispose} clears them on plugin unload.
+     */
+    private readonly selfWriteRegistry: SelfWriteRegistry | null;
+    private readonly actionExecutor: ActionExecutor | null;
 
     constructor(plugin: PluginManager, aiUtils: AIUtils, options: PaAgentRuntimeOptions = {}) {
         this.plugin = plugin;
@@ -485,12 +655,34 @@ export class PaAgentRuntime {
         this.memoryTool = new MemorySearchTool(plugin, aiUtils);
         const runtimePlatform = this.options.runtimePlatform ?? "desktop";
         this.toolRegistry = new CapabilityRegistry({
-            policyEngine: new PolicyEngine({ platform: runtimePlatform }),
+            policyEngine: new PolicyEngine({
+                platform: runtimePlatform,
+                ...options.policyOptions,
+            }),
             telemetryEnabled: this.plugin.settings.shareAnonymousCapabilityUsage === true,
             onCapabilityEvent: (event) => {
                 this.plugin.log("PA capability usage event", event);
             },
         });
+        // Per-runtime Write Action Framework wiring (SDD §5.2 + §5.3). Build
+        // selfWriteRegistry + actionExecutor exactly once when writeAction is
+        // provided so the TTL timers + debug observer share the runtime's
+        // lifetime; chat runtime callers leave both null.
+        if (options.writeAction) {
+            const selfWriteRegistry = createSelfWriteRegistry();
+            this.selfWriteRegistry = selfWriteRegistry;
+            this.actionExecutor = createActionExecutor({
+                previewRenderer: options.writeAction.previewRenderer,
+                ...(options.writeAction.fsProbe ? { fsProbe: options.writeAction.fsProbe } : {}),
+                selfWrite: selfWriteRegistry,
+                debugObserver:
+                    options.writeAction.debugObserver
+                    ?? (plugin.settings.debug ? new ConsoleDebugObserver() : NOOP_DEBUG_OBSERVER),
+            });
+        } else {
+            this.selfWriteRegistry = null;
+            this.actionExecutor = null;
+        }
         const memoryTool = this.memoryTool;
         const coreCapabilities = createCoreToolCapabilities([
             createSearchMemoryTool((input, context) => {
@@ -509,6 +701,15 @@ export class PaAgentRuntime {
         this.skillContextProvider = options.skillContextProvider === null
             ? null
             : options.skillContextProvider ?? new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
+    }
+
+    /**
+     * Release per-runtime resources. MUST be called by the owner (e.g., on
+     * plugin unload) to cancel any pending self-write TTL timers held by the
+     * Write Action Framework. Safe to invoke multiple times.
+     */
+    dispose(): void {
+        this.selfWriteRegistry?.dispose();
     }
 
     async streamTurn(options: PaAgentStreamOptions): Promise<void> {
@@ -586,28 +787,41 @@ export class PaAgentRuntime {
                 });
             },
         };
+        const baseToolExecutor = createPaAgentCapabilityToolExecutor({
+            registry: this.toolRegistry,
+            plugin: this.plugin,
+            platform: this.options.runtimePlatform ?? "desktop",
+            onBeforeVssSearch: () => {
+                options.onStatus?.({ type: "retrieving", query: "memory" });
+            },
+            onToolRunning: (tool, message) => {
+                if (tool === "search_memory") return;
+                options.onStatus?.({ type: "tool-running", tool, message });
+            },
+            ...(toolUseConstraints?.allowedToolNames
+                ? { allowedToolNames: toolUseConstraints.allowedToolNames }
+                : {}),
+            ...(toolUseConstraints?.blockedToolNames
+                ? { blockedToolNames: toolUseConstraints.blockedToolNames }
+                : {}),
+        });
+        const toolExecutor = this.actionExecutor
+            ? createWriteActionAwareToolExecutor({
+                baseExecutor: baseToolExecutor,
+                actionExecutor: this.actionExecutor,
+                registry: this.toolRegistry,
+                plugin: this.plugin,
+                platform: this.options.runtimePlatform ?? "desktop",
+                onToolRunning: (tool, message) => {
+                    options.onStatus?.({ type: "tool-running", tool, message });
+                },
+            })
+            : baseToolExecutor;
         const loop = new PaAgentLoop({
             runId,
             userInput: options.prompt,
             model,
-            toolExecutor: createPaAgentCapabilityToolExecutor({
-                registry: this.toolRegistry,
-                plugin: this.plugin,
-                platform: this.options.runtimePlatform ?? "desktop",
-                onBeforeVssSearch: () => {
-                    options.onStatus?.({ type: "retrieving", query: "memory" });
-                },
-                onToolRunning: (tool, message) => {
-                    if (tool === "search_memory") return;
-                    options.onStatus?.({ type: "tool-running", tool, message });
-                },
-                ...(toolUseConstraints?.allowedToolNames
-                    ? { allowedToolNames: toolUseConstraints.allowedToolNames }
-                    : {}),
-                ...(toolUseConstraints?.blockedToolNames
-                    ? { blockedToolNames: toolUseConstraints.blockedToolNames }
-                    : {}),
-            }),
+            toolExecutor,
             hostPolicy: {
                 afterTurn: requiredCapabilityPolicy.hostPolicy.afterTurn,
             },
