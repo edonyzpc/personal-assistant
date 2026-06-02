@@ -23,7 +23,18 @@ import type { ChatAgentSource } from "./chat-types";
 export type AgentCapabilityKind = "tool" | "context" | "action";
 export type AgentCapabilityOrigin = "core" | "builtin-mcp" | "skill";
 export type AgentPermissionV1 = ChatToolPermission | "network-read";
-export type AgentPermissionFuture = "write" | "local-script" | "shell" | "stdio-mcp";
+/**
+ * Future permission tiers (reserved for Write Action Framework v1+; chat runtime rejects all of these).
+ * - "write": generic placeholder kept for backwards compatibility; new code SHOULD use a specific tier below.
+ * - "local-filesystem-write": Write Action Framework v1 vault-content writes (e.g., Pagelet review notes).
+ * - "local-script" / "shell" / "stdio-mcp": Operations Agent mode (v2+).
+ */
+export type AgentPermissionFuture =
+    | "write"
+    | "local-filesystem-write"
+    | "local-script"
+    | "shell"
+    | "stdio-mcp";
 export type AgentPermission = AgentPermissionV1 | AgentPermissionFuture;
 export type AgentCapabilityCost = ChatToolCost | "network-calls";
 export type AgentPlatformSupport = "desktop" | "mobile" | "both";
