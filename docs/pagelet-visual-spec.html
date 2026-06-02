@@ -1,0 +1,464 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>Pagelet 视觉规范 — D004 + D005</title>
+<style>
+  :root {
+    /* 配色 token（D005） */
+    --pagelet-neutral: #e8e8e8;
+    --pagelet-thinking: #7c9eff;
+    --pagelet-done: #5dd39e;
+    --pagelet-error: #ff6b6b;
+    /* 页面背景 */
+    --bg: #1e1e1e;
+    --bg-2: #252525;
+    --bg-3: #2d2d2d;
+    --fg: #e8e8e8;
+    --fg-2: #a0a0a0;
+    --fg-3: #707070;
+    --border: #3a3a3a;
+    --card-bg: #232323;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    padding: 32px 48px;
+  }
+  h1 { font-size: 24px; margin-bottom: 8px; font-weight: 600; }
+  h2 { font-size: 18px; margin: 32px 0 16px; font-weight: 600; border-bottom: 1px solid var(--border); padding-bottom: 8px; }
+  h3 { font-size: 13px; margin: 24px 0 12px; color: var(--fg-2); text-transform: uppercase; letter-spacing: 0.5px; }
+  p { color: var(--fg-2); }
+  .subtitle { color: var(--fg-2); margin-bottom: 24px; }
+  .meta-row { display: flex; gap: 16px; font-size: 12px; color: var(--fg-3); margin-bottom: 16px; }
+  .meta-row code { color: var(--fg-2); background: var(--bg-2); padding: 1px 6px; border-radius: 3px; }
+
+  /* ---------- 状态对比 ---------- */
+  .state-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin-bottom: 16px;
+  }
+  .state-cell {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px 12px 16px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+  }
+  .state-name {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .state-desc {
+    font-size: 11px;
+    color: var(--fg-3);
+    text-align: center;
+    min-height: 32px;
+  }
+  .state-color-chip {
+    width: 14px;
+    height: 14px;
+    border-radius: 3px;
+    border: 1px solid var(--border);
+  }
+  .state-color-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-family: "SF Mono", Menlo, monospace;
+    font-size: 10px;
+    color: var(--fg-3);
+  }
+
+  /* ---------- 场景模拟 ---------- */
+  .scene-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+  }
+  .scene-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    min-height: 200px;
+  }
+  .scene-label {
+    font-size: 11px;
+    color: var(--fg-3);
+    text-transform: uppercase;
+    margin-bottom: 12px;
+  }
+
+  .sugg-mock {
+    background: var(--bg-2);
+    border-radius: 6px;
+    padding: 12px;
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+  }
+  .sugg-mock-text { flex: 1; font-size: 12px; color: var(--fg-2); }
+  .sugg-mock-text strong {
+    color: var(--fg);
+    display: block;
+    font-size: 11px;
+    margin-bottom: 2px;
+  }
+  .sugg-line { font-size: 10px; color: var(--fg-3); margin-top: 4px; }
+  .sugg-actions { display: flex; gap: 6px; margin-top: 10px; }
+  .sugg-btn {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-2);
+    cursor: pointer;
+  }
+  .sugg-cost {
+    font-size: 10px;
+    color: var(--fg-3);
+    margin-top: 6px;
+    font-family: "SF Mono", Menlo, monospace;
+  }
+
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    text-align: center;
+    padding: 24px 12px;
+    color: var(--fg-3);
+    font-size: 11px;
+    min-height: 150px;
+  }
+  .empty-state .empty-mascot { margin-bottom: 12px; opacity: 0.7; }
+
+  .float-scene {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 150px;
+    background: #1a1a1a;
+    border-radius: 6px;
+  }
+  .float-scene-label {
+    font-size: 10px;
+    color: var(--fg-3);
+    margin-top: 8px;
+    text-align: center;
+  }
+
+  /* ---------- 规范表 ---------- */
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+    margin-top: 12px;
+  }
+  th, td {
+    text-align: left;
+    padding: 9px 12px;
+    border-bottom: 1px solid var(--border);
+  }
+  th { color: var(--fg-2); font-weight: 500; background: var(--bg-2); font-size: 11px; text-transform: uppercase; }
+  td code { background: var(--bg-2); padding: 1px 5px; border-radius: 3px; font-size: 11px; color: var(--fg); }
+
+  .color-strip { display: flex; gap: 6px; margin: 12px 0; flex-wrap: wrap; }
+  .color-card {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--bg-2);
+    border-radius: 4px;
+    font-size: 11px;
+  }
+  .color-card .swatch { width: 18px; height: 18px; border-radius: 3px; }
+  .color-card code { color: var(--fg-2); font-family: "SF Mono", Menlo, monospace; }
+
+  /* ---------- 动画（D005 + D007 reduce-motion 兼容） ---------- */
+  @keyframes blink {
+    0%, 95%, 100% { transform: scaleY(1); }
+    97% { transform: scaleY(0.1); }
+  }
+  @keyframes float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-3px); }
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .anim-blink { animation: blink 4s infinite; transform-origin: center; }
+  .anim-float { animation: float 2.4s ease-in-out infinite; }
+  .anim-pulse-1 { animation: pulse 1.4s infinite; }
+  .anim-pulse-2 { animation: pulse 1.4s infinite; animation-delay: 0.2s; }
+  .anim-pulse-3 { animation: pulse 1.4s infinite; animation-delay: 0.4s; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .anim-blink, .anim-float, .anim-pulse-1, .anim-pulse-2, .anim-pulse-3 { animation: none; }
+  }
+
+  footer {
+    margin-top: 48px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    color: var(--fg-3);
+    font-size: 12px;
+  }
+</style>
+</head>
+<body>
+
+<h1>Pagelet 视觉规范</h1>
+<p class="subtitle">D004（A · 极简线稿）+ D005（④ · Tldraw-like 手绘人文）的合体执行规范。<br>所有 mascot 用 SVG 内联渲染，无外部资源，可直接嵌入 Obsidian。</p>
+
+<div class="meta-row">
+  <span>大方向：<code>极简线稿（D004）</code></span>
+  <span>子风格：<code>Tldraw-like 手绘（D005）</code></span>
+  <span>决策来源：<code>docs/review-assistant-decisions.md#D004</code> · <code>#D005</code></span>
+</div>
+
+<!-- ============ 状态矩阵 ============ -->
+<h2>① 4 状态矩阵（Idle / Thinking / Done / Error）</h2>
+
+<div class="state-grid">
+  <!-- IDLE -->
+  <div class="state-cell">
+    <svg width="72" height="72" viewBox="0 0 44 44" class="anim-float">
+      <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="#e8e8e8" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="#e8e8e8" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M16.8 22.1 Q19 22.9 21.2 21.8" fill="none" stroke="#e8e8e8" stroke-width="1.4" stroke-linecap="round" class="anim-blink"/>
+      <path d="M24.8 22 Q27 23 29.1 21.9" fill="none" stroke="#e8e8e8" stroke-width="1.4" stroke-linecap="round" class="anim-blink"/>
+    </svg>
+    <div class="state-name">Idle</div>
+    <div class="state-desc">轻浮动 + 偶尔眨眼<br>等待召唤</div>
+    <div class="state-color-row">
+      <div class="state-color-chip" style="background: #e8e8e8;"></div>
+      <code>#e8e8e8</code>
+    </div>
+  </div>
+
+  <!-- THINKING -->
+  <div class="state-cell">
+    <svg width="72" height="72" viewBox="0 0 44 44" class="anim-float">
+      <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="#7c9eff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="#7c9eff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <circle cx="18" cy="24" r="1.2" fill="#7c9eff" class="anim-pulse-1"/>
+      <circle cx="23" cy="24" r="1.2" fill="#7c9eff" class="anim-pulse-2"/>
+      <circle cx="28" cy="24" r="1.2" fill="#7c9eff" class="anim-pulse-3"/>
+    </svg>
+    <div class="state-name">Thinking</div>
+    <div class="state-desc">三点脉冲<br>"让我看看…"</div>
+    <div class="state-color-row">
+      <div class="state-color-chip" style="background: #7c9eff;"></div>
+      <code>#7c9eff</code>
+    </div>
+  </div>
+
+  <!-- DONE -->
+  <div class="state-cell">
+    <svg width="72" height="72" viewBox="0 0 44 44">
+      <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="#5dd39e" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="#5dd39e" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M16 21.2 L19.1 24 L22 21" fill="none" stroke="#5dd39e" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+      <path d="M24 21 L27 24 L30 21.2" fill="none" stroke="#5dd39e" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    <div class="state-name">Done</div>
+    <div class="state-desc">^^ 眼<br>"看起来不错"</div>
+    <div class="state-color-row">
+      <div class="state-color-chip" style="background: #5dd39e;"></div>
+      <code>#5dd39e</code>
+    </div>
+  </div>
+
+  <!-- ERROR -->
+  <div class="state-cell">
+    <svg width="72" height="72" viewBox="0 0 44 44">
+      <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="#ff6b6b" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="#ff6b6b" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      <path d="M16 21.1 L20 25 M20 21 L16 25.1" stroke="#ff6b6b" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M25 21 L29 25 M29 21.1 L25 25" stroke="#ff6b6b" stroke-width="1.4" stroke-linecap="round"/>
+      <path d="M18 31 Q22 28 26 31" fill="none" stroke="#ff6b6b" stroke-width="1.4" stroke-linecap="round"/>
+    </svg>
+    <div class="state-name">Error</div>
+    <div class="state-desc">x x 眼 + 皱眉<br>调用失败</div>
+    <div class="state-color-row">
+      <div class="state-color-chip" style="background: #ff6b6b;"></div>
+      <code>#ff6b6b</code>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 美术规范 ============ -->
+<h2>② 美术规范 token</h2>
+
+<table>
+  <thead>
+    <tr><th>项</th><th>规范</th><th>说明</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>笔触粗细</td>
+      <td><code>stroke-width: 1.6px</code>（主轮廓）/ <code>1.4px</code>（表情线条）</td>
+      <td>足够 retina 清晰，又不喧宾夺主</td>
+    </tr>
+    <tr>
+      <td>线端 / 拐角</td>
+      <td><code>stroke-linecap: round</code> · <code>stroke-linejoin: round</code></td>
+      <td>圆头 = 手绘质感，避免机械感</td>
+    </tr>
+    <tr>
+      <td>手绘抖动</td>
+      <td>顶点坐标做 <code>±0.1~0.3</code> 的微偏移（如 <code>10.2 8.3 / 36.1 14.2 / 38.1</code>）</td>
+      <td>不规则但克制，区别于"完美直线"</td>
+    </tr>
+    <tr>
+      <td>填充</td>
+      <td><code>fill: none</code>（默认）</td>
+      <td>极简线稿（D004），保持"轻"</td>
+    </tr>
+    <tr>
+      <td>动效曲线</td>
+      <td><code>cubic-bezier</code> ease-in-out · 2.4s 浮动 · 1.4s 脉冲 · 4s 眨眼</td>
+      <td>不规则节奏 = "呼吸感"</td>
+    </tr>
+    <tr>
+      <td>reduce-motion</td>
+      <td>关闭所有 animation；颜色仍随状态变化</td>
+      <td>D007 a11y 兼容</td>
+    </tr>
+    <tr>
+      <td>SVG 视窗</td>
+      <td><code>viewBox="0 0 44 44"</code>，渲染尺寸 16-84px 自适应</td>
+      <td>同源缩放无失真</td>
+    </tr>
+  </tbody>
+</table>
+
+<h3>配色 token</h3>
+<div class="color-strip">
+  <div class="color-card"><div class="swatch" style="background: #e8e8e8;"></div><code>--pagelet-neutral &nbsp;#e8e8e8</code></div>
+  <div class="color-card"><div class="swatch" style="background: #7c9eff;"></div><code>--pagelet-thinking #7c9eff</code></div>
+  <div class="color-card"><div class="swatch" style="background: #5dd39e;"></div><code>--pagelet-done &nbsp;&nbsp;&nbsp;&nbsp;#5dd39e</code></div>
+  <div class="color-card"><div class="swatch" style="background: #ff6b6b;"></div><code>--pagelet-error &nbsp;&nbsp;&nbsp;#ff6b6b</code></div>
+</div>
+
+<!-- ============ 场景模拟 ============ -->
+<h2>③ 场景应用</h2>
+
+<h3>场景 1: Suggestion Card（含 D022 费用展示）</h3>
+<div class="scene-grid">
+  <div class="scene-card" style="grid-column: 1 / -1;">
+    <div class="scene-label">Suggestion Card · 实际渲染形态</div>
+    <div class="sugg-mock">
+      <svg width="28" height="28" viewBox="0 0 44 44" style="flex-shrink: 0;">
+        <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="#7c9eff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="#7c9eff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M16.8 22.1 Q19 22.9 21.2 21.8" fill="none" stroke="#7c9eff" stroke-width="1.4" stroke-linecap="round"/>
+        <path d="M24.8 22 Q27 23 29.1 21.9" fill="none" stroke="#7c9eff" stroke-width="1.4" stroke-linecap="round"/>
+      </svg>
+      <div class="sugg-mock-text">
+        <strong>结构建议</strong>
+        将「待办事项」段落移到笔记开头，更易扫读。
+        <div class="sugg-line">基于 3 处引用 · 关联到 [[2026-week-22 review]]</div>
+        <div class="sugg-actions">
+          <button class="sugg-btn">采纳</button>
+          <button class="sugg-btn">忽略</button>
+        </div>
+        <div class="sugg-cost">this review used ~$0.003</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h3>场景 2: 空状态 vs Idle 漂浮</h3>
+<div class="scene-grid" style="grid-template-columns: 1fr 1fr;">
+  <div class="scene-card">
+    <div class="scene-label">Empty State · 没有建议</div>
+    <div class="empty-state">
+      <span class="empty-mascot">
+        <svg width="56" height="56" viewBox="0 0 44 44">
+          <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="#707070" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+          <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="#707070" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+          <path d="M16.8 22.1 Q19 22.9 21.2 21.8" fill="none" stroke="#707070" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M24.8 22 Q27 23 29.1 21.9" fill="none" stroke="#707070" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+      </span>
+      这篇笔记看起来不错，<br>暂时没有建议。
+    </div>
+  </div>
+  <div class="scene-card">
+    <div class="scene-label">Idle 漂浮 · 等待召唤</div>
+    <div class="float-scene">
+      <div style="text-align: center;">
+        <div class="anim-float">
+          <svg width="64" height="64" viewBox="0 0 44 44">
+            <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="#252525" stroke="#7c9eff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="#7c9eff" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="M16.8 22.1 Q19 22.9 21.2 21.8" fill="none" stroke="#7c9eff" stroke-width="1.4" stroke-linecap="round" class="anim-blink"/>
+            <path d="M24.8 22 Q27 23 29.1 21.9" fill="none" stroke="#7c9eff" stroke-width="1.4" stroke-linecap="round" class="anim-blink"/>
+          </svg>
+        </div>
+        <div class="float-scene-label">轻浮动 2.4s + 偶尔眨眼 4s</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ 实现要点 ============ -->
+<h2>④ 实现要点</h2>
+
+<table>
+  <thead>
+    <tr><th>关注点</th><th>实现</th><th>对应章节</th></tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>状态切换</td>
+      <td>切 CSS class（<code>--idle</code> / <code>--thinking</code> / <code>--done</code> / <code>--error</code>），不重挂 DOM</td>
+      <td>SDD §10.1</td>
+    </tr>
+    <tr>
+      <td>view-type gating</td>
+      <td>仅在 <code>view.getViewType() === "markdown"</code> 时挂载</td>
+      <td>SDD §6.1 R1</td>
+    </tr>
+    <tr>
+      <td>CSS 前缀</td>
+      <td>所有 selector <code>.pa-pagelet-*</code>，根节点 <code>data-plugin="pa-pagelet"</code></td>
+      <td>SDD §6.2 M1</td>
+    </tr>
+    <tr>
+      <td>aria-live</td>
+      <td>Suggestion 容器 <code>aria-live="polite"</code></td>
+      <td>SDD §9.2</td>
+    </tr>
+    <tr>
+      <td>reduce-motion</td>
+      <td>动画关闭、颜色保留</td>
+      <td>SDD §9.3</td>
+    </tr>
+  </tbody>
+</table>
+
+<footer>
+  <p>📝 本规范是 D004 + D005 的视觉执行基准。后续美术调整需同步更新本文件及 <code>docs/review-assistant-decisions.md</code>。</p>
+  <p>原始备选预览（A/B/C/D 大方向、4 套子风格锚点）已并入决策记录，不再单独保留预览文件。</p>
+</footer>
+
+</body>
+</html>
