@@ -10,6 +10,14 @@ import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { confirmUserAction } from "./confirm";
 import { getVaultScopedSecret, hasSecretValue } from "./utils";
+import {
+    PAGELET_DEFAULTS,
+    mergePageletSettings,
+    renderPageletSection,
+    type PageletSettings,
+    type PageletSettingFactory,
+} from "./settings/pagelet";
+import { getPageletUiLanguage } from "./locales/pagelet";
 
 export interface ResizeStyle {
     width: number,
@@ -75,6 +83,12 @@ export interface PluginManagerSettings {
     featuredImagePath: string;
     numFeaturedImages: number;
     vssCacheExcludePath: string[];
+    /**
+     * Pagelet (Review Assistant) namespace. Owned by `src/settings/pagelet/`;
+     * merged + rendered through the helpers exported from that module so
+     * future Pagelet fields stay localized to one file.
+     */
+    pagelet: PageletSettings;
 }
 
 export const DEFAULT_SETTINGS: PluginManagerSettings = {
@@ -148,6 +162,9 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
     // value, so existing users keep their configured exclusions.
     vssCacheExcludePath: [".obsidian"],
+    // Pagelet defaults live next to the Pagelet settings module so adding a
+    // field there does not require a parallel edit here.
+    pagelet: { ...PAGELET_DEFAULTS },
 }
 
 interface GraphColor {
@@ -221,6 +238,10 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
+    // Pagelet has its own per-field normalizer (8 fields, mixed types).
+    // Delegating keeps the legacy merge focused on settings that predate
+    // Pagelet and avoids polluting this file with Pagelet-specific bounds.
+    merged.pagelet = mergePageletSettings(loadedObject.pagelet);
     return merged;
 }
 
@@ -465,6 +486,7 @@ export class SettingTab extends PluginSettingTab {
         this.renderAISection(containerEl);
         this.renderSkillsSection(containerEl);
         this.renderMemorySection(containerEl);
+        this.renderPageletSection(containerEl);
         this.renderStatisticsSection(containerEl);
         this.renderRecordSection(containerEl);
         this.renderGraphSection(containerEl);
@@ -1692,6 +1714,23 @@ export class SettingTab extends PluginSettingTab {
                         await plugin.saveSettings();
                     });
             });
+    }
+
+    private renderPageletSection(parentEl: HTMLElement): void {
+        const plugin = this.plugin;
+        // Adapt Obsidian's `Setting` constructor into the bare-bones factory
+        // shape `renderPageletSection` expects. Keeping the factory thin lets
+        // the Pagelet module stay free of any Obsidian dependency, which in
+        // turn makes its unit tests trivial.
+        const factory: PageletSettingFactory = {
+            create: (containerEl) => new Setting(containerEl) as unknown as ReturnType<PageletSettingFactory["create"]>,
+        };
+        renderPageletSection(
+            parentEl,
+            plugin as unknown as Parameters<typeof renderPageletSection>[1],
+            factory,
+            getPageletUiLanguage(),
+        );
     }
 
     private renderSkillsSection(parentEl: HTMLElement): void {

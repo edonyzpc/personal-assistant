@@ -1121,6 +1121,14 @@ describe('Phase 3 IA reorder + provider UX', () => {
             // qwenOptionsContainer (not a top-level child), so it is absent here.
             'h3:Skill guides',
             'h2:Memory',
+            // Pagelet section ships between Memory and Statistics (B3). Its
+            // three sub-headings (General/Model/Limits) are also top-level
+            // children of containerEl because `renderPageletSection` writes
+            // them onto the same parent as the h2.
+            'h2:Pagelet',
+            'h3:General',
+            'h3:Model',
+            'h3:Limits',
             'h2:Vault Statistics',
             'h2:Settings for Record',
             'h2:Settings for Hover Local Graph',
