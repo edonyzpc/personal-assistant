@@ -1,5 +1,6 @@
 import type {
     AgentCapability,
+    AgentPermission,
     AgentPermissionFuture,
     AgentRuntimePlatform,
 } from "./capability-types";
@@ -15,15 +16,22 @@ export type PolicyRunKind = "chat" | "review";
 export interface PolicyEngineOptions {
     platform?: AgentRuntimePlatform;
     /**
-     * Write Action Framework v1 parameters (Step 0 type skeleton).
+     * Write Action Framework v1 parameters (see framework SDD §4).
      *
-     * When omitted (legacy chat runtime), PolicyEngine behavior is 100% unchanged:
-     * kind="action" rejected, permission must be "read-only"|"network-read",
-     * requiresConfirmation must be false, failureBehavior must be "recoverable".
+     * When omitted (legacy chat runtime caller, e.g. pa-agent-runtime.ts:488),
+     * PolicyEngine behavior is 100% unchanged from PA v1:
+     * - kind="action" rejected (defaults: runKind="chat", allowWrite=false)
+     * - non-action permission must be "read-only" | "network-read"
+     * - non-action requiresConfirmation must be false
+     * - failureBehavior must be "recoverable"
      *
-     * When runKind="review" AND allowWrite=true, kind="action" capabilities whose permission
-     * is in `allowedActionPermissions` are permitted. The behavior matrix is implemented in
-     * Track A · A1 (see docs/sdd-rollout-plan.md §3.2 and framework SDD §4).
+     * When `runKind="review"` AND `allowWrite=true` (review runtime / future Operations
+     * Agent mode), kind="action" capabilities whose permission is listed in
+     * `allowedActionPermissions` are permitted. Any other combination
+     * (runKind="chat" with any allowWrite, or runKind="review" with allowWrite=false)
+     * keeps the strict chat-runtime behavior.
+     *
+     * Non-action capabilities retain the v1 chat constraints regardless of runKind/allowWrite.
      */
     runKind?: PolicyRunKind;
     allowWrite?: boolean;
@@ -34,13 +42,13 @@ export class PolicyEngine {
     private readonly platform: AgentRuntimePlatform;
     private readonly runKind: PolicyRunKind;
     private readonly allowWrite: boolean;
-    private readonly allowedActionPermissions: readonly AgentPermissionFuture[];
+    private readonly allowedActionPermissions: ReadonlySet<AgentPermission>;
 
     constructor(options: PolicyEngineOptions = {}) {
         this.platform = options.platform ?? "desktop";
         this.runKind = options.runKind ?? "chat";
         this.allowWrite = options.allowWrite ?? false;
-        this.allowedActionPermissions = options.allowedActionPermissions ?? [];
+        this.allowedActionPermissions = new Set<AgentPermission>(options.allowedActionPermissions ?? []);
     }
 
     canExport(capability: AgentCapability): CapabilityPolicyDecision {
@@ -57,16 +65,37 @@ export class PolicyEngine {
 
     private evaluate(capability: AgentCapability): CapabilityPolicyDecision {
         if (capability.kind === "action") {
-            return { allowed: false, reason: "action capabilities are reserved for future action mode" };
-        }
-        if (capability.permission !== "read-only" && capability.permission !== "network-read") {
-            return { allowed: false, reason: `permission ${capability.permission} is not allowed in PA Agent v1` };
-        }
-        if (capability.requiresConfirmation !== false) {
-            return { allowed: false, reason: "v1 capabilities must not require confirmation" };
+            if (this.runKind !== "review" || !this.allowWrite) {
+                return {
+                    allowed: false,
+                    reason: `action capabilities require runKind="review" AND allowWrite=true`,
+                };
+            }
+            if (!this.allowedActionPermissions.has(capability.permission)) {
+                return {
+                    allowed: false,
+                    reason: `action permission "${capability.permission}" not in allowlist`,
+                };
+            }
+            // Action capabilities are required to have requiresConfirmation=true at the
+            // type layer (see write-action-framework/types.ts WriteActionCapability).
+            // PolicyEngine does not re-validate that flag here; framework gates enforce it
+            // at execution time via the Preview-Confirmation Lifecycle.
+        } else {
+            // Non-action capability: retain PA v1 chat constraints (read-only/network-read,
+            // no confirmation, recoverable). These limits hold regardless of allowWrite.
+            if (capability.permission !== "read-only" && capability.permission !== "network-read") {
+                return {
+                    allowed: false,
+                    reason: `permission ${capability.permission} is not allowed for non-action capabilities`,
+                };
+            }
+            if (capability.requiresConfirmation !== false) {
+                return { allowed: false, reason: "non-action capabilities must not require confirmation" };
+            }
         }
         if (capability.failureBehavior !== "recoverable") {
-            return { allowed: false, reason: "v1 capabilities must be recoverable" };
+            return { allowed: false, reason: "capabilities must be recoverable" };
         }
         if (!isPlatformSupported(capability.platform, this.platform)) {
             return { allowed: false, reason: `capability is not supported on ${this.platform}` };
