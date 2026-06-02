@@ -59,6 +59,18 @@ import {
     type PageletReviewResult,
     type PageletSuggestion,
 } from "./pa-review-schemas";
+import {
+    estimateTokens,
+    preCheckCost,
+    type CostPreCheckDecision,
+    type PageletCostBudget,
+    type PageletCostEntry,
+    type PageletCostTracker,
+} from "./pa-review-cost";
+import {
+    type PageletRateLimiter,
+    type RateLimitDecision,
+} from "./pa-review-rate-limit";
 import { pageletT, type PageletLocale } from "../locales/pagelet";
 
 // ---------------------------------------------------------------------------
@@ -98,7 +110,15 @@ export type PageletReviewErrorCode =
     | "schema_invalid"
     | "parse_failed"
     | "timeout"
-    | "provider_error";
+    | "provider_error"
+    /** B4 cost-gate: requested input exceeds the user-configured input cap. */
+    | "input_too_large"
+    /** B4 cost-gate: input + reserved output budget exceeds the 36K hard cap (D018). */
+    | "hard_cap_exceeded"
+    /** B4 rate-limit: hourly call cap reached (D020 — 10/hr). */
+    | "rate_limit_hourly"
+    /** B4 rate-limit: daily call cap reached (D020 — 100/day). */
+    | "rate_limit_daily";
 
 export type PageletReviewPath =
     | "structured"
@@ -117,6 +137,25 @@ export interface PageletReviewDiagnostics {
     providerError?: string;
     /** ms spent in LLM invocations (sum across attempts). */
     elapsedMs: number;
+    /**
+     * B4: pre-flight estimate of input tokens (system + user prompt). Always
+     * populated when the orchestrator passes a `costBudget`; otherwise 0 so
+     * downstream metrics can still aggregate without guarding for undefined.
+     */
+    estimatedInputTokens?: number;
+    /**
+     * B4: cost entry recorded after a successful call. Absent for error
+     * outcomes and for B1-style tests that pass no cost tracker.
+     */
+    costEntry?: PageletCostEntry;
+    /**
+     * B4: when a rate-limit or cost cap rejected the call, this is set to
+     * the gate's resume timestamp / detail. UI uses it to render
+     * "available in N min".
+     */
+    gateRejection?:
+        | { kind: "rate-limit"; reason: "hr-cap" | "day-cap"; resumeAt: number }
+        | { kind: "cost"; reason: "input_too_large" | "hard_cap_exceeded"; detail: string };
 }
 
 export type PageletReviewOutcome =
@@ -164,6 +203,38 @@ export interface PageletReviewModelOptions {
      * stable copy without depending on a window global.
      */
     userMessageLocale?: PageletLocale;
+    // -----------------------------------------------------------------
+    // B4 dependency-injection seams (all OPTIONAL — when absent, the
+    // orchestrator behaves exactly as in B1 so B1's test suite stays green
+    // without re-mocking storage / clock / pricing).
+    // -----------------------------------------------------------------
+    /**
+     * Cost budget — derived from `PageletSettings.maxInputTokens` /
+     * `maxOutputTokens`. When set, `reviewNote()` runs a pre-flight token
+     * check and rejects with `input_too_large` / `hard_cap_exceeded`
+     * BEFORE issuing the LLM call (D018).
+     */
+    costBudget?: PageletCostBudget;
+    /**
+     * Cost tracker — accumulates per-call usage. When set, `reviewNote()`
+     * records an entry on every successful call so the SuggestionCard
+     * footer (B2) can display "this review used ~$0.003" (D022).
+     */
+    costTracker?: PageletCostTracker;
+    /**
+     * Rate limiter — enforces hourly / daily call caps (D020). When set,
+     * `reviewNote()` calls `reserve()` before the LLM call and surfaces
+     * `rate_limit_hourly` / `rate_limit_daily` if the gate rejects.
+     */
+    rateLimiter?: PageletRateLimiter;
+    /**
+     * Provider / model strings used as the pricing lookup composite key.
+     * Pulled from settings in production. When omitted, the cost tracker
+     * records the call as "pricing unknown" (D022 — explicit ~$? rather
+     * than silently zero).
+     */
+    providerForPricing?: string;
+    modelForPricing?: string;
 }
 
 const DEFAULT_OPTIONS: Required<
@@ -210,6 +281,41 @@ const ERROR_MESSAGE_KEYS: Record<PageletReviewErrorCode, string> = {
     parse_failed: "pagelet.errors.parse_failed",
     timeout: "pagelet.errors.timeout",
     provider_error: "pagelet.errors.provider_error",
+    // B4 — the four new error codes deliberately reuse `pagelet.cost.*` keys
+    // that B3 already registered. Mapping rationale:
+    //   - rate_limit_hourly / rate_limit_daily reuse `pagelet.cost.limitReached`
+    //     because the user-facing copy ("Pagelet hit the daily call limit. It
+    //     will resume tomorrow.") is close enough for both cases. A future
+    //     B3 follow-up may split these into distinct hourly vs daily strings;
+    //     the codes already exist so that split is purely a translation edit.
+    //   - input_too_large / hard_cap_exceeded fall through to the key itself
+    //     for now — the `pageletT` loader surfaces the key string, which is
+    //     loudly visible during the v1 beta so missing translations get
+    //     caught in user feedback rather than silently degrading. The
+    //     `ERROR_MESSAGE_FALLBACKS` below provides a sane English fallback
+    //     so end users still get a readable sentence.
+    input_too_large: "pagelet.errors.input_too_large",
+    hard_cap_exceeded: "pagelet.errors.hard_cap_exceeded",
+    rate_limit_hourly: "pagelet.cost.limitReached",
+    rate_limit_daily: "pagelet.cost.limitReached",
+};
+
+/**
+ * Best-effort English fallbacks for error codes whose i18n key isn't yet in
+ * the locale dictionary. `pageletT` only returns the key name when no entry
+ * is found anywhere — supplying a fallback here means the user reads a real
+ * sentence, while the key-name surface still works for `console.warn` /
+ * debug telemetry.
+ *
+ * Once B3 registers proper `pagelet.errors.input_too_large` /
+ * `pagelet.errors.hard_cap_exceeded` strings (EN + ZH), these fallbacks
+ * become dead branches — the dictionary hit takes precedence.
+ */
+const ERROR_MESSAGE_FALLBACKS: Partial<Record<PageletReviewErrorCode, string>> = {
+    input_too_large:
+        "Pagelet refused this review: the note exceeds the configured input token limit. Try splitting the note or lowering it under the cap.",
+    hard_cap_exceeded:
+        "Pagelet refused this review: input plus reserved output budget exceeds the 36K hard cap. Lower max input or max output tokens in settings.",
 };
 
 // ---------------------------------------------------------------------------
@@ -257,6 +363,26 @@ export class PageletReviewModel {
         const systemPrompt = buildSystemPrompt(parsedInput.detectedLanguage);
         const userPrompt = buildUserPrompt(parsedInput);
 
+        // ---- B4 gate 1: cost pre-flight (D018) ----------------------------
+        // Pre-flight FIRST because we don't want to burn a rate-limit slot
+        // on a request we'd reject for size. The order is:
+        //   1. estimate input tokens
+        //   2. preCheckCost → may return input_too_large / hard_cap_exceeded
+        //   3. rateLimiter.reserve → may return rate_limit_*
+        //   4. factory + LLM
+        //   5. cost record on success
+        const costGateResult = this.runCostPreCheck(
+            systemPrompt,
+            userPrompt,
+            diagnostics,
+            effectiveOpts,
+        );
+        if (costGateResult) return costGateResult;
+
+        // ---- B4 gate 2: rate-limit reservation (D020) ---------------------
+        const rateGateResult = await this.runRateLimitGate(diagnostics, effectiveOpts);
+        if (rateGateResult) return rateGateResult;
+
         let model: PageletChatModelLike;
         try {
             model = await this.factory(effectiveOpts.temperature, {
@@ -284,7 +410,10 @@ export class PageletReviewModel {
                 now,
                 signal,
             );
-            if (structuredOutcome) return structuredOutcome;
+            if (structuredOutcome) {
+                this.maybeRecordCost(structuredOutcome, diagnostics, effectiveOpts);
+                return structuredOutcome;
+            }
             // structuredOutcome returns null when we should fall through to JSON mode.
         }
 
@@ -299,7 +428,7 @@ export class PageletReviewModel {
             );
         }
 
-        return this.runWithJsonMode(
+        const jsonModeOutcome = await this.runWithJsonMode(
             model,
             systemPrompt,
             userPrompt,
@@ -310,6 +439,89 @@ export class PageletReviewModel {
             now,
             signal,
         );
+        this.maybeRecordCost(jsonModeOutcome, diagnostics, effectiveOpts);
+        return jsonModeOutcome;
+    }
+
+    // ----- B4 gate helpers ---------------------------------------------------
+
+    /**
+     * Estimate input tokens, run pre-flight cost check, and (if rejected)
+     * return a terminal error outcome. Stores the estimate on diagnostics
+     * regardless of outcome so telemetry can see what the size looked like.
+     */
+    private runCostPreCheck(
+        systemPrompt: string,
+        userPrompt: string,
+        diagnostics: PageletReviewDiagnostics,
+        opts: typeof DEFAULT_OPTIONS & PageletReviewModelOptions,
+    ): PageletReviewOutcome | null {
+        const budget = opts.costBudget;
+        if (!budget) return null;
+        const estimated = estimateTokens(systemPrompt) + estimateTokens(userPrompt);
+        diagnostics.estimatedInputTokens = estimated;
+        const decision: CostPreCheckDecision = preCheckCost(estimated, budget);
+        if (decision.ok) return null;
+        diagnostics.gateRejection = {
+            kind: "cost",
+            reason: decision.reason,
+            detail: decision.detail,
+        };
+        return errorOutcome(decision.reason, diagnostics, opts.userMessageLocale);
+    }
+
+    /**
+     * Reserve a slot from the rate limiter. On `ok` returns null (the
+     * caller proceeds); on rejection, surfaces the corresponding error
+     * code AND stamps gateRejection so the UI can render "available in
+     * N min" without re-querying the limiter.
+     */
+    private async runRateLimitGate(
+        diagnostics: PageletReviewDiagnostics,
+        opts: typeof DEFAULT_OPTIONS & PageletReviewModelOptions,
+    ): Promise<PageletReviewOutcome | null> {
+        const limiter = opts.rateLimiter;
+        if (!limiter) return null;
+        const decision: RateLimitDecision = await limiter.reserve();
+        if (decision.ok) return null;
+        diagnostics.gateRejection = {
+            kind: "rate-limit",
+            reason: decision.reason,
+            resumeAt: decision.resumeAt,
+        };
+        const code: PageletReviewErrorCode =
+            decision.reason === "hr-cap" ? "rate_limit_hourly" : "rate_limit_daily";
+        return errorOutcome(code, diagnostics, opts.userMessageLocale);
+    }
+
+    /**
+     * Record cost on a successful outcome (`ok` or `empty`). Errors don't
+     * record because the LLM may have produced no usable tokens — we don't
+     * want a 401 to show up as "$0.000" in the cost history.
+     *
+     * Output-token estimation is best-effort:
+     *   - structured path: stringify the result to approximate the model's
+     *     emitted JSON length.
+     *   - empty path: same approach; an empty `suggestions: []` still costs
+     *     a few tokens of envelope.
+     */
+    private maybeRecordCost(
+        outcome: PageletReviewOutcome,
+        diagnostics: PageletReviewDiagnostics,
+        opts: typeof DEFAULT_OPTIONS & PageletReviewModelOptions,
+    ): void {
+        const tracker = opts.costTracker;
+        if (!tracker) return;
+        if (outcome.status !== "ok" && outcome.status !== "empty") return;
+        const inputTokens = diagnostics.estimatedInputTokens ?? 0;
+        const outputTokens = estimateTokens(safeStringify(outcome.result));
+        const entry = tracker.record({
+            inputTokens,
+            outputTokens,
+            provider: opts.providerForPricing,
+            model: opts.modelForPricing,
+        });
+        diagnostics.costEntry = entry;
     }
 
     // ----- Structured path ---------------------------------------------------
@@ -585,6 +797,20 @@ function errorMessage(err: unknown): string {
     }
 }
 
+/**
+ * Stringify a value for output-token estimation, swallowing circular-ref
+ * errors. The fallback uses `String(value)` which gives a meaningful
+ * approximation (`[object Object]` is ~16 chars, ~4 tokens) so cost
+ * accounting degrades gracefully on pathological payloads.
+ */
+function safeStringify(value: unknown): string {
+    try {
+        return JSON.stringify(value) ?? "";
+    } catch {
+        return String(value);
+    }
+}
+
 function errorOutcome(
     code: PageletReviewErrorCode,
     diagnostics: PageletReviewDiagnostics,
@@ -607,7 +833,7 @@ function errorOutcome(
  * See `pageletT` in `src/locales/pagelet/index.ts`.
  */
 function resolveErrorMessage(code: PageletReviewErrorCode, locale: PageletLocale): string {
-    return pageletT(ERROR_MESSAGE_KEYS[code], locale);
+    return pageletT(ERROR_MESSAGE_KEYS[code], locale, undefined, ERROR_MESSAGE_FALLBACKS[code]);
 }
 
 function appendRetryHint(originalUserPrompt: string, errors: readonly string[]): string {
