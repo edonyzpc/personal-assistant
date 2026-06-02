@@ -1,0 +1,72 @@
+{
+    "pagelet.mascot.idle": "Pagelet is watching.",
+    "pagelet.mascot.thinking": "Let me take a look…",
+    "pagelet.mascot.done": "Done — see what I noticed.",
+    "pagelet.mascot.error": "Something went wrong. Try again or send feedback.",
+
+    "pagelet.suggestion.kind.clarify": "Clarify",
+    "pagelet.suggestion.kind.expand": "Expand",
+    "pagelet.suggestion.kind.link": "Link",
+    "pagelet.suggestion.kind.trim": "Trim",
+    "pagelet.suggestion.kind.evidence": "Evidence",
+
+    "pagelet.suggestion.accept": "Accept",
+    "pagelet.suggestion.dismiss": "Dismiss",
+    "pagelet.suggestion.source": "Source",
+    "pagelet.suggestion.rationale": "Why",
+    "pagelet.suggestion.proposedAction": "Suggested action",
+    "pagelet.suggestion.partialBadge": "Partial",
+    "pagelet.suggestion.truncatedBadge": "Shortened by Pagelet",
+
+    "pagelet.settings.section.title": "Pagelet",
+    "pagelet.settings.section.subtitle": "Your note's quiet reviewer.",
+    "pagelet.settings.beta.callout": "Pagelet is in Beta. Suggestions may be imperfect — your feedback helps us improve.",
+    "pagelet.settings.beta.sendFeedback": "Send feedback →",
+    "pagelet.settings.general.heading": "General",
+    "pagelet.settings.model.heading": "Model",
+    "pagelet.settings.limits.heading": "Limits",
+    "pagelet.settings.advanced.heading": "Advanced",
+
+    "pagelet.settings.enabled.name": "Enable Pagelet",
+    "pagelet.settings.enabled.desc": "Turn the Pagelet reviewer on. When off, the mascot, ribbon, and review commands are hidden.",
+
+    "pagelet.settings.reviewsFolder.name": "Reviews folder",
+    "pagelet.settings.reviewsFolder.desc": "Vault path where review notes are stored. Defaults to .pagelet (a dotfolder so other plugins skip it).",
+
+    "pagelet.settings.outputLanguage.name": "Output language",
+    "pagelet.settings.outputLanguage.desc": "Language used for review suggestions. Auto follows the note's language; pick a value to force one.",
+    "pagelet.settings.outputLanguage.option.auto": "Auto (follow note language)",
+    "pagelet.settings.outputLanguage.option.zh": "Chinese (Simplified)",
+    "pagelet.settings.outputLanguage.option.en": "English",
+
+    "pagelet.settings.ribbonPosition.name": "Ribbon position",
+    "pagelet.settings.ribbonPosition.desc": "Where the Pagelet ribbon icon appears in Obsidian's left bar.",
+    "pagelet.settings.ribbonPosition.option.default": "Default",
+    "pagelet.settings.ribbonPosition.option.top": "Top",
+    "pagelet.settings.ribbonPosition.option.hidden": "Hidden",
+
+    "pagelet.settings.temperature.name": "Temperature",
+    "pagelet.settings.temperature.desc": "Model creativity. Lower values produce more deterministic reviews. Range 0.0 to 0.5; default 0.2.",
+
+    "pagelet.settings.maxInputTokens.name": "Max input tokens",
+    "pagelet.settings.maxInputTokens.desc": "Per-review input cap. Default 8000; max 32000. Longer notes are split or refused.",
+
+    "pagelet.settings.maxOutputTokens.name": "Max output tokens",
+    "pagelet.settings.maxOutputTokens.desc": "Per-review output cap. Default 2000; max 4000.",
+
+    "pagelet.errors.schema_invalid": "Pagelet review failed: the model's response did not match the expected structure. Please try again or send feedback.",
+    "pagelet.errors.parse_failed": "Pagelet review failed: the model's response could not be parsed. Please try again or send feedback.",
+    "pagelet.errors.timeout": "Pagelet review timed out. Try again, or shorten the note before retrying.",
+    "pagelet.errors.provider_error": "Pagelet review failed: the AI provider returned an error. Check your API key, provider, and model in settings.",
+
+    "pagelet.cost.label": "Cost",
+    "pagelet.cost.todayTotal": "Today's cost",
+    "pagelet.cost.estimate": "Estimated cost: {usd}",
+    "pagelet.cost.limitReached": "Pagelet hit the daily call limit. It will resume tomorrow.",
+
+    "pagelet.a11y.suggestionsRegion": "Pagelet suggestions",
+    "pagelet.a11y.mascotLabel": "Pagelet status indicator",
+    "pagelet.a11y.focusLatestCommand": "Focus latest Pagelet suggestion",
+    "pagelet.a11y.dismissCardLabel": "Dismiss this suggestion",
+    "pagelet.a11y.acceptCardLabel": "Accept this suggestion"
+}

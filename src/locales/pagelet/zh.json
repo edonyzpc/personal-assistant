@@ -1,0 +1,72 @@
+{
+    "pagelet.mascot.idle": "拾页在静静看着。",
+    "pagelet.mascot.thinking": "让我看看…",
+    "pagelet.mascot.done": "看完了，看看我发现了什么。",
+    "pagelet.mascot.error": "出了点问题。重试或发送反馈。",
+
+    "pagelet.suggestion.kind.clarify": "澄清",
+    "pagelet.suggestion.kind.expand": "展开",
+    "pagelet.suggestion.kind.link": "关联",
+    "pagelet.suggestion.kind.trim": "精简",
+    "pagelet.suggestion.kind.evidence": "佐证",
+
+    "pagelet.suggestion.accept": "采纳",
+    "pagelet.suggestion.dismiss": "忽略",
+    "pagelet.suggestion.source": "来源",
+    "pagelet.suggestion.rationale": "原因",
+    "pagelet.suggestion.proposedAction": "建议动作",
+    "pagelet.suggestion.partialBadge": "部分",
+    "pagelet.suggestion.truncatedBadge": "已被拾页截短",
+
+    "pagelet.settings.section.title": "拾页",
+    "pagelet.settings.section.subtitle": "你笔记里安静的审阅者。",
+    "pagelet.settings.beta.callout": "拾页处于 Beta 阶段，建议可能不完美 —— 你的反馈帮助我们改进。",
+    "pagelet.settings.beta.sendFeedback": "发送反馈 →",
+    "pagelet.settings.general.heading": "通用",
+    "pagelet.settings.model.heading": "模型",
+    "pagelet.settings.limits.heading": "限额",
+    "pagelet.settings.advanced.heading": "高级",
+
+    "pagelet.settings.enabled.name": "启用拾页",
+    "pagelet.settings.enabled.desc": "开启拾页审阅器。关闭后，吉祥物、ribbon 图标和审阅命令都会隐藏。",
+
+    "pagelet.settings.reviewsFolder.name": "审阅笔记目录",
+    "pagelet.settings.reviewsFolder.desc": "审阅笔记保存的 vault 路径。默认 .pagelet（dotfolder，其他插件会跳过）。",
+
+    "pagelet.settings.outputLanguage.name": "输出语言",
+    "pagelet.settings.outputLanguage.desc": "审阅建议使用的语言。Auto 跟随笔记语言；选择具体值则强制使用。",
+    "pagelet.settings.outputLanguage.option.auto": "Auto（跟随笔记语言）",
+    "pagelet.settings.outputLanguage.option.zh": "中文（简体）",
+    "pagelet.settings.outputLanguage.option.en": "英文",
+
+    "pagelet.settings.ribbonPosition.name": "Ribbon 位置",
+    "pagelet.settings.ribbonPosition.desc": "拾页 ribbon 图标在 Obsidian 左侧栏的位置。",
+    "pagelet.settings.ribbonPosition.option.default": "默认",
+    "pagelet.settings.ribbonPosition.option.top": "顶部",
+    "pagelet.settings.ribbonPosition.option.hidden": "隐藏",
+
+    "pagelet.settings.temperature.name": "Temperature",
+    "pagelet.settings.temperature.desc": "模型创造性。值越低，审阅结果越确定。范围 0.0 至 0.5，默认 0.2。",
+
+    "pagelet.settings.maxInputTokens.name": "输入 token 上限",
+    "pagelet.settings.maxInputTokens.desc": "单次审阅的输入上限。默认 8000，最大 32000。更长的笔记会被拆分或拒绝。",
+
+    "pagelet.settings.maxOutputTokens.name": "输出 token 上限",
+    "pagelet.settings.maxOutputTokens.desc": "单次审阅的输出上限。默认 2000，最大 4000。",
+
+    "pagelet.errors.schema_invalid": "拾页审阅失败：模型返回的结构不符合预期。请重试或发送反馈。",
+    "pagelet.errors.parse_failed": "拾页审阅失败：无法解析模型返回的内容。请重试或发送反馈。",
+    "pagelet.errors.timeout": "拾页审阅超时。请重试，或先缩短笔记再重试。",
+    "pagelet.errors.provider_error": "拾页审阅失败：AI 服务商返回了错误。请在设置中检查你的 API key、provider 和模型。",
+
+    "pagelet.cost.label": "费用",
+    "pagelet.cost.todayTotal": "今日费用",
+    "pagelet.cost.estimate": "预估费用：{usd}",
+    "pagelet.cost.limitReached": "拾页已达今日调用上限，明日恢复。",
+
+    "pagelet.a11y.suggestionsRegion": "拾页建议",
+    "pagelet.a11y.mascotLabel": "拾页状态指示",
+    "pagelet.a11y.focusLatestCommand": "聚焦最新的拾页建议",
+    "pagelet.a11y.dismissCardLabel": "忽略此条建议",
+    "pagelet.a11y.acceptCardLabel": "采纳此条建议"
+}

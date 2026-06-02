@@ -59,6 +59,7 @@ import {
     type PageletReviewResult,
     type PageletSuggestion,
 } from "./pa-review-schemas";
+import { pageletT, type PageletLocale } from "../locales/pagelet";
 
 // ---------------------------------------------------------------------------
 // Minimal LangChain model surface.
@@ -156,32 +157,59 @@ export interface PageletReviewModelOptions {
     modelName?: string;
     /** Injectable clock for tests. */
     now?: () => number;
+    /**
+     * Locale used to render the user-facing `outcome.userMessage` string.
+     * Follows UI language per D014 + D017 (mascot / settings are UI lang,
+     * not note lang). Defaults to "en" so headless callers / tests get
+     * stable copy without depending on a window global.
+     */
+    userMessageLocale?: PageletLocale;
 }
 
 const DEFAULT_OPTIONS: Required<
-    Pick<PageletReviewModelOptions, "maxRetries" | "temperature" | "disableStructuredOutput" | "disableFreeFormFallback">
+    Pick<
+        PageletReviewModelOptions,
+        | "maxRetries"
+        | "temperature"
+        | "disableStructuredOutput"
+        | "disableFreeFormFallback"
+        | "userMessageLocale"
+    >
 > = {
     maxRetries: 1,
     temperature: 0.2,
     disableStructuredOutput: false,
     disableFreeFormFallback: false,
+    // EN is a safer default than reading a window global at module load:
+    // jest, storybook, and the Track A worktree all execute without a
+    // configured Obsidian shell, and silently switching to a different
+    // locale there would yield non-deterministic test output.
+    userMessageLocale: "en",
 };
 
 // ---------------------------------------------------------------------------
-// Friendly error copy. Keeping these inline (not in i18n yet) because B3
-// owns i18n key registration — leaving inert English strings makes the B3
-// migration a single grep + replace later.
+// Friendly error copy.
+//
+// Migrated to i18n keys in B3 (`src/locales/pagelet/{en,zh}.json`). The
+// orchestrator looks up `pagelet.errors.<code>` via the shared loader and
+// renders the result through `outcome.userMessage`. Callers that want to
+// force a specific locale can pass `userMessageLocale` on the options
+// bag — the default mirrors PA's UI language pick (D014 + D017).
+//
+// The map below is a translation table from internal error codes to i18n
+// keys. Adding a new error code therefore requires THREE edits in lockstep:
+//   1. extend `PageletReviewErrorCode` above
+//   2. add the key here
+//   3. add the localized string in en.json + zh.json
+// The parity test in pa-locales-pagelet.test.ts guarantees (3) does not
+// drift from (1).
 // ---------------------------------------------------------------------------
 
-const USER_MESSAGES: Record<PageletReviewErrorCode, string> = {
-    schema_invalid:
-        "Pagelet review failed: the model's response did not match the expected structure. Please try again or send feedback.",
-    parse_failed:
-        "Pagelet review failed: the model's response could not be parsed. Please try again or send feedback.",
-    timeout:
-        "Pagelet review timed out. Try again, or shorten the note before retrying.",
-    provider_error:
-        "Pagelet review failed: the AI provider returned an error. Check your API key, provider, and model in settings.",
+const ERROR_MESSAGE_KEYS: Record<PageletReviewErrorCode, string> = {
+    schema_invalid: "pagelet.errors.schema_invalid",
+    parse_failed: "pagelet.errors.parse_failed",
+    timeout: "pagelet.errors.timeout",
+    provider_error: "pagelet.errors.provider_error",
 };
 
 // ---------------------------------------------------------------------------
@@ -236,7 +264,7 @@ export class PageletReviewModel {
             });
         } catch (err) {
             diagnostics.providerError = errorMessage(err);
-            return errorOutcome("provider_error", diagnostics);
+            return errorOutcome("provider_error", diagnostics, effectiveOpts.userMessageLocale);
         }
 
         const canUseStructured =
@@ -267,6 +295,7 @@ export class PageletReviewModel {
             return errorOutcome(
                 diagnostics.schemaErrors.length > 0 ? "schema_invalid" : "parse_failed",
                 diagnostics,
+                effectiveOpts.userMessageLocale,
             );
         }
 
@@ -325,7 +354,7 @@ export class PageletReviewModel {
                 );
             } catch (err) {
                 diagnostics.elapsedMs += Math.max(0, now() - started);
-                if (isAbortError(err)) return errorOutcome("timeout", diagnostics);
+                if (isAbortError(err)) return errorOutcome("timeout", diagnostics, opts.userMessageLocale);
                 // withStructuredOutput throws on schema validation failure;
                 // treat the throw as a schema-invalid signal and either
                 // retry or fall through to free-form fallback.
@@ -385,9 +414,9 @@ export class PageletReviewModel {
                 );
             } catch (err) {
                 diagnostics.elapsedMs += Math.max(0, now() - started);
-                if (isAbortError(err)) return errorOutcome("timeout", diagnostics);
+                if (isAbortError(err)) return errorOutcome("timeout", diagnostics, opts.userMessageLocale);
                 diagnostics.providerError = errorMessage(err);
-                return errorOutcome("provider_error", diagnostics);
+                return errorOutcome("provider_error", diagnostics, opts.userMessageLocale);
             }
             diagnostics.elapsedMs += Math.max(0, now() - started);
 
@@ -421,7 +450,7 @@ export class PageletReviewModel {
             attempt += 1;
         }
 
-        return errorOutcome(lastErrorCode, diagnostics);
+        return errorOutcome(lastErrorCode, diagnostics, opts.userMessageLocale);
     }
 }
 
@@ -559,13 +588,26 @@ function errorMessage(err: unknown): string {
 function errorOutcome(
     code: PageletReviewErrorCode,
     diagnostics: PageletReviewDiagnostics,
+    locale: PageletLocale = "en",
 ): PageletReviewOutcome {
     return {
         status: "error",
         errorCode: code,
-        userMessage: USER_MESSAGES[code],
+        userMessage: resolveErrorMessage(code, locale),
         diagnostics,
     };
+}
+
+/**
+ * Resolve the i18n key for an error code into a user-facing string.
+ *
+ * Tested behaviour: a missing key (e.g. translator forgot ZH) falls back
+ * to the EN dictionary, and a missing EN entry surfaces as the literal
+ * i18n key so the regression is loud at runtime and trivially greppable.
+ * See `pageletT` in `src/locales/pagelet/index.ts`.
+ */
+function resolveErrorMessage(code: PageletReviewErrorCode, locale: PageletLocale): string {
+    return pageletT(ERROR_MESSAGE_KEYS[code], locale);
 }
 
 function appendRetryHint(originalUserPrompt: string, errors: readonly string[]): string {
