@@ -44,6 +44,37 @@ export interface WriteActionExecuteHooks {
 }
 
 /**
+ * Per-capability target confinement rule (framework SDD §2.2 / §3.1).
+ *
+ * Declared on each WriteActionCapability so Gate 1 can validate target paths
+ * before buildPreview/executeWrite. ConfinementConfig is the runtime-facing alias.
+ */
+export interface ConfinementConfig {
+    /** Allowed vault-relative path prefixes (e.g., [".pagelet/"]). Required, non-empty. */
+    allowedRoots: string[];
+    /** Allowed file extensions (e.g., [".md"]). Required, non-empty. */
+    allowedExtensions: string[];
+    /** Max normalized path length. Default 200 (framework SDD §2.2). */
+    maxPathLength?: number;
+    /** Optional caller-supplied additional reject patterns; runs after built-in categorized checks. */
+    rejectPatterns?: readonly RegExp[];
+}
+
+/**
+ * Stale-reread target snapshot (framework SDD §2.3 mode A).
+ *
+ * Captured at Gate 2 (preview shown) and re-validated at Gate 3 (before execute).
+ * Drift on folderExists / targetExists → reject + emit `gate.stale-reread.drift`.
+ */
+export interface TargetSnapshot {
+    targetPath: string;
+    folderExists: boolean;
+    targetExists: boolean;
+    /** Date.now() at capture time. Useful for debug emit aging analysis. */
+    capturedAt: number;
+}
+
+/**
  * Write Action Capability — MUST be invoked via framework ActionExecutor.
  *
  * Framework 4-gate 流程：
@@ -59,10 +90,14 @@ export interface WriteActionCapability extends AgentCapability {
     actionFamily: WriteActionFamily;
     /** Debug emit 分类标签（如 "pagelet-review-note"）。用于 debug observer 聚合分析 */
     targetCategory: string;
+    /** Per-capability path allowlist + extension + rejectPatterns (framework SDD §2.2). */
+    targetConfinement: ConfinementConfig;
 
     /**
      * 由 framework Gate 2 (preview-confirmation lifecycle) 调用。
      * 返回 5 区块 PreviewSpec 供 modal 渲染。MUST 是纯函数（无副作用）。
+     *
+     * 同时被 Gate 1 用来提取 target 候选路径（spec.target.path）。
      */
     buildPreview(input: unknown, context: AgentCapabilityContext): Promise<PreviewSpec>;
 
