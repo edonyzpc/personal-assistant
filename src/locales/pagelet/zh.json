@@ -38,6 +38,9 @@
     "pagelet.settings.reviewsFolder.error.parent_traversal": "审阅笔记目录不能包含 '..' 路径段，已恢复为上次有效的值。",
     "pagelet.settings.reviewsFolder.error.obsidian_config": "审阅笔记目录不能位于 .obsidian（Obsidian 配置目录）内，已恢复为上次有效的值。",
     "pagelet.settings.reviewsFolder.error.control_chars": "审阅笔记目录包含控制字符，已恢复为上次有效的值。",
+    "pagelet.settings.reviewsFolder.error.invisible_chars": "审阅笔记目录包含不可见字符（例如零宽空格），已恢复为上次有效的值。",
+    "pagelet.settings.reviewsFolder.error.trailing_dot_or_space": "审阅笔记目录的路径段不能以 '.' 或空格结尾（Windows 会静默去除），已恢复为上次有效的值。",
+    "pagelet.migration.reviewsFolderCoerced.title": "Pagelet：保存的审阅目录未通过新校验，已恢复为默认值。原有的审阅文件（如果有）仍保留在磁盘上：",
 
     "pagelet.settings.outputLanguage.name": "输出语言",
     "pagelet.settings.outputLanguage.desc": "审阅建议使用的语言。Auto 跟随笔记语言；选择具体值则强制使用。",

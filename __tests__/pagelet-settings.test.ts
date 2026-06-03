@@ -32,6 +32,7 @@ import {
     type PageletSettingFactory,
     type PageletSettingsHost,
 } from "../src/settings/pagelet";
+import { makePageletTranslator } from "../src/locales/pagelet";
 
 // ---------------------------------------------------------------------------
 // Tiny stub DOM + Setting harness. We intentionally do NOT pull in the
@@ -271,6 +272,31 @@ describe("mergePageletSettings", () => {
         );
     });
 
+    it("silently coerces legacy bypass shapes the H1 migration Notice flags", () => {
+        // Boot-time merge is silent (the migration Notice plumbing in
+        // src/plugin.ts surfaces user-visible feedback separately). Confirm
+        // that the merged value falls back to the default for every legacy
+        // shape the new validator now rejects — losing this contract would
+        // let the framework's allowedRoots widen on a stale data.json.
+        const legacyShapes = [
+            ".obsidian/plugins/personal-assistant/reviews",
+            ".Obsidian/plugins",
+            ".obsidian./plugins",
+            ".obsidian\\plugins",
+            "C:\\Users\\me\\notes",
+            "/etc/passwd",
+            "notes/../../escape",
+            "​.obsidian",
+            "notesdel",
+            "foo /bar",
+        ];
+        for (const shape of legacyShapes) {
+            expect(mergePageletSettings({ reviewsFolder: shape }).reviewsFolder).toBe(
+                PAGELET_DEFAULTS.reviewsFolder,
+            );
+        }
+    });
+
     it("accepts every valid outputLanguage and rejects others", () => {
         for (const v of ["auto", "zh", "en"] as const) {
             expect(mergePageletSettings({ outputLanguage: v }).outputLanguage).toBe(v);
@@ -427,6 +453,125 @@ describe("normalizeReviewsFolder (settings-layer validator)", () => {
         const r = normalizeReviewsFolder("  /etc  ");
         expect(r.input).toBe("/etc");
         expect(r.error).toBe("absolute_path");
+    });
+
+    // ─── B1: case-insensitive .obsidian (APFS/NTFS bypass) ───────────────
+    it("case-folds segments[0] before .obsidian compare (B1 — APFS/NTFS bypass)", () => {
+        for (const bad of [
+            ".Obsidian",
+            ".OBSIDIAN",
+            ".Obsidian/plugins",
+            ".OBSIDIAN/plugins/personal-assistant",
+            ".ObSiDiAn/foo",
+        ]) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("obsidian_config");
+        }
+    });
+
+    // ─── B2: trailing dot/space (NTFS strips them silently) ──────────────
+    it("rejects segments ending in '.' or whitespace (B2 — NTFS strip bypass)", () => {
+        // Trailing whitespace on the WHOLE input is removed by `.trim()`
+        // before any segment check, so the meaningful B2 case is whitespace
+        // BETWEEN slashes — i.e. mid-path. NTFS would silently strip it on
+        // disk, so `foo /bar` would resolve to `foo/bar` and let an
+        // `.obsidian /plugins` shape escape into the real `.obsidian/`.
+        for (const bad of [
+            ".obsidian./plugins",
+            ".obsidian /plugins",
+            ".obsidian.../foo",
+            "foo./bar",
+            "foo /bar",
+        ]) {
+            // (a tab between segments would trip control_chars first, so we
+            // omit it — the segment-end rule still covers ASCII space.)
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("trailing_dot_or_space");
+        }
+    });
+
+    // ─── B3: Windows backslash normalization ─────────────────────────────
+    it("normalizes Windows backslashes before segment checks (B3 — Gemini bot)", () => {
+        // After `\` → `/` normalization, each of these collapses into the
+        // category the user actually attempted, NOT the opaque-segment bypass
+        // that pre-normalization would have allowed.
+        const cases: Array<[string, string]> = [
+            [".obsidian\\plugins", "obsidian_config"],
+            [".obsidian\\plugins\\evil", "obsidian_config"],
+            ["notes\\..\\evil", "parent_traversal"],
+            ["C:\\Users\\evil", "drive_letter"],
+            ["\\\\server\\share", "absolute_path"],
+        ];
+        for (const [bad, want] of cases) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe(want);
+        }
+    });
+
+    // ─── H2: Cf-category invisible characters (spoofing) ─────────────────
+    it("rejects zero-width / bidi / BOM Cf characters with error: invisible_chars (H2)", () => {
+        // BOM (U+FEFF) at the START is removed by `.trim()` so the validator
+        // never sees it; only mid-string occurrences are reachable. ZWSP and
+        // friends survive trim and are the real spoof vector.
+        for (const bad of [
+            "​.obsidian", // ZWSP (mid-string)
+            "notes‌dir",  // ZWNJ
+            "notes‍dir",  // ZWJ
+            "notes⁠dir",  // WJ
+            "notes﻿dir",  // BOM mid-string
+            "notes‮dir",  // RLO
+            "notes⁦dir",  // LRI
+        ]) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("invisible_chars");
+        }
+    });
+
+    // ─── DEL (U+007F) — grouped with C0 controls ─────────────────────────
+    it("rejects DEL (U+007F) as control_chars", () => {
+        const r = normalizeReviewsFolder("notesdel");
+        expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+        expect(r.error).toBe("control_chars");
+    });
+
+    // ─── Near-miss negatives: literally legal folder shapes ──────────────
+    it("accepts segment-exact near-misses that look like .obsidian but are not", () => {
+        // These must NOT trip the obsidian_config guard — they are legitimate
+        // user folder names that share a prefix or contain `.obsidian` as a
+        // substring of a non-leading segment.
+        expect(normalizeReviewsFolder(".obsidianbackup")).toEqual({ value: ".obsidianbackup" });
+        expect(normalizeReviewsFolder("obsidian/notes")).toEqual({ value: "obsidian/notes" });
+        expect(normalizeReviewsFolder("notes/.obsidian-cheatsheet"))
+            .toEqual({ value: "notes/.obsidian-cheatsheet" });
+        // case-folded near-miss: the first segment isn't `.obsidian` after
+        // toLowerCase, just shares an exact prefix.
+        expect(normalizeReviewsFolder(".OBSIDIANBackup")).toEqual({ value: ".OBSIDIANBackup" });
+    });
+
+    // ─── Ordering tests: pin which rule fires first ──────────────────────
+    it("evaluates rules in a stable order (pin first-match for overlapping inputs)", () => {
+        // Backslash normalization happens FIRST, so `\\server\share` collapses
+        // to `//server/share` and trips absolute_path — NOT drive_letter (no
+        // colon) and NOT obsidian_config (no .obsidian).
+        expect(normalizeReviewsFolder("\\\\server\\share").error).toBe("absolute_path");
+        // Drive letter fires BEFORE absolute_path/obsidian_config when both
+        // would apply. `C:\..\evil` → drive_letter (caught first).
+        expect(normalizeReviewsFolder("C:\\..\\evil").error).toBe("drive_letter");
+        // Absolute path fires before parent_traversal: `/foo/../etc` is
+        // categorised as absolute_path, not parent_traversal.
+        expect(normalizeReviewsFolder("/foo/../etc").error).toBe("absolute_path");
+        // Parent traversal fires before obsidian_config: `.obsidian/../foo`
+        // is parent_traversal (counter-intuitive but intentional — the user
+        // is doing something path-rewriting that we cannot reason about
+        // semantically).
+        expect(normalizeReviewsFolder(".obsidian/../foo").error).toBe("parent_traversal");
+        // Trailing-dot fires before obsidian_config (necessary for B2):
+        // `.obsidian./plugins` is trailing_dot_or_space, not obsidian_config.
+        expect(normalizeReviewsFolder(".obsidian./plugins").error).toBe("trailing_dot_or_space");
     });
 });
 
@@ -600,7 +745,13 @@ describe("renderPageletSection", () => {
 
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
         expect(rows[1].textValue).toBe("notes/reviews");
-        expect(errorEl?.textContent).toContain(".obsidian");
+        // Compare to the resolved EN translation rather than a literal
+        // substring so the assertion stays correct if/when the message copy
+        // changes. The point is "the obsidian_config category surfaced",
+        // not "the message happens to spell `.obsidian`".
+        expect(errorEl?.textContent).toBe(
+            makePageletTranslator("en")("pagelet.settings.reviewsFolder.error.obsidian_config"),
+        );
         expect(save).toHaveBeenCalledTimes(1);
 
         // After a clean edit the error must clear so a previous rejection
