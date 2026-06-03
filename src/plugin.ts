@@ -36,6 +36,7 @@ import {
     type PaReviewRuntime,
 } from './pagelet';
 import { getPageletUiLanguage, pageletT } from './locales/pagelet';
+import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -100,6 +101,31 @@ function arraysEqual(left: string[], right: string[]): boolean {
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+/**
+ * localStorage key guarding the one-time Notice fired when a stored
+ * `pagelet.reviewsFolder` is coerced by the validator. Set to "1" after the
+ * Notice fires so subsequent boots stay silent. Vault-scoped (Obsidian
+ * isolates localStorage per vault), so a user can opt into the Notice
+ * separately for each vault.
+ */
+const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration-v1";
+
+function readPageletMigrationFlag(): boolean {
+    try {
+        return globalThis.localStorage?.getItem(PAGELET_MIGRATION_NOTICE_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function writePageletMigrationFlag(): void {
+    try {
+        globalThis.localStorage?.setItem(PAGELET_MIGRATION_NOTICE_KEY, "1");
+    } catch {
+        /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
+    }
+}
+
 export class PluginManager extends Plugin {
     settings!: PluginManagerSettings
     private localGraph = new LocalGraph(this.app, this);
@@ -129,6 +155,18 @@ export class PluginManager extends Plugin {
      * per-streamTurn inside chat-service.ts).
      */
     private pageletRuntime: PaReviewRuntime | null = null;
+    /**
+     * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
+     * was coerced to the default by the now-stricter validator. Consumed once
+     * by {@link onload} to fire a one-time Notice so the user knows their
+     * folder was reset (orphaned reviews on disk are unmoved). Cleared after
+     * the Notice is dispatched. Persists across the boot via localStorage
+     * key {@link PAGELET_MIGRATION_NOTICE_KEY} so the Notice only fires once.
+     */
+    private pendingPageletReviewsFolderMigration: {
+        input: string;
+        error: PageletReviewsFolderError;
+    } | null = null;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
     /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
@@ -145,6 +183,12 @@ export class PluginManager extends Plugin {
 
         // 迁移旧版本设置
         await this.migrateSettings();
+
+        // Surface the one-time Pagelet reviewsFolder migration Notice, if
+        // `loadSettings` flagged a coerced value. We fire here (not in
+        // `loadSettings`) so the Notice is bound to plugin onload and respects
+        // the user's installed locale.
+        this.surfacePendingPageletReviewsFolderMigration();
 
         // showup notification of plugin starting when it is in debug mode
         if (this.settings.debug) {
@@ -615,12 +659,61 @@ export class PluginManager extends Plugin {
             // AI provider" prompt while aiProvider is empty.
             this.settings.aiProvider = "";
         }
+        // Detect when a pre-existing `pagelet.reviewsFolder` was just coerced
+        // by the now-stricter validator (e.g. an early-beta user stored
+        // ".obsidian/plugins/personal-assistant/reviews" or "C:\\notes"). The
+        // merged value has already failed-closed to ".pagelet", but the user
+        // deserves to know — their old reviews on disk are now orphaned. We
+        // surface a Notice once via `onload`; the flag persists in localStorage
+        // so the Notice never re-fires on subsequent boots.
+        const rawPagelet = (typeof loaded === "object" && loaded !== null)
+            ? (loaded as Record<string, unknown>).pagelet
+            : undefined;
+        const rawReviewsFolder = (typeof rawPagelet === "object" && rawPagelet !== null)
+            ? (rawPagelet as Record<string, unknown>).reviewsFolder
+            : undefined;
+        if (typeof rawReviewsFolder === "string" && rawReviewsFolder.trim().length > 0) {
+            const inspection = normalizeReviewsFolder(rawReviewsFolder);
+            if (inspection.error && !readPageletMigrationFlag()) {
+                this.pendingPageletReviewsFolderMigration = {
+                    input: inspection.input ?? rawReviewsFolder,
+                    error: inspection.error,
+                };
+            }
+        }
         this.log("Settings loaded", this.settings);
     }
 
     async saveSettings() {
         await this.saveData(this.settings);
         await this.notifySettingsChanged();
+    }
+
+    /**
+     * One-shot: fire the migration Notice queued by {@link loadSettings} if
+     * any, then persist the localStorage flag so subsequent boots are silent.
+     * Idempotent — runs at most once per boot and at most once per vault
+     * lifetime regardless of how many times it is invoked.
+     */
+    private surfacePendingPageletReviewsFolderMigration(): void {
+        const pending = this.pendingPageletReviewsFolderMigration;
+        if (!pending) return;
+        this.pendingPageletReviewsFolderMigration = null;
+        const locale = this.getPageletLocale();
+        // Body has the user's original input quoted back so they can re-point
+        // their folder (or move files from the orphaned location) without
+        // re-typing it. 10s timeout is long enough to read; clicking dismisses.
+        const message = `${pageletT("pagelet.migration.reviewsFolderCoerced.title", locale)}\n${pending.input}`;
+        try {
+            new Notice(message, 10000);
+        } catch (error) {
+            this.log("Failed to fire Pagelet migration Notice", error);
+        }
+        writePageletMigrationFlag();
+        this.log(
+            "Pagelet reviewsFolder coerced on load; emitted one-time Notice",
+            { error: pending.error, input: pending.input },
+        );
     }
 
     log(...msg: any) { // eslint-disable-line @typescript-eslint/no-explicit-any

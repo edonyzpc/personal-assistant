@@ -38,6 +38,9 @@
     "pagelet.settings.reviewsFolder.error.parent_traversal": "Reviews folder cannot contain '..' segments. Reverted to the previous value.",
     "pagelet.settings.reviewsFolder.error.obsidian_config": "Reviews folder cannot live inside .obsidian (Obsidian's config directory). Reverted to the previous value.",
     "pagelet.settings.reviewsFolder.error.control_chars": "Reviews folder contains control characters. Reverted to the previous value.",
+    "pagelet.settings.reviewsFolder.error.invisible_chars": "Reviews folder contains invisible format characters (e.g. zero-width spaces). Reverted to the previous value.",
+    "pagelet.settings.reviewsFolder.error.trailing_dot_or_space": "Reviews folder segments cannot end in '.' or whitespace (Windows strips them silently). Reverted to the previous value.",
+    "pagelet.migration.reviewsFolderCoerced.title": "Pagelet: your saved reviews folder was reset to the default because it failed the new validator. Old review files (if any) were left on disk at:",
 
     "pagelet.settings.outputLanguage.name": "Output language",
     "pagelet.settings.outputLanguage.desc": "Language used for review suggestions. Auto follows the note's language; pick a value to force one.",

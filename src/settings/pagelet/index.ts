@@ -135,7 +135,9 @@ export type PageletReviewsFolderError =
     | "drive_letter"
     | "parent_traversal"
     | "obsidian_config"
-    | "control_chars";
+    | "control_chars"
+    | "invisible_chars"
+    | "trailing_dot_or_space";
 
 /**
  * Output shape of `normalizeReviewsFolder`. `value` is always safe to use
@@ -225,17 +227,35 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
         return { value: PAGELET_DEFAULTS.reviewsFolder };
     }
 
-    const trimmed = value.trim();
+    // Normalize Windows-style backslashes to forward slashes BEFORE any
+    // segment-aware check runs. Without this, `.obsidian\plugins` is one
+    // opaque segment that bypasses the `.obsidian` guard below, `foo\..\bar`
+    // bypasses the parent-traversal guard, and `\\server\share` looks like
+    // a single non-absolute segment. Obsidian's vault APIs only speak POSIX
+    // paths, so coercing here is both safe and semantically correct.
+    const trimmed = value.trim().replace(/\\/g, "/");
     if (trimmed.length === 0) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "empty", input: trimmed };
     }
 
-    // Control chars / NUL — surface BEFORE the strip-and-normalize so the
-    // raw byte that tripped the check is visible in `input` if a logger
-    // wants it.
+    // Control chars / NUL / DEL — surface BEFORE the strip-and-normalize so
+    // the raw byte that tripped the check is visible in `input` if a logger
+    // wants it. U+007F (DEL) is grouped with the C0 controls because it is
+    // equally hostile to filesystem and terminal display.
     // eslint-disable-next-line no-control-regex
-    if (/[\u0000-\u001f]/.test(trimmed)) {
+    if (/[\u0000-\u001f\u007f]/.test(trimmed)) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "control_chars", input: trimmed };
+    }
+
+    // Invisible format characters (Cf category subset commonly used to spoof
+    // identifiers): ZWSP/ZWNJ/ZWJ, WJ, BOM/ZWNBSP, LRM/RLM, bidi-isolates.
+    // These survive String.prototype.trim and would otherwise let an attacker
+    // craft a name like `\u200B.obsidian` that visually reads as `.obsidian`
+    // but bypasses the strict segment-equality check below. Rejecting
+    // outright is simpler and safer than NFKC-folding; a legitimate folder
+    // name never needs a zero-width joiner.
+    if (/[\u200b-\u200d\u2060\ufeff\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "invisible_chars", input: trimmed };
     }
 
     // Windows drive letter — must run before any slash normalization so
@@ -271,10 +291,27 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "parent_traversal", input: trimmed };
     }
 
+    // Trailing dot or whitespace in any segment — NTFS silently strips these
+    // at the OS layer, so a path like `.obsidian./plugins` would dispatch into
+    // the real `.obsidian/plugins` despite the strict `=== ".obsidian"` guard
+    // below failing on the literal string `.obsidian.`. Same class of bypass
+    // for `.obsidian /plugins` (trailing space). We reject the input before
+    // the case-fold comparison gets the chance to mismatch.
+    if (segments.some((seg) => /[.\s]$/.test(seg))) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "trailing_dot_or_space", input: trimmed };
+    }
+
     // Obsidian config directory — the framework would otherwise happily
     // write into `.obsidian/plugins/personal-assistant/` if the user (mis)set
     // their folder there. This is the PR #356 B2 production-gap fixture.
-    if (segments[0] === ".obsidian") {
+    // Checking only `segments[0]` is intentional: a nested folder literally
+    // named `.obsidian` (e.g. `notes/.obsidian-cheatsheet`) is harmless; only
+    // a top-level `.obsidian` segment collides with Obsidian's config root.
+    // Case-fold + NFC the first segment before comparing so `.Obsidian` and
+    // `.OBSIDIAN` also trip — default macOS APFS and Windows NTFS are
+    // case-insensitive, so a non-folded compare would let those inputs through
+    // and the OS would still dispatch the write into the real `.obsidian/`.
+    if (segments[0].normalize("NFC").toLowerCase() === ".obsidian") {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "obsidian_config", input: trimmed };
     }
 
