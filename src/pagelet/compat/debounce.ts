@@ -283,8 +283,13 @@ export class PageletReviewCoalescer<T> {
         };
         this.entries.set(cacheKey, runningEntry);
 
-        // Fire the runner. The Promise chain handles success / failure.
-        runner().then(
+        // Fire the runner. We wrap the invocation in `Promise.resolve().then`
+        // so a synchronous throw from a non-async runner is caught as a
+        // rejection — a bare `runner().then(...)` lets sync throws escape
+        // before the rejection handler is attached, which would leave the
+        // entry stranded in "running" forever and cause subsequent `request`
+        // calls for the same key to dedup onto a never-settling promise.
+        Promise.resolve().then(() => runner()).then(
             (value) => {
                 // We may have been cleared / replaced while running.
                 const current = this.entries.get(cacheKey);

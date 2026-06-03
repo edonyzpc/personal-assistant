@@ -276,6 +276,39 @@ describe("lookupPricing / pricingKey", () => {
     it("treats undefined provider/model as the empty key (unknown)", () => {
         expect(lookupPricing(undefined, undefined).known).toBe(false);
     });
+
+    it("resolves the canonical 'qwen' provider via the dashscope/bailian alias", () => {
+        // Regression: PA's canonical provider id is "qwen" (see settings.ts,
+        // chat-service.ts). The pricing table keys on the vendor prefix
+        // (dashscope/bailian) because the same model is sold through both
+        // services. Without alias resolution, a runtime that passes
+        // `provider = settings.aiProvider` ("qwen") would receive
+        // UNKNOWN_PRICING → $0/token → silent bypass of D022 cost display.
+        const plus = lookupPricing("qwen", "qwen-plus");
+        expect(plus.known).toBe(true);
+        // Should resolve to the dashscope entry (preferred alias).
+        expect(plus.entry.inputPerKToken).toBe(0.0004);
+        expect(plus.entry.outputPerKToken).toBe(0.0012);
+
+        const turbo = lookupPricing("qwen", "qwen-turbo");
+        expect(turbo.known).toBe(true);
+        expect(turbo.entry.inputPerKToken).toBe(0.00005);
+
+        // Case + whitespace tolerance carries through the alias path.
+        expect(lookupPricing("  QWEN  ", "Qwen-Max").known).toBe(true);
+    });
+
+    it("returns known pricing for canonical openai / anthropic ids directly", () => {
+        // openai is canonical AND matches the pricing-table prefix, so no
+        // alias is needed — this test pins that the alias path doesn't
+        // accidentally short-circuit the direct lookup.
+        expect(lookupPricing("openai", "gpt-4o-mini").known).toBe(true);
+        // anthropic is canonical but not in the default table yet; it
+        // should miss cleanly (no alias, no entry) rather than crashing.
+        const missing = lookupPricing("anthropic", "claude-haiku");
+        expect(missing.known).toBe(false);
+        expect(missing.entry.inputPerKToken).toBe(0);
+    });
 });
 
 describe("computeCost", () => {

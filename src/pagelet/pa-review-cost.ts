@@ -264,6 +264,31 @@ export interface PageletPricingEntry {
 const UNKNOWN_PRICING: PageletPricingEntry = Object.freeze({ inputPerKToken: 0, outputPerKToken: 0 });
 
 /**
+ * Provider-id alias map (canonical → pricing-table prefixes).
+ *
+ * The rest of PA uses canonical provider ids: `qwen`, `openai`, `anthropic`
+ * (see `settings.ts` defaults, `ai-utils.ts`, `chat-service.ts`). The
+ * pricing table above keys on the *vendor service* exposing the model
+ * (`dashscope:*`, `bailian:*`, `openai:*`) because the same Qwen family of
+ * models is sold through both DashScope and Bailian at different prices.
+ *
+ * Without this alias, a runtime that passes `provider = settings.aiProvider`
+ * (i.e. `"qwen"`) into `lookupPricing` would always miss the table, fall
+ * back to `UNKNOWN_PRICING`, and silently report $0/token — bypassing the
+ * cost-display gate (D022) and the cost tracker's "unknown pricing" badge.
+ *
+ * Resolution order: direct key first, then each alias in declaration
+ * order. `dashscope` is preferred over `bailian` because the Qwen-Plus /
+ * Qwen-Turbo defaults shipped in `ai-utils.ts` resolve to DashScope.
+ *
+ * `openai` and `anthropic` need no alias — their canonical ids already
+ * match the pricing-table prefix.
+ */
+const PROVIDER_ID_ALIASES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+    qwen: Object.freeze(["dashscope", "bailian"]) as readonly string[],
+});
+
+/**
  * Build the composite key used to look up pricing. Provider + model live as
  * separate fields in `PageletSettings` so they're case-normalised here to
  * tolerate display-string drift (e.g. `OpenAI` vs `openai`).
@@ -282,6 +307,16 @@ export function lookupPricing(
     const key = pricingKey(provider, model);
     const entry = table[key];
     if (entry) return { entry, known: true };
+    // Canonical-id alias resolution: try the vendor prefixes that ship
+    // the same model. See PROVIDER_ID_ALIASES for the rationale.
+    const normalizedProvider = (provider ?? "").toLowerCase().trim();
+    const aliases = PROVIDER_ID_ALIASES[normalizedProvider];
+    if (aliases) {
+        for (const alias of aliases) {
+            const aliasEntry = table[pricingKey(alias, model)];
+            if (aliasEntry) return { entry: aliasEntry, known: true };
+        }
+    }
     return { entry: UNKNOWN_PRICING, known: false };
 }
 

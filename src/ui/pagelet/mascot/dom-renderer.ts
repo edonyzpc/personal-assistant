@@ -217,6 +217,12 @@ export function createMascotRendererWithHost(
     const prefersReducedMotion = options.prefersReducedMotion ?? defaultPrefersReducedMotion;
     const announceLiveRegion = options.announceLiveRegion;
     let currentState: MascotState = options.initialState ?? "idle";
+    // Lifecycle guard: once `destroy()` runs, every subsequent `setState` /
+    // announcement must be a no-op. Without this, a late status broadcast
+    // (e.g. from an in-flight review that finished after the view closed)
+    // would mutate a detached DOM and still fire the `announceLiveRegion`
+    // seam, surfacing ghost announcements to screen readers.
+    let destroyed = false;
 
     const initialReducedMotion = safeProbeReducedMotion(prefersReducedMotion);
     const mounted = mountInitial({
@@ -235,6 +241,10 @@ export function createMascotRendererWithHost(
     emitAnnouncement(currentState, translator, mounted, announceLiveRegion);
 
     function applyState(newState: MascotState, opts?: MascotSetStateOptions): void {
+        // Guard 0: post-destroy calls are silently dropped. The renderer
+        // is unusable after destroy() — surfacing a noisy error would
+        // turn benign late-callbacks into user-visible failures.
+        if (destroyed) return;
         // Guard 1: abort signal short-circuits the transition.
         if (opts?.signal?.aborted) return;
         // Guard 2: skip if the state and message are identical (a
@@ -267,6 +277,8 @@ export function createMascotRendererWithHost(
         },
         setState: applyState,
         destroy(): void {
+            if (destroyed) return;
+            destroyed = true;
             mounted.root.remove();
         },
     };
@@ -395,14 +407,28 @@ function clearChildren(node: MascotDomNode): void {
         return;
     }
     // Fallback: try `replaceChildren` on a real Element wrapper.
+    // `replaceChildren` was added in Safari 14 / Chrome 86; iOS 13's
+    // WKWebView (still in the field for older Obsidian Mobile installs)
+    // throws "undefined is not a function". On that path we fall through
+    // to a manual removeChild loop — otherwise the SVG accumulates
+    // overlapping paths on every setState and the DOM leaks per
+    // transition.
     const real = node as MascotDomNode & { raw?: () => Element };
     if (typeof real.raw === "function") {
+        const el = real.raw();
         try {
-            real.raw().replaceChildren();
-            return;
+            (el as Element & { replaceChildren?: () => void }).replaceChildren?.();
+            // If `replaceChildren` was missing entirely (iOS 13 etc.), `?.()`
+            // returns undefined without throwing. Check that the children
+            // actually went away; if not, fall through to the manual loop.
+            if (!el.firstChild) return;
         } catch {
-            // ignore — fall through to host-agnostic loop
+            // `replaceChildren` threw — fall through to the manual loop.
         }
+        while (el.firstChild) {
+            el.removeChild(el.firstChild);
+        }
+        return;
     }
     // The host abstraction does not expose iteration over children;
     // recording-host tests handle clearing via their own counter.

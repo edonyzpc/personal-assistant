@@ -407,9 +407,19 @@ export class PluginManager extends Plugin {
         // VSS lifecycle events mark local state dirty; approved memory can then maintain itself in the background.
         this.registerEvent(
             this.app.vault.on("create", async (file) => {
-                if (file instanceof TFile && await this.vss.markDirtyIfEligible(file)) {
-                    this.memoryManager.scheduleAutoFlush("vault-create");
-                    await this.updateMemoryStatusBar();
+                if (file instanceof TFile) {
+                    // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
+                    // Obsidian fires `create` (not `modify`) for a NEW file, so the
+                    // first Pagelet write of a review note arrives here. Without the
+                    // same guard applied to modify below, vss would index the
+                    // freshly-written review note, triggering a ripple.
+                    if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
+                        return;
+                    }
+                    if (await this.vss.markDirtyIfEligible(file)) {
+                        this.memoryManager.scheduleAutoFlush("vault-create");
+                        await this.updateMemoryStatusBar();
+                    }
                 }
             })
         );
