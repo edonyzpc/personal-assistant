@@ -2443,3 +2443,47 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 		max-width: 8ch;
 	}
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Pagelet (Review Assistant) — mascot a11y / reduced-motion baseline.
+ *
+ * The mascot DOM renderer (`src/ui/pagelet/mascot/dom-renderer.ts`) emits
+ * two classes the rest of the Pagelet styles assume exist:
+ *
+ *  - `.pa-pagelet-mascot--reduce-motion` — applied when the user has
+ *    `prefers-reduced-motion: reduce` set. Disables every animation /
+ *    transition under the mascot root so the SVG paths render statically.
+ *  - `.pa-pagelet-mascot__live` — visually-hidden aria-live region used to
+ *    announce state transitions to screen readers. Must be in the DOM
+ *    (assistive tech polls it) but invisible to sighted users.
+ *
+ * Why a global selector for reduce-motion (rather than a per-class opt-out):
+ *  - Future B5 animation work may add new `animation`/`transition` rules
+ *    inside the mascot root. The wildcard `* { animation: none }` form
+ *    guarantees they are caught without each new style having to opt in.
+ *
+ * Why the long-form visually-hidden recipe (instead of `display: none`):
+ *  - `display: none` removes the element from the AT tree, so AT never
+ *    sees the announcement. The clip + clip-path pattern is the WCAG-
+ *    recommended way to hide content visually but keep it announceable.
+ * ────────────────────────────────────────────────────────────────────── */
+.pa-pagelet-mascot--reduce-motion *,
+.pa-pagelet-mascot--reduce-motion *::before,
+.pa-pagelet-mascot--reduce-motion *::after {
+	animation-duration: 0s !important;
+	animation-iteration-count: 1 !important;
+	transition: none !important;
+}
+
+.pa-pagelet-mascot__live {
+	position: absolute;
+	width: 1px;
+	height: 1px;
+	padding: 0;
+	margin: -1px;
+	overflow: hidden;
+	clip: rect(0 0 0 0);
+	clip-path: inset(50%);
+	white-space: nowrap;
+	border: 0;
+}

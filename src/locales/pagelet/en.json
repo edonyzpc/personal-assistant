@@ -70,5 +70,8 @@
     "pagelet.a11y.dismissCardLabel": "Dismiss this suggestion",
     "pagelet.a11y.acceptCardLabel": "Accept this suggestion",
     "pagelet.a11y.announce.done": "Pagelet finished reviewing. Suggestions are ready.",
-    "pagelet.a11y.announce.error": "Pagelet review failed. Open the panel for details."
+    "pagelet.a11y.announce.error": "Pagelet review failed. Open the panel for details.",
+
+    "pagelet.preview.confirm": "Save review note",
+    "pagelet.preview.cancel": "Cancel"
 }

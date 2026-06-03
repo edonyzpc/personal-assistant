@@ -70,5 +70,8 @@
     "pagelet.a11y.dismissCardLabel": "忽略此条建议",
     "pagelet.a11y.acceptCardLabel": "采纳此条建议",
     "pagelet.a11y.announce.done": "拾页审阅完成，建议已就绪。",
-    "pagelet.a11y.announce.error": "拾页审阅失败，请打开面板查看详情。"
+    "pagelet.a11y.announce.error": "拾页审阅失败，请打开面板查看详情。",
+
+    "pagelet.preview.confirm": "保存审阅笔记",
+    "pagelet.preview.cancel": "取消"
 }

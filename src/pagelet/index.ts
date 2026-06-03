@@ -107,6 +107,27 @@ export {
     type WriteReviewNoteResult,
 } from "./pa-review-file-io";
 
+// Track C · C1 — Write Action Framework v1 capability + runtime composer.
+export {
+    PAGELET_PROVIDER_ID,
+    PAGELET_WRITE_REVIEW_OUTPUT_NAME,
+    createPaReviewToolProvider,
+    createPaReviewToolProviderForApp,
+    type CreatePaReviewToolProviderOptions,
+    type PageletReviewToolSettings,
+    type PageletReviewToolVaultLike,
+    type PageletWriteReviewOutputInput,
+    type PaReviewToolProvider,
+} from "./pa-review-tool-provider";
+
+export {
+    SELF_WRITE_WINDOW_MS as PAGELET_SELF_WRITE_WINDOW_MS,
+    createPaReviewRuntime,
+    type CreatePaReviewRuntimeOptions,
+    type PaReviewPaAgentOptionsBundle,
+    type PaReviewRuntime,
+} from "./pa-review-runtime";
+
 // Track B · B5 compatibility / a11y surface — view-type gating,
 // debounce + idempotency, ribbon registration, Cmd+/ focus command.
 export {
