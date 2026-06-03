@@ -269,11 +269,21 @@ describe("Pagelet self-write no-loop guard (Track C · C2)", () => {
         runtime.dispose();
     });
 
-    it("dispose() empties the registry so listeners cannot fire stale suppression", () => {
+    it("dispose() empties the registry so listeners cannot fire stale suppression", async () => {
         // The plugin's onunload calls runtime.dispose(). After that, any
         // queued modify event (e.g., from an Obsidian late-flush) must
         // observe the registry as empty so it does not accidentally
         // short-circuit a legitimate user write.
+        //
+        // H1 fix · prior version computed a hand-rolled `.pagelet/manual.md`
+        // path that never matched the executor's deterministic output
+        // (`.pagelet/manual-pagelet-review-2026-06-03.md`) AND fired
+        // `capability.executeWrite` without awaiting — so the registry was
+        // empty when dispose() ran and the post-dispose assertion would
+        // trivially pass even if dispose() were a no-op. This rewrite
+        // drives the full ActionExecutor, snapshots the path that the
+        // framework actually marked, asserts the pre-dispose registry holds
+        // it, then calls dispose() and asserts the same path is gone.
         const adapter = makeAdapter();
         const settings: PageletSettings = { ...PAGELET_DEFAULTS };
         const fakeApp = { vault: { adapter } } as unknown as Parameters<typeof createPaReviewRuntime>[0]["app"];
@@ -284,20 +294,34 @@ describe("Pagelet self-write no-loop guard (Track C · C2)", () => {
             fsProbe: adapter as unknown as FsProbe,
             debugObserver: silentObserver(),
         });
-        // Manually mark via the same path the framework would have used.
-        // (We avoid driving the executor here to keep the test focused on
-        // dispose() semantics, not the full gate sequence.)
-        const fakePath = ".pagelet/manual.md";
-        runtime.toolProvider.capability.executeWrite(
-            makeInput({ sourcePath: "notes/manual.md" }),
+
+        const input = makeInput({ sourcePath: "notes/manual.md" });
+        const expectedPath = runtime.toolProvider.capability.getTargetPath(input);
+
+        // Drive the full executor so both the framework's pre-execute mark
+        // AND the post-execute refresh land in the external registry —
+        // matching production semantics.
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            input,
             makeContext(),
-            { markSelfWrite: () => undefined },
         );
-        // Suppression should hold for the actually-written path; we can't
-        // know it yet (the executeWrite above is async) so we just verify
-        // the dispose contract by manually invoking it.
+        expect(result.status).toBe("ok");
+
+        // Sanity: BEFORE dispose, the registry holds the just-written path.
+        // If this fails, the test's premise (something to dispose of) is
+        // broken — surface that loudly rather than silently passing the
+        // post-dispose assertion.
+        expect(runtime.isRecentSelfWrite(expectedPath)).toBe(true);
+        expect(runtime.selfWriteSnapshot()).toContain(expectedPath);
+
         runtime.dispose();
-        expect(runtime.isRecentSelfWrite(fakePath)).toBe(false);
+
+        // After dispose, the registry must be empty AND the predicate must
+        // report `false` for the same path that was held a moment ago. This
+        // proves dispose() actually does work (a no-op implementation would
+        // leave the path in the snapshot and fail this assertion).
+        expect(runtime.isRecentSelfWrite(expectedPath)).toBe(false);
         expect(runtime.selfWriteSnapshot()).toEqual([]);
     });
 });

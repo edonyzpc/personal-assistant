@@ -197,6 +197,28 @@ interface InjectionFixture {
     reviewsFolder: string;
     /** Optional source path override. Defaults to `"notes/x.md"`. */
     sourcePath?: string;
+    /**
+     * Pin the framework's confinement reject reason so fixture intent does
+     * not silently drift. Without this pin, a refactor that moves a fixture
+     * from (say) `absolute_path` to `folder_missing` would still pass the
+     * generic `rejected_at_confinement` assertion — yet the security story
+     * has materially changed (folder_missing only rejects because the
+     * test mock didn't seed the folder, which production would).
+     *
+     * Values map 1:1 to `ConfinementRejectReason` in
+     * `src/ai-services/write-action-framework/target-confinement.ts`.
+     */
+    expectedReason: string;
+    /**
+     * Honest note about why this fixture lands on `expectedReason` rather
+     * than the SDD-named reason (e.g. `inject-absolute-path` lists
+     * "absolute_path" but the writer's `normalizeReviewsFolder` strips the
+     * leading `/` before the framework sees the path, so the actual
+     * rejection reason is `folder_missing`). Surfaces production-vs-test
+     * gaps inline next to each fixture so reviewers can see them at a
+     * glance.
+     */
+    productionGapNote?: string;
 }
 
 const SDD_8_3_FIXTURES: readonly InjectionFixture[] = [
@@ -204,28 +226,61 @@ const SDD_8_3_FIXTURES: readonly InjectionFixture[] = [
         id: "inject-absolute-path",
         description: "/etc/passwd — absolute system path (SDD §8.3 row 1)",
         reviewsFolder: "/etc/passwd",
+        // `normalizeReviewsFolder` (pa-review-file-io.ts:325) strips the
+        // leading `/` so by the time the framework sees the candidate it is
+        // already `etc/passwd/...` — sync `absolute_path` check never fires.
+        // The mock adapter does not seed `etc/passwd`, so async Gate 1
+        // rejects with `folder_missing`. On a system where `etc/passwd`
+        // happens to exist as a vault-relative folder (vanishingly unlikely
+        // for the literal name; very real for other absolute paths that
+        // collapse to existing relative folders) the gate would NOT reject
+        // here — only the per-capability allowlist would. See the
+        // production-gap test below.
+        expectedReason: "folder_missing",
+        productionGapNote: "absolute-path scrub happens before the framework sees the candidate",
     },
     {
         id: "inject-traversal",
         description: "../../config.json — parent-traversal escape (SDD §8.3 row 2)",
         reviewsFolder: "../../config.json",
+        // Sync gate catches the `..` segment regardless of FS state — this
+        // fixture is the most production-faithful of the bunch.
+        expectedReason: "parent_traversal",
     },
     {
         id: "inject-into-pa-config",
         description: ".obsidian/plugins/personal-assistant/data.json — adjacent escape",
         reviewsFolder: ".obsidian/plugins/personal-assistant",
         sourcePath: "data.json",
+        // The mock doesn't seed `.obsidian/plugins/personal-assistant`, so
+        // async Gate 1 rejects with `folder_missing`. PRODUCTION GAP: in a
+        // real plugin install that folder ALWAYS exists, so the framework's
+        // Gate 1 would NOT reject — the candidate would reach Gate 2's
+        // preview modal targeting a plugin-config-adjacent path. The
+        // capability's allowedRoots is dynamically derived from
+        // `settings.reviewsFolder` (pa-review-tool-provider.ts:285-296) so
+        // it would also not reject. The folder-exists production-gap test
+        // below makes this visible; a separate fix on
+        // `feat/pagelet-non-write` or similar should validate
+        // `reviewsFolder` at settings-write time (reject paths inside
+        // `.obsidian/`).
+        expectedReason: "folder_missing",
+        productionGapNote: "real .obsidian/plugins/personal-assistant exists → bypasses Gate 1 in prod",
     },
     {
         id: "inject-drive-letter",
         description: "C:\\evil — Windows drive-letter prefix rejected by sync stage",
         reviewsFolder: "C:\\evil",
+        // Sync gate catches `^[a-zA-Z]:` before normalize. Production-faithful.
+        expectedReason: "drive_letter",
     },
     {
         id: "inject-path-too-long",
         description: "300-char filename — exceeds capability's maxPathLength: 200",
         reviewsFolder: ".pagelet",
         sourcePath: `${"a".repeat(300)}.md`,
+        // Sync length check on the assembled candidate path.
+        expectedReason: "path_too_long",
     },
 ] as const;
 
@@ -278,6 +333,12 @@ describe("Pagelet prompt-injection fixtures (Track C · C2; SDD §8.3)", () => {
                     && e.errorCategory === "rejected_at_confinement",
             );
             expect(rejects).toHaveLength(1);
+            // B2 fix · Pin the framework's confinement reject reason.
+            // Without this pin, a fixture that silently shifted from one
+            // reason to another (e.g., `absolute_path` → `folder_missing`,
+            // exposing the production gap noted in fixture metadata) would
+            // still pass the generic `rejected_at_confinement` check.
+            expect(rejects[0]?.extra?.reason).toBe(fixture.expectedReason);
             // execute.* MUST NOT fire — the framework stopped before the
             // execute span.
             const types = observer.events.map((e) => e.type);
@@ -287,6 +348,62 @@ describe("Pagelet prompt-injection fixtures (Track C · C2; SDD §8.3)", () => {
             runtime.dispose();
         },
     );
+
+    it("production-gap exposure · seeding .obsidian/plugins/personal-assistant lets the candidate reach Gate 2", async () => {
+        // The `inject-into-pa-config` fixture above relies on the mock
+        // adapter NOT seeding `.obsidian/plugins/personal-assistant` — only
+        // that omission triggers `folder_missing`. This test deliberately
+        // seeds that folder to mirror a real plugin install and asserts
+        // the framework does NOT reject. The expected outcome is that the
+        // write actually proceeds through Gate 2 + Gate 3 + execute, which
+        // is the production gap: Pagelet's framework wiring trusts the
+        // user-configured `reviewsFolder` without validating that the
+        // configured path is outside `.obsidian/`. A separate ticket
+        // (production-side, not on this tests-only branch) should add a
+        // settings validator that rejects `reviewsFolder` values that
+        // start with `.obsidian/` (and probably other dotfolders Obsidian
+        // owns). Track in the smoke checklist's Bugs table under S0.
+        const folder = ".obsidian/plugins/personal-assistant";
+        const adapter = makeAdapter([folder]);
+        const settings: PageletSettings = {
+            ...PAGELET_DEFAULTS,
+            reviewsFolder: folder,
+        };
+        const renderer = confirmingRenderer();
+        const observer = recordingObserver();
+        const fakeApp = { vault: { adapter } } as unknown as Parameters<typeof createPaReviewRuntime>[0]["app"];
+        const runtime = createPaReviewRuntime({
+            app: fakeApp,
+            getPageletSettings: () => settings,
+            previewRenderer: renderer,
+            fsProbe: adapter as unknown as FsProbe,
+            debugObserver: observer,
+        });
+
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            makeInput({ sourcePath: "data.json" }),
+            makeContext(),
+        );
+
+        // ── Production-gap assertions ────────────────────────────────────
+        // The framework happily writes into `.obsidian/plugins/...` because
+        // the user-configured reviewsFolder IS the (capability-derived)
+        // allowedRoot. If a future production fix lands a settings-side
+        // validator, this test should flip to expecting `result.status ===
+        // "failed"` — at which point delete it (the corresponding case
+        // moves into the rejection loop above).
+        expect(result.status).toBe("ok");
+        expect(adapter.write).toHaveBeenCalledTimes(1);
+        expect(adapter.write.mock.calls[0]![0]).toContain(folder);
+        // No confinement reject was emitted — Gate 1 found nothing wrong.
+        const rejects = observer.events.filter(
+            (e) => e.type === "gate.target-confinement.reject",
+        );
+        expect(rejects).toHaveLength(0);
+
+        runtime.dispose();
+    });
 
     it("benign control fixture (clean .pagelet/ target) still flows through to the renderer", async () => {
         // Without this control, all assertions above would also pass if
