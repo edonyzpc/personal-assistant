@@ -95,7 +95,83 @@ export interface MascotRendererOptions {
      * tests can override; production uses the spec default.
      */
     dataPlugin?: string;
+    /**
+     * B5 / D007.4 — reduced-motion seam.
+     *
+     * Probe invoked at construction time AND on every `setState`. When
+     * it returns `true`, the renderer strips SVG animation classes
+     * (no blink / float / pulse) AND adds a `--reduce-motion` modifier
+     * to the root so a CSS theme can suppress any leftover keyframes.
+     *
+     * Why a factory (not a boolean):
+     *   - `prefers-reduced-motion` is a live media query — the user can
+     *     toggle the OS setting mid-session. Re-evaluating on every
+     *     setState catches the change without observers / listeners.
+     *   - Tests inject a deterministic stub instead of mocking
+     *     `window.matchMedia`. The default uses `window.matchMedia` when
+     *     available, otherwise returns `false`.
+     */
+    prefersReducedMotion?: () => boolean;
+    /**
+     * B5 — accessible "announcement" seam.
+     *
+     * Receives the resolved announcement string + `aria-live` level for
+     * the current state. Default behavior writes into an internal
+     * `aria-live` region attached to the mascot's root. Tests stub it
+     * to assert announcement timing without inspecting the DOM tree.
+     *
+     * Only fires when the state transitions to one of the announcing
+     * states (`done` → polite, `error` → assertive). `idle` /
+     * `thinking` clear the region (empty string + `"off"`).
+     */
+    announceLiveRegion?: (announcement: MascotLiveAnnouncement) => void;
 }
+
+/**
+ * Live-region announcement payload. Resolved once per state transition
+ * (or on initial mount) and either pushed into the default DOM live
+ * region or forwarded to a caller-supplied seam.
+ *
+ * - `message`: short, already-translated; empty string means "clear the
+ *   region" so subsequent same-state re-entry can re-announce.
+ * - `level`: maps to the `aria-live` attribute. `off` means do not
+ *   announce; `polite` for `done`; `assertive` for `error`.
+ */
+export interface MascotLiveAnnouncement {
+    state: MascotState;
+    message: string;
+    level: MascotLiveLevel;
+}
+
+/** Mascot aria-live level. */
+export type MascotLiveLevel = "off" | "polite" | "assertive";
+
+/**
+ * State → aria-live level mapping. Frozen so callers can rely on
+ * referential stability when comparing.
+ *
+ * - `done` → polite: a non-interrupting confirmation suffices.
+ * - `error` → assertive: failures should override pending speech.
+ * - `idle` / `thinking` → off: no announcement (the visual change is
+ *   enough; assertive thinking would be noise).
+ */
+export const MASCOT_STATE_LIVE_LEVEL: Readonly<Record<MascotState, MascotLiveLevel>> = Object.freeze({
+    idle: "off",
+    thinking: "off",
+    done: "polite",
+    error: "assertive",
+});
+
+/**
+ * State → i18n key for the announcement message. `idle` / `thinking`
+ * are intentionally absent — we never read these (level === "off").
+ */
+export const MASCOT_STATE_ANNOUNCE_I18N_KEY: Readonly<Record<MascotState, string | null>> = Object.freeze({
+    idle: null,
+    thinking: null,
+    done: "pagelet.a11y.announce.done",
+    error: "pagelet.a11y.announce.error",
+});
 
 /**
  * Translator function shape — narrowed to the single (key, fallback)

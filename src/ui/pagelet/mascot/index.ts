@@ -12,7 +12,11 @@
  */
 
 export {
+    MASCOT_STATE_ANNOUNCE_I18N_KEY,
+    MASCOT_STATE_LIVE_LEVEL,
     MASCOT_STATES,
+    type MascotLiveAnnouncement,
+    type MascotLiveLevel,
     type MascotRenderer,
     type MascotRendererOptions,
     type MascotSetStateOptions,

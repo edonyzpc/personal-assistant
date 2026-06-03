@@ -41,12 +41,16 @@ import {
     MASCOT_STATE_I18N_KEY,
     type MascotMarkup,
 } from "./markup";
-import type {
-    MascotRenderer,
-    MascotRendererOptions,
-    MascotSetStateOptions,
-    MascotState,
-    MascotTranslator,
+import {
+    MASCOT_STATE_ANNOUNCE_I18N_KEY,
+    MASCOT_STATE_LIVE_LEVEL,
+    type MascotLiveAnnouncement,
+    type MascotLiveLevel,
+    type MascotRenderer,
+    type MascotRendererOptions,
+    type MascotSetStateOptions,
+    type MascotState,
+    type MascotTranslator,
 } from "./types";
 
 // ---------------------------------------------------------------------------
@@ -157,6 +161,13 @@ interface MountedNodes {
     root: MascotDomNode;
     svg: MascotDomNode;
     messageEl: MascotDomNode;
+    /**
+     * Hidden aria-live region for state announcements (B5 §6.2). Lives
+     * inside the mascot root so the same screen-reader cursor that
+     * tracks the mascot also picks up the announcement, but visually
+     * hidden via the `pa-pagelet-mascot__live` class (see CSS spec).
+     */
+    liveEl: MascotDomNode;
 }
 
 /**
@@ -203,8 +214,11 @@ export function createMascotRendererWithHost(
     const translator = options.translator ?? defaultTranslator(locale);
     const dataPlugin = options.dataPlugin ?? "pa-pagelet";
     const ariaLabelOverride = options.ariaLabel;
+    const prefersReducedMotion = options.prefersReducedMotion ?? defaultPrefersReducedMotion;
+    const announceLiveRegion = options.announceLiveRegion;
     let currentState: MascotState = options.initialState ?? "idle";
 
+    const initialReducedMotion = safeProbeReducedMotion(prefersReducedMotion);
     const mounted = mountInitial({
         host: options.host,
         parentNode,
@@ -212,8 +226,13 @@ export function createMascotRendererWithHost(
         markup: buildMascotMarkup(currentState, {
             translator,
             ariaLabel: ariaLabelOverride,
+            reducedMotion: initialReducedMotion,
         }),
     });
+    // Mount-time announcement: if the initial state is one of the
+    // announcing states (rare but possible — e.g. a host restoring
+    // mascot from a saved "error" state), emit immediately.
+    emitAnnouncement(currentState, translator, mounted, announceLiveRegion);
 
     function applyState(newState: MascotState, opts?: MascotSetStateOptions): void {
         // Guard 1: abort signal short-circuits the transition.
@@ -223,13 +242,23 @@ export function createMascotRendererWithHost(
         // pointless DOM mutation.
         if (newState === currentState && opts?.message === undefined) return;
 
+        const reducedMotion = safeProbeReducedMotion(prefersReducedMotion);
         const markup = buildMascotMarkup(newState, {
             translator,
             messageOverride: opts?.message,
             ariaLabel: ariaLabelOverride,
+            reducedMotion,
         });
         applyMarkup(mounted, markup, options.host);
+        const stateChanged = newState !== currentState;
         currentState = newState;
+        // Only announce on a real state transition. Re-renders that
+        // only swap the message (same state) should not re-announce
+        // — that would spam screen readers on rapid "Reviewing X..."
+        // status updates.
+        if (stateChanged) {
+            emitAnnouncement(newState, translator, mounted, announceLiveRegion);
+        }
     }
 
     return {
@@ -275,9 +304,25 @@ function mountInitial(args: {
     messageEl.setAttribute("class", "pa-pagelet-mascot__message");
     root.appendChild(messageEl);
 
+    // Visually hidden aria-live region for state announcements.
+    // `aria-live` defaults to "off" at mount time — `applyAnnouncement`
+    // toggles it per state so AT only picks up real transitions.
+    const liveEl = host.createHtmlElement("span");
+    liveEl.setAttribute("class", "pa-pagelet-mascot__live");
+    liveEl.setAttribute("aria-live", "off");
+    // `aria-atomic="true"` so AT re-reads the whole announcement instead
+    // of trying to diff. Atomic is correct for short status messages.
+    liveEl.setAttribute("aria-atomic", "true");
+    // `role="status"` is the SDD §9.2 baseline for transient updates;
+    // we keep `role="status"` on the dedicated live element rather than
+    // doubling it on the root (which would conflict with the mascot's
+    // own `role="status"` set above and confuse some AT).
+    liveEl.setAttribute("role", "status");
+    root.appendChild(liveEl);
+
     parentNode.appendChild(root);
 
-    const mounted: MountedNodes = { root, svg, messageEl };
+    const mounted: MountedNodes = { root, svg, messageEl, liveEl };
     applyMarkup(mounted, markup, host);
     return mounted;
 }
@@ -369,6 +414,84 @@ function clearChildren(node: MascotDomNode): void {
 function defaultTranslator(locale: PageletLocale): MascotTranslator {
     return (key: string, fallback?: string) => pageletT(key, locale, undefined, fallback);
 }
+
+/**
+ * Default `prefers-reduced-motion` probe.
+ *
+ * Lazy `window.matchMedia` lookup — invoked on every `setState` call,
+ * NOT cached at module-load — so a user who toggles their OS reduce-
+ * motion preference mid-session takes effect on the next mascot
+ * transition (no listener overhead required).
+ *
+ * Defensive `try/catch` because some Obsidian environments (mobile
+ * preview, certain WebViews) throw when matchMedia is called with a
+ * not-yet-recognized media query string.
+ */
+function defaultPrefersReducedMotion(): boolean {
+    if (typeof window === "undefined") return false;
+    const mm = (window as Window & { matchMedia?: typeof window.matchMedia }).matchMedia;
+    if (typeof mm !== "function") return false;
+    try {
+        return mm.call(window, "(prefers-reduced-motion: reduce)").matches === true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Bullet-proof wrapper around the user-supplied probe — a thrown
+ * exception must not interrupt the mascot transition.
+ */
+function safeProbeReducedMotion(probe: () => boolean): boolean {
+    try {
+        return probe() === true;
+    } catch {
+        return false;
+    }
+}
+
+/**
+ * Emit a state announcement to the live region. Updates BOTH the
+ * `aria-live` attribute (so AT picks the right priority) AND the text
+ * (so AT speaks it). Calls the optional caller seam for tests / custom
+ * routing.
+ */
+function emitAnnouncement(
+    state: MascotState,
+    translator: MascotTranslator,
+    mounted: MountedNodes,
+    announceLiveRegion: ((announcement: MascotLiveAnnouncement) => void) | undefined,
+): void {
+    const level: MascotLiveLevel = MASCOT_STATE_LIVE_LEVEL[state];
+    const messageKey = MASCOT_STATE_ANNOUNCE_I18N_KEY[state];
+    const message = messageKey
+        ? lookupAnnouncementMessage(messageKey, translator)
+        : "";
+
+    mounted.liveEl.setAttribute("aria-live", level);
+    mounted.liveEl.setText(message);
+
+    if (announceLiveRegion) {
+        announceLiveRegion({ state, message, level });
+    }
+}
+
+/**
+ * Resolve the announcement string, falling through to a sensible EN
+ * default when the translator surfaces the raw key (same pattern the
+ * mascot message resolver uses).
+ */
+function lookupAnnouncementMessage(key: string, translator: MascotTranslator): string {
+    const fallback = ANNOUNCE_DEFAULT_TEXT[key] ?? "";
+    const raw = translator(key, fallback);
+    return raw === key ? fallback : raw;
+}
+
+/** Hard-coded EN fallbacks for the announcement keys. */
+const ANNOUNCE_DEFAULT_TEXT: Readonly<Record<string, string>> = Object.freeze({
+    "pagelet.a11y.announce.done": "Pagelet finished reviewing. Suggestions are ready.",
+    "pagelet.a11y.announce.error": "Pagelet review failed. Open the panel for details.",
+});
 
 // ---------------------------------------------------------------------------
 // Re-exports — keep the mascot/index.ts barrel slim.
