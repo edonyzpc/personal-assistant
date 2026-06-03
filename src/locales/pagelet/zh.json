@@ -32,6 +32,12 @@
 
     "pagelet.settings.reviewsFolder.name": "审阅笔记目录",
     "pagelet.settings.reviewsFolder.desc": "审阅笔记保存的 vault 路径。默认 .pagelet（dotfolder，其他插件会跳过）。",
+    "pagelet.settings.reviewsFolder.error.empty": "审阅笔记目录不能为空，已恢复为上次有效的值。",
+    "pagelet.settings.reviewsFolder.error.absolute_path": "审阅笔记目录必须是 vault 相对路径（不能以 / 开头），已恢复为上次有效的值。",
+    "pagelet.settings.reviewsFolder.error.drive_letter": "审阅笔记目录不能以盘符开头，已恢复为上次有效的值。",
+    "pagelet.settings.reviewsFolder.error.parent_traversal": "审阅笔记目录不能包含 '..' 路径段，已恢复为上次有效的值。",
+    "pagelet.settings.reviewsFolder.error.obsidian_config": "审阅笔记目录不能位于 .obsidian（Obsidian 配置目录）内，已恢复为上次有效的值。",
+    "pagelet.settings.reviewsFolder.error.control_chars": "审阅笔记目录包含控制字符，已恢复为上次有效的值。",
 
     "pagelet.settings.outputLanguage.name": "输出语言",
     "pagelet.settings.outputLanguage.desc": "审阅建议使用的语言。Auto 跟随笔记语言；选择具体值则强制使用。",

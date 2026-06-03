@@ -53,7 +53,12 @@ import {
     PAGELET_SCHEMA_VERSION,
     type PageletReviewResult,
 } from "../src/pagelet/pa-review-schemas";
-import { PAGELET_DEFAULTS, type PageletSettings } from "../src/settings/pagelet";
+import {
+    PAGELET_DEFAULTS,
+    mergePageletSettings,
+    normalizeReviewsFolder,
+    type PageletSettings,
+} from "../src/settings/pagelet";
 import {
     type PageletWriteReviewOutputInput,
 } from "../src/pagelet/pa-review-tool-provider";
@@ -253,19 +258,16 @@ const SDD_8_3_FIXTURES: readonly InjectionFixture[] = [
         reviewsFolder: ".obsidian/plugins/personal-assistant",
         sourcePath: "data.json",
         // The mock doesn't seed `.obsidian/plugins/personal-assistant`, so
-        // async Gate 1 rejects with `folder_missing`. PRODUCTION GAP: in a
-        // real plugin install that folder ALWAYS exists, so the framework's
-        // Gate 1 would NOT reject — the candidate would reach Gate 2's
-        // preview modal targeting a plugin-config-adjacent path. The
-        // capability's allowedRoots is dynamically derived from
-        // `settings.reviewsFolder` (pa-review-tool-provider.ts:285-296) so
-        // it would also not reject. The folder-exists production-gap test
-        // below makes this visible; a separate fix on
-        // `feat/pagelet-non-write` or similar should validate
-        // `reviewsFolder` at settings-write time (reject paths inside
-        // `.obsidian/`).
+        // async Gate 1 rejects with `folder_missing`. NOTE: in a real
+        // plugin install that folder ALWAYS exists — but the production
+        // gap that previously exposed is now closed at the **settings
+        // boundary** by `normalizeReviewsFolder` (see the
+        // settings-layer-validator test below + `src/settings/pagelet/index.ts`).
+        // The fixture is retained so the Gate 1 contract stays exercised
+        // for any caller that bypasses the settings layer (e.g. a future
+        // capability that derives an allowlist from a different source).
         expectedReason: "folder_missing",
-        productionGapNote: "real .obsidian/plugins/personal-assistant exists → bypasses Gate 1 in prod",
+        productionGapNote: "settings-layer validator (H-B3.2 / v2.2.0-beta.1) now rejects .obsidian/* before the framework sees it",
     },
     {
         id: "inject-drive-letter",
@@ -349,32 +351,57 @@ describe("Pagelet prompt-injection fixtures (Track C · C2; SDD §8.3)", () => {
         },
     );
 
-    it("production-gap exposure · seeding .obsidian/plugins/personal-assistant lets the candidate reach Gate 2", async () => {
-        // The `inject-into-pa-config` fixture above relies on the mock
-        // adapter NOT seeding `.obsidian/plugins/personal-assistant` — only
-        // that omission triggers `folder_missing`. This test deliberately
-        // seeds that folder to mirror a real plugin install and asserts
-        // the framework does NOT reject. The expected outcome is that the
-        // write actually proceeds through Gate 2 + Gate 3 + execute, which
-        // is the production gap: Pagelet's framework wiring trusts the
-        // user-configured `reviewsFolder` without validating that the
-        // configured path is outside `.obsidian/`. A separate ticket
-        // (production-side, not on this tests-only branch) should add a
-        // settings validator that rejects `reviewsFolder` values that
-        // start with `.obsidian/` (and probably other dotfolders Obsidian
-        // owns). Track in the smoke checklist's Bugs table under S0.
-        const folder = ".obsidian/plugins/personal-assistant";
-        const adapter = makeAdapter([folder]);
-        const settings: PageletSettings = {
-            ...PAGELET_DEFAULTS,
-            reviewsFolder: folder,
-        };
+    it("settings-layer validator stops `.obsidian/plugins/personal-assistant` BEFORE the framework ever sees it (H-B3.2 / PR #356 B2 fix)", async () => {
+        // History: this test used to seed `.obsidian/plugins/personal-assistant`
+        // as `reviewsFolder` and assert the framework wrote there happily —
+        // a real production gap because `PaReviewToolProvider` derives
+        // `targetConfinement.allowedRoots` directly from `settings.reviewsFolder`
+        // (pa-review-tool-provider.ts:285-296), so Gate 1 would have nothing
+        // to reject.
+        //
+        // The fix (shipped in v2.2.0-beta.1) lives at the settings boundary:
+        // `normalizeReviewsFolder` in `src/settings/pagelet/index.ts` rejects
+        // `.obsidian/` (and absolute paths / parent-traversal / drive letters
+        // / control chars) up front, falling back to the `.pagelet` default
+        // and surfacing an inline UI error. The capability shape is
+        // unchanged — the boundary just never widens.
+        //
+        // This test now asserts the **two arms** of the new contract:
+        //   1. The validator rejects the forbidden folder (returns default
+        //      + error code) so nothing forbidden ever lands in the
+        //      persisted settings.
+        //   2. If a runtime is built from settings that went through
+        //      `mergePageletSettings`, the framework receives `.pagelet`
+        //      (not `.obsidian/...`) and writes there — i.e. the framework
+        //      never even gets the chance to refuse, because the boundary
+        //      already coerced.
+        const forbidden = ".obsidian/plugins/personal-assistant";
+
+        // ── Arm 1 — settings-layer rejection ─────────────────────────────
+        const validation = normalizeReviewsFolder(forbidden);
+        expect(validation.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+        expect(validation.error).toBe("obsidian_config");
+        expect(validation.input).toBe(forbidden);
+
+        // The same path coming in through `mergePageletSettings` (the
+        // data.json load boundary) also fails closed — a corrupted /
+        // attacker-poisoned settings file cannot smuggle in a forbidden
+        // root.
+        const merged = mergePageletSettings({ reviewsFolder: forbidden });
+        expect(merged.reviewsFolder).toBe(PAGELET_DEFAULTS.reviewsFolder);
+
+        // ── Arm 2 — runtime built from coerced settings writes into the
+        // safe default folder, never into `.obsidian/…`. We seed BOTH
+        // `.obsidian/...` (so a regression that bypassed the validator
+        // would also pass the FS-exists probe and surface the bug) AND the
+        // default `.pagelet` folder (so the safe write path can land).
+        const adapter = makeAdapter([forbidden, PAGELET_DEFAULTS.reviewsFolder]);
         const renderer = confirmingRenderer();
         const observer = recordingObserver();
         const fakeApp = { vault: { adapter } } as unknown as Parameters<typeof createPaReviewRuntime>[0]["app"];
         const runtime = createPaReviewRuntime({
             app: fakeApp,
-            getPageletSettings: () => settings,
+            getPageletSettings: () => merged,
             previewRenderer: renderer,
             fsProbe: adapter as unknown as FsProbe,
             debugObserver: observer,
@@ -386,21 +413,15 @@ describe("Pagelet prompt-injection fixtures (Track C · C2; SDD §8.3)", () => {
             makeContext(),
         );
 
-        // ── Production-gap assertions ────────────────────────────────────
-        // The framework happily writes into `.obsidian/plugins/...` because
-        // the user-configured reviewsFolder IS the (capability-derived)
-        // allowedRoot. If a future production fix lands a settings-side
-        // validator, this test should flip to expecting `result.status ===
-        // "failed"` — at which point delete it (the corresponding case
-        // moves into the rejection loop above).
         expect(result.status).toBe("ok");
         expect(adapter.write).toHaveBeenCalledTimes(1);
-        expect(adapter.write.mock.calls[0]![0]).toContain(folder);
-        // No confinement reject was emitted — Gate 1 found nothing wrong.
-        const rejects = observer.events.filter(
-            (e) => e.type === "gate.target-confinement.reject",
-        );
-        expect(rejects).toHaveLength(0);
+        // The crux: the actually-written path lives under `.pagelet/`, NOT
+        // under `.obsidian/...`, EVEN THOUGH the original input asked for
+        // the forbidden folder. Settings layer scrubbed it BEFORE the
+        // capability could derive an allowedRoot from it.
+        const writtenPath = adapter.write.mock.calls[0]![0];
+        expect(writtenPath.startsWith(`${PAGELET_DEFAULTS.reviewsFolder}/`)).toBe(true);
+        expect(writtenPath).not.toContain(".obsidian");
 
         runtime.dispose();
     });

@@ -25,6 +25,7 @@ import {
     PAGELET_DEFAULTS,
     PAGELET_FIXED_CALL_LIMITS,
     mergePageletSettings,
+    normalizeReviewsFolder,
     renderPageletSection,
     type PageletSettings,
     type PageletSettingBuilder,
@@ -252,9 +253,20 @@ describe("mergePageletSettings", () => {
 
     it("normalizes reviewsFolder by stripping leading ./ and trailing /", () => {
         expect(mergePageletSettings({ reviewsFolder: "./notes/" }).reviewsFolder).toBe("notes");
-        expect(mergePageletSettings({ reviewsFolder: "/notes" }).reviewsFolder).toBe("notes");
         expect(mergePageletSettings({ reviewsFolder: "notes//" }).reviewsFolder).toBe("notes");
         expect(mergePageletSettings({ reviewsFolder: "  " }).reviewsFolder).toBe(
+            PAGELET_DEFAULTS.reviewsFolder,
+        );
+    });
+
+    it("fails closed when reviewsFolder is an absolute path (was: stripped silently)", () => {
+        // Pre-H-B3.2 the merger silently stripped the leading slash so
+        // `"/notes"` became `"notes"`. The capability's allowedRoots is
+        // derived from this value (pa-review-tool-provider.ts:285-296), so
+        // accepting an absolute path widened the framework's confinement
+        // gate to any vault folder named `notes`. Closing the gap means
+        // rejecting absolute paths outright and reverting to the default.
+        expect(mergePageletSettings({ reviewsFolder: "/notes" }).reviewsFolder).toBe(
             PAGELET_DEFAULTS.reviewsFolder,
         );
     });
@@ -305,6 +317,120 @@ describe("mergePageletSettings", () => {
 });
 
 // ---------------------------------------------------------------------------
+// normalizeReviewsFolder — H-B3.2 / PR #356 B2 prod-gap settings-layer validator
+//
+// This validator is the fail-closed boundary that backs
+// `PaReviewToolProvider.targetConfinement.allowedRoots`. Without it, a
+// misconfigured `reviewsFolder` (`.obsidian/`, `/etc`, `../foo`, `C:\…`)
+// would propagate to the capability and Gate 1 of the Write Action
+// Framework would happily accept writes inside the user's Obsidian config
+// folder. Each forbidden shape below maps to a real attacker fixture
+// documented in `docs/write-action-framework-sdd.md` §8.3.
+// ---------------------------------------------------------------------------
+
+describe("normalizeReviewsFolder (settings-layer validator)", () => {
+    it("accepts plain vault-relative paths unchanged", () => {
+        expect(normalizeReviewsFolder("notes/reviews")).toEqual({
+            value: "notes/reviews",
+        });
+        expect(normalizeReviewsFolder(".pagelet")).toEqual({ value: ".pagelet" });
+    });
+
+    it("trims whitespace and strips leading ./ and trailing /", () => {
+        expect(normalizeReviewsFolder("  ./reviews/  ")).toEqual({
+            value: "reviews",
+        });
+        expect(normalizeReviewsFolder("reviews//")).toEqual({ value: "reviews" });
+    });
+
+    it("returns the default with no error for non-string inputs (corrupt data.json)", () => {
+        // Non-string inputs originate from a broken data.json shape, not a
+        // typed user action — coerce silently to avoid noisy startup errors.
+        expect(normalizeReviewsFolder(undefined)).toEqual({
+            value: PAGELET_DEFAULTS.reviewsFolder,
+        });
+        expect(normalizeReviewsFolder(42)).toEqual({
+            value: PAGELET_DEFAULTS.reviewsFolder,
+        });
+        expect(normalizeReviewsFolder({ folder: "notes" })).toEqual({
+            value: PAGELET_DEFAULTS.reviewsFolder,
+        });
+    });
+
+    it("rejects empty input (whitespace-only or '.') with error: empty", () => {
+        const r = normalizeReviewsFolder("   ");
+        expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+        expect(r.error).toBe("empty");
+        // Sanitised-to-empty (single `.` strips to nothing) also fails closed.
+        const dot = normalizeReviewsFolder("./");
+        expect(dot.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+        expect(dot.error).toBe("empty");
+    });
+
+    it("rejects absolute Unix paths with error: absolute_path", () => {
+        for (const bad of ["/etc/passwd", "/tmp", "/"]) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("absolute_path");
+            expect(r.input).toBe(bad);
+        }
+    });
+
+    it("rejects Windows drive-letter prefixes with error: drive_letter", () => {
+        for (const bad of ["C:\\Users\\me", "c:/notes", "Z:\\evil"]) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("drive_letter");
+        }
+    });
+
+    it("rejects parent-traversal segments with error: parent_traversal", () => {
+        for (const bad of ["..", "../../config", "notes/../escape", "a/b/.."]) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("parent_traversal");
+        }
+    });
+
+    it("accepts folder names that merely CONTAIN '..' but do not have a bare '..' segment", () => {
+        // A literal folder name `..config` (filesystem-legal) must NOT be
+        // confused with parent-traversal. Tokenisation on `/` prevents that.
+        expect(normalizeReviewsFolder("..config")).toEqual({ value: "..config" });
+        expect(normalizeReviewsFolder("foo/bar..baz")).toEqual({ value: "foo/bar..baz" });
+    });
+
+    it("rejects paths inside .obsidian with error: obsidian_config (PR #356 B2 fixture)", () => {
+        for (const bad of [
+            ".obsidian",
+            ".obsidian/plugins",
+            ".obsidian/plugins/personal-assistant",
+            "./.obsidian/foo",
+        ]) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("obsidian_config");
+        }
+    });
+
+    it("rejects control characters (NUL, TAB, BEL, …) with error: control_chars", () => {
+        for (const bad of ["notes\u0000evil", "notes\u0007bell", "notes\ttab"]) {
+            const r = normalizeReviewsFolder(bad);
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("control_chars");
+        }
+    });
+
+    it("input echo trims to surface the user's typed value to the UI", () => {
+        // The UI logs `result.input` when it surfaces an error message; the
+        // echo should reflect what the user typed (trimmed) so feedback is
+        // clear even when surrounding whitespace is the trigger.
+        const r = normalizeReviewsFolder("  /etc  ");
+        expect(r.input).toBe("/etc");
+        expect(r.error).toBe("absolute_path");
+    });
+});
+
+// ---------------------------------------------------------------------------
 // renderPageletSection — UI wiring + i18n + onChange path
 // ---------------------------------------------------------------------------
 
@@ -329,23 +455,34 @@ describe("renderPageletSection", () => {
         ]);
     });
 
-    it("emits the section heading, subtitle, beta callout, and 3 group headings", () => {
+    it("emits the section heading, subtitle, beta callout, 3 group headings, and the reviewsFolder error sibling", () => {
         const parent = makeStubNode("div");
         const { factory } = makeStubFactory();
         const { host } = makeHost();
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        // h2 + p + div (beta callout) + 3× h3 (General/Model/Limits).
+        // h2 + p + div (beta callout) + h3 (General) + div (reviewsFolder
+        // error sibling, kept empty until a validator rejection fires) +
+        // h3 (Model) + h3 (Limits).
         const headings = parent.children.filter((c) => c.tagName.startsWith("h") || c.tagName === "p" || c.tagName === "div");
         expect(headings.map((h) => h.tagName)).toEqual([
-            "h2", "p", "div", "h3", "h3", "h3",
+            "h2", "p", "div", "h3", "div", "h3", "h3",
         ]);
         expect(headings[0].text).toBe("Pagelet");
         // The beta callout must be visible from the moment Pagelet ships
         // (D013) — it's the channel we collect feedback through.
         expect(headings[2].text).toContain("Beta");
         expect(headings[2].cls).toBe("pa-pagelet-beta-callout");
+        // The reviewsFolder error sibling must exist with the expected
+        // class so styles target it; absence here means the inline error
+        // message has nowhere to render and rejections become silent.
+        const errorEl = parent.children.find(
+            (c) => c.tagName === "div" && c.cls === "pa-pagelet-settings-error",
+        );
+        expect(errorEl).toBeDefined();
+        // Initially empty so non-error state does not visually shift.
+        expect(errorEl?.text).toBeUndefined();
     });
 
     it("uses zh dictionary when locale is zh", () => {
@@ -426,6 +563,51 @@ describe("renderPageletSection", () => {
 
         expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
         expect(save).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails closed on a forbidden reviewsFolder edit — surfaces error + reverts visible input", async () => {
+        // This is the renderer-side guarantee for H-B3.2 / PR #356 B2: a
+        // user typo that targets `.obsidian/` or an absolute path MUST NOT
+        // propagate into `settings.reviewsFolder` (which would widen the
+        // capability's allowedRoots), AND the visible text input MUST
+        // revert so the user sees their edit was not accepted. All three
+        // arms assert the fail-closed contract.
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host, save } = makeHost({ reviewsFolder: "notes/reviews" });
+
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+        // Seeded value rendered into the input.
+        expect(rows[1].textValue).toBe("notes/reviews");
+
+        // Read the error element. The stub does not track `textContent`
+        // (the renderer writes to a raw DOM property), so we read it back
+        // through a cast — JS still stores the assignment as a plain
+        // property on the stub object.
+        const errorEl = parent.children.find(
+            (c) => c.tagName === "div" && c.cls === "pa-pagelet-settings-error",
+        ) as unknown as { textContent?: string } | undefined;
+        expect(errorEl).toBeDefined();
+
+        // User typos a forbidden path. Expectations:
+        //   1. `settings.reviewsFolder` stays at the previously valid value.
+        //   2. Visible text input reverts to that previously valid value.
+        //   3. The error sibling shows the localised message for the
+        //      rejected category.
+        //   4. `saveSettings` still ran (the merger is forgiving — settings
+        //      may have changed adjacent fields elsewhere).
+        await rows[1].textOnChange!(".obsidian/plugins/personal-assistant");
+
+        expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
+        expect(rows[1].textValue).toBe("notes/reviews");
+        expect(errorEl?.textContent).toContain(".obsidian");
+        expect(save).toHaveBeenCalledTimes(1);
+
+        // After a clean edit the error must clear so a previous rejection
+        // is not stuck on screen forever.
+        await rows[1].textOnChange!("clean/folder");
+        expect(host.settings.pagelet.reviewsFolder).toBe("clean/folder");
+        expect(errorEl?.textContent).toBe("");
     });
 
     it("clamps out-of-range temperature/token edits", async () => {
