@@ -349,6 +349,42 @@ describe("PageletReviewCoalescer — error handling", () => {
         await expect(p2).resolves.toBe("ok");
         expect(attempt).toBe(2);
     });
+
+    it("handles a synchronously-throwing runner — promise rejects + entry is dropped", async () => {
+        // Regression: a non-async runner that throws BEFORE returning a
+        // promise must not strand the entry in "running". A bare
+        // `runner().then(...)` would let the sync throw escape ahead of
+        // the rejection handler, leaving the entry pending forever and
+        // causing the next request to dedup onto a never-settling promise.
+        const timers = makeManualTimers();
+        const coalescer = new PageletReviewCoalescer<string>({
+            setTimer: timers.setTimer,
+            clearTimer: timers.clearTimer,
+        });
+
+        const key = { notePath: "a.md", contentHash: "h1" };
+        // Cast through unknown to satisfy the typed runner signature while
+        // still exercising the sync-throw path the bug allowed in practice
+        // (TS does not stop a JS caller from passing such a function).
+        const syncThrowRunner = (() => { throw new Error("sync boom"); }) as unknown as () => Promise<string>;
+        const p1 = coalescer.request(key, syncThrowRunner);
+        timers.flushLast();
+        await expect(p1).rejects.toThrow("sync boom");
+        // Entry must be dropped — otherwise the next request would dedup
+        // onto a dead promise.
+        expect(coalescer.peek(key)).toBeNull();
+
+        // Retry with a real runner must produce a fresh promise.
+        let retried = false;
+        const p2 = coalescer.request(key, async () => {
+            retried = true;
+            return "ok";
+        });
+        expect(p2).not.toBe(p1);
+        timers.flushLast();
+        await expect(p2).resolves.toBe("ok");
+        expect(retried).toBe(true);
+    });
 });
 
 // ---------------------------------------------------------------------------

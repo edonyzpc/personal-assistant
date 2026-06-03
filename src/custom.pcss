@@ -2487,3 +2487,59 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	white-space: nowrap;
 	border: 0;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Pagelet (Review Assistant) — mascot visual tokens + animations.
+ *
+ * The mascot's pure markup builder (`src/ui/pagelet/mascot/markup.ts`) sets
+ *   - `stroke="var(--pa-pagelet-color-<state>)"` on each path/circle, and
+ *   - `class="pa-pagelet-anim-<blink|pulse-1|pulse-2|pulse-3>"` on the
+ *     animated path/circle.
+ *
+ * The DOM renderer also sets the `--pa-pagelet-mascot-stroke` custom
+ * property on the root so callers can theme the whole mascot without
+ * touching state-specific tokens.
+ *
+ * Values mirror `docs/pagelet-visual-spec.html` §① (4-state matrix) and §②
+ * (animation table). The spec uses `--pagelet-*` token names; we follow
+ * the codebase's BEM-style `pa-pagelet-*` prefix instead (D013 / SDD §6.2 M1).
+ *
+ * Reduce-motion is honored by the global selector defined above
+ * (`.pa-pagelet-mascot--reduce-motion *`) — no per-keyframe opt-out needed.
+ * ────────────────────────────────────────────────────────────────────── */
+.pa-pagelet-mascot {
+	--pa-pagelet-color-neutral: #e8e8e8;
+	--pa-pagelet-color-thinking: #7c9eff;
+	--pa-pagelet-color-done: #5dd39e;
+	--pa-pagelet-color-error: #ff6b6b;
+}
+
+@keyframes pa-pagelet-mascot-blink {
+	0%, 95%, 100% { transform: scaleY(1); }
+	97% { transform: scaleY(0.1); }
+}
+
+@keyframes pa-pagelet-mascot-pulse {
+	0%, 100% { opacity: 1; }
+	50% { opacity: 0.4; }
+}
+
+.pa-pagelet-anim-blink {
+	animation: pa-pagelet-mascot-blink 4s infinite;
+	transform-origin: center;
+	transform-box: fill-box;
+}
+
+.pa-pagelet-anim-pulse-1 {
+	animation: pa-pagelet-mascot-pulse 1.4s infinite;
+}
+
+.pa-pagelet-anim-pulse-2 {
+	animation: pa-pagelet-mascot-pulse 1.4s infinite;
+	animation-delay: 0.2s;
+}
+
+.pa-pagelet-anim-pulse-3 {
+	animation: pa-pagelet-mascot-pulse 1.4s infinite;
+	animation-delay: 0.4s;
+}
