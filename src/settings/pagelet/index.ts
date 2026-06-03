@@ -115,6 +115,44 @@ export const PAGELET_FIXED_CALL_LIMITS = Object.freeze({
 });
 
 // ---------------------------------------------------------------------------
+// reviewsFolder validation
+// ---------------------------------------------------------------------------
+
+/**
+ * Categorised reasons `normalizeReviewsFolder` may reject an input.
+ *
+ * `none` is implicit (omitted `error` on the validation result). The other
+ * categories map 1:1 to the H-B3.2 / PR #356 B2 prod-gap fixtures: the
+ * settings layer is the fail-closed boundary that prevents these from
+ * EVER reaching `PaReviewToolProvider.targetConfinement.allowedRoots`.
+ *
+ * See `docs/write-action-framework-sdd.md` §8.3 for the upstream attacker
+ * model these categories defend against.
+ */
+export type PageletReviewsFolderError =
+    | "empty"
+    | "absolute_path"
+    | "drive_letter"
+    | "parent_traversal"
+    | "obsidian_config"
+    | "control_chars";
+
+/**
+ * Output shape of `normalizeReviewsFolder`. `value` is always safe to use
+ * (fails closed to `PAGELET_DEFAULTS.reviewsFolder` on rejection). `error`
+ * is set only when the input was rejected — settings UI surfaces it as an
+ * inline message.
+ */
+export interface PageletReviewsFolderValidation {
+    /** Vault-relative, normalized folder. On rejection equals the default. */
+    value: string;
+    /** Set iff the input was rejected — used to pick the user-visible message. */
+    error?: PageletReviewsFolderError;
+    /** Echo of the raw input (trimmed view) so the UI can quote it back. */
+    input?: string;
+}
+
+// ---------------------------------------------------------------------------
 // Merge / normalize
 // ---------------------------------------------------------------------------
 
@@ -131,7 +169,7 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
     const raw = isRecord(loaded) ? loaded : {};
     return {
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : PAGELET_DEFAULTS.enabled,
-        reviewsFolder: normalizeReviewsFolder(raw.reviewsFolder),
+        reviewsFolder: normalizeReviewsFolder(raw.reviewsFolder).value,
         outputLanguage: normalizeOutputLanguage(raw.outputLanguage),
         ribbonPosition: normalizeRibbonPosition(raw.ribbonPosition),
         temperature: normalizeBoundedNumber(
@@ -155,13 +193,92 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
     };
 }
 
-function normalizeReviewsFolder(value: unknown): string {
-    if (typeof value !== "string") return PAGELET_DEFAULTS.reviewsFolder;
+/**
+ * Validate + normalize a user-supplied `reviewsFolder` value.
+ *
+ * This is the **fail-closed settings boundary** that backs `PaReviewToolProvider`'s
+ * `targetConfinement.allowedRoots`. The capability derives its allowlist
+ * from `settings.reviewsFolder` directly (see
+ * `src/pagelet/pa-review-tool-provider.ts:285-296`), so a misconfigured
+ * folder (e.g. `.obsidian/`, `/`, `..`, `C:\…`) would otherwise let the
+ * Write Action Framework's Gate 1 accept paths that escape Pagelet's
+ * intended sandbox. We block those classes here, **before** the value
+ * persists to data.json.
+ *
+ * On any rejection, the function returns the default folder (`.pagelet`) so
+ * the rest of the runtime stays safe even if a caller forgets to inspect
+ * `error`. The UI layer is responsible for surfacing the error and reverting
+ * the editable text input (see `renderPageletSection`).
+ *
+ * `PaReviewToolProvider` does NOT call this validator directly — it still
+ * resolves the persisted value through `pa-review-file-io.ts`'s sibling
+ * `normalizeReviewsFolder`, which trusts that the settings layer already
+ * scrubbed forbidden shapes. Keeping the fix here (one boundary) instead
+ * of in the capability avoids a per-call branch on every write.
+ */
+export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderValidation {
+    if (typeof value !== "string") {
+        // Missing / wrong-type values are coerced silently — they originate
+        // from corrupt data.json shapes, not a typed user action, so an
+        // inline error would be noise. The merge layer already logs at the
+        // boundary if it wants visibility.
+        return { value: PAGELET_DEFAULTS.reviewsFolder };
+    }
+
     const trimmed = value.trim();
-    if (trimmed.length === 0) return PAGELET_DEFAULTS.reviewsFolder;
-    // Strip leading "/" and "./" so the stored path is always a vault-relative
-    // POSIX form — matches how Obsidian's vault.adapter.* functions interpret paths.
-    return trimmed.replace(/^\.?\/+/, "").replace(/\/+$/, "");
+    if (trimmed.length === 0) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "empty", input: trimmed };
+    }
+
+    // Control chars / NUL — surface BEFORE the strip-and-normalize so the
+    // raw byte that tripped the check is visible in `input` if a logger
+    // wants it.
+    // eslint-disable-next-line no-control-regex
+    if (/[\u0000-\u001f]/.test(trimmed)) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "control_chars", input: trimmed };
+    }
+
+    // Windows drive letter — must run before any slash normalization so
+    // `C:\foo` and `c:/foo` both trip. The check is intentionally narrow
+    // (single-letter prefix + colon) so a future user folder literally
+    // named `bin:` does not collide.
+    if (/^[a-zA-Z]:/.test(trimmed)) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "drive_letter", input: trimmed };
+    }
+
+    // Absolute Unix path — Obsidian vaults are always relative; an
+    // absolute path almost certainly means the user copy-pasted from a
+    // shell or filesystem browser.
+    if (trimmed.startsWith("/")) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "absolute_path", input: trimmed };
+    }
+
+    // Strip leading "./" and trailing "/" so the stored path is always a
+    // vault-relative POSIX form — matches how Obsidian's vault.adapter.*
+    // functions interpret paths. The leading `\\?/+` form is intentionally
+    // tolerant: `./.pagelet` and `.pagelet` are equivalent for the user.
+    const stripped = trimmed.replace(/^\.?\/+/, "").replace(/\/+$/, "");
+    if (stripped.length === 0) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "empty", input: trimmed };
+    }
+
+    // Parent traversal — any `..` segment escapes the vault root. We
+    // tokenise on `/` rather than substring-matching `..` so a literal
+    // folder named `..config` (legal) is NOT rejected; only the path
+    // segment exactly `..` trips.
+    const segments = stripped.split("/");
+    if (segments.some((seg) => seg === "..")) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "parent_traversal", input: trimmed };
+    }
+
+    // Obsidian config directory — the framework would otherwise happily
+    // write into `.obsidian/plugins/personal-assistant/` if the user (mis)set
+    // their folder there. This is the PR #356 B2 production-gap fixture.
+    if (segments[0] === ".obsidian") {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "obsidian_config", input: trimmed };
+    }
+
+    return { value: stripped };
 }
 
 function normalizeOutputLanguage(value: unknown): PageletOutputLanguageSetting {
@@ -303,16 +420,52 @@ export function renderPageletSection(
     // ── General ─────────────────────────────────────────────────────────
     parentEl.createEl("h3", { text: t("pagelet.settings.general.heading") });
 
+    // Track the last-known valid folder so a rejected edit can revert both
+    // the persisted value AND the visible text input. Seeded with whatever
+    // mergePageletSettings already accepted at load time.
+    let lastValidReviewsFolder = settings.reviewsFolder;
+    let reviewsFolderTextHandle: PageletTextHandle | undefined;
     factory.create(parentEl)
         .setName(t("pagelet.settings.reviewsFolder.name"))
         .setDesc(t("pagelet.settings.reviewsFolder.desc"))
-        .addText((text) =>
+        .addText((text) => {
+            reviewsFolderTextHandle = text;
             text
                 .setPlaceholder(PAGELET_DEFAULTS.reviewsFolder)
                 .setValue(settings.reviewsFolder)
                 .onChange((value) => saveOnChange(() => {
-                    settings.reviewsFolder = normalizeReviewsFolder(value);
-                })));
+                    const result = normalizeReviewsFolder(value);
+                    if (result.error) {
+                        // Fail-closed: keep the previously valid folder so the
+                        // capability's `allowedRoots` (derived from this value)
+                        // never widens to a forbidden root. Surface the reason
+                        // inline + revert the visible input so the user sees
+                        // their edit was not accepted.
+                        reviewsFolderErrorEl.textContent = t(
+                            `pagelet.settings.reviewsFolder.error.${result.error}`,
+                        );
+                        settings.reviewsFolder = lastValidReviewsFolder;
+                        reviewsFolderTextHandle?.setValue(lastValidReviewsFolder);
+                        return;
+                    }
+                    reviewsFolderErrorEl.textContent = "";
+                    settings.reviewsFolder = result.value;
+                    lastValidReviewsFolder = result.value;
+                    // If we trimmed leading/trailing slashes, reflect the
+                    // normalised form in the visible input so the user sees
+                    // what was stored.
+                    if (value !== result.value) {
+                        reviewsFolderTextHandle?.setValue(result.value);
+                    }
+                }));
+        });
+    // Inline error message sits IMMEDIATELY below the input so a rejection
+    // surfaces right where the user just typed. Kept empty until a
+    // validator rejection fires; an empty `textContent` collapses the row
+    // visually so non-error state does not look like a layout shift.
+    const reviewsFolderErrorEl = parentEl.createEl("div", {
+        cls: "pa-pagelet-settings-error",
+    });
 
     factory.create(parentEl)
         .setName(t("pagelet.settings.outputLanguage.name"))

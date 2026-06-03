@@ -32,6 +32,12 @@
 
     "pagelet.settings.reviewsFolder.name": "Reviews folder",
     "pagelet.settings.reviewsFolder.desc": "Vault path where review notes are stored. Defaults to .pagelet (a dotfolder so other plugins skip it).",
+    "pagelet.settings.reviewsFolder.error.empty": "Reviews folder cannot be empty. Reverted to the previous value.",
+    "pagelet.settings.reviewsFolder.error.absolute_path": "Reviews folder must be a vault-relative path (no leading /). Reverted to the previous value.",
+    "pagelet.settings.reviewsFolder.error.drive_letter": "Reviews folder cannot start with a drive letter. Reverted to the previous value.",
+    "pagelet.settings.reviewsFolder.error.parent_traversal": "Reviews folder cannot contain '..' segments. Reverted to the previous value.",
+    "pagelet.settings.reviewsFolder.error.obsidian_config": "Reviews folder cannot live inside .obsidian (Obsidian's config directory). Reverted to the previous value.",
+    "pagelet.settings.reviewsFolder.error.control_chars": "Reviews folder contains control characters. Reverted to the previous value.",
 
     "pagelet.settings.outputLanguage.name": "Output language",
     "pagelet.settings.outputLanguage.desc": "Language used for review suggestions. Auto follows the note's language; pick a value to force one.",
