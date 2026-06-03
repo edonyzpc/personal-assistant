@@ -68,5 +68,7 @@
     "pagelet.a11y.mascotLabel": "Pagelet status indicator",
     "pagelet.a11y.focusLatestCommand": "Focus latest Pagelet suggestion",
     "pagelet.a11y.dismissCardLabel": "Dismiss this suggestion",
-    "pagelet.a11y.acceptCardLabel": "Accept this suggestion"
+    "pagelet.a11y.acceptCardLabel": "Accept this suggestion",
+    "pagelet.a11y.announce.done": "Pagelet finished reviewing. Suggestions are ready.",
+    "pagelet.a11y.announce.error": "Pagelet review failed. Open the panel for details."
 }

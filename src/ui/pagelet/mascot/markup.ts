@@ -135,6 +135,22 @@ export interface BuildMascotMarkupOptions {
     messageOverride?: string;
     /** Optional override for the root's aria-label (B5 may pass richer copy). */
     ariaLabel?: string;
+    /**
+     * B5 / D007.4 — when `true`, strip every `animClass` from the SVG
+     * descriptor AND append `pa-pagelet-mascot--reduce-motion` to the
+     * root class list. Defaults to `false` (animations on).
+     *
+     * Why strip animClasses at the markup layer (not in CSS only):
+     *  - CSS `@media (prefers-reduced-motion)` covers most cases, BUT
+     *    some Obsidian themes override the media query (intentionally,
+     *    for kiosk-style displays). Surfacing the decision in the
+     *    markup descriptor lets a no-CSS environment also honor user
+     *    intent.
+     *  - The modifier class on the root remains the canonical hook for
+     *    CSS to suppress any keyframes the bare `animClass` removal
+     *    misses (e.g. ambient float on the root).
+     */
+    reducedMotion?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,19 +194,51 @@ export function buildMascotMarkup(
     const strokeCssVar = MASCOT_STATE_STROKE_VAR[state];
     const strokeColor = `var(${strokeCssVar})`;
 
+    const baseClassList = [
+        "pa-pagelet-mascot",
+        `pa-pagelet-mascot--${state}`,
+    ];
+    const rootClassList = options.reducedMotion
+        ? [...baseClassList, "pa-pagelet-mascot--reduce-motion"]
+        : baseClassList;
+
+    const svgShapes = options.reducedMotion
+        ? stripAnimClasses(SVG_SHAPES_BY_STATE[state])
+        : SVG_SHAPES_BY_STATE[state];
+
     return {
         state,
-        rootClassList: [
-            "pa-pagelet-mascot",
-            `pa-pagelet-mascot--${state}`,
-        ],
+        rootClassList,
         message,
         ariaLabel,
         strokeCssVar,
         strokeColor,
         svgViewBox: MASCOT_SVG_VIEWBOX,
-        svgShapes: SVG_SHAPES_BY_STATE[state],
+        svgShapes,
     };
+}
+
+/**
+ * Return a copy of `shapes` with every `animClass` stripped. The
+ * frozen base tables are kept untouched — we always emit a fresh
+ * object so the renderer can mutate freely without poisoning the
+ * shared descriptor.
+ */
+function stripAnimClasses(shapes: MascotSvgShapes): MascotSvgShapes {
+    const paths = shapes.paths.map((p) => {
+        if (!p.animClass) return { ...p };
+        const { animClass: _omit, ...rest } = p;
+        void _omit;
+        return rest;
+    });
+    if (!shapes.circles) return { paths };
+    const circles = shapes.circles.map((c) => {
+        if (!c.animClass) return { ...c };
+        const { animClass: _omit, ...rest } = c;
+        void _omit;
+        return rest;
+    });
+    return { paths, circles };
 }
 
 // ---------------------------------------------------------------------------
