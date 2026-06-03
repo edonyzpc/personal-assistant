@@ -13,7 +13,8 @@
 | 字段 | 值 |
 |----|----|
 | Spec version | 0.1 (Draft for implementation) |
-| 对应版本 | PA `v2.(x+1).0-beta.N`（D013，沿用 Pagelet beta 通道） |
+| Implementation Status | **v1 implemented in PRs #354/#355/#356, released as `v2.2.0-beta.1`** (2026-06-03). Pagelet [[OQ001]] hard blocker resolved per `docs/review-assistant-decisions.md` D031. |
+| 对应版本 | PA `v2.2.0-beta.1`（D013，沿用 Pagelet beta 通道） |
 | 决策依据 | `docs/review-assistant-decisions.md` **D025 + D030**（来源）；本 SDD 不引入新决策号（命名层级、scope 已在 D030 锁定） |
 | 边界文档来源 | `docs/write-action-design-handoff.md`（7 gates + Audit Contract） + `docs/operations-agent-plan.md`（5 子模块 + Target Confinement + Rollback） |
 | 二层命名层级 | `Operations Agent (mode, future, v2+)` ⟶ **Write Action Framework v1 (本 SDD)** ⟶ `Pagelet v1（首 caller）` |
