@@ -27,6 +27,15 @@ import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
 import { ChatHistoryManager } from './chat/chat-history-manager';
+import {
+    PAGELET_FOCUS_LATEST_COMMAND_ID,
+    PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
+    createPaReviewRuntime,
+    registerPageletFocusCommand,
+    registerPageletRibbonIcon,
+    type PaReviewRuntime,
+} from './pagelet';
+import { getPageletUiLanguage, pageletT } from './locales/pagelet';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -112,6 +121,14 @@ export class PluginManager extends Plugin {
     memoryManager!: MemoryManager;
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
+    /**
+     * Pagelet (Review Assistant) per-plugin runtime — lazy-constructed on
+     * first review trigger so cold-start cost stays zero for users who never
+     * enable Pagelet. Owned by the plugin so the framework's self-write
+     * registry can outlive any individual PaAgentRuntime turn (which lives
+     * per-streamTurn inside chat-service.ts).
+     */
+    private pageletRuntime: PaReviewRuntime | null = null;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
     /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
@@ -398,9 +415,19 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("modify", async (file) => {
-                if (file instanceof TFile && await this.vss.markDirtyIfEligible(file)) {
-                    this.memoryManager.scheduleAutoFlush("vault-modify");
-                    await this.updateMemoryStatusBar();
+                if (file instanceof TFile) {
+                    // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
+                    // when the modify event was triggered by Pagelet's own
+                    // review-note write, skip downstream side-effects so the
+                    // listener does not re-invoke another review or mark a
+                    // freshly-written review note as dirty for VSS.
+                    if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
+                        return;
+                    }
+                    if (await this.vss.markDirtyIfEligible(file)) {
+                        this.memoryManager.scheduleAutoFlush("vault-modify");
+                        await this.updateMemoryStatusBar();
+                    }
                 }
             })
         );
@@ -457,6 +484,83 @@ export class PluginManager extends Plugin {
 
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(this.settingTab);
+
+        // ── Pagelet (Review Assistant) wiring ──────────────────────────
+        // Ribbon icon + Cmd+/ focus command. The ribbon click lazily mints
+        // the framework runtime via `getOrCreatePageletRuntime` so cold-start
+        // cost stays zero for users who never click it. The focus command
+        // is registered unconditionally so the hotkey is discoverable in
+        // Settings → Hotkeys even before the first review.
+        // The optional-chain guard lets tests that ship a partial settings
+        // object (no `pagelet` key) reach onload() without throwing.
+        if (this.settings.pagelet?.enabled) {
+            try {
+                registerPageletRibbonIcon(this, {
+                    position: this.settings.pagelet.ribbonPosition,
+                    onClick: () => {
+                        // Lazy init — first click mints the runtime + framework
+                        // wiring. Subsequent clicks reuse the singleton.
+                        const runtime = this.getOrCreatePageletRuntime();
+                        // The actual "open Pagelet panel + trigger review"
+                        // glue lives in Track B5's view layer; once that
+                        // view registers, this callback will route through
+                        // it. For now, mounting the runtime is enough to
+                        // arm the self-write reentrancy guard above.
+                        void runtime;
+                        new Notice(pageletT("pagelet.mascot.idle", this.getPageletLocale()), 2000);
+                    },
+                });
+            } catch (error) {
+                this.log("Failed to register Pagelet ribbon", error);
+            }
+            try {
+                // Cast to the narrow PageletCommandHost shape; Obsidian's
+                // Plugin.addCommand returns a more specific Command type but
+                // the registrar only needs the structural surface.
+                registerPageletFocusCommand(this as unknown as Parameters<typeof registerPageletFocusCommand>[0], {
+                    name: pageletT("pagelet.a11y.focusLatestCommand", this.getPageletLocale()),
+                    hotkeys: [PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY],
+                });
+            } catch (error) {
+                this.log("Failed to register Pagelet focus command", error);
+            }
+            // Acknowledge stable constant (used only when an external caller
+            // wants to query the registered command id, e.g. for tests).
+            void PAGELET_FOCUS_LATEST_COMMAND_ID;
+        }
+    }
+
+    /**
+     * Lazy accessor for the Pagelet (Review Assistant) runtime.
+     *
+     * - Returns `null` when Pagelet is disabled in settings (the ribbon
+     *   should never have called this, but be defensive).
+     * - Otherwise constructs the runtime on first call, then returns the
+     *   cached instance. Disposal happens in `onunload`.
+     */
+    getOrCreatePageletRuntime(): PaReviewRuntime | null {
+        if (!this.settings.pagelet?.enabled) {
+            return null;
+        }
+        if (!this.pageletRuntime) {
+            this.pageletRuntime = createPaReviewRuntime({
+                app: this.app,
+                getPageletSettings: () => this.settings.pagelet,
+                getLocale: () => this.getPageletLocale(),
+                debug: this.settings.debug,
+            });
+            this.log("Pagelet runtime initialized");
+        }
+        return this.pageletRuntime;
+    }
+
+    /**
+     * Resolve the Pagelet UI locale once per call. The detector reads from
+     * Obsidian's `localStorage("language")` + browser fallbacks; cheap
+     * enough to invoke per click / per render without caching.
+     */
+    private getPageletLocale(): "zh" | "en" {
+        return getPageletUiLanguage();
     }
 
     async onunload() {
@@ -480,6 +584,14 @@ export class PluginManager extends Plugin {
         }
         this.chatHistoryStore = undefined;
         this.chatHistoryManager = undefined;
+        if (this.pageletRuntime) {
+            try {
+                this.pageletRuntime.dispose();
+            } catch (error) {
+                this.log("Failed to dispose Pagelet runtime", error);
+            }
+            this.pageletRuntime = null;
+        }
     }
 
     async loadSettings() {

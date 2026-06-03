@@ -44,6 +44,14 @@ jest.mock('obsidian', () => {
         debounce: <T extends unknown[], V>(callback: (...args: T) => V) => callback,
         Editor: class { },
         MarkdownView: class { },
+        // Write Action Framework preview modal (imported transitively via
+        // src/plugin.ts → src/pagelet → pa-review-runtime) extends these
+        // Obsidian primitives at module-load time; without stubs the class
+        // declaration throws "Class extends value undefined".
+        Modal: class { },
+        Component: class { },
+        Setting: class { },
+        MarkdownRenderer: { render: jest.fn(), renderMarkdown: jest.fn() },
     };
 });
 
