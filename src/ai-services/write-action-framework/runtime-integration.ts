@@ -113,8 +113,22 @@ export function createSelfWriteRegistry(options: SelfWriteRegistryOptions = {}):
 // ActionExecutor — 4-gate orchestrator
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** Joint FS adapter shape used by Gate 1 + Gate 3. Mirrors `vault.adapter.exists`. */
-export type FsProbe = ConfinementFsProbe & StaleReadProbe;
+/**
+ * Optional `remove` probe used by the framework's create-file rollback safety
+ * net (Fix #4 / SDD §3.3 line 466). Tests usually omit it; production wires
+ * `app.vault.adapter.remove` which already satisfies this signature.
+ */
+export interface FsRemoveProbe {
+    remove(path: string): Promise<void>;
+}
+
+/**
+ * Joint FS adapter shape used by Gate 1 + Gate 3 + create-file auto-rollback.
+ * Mirrors `vault.adapter.{exists,remove}`. `remove` is optional so the
+ * framework degrades gracefully (capability-only rollback) when callers do
+ * not supply it.
+ */
+export type FsProbe = ConfinementFsProbe & StaleReadProbe & Partial<FsRemoveProbe>;
 
 export interface ActionExecutor {
     /**
@@ -192,6 +206,10 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
         };
     }
 
+    function describeError(error: unknown): string {
+        return error instanceof Error ? error.message : String(error);
+    }
+
     return {
         async execute(capability, input, context): Promise<AgentCapabilityResult> {
             const runId = runIdFactory();
@@ -199,42 +217,64 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
             const startedAt = now();
 
             // ────────────────────────────────────────────────────────────────
-            // Gate 0: build preview first (pure per Step 0 contract). This gives
-            // us the target.path string used by Gate 1, without forcing
-            // capabilities to expose a separate getTargetPath() method.
+            // Gate 1 — Target Confinement (Fix #3: runs BEFORE buildPreview)
+            //
+            // We obtain the candidate path from a NEW synchronous + pure
+            // `getTargetPath(input)` API. This ensures untrusted LLM input is
+            // validated against the per-capability allowlist BEFORE any
+            // side-effect-capable code (`buildPreview`) consumes it. The
+            // displayPath in the eventual PreviewSpec is cross-checked
+            // against the path validated here.
             // ────────────────────────────────────────────────────────────────
-            let spec: PreviewSpec;
+            let candidatePath: string;
             try {
-                spec = await capability.buildPreview(input, context);
+                candidatePath = capability.getTargetPath(input);
             } catch (error) {
-                emit("execute.fail", capability, runId, turnId, {
-                    errorCategory: "unknown",
+                emit("gate.target-confinement.reject", capability, runId, turnId, {
+                    errorCategory: "user_aborted",
                     extra: {
-                        stage: "buildPreview",
-                        message: error instanceof Error ? error.message : String(error),
+                        stage: "getTargetPath",
+                        message: describeError(error),
+                        targetCategory: capability.targetCategory,
                     },
                 });
                 return failure(
                     capability,
-                    `buildPreview threw: ${error instanceof Error ? error.message : String(error)}`,
+                    `getTargetPath threw: ${describeError(error)}`,
+                    "The proposed file path was rejected by safety checks.",
                 );
             }
 
-            // ────────────────────────────────────────────────────────────────
-            // Gate 1: target confinement
-            // ────────────────────────────────────────────────────────────────
-            const confinement = await validateTargetConfinement(
-                spec.target.path,
-                capability.targetConfinement,
-                fsProbe,
-            );
+            let confinement: Awaited<ReturnType<typeof validateTargetConfinement>>;
+            try {
+                confinement = await validateTargetConfinement(
+                    candidatePath,
+                    capability.targetConfinement,
+                    fsProbe,
+                );
+            } catch (error) {
+                emit("gate.target-confinement.reject", capability, runId, turnId, {
+                    errorCategory: "fs_error",
+                    extra: {
+                        stage: "validateTargetConfinement",
+                        message: describeError(error),
+                        candidatePath,
+                        targetCategory: capability.targetCategory,
+                    },
+                });
+                return failure(
+                    capability,
+                    `target confinement check failed: ${describeError(error)}`,
+                    "The proposed file path could not be validated.",
+                );
+            }
             if (!confinement.ok) {
                 emit("gate.target-confinement.reject", capability, runId, turnId, {
                     errorCategory: "rejected_at_confinement",
                     extra: {
                         reason: confinement.reason,
                         detail: confinement.detail,
-                        candidatePath: spec.target.path,
+                        candidatePath,
                         targetCategory: capability.targetCategory,
                     },
                 });
@@ -252,17 +292,75 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
             });
 
             // ────────────────────────────────────────────────────────────────
-            // Gate 2: preview-confirmation lifecycle
-            // (snapshot for Gate 3 captured at preview time per SDD §2.3)
+            // Gate 2 — Preview-Confirmation Lifecycle
+            //
+            // buildPreview runs ONLY after the path passed confinement (Fix #3).
+            // The returned spec.target.displayPath must match the confined
+            // path — mismatch is treated as a confinement rejection so a
+            // sneaky capability cannot show a preview for path A and then
+            // write path B.
             // ────────────────────────────────────────────────────────────────
-            const snapshot = fsProbe
-                ? await takeSnapshot(confinement.normalizedPath, fsProbe, now)
-                : {
-                    targetPath: confinement.normalizedPath,
-                    folderExists: true,
-                    targetExists: false,
-                    capturedAt: now(),
-                };
+            let spec: PreviewSpec;
+            try {
+                spec = await capability.buildPreview(input, context);
+            } catch (error) {
+                emit("execute.fail", capability, runId, turnId, {
+                    errorCategory: "user_aborted",
+                    extra: {
+                        stage: "buildPreview",
+                        message: describeError(error),
+                        targetCategory: capability.targetCategory,
+                    },
+                });
+                return failure(
+                    capability,
+                    `buildPreview threw: ${describeError(error)}`,
+                );
+            }
+            if (spec.target.displayPath !== confinement.normalizedPath) {
+                emit("gate.target-confinement.reject", capability, runId, turnId, {
+                    errorCategory: "rejected_at_confinement",
+                    extra: {
+                        reason: "path mismatch between getTargetPath and buildPreview",
+                        getTargetPath: confinement.normalizedPath,
+                        previewDisplayPath: spec.target.displayPath,
+                        targetCategory: capability.targetCategory,
+                    },
+                });
+                return failure(
+                    capability,
+                    "spec.target.displayPath does not match the confined path",
+                    "The proposed file path was rejected by safety checks.",
+                );
+            }
+
+            // Snapshot for Gate 3 captured at preview time per SDD §2.3.
+            // `takeSnapshot` only runs when fsProbe is supplied; wrap in
+            // try/catch (Fix #5) so a probe fault never escapes as an
+            // unhandled rejection.
+            let snapshot: ReturnType<typeof buildEmptySnapshot>;
+            if (fsProbe) {
+                try {
+                    snapshot = await takeSnapshot(confinement.normalizedPath, fsProbe, now);
+                } catch (error) {
+                    emit("gate.target-confinement.reject", capability, runId, turnId, {
+                        errorCategory: "fs_error",
+                        extra: {
+                            stage: "takeSnapshot",
+                            message: describeError(error),
+                            normalizedPath: confinement.normalizedPath,
+                            targetCategory: capability.targetCategory,
+                        },
+                    });
+                    return failure(
+                        capability,
+                        `takeSnapshot failed: ${describeError(error)}`,
+                        "The file state could not be sampled before preview.",
+                    );
+                }
+            } else {
+                snapshot = buildEmptySnapshot(confinement.normalizedPath, now());
+            }
             emit("gate.preview.shown", capability, runId, turnId, {
                 extra: {
                     targetCategory: capability.targetCategory,
@@ -270,9 +368,29 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                     snapshotAt: snapshot.capturedAt,
                 },
             });
-            const { outcome, renderWarnings } = await previewRenderer.show(spec, {
-                signal: context.signal,
-            });
+            let outcome: Awaited<ReturnType<typeof previewRenderer.show>>["outcome"];
+            let renderWarnings: string[] | undefined;
+            try {
+                const showResult = await previewRenderer.show(spec, {
+                    signal: context.signal,
+                });
+                outcome = showResult.outcome;
+                renderWarnings = showResult.renderWarnings;
+            } catch (error) {
+                emit("gate.confirmation.received", capability, runId, turnId, {
+                    errorCategory: "preview_render_failed",
+                    extra: {
+                        outcome: "aborted",
+                        renderWarnings: [`preview renderer threw: ${describeError(error)}`],
+                        targetCategory: capability.targetCategory,
+                    },
+                });
+                return failure(
+                    capability,
+                    `preview render failed: ${describeError(error)}`,
+                    "The preview could not be displayed; the action was cancelled.",
+                );
+            }
             emit("gate.confirmation.received", capability, runId, turnId, {
                 extra: {
                     outcome,
@@ -289,13 +407,32 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
             }
 
             // ────────────────────────────────────────────────────────────────
-            // Gate 3: stale re-read (mode A)
+            // Gate 3 — Stale Re-read (mode A)
             // ────────────────────────────────────────────────────────────────
             if (fsProbe) {
-                const stale = await checkStaleReread(snapshot, fsProbe, now);
+                let stale: Awaited<ReturnType<typeof checkStaleReread>>;
+                try {
+                    stale = await checkStaleReread(snapshot, fsProbe, now);
+                } catch (error) {
+                    emit("gate.stale-reread.drift", capability, runId, turnId, {
+                        errorCategory: "fs_error",
+                        extra: {
+                            stage: "checkStaleReread",
+                            message: describeError(error),
+                            normalizedPath: confinement.normalizedPath,
+                            targetCategory: capability.targetCategory,
+                            snapshotAt: snapshot.capturedAt,
+                        },
+                    });
+                    return failure(
+                        capability,
+                        `stale-reread probe failed: ${describeError(error)}`,
+                        "The file state could not be re-validated before write.",
+                    );
+                }
                 if (stale.stale) {
                     emit("gate.stale-reread.drift", capability, runId, turnId, {
-                        errorCategory: "stale_drift",
+                        errorCategory: "stale_target",
                         extra: {
                             drift: stale.drift,
                             targetCategory: capability.targetCategory,
@@ -341,11 +478,12 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
 
             let result: AgentCapabilityResult;
             const execStartedAt = now();
+            let executeAttempted = true;
             try {
                 result = await capability.executeWrite(input, context, hooks);
             } catch (error) {
                 const durationMs = now() - execStartedAt;
-                const message = error instanceof Error ? error.message : String(error);
+                const message = describeError(error);
                 emit("execute.fail", capability, runId, turnId, {
                     durationMs,
                     errorCategory: "fs_error",
@@ -356,7 +494,15 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                         normalizedPath: confinement.normalizedPath,
                     },
                 });
-                await runRollback(capability, input, context, runId, turnId);
+                await runRollback(
+                    capability,
+                    input,
+                    context,
+                    runId,
+                    turnId,
+                    confinement.normalizedPath,
+                    executeAttempted,
+                );
                 return failure(
                     capability,
                     `executeWrite threw: ${message}`,
@@ -374,14 +520,23 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                         totalDurationMs: now() - startedAt,
                     },
                 });
+                // Fix #7: refresh the self-write TTL after a slow vault IO
+                // path. The capability's own markSelfWrite (called inside
+                // executeWrite) and our pre-execute mark may have aged past
+                // the 5s window if executeWrite took a long time; this
+                // belt-and-suspenders refresh keeps the modify listener
+                // suppression honest on the success path.
+                selfWrite.markSelfWrite(confinement.normalizedPath);
                 return result;
             }
 
             // capability returned non-ok status without throwing — emit fail
-            // but don't auto-rollback (capability may have already cleaned up).
+            // with category mapped to capability status. Auto-rollback still
+            // runs so create-file partial writes don't linger.
             emit("execute.fail", capability, runId, turnId, {
                 durationMs,
-                errorCategory: result.status === "unavailable" ? "policy_violation" : "unknown",
+                errorCategory:
+                    result.status === "unavailable" ? "permission_denied" : "fs_error",
                 extra: {
                     stage: "executeWrite",
                     capabilityStatus: result.status,
@@ -390,36 +545,117 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                     normalizedPath: confinement.normalizedPath,
                 },
             });
-            await runRollback(capability, input, context, runId, turnId);
+            await runRollback(
+                capability,
+                input,
+                context,
+                runId,
+                turnId,
+                confinement.normalizedPath,
+                executeAttempted,
+            );
             return result;
 
+            /**
+             * Run capability rollback (when declared) followed by the
+             * framework's create-file safety net (Fix #4). Either step may
+             * run independently:
+             *
+             *   - `cap.rollback` is awaited first when declared.
+             *   - The framework `fsProbe.remove(target)` then runs when the
+             *     family is `create-file`, a probe is wired, and executeWrite
+             *     was attempted. This honors SDD §3.3 line 466: the framework
+             *     auto-removes the partial file even when the capability did
+             *     not implement rollback.
+             *
+             * Both surfaces emit a separate `rollback.ok` / `rollback.fail`
+             * pair so the developer can tell which layer cleaned up.
+             */
             async function runRollback(
                 cap: WriteActionCapability,
                 rawInput: unknown,
                 ctx: AgentCapabilityContext,
                 rid: string,
                 tid: string,
+                normalizedPath: string,
+                writeAttempted: boolean,
             ): Promise<void> {
-                if (!cap.rollback) return;
-                const rollbackStart = now();
-                try {
-                    await cap.rollback(rawInput, ctx);
-                    emit("rollback.ok", cap, rid, tid, {
-                        durationMs: now() - rollbackStart,
-                        extra: { targetCategory: cap.targetCategory },
-                    });
-                } catch (error) {
-                    emit("rollback.fail", cap, rid, tid, {
-                        durationMs: now() - rollbackStart,
-                        errorCategory: "fs_error",
-                        extra: {
-                            cascade: true,
-                            message: error instanceof Error ? error.message : String(error),
-                            targetCategory: cap.targetCategory,
-                        },
-                    });
+                if (cap.rollback) {
+                    const rollbackStart = now();
+                    try {
+                        await cap.rollback(rawInput, ctx);
+                        emit("rollback.ok", cap, rid, tid, {
+                            durationMs: now() - rollbackStart,
+                            extra: {
+                                layer: "capability",
+                                targetCategory: cap.targetCategory,
+                            },
+                        });
+                    } catch (error) {
+                        emit("rollback.fail", cap, rid, tid, {
+                            durationMs: now() - rollbackStart,
+                            errorCategory: "fs_error",
+                            extra: {
+                                layer: "capability",
+                                cascade: true,
+                                message: describeError(error),
+                                targetCategory: cap.targetCategory,
+                            },
+                        });
+                    }
+                }
+                // Framework safety net for create-file (SDD §3.3 line 466).
+                if (
+                    cap.actionFamily === "create-file"
+                    && writeAttempted
+                    && fsProbe?.remove
+                ) {
+                    const removeStart = now();
+                    try {
+                        await fsProbe.remove(normalizedPath);
+                        emit("rollback.ok", cap, rid, tid, {
+                            durationMs: now() - removeStart,
+                            extra: {
+                                layer: "framework",
+                                cascade: Boolean(cap.rollback),
+                                normalizedPath,
+                                targetCategory: cap.targetCategory,
+                            },
+                        });
+                    } catch (error) {
+                        emit("rollback.fail", cap, rid, tid, {
+                            durationMs: now() - removeStart,
+                            errorCategory: "fs_error",
+                            extra: {
+                                layer: "framework",
+                                cascade: Boolean(cap.rollback),
+                                normalizedPath,
+                                message: describeError(error),
+                                targetCategory: cap.targetCategory,
+                            },
+                        });
+                    }
                 }
             }
         },
+    };
+}
+
+/**
+ * Build the placeholder snapshot used when no FS probe is wired. Mirrors the
+ * old inline literal but extracted for typing (`takeSnapshot` returns
+ * `Promise<TargetSnapshot>` which is the same shape).
+ */
+function buildEmptySnapshot(targetPath: string, capturedAt: number): {
+    targetPath: string;
+    folderExists: boolean;
+    targetExists: boolean;
+    capturedAt: number;
+} {
+    return {
+        targetPath,
+        folderExists: true,
+        targetExists: false,
+        capturedAt,
     };
 }

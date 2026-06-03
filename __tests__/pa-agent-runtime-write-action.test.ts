@@ -117,13 +117,30 @@ function makeWriteCapability(
     specOverrides: Partial<PreviewSpec> = {},
 ): WriteActionCapability {
     const previewSpec: PreviewSpec = {
-        target: { path: ".pagelet/foo.md", category: "pagelet-review-note" },
-        contentMarkdown: "# Generated review body",
-        impact: "Creates 1 file in .pagelet/",
-        risk: "None",
-        action: "Create .pagelet/foo.md",
+        operationType: "create-file",
+        actionFamily: "pagelet-review-note",
+        capabilityId: WRITE_TOOL_NAME,
+        target: {
+            kind: "vault-path",
+            displayPath: ".pagelet/foo.md",
+            folder: ".pagelet/",
+            filename: "foo.md",
+        },
+        contentPreview: {
+            format: "markdown",
+            body: "# Generated review body",
+            byteSize: 24,
+        },
+        impact: {
+            usesAiProvider: false,
+            usesAiCredits: false,
+            affectsExternalState: false,
+        },
+        riskNotes: [],
+        confirmCopy: { confirmLabel: "Confirm", cancelLabel: "Cancel" },
         ...specOverrides,
     };
+    const initialTargetPath = previewSpec.target.displayPath;
     return {
         name: WRITE_TOOL_NAME,
         description: "Test write action capability",
@@ -176,12 +193,15 @@ function makeWriteCapability(
         execute: async () => {
             throw new Error("WriteActionCapability.execute must not be called directly (use ActionExecutor)");
         },
+        // Fix #3: synchronous + pure target-path extractor consumed by Gate 1.
+        getTargetPath: ((): WriteActionCapability["getTargetPath"] =>
+            (() => initialTargetPath))(),
         buildPreview: jest.fn(async () => previewSpec) as WriteActionCapability["buildPreview"],
         executeWrite: jest.fn(async () => ({
             status: "ok" as const,
-            observation: { createdPath: previewSpec.target.path },
+            observation: { createdPath: previewSpec.target.displayPath },
             sourceRecords: [],
-            inputSummary: `wrote ${previewSpec.target.path}`,
+            inputSummary: `wrote ${previewSpec.target.displayPath}`,
             sources: [],
         })) as WriteActionCapability["executeWrite"],
         ...overrides,
@@ -493,5 +513,109 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
         expect(capability.buildPreview).not.toHaveBeenCalled();
         expect(capability.executeWrite).not.toHaveBeenCalled();
         expect(harness.events).toHaveLength(0);
+    });
+
+    it("rejects with policy_rejected outcome when PolicyEngine denies the action capability (Fix #2)", async () => {
+        // Chat-runtime PolicyEngine → action capabilities denied at canExecute.
+        const policyDenyHarness = buildReviewModeHarness({
+            policyEngine: new PolicyEngine({ platform: "desktop" }),
+        });
+        const capability = makeWriteCapability();
+        policyDenyHarness.registry.register(capability);
+
+        const baseExecutor = createPaAgentCapabilityToolExecutor({
+            registry: policyDenyHarness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+        const executor = createWriteActionAwareToolExecutor({
+            baseExecutor,
+            actionExecutor: policyDenyHarness.actionExecutor,
+            registry: policyDenyHarness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+
+        const result = await executor.execute(buildExecutionInput(WRITE_TOOL_NAME));
+        expect(result.outcome).toBe("policy_rejected");
+        expect(result.metadata?.reason).toBe("policy_denied_capability");
+        expect(capability.buildPreview).not.toHaveBeenCalled();
+        expect(capability.executeWrite).not.toHaveBeenCalled();
+        // Framework debug observer did not emit anything (we short-circuited
+        // before reaching the action executor).
+        expect(policyDenyHarness.events).toHaveLength(0);
+    });
+
+    it("rejects with policy_rejected outcome when allowedToolNames excludes the action (Fix #6)", async () => {
+        const harness = buildReviewModeHarness();
+        const capability = makeWriteCapability();
+        harness.registry.register(capability);
+
+        const baseExecutor = createPaAgentCapabilityToolExecutor({
+            registry: harness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+        const executor = createWriteActionAwareToolExecutor({
+            baseExecutor,
+            actionExecutor: harness.actionExecutor,
+            registry: harness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+            allowedToolNames: new Set<string>(["something_else"]),
+        });
+
+        const result = await executor.execute(buildExecutionInput(WRITE_TOOL_NAME));
+        expect(result.outcome).toBe("policy_rejected");
+        expect(result.metadata?.reason).toBe("tool_outside_user_requested_scope");
+        expect(capability.buildPreview).not.toHaveBeenCalled();
+        expect(harness.events).toHaveLength(0);
+    });
+
+    it("emits CapabilityUsageEvent (status=invoked) on the success path (Fix #2)", async () => {
+        const usageEvents: Array<{ status: string; capabilityName: string }> = [];
+        const policy = new PolicyEngine({
+            platform: "desktop",
+            runKind: "review",
+            allowWrite: true,
+            allowedActionPermissions: ["local-filesystem-write"],
+        });
+        const registry = new CapabilityRegistry({
+            policyEngine: policy,
+            telemetryEnabled: true,
+            onCapabilityEvent: (event) => {
+                usageEvents.push({ status: event.status, capabilityName: event.capabilityName });
+            },
+        });
+        const capability = makeWriteCapability();
+        registry.register(capability);
+
+        const selfWrite = makeNoopSelfWriteRegistry();
+        const actionExecutor = createActionExecutor({
+            previewRenderer: makeRenderer(["confirmed"]),
+            fsProbe: makeFsProbe({ ".pagelet": true }),
+            selfWrite,
+            debugObserver: makeObserver([]),
+            runIdFactory: () => "run-x",
+            now: () => 1000,
+        });
+        const baseExecutor = createPaAgentCapabilityToolExecutor({
+            registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+        const executor = createWriteActionAwareToolExecutor({
+            baseExecutor,
+            actionExecutor,
+            registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+        const result = await executor.execute(buildExecutionInput(WRITE_TOOL_NAME));
+        expect(result.outcome).toBe("success");
+        expect(usageEvents).toContainEqual({
+            status: "invoked",
+            capabilityName: WRITE_TOOL_NAME,
+        });
     });
 });

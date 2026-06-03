@@ -3,8 +3,8 @@
  *
  * Generalizes the multi-section approval pattern from
  * `src/memory-manager.ts:612-679` (MemoryApprovalModal) into a reusable modal
- * that renders 5 PreviewSpec sections and captures a 4-valued
- * {@link ConfirmationOutcome} from the user.
+ * that renders the {@link PreviewSpec} into 5 logical sections and captures a
+ * 4-valued {@link ConfirmationOutcome} from the user.
  *
  * Mutex policy (SDD §2.1: "**不允许并发 preview**"):
  *   Concurrent show() calls are **serialized** (FIFO queue) — they wait their
@@ -18,14 +18,14 @@
  *   Production wires {@link ObsidianPreviewRenderer} which extends Obsidian's
  *   `Modal` class — only exercised in Obsidian integration tests.
  *
- * Outcome mapping (matches Step 0 ConfirmationOutcome enum):
+ * Outcome mapping (matches SDD §2.1 table):
  *   - "confirmed": primary CTA clicked
- *   - "cancelled": secondary button clicked
- *   - "closed":    modal closed via X / ESC / click-outside (no explicit button)
+ *   - "cancelled": secondary button clicked / ESC / ✕ / click-outside
  *   - "aborted":   external AbortSignal fired (turn cancelled / plugin unload)
+ *   - "timeout":   reserved for Operations Agent mode; v1 never emits
  */
 
-import { Modal, Setting, type App } from "obsidian";
+import { Component, MarkdownRenderer, Modal, Setting, type App } from "obsidian";
 
 import type { ConfirmationOutcome, PreviewSpec } from "./types";
 
@@ -86,14 +86,22 @@ export function createMutexPreviewRenderer(inner: PreviewRenderer): PreviewRende
 /**
  * Per-spec lifecycle: build sections, capture outcome via promise resolution,
  * unwire AbortSignal listener in finally. Generalizes MemoryApprovalModal.
+ *
+ * Render policy:
+ *   - `contentPreview.format === "markdown"`: render through Obsidian's
+ *     `MarkdownRenderer.render`. On render failure we fall back to a `<pre>`
+ *     text block (SDD §2.1 failure behavior line 212) and surface a
+ *     renderWarning to the caller.
+ *   - `contentPreview.format === "plain-text"`: always `<pre>` text.
  */
 export class WriteActionPreviewModal extends Modal {
     private settled = false;
+    private readonly renderHost = new Component();
 
     constructor(
         app: App,
         private readonly spec: PreviewSpec,
-        private readonly onOutcome: (outcome: ConfirmationOutcome) => void,
+        private readonly onOutcome: (outcome: ConfirmationOutcome, warnings?: string[]) => void,
     ) {
         super(app);
     }
@@ -102,46 +110,100 @@ export class WriteActionPreviewModal extends Modal {
         const { contentEl } = this;
         contentEl.empty();
         contentEl.addClass("pa-write-action-modal");
+        const renderWarnings: string[] = [];
 
-        // Header banner: action family + capability id from spec.target.category.
-        contentEl.createEl("h2", { text: `Write action: ${this.spec.target.category}` });
+        // Header banner: actionFamily · capabilityId (SDD §2.1 section 1).
+        contentEl.createEl("h2", {
+            text: `${this.spec.actionFamily} · ${this.spec.capabilityId}`,
+        });
 
-        // Section 1: Target — high-visibility path display.
-        this.addSection("Target", this.spec.target.path, "pa-write-action-modal__target");
-        // Section 2: Impact — what side effects this incurs.
-        this.addSection("Impact", this.spec.impact, "pa-write-action-modal__impact");
-        // Section 3: Risk — caller-curated warning text.
-        this.addSection("Risk", this.spec.risk, "pa-write-action-modal__risk");
-        // Section 4: Action — what will happen on confirm.
-        this.addSection("Action", this.spec.action, "pa-write-action-modal__action");
-        // Section 5: Content preview — full markdown body (rendered as text in v1;
-        // future iteration may swap to MarkdownRenderer.render once a Component
-        // host is wired here).
-        const contentBlock = contentEl.createDiv({ cls: "pa-write-action-modal__content" });
-        contentBlock.createDiv({ cls: "pa-write-action-modal__section-title", text: "Preview" });
+        // Section 1: Target — operationType → displayPath.
+        this.addSection(
+            "Target",
+            `${this.spec.operationType} → ${this.spec.target.displayPath}`,
+            "pa-write-action-modal__target",
+        );
+
+        // Section 2: Content preview (markdown via MarkdownRenderer or
+        // plain-text via <pre> fallback).
+        const contentBlock = this.contentEl.createDiv({
+            cls: "pa-write-action-modal__section pa-write-action-modal__content",
+        });
+        contentBlock.createDiv({
+            cls: "pa-write-action-modal__section-title",
+            text: "Preview",
+        });
         const body = contentBlock.createDiv({ cls: "pa-write-action-modal__section-body" });
-        body.setText(this.spec.contentMarkdown);
+        if (this.spec.contentPreview.format === "markdown") {
+            try {
+                const renderResult = MarkdownRenderer.render(
+                    this.app,
+                    this.spec.contentPreview.body,
+                    body,
+                    this.spec.target.displayPath,
+                    this.renderHost,
+                ) as unknown;
+                if (renderResult instanceof Promise) {
+                    renderResult.catch((error: unknown) => {
+                        renderWarnings.push(
+                            `markdown render failed: ${error instanceof Error ? error.message : String(error)}`,
+                        );
+                        this.renderPlainTextFallback(body);
+                    });
+                }
+            } catch (error) {
+                renderWarnings.push(
+                    `markdown render failed: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                this.renderPlainTextFallback(body);
+            }
+        } else {
+            this.renderPlainTextFallback(body);
+        }
 
-        new Setting(contentEl)
+        // Section 3: Impact — 3 booleans + byteSize.
+        const impactLines = [
+            `usesAiProvider: ${this.spec.impact.usesAiProvider}`,
+            `usesAiCredits: ${this.spec.impact.usesAiCredits}`,
+            `affectsExternalState: ${this.spec.impact.affectsExternalState}`,
+            `previewByteSize: ${this.spec.contentPreview.byteSize}`,
+        ];
+        this.addSection("Impact", impactLines.join("\n"), "pa-write-action-modal__impact");
+
+        // Section 4: Risk notes (callout per line). Render even when empty so
+        // the user sees an explicit "none" rather than wondering if the
+        // section was hidden.
+        const riskBody = this.spec.riskNotes.length > 0
+            ? this.spec.riskNotes.map((line) => `⚠️ ${line}`).join("\n")
+            : "none";
+        this.addSection("Risk", riskBody, "pa-write-action-modal__risk");
+
+        // Section 5: Action buttons (CTA + secondary). Labels come from the
+        // spec so capabilities can i18n.
+        new Setting(this.contentEl)
             .addButton((button) => {
                 button
                     .setCta()
-                    .setButtonText("Confirm")
-                    .onClick(() => this.resolveWith("confirmed"));
+                    .setButtonText(this.spec.confirmCopy.confirmLabel)
+                    .onClick(() => this.resolveWith("confirmed", renderWarnings));
             })
             .addButton((button) => {
                 button
-                    .setButtonText("Cancel")
-                    .onClick(() => this.resolveWith("cancelled"));
+                    .setButtonText(this.spec.confirmCopy.cancelLabel)
+                    .onClick(() => this.resolveWith("cancelled", renderWarnings));
             });
+
+        this.renderHost.load();
     }
 
     onClose(): void {
         this.contentEl.empty();
-        // Modal closed without resolving — must report a non-confirmed outcome.
+        this.renderHost.unload();
+        // Modal closed without resolving — SDD §2.1 maps ✕ / click-outside / ESC
+        // to "cancelled". v1 doesn't emit a distinct "closed" outcome.
         if (!this.settled) {
             this.settled = true;
-            this.onOutcome("closed");
+            this.onOutcome("cancelled");
         }
     }
 
@@ -153,11 +215,16 @@ export class WriteActionPreviewModal extends Modal {
         this.resolveWith(outcome);
     }
 
-    private resolveWith(outcome: ConfirmationOutcome): void {
+    private resolveWith(outcome: ConfirmationOutcome, warnings?: string[]): void {
         if (this.settled) return;
         this.settled = true;
-        this.onOutcome(outcome);
+        this.onOutcome(outcome, warnings);
         this.close();
+    }
+
+    private renderPlainTextFallback(body: HTMLElement): void {
+        const pre = body.createEl("pre", { cls: "pa-write-action-modal__plain-text" });
+        pre.setText(this.spec.contentPreview.body);
     }
 
     private addSection(title: string, body: string, extraClass?: string): void {
@@ -195,9 +262,11 @@ export class ObsidianPreviewRenderer implements PreviewRenderer {
             const onAbort = (): void => {
                 this.liveModal?.forceResolve("aborted");
             };
-            const modal = new WriteActionPreviewModal(this.app, spec, (outcome) => {
+            const modal = new WriteActionPreviewModal(this.app, spec, (outcome, warnings) => {
                 cleanup();
-                resolve({ outcome });
+                resolve(warnings && warnings.length > 0
+                    ? { outcome, renderWarnings: warnings }
+                    : { outcome });
             });
             this.liveModal = modal;
             if (options?.signal) {
