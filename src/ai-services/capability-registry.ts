@@ -22,7 +22,7 @@ import {
     OBSIDIAN_OPERATIONS_V1A_MAX_OUTPUT_BUDGET_CHARS,
     isObsidianOperationsV1AToolName,
 } from "./chat-tools";
-import { PolicyEngine } from "./policy-engine";
+import { PolicyEngine, type CapabilityPolicyDecision } from "./policy-engine";
 import { getErrorType } from "./agent-utils";
 
 export interface CapabilityRegistryOptions {
@@ -177,6 +177,33 @@ export class CapabilityRegistry {
 
     has(name: string): boolean {
         return Boolean(this.get(name));
+    }
+
+    /**
+     * Policy gate for capability execution. Used by the Write Action Framework
+     * wrapper (`createWriteActionAwareToolExecutor`) to mirror the
+     * chat-runtime semantics already enforced by `this.execute`. Returns a
+     * specific `unregistered capability` decision when the name is unknown so
+     * the wrapper can short-circuit before touching the action executor.
+     */
+    canExecute(name: string): CapabilityPolicyDecision {
+        const capability = this.get(name);
+        if (!capability) {
+            return { allowed: false, reason: "unregistered capability" };
+        }
+        return this.policyEngine.canExecute(capability);
+    }
+
+    /**
+     * Public wrapper around the private telemetry emitter. The Write Action
+     * Framework wrapper records `invoked`/`failed`/`skipped` events for the
+     * action route here so chat-runtime + framework telemetry stay coherent.
+     * Telemetry gating (the `telemetryEnabled` flag) is preserved inside the
+     * private emitter — callers should always invoke this and let the registry
+     * decide whether to forward to the handler.
+     */
+    recordCapabilityEvent(event: CapabilityUsageEvent): void {
+        this.emitCapabilityEvent(event);
     }
 
     /**

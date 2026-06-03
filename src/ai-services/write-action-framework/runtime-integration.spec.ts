@@ -63,13 +63,30 @@ function makeCapability(
     spec: Partial<PreviewSpec> = {},
 ): WriteActionCapability {
     const previewSpec: PreviewSpec = {
-        target: { path: ".pagelet/foo.md", category: "pagelet-review-note" },
-        contentMarkdown: "# Body",
-        impact: "Creates 1 file",
-        risk: "None",
-        action: "Create .pagelet/foo.md",
+        operationType: "create-file",
+        actionFamily: "pagelet-review-note",
+        capabilityId: "test.write_action",
+        target: {
+            kind: "vault-path",
+            displayPath: ".pagelet/foo.md",
+            folder: ".pagelet/",
+            filename: "foo.md",
+        },
+        contentPreview: {
+            format: "markdown",
+            body: "# Body",
+            byteSize: 6,
+        },
+        impact: {
+            usesAiProvider: false,
+            usesAiCredits: false,
+            affectsExternalState: false,
+        },
+        riskNotes: [],
+        confirmCopy: { confirmLabel: "Confirm", cancelLabel: "Cancel" },
         ...spec,
     };
+    const initialTargetPath = previewSpec.target.displayPath;
     // ChatToolName / ChatToolPermission / etc. are string-literal unions of the
     // shipped tool names. Tests use a placeholder name + assertions to opt out.
     const cap: WriteActionCapability = {
@@ -122,6 +139,8 @@ function makeCapability(
         execute: async () => {
             throw new Error("WriteActionCapability.execute must not be called directly (use ActionExecutor)");
         },
+        getTargetPath: ((): WriteActionCapability["getTargetPath"] =>
+            (() => initialTargetPath))(),
         buildPreview: jest.fn(async () => previewSpec) as WriteActionCapability["buildPreview"],
         executeWrite: jest.fn(async () => ({
             status: "ok",
@@ -258,6 +277,27 @@ describe("ActionExecutor (4-gate orchestration, framework SDD §3.2)", () => {
         expect((cap.buildPreview as jest.Mock)).toHaveBeenCalledTimes(1);
     });
 
+    it("re-marks self-write on the success path so a slow executeWrite cannot age out the TTL (Fix #7)", async () => {
+        const markCalls: string[] = [];
+        const selfWrite = createSelfWriteRegistry({
+            setTimer: () => ({ id: 1 }),
+            clearTimer: () => undefined,
+        });
+        // Wrap selfWrite to record every markSelfWrite invocation.
+        const wrapped = {
+            ...selfWrite,
+            markSelfWrite: (path: string) => {
+                markCalls.push(path);
+                selfWrite.markSelfWrite(path);
+            },
+        };
+        const cap = makeCapability();
+        await createActionExecutor(defaultExecutorOptions({ selfWrite: wrapped }))
+            .execute(cap, {}, makeContext());
+        // Two marks for the same path: one pre-execute, one post-execute (Fix #7).
+        expect(markCalls.filter((p) => p === ".pagelet/foo.md")).toHaveLength(2);
+    });
+
     it("marks the normalized target as self-written before executeWrite runs", async () => {
         const seenInsideExecute: string[] = [];
         const selfWrite = createSelfWriteRegistry({
@@ -290,10 +330,9 @@ describe("ActionExecutor (4-gate orchestration, framework SDD §3.2)", () => {
 describe("ActionExecutor (gate rejection paths)", () => {
     it("returns failure + emits gate.target-confinement.reject when target outside allowlist", async () => {
         const events: DebugEvent[] = [];
-        const cap = makeCapability(
-            {},
-            { target: { path: "/etc/passwd", category: "pagelet-review-note" } },
-        );
+        const cap = makeCapability({
+            getTargetPath: () => "/etc/passwd",
+        });
         const exec = createActionExecutor(defaultExecutorOptions({ debugObserver: makeObserver(events) }));
         const result = await exec.execute(cap, {}, makeContext());
         expect(result.status).toBe("failed");
@@ -302,6 +341,9 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect(events[0].errorCategory).toBe("rejected_at_confinement");
         expect(events[0].extra?.reason).toBe("absolute_path");
         expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+        // Fix #3: buildPreview is NOT called when getTargetPath fails
+        // confinement, since Gate 1 runs first.
+        expect((cap.buildPreview as jest.Mock)).not.toHaveBeenCalled();
     });
 
     it("returns failure + emits gate.confirmation.received with outcome when user cancels", async () => {
@@ -325,8 +367,8 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
     });
 
-    it("returns failure for closed/aborted outcomes (still emits gate.confirmation.received)", async () => {
-        for (const outcome of ["closed", "aborted"] as const) {
+    it("returns failure for cancelled/aborted outcomes (still emits gate.confirmation.received)", async () => {
+        for (const outcome of ["cancelled", "aborted"] as const) {
             const events: DebugEvent[] = [];
             const cap = makeCapability();
             const exec = createActionExecutor(defaultExecutorOptions({
@@ -368,7 +410,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect(result.status).toBe("failed");
         const driftEvent = events.find((e) => e.type === "gate.stale-reread.drift");
         expect(driftEvent).toBeDefined();
-        expect(driftEvent?.errorCategory).toBe("stale_drift");
+        expect(driftEvent?.errorCategory).toBe("stale_target");
         expect((driftEvent?.extra as { drift?: Record<string, boolean> } | undefined)?.drift?.targetAppeared).toBe(true);
     });
 
@@ -384,6 +426,59 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect(result.status).toBe("failed");
         const evt = events.find((e) => e.type === "execute.fail");
         expect(evt?.extra?.stage).toBe("buildPreview");
+        expect(evt?.errorCategory).toBe("user_aborted");
+    });
+
+    it("returns failure + emits gate.target-confinement.reject when getTargetPath throws (Fix #5)", async () => {
+        const events: DebugEvent[] = [];
+        const cap = makeCapability({
+            getTargetPath: () => {
+                throw new Error("input missing target");
+            },
+        });
+        const exec = createActionExecutor(defaultExecutorOptions({ debugObserver: makeObserver(events) }));
+        const result = await exec.execute(cap, {}, makeContext());
+        expect(result.status).toBe("failed");
+        const evt = events.find((e) => e.type === "gate.target-confinement.reject");
+        expect(evt?.extra?.stage).toBe("getTargetPath");
+        expect(evt?.errorCategory).toBe("user_aborted");
+        expect((cap.buildPreview as jest.Mock)).not.toHaveBeenCalled();
+        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+    });
+
+    it("rejects when spec.target.displayPath disagrees with getTargetPath (Fix #3)", async () => {
+        const events: DebugEvent[] = [];
+        const cap = makeCapability(
+            { getTargetPath: () => ".pagelet/foo.md" },
+            { target: { kind: "vault-path", displayPath: ".pagelet/other.md", folder: ".pagelet/", filename: "other.md" } },
+        );
+        const exec = createActionExecutor(defaultExecutorOptions({ debugObserver: makeObserver(events) }));
+        const result = await exec.execute(cap, {}, makeContext());
+        expect(result.status).toBe("failed");
+        const evt = events.find((e) => e.type === "gate.target-confinement.reject");
+        expect(evt?.errorCategory).toBe("rejected_at_confinement");
+        expect(evt?.extra?.reason).toBe("path mismatch between getTargetPath and buildPreview");
+        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+    });
+
+    it("returns failure + emits gate.confirmation.received with renderWarnings when preview render throws (Fix #5)", async () => {
+        const events: DebugEvent[] = [];
+        const renderer: PreviewRenderer = {
+            show: jest.fn(async () => {
+                throw new Error("modal mount exploded");
+            }) as PreviewRenderer["show"],
+        };
+        const cap = makeCapability();
+        const exec = createActionExecutor(defaultExecutorOptions({
+            debugObserver: makeObserver(events),
+            previewRenderer: renderer,
+        }));
+        const result = await exec.execute(cap, {}, makeContext());
+        expect(result.status).toBe("failed");
+        const evt = events.find((e) => e.type === "gate.confirmation.received");
+        expect(evt?.errorCategory).toBe("preview_render_failed");
+        expect(evt?.extra?.outcome).toBe("aborted");
+        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
     });
 });
 
@@ -429,19 +524,104 @@ describe("ActionExecutor (execute & rollback)", () => {
         expect(rollbackEvt?.extra?.cascade).toBe(true);
     });
 
-    it("skips rollback emission when capability has no rollback fn (capability handles its own cleanup)", async () => {
+    it("skips rollback emission when capability has no rollback fn AND fsProbe lacks remove (no safety net wired)", async () => {
         const events: DebugEvent[] = [];
         const cap = makeCapability({
             executeWrite: jest.fn(async () => {
                 throw new Error("oops");
             }) as WriteActionCapability["executeWrite"],
         });
+        // Default fsProbe (makeFsProbe) lacks `remove`, so the framework
+        // safety net cannot run; rollback emit chain stays silent.
         const exec = createActionExecutor(defaultExecutorOptions({ debugObserver: makeObserver(events) }));
         await exec.execute(cap, {}, makeContext());
         const types = events.map((e) => e.type);
         expect(types).toContain("execute.fail");
         expect(types).not.toContain("rollback.ok");
         expect(types).not.toContain("rollback.fail");
+    });
+
+    it("auto-removes create-file target via fsProbe.remove when executeWrite throws (Fix #4)", async () => {
+        const events: DebugEvent[] = [];
+        const removeCalls: string[] = [];
+        const fsProbe: FsProbe = {
+            exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
+            remove: jest.fn(async (path: string) => {
+                removeCalls.push(path);
+            }) as NonNullable<FsProbe["remove"]>,
+        };
+        const cap = makeCapability({
+            executeWrite: jest.fn(async () => {
+                throw new Error("disk full");
+            }) as WriteActionCapability["executeWrite"],
+        });
+        const exec = createActionExecutor(defaultExecutorOptions({
+            debugObserver: makeObserver(events),
+            fsProbe,
+        }));
+        const result = await exec.execute(cap, {}, makeContext());
+        expect(result.status).toBe("failed");
+        expect(removeCalls).toEqual([".pagelet/foo.md"]);
+        const rollbackOk = events.find(
+            (e) => e.type === "rollback.ok" && e.extra?.layer === "framework",
+        );
+        expect(rollbackOk).toBeDefined();
+        expect(rollbackOk?.extra?.normalizedPath).toBe(".pagelet/foo.md");
+        expect(rollbackOk?.extra?.cascade).toBe(false);
+    });
+
+    it("runs capability rollback AND framework auto-remove when both wired (Fix #4 cascade)", async () => {
+        const events: DebugEvent[] = [];
+        const fsProbe: FsProbe = {
+            exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
+            remove: jest.fn(async () => undefined) as NonNullable<FsProbe["remove"]>,
+        };
+        const rollback = jest.fn(async () => undefined) as WriteActionCapability["rollback"];
+        const cap = makeCapability({
+            executeWrite: jest.fn(async () => {
+                throw new Error("nope");
+            }) as WriteActionCapability["executeWrite"],
+            rollback,
+        });
+        const exec = createActionExecutor(defaultExecutorOptions({
+            debugObserver: makeObserver(events),
+            fsProbe,
+        }));
+        await exec.execute(cap, {}, makeContext());
+        const okEvents = events.filter((e) => e.type === "rollback.ok");
+        expect(okEvents).toHaveLength(2);
+        const layers = okEvents.map((e) => e.extra?.layer);
+        expect(layers).toEqual(expect.arrayContaining(["capability", "framework"]));
+        const frameworkEvt = okEvents.find((e) => e.extra?.layer === "framework");
+        expect(frameworkEvt?.extra?.cascade).toBe(true);
+        expect((rollback as jest.Mock)).toHaveBeenCalledTimes(1);
+        expect((fsProbe.remove as jest.Mock)).toHaveBeenCalledWith(".pagelet/foo.md");
+    });
+
+    it("emits rollback.fail layer=framework with fs_error when fsProbe.remove throws (Fix #4)", async () => {
+        const events: DebugEvent[] = [];
+        const fsProbe: FsProbe = {
+            exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
+            remove: jest.fn(async () => {
+                throw new Error("permission denied");
+            }) as NonNullable<FsProbe["remove"]>,
+        };
+        const cap = makeCapability({
+            executeWrite: jest.fn(async () => {
+                throw new Error("disk gone");
+            }) as WriteActionCapability["executeWrite"],
+        });
+        const exec = createActionExecutor(defaultExecutorOptions({
+            debugObserver: makeObserver(events),
+            fsProbe,
+        }));
+        await exec.execute(cap, {}, makeContext());
+        const failEvt = events.find(
+            (e) => e.type === "rollback.fail" && e.extra?.layer === "framework",
+        );
+        expect(failEvt).toBeDefined();
+        expect(failEvt?.errorCategory).toBe("fs_error");
+        expect(failEvt?.extra?.normalizedPath).toBe(".pagelet/foo.md");
     });
 
     it("emits execute.fail + rollback when capability returns non-ok status without throwing", async () => {

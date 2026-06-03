@@ -61,6 +61,7 @@ export type {
     ActionExecutor,
     ActionExecutorOptions,
     FsProbe,
+    FsRemoveProbe,
     SelfWriteRegistry,
     SelfWriteRegistryOptions,
 } from "./runtime-integration";

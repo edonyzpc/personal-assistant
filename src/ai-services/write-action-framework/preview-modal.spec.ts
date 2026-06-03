@@ -30,9 +30,10 @@ function createEl(): MockEl {
     el.setText = jest.fn((text: unknown) => {
         el.text = typeof text === "string" ? text : String(text ?? "");
     });
-    el.createEl = jest.fn((_tag: unknown, options?: unknown) => {
+    el.createEl = jest.fn((tag: unknown, options?: unknown) => {
         const opts = (options ?? {}) as { text?: string; cls?: string };
         const child = createEl();
+        child.tag = typeof tag === "string" ? tag : "";
         if (opts.text) child.text = opts.text;
         if (opts.cls) child.cls = opts.cls;
         el.children.push(child);
@@ -49,10 +50,29 @@ function createEl(): MockEl {
     return el;
 }
 
+function flattenSubtree(root: MockEl): MockEl[] {
+    const out: MockEl[] = [];
+    const stack: MockEl[] = [root];
+    while (stack.length > 0) {
+        const node = stack.pop();
+        if (!node) continue;
+        out.push(node);
+        for (const child of (node.children ?? []) as MockEl[]) {
+            stack.push(child);
+        }
+    }
+    return out;
+}
+
+const markdownRenderCalls: Array<{ markdown: string; sourcePath: string }> = [];
+
 jest.mock("obsidian", () => ({
     Modal: class {
+        app: unknown;
         contentEl: MockEl = createEl();
-        constructor(_app: unknown) {}
+        constructor(app: unknown) {
+            this.app = app;
+        }
         open(): void {
             (this as unknown as { onOpen: () => void }).onOpen();
         }
@@ -92,6 +112,18 @@ jest.mock("obsidian", () => ({
             return this;
         }
     },
+    Component: class {
+        load(): void {}
+        unload(): void {}
+    },
+    MarkdownRenderer: {
+        render: jest.fn(
+            (_app: unknown, markdown: string, el: MockEl, sourcePath: string) => {
+                markdownRenderCalls.push({ markdown, sourcePath });
+                el.setText?.(markdown);
+            },
+        ),
+    },
 }));
 
 // IMPORTANT: imports MUST come after jest.mock so the mock is wired before the
@@ -106,54 +138,94 @@ import {
 // eslint-disable-next-line import/first
 import type { ConfirmationOutcome, PreviewSpec } from "./types";
 
-function buildSpec(): PreviewSpec {
+function buildSpec(overrides: Partial<PreviewSpec> = {}): PreviewSpec {
     return {
-        target: { path: ".pagelet/2026-06-02-meeting.md", category: "pagelet-review-note" },
-        contentMarkdown: "# Heading\n\n- bullet\n- bullet",
-        impact: "Creates 1 new file in .pagelet/",
-        risk: "No external state.",
-        action: "Create file .pagelet/2026-06-02-meeting.md",
+        operationType: "create-file",
+        actionFamily: "pagelet-review-note",
+        capabilityId: "pagelet.write_review_output",
+        target: {
+            kind: "vault-path",
+            displayPath: ".pagelet/2026-06-02-meeting.md",
+            folder: ".pagelet/",
+            filename: "2026-06-02-meeting.md",
+        },
+        contentPreview: {
+            format: "markdown",
+            body: "# Heading\n\n- bullet\n- bullet",
+            byteSize: 28,
+        },
+        impact: {
+            usesAiProvider: false,
+            usesAiCredits: false,
+            affectsExternalState: false,
+        },
+        riskNotes: [],
+        confirmCopy: { confirmLabel: "Adopt", cancelLabel: "Cancel" },
+        ...overrides,
     };
 }
 
 beforeEach(() => {
     mockSettingGroups.length = 0;
+    markdownRenderCalls.length = 0;
 });
 
-describe("WriteActionPreviewModal (5-section rendering)", () => {
-    it("renders all 5 sections + header on open", () => {
+describe("WriteActionPreviewModal (PreviewSpec section rendering)", () => {
+    it("renders Target/Preview/Impact/Risk sections + header on open", () => {
         const outcomes: ConfirmationOutcome[] = [];
         const modal = new WriteActionPreviewModal({} as never, buildSpec(), (o) => outcomes.push(o));
         modal.onOpen();
         // `contentEl` is typed as HTMLElement by Obsidian's Modal but is actually
         // our MockEl at runtime (per jest.mock above) — cast for inspection.
         const contentEl = (modal as unknown as { contentEl: MockEl }).contentEl;
-        // Header h2 + 5 sections (target, impact, risk, action, content).
-        const titles = (contentEl.children as MockEl[])
-            .flatMap((c: MockEl) => c.children as MockEl[])
-            .filter((c: MockEl) => typeof c.cls === "string" && c.cls.includes("pa-write-action-modal__section-title"))
+        const titles = flattenSubtree(contentEl)
+            .filter((c: MockEl) =>
+                typeof c.cls === "string"
+                && c.cls.includes("pa-write-action-modal__section-title"),
+            )
             .map((c: MockEl) => c.text);
         expect(titles).toEqual(
-            expect.arrayContaining(["Target", "Impact", "Risk", "Action", "Preview"]),
+            expect.arrayContaining(["Target", "Preview", "Impact", "Risk"]),
         );
-        // Content body received the markdown text via setText().
-        const contentBody = (contentEl.children as MockEl[])
-            .flatMap((c: MockEl) => c.children as MockEl[])
-            .find((c: MockEl) =>
-                typeof c.cls === "string"
-                && c.cls.includes("pa-write-action-modal__section-body")
-                && typeof c.text === "string"
-                && c.text.includes("# Heading"),
-            );
-        expect(contentBody).toBeDefined();
+        // Header h2 includes the actionFamily · capabilityId banner.
+        const header = flattenSubtree(contentEl).find((c: MockEl) => c.tag === "h2");
+        expect(header?.text).toContain("pagelet-review-note");
+        expect(header?.text).toContain("pagelet.write_review_output");
     });
 
-    it("captures confirmed outcome via primary CTA button", () => {
+    it("uses MarkdownRenderer.render when contentPreview.format=markdown", () => {
         const outcomes: ConfirmationOutcome[] = [];
         const modal = new WriteActionPreviewModal({} as never, buildSpec(), (o) => outcomes.push(o));
         modal.onOpen();
+        expect(markdownRenderCalls).toHaveLength(1);
+        expect(markdownRenderCalls[0].markdown).toContain("# Heading");
+        expect(markdownRenderCalls[0].sourcePath).toBe(".pagelet/2026-06-02-meeting.md");
+    });
+
+    it("renders <pre> fallback when contentPreview.format=plain-text", () => {
+        const outcomes: ConfirmationOutcome[] = [];
+        const spec = buildSpec({
+            contentPreview: { format: "plain-text", body: "Plain text body", byteSize: 15 },
+        });
+        const modal = new WriteActionPreviewModal({} as never, spec, (o) => outcomes.push(o));
+        modal.onOpen();
+        expect(markdownRenderCalls).toHaveLength(0);
+        const contentEl = (modal as unknown as { contentEl: MockEl }).contentEl;
+        const pre = flattenSubtree(contentEl).find(
+            (c: MockEl) => c.tag === "pre" && typeof c.text === "string" && c.text.includes("Plain text body"),
+        );
+        expect(pre).toBeDefined();
+    });
+
+    it("uses confirmCopy.confirmLabel/cancelLabel for buttons", () => {
+        const outcomes: ConfirmationOutcome[] = [];
+        const spec = buildSpec({
+            confirmCopy: { confirmLabel: "采纳", cancelLabel: "取消" },
+        });
+        const modal = new WriteActionPreviewModal({} as never, spec, (o) => outcomes.push(o));
+        modal.onOpen();
         const buttons = mockSettingGroups.flat();
-        expect(buttons.map((b) => b.text)).toEqual(["Confirm", "Cancel"]);
+        expect(buttons.map((b) => b.text)).toEqual(["采纳", "取消"]);
         expect(buttons[0].cta).toBe(true);
         buttons[0].click?.();
         expect(outcomes).toEqual(["confirmed"]);
@@ -168,12 +240,12 @@ describe("WriteActionPreviewModal (5-section rendering)", () => {
         expect(outcomes).toEqual(["cancelled"]);
     });
 
-    it("captures closed outcome when modal closed without resolving", () => {
+    it("maps onClose (✕ / click-outside / ESC) to cancelled per SDD §2.1", () => {
         const outcomes: ConfirmationOutcome[] = [];
         const modal = new WriteActionPreviewModal({} as never, buildSpec(), (o) => outcomes.push(o));
         modal.onOpen();
         modal.onClose();
-        expect(outcomes).toEqual(["closed"]);
+        expect(outcomes).toEqual(["cancelled"]);
     });
 
     it("captures aborted outcome via forceResolve (external signal)", () => {
@@ -279,9 +351,9 @@ describe("createMutexPreviewRenderer (serial mutex)", () => {
         await Promise.resolve();
         await Promise.resolve();
         expect(ctrl.pending.length).toBe(1);
-        ctrl.pending.shift()?.("closed");
+        ctrl.pending.shift()?.("aborted");
         const r3 = await p3;
-        expect(r3).toEqual({ outcome: "closed" });
+        expect(r3).toEqual({ outcome: "aborted" });
     });
 
     it("returns aborted without invoking inner renderer when signal aborts while queued", async () => {

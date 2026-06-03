@@ -45,7 +45,11 @@ import { PolicyEngine, type PolicyEngineOptions } from "./policy-engine";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { errorMessage } from "./agent-utils";
 import { SkillContextProvider } from "./skill-context-provider";
-import { chatToolResultToPaAgentToolExecutionResult, createPaAgentCapabilityToolExecutor } from "./pa-agent-host-tools";
+import {
+    chatToolResultToPaAgentToolExecutionResult,
+    createPaAgentCapabilityToolExecutor,
+    isAllowedHostToolCall,
+} from "./pa-agent-host-tools";
 import { extractCanonicalTurnMetadata } from "./pa-agent-history";
 import {
     ConsoleDebugObserver,
@@ -530,6 +534,16 @@ export interface WriteActionAwareToolExecutorOptions {
     plugin: PluginManager;
     platform?: AgentRuntimePlatform;
     onToolRunning?: (tool: string, message: string) => void;
+    /**
+     * Required-capability allowlist passed through from the runtime so the
+     * action route honors the same scope as the chat-runtime executor (Fix #6).
+     */
+    allowedToolNames?: ReadonlySet<string>;
+    /**
+     * Required-capability blocklist passed through from the runtime so the
+     * action route honors the same scope as the chat-runtime executor (Fix #6).
+     */
+    blockedToolNames?: ReadonlySet<string>;
 }
 
 /**
@@ -577,6 +591,42 @@ export function createWriteActionAwareToolExecutor(
                 return options.baseExecutor.execute(input);
             }
             const writeCapability = capability as WriteActionCapability;
+            // Fix #6: honor allowedToolNames/blockedToolNames before any
+            // action-specific work so out-of-scope writes never reach the
+            // framework (matches `createPaAgentCapabilityToolExecutor` semantics).
+            if (!isAllowedHostToolCall(toolCall.name, options.allowedToolNames, options.blockedToolNames)) {
+                return {
+                    outcome: "policy_rejected",
+                    promptText: `Tool ${toolCall.name} was skipped because the user limited this request to different available context.`,
+                    previewText: `Skipped ${toolCall.name}; outside the user-requested context scope.`,
+                    metadata: {
+                        outcome: "policy_rejected",
+                        reason: "tool_outside_user_requested_scope",
+                    },
+                };
+            }
+            // Fix #2: action route MUST consult PolicyEngine.canExecute and
+            // emit CapabilityUsageEvent — same as the chat-runtime executor.
+            const policyDecision = options.registry.canExecute(toolCall.name);
+            if (!policyDecision.allowed) {
+                options.registry.recordCapabilityEvent({
+                    capabilityName: writeCapability.name,
+                    providerId: writeCapability.providerId,
+                    status: "skipped",
+                    durationMs: 0,
+                });
+                return {
+                    outcome: "policy_rejected",
+                    promptText: `Tool ${toolCall.name} was skipped by policy: ${policyDecision.reason ?? "policy rejected"}.`,
+                    previewText: `Skipped ${toolCall.name}; policy rejected.`,
+                    metadata: {
+                        outcome: "policy_rejected",
+                        reason: "policy_denied_capability",
+                        tool: toolCall.name,
+                        policyReason: policyDecision.reason ?? "policy rejected",
+                    },
+                };
+            }
             const preparedResult = options.registry.prepareAndValidate(
                 toolCall.name,
                 toolCall.input,
@@ -602,11 +652,18 @@ export function createWriteActionAwareToolExecutor(
                 signal: input.signal,
                 platform: options.platform ?? "desktop",
             };
+            const startedAt = Date.now();
             const agentResult = await options.actionExecutor.execute(
                 writeCapability,
                 preparedResult.input,
                 ctx,
             );
+            options.registry.recordCapabilityEvent({
+                capabilityName: writeCapability.name,
+                providerId: writeCapability.providerId,
+                status: agentResult.status === "ok" ? "invoked" : "failed",
+                durationMs: Math.max(0, Date.now() - startedAt),
+            });
             const chatToolResult = agentResultToChatToolResult(writeCapability.name, agentResult);
             const canonicalResult = chatToolResultToPaAgentToolExecutionResult(toolCall, chatToolResult);
             const augmentedMetadata = preparedResult.repaired
@@ -815,6 +872,12 @@ export class PaAgentRuntime {
                 onToolRunning: (tool, message) => {
                     options.onStatus?.({ type: "tool-running", tool, message });
                 },
+                ...(toolUseConstraints?.allowedToolNames
+                    ? { allowedToolNames: toolUseConstraints.allowedToolNames }
+                    : {}),
+                ...(toolUseConstraints?.blockedToolNames
+                    ? { blockedToolNames: toolUseConstraints.blockedToolNames }
+                    : {}),
             })
             : baseToolExecutor;
         const loop = new PaAgentLoop({

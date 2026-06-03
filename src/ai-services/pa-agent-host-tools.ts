@@ -49,7 +49,7 @@ export function createPaAgentCapabilityToolExecutor(
             // CapabilityRegistry.prepareAndValidate runs prepareArguments + validateInput.
             // Failure → schema_invalid outcome → HostPolicy corrective turn + answer-completion failed-only path.
             const toolCall = input.toolCall;
-            if (!isAllowedHostToolCall(toolCall.name, options)) {
+            if (!isAllowedHostToolCall(toolCall.name, options.allowedToolNames, options.blockedToolNames)) {
                 return {
                     outcome: "policy_rejected",
                     promptText: `Tool ${toolCall.name} was skipped because the user limited this request to different available context.`,
@@ -119,9 +119,19 @@ export function createPaAgentCapabilityToolExecutor(
     };
 }
 
-function isAllowedHostToolCall(toolName: string, options: PaAgentCapabilityToolExecutorOptions): boolean {
-    if (options.allowedToolNames && !options.allowedToolNames.has(toolName)) return false;
-    if (options.blockedToolNames?.has(toolName)) return false;
+/**
+ * Tool-name allow/block list gate shared by the chat-runtime executor (this
+ * file) and the action-aware wrapper in `pa-agent-runtime.ts`. Returns `true`
+ * when the call is permitted; `false` triggers a `policy_rejected` outcome
+ * upstream. Both sets are optional — omitting both behaves as "always allow".
+ */
+export function isAllowedHostToolCall(
+    toolName: string,
+    allowedToolNames?: ReadonlySet<string>,
+    blockedToolNames?: ReadonlySet<string>,
+): boolean {
+    if (allowedToolNames && !allowedToolNames.has(toolName)) return false;
+    if (blockedToolNames?.has(toolName)) return false;
     return true;
 }
 
