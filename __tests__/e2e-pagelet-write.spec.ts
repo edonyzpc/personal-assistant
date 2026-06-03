@@ -254,6 +254,26 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
         const input = makeInput();
         const expectedPath = runtime.toolProvider.capability.getTargetPath(input);
 
+        // ── B1 fix · Synchronous self-write spy ──────────────────────────
+        // The framework re-marks the path on `execute.ok` (runtime-integration.ts
+        // line 529). If we only asserted `runtime.isRecentSelfWrite(path)` AFTER
+        // execute returned, the post-execute refresh could mask a missing
+        // pre-execute mark — the modify-event listener would still loop on
+        // a fast vault round-trip. To pin the pre-execute mark we wrap the
+        // adapter's `write` method and snapshot the registry state SYNCHRONOUSLY
+        // at the moment the framework calls into the vault. That moment sits
+        // strictly between the framework's pre-execute `markSelfWrite` (line
+        // 477) and the post-execute refresh (line 529), so the captured value
+        // proves the mark landed before the write.
+        let selfWriteAtWriteTime: boolean | null = null;
+        const originalWrite = adapter.write;
+        adapter.write = async (path: string, data: string): Promise<void> => {
+            if (path === expectedPath && selfWriteAtWriteTime === null) {
+                selfWriteAtWriteTime = runtime.isRecentSelfWrite(path);
+            }
+            return originalWrite(path, data);
+        };
+
         // Simulate the upstream LLM cost record — the framework does not own
         // this, the model (B1) does, so we mirror what the orchestrator would
         // have called before reaching executeWrite.
@@ -300,19 +320,22 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
         expect(persisted).toContain("## Suggestions");
         expect(persisted).toContain("Solid draft; one scope clarification away from a publish.");
 
-        // ── markSelfWrite ordering: adapter.write must NOT appear before the
-        // first self-write mark hit our external registry. We assert this
-        // via the call log: every `write` call's `order` is greater than the
-        // first `exists` call's order (proves we ran through Gate 1's probes
-        // first); and the runtime snapshot already contained the path before
-        // the write landed because the framework marks at line 477 of
-        // runtime-integration.ts (BEFORE capability.executeWrite is called).
+        // ── markSelfWrite ordering ──────────────────────────────────────
+        // The synchronous spy installed above captured the registry state at
+        // the exact moment `vault.adapter.write` was invoked. The framework
+        // guarantees `markSelfWrite` runs BEFORE `capability.executeWrite`
+        // (runtime-integration.ts line 477), so the captured value MUST be
+        // `true` — independently of the post-execute refresh at line 529.
+        // A regression that drops the pre-execute mark would surface here
+        // even though the post-execute assertions still pass.
+        expect(selfWriteAtWriteTime).toBe(true);
+        // Defence-in-depth: the call log also shows the Gate 1 `exists`
+        // probe landed before the write (proves the gate ordering, not just
+        // the mark ordering).
         const writeCall = adapter.calls.find((c) => c.method === "write" && c.path === expectedPath);
         expect(writeCall).toBeDefined();
         const firstSnapshotEntry = adapter.calls.find((c) => c.method === "exists" && c.path === expectedPath);
         expect(firstSnapshotEntry).toBeDefined();
-        // The exists() snapshot probe happens during Gate 1 BEFORE the write,
-        // confirming the framework's ordering invariant.
         expect(firstSnapshotEntry!.order).toBeLessThan(writeCall!.order);
 
         // ── Debug observer captured the full success chain ───────────────
