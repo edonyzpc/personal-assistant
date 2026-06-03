@@ -21,7 +21,7 @@ All notable changes to this project will be documented in this file. See [standa
 - 1 new manual smoke checklist (`docs/pagelet-smoke-checklist.md`) for real-Obsidian verification with explicit release-gate severity tiers.
 
 ### Notes
-- Pagelet is **beta** — feedback via GitHub Issues. Disabled by default until `settings.pagelet.enabled` is toggled.
+- Pagelet is **beta** — feedback via GitHub Issues. Enabled by default for beta users; toggle off via `settings.pagelet.enabled` if you'd rather opt out.
 
 ## [2.1.2](https://github.com/edonyzpc/personal-assistant/compare/2.1.1...2.1.2) (2026-05-31)
 
