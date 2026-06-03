@@ -433,6 +433,21 @@
   - ⏭ 写 `docs/write-action-framework-sdd.md` 留给下一会话
 - **依赖追踪**：[[OQ001]]（升级为 Hard Blocker），[[D025]]（命名替换 + cross-ref）
 
+#### D031 · Write Action Framework v1 实现完成 + Pagelet beta 解阻塞
+
+- **日期**：2026-06-03
+- **决策**：Write Action Framework v1 实现完整就绪，Pagelet beta 解 [[OQ001]] 硬阻塞，随 `v2.2.0-beta.1` 一同发布
+- **上下文**：
+  - [[OQ001]] 自 2026-06-02 升级为 Pagelet beta Hard Blocker（[[D030]]）
+  - 本批 PR（#354 framework / #355 Pagelet runtime-stub / #356 Pagelet 测试 + 文档）合入 master 后，framework + Pagelet 已能跑通端到端：5 个 prompt-injection fixture 全部被 Gate 1 拒绝，benign control + sanitiser fixture 写入 `.pagelet/`，settings-layer validator（H-B3.2）守护 `reviewsFolder` 边界
+  - 发布通道沿用 [[D013]]（`v2.(x+1).0-beta.N`）→ 实际取 `v2.2.0-beta.1`
+- **本次落地范围**：
+  - ✅ 框架 4 子模块 + PolicyEngine 参数化（详见 `docs/write-action-framework-sdd.md` §2-§4）
+  - ✅ Pagelet `pagelet.write_review_output` capability 解 stub（pa-review-tool-provider.ts:285-296）
+  - ✅ 设置层 `normalizeReviewsFolder` 验证器（fail-closed 默认 `.pagelet`，inline UI error），关闭 H-B3.2 + PR #356 B2 prod-gap
+  - ✅ CHANGELOG `v2.2.0-beta.1`、versions.json、manifest{,.beta}.json 同步
+- **后续追踪**：framework v2 演进（append / replace / multi-file / shell action families）走 Operations Agent mode 路线（[[D030]] 二层命名层级中的 mode 层），不在本 OQ 范围
+
 ---
 
 ## 🔄 Superseded Decisions
@@ -449,18 +464,15 @@
 
 ### OQ001 · Write Action Framework v1 SDD 撰写
 
-- **状态**：**Open · Hard Blocker for Pagelet beta**（2026-06-02 升级，参见 [[D030]]）
-- **日期**：2026-06-01（升级 2026-06-02）
-- **背景**：D025 决定 Pagelet 走 B-full，依赖 Write Action Framework v1；但 PA 当前只有两份边界文档（`docs/write-action-design-handoff.md` + `docs/operations-agent-plan.md`），尚无完整 SDD，且 `src/ai-services/policy-engine.ts:35` 仍对 `kind="action"` 默认拒绝
-- **待办**：
-  1. 写 `docs/write-action-framework-sdd.md`，合并上述两份边界文档为单一 SDD
-  2. 覆盖 5 子模块：preview / confirmation / target confinement / stale re-read / audit
-  3. 给出 PolicyEngine 的参数化方案（runKind + allowWrite），允许 review 写但仍默认拒绝 chat 写
-  4. 实现 minimal capability + 至少一个端到端 write action（创建 review note 即首个落地用例）
-- **阻塞**：
-  - Pagelet SDD §2.4 / §3 / §14 的写路径细节需要等本 SDD 稳定后才能补完
-  - Pagelet beta 上线必须等 Write Action Framework v1 实现就绪
-- **下一会话动作**：开新会话写 `docs/write-action-framework-sdd.md`
+- **状态**：**✅ Resolved**（2026-06-03 解阻塞；framework SDD 落地 + v1 实现随 Pagelet beta `v2.2.0-beta.1` 发布；详见 [[D031]] 与 `docs/write-action-framework-sdd.md` §0）
+- **日期**：2026-06-01（升级 2026-06-02 → Resolved 2026-06-03）
+- **背景**：D025 决定 Pagelet 走 B-full，依赖 Write Action Framework v1；但 PA 当时只有两份边界文档（`docs/write-action-design-handoff.md` + `docs/operations-agent-plan.md`），尚无完整 SDD，且 `src/ai-services/policy-engine.ts:35` 仍对 `kind="action"` 默认拒绝
+- **解决路径**：
+  1. ✅ `docs/write-action-framework-sdd.md` 落地（合并 2 份边界文档 + 4 子模块契约 + PolicyEngine 参数化方案）
+  2. ✅ `src/ai-services/write-action-framework/**` 实现 4 个 gate（target-confinement / preview-confirmation / stale-reread / execute + 自动 rollback）
+  3. ✅ PolicyEngine 参数化（runKind + allowWrite）；chat backward-compat 由 §4.4 单测守护
+  4. ✅ `pagelet.write_review_output` 作为首个真实 caller 接入；E2E + prompt-injection fixtures 全绿
+- **下游解阻塞**：Pagelet beta `v2.2.0-beta.1` 已可发布；本 OQ 移交 [[D031]] 跟踪 framework 实现的后续 v2 演进
 
 ### OQ002 · F5 Provider 兼容性 spike
 

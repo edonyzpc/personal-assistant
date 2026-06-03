@@ -12,17 +12,18 @@
 
 | 项 | 值 |
 |----|----|
-| Spec version | 0.1 (Beta-ready draft) |
-| 对应版本 | PA `v2.(x+1).0-beta.N`（D013） |
-| 决策依据 | `docs/review-assistant-decisions.md` D001-D030 |
+| Spec version | 0.1 |
+| 实现状态 | **v1 implemented (beta)** — `v2.2.0-beta.1` 发布（2026-06-03） |
+| 对应版本 | PA `v2.2.0-beta.1`（沿用 D013 通道） |
+| 决策依据 | `docs/review-assistant-decisions.md` D001-D031 |
 | 产品意图 | `docs/review-assistant-product-design.md` |
-| 阻塞项 | **OQ001 (Write Action Framework v1 SDD — Hard Blocker for Pagelet beta)**、OQ002 (F5 provider spike) |
+| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；OQ002 (F5 provider spike) 仍 Open（Soft Blocker） |
 | 主作者 | PA core |
-| 上次更新 | 2026-06-02 |
+| 上次更新 | 2026-06-03 |
 
-> **阻塞说明（Hard Blocker）**：D025 + D030 决定写路径走 **Write Action Framework v1**（基础设施层，未来 Operations Agent mode 会在其上构建）。本 SDD §2.4 / §3 / §14 仅勾勒 Pagelet 侧的契约面与命名占位，**必须**等 `docs/write-action-framework-sdd.md` 落地、PolicyEngine 完成参数化改造（runKind + allowWrite）、且最小写 capability 实现就绪后，才能进入实现阶段。
+> **解阻塞标记（2026-06-03）**：D025 + D030 决定写路径走 **Write Action Framework v1**（基础设施层）。`docs/write-action-framework-sdd.md` 已落地、`src/ai-services/write-action-framework/**` 4 子模块 + PolicyEngine 参数化已实现、`pagelet.write_review_output` 作为首个真实 caller 跑通端到端测试。本 SDD §2.4 / §3 / §14 的契约面占位已去 stub 化，Pagelet beta 随 `v2.2.0-beta.1` 发布（详见 [[D031]]）。
 >
-> **为什么是 Hard Blocker**：Pagelet 唯一的 v1 写动作（创建 review note）就是 Write Action Framework v1 的首个真实 caller，没有框架就没有 Pagelet beta。
+> **历史背景（保留可追溯）**：v1 立项时 OQ001 被升级为 Pagelet beta Hard Blocker（Pagelet 唯一的 v1 写动作"创建 review note"是框架的首个真实 caller，没有框架就没有 Pagelet beta）。
 
 ---
 
@@ -773,10 +774,12 @@ v1 暂不直接收集遥测数据。代用指标：
 
 | ID | 内容 | 严重程度 | 影响 SDD 章节 |
 |----|------|---------|--------------|
-| **OQ001** | **Write Action Framework v1 SDD（`docs/write-action-framework-sdd.md`）+ 最小实现 + PolicyEngine 参数化** | **🔴 Hard Blocker（Pagelet beta 上线前置）** | §2.4（写 capability stub）、§3（PolicyEngine 改造）、§7（File IO 写路径）、§14.3 |
+| ~~**OQ001**~~ | ~~**Write Action Framework v1 SDD + 最小实现 + PolicyEngine 参数化**~~ | **✅ Resolved（2026-06-03，[[D031]]）** | §2.4 / §3 / §7 / §14.3 占位已去 stub |
 | OQ002 | F5 Provider 兼容性 spike | 🟡 Soft Blocker（结构化输出兼容率不达预期会降级体验） | §4.2（兼容矩阵）、§4.3（失败矩阵实际触发率） |
 
-> **OQ001 升级说明（D030）**：本 SDD §2.4 与 §3 的写路径细节均为契约面占位；Write Action Framework v1 SDD 落地前，Pagelet 不能进入实现阶段。命名对齐为二层层级：Operations Agent (mode, future) → Write Action Framework v1 → Pagelet v1。
+> **OQ001 解阻塞标记（2026-06-03）**：Write Action Framework v1 SDD 落地（`docs/write-action-framework-sdd.md`），`src/ai-services/write-action-framework/**` 4 个 gate 实现就绪，PolicyEngine 参数化（runKind + allowWrite）完成，`pagelet.write_review_output` 作为首个真实 caller 接入并通过 E2E + prompt-injection 测试。本 SDD §2.4 与 §3 的契约面占位已 1:1 映射到 framework SDD §3 capability contract 与 §4 PolicyEngine diff。命名对齐二层层级（Operations Agent mode, future → Write Action Framework v1 → Pagelet v1）保留；framework v2 的 action family 扩展（append / replace / multi-file / shell）走 mode 路线，参 [[D031]]。
+>
+> **历史背景（保留可追溯）**：OQ001 在 2026-06-02 由 [[D030]] 升级为 Pagelet beta Hard Blocker，约束 §2.4 / §3 / §14 仅勾勒契约面与命名占位、不进入实现，直到 framework v1 就绪。该阻塞自 2026-06-03 起解除。
 
 ### 14.2 延期到 v2
 

@@ -2,6 +2,27 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.2.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.1.2...2.2.0-beta.1) (2026-06-03)
+
+### Beta Features
+- **Pagelet (Review Assistant) v1 — beta**: a quiet reviewer for your notes. Inline mascot + structured suggestion cards + per-segment review, with cost ceiling and rate limiting. Configurable per-vault folder, prefers-reduced-motion respected, EN + ZH UI.
+- **Write Action Framework v1**: PA-level infrastructure providing the 4-gate write path (target-confinement → preview-confirmation → stale-reread → execute) plus auto-rollback for `create-file` actions. First caller is Pagelet's `pagelet.write_review_output` capability.
+
+### Improvements
+- settings(pagelet): `reviewsFolder` now rejects `.obsidian/`, absolute paths, parent-traversal, drive letters, and control chars; fail-closed to the `.pagelet/` default with an inline error.
+- pagelet: pricing-table accepts canonical provider IDs (`qwen` → `dashscope`/`bailian` aliases) — closes a potential $0/token bypass.
+- pagelet: `vault.on("create")` listener now consults `isRecentSelfWrite` to prevent self-write reentrancy via the create event.
+- pagelet: mascot CSS tokens + animation keyframes landed; visible in production.
+- pagelet: debounce coalescer survives sync-throw runners (regression-tested).
+- pagelet: mascot setState/destroy lifecycle gated; replaceChildren falls back on iOS 13.
+
+### Tests
+- 4 new automated test suites for Pagelet E2E flow (happy path, self-write no-loop, cancel/abort, prompt-injection rejection).
+- 1 new manual smoke checklist (`docs/pagelet-smoke-checklist.md`) for real-Obsidian verification with explicit release-gate severity tiers.
+
+### Notes
+- Pagelet is **beta** — feedback via GitHub Issues. Disabled by default until `settings.pagelet.enabled` is toggled.
+
 ## [2.1.2](https://github.com/edonyzpc/personal-assistant/compare/2.1.1...2.1.2) (2026-05-31)
 
 ### Fix
