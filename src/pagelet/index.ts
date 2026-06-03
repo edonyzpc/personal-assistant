@@ -84,3 +84,25 @@ export {
     type PageletRateLimiterOptions,
     type RateLimitDecision,
 } from "./pa-review-rate-limit";
+
+export {
+    MAX_COLLISION_SUFFIX,
+    PAGELET_DEFAULT_REVIEWS_FOLDER,
+    PAGELET_FILENAME_INFIX,
+    assembleReviewNote,
+    buildReviewMetadata,
+    formatPageletDate,
+    formatPageletIsoTimestamp,
+    normalizeReviewsFolder as normalizePageletReviewsFolder,
+    renderReviewBody,
+    resolveReviewNotePath,
+    sanitizeSourceBaseName,
+    serializeFrontmatter,
+    writeReviewNote,
+    type PageletReviewFileIOSettings,
+    type PageletReviewIOAdapter,
+    type PageletReviewVaultLike,
+    type ResolveReviewNotePathInput,
+    type WriteReviewNoteInput,
+    type WriteReviewNoteResult,
+} from "./pa-review-file-io";
