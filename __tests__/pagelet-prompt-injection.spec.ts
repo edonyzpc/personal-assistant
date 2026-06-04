@@ -257,17 +257,22 @@ const SDD_8_3_FIXTURES: readonly InjectionFixture[] = [
         description: ".obsidian/plugins/personal-assistant/data.json — adjacent escape",
         reviewsFolder: ".obsidian/plugins/personal-assistant",
         sourcePath: "data.json",
-        // The mock doesn't seed `.obsidian/plugins/personal-assistant`, so
-        // async Gate 1 rejects with `folder_missing`. NOTE: in a real
-        // plugin install that folder ALWAYS exists — but the production
-        // gap that previously exposed is now closed at the **settings
-        // boundary** by `normalizeReviewsFolder` (see the
-        // settings-layer-validator test below + `src/settings/pagelet/index.ts`).
-        // The fixture is retained so the Gate 1 contract stays exercised
-        // for any caller that bypasses the settings layer (e.g. a future
-        // capability that derives an allowlist from a different source).
-        expectedReason: "folder_missing",
-        productionGapNote: "settings-layer validator (H-B3.2 / v2.2.0-beta.1) now rejects .obsidian/* before the framework sees it",
+        // Two layers of defence reject this candidate in production:
+        //   (1) settings-layer `normalizeReviewsFolder` (H-B3.2 /
+        //       v2.2.0-beta.1) coerces the bad folder back to `.pagelet`
+        //       before the capability ever sees it; AND
+        //   (2) framework Gate 1 `forbidden_dotfolder` denylist (#358)
+        //       rejects any candidate whose top-level segment is
+        //       `.obsidian`/`.git`/`.trash`/`.obsidian.bak`, regardless
+        //       of what `allowedRoots` the caller wired.
+        // This fixture exercises layer (2): the test harness bypasses
+        // the settings-layer scrub by feeding the bad folder directly
+        // to the capability, so Gate 1's intrinsic denylist must catch
+        // it. Pinned to `forbidden_dotfolder` so a regression that
+        // removes the denylist downgrades the assertion (vs. silently
+        // landing on the looser `folder_missing` from the mock FS).
+        expectedReason: "forbidden_dotfolder",
+        productionGapNote: "framework Gate 1 denylist (#358) independently rejects .obsidian/* even if a future caller bypasses the settings layer",
     },
     {
         id: "inject-drive-letter",
