@@ -131,13 +131,35 @@ export const PAGELET_FIXED_CALL_LIMITS = Object.freeze({
  */
 export type PageletReviewsFolderError =
     | "empty"
+    | "too_long"
     | "absolute_path"
     | "drive_letter"
     | "parent_traversal"
     | "obsidian_config"
+    | "forbidden_dotfolder"
     | "control_chars"
     | "invisible_chars"
     | "trailing_dot_or_space";
+
+/**
+ * Top-level dotfolders beyond `.obsidian` that the framework must never
+ * write into. `.git` and `.trash` are Obsidian / Git-shared system folders;
+ * `.obsidian.bak` is the conventional backup name some users keep next to
+ * `.obsidian`. Kept separate from `obsidian_config` so the user-facing
+ * message stays specific (it's not always THE Obsidian config dir).
+ *
+ * Compared case-folded NFC just like the `.obsidian` check below.
+ */
+const FORBIDDEN_DOTFOLDER_SEGMENTS = new Set([".git", ".trash", ".obsidian.bak"]);
+
+/**
+ * Hard cap on validator input length. 4 KB is well above any realistic
+ * vault-relative path (POSIX PATH_MAX is 4096) and stops a pathological
+ * input from spending unbounded time in the regex / segment work below.
+ * The cap runs after `trim()` so trailing whitespace does not push a
+ * benign path over the limit.
+ */
+const REVIEWS_FOLDER_MAX_LENGTH = 4096;
 
 /**
  * Output shape of `normalizeReviewsFolder`. `value` is always safe to use
@@ -238,6 +260,14 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "empty", input: trimmed };
     }
 
+    // Pathological-length guard. Cheap to reject and stops a degenerate
+    // input from spending unbounded time in the regex / segment work below.
+    // 4 KB is well above POSIX PATH_MAX (4096) so any realistic vault path
+    // fits comfortably.
+    if (trimmed.length > REVIEWS_FOLDER_MAX_LENGTH) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "too_long", input: trimmed };
+    }
+
     // Control chars / NUL / DEL — surface BEFORE the strip-and-normalize so
     // the raw byte that tripped the check is visible in `input` if a logger
     // wants it. U+007F (DEL) is grouped with the C0 controls because it is
@@ -311,8 +341,17 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     // `.OBSIDIAN` also trip — default macOS APFS and Windows NTFS are
     // case-insensitive, so a non-folded compare would let those inputs through
     // and the OS would still dispatch the write into the real `.obsidian/`.
-    if (segments[0].normalize("NFC").toLowerCase() === ".obsidian") {
+    const firstSegmentFolded = segments[0].normalize("NFC").toLowerCase();
+    if (firstSegmentFolded === ".obsidian") {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "obsidian_config", input: trimmed };
+    }
+
+    // Other top-level dotfolders that must never be written into. Same
+    // case-fold + NFC rationale as the `.obsidian` check above. Kept in
+    // a separate guard so the error message can be specific (".git" /
+    // ".trash" / ".obsidian.bak" don't share the "Obsidian config" framing).
+    if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
+        return { value: PAGELET_DEFAULTS.reviewsFolder, error: "forbidden_dotfolder", input: trimmed };
     }
 
     return { value: stripped };
@@ -348,6 +387,26 @@ function normalizeBoundedInt(value: unknown, fallback: number, min: number, max:
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
+
+/**
+ * Exhaustive map from validator error to its i18n key. Replaces a runtime
+ * `t(\`...error.${result.error}\`)` template lookup: any future variant added
+ * to {@link PageletReviewsFolderError} fails compile here unless EN/ZH labels
+ * are added, so the UI can never silently render a missing-translation
+ * placeholder for a new rejection category.
+ */
+const REVIEWS_FOLDER_ERROR_I18N_KEY: Record<PageletReviewsFolderError, string> = {
+    empty: "pagelet.settings.reviewsFolder.error.empty",
+    too_long: "pagelet.settings.reviewsFolder.error.too_long",
+    absolute_path: "pagelet.settings.reviewsFolder.error.absolute_path",
+    drive_letter: "pagelet.settings.reviewsFolder.error.drive_letter",
+    parent_traversal: "pagelet.settings.reviewsFolder.error.parent_traversal",
+    obsidian_config: "pagelet.settings.reviewsFolder.error.obsidian_config",
+    forbidden_dotfolder: "pagelet.settings.reviewsFolder.error.forbidden_dotfolder",
+    control_chars: "pagelet.settings.reviewsFolder.error.control_chars",
+    invisible_chars: "pagelet.settings.reviewsFolder.error.invisible_chars",
+    trailing_dot_or_space: "pagelet.settings.reviewsFolder.error.trailing_dot_or_space",
+};
 
 // ---------------------------------------------------------------------------
 // Render
@@ -478,9 +537,7 @@ export function renderPageletSection(
                         // never widens to a forbidden root. Surface the reason
                         // inline + revert the visible input so the user sees
                         // their edit was not accepted.
-                        reviewsFolderErrorEl.textContent = t(
-                            `pagelet.settings.reviewsFolder.error.${result.error}`,
-                        );
+                        reviewsFolderErrorEl.textContent = t(REVIEWS_FOLDER_ERROR_I18N_KEY[result.error]);
                         settings.reviewsFolder = lastValidReviewsFolder;
                         reviewsFolderTextHandle?.setValue(lastValidReviewsFolder);
                         return;
