@@ -521,6 +521,17 @@ export function renderPageletSection(
     // mergePageletSettings already accepted at load time.
     let lastValidReviewsFolder = settings.reviewsFolder;
     let reviewsFolderTextHandle: PageletTextHandle | undefined;
+    // Inline error message lives next to the reviews-folder input so a
+    // rejection surfaces right where the user just typed. Declared BEFORE
+    // the addText closure that references it so the binding is never in
+    // the temporal dead zone when the closure body runs — brittle if a
+    // future refactor ever fires onChange synchronously during init.
+    // Kept empty until a validator rejection fires; an empty `textContent`
+    // collapses the row visually so non-error state does not look like a
+    // layout shift.
+    const reviewsFolderErrorEl = parentEl.createEl("div", {
+        cls: "pa-pagelet-settings-error",
+    });
     factory.create(parentEl)
         .setName(t("pagelet.settings.reviewsFolder.name"))
         .setDesc(t("pagelet.settings.reviewsFolder.desc"))
@@ -553,13 +564,6 @@ export function renderPageletSection(
                     }
                 }));
         });
-    // Inline error message sits IMMEDIATELY below the input so a rejection
-    // surfaces right where the user just typed. Kept empty until a
-    // validator rejection fires; an empty `textContent` collapses the row
-    // visually so non-error state does not look like a layout shift.
-    const reviewsFolderErrorEl = parentEl.createEl("div", {
-        cls: "pa-pagelet-settings-error",
-    });
 
     factory.create(parentEl)
         .setName(t("pagelet.settings.outputLanguage.name"))
