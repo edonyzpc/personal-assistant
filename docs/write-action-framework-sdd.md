@@ -232,21 +232,28 @@ export interface TargetCheckResult {
     ok: boolean;
     normalizedPath?: string;                    // 通过时返回
     reason?: string;                            // 失败时给 errorCategory 用
-    category?: "absolute_path" | "parent_traversal" | "outside_allowlist"
-             | "bad_extension" | "path_too_long" | "control_char"
-             | "name_collision" | "folder_missing";
+    category?: "empty_path" | "absolute_path" | "drive_letter"
+             | "parent_traversal" | "control_char" | "forbidden_dotfolder"
+             | "outside_allowlist" | "bad_extension" | "path_too_long"
+             | "custom_pattern_rejected" | "name_collision" | "folder_missing";
 }
 ```
 
-**算法：**
+**算法（实际实现中的检查顺序，见 `src/ai-services/write-action-framework/target-confinement.ts`）：**
 
-1. **Normalize**：`path.posix.normalize`（vault path 全用 `/`）；剥离前导 `./`
-2. **Reject patterns 检查**：absolute / traversal / drive letter / control char → reject
-3. **Allowlist 检查**：normalizedPath 必须以 `allowedRoots` 中任一前缀开头
-4. **Extension 检查**：`path.posix.extname` 必须在 `allowedExtensions`
-5. **Length 检查**：≤ `maxPathLength`
-6. **Collision 检查**：`vault.adapter.exists(normalizedPath)` 为 false（v1 create-file 不覆盖；Pagelet D008 已有"撞名自动避让"策略，但属 caller 责任，framework 仅报 collision）
-7. **Folder 检查**：父目录必须存在（caller 调用前应已 ensure；framework 仅校验，不自动创建）
+1. **Empty**：null/undefined/空串/纯空白 → reject `empty_path`
+2. **Control chars**：`[\x00-\x1f]` → reject `control_char`
+3. **Absolute path**：前导 `/` → reject `absolute_path`
+4. **Drive letter**：`^[a-zA-Z]:` → reject `drive_letter`
+5. **Normalize**：`\` → `/`、剥离前导 `./`、collapse `/+`、剥离尾随 `/`
+6. **Parent traversal**：任一段为 `..` → reject `parent_traversal`
+7. **Forbidden dotfolder**：`segments[0].normalize("NFC").toLowerCase()` ∈ `{.obsidian, .git, .trash, .obsidian.bak}` → reject `forbidden_dotfolder`（内建 denylist，与 settings-layer `src/settings/pagelet/index.ts:344` mirror — defense-in-depth：即使 caller 错配 `allowedRoots`，candidate 落入禁止段照样拒）
+8. **Length cap**：normalized 长度 ≤ `maxPathLength`（默认 200）
+9. **Allowlist**：normalizedPath 必须以 `allowedRoots` 中任一前缀开头
+10. **Extension**：必须在 `allowedExtensions`
+11. **Custom rejectPatterns**：caller 自定义 RegExp
+12. **(async) Folder 检查**：父目录必须存在 → reject `folder_missing`
+13. **(async) Collision 检查**：`vault.adapter.exists(normalizedPath)` 为 false（v1 create-file 不覆盖；Pagelet D008 已有"撞名自动避让"策略，但属 caller 责任，framework 仅报 collision）
 
 **fail closed**：任何一步失败 → outcome=`rejected_at_confinement`，debug emit 记录，无 preview 弹出。
 

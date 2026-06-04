@@ -72,6 +72,83 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
         });
     });
 
+    // forbidden_dotfolder denylist — defense-in-depth that fires BEFORE the
+    // allowlist check, so a caller with a misconfigured `allowedRoots`
+    // pointing into a forbidden segment still fails closed. NFC + case-fold
+    // mirrors `src/settings/pagelet/index.ts:344`.
+    it("rejects forbidden_dotfolder for top-level .obsidian segment", () => {
+        // The misconfigured-allowlist case: even when `allowedRoots` is
+        // (wrongly) `.obsidian/...`, the candidate is still rejected.
+        const cfg: ConfinementConfig = {
+            allowedRoots: [".obsidian/plugins/x/"],
+            allowedExtensions: [".md"],
+        };
+        const result = validateTargetConfinementSync(".obsidian/plugins/x/evil.md", cfg);
+        expect(result).toMatchObject({ ok: false, reason: "forbidden_dotfolder", detail: ".obsidian" });
+    });
+
+    it("rejects forbidden_dotfolder for top-level .git segment", () => {
+        expect(validateTargetConfinementSync(".git/config.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: ".git",
+        });
+    });
+
+    it("rejects forbidden_dotfolder for top-level .trash segment", () => {
+        expect(validateTargetConfinementSync(".trash/note.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: ".trash",
+        });
+    });
+
+    it("rejects forbidden_dotfolder for top-level .obsidian.bak segment", () => {
+        expect(validateTargetConfinementSync(".obsidian.bak/snapshot.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: ".obsidian.bak",
+        });
+    });
+
+    it("rejects forbidden_dotfolder for case-fold variants (.Obsidian / .OBSIDIAN.BAK)", () => {
+        // APFS / NTFS dispatch case-insensitively, so the OS would still
+        // route the write into the real `.obsidian/`. NFC + lowercase fold
+        // must catch this before the allowlist gets a chance to.
+        expect(validateTargetConfinementSync(".Obsidian/plugins/x/foo.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: ".Obsidian",
+        });
+        expect(validateTargetConfinementSync(".OBSIDIAN.BAK/snapshot.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: ".OBSIDIAN.BAK",
+        });
+    });
+
+    it("rejects forbidden_dotfolder for backslash inputs (.git\\foo.md)", () => {
+        // Backslash → forward slash collapse happens in step 4, so by the
+        // time the segment guard runs, `.git\\foo.md` is `[".git", "foo.md"]`.
+        expect(validateTargetConfinementSync(".git\\foo.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: ".git",
+        });
+    });
+
+    it("does NOT reject forbidden_dotfolder when the forbidden name appears nested-deep", () => {
+        // Only the TOP-LEVEL segment is denied; a nested folder literally
+        // named `.git-archive` or `notes/.obsidian-cheatsheet` is harmless
+        // and should fall through to the regular allowlist check.
+        const cfg: ConfinementConfig = {
+            allowedRoots: ["notes/"],
+            allowedExtensions: [".md"],
+        };
+        const result = validateTargetConfinementSync("notes/.obsidian-cheatsheet/tips.md", cfg);
+        expect(result).toEqual({ ok: true, normalizedPath: "notes/.obsidian-cheatsheet/tips.md" });
+    });
+
     it("rejects path_too_long when normalized path exceeds maxPathLength", () => {
         const longName = "a".repeat(300);
         const result = validateTargetConfinementSync(`.pagelet/${longName}.md`, baseConfig);

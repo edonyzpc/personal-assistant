@@ -25,12 +25,30 @@ export type ConfinementRejectReason =
     | "drive_letter"
     | "parent_traversal"
     | "control_char"
+    | "forbidden_dotfolder"
     | "outside_allowlist"
     | "bad_extension"
     | "path_too_long"
     | "custom_pattern_rejected"
     | "name_collision"
     | "folder_missing";
+
+/**
+ * Top-level path segments that must never be written into, regardless of what
+ * `allowedRoots` the caller supplies. Mirrors the same set checked by the
+ * settings-layer validator at `src/settings/pagelet/index.ts` (`FORBIDDEN_DOTFOLDER_SEGMENTS`
+ * + the `obsidian_config` literal); kept here as defense-in-depth so a caller
+ * with a misconfigured allowlist — or a future caller wired without a
+ * settings-layer scrub — still fails closed. Membership test is performed
+ * after NFC + lowercase folding so APFS / NTFS case-insensitive dispatch
+ * (`.Obsidian`, `.OBSIDIAN.bak`) and NFD variants do not bypass the guard.
+ */
+const FORBIDDEN_DOTFOLDER_SEGMENTS: ReadonlySet<string> = new Set([
+    ".obsidian",
+    ".git",
+    ".trash",
+    ".obsidian.bak",
+]);
 
 export type ConfinementResult =
     | { ok: true; normalizedPath: string }
@@ -55,7 +73,8 @@ export const DEFAULT_MAX_PATH_LENGTH = 200;
  * reports `absolute_path` first).
  *
  * Order: empty → control_char → absolute → drive_letter → normalize →
- *        parent_traversal → length → allowlist → extension → custom rejectPatterns.
+ *        parent_traversal → forbidden_dotfolder → length → allowlist →
+ *        extension → custom rejectPatterns.
  */
 export function validateTargetConfinementSync(
     candidate: string,
@@ -98,13 +117,27 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "parent_traversal" };
     }
 
-    // 6. Length cap.
+    // 6. Forbidden top-level dotfolder. Intrinsic denylist that fires
+    // BEFORE the allowlist check, so a caller with a misconfigured
+    // `allowedRoots = [".obsidian/plugins/x/"]` cannot pass a candidate
+    // under `.obsidian/...` through. NFC + lowercase mirrors the
+    // settings-layer validator at `src/settings/pagelet/index.ts:344`
+    // so both layers fail the same inputs (APFS/NTFS case-insensitive
+    // dispatch, NFD variants). Backslash inputs are already collapsed
+    // to "/" by step 4, so `.git\evil.md` is `segments[0] === ".git"`
+    // by the time we reach this check.
+    const firstSegmentFolded = (segments[0] ?? "").normalize("NFC").toLowerCase();
+    if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
+        return { ok: false, reason: "forbidden_dotfolder", detail: segments[0] };
+    }
+
+    // 7. Length cap.
     const maxLength = config.maxPathLength ?? DEFAULT_MAX_PATH_LENGTH;
     if (normalized.length > maxLength) {
         return { ok: false, reason: "path_too_long", detail: `${normalized.length} > ${maxLength}` };
     }
 
-    // 7. Allowlist: normalizedPath must start with one of the allowed roots.
+    // 8. Allowlist: normalizedPath must start with one of the allowed roots.
     if (!config.allowedRoots || config.allowedRoots.length === 0) {
         return { ok: false, reason: "outside_allowlist", detail: "no allowedRoots configured" };
     }
@@ -116,7 +149,7 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "outside_allowlist" };
     }
 
-    // 8. Extension.
+    // 9. Extension.
     const lastDot = normalized.lastIndexOf(".");
     const lastSlash = normalized.lastIndexOf("/");
     const ext = lastDot > lastSlash ? normalized.substring(lastDot) : "";
@@ -127,7 +160,7 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "bad_extension", detail: `got "${ext}"` };
     }
 
-    // 9. Custom reject patterns (caller extensibility; runs after built-in checks).
+    // 10. Custom reject patterns (caller extensibility; runs after built-in checks).
     if (config.rejectPatterns) {
         for (const pattern of config.rejectPatterns) {
             if (pattern.test(normalized) || pattern.test(candidate)) {
