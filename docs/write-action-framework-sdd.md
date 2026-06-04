@@ -247,15 +247,17 @@ export interface TargetCheckResult {
 4. **Drive letter**：`^[a-zA-Z]:` → reject `drive_letter`
 5. **Normalize**：`\` → `/`、剥离前导 `./`、collapse `/+`、剥离尾随 `/`
 6. **Parent traversal**：任一段为 `..` → reject `parent_traversal`
-7. **Forbidden dotfolder**：`segments[0].normalize("NFC").toLowerCase()` ∈ `{.obsidian, .git, .trash, .obsidian.bak}` → reject `forbidden_dotfolder`（内建 denylist，与 settings-layer `src/settings/pagelet/index.ts:344` mirror — defense-in-depth：即使 caller 错配 `allowedRoots`，candidate 落入禁止段照样拒）
+7. **Forbidden dotfolder**：`segments[0].normalize("NFC").toLowerCase()` ∈ `{.obsidian, .git, .trash, .obsidian.bak}` → reject `forbidden_dotfolder`（内建 denylist，与 settings-layer `src/settings/pagelet/index.ts:344-353` mirror — defense-in-depth：即使 caller 错配 `allowedRoots`，candidate 落入禁止段照样拒）
 8. **Length cap**：normalized 长度 ≤ `maxPathLength`（默认 200）
 9. **Allowlist**：normalizedPath 必须以 `allowedRoots` 中任一前缀开头
 10. **Extension**：必须在 `allowedExtensions`
-11. **Custom rejectPatterns**：caller 自定义 RegExp
+11. **Custom rejectPatterns**：caller 自定义 RegExp（caller 通过 `ConfinementConfig.rejectPatterns` 注入；framework 不提供默认值）
 12. **(async) Folder 检查**：父目录必须存在 → reject `folder_missing`
 13. **(async) Collision 检查**：`vault.adapter.exists(normalizedPath)` 为 false（v1 create-file 不覆盖；Pagelet D008 已有"撞名自动避让"策略，但属 caller 责任，framework 仅报 collision）
 
 **fail closed**：任何一步失败 → outcome=`rejected_at_confinement`，debug emit 记录，无 preview 弹出。
+
+**构造期验证（issue #358 AC #1）：** `validateAllowedRoots(roots)` 在 `buildConfinement` 内同步调用，对每个 root 做相同的 NFC+lowercase fold 检查；命中 `FORBIDDEN_DOTFOLDER_SEGMENTS` 直接 throw `ConfinementConfigError`（不是 silent 降级），让错配的 caller 在 capability 注册时即失败，不要等到第一次写。Pagelet 当前路径下 `normalizeReviewsFolder` 已上游兜底，此 throw 是 defense-in-depth assert，正常代码路径下不会触发。
 
 **Pagelet 的 allowlist 注册（举例）：**
 
@@ -264,7 +266,7 @@ const pageletReviewOutputRule: TargetConfinementRule = {
     allowedRoots: [".pagelet/", ".pagelet-reviews/"],  // 含 D008 fallback
     allowedExtensions: [".md"],
     maxPathLength: 200,
-    rejectPatterns: DEFAULT_REJECT_PATTERNS,
+    // caller 可按需注入 rejectPatterns: [/regex/, ...]；framework 不提供默认。
 };
 ```
 
@@ -727,7 +729,7 @@ const writeReviewOutput: WriteActionCapability = {
         allowedRoots: [".pagelet/", ".pagelet-reviews/"],
         allowedExtensions: [".md"],
         maxPathLength: 200,
-        rejectPatterns: DEFAULT_REJECT_PATTERNS,
+        // rejectPatterns 可选；framework 不提供默认值，caller 按需注入
     },
 
     inputSchema: pageletReviewOutputSchema,    // zod schema from Pagelet D026

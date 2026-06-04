@@ -1,7 +1,9 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
 import {
+    ConfinementConfigError,
     DEFAULT_MAX_PATH_LENGTH,
+    validateAllowedRoots,
     validateTargetConfinement,
     validateTargetConfinementSync,
     type ConfinementFsProbe,
@@ -275,5 +277,70 @@ describe("validateTargetConfinement (async with FS probe)", () => {
         const result = await validateTargetConfinement("/etc/passwd", baseConfig, fs);
         expect(result).toMatchObject({ ok: false, reason: "absolute_path" });
         expect((fs.exists as jest.Mock)).not.toHaveBeenCalled();
+    });
+});
+
+describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => {
+    it("does nothing when allowedRoots is empty", () => {
+        expect(() => validateAllowedRoots([])).not.toThrow();
+    });
+
+    it("accepts ordinary roots like .pagelet/, notes/, sub/path/", () => {
+        expect(() => validateAllowedRoots([".pagelet/", "notes/", "sub/path/"])).not.toThrow();
+    });
+
+    it("throws ConfinementConfigError for .obsidian/ root", () => {
+        expect(() => validateAllowedRoots([".obsidian/plugins/x/"])).toThrow(ConfinementConfigError);
+        try {
+            validateAllowedRoots([".obsidian/plugins/x/"]);
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("forbidden_dotfolder");
+            expect(e.offendingRoot).toBe(".obsidian/plugins/x/");
+            expect(e.offendingSegment).toBe(".obsidian");
+        }
+    });
+
+    it("throws for .git/, .trash/, .obsidian.bak/", () => {
+        expect(() => validateAllowedRoots([".git/"])).toThrow(ConfinementConfigError);
+        expect(() => validateAllowedRoots([".trash/"])).toThrow(ConfinementConfigError);
+        expect(() => validateAllowedRoots([".obsidian.bak/"])).toThrow(ConfinementConfigError);
+    });
+
+    it("throws for case-fold variants (.Obsidian/, .OBSIDIAN.BAK/)", () => {
+        expect(() => validateAllowedRoots([".Obsidian/"])).toThrow(ConfinementConfigError);
+        expect(() => validateAllowedRoots([".OBSIDIAN.BAK/"])).toThrow(ConfinementConfigError);
+    });
+
+    it("throws for backslash inputs (.git\\plugins\\)", () => {
+        expect(() => validateAllowedRoots([".git\\plugins\\"])).toThrow(ConfinementConfigError);
+    });
+
+    it("throws for leading ./ form (./.obsidian/plugins/)", () => {
+        expect(() => validateAllowedRoots(["./.obsidian/plugins/"])).toThrow(ConfinementConfigError);
+    });
+
+    it("does NOT throw when the forbidden name appears nested-deep", () => {
+        // Mirror of validateTargetConfinementSync: only segments[0] is checked.
+        expect(() => validateAllowedRoots(["notes/.obsidian-cheatsheet/"])).not.toThrow();
+        expect(() => validateAllowedRoots(["sub/.git-archive/"])).not.toThrow();
+    });
+
+    it("throws on the first offending root in a mixed array (fail-fast)", () => {
+        expect(() => validateAllowedRoots([".pagelet/", ".obsidian/x/", "notes/"])).toThrow(
+            ConfinementConfigError,
+        );
+    });
+
+    it("error message names both root and segment for triage", () => {
+        try {
+            validateAllowedRoots([".obsidian/plugins/x/"]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect((err as Error).message).toContain(".obsidian/plugins/x/");
+            expect((err as Error).message).toContain(".obsidian");
+            expect((err as Error).message).toContain("forbidden_dotfolder");
+        }
     });
 });

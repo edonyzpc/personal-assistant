@@ -55,6 +55,7 @@ import type {
     ChatToolSourceBoundary,
 } from "../ai-services/chat-tools";
 import type { SourceRecordKind } from "../ai-services/chat-types";
+import { validateAllowedRoots } from "../ai-services/write-action-framework";
 import type {
     PreviewSpec,
     WriteActionCapability,
@@ -288,8 +289,17 @@ function buildConfinement(settings: PageletReviewToolSettings): {
     maxPathLength: number;
 } {
     const folder = normalizePageletReviewsFolder(settings.reviewsFolder);
+    const allowedRoots = [`${folder}/`];
+    // Issue #358 AC #1: construction-time defense-in-depth assert. Throws
+    // ConfinementConfigError if a forbidden top-level dotfolder slipped past
+    // the settings-layer scrub. In practice unreachable for Pagelet today
+    // (`normalizePageletReviewsFolder` already coerces forbidden inputs to
+    // `.pagelet`), but guarantees that any future caller wiring this builder
+    // — or a regression in the settings layer — fails loudly at capability
+    // registration instead of silently at first write.
+    validateAllowedRoots(allowedRoots);
     return {
-        allowedRoots: [`${folder}/`],
+        allowedRoots,
         allowedExtensions: [".md"],
         maxPathLength: PAGELET_MAX_PATH_LENGTH,
     };
