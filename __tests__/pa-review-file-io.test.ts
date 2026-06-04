@@ -30,7 +30,7 @@ import {
     buildReviewMetadata,
     formatPageletDate,
     formatPageletIsoTimestamp,
-    normalizeReviewsFolder,
+    resolveReviewsFolderPath,
     renderReviewBody,
     resolveReviewNotePath,
     sanitizeSourceBaseName,
@@ -191,26 +191,26 @@ describe("sanitizeSourceBaseName", () => {
 });
 
 // ---------------------------------------------------------------------------
-// normalizeReviewsFolder
+// resolveReviewsFolderPath
 // ---------------------------------------------------------------------------
 
-describe("normalizeReviewsFolder", () => {
+describe("resolveReviewsFolderPath", () => {
     it("returns the default for empty / whitespace input", () => {
-        expect(normalizeReviewsFolder("")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
-        expect(normalizeReviewsFolder("   ")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
-        expect(normalizeReviewsFolder(undefined)).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
+        expect(resolveReviewsFolderPath("")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
+        expect(resolveReviewsFolderPath("   ")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
+        expect(resolveReviewsFolderPath(undefined)).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
     });
 
     it("strips leading `./` / `/` and trailing slashes", () => {
-        expect(normalizeReviewsFolder("/Pagelet/")).toBe("Pagelet");
-        expect(normalizeReviewsFolder("./reviews/")).toBe("reviews");
+        expect(resolveReviewsFolderPath("/Pagelet/")).toBe("Pagelet");
+        expect(resolveReviewsFolderPath("./reviews/")).toBe("reviews");
     });
 
     it("collapses a root-only path back to the default", () => {
         // A user typo of `/` would otherwise resolve to an empty folder
         // and break `vault.adapter.write` calls in a confusing way.
-        expect(normalizeReviewsFolder("/")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
-        expect(normalizeReviewsFolder(".")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
+        expect(resolveReviewsFolderPath("/")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
+        expect(resolveReviewsFolderPath(".")).toBe(PAGELET_DEFAULT_REVIEWS_FOLDER);
     });
 });
 

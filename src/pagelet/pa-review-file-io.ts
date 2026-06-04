@@ -309,16 +309,22 @@ export function sanitizeSourceBaseName(sourcePath: string): string {
 }
 
 /**
- * Normalize the user's configured `reviewsFolder` setting. Defers to
- * Obsidian's `normalizePath` so behaviour matches `vault.adapter.*` call
- * sites elsewhere in the plugin, then strips trailing slashes (the SDD
- * stores paths as `.pagelet`, not `.pagelet/`).
+ * Resolve the user's configured `reviewsFolder` setting to a vault-relative
+ * POSIX path the IO layer can hand to `vault.adapter.*`. Defers to
+ * Obsidian's `normalizePath` so behaviour matches other adapter call sites
+ * in the plugin, then strips trailing slashes (the SDD stores paths as
+ * `.pagelet`, not `.pagelet/`).
  *
  * Falls back to `PAGELET_DEFAULT_REVIEWS_FOLDER` when the input is empty,
  * non-string, or normalizes to `/` — none of which represent a usable
  * vault-relative folder.
+ *
+ * This is purely a path resolver — it assumes the settings layer's
+ * `normalizeReviewsFolder` (in `src/settings/pagelet/index.ts`) has already
+ * fail-closed any forbidden shapes (`.obsidian/...`, absolute, traversal,
+ * control chars, …). Do NOT call this on raw user input.
  */
-export function normalizeReviewsFolder(value: unknown): string {
+export function resolveReviewsFolderPath(value: unknown): string {
     if (typeof value !== "string") return PAGELET_DEFAULT_REVIEWS_FOLDER;
     const trimmed = value.trim();
     if (trimmed.length === 0) return PAGELET_DEFAULT_REVIEWS_FOLDER;
@@ -330,13 +336,21 @@ export function normalizeReviewsFolder(value: unknown): string {
 }
 
 /**
+ * @deprecated Use {@link resolveReviewsFolderPath} — kept as an alias so the
+ * locked `pa-review-tool-provider.ts` import (`normalizeReviewsFolder as
+ * normalizePageletReviewsFolder`) continues to compile while callers migrate
+ * to the new name. Will be removed once the locked file is editable again.
+ */
+export const normalizeReviewsFolder = resolveReviewsFolderPath;
+
+/**
  * Pure path-resolver — produces the deterministic `.pagelet/<stem>-pagelet-review-<date>.md`
  * candidate path for the given inputs. Collision detection lives in
  * `writeReviewNote` (it needs `adapter.exists`); this function only computes
  * the candidate the IO layer will probe.
  */
 export function resolveReviewNotePath(input: ResolveReviewNotePathInput): string {
-    const folder = normalizeReviewsFolder(input.settings.reviewsFolder);
+    const folder = resolveReviewsFolderPath(input.settings.reviewsFolder);
     const stem = sanitizeSourceBaseName(input.sourcePath);
     const date = formatPageletDate(input.date);
     const suffix = input.collisionIndex && input.collisionIndex > 0
@@ -547,7 +561,7 @@ export async function writeReviewNote(
     input: WriteReviewNoteInput,
 ): Promise<WriteReviewNoteResult> {
     const date = input.dateOverride ?? new Date();
-    const folder = normalizeReviewsFolder(input.settings.reviewsFolder);
+    const folder = resolveReviewsFolderPath(input.settings.reviewsFolder);
 
     await ensureFolder(input.vault.adapter, folder);
 
@@ -628,7 +642,7 @@ async function mintNonCollidingPath(args: {
     // unbounded `-N` chain. This is pathological-territory; the SDD's
     // ".pagelet folder per source note per day" assumption breaks down
     // long before we reach here.
-    const folder = normalizeReviewsFolder(args.settings.reviewsFolder);
+    const folder = resolveReviewsFolderPath(args.settings.reviewsFolder);
     const stem = sanitizeSourceBaseName(args.sourcePath);
     const date = formatPageletDate(args.date);
     const time = formatHmsSuffix(args.date);

@@ -27,6 +27,7 @@ import {
     mergePageletSettings,
     normalizeReviewsFolder,
     renderPageletSection,
+    type PageletReviewsFolderError,
     type PageletSettings,
     type PageletSettingBuilder,
     type PageletSettingFactory,
@@ -573,6 +574,76 @@ describe("normalizeReviewsFolder (settings-layer validator)", () => {
         // `.obsidian./plugins` is trailing_dot_or_space, not obsidian_config.
         expect(normalizeReviewsFolder(".obsidian./plugins").error).toBe("trailing_dot_or_space");
     });
+
+    it("rejects other system dotfolders (.git / .trash / .obsidian.bak) with error: forbidden_dotfolder", () => {
+        // .git can absolutely live next to .obsidian in a vault; writing into
+        // it would corrupt the repo. Same hazard class as .obsidian/.
+        const git = normalizeReviewsFolder(".git/pagelet");
+        expect(git.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+        expect(git.error).toBe("forbidden_dotfolder");
+
+        // .trash is Obsidian's local trash bin; writing into it would put
+        // freshly-created review notes one step from deletion.
+        const trash = normalizeReviewsFolder(".trash/notes");
+        expect(trash.error).toBe("forbidden_dotfolder");
+
+        // .obsidian.bak is the conventional backup-of-Obsidian-config name
+        // some users keep next to .obsidian.
+        const bak = normalizeReviewsFolder(".obsidian.bak/foo");
+        expect(bak.error).toBe("forbidden_dotfolder");
+
+        // Case-fold + NFC applies just like the .obsidian compare above.
+        expect(normalizeReviewsFolder(".Git/x").error).toBe("forbidden_dotfolder");
+        expect(normalizeReviewsFolder(".TRASH/x").error).toBe("forbidden_dotfolder");
+
+        // Nested deeper or as a non-top-level segment is harmless — same
+        // contract as the .obsidian check (only segments[0] trips).
+        expect(normalizeReviewsFolder("notes/.git-cheatsheet").error).toBeUndefined();
+        expect(normalizeReviewsFolder("notes/.trash-archive").error).toBeUndefined();
+    });
+
+    it("rejects inputs longer than 4096 chars with error: too_long", () => {
+        const longPath = "a".repeat(4097);
+        const result = normalizeReviewsFolder(longPath);
+        expect(result.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+        expect(result.error).toBe("too_long");
+
+        // Exactly at the cap is accepted (4096 chars is at the boundary).
+        const atCap = "b".repeat(4096);
+        expect(normalizeReviewsFolder(atCap).error).toBeUndefined();
+    });
+
+    it("has a resolvable EN + ZH label for every PageletReviewsFolderError variant", () => {
+        // This pins the i18n contract: every rejection category the
+        // validator can emit MUST have a user-facing message in both
+        // locales. The typed Record at the renderer surface protects
+        // against missing keys at compile time, but a placeholder string
+        // is just as bad as a missing key. We assert every label resolves
+        // to a non-empty, non-placeholder string.
+        const allVariants: PageletReviewsFolderError[] = [
+            "empty",
+            "too_long",
+            "absolute_path",
+            "drive_letter",
+            "parent_traversal",
+            "obsidian_config",
+            "forbidden_dotfolder",
+            "control_chars",
+            "invisible_chars",
+            "trailing_dot_or_space",
+        ];
+        const en = makePageletTranslator("en");
+        const zh = makePageletTranslator("zh");
+        for (const variant of allVariants) {
+            const key = `pagelet.settings.reviewsFolder.error.${variant}`;
+            const enLabel = en(key);
+            const zhLabel = zh(key);
+            expect(enLabel.length).toBeGreaterThan(0);
+            expect(enLabel).not.toBe(key); // a fallback that echoes the key means missing translation
+            expect(zhLabel.length).toBeGreaterThan(0);
+            expect(zhLabel).not.toBe(key);
+        }
+    });
 });
 
 // ---------------------------------------------------------------------------
@@ -759,6 +830,39 @@ describe("renderPageletSection", () => {
         await rows[1].textOnChange!("clean/folder");
         expect(host.settings.pagelet.reviewsFolder).toBe("clean/folder");
         expect(errorEl?.textContent).toBe("");
+    });
+
+    it("surfaces forbidden_dotfolder via the typed-Record lookup (regression for the .${result.error} template removal)", async () => {
+        // After the S2 cleanup the renderer no longer uses a
+        // `t(\`...error.${...}\`)` template; instead it looks up via a
+        // typed `Record<PageletReviewsFolderError, string>` so any future
+        // variant fails compile if EN/ZH isn't updated. This test exercises
+        // the typed path for one of the NEW (post-bundle) categories so we
+        // catch a regression that drops a Record entry.
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host } = makeHost({ reviewsFolder: "notes/reviews" });
+
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+
+        const errorEl = parent.children.find(
+            (c) => c.tagName === "div" && c.cls === "pa-pagelet-settings-error",
+        ) as unknown as { textContent?: string } | undefined;
+        expect(errorEl).toBeDefined();
+
+        await rows[1].textOnChange!(".git/pagelet");
+        expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
+        expect(rows[1].textValue).toBe("notes/reviews");
+        expect(errorEl?.textContent).toBe(
+            makePageletTranslator("en")("pagelet.settings.reviewsFolder.error.forbidden_dotfolder"),
+        );
+
+        // too_long path through the same renderer surface.
+        await rows[1].textOnChange!("x".repeat(4097));
+        expect(host.settings.pagelet.reviewsFolder).toBe("notes/reviews");
+        expect(errorEl?.textContent).toBe(
+            makePageletTranslator("en")("pagelet.settings.reviewsFolder.error.too_long"),
+        );
     });
 
     it("clamps out-of-range temperature/token edits", async () => {

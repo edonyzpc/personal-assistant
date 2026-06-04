@@ -9,7 +9,9 @@ All notable changes to this project will be documented in this file. See [standa
 - **Write Action Framework v1**: PA-level infrastructure providing the 4-gate write path (target-confinement → preview-confirmation → stale-reread → execute) plus auto-rollback for `create-file` actions. First caller is Pagelet's `pagelet.write_review_output` capability.
 
 ### Improvements
-- settings(pagelet): `reviewsFolder` now rejects `.obsidian/`, absolute paths, parent-traversal, drive letters, and control chars; fail-closed to the `.pagelet/` default with an inline error.
+- settings(pagelet): `reviewsFolder` now rejects 10 forbidden shapes (empty, too-long >4 KB, absolute path, drive letter, parent-traversal, `.obsidian/`, other system dotfolders `.git`/`.trash`/`.obsidian.bak`, control chars incl. DEL, Cf-category invisible chars, trailing dot/space). Backslash inputs are normalized to forward slashes before segmentation so Windows-style traversal collapses to the existing checks. APFS/NTFS case-fold + NFC are applied to top-level segment guards so `.Obsidian/...` and visually-equivalent Unicode no longer slip through. Fail-closed to the `.pagelet/` default with an inline error.
+- settings(pagelet): when a previously-saved `reviewsFolder` value fails the new validator on plugin load, surface a one-time `Notice` so users learn their value was reset (per-vault flag in `localStorage`; never re-fires for the same vault after acknowledgement).
+- pagelet/release: keep `manifest.json` at the last stable (2.1.2); only `manifest-beta.json` advances to `2.2.0-beta.1`. BRAT testers see the beta; community-channel updaters keep stable until graduation.
 - pagelet: pricing-table accepts canonical provider IDs (`qwen` → `dashscope`/`bailian` aliases) — closes a potential $0/token bypass.
 - pagelet: `vault.on("create")` listener now consults `isRecentSelfWrite` to prevent self-write reentrancy via the create event.
 - pagelet: mascot CSS tokens + animation keyframes landed; visible in production.
