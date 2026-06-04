@@ -117,15 +117,17 @@ export class ConfinementConfigError extends Error {
  * fold — is in {@link FORBIDDEN_DOTFOLDER_SEGMENTS}. Runs at
  * `buildConfinement` time so a misconfigured caller fails LOUDLY at
  * capability registration, not silently at first write. Mirrors the
- * candidate-side denylist in {@link validateTargetConfinementSync} step 6:
+ * candidate-side denylist in {@link validateTargetConfinementSync} step 9:
  * both sides reject the same input set so the framework remains a true
- * second line of defense regardless of caller wiring.
+ * second line of defense regardless of caller wiring. Step numbers throughout
+ * track SDD §2.2's 1–13 sync sequence (steps 14–15 are async folder/collision
+ * probes that only the {@link validateTargetConfinement} wrapper runs).
  */
 export function validateAllowedRoots(allowedRoots: readonly string[]): void {
     for (const root of allowedRoots) {
         if (typeof root !== "string" || root.length === 0) continue;
 
-        // Mirror sync step 1: control_char on raw root, before any normalization.
+        // Mirror sync step 2: control_char on raw root, before any normalization.
         // Catches NUL / 0x01–0x1F smuggled into the allowlist at construction
         // time so a misconfigured caller cannot slip past the candidate-side
         // guard via a sanitizer that strips control chars from the candidate
@@ -135,29 +137,37 @@ export function validateAllowedRoots(allowedRoots: readonly string[]): void {
             throw new ConfinementConfigError("control_char", root, root);
         }
 
-        // Mirror sync step 1.5: invisible_chars on raw root, before any
+        // Mirror sync step 3: invisible_chars on raw root, before any
         // normalization. Surface the offending root unchanged so a maintainer
         // can paste it back into a hex inspector if the byte is non-printable.
         if (INVISIBLE_CHARS_RE.test(root)) {
             throw new ConfinementConfigError("invisible_chars", root, root);
         }
 
-        // Mirror sync step 2: absolute_path. A root anchored at filesystem
+        // Mirror sync step 4: absolute_path. A root anchored at filesystem
         // root would let any candidate that prefix-matches it escape the vault.
         if (root.startsWith("/")) {
             throw new ConfinementConfigError("absolute_path", root, root);
         }
 
-        // Mirror sync step 3: drive_letter (Windows). Same escape-the-vault
+        // Mirror sync step 5: drive_letter (Windows). Same escape-the-vault
         // concern as absolute_path on POSIX.
         if (/^[a-zA-Z]:/.test(root)) {
             throw new ConfinementConfigError("drive_letter", root, root);
         }
 
-        const normalized = root.replace(/\\/g, "/").replace(/^\.\//, "");
+        // Mirror sync step 6: same normalize shape on both sides (backslash →
+        // `/`, strip leading `./`, collapse repeated `//`). The `/+/g` collapse
+        // is load-bearing — without it `notes//foo/` splits to
+        // `["notes", "", "foo", ""]` and a future segment check that forgets to
+        // skip empties would either misreport or silently let bad input through.
+        const normalized = root
+            .replace(/\\/g, "/")
+            .replace(/^\.\//, "")
+            .replace(/\/+/g, "/");
         const segments = normalized.split("/");
 
-        // Mirror sync step 5: parent traversal. Any literal `..` segment
+        // Mirror sync step 7: parent traversal. Any literal `..` segment
         // would route an allowlist-anchored write outside the vault root,
         // so reject before checking trailing-char shapes (otherwise the
         // `..` ends-in-dot property reports the wrong reason).
@@ -165,9 +175,11 @@ export function validateAllowedRoots(allowedRoots: readonly string[]): void {
             throw new ConfinementConfigError("parent_traversal", root, "..");
         }
 
-        // Mirror sync step 6.5: trailing dot/space on any non-empty segment.
-        // `.pagelet/` splits to [".pagelet", ""] — skip the empty terminal
-        // segment so a legitimate trailing slash on a root doesn't trip.
+        // Mirror sync step 8: trailing dot/space per segment. After the `/+/g`
+        // collapse above, the only empty segment that can survive is the
+        // terminal one from a legitimate trailing slash (e.g. `.pagelet/`
+        // splits to `[".pagelet", ""]`), so `length > 0` is a convention guard,
+        // not a normalization workaround.
         for (const segment of segments) {
             if (segment.length > 0 && TRAILING_DOT_OR_SPACE_RE.test(segment)) {
                 throw new ConfinementConfigError("trailing_dot_or_space", root, segment);
@@ -216,14 +228,15 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "empty_path" };
     }
 
-    // 1. Control characters (NUL through 0x1F). Detect on raw input before any
+    // 2. Control characters (NUL through 0x1F). Detect on raw input before any
     // normalization to catch payloads that try to smuggle bytes past trim/replace.
+    // (Step 1 — empty/whitespace — is the two `empty_path` returns above.)
     // eslint-disable-next-line no-control-regex
     if (/[\x00-\x1f]/.test(candidate)) {
         return { ok: false, reason: "control_char" };
     }
 
-    // 1.5. Cf-category invisible chars (ZWSP/ZWNJ/ZWJ, WJ, BOM, LRM/RLM,
+    // 3. Cf-category invisible chars (ZWSP/ZWNJ/ZWJ, WJ, BOM, LRM/RLM,
     // bidi-isolates). Raw-input check so a ZWSP prefix on `.obsidian` is
     // rejected here instead of leaking through to the segment-equality check
     // that wouldn't match the spoofed string. Mirror of settings-layer
@@ -232,17 +245,17 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "invisible_chars" };
     }
 
-    // 2. Absolute path (POSIX-style leading "/").
+    // 4. Absolute path (POSIX-style leading "/").
     if (candidate.startsWith("/")) {
         return { ok: false, reason: "absolute_path" };
     }
 
-    // 3. Windows drive letter (e.g., "C:/...", "c:\..."). Catch before normalize.
+    // 5. Windows drive letter (e.g., "C:/...", "c:\..."). Catch before normalize.
     if (/^[a-zA-Z]:/.test(candidate)) {
         return { ok: false, reason: "drive_letter" };
     }
 
-    // 4. Normalize: convert backslashes to forward slashes (Obsidian uses POSIX
+    // 6. Normalize: convert backslashes to forward slashes (Obsidian uses POSIX
     // separators), strip leading "./", collapse repeated "//".
     let normalized = candidate.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
     // Strip a trailing slash so extension check has a real filename to inspect.
@@ -250,13 +263,13 @@ export function validateTargetConfinementSync(
         normalized = normalized.slice(0, -1);
     }
 
-    // 5. Parent traversal: any segment equal to ".." (covers "../x", "a/../b", "a/..").
+    // 7. Parent traversal: any segment equal to ".." (covers "../x", "a/../b", "a/..").
     const segments = normalized.split("/");
     if (segments.some((segment) => segment === "..")) {
         return { ok: false, reason: "parent_traversal" };
     }
 
-    // 5.5. Trailing dot or whitespace per segment. MUST run before the
+    // 8. Trailing dot or whitespace per segment. MUST run before the
     // forbidden_dotfolder check below — otherwise `.obsidian./plugins/x.md`
     // would slip past the segment-equality fold (`.obsidian.` ≠ `.obsidian`)
     // and only NTFS would stop it at OS layer (which it does silently, by
@@ -267,27 +280,27 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "trailing_dot_or_space", detail: trailingOffender };
     }
 
-    // 6. Forbidden top-level dotfolder. Intrinsic denylist that fires
+    // 9. Forbidden top-level dotfolder. Intrinsic denylist that fires
     // BEFORE the allowlist check, so a caller with a misconfigured
     // `allowedRoots = [".obsidian/plugins/x/"]` cannot pass a candidate
     // under `.obsidian/...` through. NFC + lowercase mirrors the
     // settings-layer validator at `src/settings/pagelet/index.ts:344`
     // so both layers fail the same inputs (APFS/NTFS case-insensitive
     // dispatch, NFD variants). Backslash inputs are already collapsed
-    // to "/" by step 4, so `.git\evil.md` is `segments[0] === ".git"`
+    // to "/" by step 6, so `.git\evil.md` is `segments[0] === ".git"`
     // by the time we reach this check.
     const firstSegmentFolded = (segments[0] ?? "").normalize("NFC").toLowerCase();
     if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
         return { ok: false, reason: "forbidden_dotfolder", detail: segments[0] };
     }
 
-    // 7. Length cap.
+    // 10. Length cap.
     const maxLength = config.maxPathLength ?? DEFAULT_MAX_PATH_LENGTH;
     if (normalized.length > maxLength) {
         return { ok: false, reason: "path_too_long", detail: `${normalized.length} > ${maxLength}` };
     }
 
-    // 8. Allowlist: normalizedPath must start with one of the allowed roots.
+    // 11. Allowlist: normalizedPath must start with one of the allowed roots.
     if (!config.allowedRoots || config.allowedRoots.length === 0) {
         return { ok: false, reason: "outside_allowlist", detail: "no allowedRoots configured" };
     }
@@ -299,7 +312,7 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "outside_allowlist" };
     }
 
-    // 9. Extension.
+    // 12. Extension.
     const lastDot = normalized.lastIndexOf(".");
     const lastSlash = normalized.lastIndexOf("/");
     const ext = lastDot > lastSlash ? normalized.substring(lastDot) : "";
@@ -310,7 +323,7 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "bad_extension", detail: `got "${ext}"` };
     }
 
-    // 10. Custom reject patterns (caller extensibility; runs after built-in checks).
+    // 13. Custom reject patterns (caller extensibility; runs after built-in checks).
     if (config.rejectPatterns) {
         for (const pattern of config.rejectPatterns) {
             if (pattern.test(normalized) || pattern.test(candidate)) {
