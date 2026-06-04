@@ -257,7 +257,14 @@ export interface TargetCheckResult {
 
 **fail closed**：任何一步失败 → outcome=`rejected_at_confinement`，debug emit 记录，无 preview 弹出。
 
-**构造期验证（issue #358 AC #1）：** `validateAllowedRoots(roots)` 在 `buildConfinement` 内同步调用，对每个 root 做相同的 NFC+lowercase fold 检查；命中 `FORBIDDEN_DOTFOLDER_SEGMENTS` 直接 throw `ConfinementConfigError`（不是 silent 降级），让错配的 caller 在 capability 注册时即失败，不要等到第一次写。Pagelet 当前路径下 `normalizeReviewsFolder` 已上游兜底，此 throw 是 defense-in-depth assert，正常代码路径下不会触发。
+**构造期验证（issue #358 AC #1）：** `validateAllowedRoots(roots)` 在 `buildConfinement` 内同步调用，对每个 root 做相同的 NFC+lowercase fold 检查；命中 `FORBIDDEN_DOTFOLDER_SEGMENTS` 直接 throw `ConfinementConfigError`（不是 silent 降级）。Pagelet 当前路径下 `normalizeReviewsFolder` 已上游兜底，此 throw 是 defense-in-depth assert，正常代码路径下不会触发。
+
+**触发时机与 caller 模式（重要）：** "构造期" 指 `buildConfinement` 被调用的那一刻——具体落在哪个时间点取决于 caller 怎么暴露 `targetConfinement`：
+
+- **Getter 模式（Pagelet）**：`get targetConfinement() { return buildConfinement(settings); }` 每次属性读时都 rebuild，throw 因此延迟到执行期。Runtime 的 `validateTargetConfinement` catch 兜底把 `ConfinementConfigError` 转成 `gate.target-confinement.reject` / `rejected_at_confinement` 事件（参 `runtime-integration.ts:257-278`），triage 表现与 candidate-side reject 一致。
+- **Eager 模式（建议给第三方 provider）**：`targetConfinement: buildConfinement(staticConfig)` 字面量，throw 在 provider 构造时立刻冒出，capability 永远不会被注册进 registry。
+
+两种模式都满足 AC #1 的 "loud, not silent" 要求，但调用 site 和栈追踪不同——getter 模式下错配在第一次写时浮面，eager 模式下错配在 provider 创建时立即浮面。Framework 不强制任一模式；只要 `validateAllowedRoots` 被调用过，throw 一定会以可观察的方式触达 caller。
 
 **Pagelet 的 allowlist 注册（举例）：**
 

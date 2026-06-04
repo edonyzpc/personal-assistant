@@ -255,11 +255,20 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                 );
             } catch (error) {
                 // Issue #358 AC #1: a ConfinementConfigError from
-                // `validateAllowedRoots` (fires when `capability.targetConfinement`
-                // is accessed and the caller wired a forbidden top-level
-                // dotfolder root). Surface it under `rejected_at_confinement`
-                // so triage sees the same event shape as a candidate-side
-                // reject — both are config rejections, not FS errors.
+                // `validateAllowedRoots`. **This branch is load-bearing —
+                // do not remove**, even though `validateTargetConfinement`
+                // itself never throws this type. The error originates from
+                // the `capability.targetConfinement` property access on the
+                // line above: Pagelet exposes `targetConfinement` as a getter
+                // (`pa-review-tool-provider.ts:410`) that rebuilds on every
+                // read, so `buildConfinement` → `validateAllowedRoots`
+                // executes inside this try block and any throw is caught
+                // here. Without this branch the throw would surface under
+                // `errorCategory: "fs_error"` (the generic catch below),
+                // which is semantically wrong — a config rejection is not
+                // a filesystem error. Re-emit on `rejected_at_confinement`
+                // so triage sees one event shape for both rejection paths
+                // (construction-side AND candidate-side).
                 if (error instanceof ConfinementConfigError) {
                     emit("gate.target-confinement.reject", capability, runId, turnId, {
                         errorCategory: "rejected_at_confinement",
