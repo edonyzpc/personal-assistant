@@ -262,7 +262,7 @@ export interface TargetCheckResult {
 
 **fail closed**：任何一步失败 → outcome=`rejected_at_confinement`，debug emit 记录，无 preview 弹出。
 
-**构造期验证（issue #358 AC #1，issue #360 扩展）：** `validateAllowedRoots(roots)` 在 `buildConfinement` 内同步调用，对每个 root 顺序检查 `invisible_chars` → 任一段为 `..` 的 `parent_traversal` → 每段 `trailing_dot_or_space` → `segments[0]` 在 `FORBIDDEN_DOTFOLDER_SEGMENTS`（NFC + lowercase fold）→ 命中任一立即 throw `ConfinementConfigError`（不是 silent 降级），`reason` 字段记录具体类。Pagelet 当前路径下 `normalizeReviewsFolder` 已上游兜底，此 throw 是 defense-in-depth assert，正常代码路径下不会触发。
+**构造期验证（issue #358 AC #1，issue #360 + round-1 review 扩展）：** `validateAllowedRoots(roots)` 在 `buildConfinement` 内同步调用，对每个 root 顺序检查 `control_char` → `invisible_chars` → `absolute_path` → `drive_letter` → 任一段为 `..` 的 `parent_traversal` → 每段 `trailing_dot_or_space` → `segments[0]` 在 `FORBIDDEN_DOTFOLDER_SEGMENTS`（NFC + lowercase fold）→ 命中任一立即 throw `ConfinementConfigError`（不是 silent 降级），`reason` 字段记录具体类。检查序列与 `validateTargetConfinementSync` 的前 7 步严格 mirror，所以 "defense-in-depth second line" 对任一被两侧共同覆盖的 reject reason 都是 true parity。Pagelet 当前路径下 `normalizeReviewsFolder` 已上游兜底，此 throw 是 defense-in-depth assert，正常代码路径下不会触发。
 
 **触发时机与 caller 模式（重要）：** "构造期" 指 `buildConfinement` 被调用的那一刻——具体落在哪个时间点取决于 caller 怎么暴露 `targetConfinement`：
 

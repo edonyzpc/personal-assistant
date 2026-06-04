@@ -435,6 +435,48 @@ describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => 
         }
     });
 
+    // Issue #360 round-1 review collateral: register-side now mirrors the
+    // sync-side control_char / absolute_path / drive_letter checks so the
+    // "defense-in-depth second line" promise is true parity rather than the
+    // narrower invisible_chars + trailing_dot_or_space mirror originally
+    // scoped for #360.
+    it("throws control_char when an allowed root contains a NUL byte", () => {
+        const root = ".pagelet\x00/";
+        try {
+            validateAllowedRoots([root]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("control_char");
+            expect(e.offendingRoot).toBe(root);
+        }
+    });
+
+    it("throws absolute_path when an allowed root starts with /", () => {
+        try {
+            validateAllowedRoots(["/etc/pagelet/"]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("absolute_path");
+            expect(e.offendingRoot).toBe("/etc/pagelet/");
+        }
+    });
+
+    it("throws drive_letter when an allowed root is Windows-rooted (C:/...)", () => {
+        try {
+            validateAllowedRoots(["C:/Users/x/"]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("drive_letter");
+            expect(e.offendingRoot).toBe("C:/Users/x/");
+        }
+    });
+
     // Issue #360 collateral: register-side now mirrors the sync-side
     // parent_traversal check too (was missing in #358's minimal scope —
     // surfaced by the prompt-injection fixture for `../../config.json`).

@@ -125,11 +125,33 @@ export function validateAllowedRoots(allowedRoots: readonly string[]): void {
     for (const root of allowedRoots) {
         if (typeof root !== "string" || root.length === 0) continue;
 
-        // Mirror sync step 2.5: invisible_chars on raw root, before any
+        // Mirror sync step 1: control_char on raw root, before any normalization.
+        // Catches NUL / 0x01–0x1F smuggled into the allowlist at construction
+        // time so a misconfigured caller cannot slip past the candidate-side
+        // guard via a sanitizer that strips control chars from the candidate
+        // but trusts the root verbatim.
+        // eslint-disable-next-line no-control-regex
+        if (/[\x00-\x1f]/.test(root)) {
+            throw new ConfinementConfigError("control_char", root, root);
+        }
+
+        // Mirror sync step 1.5: invisible_chars on raw root, before any
         // normalization. Surface the offending root unchanged so a maintainer
         // can paste it back into a hex inspector if the byte is non-printable.
         if (INVISIBLE_CHARS_RE.test(root)) {
             throw new ConfinementConfigError("invisible_chars", root, root);
+        }
+
+        // Mirror sync step 2: absolute_path. A root anchored at filesystem
+        // root would let any candidate that prefix-matches it escape the vault.
+        if (root.startsWith("/")) {
+            throw new ConfinementConfigError("absolute_path", root, root);
+        }
+
+        // Mirror sync step 3: drive_letter (Windows). Same escape-the-vault
+        // concern as absolute_path on POSIX.
+        if (/^[a-zA-Z]:/.test(root)) {
+            throw new ConfinementConfigError("drive_letter", root, root);
         }
 
         const normalized = root.replace(/\\/g, "/").replace(/^\.\//, "");
@@ -196,6 +218,7 @@ export function validateTargetConfinementSync(
 
     // 1. Control characters (NUL through 0x1F). Detect on raw input before any
     // normalization to catch payloads that try to smuggle bytes past trim/replace.
+    // eslint-disable-next-line no-control-regex
     if (/[\x00-\x1f]/.test(candidate)) {
         return { ok: false, reason: "control_char" };
     }
