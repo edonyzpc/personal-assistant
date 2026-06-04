@@ -55,6 +55,53 @@ export type ConfinementResult =
     | { ok: false; reason: ConfinementRejectReason; detail?: string };
 
 /**
+ * Construction-time validation failure thrown by {@link validateAllowedRoots}.
+ * Loud signal (per issue #358 AC) so a misconfigured `allowedRoots` cannot be
+ * silently coerced through the candidate-side check at write time. Caught
+ * upstream by capability registration code or surfaced as plugin-init failure.
+ */
+export class ConfinementConfigError extends Error {
+    readonly reason: ConfinementRejectReason;
+    readonly offendingRoot: string;
+    readonly offendingSegment: string;
+    constructor(
+        reason: ConfinementRejectReason,
+        offendingRoot: string,
+        offendingSegment: string,
+        message?: string,
+    ) {
+        super(message ?? `allowedRoots entry "${offendingRoot}" rejected: ${reason} (segment "${offendingSegment}")`);
+        this.name = "ConfinementConfigError";
+        this.reason = reason;
+        this.offendingRoot = offendingRoot;
+        this.offendingSegment = offendingSegment;
+    }
+}
+
+/**
+ * Construction-time validation of `allowedRoots` (framework SDD §2.2 / issue
+ * #358 AC #1). Throws {@link ConfinementConfigError} when any root's
+ * top-level segment — after backslash normalization, NFC, and lowercase
+ * fold — is in {@link FORBIDDEN_DOTFOLDER_SEGMENTS}. Runs at
+ * `buildConfinement` time so a misconfigured caller fails LOUDLY at
+ * capability registration, not silently at first write. Mirrors the
+ * candidate-side denylist in {@link validateTargetConfinementSync} step 6:
+ * both sides reject the same input set so the framework remains a true
+ * second line of defense regardless of caller wiring.
+ */
+export function validateAllowedRoots(allowedRoots: readonly string[]): void {
+    for (const root of allowedRoots) {
+        if (typeof root !== "string" || root.length === 0) continue;
+        const normalized = root.replace(/\\/g, "/").replace(/^\.\//, "");
+        const firstSegment = normalized.split("/")[0] ?? "";
+        const folded = firstSegment.normalize("NFC").toLowerCase();
+        if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(folded)) {
+            throw new ConfinementConfigError("forbidden_dotfolder", root, firstSegment);
+        }
+    }
+}
+
+/**
  * Filesystem probe used by the async {@link validateTargetConfinement} wrapper
  * to check folder existence and target collision. Adapter shape is intentionally
  * narrow so callers can pass either Obsidian's `vault.adapter` (which already

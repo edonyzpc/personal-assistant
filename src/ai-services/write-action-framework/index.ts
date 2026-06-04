@@ -13,7 +13,9 @@ export type {
 } from "./types";
 
 export {
+    ConfinementConfigError,
     DEFAULT_MAX_PATH_LENGTH,
+    validateAllowedRoots,
     validateTargetConfinement,
     validateTargetConfinementSync,
 } from "./target-confinement";

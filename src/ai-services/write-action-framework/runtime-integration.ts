@@ -35,6 +35,7 @@ import {
     type StaleReadProbe,
 } from "./stale-reread";
 import {
+    ConfinementConfigError,
     validateTargetConfinement,
     type ConfinementFsProbe,
 } from "./target-confinement";
@@ -253,6 +254,28 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                     fsProbe,
                 );
             } catch (error) {
+                // Issue #358 AC #1: a ConfinementConfigError from
+                // `validateAllowedRoots` (fires when `capability.targetConfinement`
+                // is accessed and the caller wired a forbidden top-level
+                // dotfolder root). Surface it under `rejected_at_confinement`
+                // so triage sees the same event shape as a candidate-side
+                // reject — both are config rejections, not FS errors.
+                if (error instanceof ConfinementConfigError) {
+                    emit("gate.target-confinement.reject", capability, runId, turnId, {
+                        errorCategory: "rejected_at_confinement",
+                        extra: {
+                            reason: error.reason,
+                            detail: `allowedRoots entry "${error.offendingRoot}" rejected at construction (segment "${error.offendingSegment}")`,
+                            candidatePath,
+                            targetCategory: capability.targetCategory,
+                        },
+                    });
+                    return failure(
+                        capability,
+                        `target rejected at confinement: ${error.reason}`,
+                        "The proposed file path was rejected by safety checks.",
+                    );
+                }
                 emit("gate.target-confinement.reject", capability, runId, turnId, {
                     errorCategory: "fs_error",
                     extra: {

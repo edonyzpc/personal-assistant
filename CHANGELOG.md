@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [Unreleased]
+
+### Improvements
+- framework(write-action): Gate 1 now has an intrinsic top-level dotfolder denylist (`.obsidian / .git / .trash / .obsidian.bak`, NFC + case-fold) at both construction time (`validateAllowedRoots` throws `ConfinementConfigError`) and candidate-write time (`forbidden_dotfolder` reject reason). The settings-layer guard introduced in `2.2.0-beta.1` remains the first line; the framework layer is now a true defense-in-depth second line that holds even if a future capability provider bypasses the settings scrub. Closes #358.
+
 ## [2.2.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.1.2...2.2.0-beta.1) (2026-06-03)
 
 ### Beta Features
