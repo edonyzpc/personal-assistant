@@ -24,6 +24,7 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Notes
 - Pagelet is **beta** — feedback via GitHub Issues. Enabled by default for beta users; toggle off via `settings.pagelet.enabled` if you'd rather opt out.
+- **BRAT-only beta**: only `manifest-beta.json` advances to `2.2.0-beta.1`; `manifest.json` stays at `2.1.2`. Community-plugin users on `2.1.2` are unaffected and will not auto-update into this beta until the version graduates.
 
 ## [2.1.2](https://github.com/edonyzpc/personal-assistant/compare/2.1.1...2.1.2) (2026-05-31)
 
