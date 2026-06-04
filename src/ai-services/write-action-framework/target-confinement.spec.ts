@@ -151,6 +151,97 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
         expect(result).toEqual({ ok: true, normalizedPath: "notes/.obsidian-cheatsheet/tips.md" });
     });
 
+    // invisible_chars — Cf-category spoof defense (issue #360). Mirror of
+    // settings-layer `src/settings/pagelet/index.ts:287`. Fires on RAW input
+    // BEFORE normalize so a ZWSP-prefixed `.obsidian` does not slip past the
+    // dotfolder denylist by being a different literal string.
+    it("rejects invisible_chars for ZWSP prefix on .obsidian (the canonical spoof)", () => {
+        // The whole point of this defense: must report `invisible_chars`,
+        // NOT `forbidden_dotfolder`, because the segment is `​.obsidian`
+        // (with the zero-width prefix) and the fold check would never match
+        // `.obsidian`. The check order in the validator is what catches this.
+        const result = validateTargetConfinementSync("​.obsidian/plugins/x.md", baseConfig);
+        expect(result).toMatchObject({ ok: false, reason: "invisible_chars" });
+    });
+
+    it("rejects invisible_chars for ZWNJ / ZWJ / WJ / BOM variants", () => {
+        for (const ch of ["‌", "‍", "⁠", "﻿"]) {
+            const path = `.pagelet/no${ch}te.md`;
+            expect(validateTargetConfinementSync(path, baseConfig)).toMatchObject({
+                ok: false,
+                reason: "invisible_chars",
+            });
+        }
+    });
+
+    it("rejects invisible_chars for LRM / RLM directional marks", () => {
+        for (const ch of ["‎", "‏"]) {
+            const path = `.pagelet/n${ch}ote.md`;
+            expect(validateTargetConfinementSync(path, baseConfig)).toMatchObject({
+                ok: false,
+                reason: "invisible_chars",
+            });
+        }
+    });
+
+    it("rejects invisible_chars for bidi-isolate marks (U+2066–U+2069)", () => {
+        const path = `.pagelet/⁦hidden.md⁩`;
+        expect(validateTargetConfinementSync(path, baseConfig)).toMatchObject({
+            ok: false,
+            reason: "invisible_chars",
+        });
+    });
+
+    // trailing_dot_or_space — NTFS-bypass defense (issue #360). Mirror of
+    // settings-layer `src/settings/pagelet/index.ts:330`. MUST fire BEFORE
+    // forbidden_dotfolder so `.obsidian./...` reports the actual spoof class.
+    it("rejects trailing_dot_or_space for .obsidian./plugins (the canonical NTFS spoof)", () => {
+        // Critical-order test: `.obsidian.` would not match the fold so it
+        // would slip past forbidden_dotfolder — but NTFS would still route
+        // the write to the real `.obsidian/`. Must report
+        // `trailing_dot_or_space`, NOT `forbidden_dotfolder`.
+        const result = validateTargetConfinementSync(".obsidian./plugins/x.md", baseConfig);
+        expect(result).toMatchObject({
+            ok: false,
+            reason: "trailing_dot_or_space",
+            detail: ".obsidian.",
+        });
+    });
+
+    it("rejects trailing_dot_or_space for trailing dot on a nested segment", () => {
+        expect(validateTargetConfinementSync(".pagelet/sub./file.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "trailing_dot_or_space",
+            detail: "sub.",
+        });
+    });
+
+    it("rejects trailing_dot_or_space for trailing space on a nested segment", () => {
+        expect(validateTargetConfinementSync(".pagelet/sub /file.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "trailing_dot_or_space",
+            detail: "sub ",
+        });
+    });
+
+    it("rejects trailing_dot_or_space for trailing NBSP (\\s covers U+00A0)", () => {
+        // Tab/CR/LF would be eaten by the earlier `control_char` step (they're
+        // in [\x00-\x1f]); NBSP isn't a control char but `\s` matches it, so
+        // it's the right witness for "trailing whitespace beyond ASCII space".
+        expect(validateTargetConfinementSync(".pagelet/sub /file.md", baseConfig)).toMatchObject({
+            ok: false,
+            reason: "trailing_dot_or_space",
+            detail: "sub ",
+        });
+    });
+
+    it("does NOT trip trailing_dot_or_space when a segment ends in a normal char", () => {
+        // Sanity: only literal trailing `.` or `\s` matches; a normal filename
+        // like `foo.md` ends in `d`, not `.` or whitespace.
+        const result = validateTargetConfinementSync(".pagelet/notes/foo.md", baseConfig);
+        expect(result).toEqual({ ok: true, normalizedPath: ".pagelet/notes/foo.md" });
+    });
+
     it("rejects path_too_long when normalized path exceeds maxPathLength", () => {
         const longName = "a".repeat(300);
         const result = validateTargetConfinementSync(`.pagelet/${longName}.md`, baseConfig);
@@ -342,5 +433,78 @@ describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => 
             expect((err as Error).message).toContain(".obsidian");
             expect((err as Error).message).toContain("forbidden_dotfolder");
         }
+    });
+
+    // Issue #360 collateral: register-side now mirrors the sync-side
+    // parent_traversal check too (was missing in #358's minimal scope —
+    // surfaced by the prompt-injection fixture for `../../config.json`).
+    it("throws parent_traversal when an allowed root contains a `..` segment", () => {
+        try {
+            validateAllowedRoots(["../../config.json/"]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("parent_traversal");
+            expect(e.offendingSegment).toBe("..");
+        }
+    });
+
+    // Issue #360: register-time mirrors of the two new sync-side reasons.
+    it("throws invisible_chars for a root containing a ZWSP", () => {
+        const root = "​.pagelet/";
+        try {
+            validateAllowedRoots([root]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("invisible_chars");
+            expect(e.offendingRoot).toBe(root);
+        }
+    });
+
+    it("throws trailing_dot_or_space when a top-level root segment ends in space", () => {
+        try {
+            validateAllowedRoots([".pagelet /"]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("trailing_dot_or_space");
+            expect(e.offendingSegment).toBe(".pagelet ");
+        }
+    });
+
+    it("throws trailing_dot_or_space when a NESTED root segment ends in dot", () => {
+        try {
+            validateAllowedRoots([".pagelet/sub./"]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("trailing_dot_or_space");
+            expect(e.offendingSegment).toBe("sub.");
+        }
+    });
+
+    it("throws trailing_dot_or_space (NOT forbidden_dotfolder) for .obsidian./plugins/", () => {
+        // Order assertion: the same critical-order property as the sync side.
+        // `.obsidian.` would not match the dotfolder fold; the trailing check
+        // must run first or the spoof slips through.
+        try {
+            validateAllowedRoots([".obsidian./plugins/"]);
+            throw new Error("should have thrown");
+        } catch (err) {
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("trailing_dot_or_space");
+        }
+    });
+
+    it("does NOT trip trailing_dot_or_space on the empty terminal segment of `.pagelet/`", () => {
+        // Defensive check: roots conventionally end in `/`, splitting to
+        // [".pagelet", ""]. The empty terminal must be skipped so legitimate
+        // roots aren't rejected.
+        expect(() => validateAllowedRoots([".pagelet/"])).not.toThrow();
     });
 });

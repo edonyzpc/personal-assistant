@@ -25,6 +25,8 @@ export type ConfinementRejectReason =
     | "drive_letter"
     | "parent_traversal"
     | "control_char"
+    | "invisible_chars"
+    | "trailing_dot_or_space"
     | "forbidden_dotfolder"
     | "outside_allowlist"
     | "bad_extension"
@@ -49,6 +51,36 @@ const FORBIDDEN_DOTFOLDER_SEGMENTS: ReadonlySet<string> = new Set([
     ".trash",
     ".obsidian.bak",
 ]);
+
+/**
+ * Cf-category invisible characters used for identifier spoofing — ZWSP/ZWNJ/ZWJ
+ * (U+200B-U+200D), WJ (U+2060), BOM/ZWNBSP (U+FEFF), LRM/RLM (U+200E/U+200F),
+ * bidi-formats (U+202A-U+202E), bidi-isolates (U+2066-U+2069). Pattern is
+ * verbatim-equal to the settings-layer source at
+ * `src/settings/pagelet/index.ts:287` so a future audit can grep both sides
+ * and confirm parity. Rejects e.g. a path with a leading ZWSP before
+ * `.obsidian` (visually reads `.obsidian/...` but bypasses the literal
+ * segment-equality check below).
+ *
+ * NFC residual risk (issue #360 Option A): fullwidth lookalikes like
+ * U+FF0E + fullwidth letters survive both this check and the NFC +
+ * lowercase fold path used by `FORBIDDEN_DOTFOLDER_SEGMENTS`. Acceptable
+ * today because Obsidian / APFS / NTFS dispatch rules don't fold fullwidth
+ * → ASCII. If that ever changes, upgrade BOTH this layer AND the
+ * settings-layer fold to NFKC in lock-step (see SDD §2.2 note).
+ */
+const INVISIBLE_CHARS_RE =
+    /[\u200b-\u200d\u2060\ufeff\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
+
+/**
+ * Trailing dot or whitespace per segment. NTFS silently strips trailing `.` /
+ * space at the OS layer, so `.obsidian./plugins/x.md` dispatches to the real
+ * `.obsidian/plugins/x.md` despite the literal segment guard below seeing
+ * `.obsidian.` (not equal to `.obsidian`). Same class of bypass for trailing
+ * tab/NBSP via `\s`. Verbatim copy of the settings-layer pattern at
+ * `src/settings/pagelet/index.ts:330`.
+ */
+const TRAILING_DOT_OR_SPACE_RE = /[.\s]$/;
 
 export type ConfinementResult =
     | { ok: true; normalizedPath: string }
@@ -92,8 +124,35 @@ export class ConfinementConfigError extends Error {
 export function validateAllowedRoots(allowedRoots: readonly string[]): void {
     for (const root of allowedRoots) {
         if (typeof root !== "string" || root.length === 0) continue;
+
+        // Mirror sync step 2.5: invisible_chars on raw root, before any
+        // normalization. Surface the offending root unchanged so a maintainer
+        // can paste it back into a hex inspector if the byte is non-printable.
+        if (INVISIBLE_CHARS_RE.test(root)) {
+            throw new ConfinementConfigError("invisible_chars", root, root);
+        }
+
         const normalized = root.replace(/\\/g, "/").replace(/^\.\//, "");
-        const firstSegment = normalized.split("/")[0] ?? "";
+        const segments = normalized.split("/");
+
+        // Mirror sync step 5: parent traversal. Any literal `..` segment
+        // would route an allowlist-anchored write outside the vault root,
+        // so reject before checking trailing-char shapes (otherwise the
+        // `..` ends-in-dot property reports the wrong reason).
+        if (segments.some((segment) => segment === "..")) {
+            throw new ConfinementConfigError("parent_traversal", root, "..");
+        }
+
+        // Mirror sync step 6.5: trailing dot/space on any non-empty segment.
+        // `.pagelet/` splits to [".pagelet", ""] — skip the empty terminal
+        // segment so a legitimate trailing slash on a root doesn't trip.
+        for (const segment of segments) {
+            if (segment.length > 0 && TRAILING_DOT_OR_SPACE_RE.test(segment)) {
+                throw new ConfinementConfigError("trailing_dot_or_space", root, segment);
+            }
+        }
+
+        const firstSegment = segments[0] ?? "";
         const folded = firstSegment.normalize("NFC").toLowerCase();
         if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(folded)) {
             throw new ConfinementConfigError("forbidden_dotfolder", root, firstSegment);
@@ -119,9 +178,10 @@ export const DEFAULT_MAX_PATH_LENGTH = 200;
  * concrete reason wins (e.g., an absolute path containing control chars
  * reports `absolute_path` first).
  *
- * Order: empty → control_char → absolute → drive_letter → normalize →
- *        parent_traversal → forbidden_dotfolder → length → allowlist →
- *        extension → custom rejectPatterns.
+ * Order: empty → control_char → invisible_chars → absolute → drive_letter →
+ *        normalize → parent_traversal → trailing_dot_or_space →
+ *        forbidden_dotfolder → length → allowlist → extension →
+ *        custom rejectPatterns.
  */
 export function validateTargetConfinementSync(
     candidate: string,
@@ -138,6 +198,15 @@ export function validateTargetConfinementSync(
     // normalization to catch payloads that try to smuggle bytes past trim/replace.
     if (/[\x00-\x1f]/.test(candidate)) {
         return { ok: false, reason: "control_char" };
+    }
+
+    // 1.5. Cf-category invisible chars (ZWSP/ZWNJ/ZWJ, WJ, BOM, LRM/RLM,
+    // bidi-isolates). Raw-input check so a ZWSP prefix on `.obsidian` is
+    // rejected here instead of leaking through to the segment-equality check
+    // that wouldn't match the spoofed string. Mirror of settings-layer
+    // `src/settings/pagelet/index.ts:287`.
+    if (INVISIBLE_CHARS_RE.test(candidate)) {
+        return { ok: false, reason: "invisible_chars" };
     }
 
     // 2. Absolute path (POSIX-style leading "/").
@@ -162,6 +231,17 @@ export function validateTargetConfinementSync(
     const segments = normalized.split("/");
     if (segments.some((segment) => segment === "..")) {
         return { ok: false, reason: "parent_traversal" };
+    }
+
+    // 5.5. Trailing dot or whitespace per segment. MUST run before the
+    // forbidden_dotfolder check below — otherwise `.obsidian./plugins/x.md`
+    // would slip past the segment-equality fold (`.obsidian.` ≠ `.obsidian`)
+    // and only NTFS would stop it at OS layer (which it does silently, by
+    // dispatching the write into the real `.obsidian/`). Mirror of
+    // settings-layer `src/settings/pagelet/index.ts:330`.
+    const trailingOffender = segments.find((segment) => TRAILING_DOT_OR_SPACE_RE.test(segment));
+    if (trailingOffender !== undefined) {
+        return { ok: false, reason: "trailing_dot_or_space", detail: trailingOffender };
     }
 
     // 6. Forbidden top-level dotfolder. Intrinsic denylist that fires

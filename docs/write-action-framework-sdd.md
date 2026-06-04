@@ -233,7 +233,8 @@ export interface TargetCheckResult {
     normalizedPath?: string;                    // 通过时返回
     reason?: string;                            // 失败时给 errorCategory 用
     category?: "empty_path" | "absolute_path" | "drive_letter"
-             | "parent_traversal" | "control_char" | "forbidden_dotfolder"
+             | "parent_traversal" | "control_char" | "invisible_chars"
+             | "trailing_dot_or_space" | "forbidden_dotfolder"
              | "outside_allowlist" | "bad_extension" | "path_too_long"
              | "custom_pattern_rejected" | "name_collision" | "folder_missing";
 }
@@ -243,21 +244,25 @@ export interface TargetCheckResult {
 
 1. **Empty**：null/undefined/空串/纯空白 → reject `empty_path`
 2. **Control chars**：`[\x00-\x1f]` → reject `control_char`
-3. **Absolute path**：前导 `/` → reject `absolute_path`
-4. **Drive letter**：`^[a-zA-Z]:` → reject `drive_letter`
-5. **Normalize**：`\` → `/`、剥离前导 `./`、collapse `/+`、剥离尾随 `/`
-6. **Parent traversal**：任一段为 `..` → reject `parent_traversal`
-7. **Forbidden dotfolder**：`segments[0].normalize("NFC").toLowerCase()` ∈ `{.obsidian, .git, .trash, .obsidian.bak}` → reject `forbidden_dotfolder`（内建 denylist，与 settings-layer `src/settings/pagelet/index.ts:344-353` mirror — defense-in-depth：即使 caller 错配 `allowedRoots`，candidate 落入禁止段照样拒）
-8. **Length cap**：normalized 长度 ≤ `maxPathLength`（默认 200）
-9. **Allowlist**：normalizedPath 必须以 `allowedRoots` 中任一前缀开头
-10. **Extension**：必须在 `allowedExtensions`
-11. **Custom rejectPatterns**：caller 自定义 RegExp（caller 通过 `ConfinementConfig.rejectPatterns` 注入；framework 不提供默认值）
-12. **(async) Folder 检查**：父目录必须存在 → reject `folder_missing`
-13. **(async) Collision 检查**：`vault.adapter.exists(normalizedPath)` 为 false（v1 create-file 不覆盖；Pagelet D008 已有"撞名自动避让"策略，但属 caller 责任，framework 仅报 collision）
+3. **Invisible chars**：Cf-category 子集 ZWSP/ZWNJ/ZWJ/WJ/BOM/LRM/RLM/bidi-isolates 任一出现 → reject `invisible_chars`（raw 阶段拦 identifier spoofing，例如 `​.obsidian` 视觉读作 `.obsidian` 但会绕过 segment-equality；与 settings-layer `src/settings/pagelet/index.ts:287` mirror）
+4. **Absolute path**：前导 `/` → reject `absolute_path`
+5. **Drive letter**：`^[a-zA-Z]:` → reject `drive_letter`
+6. **Normalize**：`\` → `/`、剥离前导 `./`、collapse `/+`、剥离尾随 `/`
+7. **Parent traversal**：任一段为 `..` → reject `parent_traversal`
+8. **Trailing dot or space**：任一段末尾匹配 `[.\s]` → reject `trailing_dot_or_space`（NTFS 在 OS 层会静默剥离 trailing `.` / space，所以 `.obsidian./plugins` 实际 dispatch 到真正的 `.obsidian/plugins`；**必须**在 forbidden_dotfolder 之前，否则 spoof segment 不命中 fold 后漏出；与 settings-layer `src/settings/pagelet/index.ts:330` mirror）
+9. **Forbidden dotfolder**：`segments[0].normalize("NFC").toLowerCase()` ∈ `{.obsidian, .git, .trash, .obsidian.bak}` → reject `forbidden_dotfolder`（内建 denylist，与 settings-layer `src/settings/pagelet/index.ts:344-353` mirror — defense-in-depth：即使 caller 错配 `allowedRoots`，candidate 落入禁止段照样拒）
+10. **Length cap**：normalized 长度 ≤ `maxPathLength`（默认 200）
+11. **Allowlist**：normalizedPath 必须以 `allowedRoots` 中任一前缀开头
+12. **Extension**：必须在 `allowedExtensions`
+13. **Custom rejectPatterns**：caller 自定义 RegExp（caller 通过 `ConfinementConfig.rejectPatterns` 注入；framework 不提供默认值）
+14. **(async) Folder 检查**：父目录必须存在 → reject `folder_missing`
+15. **(async) Collision 检查**：`vault.adapter.exists(normalizedPath)` 为 false（v1 create-file 不覆盖；Pagelet D008 已有"撞名自动避让"策略，但属 caller 责任，framework 仅报 collision）
+
+**NFC 残余风险（issue #360）：** invisible_chars / trailing_dot_or_space / forbidden_dotfolder 三步都在 NFC + lowercase fold 路径里跑，与 settings 层一致。NFKC fullwidth 变体（如 `．ｏｂｓｉｄｉａｎ`，U+FF0E + fullwidth letters）当前**不**拦截——可接受，因为 Obsidian / APFS / NTFS dispatch 规则不会把 fullwidth 折成 ASCII。如果未来真遇到 OS dispatch fullwidth → ASCII 的现实案例，**两层必须 lock-step 升到 NFKC**（settings + framework 同时改），否则会重新打开 issue #358 关掉的那类 bypass。
 
 **fail closed**：任何一步失败 → outcome=`rejected_at_confinement`，debug emit 记录，无 preview 弹出。
 
-**构造期验证（issue #358 AC #1）：** `validateAllowedRoots(roots)` 在 `buildConfinement` 内同步调用，对每个 root 做相同的 NFC+lowercase fold 检查；命中 `FORBIDDEN_DOTFOLDER_SEGMENTS` 直接 throw `ConfinementConfigError`（不是 silent 降级）。Pagelet 当前路径下 `normalizeReviewsFolder` 已上游兜底，此 throw 是 defense-in-depth assert，正常代码路径下不会触发。
+**构造期验证（issue #358 AC #1，issue #360 扩展）：** `validateAllowedRoots(roots)` 在 `buildConfinement` 内同步调用，对每个 root 顺序检查 `invisible_chars` → 任一段为 `..` 的 `parent_traversal` → 每段 `trailing_dot_or_space` → `segments[0]` 在 `FORBIDDEN_DOTFOLDER_SEGMENTS`（NFC + lowercase fold）→ 命中任一立即 throw `ConfinementConfigError`（不是 silent 降级），`reason` 字段记录具体类。Pagelet 当前路径下 `normalizeReviewsFolder` 已上游兜底，此 throw 是 defense-in-depth assert，正常代码路径下不会触发。
 
 **触发时机与 caller 模式（重要）：** "构造期" 指 `buildConfinement` 被调用的那一刻——具体落在哪个时间点取决于 caller 怎么暴露 `targetConfinement`：
 
