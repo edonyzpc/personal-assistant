@@ -6,6 +6,7 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Improvements
 - framework(write-action): Gate 1 now has an intrinsic top-level dotfolder denylist (`.obsidian / .git / .trash / .obsidian.bak`, NFC + case-fold) at both construction time (`validateAllowedRoots` throws `ConfinementConfigError`) and candidate-write time (`forbidden_dotfolder` reject reason). The settings-layer guard introduced in `2.2.0-beta.1` remains the first line; the framework layer is now a true defense-in-depth second line that holds even if a future capability provider bypasses the settings scrub. Closes #358.
+- framework(write-action): Gate 1 also mirrors the settings-layer Cf-category invisible-char check (ZWSP/ZWNJ/ZWJ, WJ, BOM, LRM/RLM, bidi-isolates → `invisible_chars`) and the per-segment trailing dot/space check (NTFS silent-strip bypass → `trailing_dot_or_space`). Both run at construction time via `validateAllowedRoots` and at candidate-write time in the sync validator, in lock-step with the dotfolder denylist. NFKC fullwidth lookalikes remain an accepted residual risk in both layers (see SDD §2.2). Closes #360.
 
 ## [2.2.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.1.2...2.2.0-beta.1) (2026-06-03)
 
