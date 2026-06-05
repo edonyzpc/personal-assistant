@@ -305,8 +305,16 @@ export function validateTargetConfinementSync(
         return { ok: false, reason: "outside_allowlist", detail: "no allowedRoots configured" };
     }
     const insideAllowlist = config.allowedRoots.some((root) => {
-        const rootWithSlash = root.endsWith("/") ? root : `${root}/`;
-        return normalized === root || normalized.startsWith(rootWithSlash);
+        // Normalize root the same way the candidate was normalized in step 6
+        // (backslash → "/", strip leading "./", collapse "//+") so a root
+        // stored with Windows separators (e.g. `.pagelet\`) still matches the
+        // POSIX-normalized candidate `.pagelet/notes/foo.md`. Issue #363.
+        const nr = root
+            .replace(/\\/g, "/")
+            .replace(/^\.\//, "")
+            .replace(/\/+/g, "/");
+        const rootWithSlash = nr.endsWith("/") ? nr : `${nr}/`;
+        return normalized === nr || normalized.startsWith(rootWithSlash);
     });
     if (!insideAllowlist) {
         return { ok: false, reason: "outside_allowlist" };

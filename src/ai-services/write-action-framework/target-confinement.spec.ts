@@ -317,6 +317,27 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
             normalizedPath: ".pagelet-reviews/note.md",
         });
     });
+
+    // Issue #363: Windows backslash in allowlist roots — the allowlist match
+    // must normalize roots the same way the candidate is normalized so a root
+    // stored as `.pagelet\` matches the POSIX-normalized candidate.
+    it("accepts backslash candidate against backslash root (.pagelet\\notes\\foo.md vs .pagelet\\)", () => {
+        const cfg: ConfinementConfig = {
+            allowedRoots: [".pagelet\\"],
+            allowedExtensions: [".md"],
+        };
+        const result = validateTargetConfinementSync(".pagelet\\notes\\foo.md", cfg);
+        expect(result).toEqual({ ok: true, normalizedPath: ".pagelet/notes/foo.md" });
+    });
+
+    it("accepts forward-slash candidate against backslash root (.pagelet/notes/foo.md vs .pagelet\\)", () => {
+        const cfg: ConfinementConfig = {
+            allowedRoots: [".pagelet\\"],
+            allowedExtensions: [".md"],
+        };
+        const result = validateTargetConfinementSync(".pagelet/notes/foo.md", cfg);
+        expect(result).toEqual({ ok: true, normalizedPath: ".pagelet/notes/foo.md" });
+    });
 });
 
 describe("validateTargetConfinement (async with FS probe)", () => {
@@ -540,6 +561,8 @@ describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => 
         } catch (err) {
             const e = err as ConfinementConfigError;
             expect(e.reason).toBe("trailing_dot_or_space");
+            expect(e.offendingRoot).toBe(".obsidian./plugins/");
+            expect(e.offendingSegment).toBe(".obsidian.");
         }
     });
 
