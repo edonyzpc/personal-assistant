@@ -19,7 +19,7 @@
 | 产品意图 | `docs/review-assistant-product-design.md` |
 | 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Partially Resolved（2026-06-05 spike 确认双路径架构可用，live API 测试延至 beta QA） |
 | 主作者 | PA core |
-| 上次更新 | 2026-06-03 |
+| 上次更新 | 2026-06-05 |
 
 > **解阻塞标记（2026-06-03）**：D025 + D030 决定写路径走 **Write Action Framework v1**（基础设施层）。`docs/write-action-framework-sdd.md` 已落地、`src/ai-services/write-action-framework/**` 4 子模块 + PolicyEngine 参数化已实现、`pagelet.write_review_output` 作为首个真实 caller 跑通端到端测试。本 SDD §2.4 / §3 / §14 的契约面占位已去 stub 化，Pagelet beta 随 `v2.2.0-beta.1` 发布（详见 [[D031]]）。
 >
