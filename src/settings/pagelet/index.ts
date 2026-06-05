@@ -39,6 +39,12 @@ import {
     makePageletTranslator,
     type PageletLocale,
 } from "../../locales/pagelet";
+import {
+    FORBIDDEN_DOTFOLDER_SEGMENTS,
+    INVISIBLE_CHARS_RE,
+    TRAILING_DOT_OR_SPACE_RE,
+    foldForDotfolderCheck,
+} from "../../shared/path-spoof-patterns";
 
 // ---------------------------------------------------------------------------
 // Persisted shape
@@ -140,17 +146,6 @@ export type PageletReviewsFolderError =
     | "control_chars"
     | "invisible_chars"
     | "trailing_dot_or_space";
-
-/**
- * Top-level dotfolders beyond `.obsidian` that the framework must never
- * write into. `.git` and `.trash` are Obsidian / Git-shared system folders;
- * `.obsidian.bak` is the conventional backup name some users keep next to
- * `.obsidian`. Kept separate from `obsidian_config` so the user-facing
- * message stays specific (it's not always THE Obsidian config dir).
- *
- * Compared case-folded NFC just like the `.obsidian` check below.
- */
-const FORBIDDEN_DOTFOLDER_SEGMENTS = new Set([".git", ".trash", ".obsidian.bak"]);
 
 /**
  * Hard cap on validator input length. 4 KB is well above any realistic
@@ -280,11 +275,11 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     // Invisible format characters (Cf category subset commonly used to spoof
     // identifiers): ZWSP/ZWNJ/ZWJ, WJ, BOM/ZWNBSP, LRM/RLM, bidi-isolates.
     // These survive String.prototype.trim and would otherwise let an attacker
-    // craft a name like `\u200B.obsidian` that visually reads as `.obsidian`
+    // craft a name like `\u200b.obsidian` that visually reads as `.obsidian`
     // but bypasses the strict segment-equality check below. Rejecting
     // outright is simpler and safer than NFKC-folding; a legitimate folder
     // name never needs a zero-width joiner.
-    if (/[\u200b-\u200d\u2060\ufeff\u200e\u200f\u202a-\u202e\u2066-\u2069]/.test(trimmed)) {
+    if (INVISIBLE_CHARS_RE.test(trimmed)) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "invisible_chars", input: trimmed };
     }
 
@@ -327,7 +322,7 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     // below failing on the literal string `.obsidian.`. Same class of bypass
     // for `.obsidian /plugins` (trailing space). We reject the input before
     // the case-fold comparison gets the chance to mismatch.
-    if (segments.some((seg) => /[.\s]$/.test(seg))) {
+    if (segments.some((seg) => TRAILING_DOT_OR_SPACE_RE.test(seg))) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "trailing_dot_or_space", input: trimmed };
     }
 
@@ -341,7 +336,7 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     // `.OBSIDIAN` also trip — default macOS APFS and Windows NTFS are
     // case-insensitive, so a non-folded compare would let those inputs through
     // and the OS would still dispatch the write into the real `.obsidian/`.
-    const firstSegmentFolded = segments[0].normalize("NFC").toLowerCase();
+    const firstSegmentFolded = foldForDotfolderCheck(segments[0]);
     if (firstSegmentFolded === ".obsidian") {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "obsidian_config", input: trimmed };
     }

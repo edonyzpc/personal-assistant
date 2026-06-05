@@ -17,6 +17,12 @@
  * can emit precise `gate.target-confinement.reject` debug events for triage.
  */
 
+import {
+    FORBIDDEN_DOTFOLDER_SEGMENTS,
+    INVISIBLE_CHARS_RE,
+    TRAILING_DOT_OR_SPACE_RE,
+    foldForDotfolderCheck,
+} from "../../shared/path-spoof-patterns";
 import type { ConfinementConfig } from "./types";
 
 export type ConfinementRejectReason =
@@ -34,53 +40,6 @@ export type ConfinementRejectReason =
     | "custom_pattern_rejected"
     | "name_collision"
     | "folder_missing";
-
-/**
- * Top-level path segments that must never be written into, regardless of what
- * `allowedRoots` the caller supplies. Mirrors the same set checked by the
- * settings-layer validator at `src/settings/pagelet/index.ts` (`FORBIDDEN_DOTFOLDER_SEGMENTS`
- * + the `obsidian_config` literal); kept here as defense-in-depth so a caller
- * with a misconfigured allowlist — or a future caller wired without a
- * settings-layer scrub — still fails closed. Membership test is performed
- * after NFC + lowercase folding so APFS / NTFS case-insensitive dispatch
- * (`.Obsidian`, `.OBSIDIAN.bak`) and NFD variants do not bypass the guard.
- */
-const FORBIDDEN_DOTFOLDER_SEGMENTS: ReadonlySet<string> = new Set([
-    ".obsidian",
-    ".git",
-    ".trash",
-    ".obsidian.bak",
-]);
-
-/**
- * Cf-category invisible characters used for identifier spoofing — ZWSP/ZWNJ/ZWJ
- * (U+200B-U+200D), WJ (U+2060), BOM/ZWNBSP (U+FEFF), LRM/RLM (U+200E/U+200F),
- * bidi-formats (U+202A-U+202E), bidi-isolates (U+2066-U+2069). Pattern is
- * verbatim-equal to the settings-layer source at
- * `src/settings/pagelet/index.ts:287` so a future audit can grep both sides
- * and confirm parity. Rejects e.g. a path with a leading ZWSP before
- * `.obsidian` (visually reads `.obsidian/...` but bypasses the literal
- * segment-equality check below).
- *
- * NFC residual risk (issue #360 Option A): fullwidth lookalikes like
- * U+FF0E + fullwidth letters survive both this check and the NFC +
- * lowercase fold path used by `FORBIDDEN_DOTFOLDER_SEGMENTS`. Acceptable
- * today because Obsidian / APFS / NTFS dispatch rules don't fold fullwidth
- * → ASCII. If that ever changes, upgrade BOTH this layer AND the
- * settings-layer fold to NFKC in lock-step (see SDD §2.2 note).
- */
-const INVISIBLE_CHARS_RE =
-    /[\u200b-\u200d\u2060\ufeff\u200e\u200f\u202a-\u202e\u2066-\u2069]/;
-
-/**
- * Trailing dot or whitespace per segment. NTFS silently strips trailing `.` /
- * space at the OS layer, so `.obsidian./plugins/x.md` dispatches to the real
- * `.obsidian/plugins/x.md` despite the literal segment guard below seeing
- * `.obsidian.` (not equal to `.obsidian`). Same class of bypass for trailing
- * tab/NBSP via `\s`. Verbatim copy of the settings-layer pattern at
- * `src/settings/pagelet/index.ts:330`.
- */
-const TRAILING_DOT_OR_SPACE_RE = /[.\s]$/;
 
 export type ConfinementResult =
     | { ok: true; normalizedPath: string }
@@ -187,7 +146,7 @@ export function validateAllowedRoots(allowedRoots: readonly string[]): void {
         }
 
         const firstSegment = segments[0] ?? "";
-        const folded = firstSegment.normalize("NFC").toLowerCase();
+        const folded = foldForDotfolderCheck(firstSegment);
         if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(folded)) {
             throw new ConfinementConfigError("forbidden_dotfolder", root, firstSegment);
         }
@@ -289,7 +248,7 @@ export function validateTargetConfinementSync(
     // dispatch, NFD variants). Backslash inputs are already collapsed
     // to "/" by step 6, so `.git\evil.md` is `segments[0] === ".git"`
     // by the time we reach this check.
-    const firstSegmentFolded = (segments[0] ?? "").normalize("NFC").toLowerCase();
+    const firstSegmentFolded = foldForDotfolderCheck(segments[0] ?? "");
     if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
         return { ok: false, reason: "forbidden_dotfolder", detail: segments[0] };
     }
