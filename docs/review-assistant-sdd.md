@@ -86,24 +86,46 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 > 决策依据：D024。
 > 代码位置：`src/ai-services/pa-agent-loop.ts:43,72,111`（3 个 DI 接口）。
 
-### 1.3 新增/改造文件清单（~900 行）
+### 1.3 新增/改造文件清单（v1 实测落地）
 
-| 文件 | 状态 | 估算行数 | 责任 |
-|------|------|----------|------|
-| `src/ai-services/pa-review-runtime.ts` | NEW | ~250 | RunKindAdapter 装配、settings 读取、cost gate |
-| `src/ai-services/pa-review-model.ts` | NEW | ~200 | `PaAgentModel` 实现：单 turn structured output |
-| `src/ai-services/pa-review-host-policy.ts` | NEW | ~80 | `PaAgentHostPolicy`：单 turn 即 stop |
-| `src/ai-services/pa-review-tool-provider.ts` | NEW | ~150 | `CapabilityProvider`：read-vault / search-vault / write-pagelet-output（D025 / D030 占位，等 Write Action Framework v1） |
-| `src/ai-services/pa-review-schemas.ts` | NEW | ~120 | zod schemas + few-shot 样本 |
-| `src/ai-services/pa-review-language.ts` | NEW | ~40 | 笔记语言检测 regex `/[一-鿿]/g` > 30% |
-| `src/ai-services/policy-engine.ts` | MODIFIED | ~+40 | 参数化 read-only 限制，开放 review 专用 capability |
-| `src/components/pagelet/*` | NEW | ~400 | Mascot SVG、Suggestion Card、callout、settings UI 段 |
-| `src/main.ts` / `src/plugin.ts` | MODIFIED | ~+80 | 注册 view、commands、ribbon、调用 PageletAdapter |
-| `src/settings.ts` | MODIFIED | ~+100 | Pagelet 设置项 |
-| `src/i18n/*` | MODIFIED | ~+60 | Pagelet 文案条目（zh + en） |
-| `src/styles/pagelet.pcss` 或追加 `custom.pcss` | NEW | ~150 | `.pa-pagelet-*` 样式、手绘风 token、reduce-motion 媒体查询 |
+> **路径修订（2026-06-04）**：v1 立项时 §1.3 设想所有 Pagelet 模块挂在 `src/ai-services/` 与 `src/components/pagelet/` 下。实际实现为了与 PA 既有目录边界对齐（`ai-services` 留给 chat/runtime/policy 共享层），把 Pagelet 拆到了独立的 `src/pagelet/` + `src/ui/pagelet/` + `src/settings/pagelet/` + `src/locales/pagelet/`。本表已替换为实测路径，原计划 1:1 对应关系记录在每行末尾以备追溯。
 
-合计：~1170 行新增 + ~280 行改造。注：UI/CSS 行数高于 D024 中提到的 ~900 行，因为 D024 估算只含 runtime 层，未包含 UI/i18n/CSS。
+#### Pagelet runtime（`src/pagelet/`）
+
+| 文件 | 状态 | 责任 | 原计划占位 |
+|------|------|------|-----------|
+| `src/pagelet/pa-review-runtime.ts` | NEW | RunKindAdapter 装配、settings 读取、cost gate 串联 | ↔ 计划同名 |
+| `src/pagelet/pa-review-model.ts` | NEW | `PaAgentModel` 实现：单 turn structured output + 降级 parser | ↔ 计划同名 |
+| `src/pagelet/pa-review-tool-provider.ts` | NEW | `CapabilityProvider`：`pagelet.read_source_note` / `pagelet.search_related_notes` / `pagelet.write_review_output` | ↔ 计划同名 |
+| `src/pagelet/pa-review-schemas.ts` | NEW | zod schemas + EN/ZH few-shot 样本 + few-shot 注入策略 | ↔ 计划同名 |
+| `src/pagelet/pa-review-cost.ts` | NEW | provider/model 定价表 + `computeCost` | (未在计划单列；§7.4) |
+| `src/pagelet/pa-review-rate-limit.ts` | NEW | 滑窗 cost gate（10/h、100/d）+ 强制跳过 | (未在计划单列；§7.2) |
+| `src/pagelet/pa-review-file-io.ts` | NEW | `.pagelet/` 目录与 `vault.adapter.write` 持久化 + frontmatter | (未在计划单列；§5) |
+| `src/pagelet/compat/{view-type,debounce,ribbon,focus-command}.ts` | NEW (5) | R1/R2/R4 兼容隔离 + D007 focus 命令 | ↔ 原 plugin.ts/main.ts diff 拆分 |
+| `src/pagelet/index.ts` | NEW | barrel | — |
+
+> v1 没有单独的 `pa-review-host-policy.ts`：basic/deeper 单 turn 流程目前在 `pa-review-runtime.ts` 内联完成，未拆出独立 HostPolicy 类。Deeper 多 turn 真正需要时再抽。
+
+#### UI / 设置 / i18n / 样式
+
+| 文件 | 状态 | 责任 |
+|------|------|------|
+| `src/ui/pagelet/mascot/{markup,dom-renderer,types,index}.ts` | NEW | 4-state mascot（idle / thinking / done / error）+ SVG inline + reduce-motion 隔离 |
+| `src/ui/pagelet/suggestion-card/{markup,dom-renderer,types,index}.ts` | NEW | 5-section card：source / kind / rationale / proposed / related |
+| `src/settings/pagelet/index.ts` | NEW | Pagelet 设置项 + `normalizeReviewsFolder`（10 类越界形状 fail-closed，§14.1 H-B3.2 第一道防线） |
+| `src/locales/pagelet/{en,zh}.json` + `index.ts` | NEW | EN/ZH 文案条目 |
+| `src/locales/pagelet/language-detect.ts` | NEW | 笔记语言检测 regex `/[一-鿿]/g` > 30%（§8.1） |
+| `src/custom.pcss` | MODIFIED | `.pa-pagelet-*` 样式、手绘风 token、`prefers-reduced-motion` 媒体查询（合并入主 PCSS，未单建 `pagelet.pcss`） |
+
+#### 共享层修改
+
+| 文件 | 状态 | 责任 |
+|------|------|------|
+| `src/ai-services/policy-engine.ts` | MODIFIED | 参数化 `runKind` + `allowWrite`（§3） |
+| `src/ai-services/write-action-framework/**` | NEW | 4 gate（target-confinement / preview-confirmation / stale-reread / runtime-integration）+ debug-observer + types。Pagelet 的 `pagelet.write_review_output` 是首个真实 caller |
+| `src/plugin.ts` | MODIFIED | 注册 view / commands / ribbon / Pagelet runtime wiring |
+
+> 测试文件清单见 §12.1（实际名称已与本节对齐）。
 
 ---
 
@@ -532,7 +554,7 @@ v1 Beta 只做最低限度："任意 LLM 调用失败 → 用户提示 + 提供 
 ### 8.1 笔记语言检测（D015）
 
 ```ts
-// pa-review-language.ts
+// src/locales/pagelet/language-detect.ts
 export function detectNoteLanguage(text: string): "zh" | "en" {
   const chineseChars = text.match(/[一-鿿]/g)?.length ?? 0;
   const ratio = chineseChars / Math.max(1, text.length);
@@ -706,15 +728,23 @@ v1 暂不直接收集遥测数据。代用指标：
 
 ## 12 · 测试策略
 
-### 12.1 单元测试
+### 12.1 单元测试（实测落地）
 
-| 测试文件 | 覆盖 |
+| 测试文件（`__tests__/`） | 覆盖 |
 |---------|------|
-| `pa-review-language.test.ts` | regex 检测：中文比例 0% / 20% / 30% / 31% / 100% |
+| `pa-locales-pagelet.test.ts` | EN/ZH key parity + `detectNoteLanguage` regex（中文比例 0% / 20% / 30% / 31% / 100%） |
 | `pa-review-schemas.test.ts` | schema 边界：空 suggestions / 超长 rationale / 缺字段 / source_id 不命中 |
-| `pa-review-host-policy.test.ts` | basic 模式单 turn 即 stop / deeper 模式 5 turn 上限 |
+| `pa-review-cost.test.ts` | 定价表 + canonical provider 别名（qwen/dashscope/bailian） |
+| `pa-review-rate-limit.test.ts` | 滑窗 / 强制跳过 / 跨日 reset |
+| `pa-review-file-io.test.ts` | `.pagelet/` 解析 + `vault.adapter.write` 路径 + frontmatter |
+| `pa-review-model.test.ts` | structured output + 降级 path |
+| `pa-review-tool-provider.test.ts` | capability 注册 + targetConfinement 行为 |
+| `pagelet-settings.test.ts` | `normalizeReviewsFolder` 10 类越界形状（§14.1 H-B3.2 第一道防线） |
+| `pagelet-mascot.test.ts` / `pagelet-mascot-a11y.test.ts` / `pagelet-suggestion-card.test.ts` | UI markup + a11y + reduced-motion |
+| `pagelet-compat-{view-type,debounce,ribbon,focus-command}.test.ts` | R1/R2/R4 + Cmd+/ |
 | `policy-engine.test.ts`（扩展） | runKind="review" + allowWrite=true → action capability 放行 |
-| `pa-review-runtime.test.ts` | cost-gate 滑窗 / hardCap / 强制跳过 |
+
+> v1 没有 `pa-review-host-policy.test.ts`：HostPolicy 未单独抽出（见 §1.3 注），单 turn 行为由 `pa-review-runtime.ts` 与 model 测试间接覆盖。
 
 ### 12.2 集成测试
 
@@ -786,8 +816,8 @@ v1 暂不直接收集遥测数据。代用指标：
 >
 > **H-B3.2 两层闭环（更新 2026-06-04，issue #358 关闭后）**：`PaReviewToolProvider` 的 `targetConfinement.allowedRoots` 由两层独立防线保护——
 >
-> 1. **Settings 层（第一道，user-facing）**：`normalizeReviewsFolder` 在 data.json 写入边界处先行 fail-closed 把 10 类越界形状（`empty / too_long / absolute_path / drive_letter / parent_traversal / obsidian_config / forbidden_dotfolder / control_chars / invisible_chars / trailing_dot_or_space`）落到默认 `.pagelet`。实现位置：`src/settings/pagelet/index.ts:243` `normalizeReviewsFolder` + `src/settings/pagelet/index.ts:192` `mergePageletSettings` boot-time merge + `src/plugin.ts:651` `loadSettings` + `src/plugin.ts:111` 的一次性迁移 Notice（localStorage flag `pa-pagelet-reviews-folder-migration-v1`）。
-> 2. **Framework Gate 1（第二道，defense-in-depth）**：`validateAllowedRoots` 在 `buildConfinement` 内对 `allowedRoots` 做 NFC+lowercase fold 检查，命中 `{.obsidian, .git, .trash, .obsidian.bak}` 直接 throw `ConfinementConfigError`（issue #358 AC #1）；写入期 `validateTargetConfinementSync` step 6 对 candidate path 重做同套段检查（issue #358 AC #2-3）。实现位置：`src/ai-services/write-action-framework/target-confinement.ts` `validateAllowedRoots` + `validateTargetConfinementSync` step 6 + `src/pagelet/pa-review-tool-provider.ts:285` `buildConfinement` 的内嵌调用。**触发时机说明**：Pagelet 用 `get targetConfinement()` getter（`pa-review-tool-provider.ts:410`），每次属性读时都会调一次 `buildConfinement` → `validateAllowedRoots`，throw 因此延迟到执行期（runtime 的 `validateTargetConfinement` catch 兜底转成 `rejected_at_confinement` 事件）；如果第三方 `CapabilityProvider` 改用 eager `targetConfinement: {...}` 字面量，调用 `buildConfinement` / `validateAllowedRoots` 的位置就回到字面 register 期，throw 在 provider 构造时立刻冒出。两种模式都满足 "loud, not silent" 的 AC #1 要求，但调用 site 和栈追踪不同。
+> 1. **Settings 层（第一道，user-facing）**：`normalizeReviewsFolder` 在 data.json 写入边界处先行 fail-closed 把 10 类越界形状（`empty / too_long / absolute_path / drive_letter / parent_traversal / obsidian_config / forbidden_dotfolder / control_chars / invisible_chars / trailing_dot_or_space`）落到默认 `.pagelet`。实现位置：`src/settings/pagelet/index.ts` `normalizeReviewsFolder` + `mergePageletSettings` boot-time merge + `src/plugin.ts` `loadSettings` + 一次性迁移 Notice（localStorage flag `pa-pagelet-reviews-folder-migration-v1`）。
+> 2. **Framework Gate 1（第二道，defense-in-depth）**：`validateAllowedRoots` 在 `buildConfinement` 内对 `allowedRoots` 做 NFC+lowercase fold 检查，命中 `{.obsidian, .git, .trash, .obsidian.bak}` 直接 throw `ConfinementConfigError`（issue #358 AC #1）；写入期 `validateTargetConfinementSync` 在第 9 步（SDD §2.2 1–13 sync 序列里的 candidate-side denylist 段）对 candidate path 重做同套段检查（issue #358 AC #2-3）。实现位置：`src/ai-services/write-action-framework/target-confinement.ts` `validateAllowedRoots` + `validateTargetConfinementSync` step 9 + `src/pagelet/pa-review-tool-provider.ts:286` `buildConfinement` 的内嵌调用。**触发时机说明**：Pagelet 用 `get targetConfinement()` getter（`pa-review-tool-provider.ts:410`），每次属性读时都会调一次 `buildConfinement` → `validateAllowedRoots`，throw 因此延迟到执行期（runtime 的 `validateTargetConfinement` catch 兜底转成 `rejected_at_confinement` 事件）；如果第三方 `CapabilityProvider` 改用 eager `targetConfinement: {...}` 字面量，调用 `buildConfinement` / `validateAllowedRoots` 的位置就回到字面 register 期，throw 在 provider 构造时立刻冒出。两种模式都满足 "loud, not silent" 的 AC #1 要求，但调用 site 和栈追踪不同。
 >
 > framework SDD §8.3 描述的攻击面在两层任一即被截断；即使未来某个第三方 `CapabilityProvider` 跳过 settings 层直接接入 framework，Gate 1 仍能独立 fail-closed。回归测试见 `__tests__/pagelet-settings.test.ts` 47 个 case（settings 层）+ `src/ai-services/write-action-framework/target-confinement.spec.ts` 30+ case（framework 层，含 `validateAllowedRoots` 10 个变体 + `forbidden_dotfolder` 候选侧 7 个变体）。剩余 framework-layer Cf-invisibles / trailing-dot-or-space mirror 单独跟踪 follow-up issue（issue #358 AC 不要求）。
 >
