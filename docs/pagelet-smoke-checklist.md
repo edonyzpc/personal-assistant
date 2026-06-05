@@ -33,6 +33,7 @@ shows what blocks tag vs what merely needs follow-up:
   - Prompt-injection negative cases (LLM-driven)
 - **P1 — track but don't block tag.** Open `S1` bugs may ship with a
   filed follow-up ticket (linked in release notes). Sections:
+  - Provider structured output (OQ002)
   - Cost indicator
   - A11y
   - Ribbon position setting
@@ -110,6 +111,56 @@ shows what blocks tag vs what merely needs follow-up:
       `gate.target-confinement.ok` → `gate.preview.shown` →
       `gate.confirmation.received` (outcome: confirmed) →
       `gate.stale-reread.ok` → `execute.ok`
+
+## Provider structured output (OQ002)
+
+Verifies that each mainstream provider produces schema-compliant structured
+output via the native `json_schema` path or falls back gracefully to the
+JSON-mode parser. This section replaces the one-shot OQ002 spike with a
+repeatable per-release check.
+
+**Prerequisites**: Debug mode ON (Settings → Personal Assistant → Debug).
+Prepare two test notes: one Chinese (~200 chars), one English (~200 words).
+
+For **each** provider below, configure it in Settings → Personal Assistant
+→ Model, then trigger Pagelet on both test notes:
+
+### Qwen / DashScope (qwen-plus)
+
+- [ ] Chinese note → review completes, modal shows valid suggestions
+- [ ] English note → review completes, modal shows valid suggestions
+- [ ] Console: check `pagelet.schema_parse` event — expected path:
+      `structured` (native json_schema). Record actual path: __________
+
+### Qwen / DashScope (qwen-max or qwen-flash)
+
+- [ ] Chinese note → review completes
+- [ ] English note → review completes
+- [ ] Console path: expected `structured`. Actual: __________
+
+### DeepSeek (direct API, deepseek-chat)
+
+- [ ] Chinese note → review completes
+- [ ] English note → review completes
+- [ ] Console path: expected `json-mode-fallback` (DeepSeek does not
+      support json_schema). Actual: __________
+
+### OpenAI-compatible (if configured)
+
+- [ ] Chinese note → review completes
+- [ ] English note → review completes
+- [ ] Console path: expected `structured`. Actual: __________
+
+### Evaluation criteria
+
+- If a provider's fallback rate > 30% across its runs (i.e. both notes
+  hit fallback when structured was expected), file as **S1** with the
+  provider name and console output.
+- If fallback produces invalid output (zod validation failure after
+  retry), file as **S0**.
+- If a provider is unavailable (no API key), mark as `SKIP — no key`
+  and note it in the Bugs table. At least TWO providers must be tested
+  for the checklist to pass.
 
 ## Cost indicator
 

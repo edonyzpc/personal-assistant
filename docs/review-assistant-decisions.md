@@ -476,7 +476,7 @@
 
 ### OQ002 · F5 Provider 兼容性 spike
 
-- **状态**：Partially Resolved（2026-06-05，code-review + web-research spike 完成；live API 测试延至 beta QA）
+- **状态**：✅ Resolved（2026-06-05）
 - **日期**：2026-06-01 → 2026-06-05
 - **背景**：D026 选定 LangChain `withStructuredOutput` + 手写 parser 降级，但 Qwen/Bailian/OpenAI-compatible 各 provider 对 structured output 的实际兼容性需要验证
 - **Spike 结论**（详见 `tmp/oq002-spike-report.md`）：
@@ -485,8 +485,8 @@
   3. **DeepSeek（直连）**：不支持 json_schema，仅支持 json_object。structured output path 会失败并 fall through 到 JSON-mode fallback，fallback parser 可靠兜底。
   4. **OpenAI / Groq / Together**：原生支持 json_schema。
   5. **整体判定**：当前双路径架构（structured output → JSON-mode fallback）充分可用。不需要重新设计（排除 option B / D026 reopen）。
-- **残留项**：live API 测试（5 模型 x 3 样本 = 15 次调用）延至 beta QA，不阻塞 beta 发布
-- **降级为**：**不再阻塞**（Soft Blocker → Partially Resolved）
+- **Live 测试制度化**：原始 spike 的 live API 测试残留项已整合到 `docs/pagelet-smoke-checklist.md`「Provider structured output (OQ002)」section（P1 release gate），每个 `beta.N` 打 tag 前重复验证，不再作为一次性待办
+- **降级为**：**Resolved**（Soft Blocker → Resolved）
 
 ### OQ003 · v2 异常熔断细化方案
 

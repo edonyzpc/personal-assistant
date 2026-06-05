@@ -17,7 +17,7 @@
 | 对应版本 | PA `v2.2.0-beta.1`（沿用 D013 通道） |
 | 决策依据 | `docs/review-assistant-decisions.md` D001-D031 |
 | 产品意图 | `docs/review-assistant-product-design.md` |
-| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Partially Resolved（2026-06-05 spike 确认双路径架构可用，live API 测试延至 beta QA） |
+| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Resolved（2026-06-05 spike + live 测试制度化到 smoke checklist） |
 | 主作者 | PA core |
 | 上次更新 | 2026-06-05 |
 
@@ -810,7 +810,7 @@ v1 暂不直接收集遥测数据。代用指标：
 | ID | 内容 | 严重程度 | 影响 SDD 章节 |
 |----|------|---------|--------------|
 | ~~**OQ001**~~ | ~~**Write Action Framework v1 SDD + 最小实现 + PolicyEngine 参数化**~~ | **✅ Resolved（2026-06-03，[[D031]]）** | §2.4 / §3 / §7 / §14.3 占位已去 stub |
-| ~~**OQ002**~~ | ~~**F5 Provider 兼容性 spike**~~ | **✅ Partially Resolved（2026-06-05）** — spike 确认 Qwen 主流模型支持 json_schema，双路径架构可用；live API 测试延至 beta QA | §4.2（兼容矩阵已更新）、§4.3（失败矩阵实际触发率） |
+| ~~**OQ002**~~ | ~~**F5 Provider 兼容性 spike**~~ | **✅ Resolved（2026-06-05）** — spike 确认双路径架构可用；live 测试制度化到 `docs/pagelet-smoke-checklist.md` P1 section | §4.2（兼容矩阵已更新）、§4.3（失败矩阵实际触发率） |
 
 > **OQ001 解阻塞标记（2026-06-03）**：Write Action Framework v1 SDD 落地（`docs/write-action-framework-sdd.md`），`src/ai-services/write-action-framework/**` 4 个 gate 实现就绪，PolicyEngine 参数化（runKind + allowWrite）完成，`pagelet.write_review_output` 作为首个真实 caller 接入并通过 E2E + prompt-injection 测试。本 SDD §2.4 与 §3 的契约面占位已 1:1 映射到 framework SDD §3 capability contract 与 §4 PolicyEngine diff。命名对齐二层层级（Operations Agent mode, future → Write Action Framework v1 → Pagelet v1）保留；framework v2 的 action family 扩展（append / replace / multi-file / shell）走 mode 路线，参 [[D031]]。
 >
