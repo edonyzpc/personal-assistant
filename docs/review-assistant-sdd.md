@@ -266,10 +266,10 @@ export type PageletReviewResult = z.infer<typeof PageletReviewResultSchema>;
 | Qwen/DashScope（qwen3.5+、qwen-max/plus/flash/turbo，非思考模式） | Yes（ChatOpenAI） | Yes | Yes | 否，仅安全网 |
 | Qwen/DashScope（旧模型 / 思考模式） | Yes（方法存在） | No | Yes | 是 |
 | Bailian（Qwen 模型） | 同 DashScope | 同 DashScope | 同 DashScope | 同 DashScope |
-| Bailian（第三方：DeepSeek、GLM 等） | Yes（方法存在） | 不确定 | 大概率 | 是 |
+| Bailian（第三方：DeepSeek、GLM 等） | Yes（方法存在） | 不确定 | Likely | 是 |
 | DeepSeek（直连） | Yes（方法存在） | No | Yes（V3+/R1+） | 是 |
 | OpenAI（原生） | Yes | Yes | Yes | 否，仅安全网 |
-| Groq | Yes | 大概率 | Yes | 否，仅安全网 |
+| Groq | Yes | Likely | Yes | 否，仅安全网 |
 | Together AI | Yes | 部分 | Yes | 视模型而定 |
 | Ollama | **不支持**（D026.c 排除） | No | No | 不进入候选 |
 
@@ -805,7 +805,7 @@ v1 暂不直接收集遥测数据。代用指标：
 
 | 风险 | 等级 | 缓解 |
 |------|------|------|
-| Provider structured-output 实际兼容性低于预期 | 低（OQ002 spike 降级） | OQ002 spike（2026-06-05）确认主流 Qwen 模型支持 json_schema；降级 path 已验证可靠 |
+| Provider structured-output 实际兼容性低于预期 | 低（OQ002 spike 降级） | OQ002 spike（2026-06-05）确认主流 Qwen 模型支持 json_schema；fallback parser 8 步纵深防御（容错提取 → 容错解析 → schema 修补 → 超长截断 → source-id 过滤 → 纠错重试 → 部分成功）已验证可靠 |
 | 用户对 `.pagelet/` 隐藏目录的接受度 | 低 | dotfolder 默认隐藏 + settings 可改 + 文档说明 |
 | Beta 期间 cost 失控（用户脚本误触发） | 中 | 小时/日双层限制（D020） + 强制跳过需手动确认 |
 | 与 Templater 等插件的隐性冲突 | 中 | R3 + frontmatter `pagelet: true` + view-type 隔离（M7） |
