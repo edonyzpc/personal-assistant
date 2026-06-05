@@ -338,6 +338,17 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
         const result = validateTargetConfinementSync(".pagelet/notes/foo.md", cfg);
         expect(result).toEqual({ ok: true, normalizedPath: ".pagelet/notes/foo.md" });
     });
+
+    // Issue #365 review: pin that ./-prefixed roots work after step 11
+    // strips the leading `./` via `.replace(/^\.\//, "")`.
+    it("accepts candidate against ./-prefixed root (./.pagelet/)", () => {
+        const cfg: ConfinementConfig = {
+            allowedRoots: ["./.pagelet/"],
+            allowedExtensions: [".md"],
+        };
+        const result = validateTargetConfinementSync(".pagelet/notes/foo.md", cfg);
+        expect(result).toEqual({ ok: true, normalizedPath: ".pagelet/notes/foo.md" });
+    });
 });
 
 describe("validateTargetConfinement (async with FS probe)", () => {

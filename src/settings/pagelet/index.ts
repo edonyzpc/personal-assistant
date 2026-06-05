@@ -345,6 +345,11 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     // case-fold + NFC rationale as the `.obsidian` check above. Kept in
     // a separate guard so the error message can be specific (".git" /
     // ".trash" / ".obsidian.bak" don't share the "Obsidian config" framing).
+    //
+    // NOTE: `.obsidian` is included in `FORBIDDEN_DOTFOLDER_SEGMENTS` (the
+    // shared set) for the framework layer's benefit, but is unreachable HERE
+    // because the `obsidian_config` check above already returns for any
+    // input whose folded first segment equals `.obsidian`.
     if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "forbidden_dotfolder", input: trimmed };
     }
