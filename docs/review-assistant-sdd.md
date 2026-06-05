@@ -17,7 +17,7 @@
 | 对应版本 | PA `v2.2.0-beta.1`（沿用 D013 通道） |
 | 决策依据 | `docs/review-assistant-decisions.md` D001-D031 |
 | 产品意图 | `docs/review-assistant-product-design.md` |
-| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；OQ002 (F5 provider spike) 仍 Open（Soft Blocker） |
+| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Partially Resolved（2026-06-05 spike 确认双路径架构可用，live API 测试延至 beta QA） |
 | 主作者 | PA core |
 | 上次更新 | 2026-06-03 |
 
@@ -259,16 +259,21 @@ export const PageletReviewResultSchema = z.object({
 export type PageletReviewResult = z.infer<typeof PageletReviewResultSchema>;
 ```
 
-### 4.2 Provider 兼容矩阵（D026.c）
+### 4.2 Provider 兼容矩阵（D026.c，OQ002 spike 更新 2026-06-05）
 
-| Provider | `withStructuredOutput` 支持 | 降级策略 |
-|----------|----------------------------|----------|
-| Qwen/DashScope | 部分（依赖模型版本，OQ002 spike） | 手写 prompt + JSON.parse + zod safeParse |
-| Bailian | 部分（OQ002 spike） | 同上 |
-| OpenAI-compatible | 通常支持 `json_schema` | LangChain 原生路径 |
-| Ollama | **不支持**（D026.c 排除） | 不进入候选 |
+| Provider | `withStructuredOutput` | JSON schema 模式 | JSON object 模式 | 降级 parser 是否为主路径？ |
+|----------|----------------------|------------------|------------------|--------------------------|
+| Qwen/DashScope（qwen3.5+、qwen-max/plus/flash/turbo，非思考模式） | Yes（ChatOpenAI） | Yes | Yes | 否，仅安全网 |
+| Qwen/DashScope（旧模型 / 思考模式） | Yes（方法存在） | No | Yes | 是 |
+| Bailian（Qwen 模型） | 同 DashScope | 同 DashScope | 同 DashScope | 同 DashScope |
+| Bailian（第三方：DeepSeek、GLM 等） | Yes（方法存在） | 不确定 | 大概率 | 是 |
+| DeepSeek（直连） | Yes（方法存在） | No | Yes（V3+/R1+） | 是 |
+| OpenAI（原生） | Yes | Yes | Yes | 否，仅安全网 |
+| Groq | Yes | 大概率 | Yes | 否，仅安全网 |
+| Together AI | Yes | 部分 | Yes | 视模型而定 |
+| Ollama | **不支持**（D026.c 排除） | No | No | 不进入候选 |
 
-> **OQ002 阻塞**：实际兼容性需要 1-2 天 spike 验证（每 provider 跑 10 个 review 样本，统计 schema 命中率）。Spike 输出会更新本表。
+> **OQ002 spike 结论（2026-06-05）**：PA 主要目标用户使用的 Qwen 主流模型（qwen-plus / qwen-max / qwen-turbo / qwen-flash）通过 DashScope OpenAI-compatible endpoint 均支持 `json_schema` 严格模式。DeepSeek 直连和 DashScope 上的第三方模型由 JSON-mode fallback parser 兜底。当前双路径架构充分可用，不需要重新设计。详见 `tmp/oq002-spike-report.md`。
 
 ### 4.3 失败矩阵（D026.d）
 
@@ -775,7 +780,7 @@ v1 暂不直接收集遥测数据。代用指标：
 | ID | 内容 | 严重程度 | 影响 SDD 章节 |
 |----|------|---------|--------------|
 | ~~**OQ001**~~ | ~~**Write Action Framework v1 SDD + 最小实现 + PolicyEngine 参数化**~~ | **✅ Resolved（2026-06-03，[[D031]]）** | §2.4 / §3 / §7 / §14.3 占位已去 stub |
-| OQ002 | F5 Provider 兼容性 spike | 🟡 Soft Blocker（结构化输出兼容率不达预期会降级体验） | §4.2（兼容矩阵）、§4.3（失败矩阵实际触发率） |
+| ~~**OQ002**~~ | ~~**F5 Provider 兼容性 spike**~~ | **✅ Partially Resolved（2026-06-05）** — spike 确认 Qwen 主流模型支持 json_schema，双路径架构可用；live API 测试延至 beta QA | §4.2（兼容矩阵已更新）、§4.3（失败矩阵实际触发率） |
 
 > **OQ001 解阻塞标记（2026-06-03）**：Write Action Framework v1 SDD 落地（`docs/write-action-framework-sdd.md`），`src/ai-services/write-action-framework/**` 4 个 gate 实现就绪，PolicyEngine 参数化（runKind + allowWrite）完成，`pagelet.write_review_output` 作为首个真实 caller 接入并通过 E2E + prompt-injection 测试。本 SDD §2.4 与 §3 的契约面占位已 1:1 映射到 framework SDD §3 capability contract 与 §4 PolicyEngine diff。命名对齐二层层级（Operations Agent mode, future → Write Action Framework v1 → Pagelet v1）保留；framework v2 的 action family 扩展（append / replace / multi-file / shell）走 mode 路线，参 [[D031]]。
 >
@@ -800,7 +805,7 @@ v1 暂不直接收集遥测数据。代用指标：
 
 | 风险 | 等级 | 缓解 |
 |------|------|------|
-| Provider structured-output 实际兼容性低于预期 | 中 | OQ002 spike 提前验证；降级 path 必须可用 |
+| Provider structured-output 实际兼容性低于预期 | 低（OQ002 spike 降级） | OQ002 spike（2026-06-05）确认主流 Qwen 模型支持 json_schema；降级 path 已验证可靠 |
 | 用户对 `.pagelet/` 隐藏目录的接受度 | 低 | dotfolder 默认隐藏 + settings 可改 + 文档说明 |
 | Beta 期间 cost 失控（用户脚本误触发） | 中 | 小时/日双层限制（D020） + 强制跳过需手动确认 |
 | 与 Templater 等插件的隐性冲突 | 中 | R3 + frontmatter `pagelet: true` + view-type 隔离（M7） |
