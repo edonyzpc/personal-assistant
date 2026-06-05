@@ -486,7 +486,7 @@
   4. **OpenAI / Groq / Together**：原生支持 json_schema。
   5. **整体判定**：当前双路径架构（structured output → JSON-mode fallback）充分可用。不需要重新设计（排除 option B / D026 reopen）。
 - **残留项**：live API 测试（5 模型 x 3 样本 = 15 次调用）延至 beta QA，不阻塞 beta 发布
-- **降级为**：**不再阻塞**（Soft Blocker → Resolved-with-residual）
+- **降级为**：**不再阻塞**（Soft Blocker → Partially Resolved）
 
 ### OQ003 · v2 异常熔断细化方案
 

@@ -61,7 +61,7 @@ The current dual-path architecture (LangChain `withStructuredOutput` as primary 
 
 #### DeepSeek (via DashScope)
 
-- Many PA users access DeepSeek models through DashScope's model catalog (e.g., `deepseek-v3`, `deepseek-r1` listed in `DASHSCOPE_NATIVE_TOOL_CALLING_MODELS`).
+- Many PA users access DeepSeek models through DashScope's model catalog (e.g., `deepseek-v3`, `deepseek-r1` listed in `DASHSCOPE_NATIVE_TOOL_CALLING_MODELS` in `src/ai-services/ai-utils.ts`).
 - DashScope may or may not pass through `json_schema` response_format to DeepSeek models. The safer assumption is json_object mode works but json_schema does not.
 - **Recommendation**: Same as direct DeepSeek -- fallback parser as primary path.
 
