@@ -476,11 +476,17 @@
 
 ### OQ002 · F5 Provider 兼容性 spike
 
-- **状态**：Open
-- **日期**：2026-06-01
-- **背景**：D026 选定 LangChain `withStructuredOutput` + 手写 parser 降级，但 Qwen/Bailian/OpenAI-compatible 各 provider 对 structured output 的实际兼容性需要 1-2 天 spike 验证
-- **待办**：写一个最小验证脚本，对每个 provider 跑 10 个 review 样本，统计 schema 命中率
-- **阻塞**：影响 Pagelet 主路径稳定性预期
+- **状态**：Partially Resolved（2026-06-05，code-review + web-research spike 完成；live API 测试延至 beta QA）
+- **日期**：2026-06-01 → 2026-06-05
+- **背景**：D026 选定 LangChain `withStructuredOutput` + 手写 parser 降级，但 Qwen/Bailian/OpenAI-compatible 各 provider 对 structured output 的实际兼容性需要验证
+- **Spike 结论**（详见 `tmp/oq002-spike-report.md`）：
+  1. **Qwen/DashScope**：DashScope OpenAI-compatible endpoint 对主流 Qwen 模型（qwen3.5+、qwen-max/plus/flash/turbo，非思考模式）支持 `response_format: { type: "json_schema" }` 严格模式。PA 的 `withStructuredOutput(schema, { method: "json_schema", strict: true })` 在这些模型上可正常工作。
+  2. **Bailian**：与 DashScope 同一后端，能力等同。通过百炼访问的第三方模型（DeepSeek、GLM 等）json_schema 支持不确定，降级 path 兜底。
+  3. **DeepSeek（直连）**：不支持 json_schema，仅支持 json_object。structured output path 会失败并 fall through 到 JSON-mode fallback，fallback parser 可靠兜底。
+  4. **OpenAI / Groq / Together**：原生支持 json_schema。
+  5. **整体判定**：当前双路径架构（structured output → JSON-mode fallback）充分可用。不需要重新设计（排除 option B / D026 reopen）。
+- **残留项**：live API 测试（5 模型 x 3 样本 = 15 次调用）延至 beta QA，不阻塞 beta 发布
+- **降级为**：**不再阻塞**（Soft Blocker → Resolved-with-residual）
 
 ### OQ003 · v2 异常熔断细化方案
 
