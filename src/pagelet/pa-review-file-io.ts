@@ -91,10 +91,12 @@ export const PAGELET_FILENAME_INFIX = "pagelet-review" as const;
  *  - `\\s` → spaces / tabs (CLI-tool friendliness; Obsidian itself tolerates spaces)
  *  - `\\u0000-\\u001F` + `\\u007F` → ASCII control characters + DEL
  */
+/* eslint-disable no-control-regex */
 const SOURCE_NAME_FORBIDDEN_CHARS = new RegExp(
     "[\\\\/:*?\"<>|\\s\\u0000-\\u001F\\u007F]",
     "g",
 );
+/* eslint-enable no-control-regex */
 
 // ---------------------------------------------------------------------------
 // Public types

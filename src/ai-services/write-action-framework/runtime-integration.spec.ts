@@ -389,7 +389,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
             exists: jest.fn(async (path: string) => existsMap[path] ?? false) as FsProbe["exists"],
         };
         const cap = makeCapability();
-        const exec = createActionExecutor(defaultExecutorOptions({
+        createActionExecutor(defaultExecutorOptions({
             debugObserver: makeObserver(events),
             fsProbe,
         }));

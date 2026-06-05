@@ -157,7 +157,7 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
     // dotfolder denylist by being a different literal string.
     it("rejects invisible_chars for ZWSP prefix on .obsidian (the canonical spoof)", () => {
         // The whole point of this defense: must report `invisible_chars`,
-        // NOT `forbidden_dotfolder`, because the segment is `​.obsidian`
+        // NOT `forbidden_dotfolder`, because the segment is `.obsidian`
         // (with the zero-width prefix) and the fold check would never match
         // `.obsidian`. The check order in the validator is what catches this.
         const result = validateTargetConfinementSync("​.obsidian/plugins/x.md", baseConfig);

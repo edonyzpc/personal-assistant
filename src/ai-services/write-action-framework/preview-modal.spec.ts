@@ -128,14 +128,12 @@ jest.mock("obsidian", () => ({
 
 // IMPORTANT: imports MUST come after jest.mock so the mock is wired before the
 // preview-modal module pulls in obsidian.
-// eslint-disable-next-line import/first
 import {
     createMutexPreviewRenderer,
     ObsidianPreviewRenderer,
     WriteActionPreviewModal,
     type PreviewRenderer,
 } from "./preview-modal";
-// eslint-disable-next-line import/first
 import type { ConfirmationOutcome, PreviewSpec } from "./types";
 
 function buildSpec(overrides: Partial<PreviewSpec> = {}): PreviewSpec {

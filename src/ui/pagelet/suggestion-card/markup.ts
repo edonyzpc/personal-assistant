@@ -35,7 +35,6 @@
 
 import {
     PAGELET_SUGGESTION_KINDS,
-    type PageletSuggestion,
     type PageletSuggestionKind,
 } from "../../../pagelet/pa-review-schemas";
 import { formatUsd, type PageletCostEntry } from "../../../pagelet/pa-review-cost";

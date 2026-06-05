@@ -510,7 +510,7 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
 
             let result: AgentCapabilityResult;
             const execStartedAt = now();
-            let executeAttempted = true;
+            const executeAttempted = true;
             try {
                 result = await capability.executeWrite(input, context, hooks);
             } catch (error) {
