@@ -145,9 +145,23 @@ export class LLMView extends ItemView {
     private nextTurnIndex = 0;
     private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
     private persistChain: Promise<void> = Promise.resolve();
+    private composerTextArea: HTMLTextAreaElement | null = null;
+    private syncComposerControlsForExternalPrefill: (() => void) | null = null;
 
     get isStreaming(): boolean {
         return this.abortController !== null;
+    }
+
+    prefillComposer(prompt: string): boolean {
+        if (!this.composerTextArea || !this.syncComposerControlsForExternalPrefill) return false;
+        if (this.composerTextArea.value.trim().length > 0 && this.composerTextArea.value !== prompt) {
+            this.composerTextArea.focus();
+            return false;
+        }
+        this.composerTextArea.value = prompt;
+        this.syncComposerControlsForExternalPrefill();
+        this.composerTextArea.focus();
+        return true;
     }
 
     constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
@@ -721,6 +735,12 @@ export class LLMView extends ItemView {
             hideComposerHint();
             syncComposerControls();
             textArea.focus();
+        };
+        this.composerTextArea = textArea;
+        this.syncComposerControlsForExternalPrefill = () => {
+            hideComposerHint();
+            renderSkillTypeahead();
+            syncComposerControls();
         };
         const getMemoryChipState = (plan?: MemoryMaintenancePlan | null): MemoryChipState => {
             if (this.plugin.settings?.memoryEnabled === false) {
@@ -2565,6 +2585,8 @@ export class LLMView extends ItemView {
         this.disconnectSettingsChangeListener();
         this.teardownMobileTabBarAutoHide();
         this.clearChatDrawerHost();
+        this.composerTextArea = null;
+        this.syncComposerControlsForExternalPrefill = null;
     }
 
     private startViewSession(): number {

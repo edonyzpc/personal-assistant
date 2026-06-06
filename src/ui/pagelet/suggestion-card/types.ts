@@ -84,6 +84,17 @@ export interface SuggestionCardProps {
     onAccept?: (suggestion: PageletSuggestion) => void;
     /** Dismiss handler — marks the suggestion as "don't show again". */
     onDismiss?: (suggestion: PageletSuggestion) => void;
+    /**
+     * Related-note click handler. The card forwards the raw model string
+     * (often a wikilink-looking value); the Pagelet panel decides how to
+     * resolve it against Obsidian metadata.
+     */
+    onRelatedNoteClick?: (noteName: string, suggestion: PageletSuggestion) => void;
+    /**
+     * Research action handler. Rendered only for link/evidence suggestions
+     * so review generation never performs automatic WebSearch.
+     */
+    onResearch?: (suggestion: PageletSuggestion) => void;
 }
 
 export interface SuggestionCardRendererOptions {

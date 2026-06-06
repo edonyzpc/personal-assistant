@@ -60,7 +60,10 @@ export {
 } from "./focus-command";
 
 export {
+    PAGELET_OPEN_PANEL_COMMAND_ID,
     PAGELET_REVIEW_CURRENT_COMMAND_ID,
+    registerPageletOpenPanelCommand,
     registerPageletReviewCurrentCommand,
+    type RegisterPageletOpenPanelCommandOptions,
     type RegisterPageletReviewCurrentCommandOptions,
 } from "./review-command";

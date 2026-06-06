@@ -108,6 +108,30 @@ export {
     type WriteReviewNoteResult,
 } from "./pa-review-file-io";
 
+export {
+    PAGELET_APPROX_CHARS_PER_TOKEN,
+    PAGELET_SCOPE_DEFAULT_MAX_INCLUDED,
+    PAGELET_SEGMENT_TARGET_CHARS,
+    applyPageletScopeToggle,
+    buildPageletScopePlan,
+    buildPageletScopeReviewBundle,
+    rangeLabel,
+    selectPageletScope,
+    skippedReasonLabel,
+    type BuildPageletScopePlanOptions,
+    type BuildPageletScopeReviewBundleOptions,
+    type PageletReviewRange,
+    type PageletScopeCandidate,
+    type PageletScopeCandidateReason,
+    type PageletScopeFileLike,
+    type PageletScopeMetadataLike,
+    type PageletScopePlan,
+    type PageletScopeReviewBundle,
+    type PageletScopeSelection,
+    type PageletScopeSkippedReason,
+    type PageletScopeSourceReference,
+} from "./scope";
+
 // Track C · C1 — Write Action Framework v1 capability + runtime composer.
 export {
     PAGELET_PROVIDER_ID,
@@ -129,6 +153,12 @@ export {
     type PaReviewRuntime,
 } from "./pa-review-runtime";
 
+export {
+    PAGELET_VIEW_TYPE,
+    PageletView,
+    type PageletPanelReviewData,
+} from "./view";
+
 // Track B · B5 compatibility / a11y surface — view-type gating,
 // debounce + idempotency, ribbon registration, Cmd+/ focus command.
 export {
@@ -139,6 +169,7 @@ export {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
     PAGELET_FOCUSABLE_SELECTORS,
+    PAGELET_OPEN_PANEL_COMMAND_ID,
     PAGELET_RIBBON_CSS_CLASS,
     PAGELET_RIBBON_DEFAULT_TOOLTIP,
     PAGELET_RIBBON_ICON_ID,
@@ -152,6 +183,7 @@ export {
     getActiveMarkdownView,
     isPageletEligibleView,
     registerPageletFocusCommand,
+    registerPageletOpenPanelCommand,
     registerPageletReviewCurrentCommand,
     registerPageletRibbonIcon,
     type PageletCoalescerEntrySnapshot,
@@ -167,6 +199,7 @@ export {
     type PageletViewTypeProbe,
     type PageletWorkspaceLike,
     type RegisterPageletFocusCommandOptions,
+    type RegisterPageletOpenPanelCommandOptions,
     type RegisterPageletReviewCurrentCommandOptions,
     type RegisterPageletRibbonOptions,
     type RegisterPageletRibbonResult,
