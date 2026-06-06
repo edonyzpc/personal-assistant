@@ -43,6 +43,7 @@ interface StructuredModelHarness {
     structuredInvocations: number;
     invokeInvocations: number;
     capturedStructuredInputs: unknown[];
+    capturedStructuredOptions: unknown[];
     capturedInvokeInputs: unknown[];
 }
 
@@ -52,6 +53,7 @@ function makeStructuredModel(steps: StructuredStep[]): StructuredModelHarness {
         structuredInvocations: 0,
         invokeInvocations: 0,
         capturedStructuredInputs: [],
+        capturedStructuredOptions: [],
         capturedInvokeInputs: [],
     };
 
@@ -62,16 +64,19 @@ function makeStructuredModel(steps: StructuredStep[]): StructuredModelHarness {
             harness.capturedInvokeInputs.push(input);
             return { content: "" };
         }),
-        withStructuredOutput: () => ({
-            invoke: async (input: unknown) => {
-                harness.structuredInvocations += 1;
-                harness.capturedStructuredInputs.push(input);
-                const step = queue.shift();
-                if (!step) throw new Error("structured queue exhausted (test bug)");
-                if (step.kind === "throw") throw step.error;
-                return step.payload as never;
-            },
-        }),
+        withStructuredOutput: (_schema: unknown, options?: unknown) => {
+            harness.capturedStructuredOptions.push(options);
+            return {
+                invoke: async (input: unknown) => {
+                    harness.structuredInvocations += 1;
+                    harness.capturedStructuredInputs.push(input);
+                    const step = queue.shift();
+                    if (!step) throw new Error("structured queue exhausted (test bug)");
+                    if (step.kind === "throw") throw step.error;
+                    return step.payload as never;
+                },
+            };
+        },
     };
 
     harness.factory = (async () => model) as PageletChatModelFactory;
@@ -166,6 +171,28 @@ describe("PageletReviewModel — happy path (structured output, 3 provider perso
         expect(outcome.diagnostics.attempts).toBe(1);
         expect(outcome.diagnostics.truncated).toBe(false);
         expect(outcome.diagnostics.partial).toBe(false);
+        expect(harness.capturedStructuredOptions[0]).toMatchObject({
+            name: "pagelet_review",
+            method: "jsonSchema",
+            strict: true,
+        });
+    });
+
+    it("uses outputLanguageOverride for the system prompt while preserving detectedLanguage input", async () => {
+        const harness = makeStructuredModel([
+            { kind: "ok", payload: validResultPayload({ detected_language: "zh" }) },
+        ]);
+        const outcome = await reviewNote(
+            harness.factory,
+            defaultInput({
+                detectedLanguage: "en",
+                outputLanguageOverride: "zh",
+            }),
+        );
+        expect(outcome.status).toBe("ok");
+        const messages = harness.capturedStructuredInputs[0] as { content: string }[];
+        expect(messages[0]?.content).toContain("respond in Simplified Chinese");
+        expect(messages[0]?.content).toContain("detected_language");
     });
 
     it("provider B (Qwen/DashScope): payload missing schema_version → auto-stamped → still ok", async () => {
@@ -268,6 +295,33 @@ describe("PageletReviewModel — failure matrix (SDD §4.3, 8 rows)", () => {
         expect(outcome.result.suggestions[0].source_id).toBe("seg-1");
         expect(outcome.diagnostics.partial).toBe(true);
         expect(outcome.diagnostics.droppedSuggestionsCount).toBe(1);
+    });
+
+    it("row 2b: every suggestion has an invalid source_id → retry instead of empty success", async () => {
+        const harness = makeStructuredModel([
+            {
+                kind: "ok",
+                payload: validResultPayload({
+                    suggestions: [
+                        {
+                            source_id: "seg-ghost",
+                            kind: "clarify",
+                            rationale: "invalid source id should force a retry",
+                            proposed_action: "this should not be rendered as an empty success",
+                        },
+                    ],
+                }),
+            },
+            { kind: "ok", payload: validResultPayload() },
+        ]);
+        const outcome = await reviewNote(harness.factory, defaultInput());
+        expect(outcome.status).toBe("ok");
+        if (outcome.status !== "ok") return;
+        expect(outcome.diagnostics.attempts).toBe(2);
+        expect(outcome.diagnostics.partial).toBe(true);
+        expect(outcome.diagnostics.droppedSuggestionsCount).toBe(1);
+        expect(outcome.result.suggestions).toHaveLength(1);
+        expect(outcome.result.suggestions[0].source_id).toBe("seg-1");
     });
 
     it("row 3: wrong field type → zod surfaces error → corrective retry path", async () => {
@@ -460,6 +514,22 @@ describe("PageletReviewModel — provider degradation paths", () => {
         expect(outcome.status).toBe("error");
         if (outcome.status !== "error") return;
         expect(outcome.errorCode).toBe("timeout");
+    });
+
+    it("AbortSignal already aborted before review starts → factory is not called", async () => {
+        let factoryCalls = 0;
+        const factory: PageletChatModelFactory = async () => {
+            factoryCalls += 1;
+            return { invoke: jest.fn(async () => ({ content: "" })) };
+        };
+        const controller = new AbortController();
+        controller.abort();
+        const outcome = await reviewNote(factory, defaultInput(), {}, controller.signal);
+        expect(outcome.status).toBe("error");
+        if (outcome.status !== "error") return;
+        expect(outcome.errorCode).toBe("timeout");
+        expect(factoryCalls).toBe(0);
+        expect(outcome.diagnostics.attempts).toBe(0);
     });
 
     it("JSON-mode parse fails twice → outcome.errorCode='parse_failed'", async () => {
@@ -756,7 +826,7 @@ describe("PageletReviewModel — B4 rate limiting (D020)", () => {
         expect(factoryCalls).toBe(0);
     });
 
-    it("consumes a slot when the call proceeds (reserve() runs BEFORE the factory)", async () => {
+    it("consumes a slot when the call proceeds (reserve() runs before LLM invoke)", async () => {
         // The limiter must consume on the GREEN path, not only on cap. Without
         // this assertion a regression that gates with `peek()` instead of
         // `reserve()` would silently let users bypass the cap.
@@ -772,6 +842,42 @@ describe("PageletReviewModel — B4 rate limiting (D020)", () => {
         const snapshot = await limiter.getStateSnapshot();
         expect(snapshot.dailyCount).toBe(1);
         expect(snapshot.hourlyTimestamps.length).toBe(1);
+    });
+
+    it("consumes one slot for each retry attempt", async () => {
+        const HOUR = 60 * 60 * 1000;
+        const limiter = new PageletRateLimiter({
+            config: { hourlyCap: 10, dailyCap: 100 },
+            now: () => 1_000,
+            nextLocalMidnight: (n) => n + 12 * HOUR,
+        });
+        const harness = makeStructuredModel([
+            { kind: "throw", error: schemaError([{ path: ["suggestions"], message: "bad" }]) },
+            { kind: "ok", payload: validResultPayload() },
+        ]);
+        const outcome = await reviewNote(harness.factory, defaultInput(), { rateLimiter: limiter });
+        expect(outcome.status).toBe("ok");
+        const snapshot = await limiter.getStateSnapshot();
+        expect(snapshot.dailyCount).toBe(2);
+        expect(snapshot.hourlyTimestamps.length).toBe(2);
+    });
+
+    it("does not count a retry as an attempt when rate limit blocks before invoke", async () => {
+        const HOUR = 60 * 60 * 1000;
+        const limiter = new PageletRateLimiter({
+            config: { hourlyCap: 1, dailyCap: 100 },
+            now: () => 1_000,
+            nextLocalMidnight: (n) => n + 12 * HOUR,
+        });
+        const harness = makeStructuredModel([
+            { kind: "throw", error: schemaError([{ path: ["suggestions"], message: "bad" }]) },
+        ]);
+        const outcome = await reviewNote(harness.factory, defaultInput(), { rateLimiter: limiter });
+        expect(outcome.status).toBe("error");
+        if (outcome.status !== "error") return;
+        expect(outcome.errorCode).toBe("rate_limit_hourly");
+        expect(outcome.diagnostics.attempts).toBe(1);
+        expect(harness.structuredInvocations).toBe(1);
     });
 
     it("when BOTH cost gate and rate gate are configured, cost gate fires first (no slot burned)", async () => {

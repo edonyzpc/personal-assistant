@@ -339,7 +339,7 @@ describe("createMascotRendererWithHost", () => {
             "pa-pagelet-mascot--idle",
         ]);
         expect(mascotRoot.attrs["data-plugin"]).toBe("pa-pagelet");
-        expect(mascotRoot.attrs["role"]).toBe("status");
+        expect(mascotRoot.attrs["role"]).toBe("group");
         expect(mascotRoot.attrs["data-mascot-state"]).toBe("idle");
         // SVG present with the canonical viewBox.
         const svgs = findAllByTag(mascotRoot, "svg");

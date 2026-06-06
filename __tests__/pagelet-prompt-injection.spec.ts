@@ -216,12 +216,8 @@ interface InjectionFixture {
     expectedReason: string;
     /**
      * Honest note about why this fixture lands on `expectedReason` rather
-     * than the SDD-named reason (e.g. `inject-absolute-path` lists
-     * "absolute_path" but the writer's `normalizeReviewsFolder` strips the
-     * leading `/` before the framework sees the path, so the actual
-     * rejection reason is `folder_missing`). Surfaces production-vs-test
-     * gaps inline next to each fixture so reviewers can see them at a
-     * glance.
+     * than the SDD-named reason. Surfaces production-vs-test gaps inline next
+     * to each fixture so reviewers can see them at a glance.
      */
     productionGapNote?: string;
 }
@@ -231,18 +227,15 @@ const SDD_8_3_FIXTURES: readonly InjectionFixture[] = [
         id: "inject-absolute-path",
         description: "/etc/passwd — absolute system path (SDD §8.3 row 1)",
         reviewsFolder: "/etc/passwd",
-        // `normalizeReviewsFolder` (pa-review-file-io.ts:325) strips the
-        // leading `/` so by the time the framework sees the candidate it is
-        // already `etc/passwd/...` — sync `absolute_path` check never fires.
-        // The mock adapter does not seed `etc/passwd`, so async Gate 1
-        // rejects with `folder_missing`. On a system where `etc/passwd`
-        // happens to exist as a vault-relative folder (vanishingly unlikely
-        // for the literal name; very real for other absolute paths that
-        // collapse to existing relative folders) the gate would NOT reject
-        // here — only the per-capability allowlist would. See the
-        // production-gap test below.
-        expectedReason: "folder_missing",
-        productionGapNote: "absolute-path scrub happens before the framework sees the candidate",
+        // The IO resolver still strips the leading `/` before Gate 1 sees the
+        // candidate path (`etc/passwd/...`), so the framework's generic
+        // `absolute_path` check does not fire. Pagelet's capability derives
+        // its allowlist from the settings-layer fail-closed validator, which
+        // coerces the compromised folder back to `.pagelet`; the candidate is
+        // rejected as outside the allowed root instead of relying on the
+        // folder-missing probe.
+        expectedReason: "outside_allowlist",
+        productionGapNote: "absolute-path scrub happens before the framework sees the candidate; Pagelet allowlist rejects the coerced relative path",
     },
     {
         id: "inject-traversal",

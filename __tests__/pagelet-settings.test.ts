@@ -308,9 +308,12 @@ describe("mergePageletSettings", () => {
     });
 
     it("accepts every valid ribbonPosition and rejects others", () => {
-        for (const v of ["default", "top", "hidden"] as const) {
+        for (const v of ["default", "hidden"] as const) {
             expect(mergePageletSettings({ ribbonPosition: v }).ribbonPosition).toBe(v);
         }
+        expect(mergePageletSettings({ ribbonPosition: "top" }).ribbonPosition).toBe(
+            PAGELET_DEFAULTS.ribbonPosition,
+        );
         expect(mergePageletSettings({ ribbonPosition: "bottom" }).ribbonPosition).toBe(
             PAGELET_DEFAULTS.ribbonPosition,
         );
@@ -664,7 +667,7 @@ describe("renderPageletSection", () => {
             "Enable Pagelet",
             "Reviews folder",
             "Output language",
-            "Ribbon position",
+            "Ribbon icon",
             "Temperature",
             "Max input tokens",
             "Max output tokens",
@@ -747,7 +750,6 @@ describe("renderPageletSection", () => {
         expect(rows[2].dropdownOptions.map((o) => o.value)).toEqual(["auto", "zh", "en"]);
         expect(rows[3].dropdownOptions.map((o) => o.value)).toEqual([
             "default",
-            "top",
             "hidden",
         ]);
         // Spot-check that labels are i18n-resolved English strings, not key

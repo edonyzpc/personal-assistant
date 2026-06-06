@@ -79,7 +79,6 @@ describe("estimateTokens (B4 token estimator)", () => {
         expect(estimateTokens(null as unknown as string)).toBe(0);
     });
 });
-
 describe("preCheckCost (B4 hard-cap enforcement, D018)", () => {
     it("passes when input < budget AND input + output < hardCap", () => {
         const decision = preCheckCost(7_500, {
@@ -493,4 +492,3 @@ describe("PAGELET_DEFAULT_PRICING table", () => {
         }
     });
 });
-

@@ -6,7 +6,6 @@
  * Coverage matrix:
  *  - Constants (icon ID, CSS class, data-plugin, tooltip) match SDD §6.1 R4.
  *  - "default" position: just append + tag.
- *  - "top" position: append + tag + `--top` modifier class.
  *  - "hidden" position: append + tag + `style.display = "none"`.
  *  - Click callback is forwarded through Obsidian's `addRibbonIcon`.
  *  - The icon ID + tooltip can be overridden by the caller (i18n hook).
@@ -139,19 +138,6 @@ describe("registerPageletRibbonIcon", () => {
         expect(el.attrs["data-plugin"]).toBe(PAGELET_DATA_PLUGIN_VALUE);
     });
 
-    it("`top` position adds the `--top` modifier class", () => {
-        const host = makeRecordingHost();
-        const result = registerPageletRibbonIcon(host, {
-            position: "top",
-            onClick: () => undefined,
-        });
-        const el = host.elements[0];
-        expect(el.classes).toContain(PAGELET_RIBBON_CSS_CLASS);
-        expect(el.classes).toContain(`${PAGELET_RIBBON_CSS_CLASS}--top`);
-        expect(result.position).toBe("top");
-        expect(result.hidden).toBe(false);
-    });
-
     it("`hidden` position sets style.display = 'none' and reports hidden=true", () => {
         const host = makeRecordingHost();
         const result = registerPageletRibbonIcon(host, {
@@ -167,14 +153,13 @@ describe("registerPageletRibbonIcon", () => {
         expect(result.position).toBe("hidden");
     });
 
-    it("`default` position never sets style.display nor the --top modifier", () => {
+    it("`default` position never sets style.display", () => {
         const host = makeRecordingHost();
         registerPageletRibbonIcon(host, {
             position: "default",
             onClick: () => undefined,
         });
         const el = host.elements[0];
-        expect(el.classes).not.toContain(`${PAGELET_RIBBON_CSS_CLASS}--top`);
         expect(el.style.display).toBeUndefined();
     });
 

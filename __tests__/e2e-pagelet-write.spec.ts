@@ -60,6 +60,7 @@ import {
 } from "../src/ai-services/write-action-framework";
 
 import { PageletCostTracker } from "../src/pagelet/pa-review-cost";
+import { mintNonCollidingReviewNotePath } from "../src/pagelet/pa-review-file-io";
 import {
     createPaReviewRuntime,
     type PaReviewRuntime,
@@ -219,14 +220,14 @@ function recordingObserver(): DebugObserver & { events: DebugEvent[] } {
  * checks folder existence + collision + snapshot drift). This is the same
  * shape Obsidian's `app.vault.adapter` exposes, so the test mirrors prod.
  */
-function buildRuntimeBundle(): {
+function buildRuntimeBundle(seedFolders: readonly string[] = [".pagelet"]): {
     runtime: PaReviewRuntime;
     adapter: InMemoryAdapter;
     renderer: ReturnType<typeof confirmedRenderer>;
     observer: ReturnType<typeof recordingObserver>;
     settings: PageletSettings;
 } {
-    const adapter = makeAdapter();
+    const adapter = makeAdapter(seedFolders);
     const settings: PageletSettings = { ...PAGELET_DEFAULTS };
     const renderer = confirmedRenderer();
     const observer = recordingObserver();
@@ -360,6 +361,57 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
         // Sanity: settings were not mutated by the write path (the runtime
         // reads via getter; D010 contract).
         expect(settings.reviewsFolder).toBe(PAGELET_DEFAULTS.reviewsFolder);
+
+        runtime.dispose();
+    });
+
+    it("creates the reviews folder after confirmation when it is missing", async () => {
+        const { runtime, adapter } = buildRuntimeBundle([]);
+        const input = makeInput();
+        const expectedPath = runtime.toolProvider.capability.getTargetPath(input);
+
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            input,
+            makeContext(),
+        );
+
+        expect(result.status).toBe("ok");
+        expect(adapter.folders.has(".pagelet")).toBe(true);
+        expect(adapter.files.has(expectedPath)).toBe(true);
+        const mkdirCall = adapter.calls.find((c) => c.method === "mkdir" && c.path === ".pagelet");
+        const writeCall = adapter.calls.find((c) => c.method === "write" && c.path === expectedPath);
+        expect(mkdirCall).toBeDefined();
+        expect(writeCall).toBeDefined();
+        expect(mkdirCall!.order).toBeLessThan(writeCall!.order);
+
+        runtime.dispose();
+    });
+
+    it("freezes a non-colliding target path before preview and writes that exact file", async () => {
+        const { runtime, adapter, renderer, settings } = buildRuntimeBundle();
+        const baseInput = makeInput();
+        const basePath = runtime.toolProvider.capability.getTargetPath(baseInput);
+        adapter.files.set(basePath, "existing review");
+        const targetPath = await mintNonCollidingReviewNotePath({
+            adapter,
+            sourcePath: baseInput.sourcePath,
+            settings,
+            date: FIXED_DATE,
+        });
+        expect(targetPath).toMatch(/-2\.md$/);
+
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            makeInput({ targetPath }),
+            makeContext(),
+        );
+
+        expect(result.status).toBe("ok");
+        expect(renderer.shown).toHaveLength(1);
+        expect(renderer.shown[0].displayPath).toBe(targetPath);
+        expect(adapter.files.get(basePath)).toBe("existing review");
+        expect(adapter.files.has(targetPath)).toBe(true);
 
         runtime.dispose();
     });

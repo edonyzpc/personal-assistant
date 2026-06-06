@@ -209,6 +209,20 @@ describe("buildUserPrompt", () => {
         expect(en).not.toContain(FEW_SHOT_ZH.assistant);
     });
 
+    it("uses outputLanguageOverride instead of detectedLanguage when provided", () => {
+        const prompt = buildUserPrompt({
+            notePath: "notes/a.md",
+            noteContent: "English source text",
+            detectedLanguage: "en",
+            outputLanguageOverride: "zh",
+            mode: "basic",
+            segments: [{ id: "seg-1", content: "English source text" }],
+        });
+        expect(prompt).toContain(FEW_SHOT_ZH.assistant);
+        expect(prompt).not.toContain(FEW_SHOT_EN.assistant);
+        expect(prompt).toContain("请基于上述片段生成 Pagelet review。");
+    });
+
     it("lists every segment id so the LLM can map source_id back", () => {
         const prompt = buildUserPrompt({
             notePath: "notes/a.md",
