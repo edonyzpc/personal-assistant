@@ -44,6 +44,7 @@ jest.mock('obsidian', () => {
         debounce: <T extends unknown[], V>(callback: (...args: T) => V) => callback,
         Editor: class { },
         MarkdownView: class { },
+        ItemView: class { },
         // Write Action Framework preview modal (imported transitively via
         // src/plugin.ts → src/pagelet → pa-review-runtime) extends these
         // Obsidian primitives at module-load time; without stubs the class
@@ -105,6 +106,7 @@ jest.mock('../src/stats/editor-plugin', () => ({
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 
 import { PluginManager } from '../src/plugin';
+import { PAGELET_VIEW_TYPE, PageletView } from '../src/pagelet';
 
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
@@ -264,7 +266,8 @@ describe('plugin startup view registration', () => {
             expect(registerView).toHaveBeenCalledWith('record-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('stat-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
-            expect(registerView).toHaveBeenCalledTimes(3);
+            expect(registerView).toHaveBeenCalledWith('pa-pagelet-view', expect.any(Function));
+            expect(registerView).toHaveBeenCalledTimes(4);
             expect(registerView.mock.invocationCallOrder[0]).toBeLessThan(
                 onLayoutReady.mock.invocationCallOrder[0],
             );
@@ -272,11 +275,46 @@ describe('plugin startup view registration', () => {
             layoutCallbacks.forEach((callback) => callback());
 
             expect(plugin.initializeCalloutManager).toHaveBeenCalledTimes(1);
-            expect(registerView).toHaveBeenCalledTimes(3);
+            expect(registerView).toHaveBeenCalledTimes(4);
         } finally {
             globalThis.document = originalDocument;
             globalThis.MutationObserver = originalMutationObserver;
         }
+    });
+});
+
+describe('Pagelet view activation', () => {
+    it('recreates stale Pagelet leaf views left behind by a plugin reload', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const freshView = Object.create(PageletView.prototype) as PageletView;
+        const leaf: {
+            view: unknown;
+            setViewState: jest.Mock<(state: { type: string; active: boolean }) => Promise<void>>;
+        } = {
+            view: { getViewType: () => PAGELET_VIEW_TYPE },
+            setViewState: jest.fn(async (state) => {
+                if (state.type === PAGELET_VIEW_TYPE) {
+                    leaf.view = freshView;
+                }
+            }),
+        };
+        const revealLeaf = jest.fn();
+
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => [leaf]),
+                getRightLeaf: jest.fn(),
+                revealLeaf,
+            },
+        };
+
+        await expect(plugin.activePageletView()).resolves.toBe(freshView);
+        expect(leaf.setViewState).toHaveBeenNthCalledWith(1, { type: 'empty', active: false });
+        expect(leaf.setViewState).toHaveBeenNthCalledWith(2, {
+            type: PAGELET_VIEW_TYPE,
+            active: true,
+        });
+        expect(revealLeaf).toHaveBeenCalledWith(leaf);
     });
 });
 

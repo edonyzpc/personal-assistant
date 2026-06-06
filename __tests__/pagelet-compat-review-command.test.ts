@@ -3,7 +3,9 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
 import {
+    PAGELET_OPEN_PANEL_COMMAND_ID,
     PAGELET_REVIEW_CURRENT_COMMAND_ID,
+    registerPageletOpenPanelCommand,
     registerPageletReviewCurrentCommand,
 } from "../src/pagelet/compat/review-command";
 import type {
@@ -83,5 +85,33 @@ describe("registerPageletReviewCurrentCommand", () => {
         await Promise.resolve();
 
         expect(onReviewCurrent).toHaveBeenCalledTimes(1);
+    });
+});
+
+describe("registerPageletOpenPanelCommand", () => {
+    it("uses the stable Pagelet panel command ID", () => {
+        expect(PAGELET_OPEN_PANEL_COMMAND_ID).toBe("pa-pagelet:open-panel");
+    });
+
+    it("registers a command-palette entry without a default hotkey", () => {
+        const host = makeCommandHost();
+        registerPageletOpenPanelCommand(host, {
+            onOpenPanel: jest.fn<() => void>(),
+        });
+
+        expect(host.registered).toHaveLength(1);
+        expect(host.registered[0].id).toBe(PAGELET_OPEN_PANEL_COMMAND_ID);
+        expect(host.registered[0].name).toBe("Pagelet: Open Pagelet");
+        expect(host.registered[0].hotkeys).toBeUndefined();
+    });
+
+    it("invokes the supplied open callback", () => {
+        const host = makeCommandHost();
+        const onOpenPanel = jest.fn<() => void>();
+        registerPageletOpenPanelCommand(host, { onOpenPanel });
+
+        host.registered[0].callback();
+
+        expect(onOpenPanel).toHaveBeenCalledTimes(1);
     });
 });

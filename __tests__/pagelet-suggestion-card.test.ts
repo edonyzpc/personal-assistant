@@ -240,6 +240,15 @@ describe("buildSuggestionCardMarkup — 5 sections", () => {
             "[[Concept X]]",
             "[[2026-week-22]]",
         ]);
+        expect(markup.related!.items.every((i) => i.interactive === false)).toBe(true);
+    });
+
+    it("marks related notes interactive when the callback is supplied", () => {
+        const markup = buildSuggestionCardMarkup(
+            { ...baseProps(), onRelatedNoteClick: () => undefined },
+            { translator: keyTranslator() },
+        );
+        expect(markup.related!.items.every((i) => i.interactive === true)).toBe(true);
     });
 
     it("omits section 5 when related_notes is empty / undefined", () => {
@@ -445,24 +454,55 @@ describe("buildSuggestionCardMarkup — cost footer", () => {
         expect(markup.footer.cost!.pricingKnown).toBe(false);
     });
 
-    it("only shows accept/dismiss when the prop callbacks are supplied", () => {
+    it("only shows footer actions when the matching prop callbacks are supplied", () => {
         const baseline = buildSuggestionCardMarkup(
             { suggestion: makeSuggestion() },
             { translator: keyTranslator() },
         );
+        expect(baseline.footer.showResearch).toBe(false);
         expect(baseline.footer.showAccept).toBe(false);
         expect(baseline.footer.showDismiss).toBe(false);
 
         const interactive = buildSuggestionCardMarkup(
             {
-                suggestion: makeSuggestion(),
+                suggestion: makeSuggestion({ kind: "evidence" }),
+                onResearch: () => undefined,
                 onAccept: () => undefined,
                 onDismiss: () => undefined,
             },
             { translator: keyTranslator() },
         );
+        expect(interactive.footer.showResearch).toBe(true);
         expect(interactive.footer.showAccept).toBe(true);
         expect(interactive.footer.showDismiss).toBe(true);
+    });
+
+    it("labels accept as add-to-draft and scopes footer aria labels to the card", () => {
+        const markup = buildSuggestionCardMarkup(
+            {
+                suggestion: makeSuggestion({ kind: "evidence", source_id: "note-2-seg-1" }),
+                onResearch: () => undefined,
+                onAccept: () => undefined,
+                onDismiss: () => undefined,
+            },
+            { translator: keyTranslator() },
+        );
+
+        expect(markup.footer.acceptLabel).toBe("Add to draft");
+        expect(markup.footer.acceptAriaLabel).toBe("Add this suggestion to draft: Evidence, note-2-seg-1");
+        expect(markup.footer.dismissAriaLabel).toBe("Dismiss this suggestion: Evidence, note-2-seg-1");
+        expect(markup.footer.researchAriaLabel).toBe("Research this suggestion: Evidence, note-2-seg-1");
+    });
+
+    it("does not show the research action for non-research suggestion kinds", () => {
+        const markup = buildSuggestionCardMarkup(
+            {
+                suggestion: makeSuggestion({ kind: "trim" }),
+                onResearch: () => undefined,
+            },
+            { translator: keyTranslator() },
+        );
+        expect(markup.footer.showResearch).toBe(false);
     });
 });
 
@@ -593,6 +633,40 @@ describe("createSuggestionCardRendererWithHost", () => {
         dismissBtn.dispatch("click");
         expect(onAccept).toHaveBeenCalledWith(suggestion);
         expect(onDismiss).toHaveBeenCalledWith(suggestion);
+    });
+
+    it("propagates related note clicks with the raw related note name", () => {
+        const onRelatedNoteClick = jest.fn();
+        const suggestion = makeSuggestion();
+        const { host, root } = makeStubHost();
+        createSuggestionCardRendererWithHost(
+            root,
+            { suggestion, onRelatedNoteClick },
+            { host, translator: keyTranslator() },
+        );
+        const button = findAllByClass(
+            root.children[0],
+            "pa-pagelet-suggestion-card__related-button",
+        )[0];
+        button.dispatch("click");
+        expect(onRelatedNoteClick).toHaveBeenCalledWith("[[Concept X]]", suggestion);
+    });
+
+    it("propagates onResearch for evidence/link suggestions", () => {
+        const onResearch = jest.fn();
+        const suggestion = makeSuggestion({ kind: "evidence" });
+        const { host, root } = makeStubHost();
+        createSuggestionCardRendererWithHost(
+            root,
+            { suggestion, onResearch },
+            { host, translator: keyTranslator() },
+        );
+        const researchBtn = findByClass(
+            root.children[0],
+            "pa-pagelet-suggestion-card__btn--research",
+        );
+        researchBtn.dispatch("click");
+        expect(onResearch).toHaveBeenCalledWith(suggestion);
     });
 
     it("omits accept/dismiss buttons when no callback is supplied", () => {
