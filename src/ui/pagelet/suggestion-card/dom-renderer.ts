@@ -198,7 +198,7 @@ function renderCard(
     root.appendChild(renderSource(host, markup, props));
     root.appendChild(renderRationale(host, markup));
     root.appendChild(renderAction(host, markup));
-    if (markup.related) root.appendChild(renderRelated(host, markup.related));
+    if (markup.related) root.appendChild(renderRelated(host, markup.related, props));
     root.appendChild(renderFooter(host, markup, props));
 
     return root;
@@ -296,6 +296,7 @@ function renderAction(host: SuggestionCardDomHost, markup: SuggestionCardMarkup)
 function renderRelated(
     host: SuggestionCardDomHost,
     related: NonNullable<SuggestionCardMarkup["related"]>,
+    props: SuggestionCardProps,
 ): SuggestionCardDomNode {
     const section = host.createHtmlElement("section");
     section.setClassList(["pa-pagelet-suggestion-card__related"]);
@@ -310,7 +311,18 @@ function renderRelated(
     for (const item of related.items) {
         const li = host.createHtmlElement("li");
         li.setClassList(["pa-pagelet-suggestion-card__related-item"]);
-        li.setText(item.name);
+        if (item.interactive) {
+            const button = host.createHtmlElement("button");
+            button.setClassList(["pa-pagelet-suggestion-card__related-button"]);
+            button.setAttribute("type", "button");
+            button.setText(item.name);
+            button.addEventListener("click", () => {
+                props.onRelatedNoteClick?.(item.name, props.suggestion);
+            });
+            li.appendChild(button);
+        } else {
+            li.setText(item.name);
+        }
         list.appendChild(li);
     }
     section.appendChild(list);
@@ -325,6 +337,19 @@ function renderFooter(
 ): SuggestionCardDomNode {
     const footer = host.createHtmlElement("footer");
     footer.setClassList(["pa-pagelet-suggestion-card__footer"]);
+
+    if (markup.footer.showResearch) {
+        const researchBtn = makeFooterButton(
+            host,
+            "pa-pagelet-suggestion-card__btn--research",
+            markup.footer.researchLabel,
+            markup.footer.researchAriaLabel,
+        );
+        researchBtn.addEventListener("click", () => {
+            invokeWithSuggestion(props.onResearch, props.suggestion);
+        });
+        footer.appendChild(researchBtn);
+    }
 
     if (markup.footer.showAccept) {
         const acceptBtn = makeFooterButton(

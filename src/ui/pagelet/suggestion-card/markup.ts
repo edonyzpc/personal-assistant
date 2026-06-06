@@ -35,6 +35,7 @@
 
 import {
     PAGELET_SUGGESTION_KINDS,
+    type PageletSuggestion,
     type PageletSuggestionKind,
 } from "../../../pagelet/pa-review-schemas";
 import { formatUsd, type PageletCostEntry } from "../../../pagelet/pa-review-cost";
@@ -80,8 +81,10 @@ const LABEL_I18N_KEYS = Object.freeze({
     rationale: "pagelet.suggestion.rationale",
     action: "pagelet.suggestion.proposedAction",
     related: "pagelet.suggestion.related",
+    research: "pagelet.suggestion.research",
     accept: "pagelet.suggestion.accept",
     dismiss: "pagelet.suggestion.dismiss",
+    researchAria: "pagelet.a11y.researchCardLabel",
     acceptAria: "pagelet.a11y.acceptCardLabel",
     dismissAria: "pagelet.a11y.dismissCardLabel",
     badgeTruncated: "pagelet.suggestion.truncatedBadge",
@@ -95,9 +98,11 @@ const LABEL_DEFAULT_TEXT = Object.freeze({
     rationale: "Why",
     action: "Suggested action",
     related: "Related notes",
-    accept: "Accept",
+    research: "Research",
+    accept: "Add to draft",
     dismiss: "Dismiss",
-    acceptAria: "Accept this suggestion",
+    researchAria: "Research this suggestion",
+    acceptAria: "Add this suggestion to draft",
     dismissAria: "Dismiss this suggestion",
     badgeTruncated: "Shortened by Pagelet",
     badgePartial: "Partial",
@@ -122,6 +127,7 @@ export interface SuggestionBadgeMarkup {
 export interface SuggestionRelatedItemMarkup {
     /** Raw note name as returned by the model. */
     name: string;
+    interactive: boolean;
 }
 
 export interface SuggestionCostMarkup {
@@ -169,10 +175,13 @@ export interface SuggestionCardMarkup {
     } | null;
     /** Footer with buttons + optional cost line. */
     footer: {
+        researchLabel: string;
+        researchAriaLabel: string;
         acceptLabel: string;
         acceptAriaLabel: string;
         dismissLabel: string;
         dismissAriaLabel: string;
+        showResearch: boolean;
         showAccept: boolean;
         showDismiss: boolean;
         cost: SuggestionCostMarkup | null;
@@ -191,7 +200,15 @@ export function buildSuggestionCardMarkup(
     props: SuggestionCardProps,
     options: BuildSuggestionCardMarkupOptions,
 ): SuggestionCardMarkup {
-    const { suggestion, diagnostics, onSourceClick, onAccept, onDismiss } = props;
+    const {
+        suggestion,
+        diagnostics,
+        onSourceClick,
+        onAccept,
+        onDismiss,
+        onRelatedNoteClick,
+        onResearch,
+    } = props;
     const t = makeFallbackTranslator(options.translator);
 
     const kindLabel = t(
@@ -204,11 +221,16 @@ export function buildSuggestionCardMarkup(
     const related = (suggestion.related_notes && suggestion.related_notes.length > 0)
         ? {
             label: t(LABEL_I18N_KEYS.related, LABEL_DEFAULT_TEXT.related),
-            items: suggestion.related_notes.map((name) => ({ name })),
+            items: suggestion.related_notes.map((name) => ({
+                name,
+                interactive: typeof onRelatedNoteClick === "function",
+            })),
         }
         : null;
 
     const cost = buildCostMarkup(diagnostics?.costEntry, t);
+    const showResearch = typeof onResearch === "function"
+        && (suggestion.kind === "evidence" || suggestion.kind === "link");
 
     return {
         rootClassList: [
@@ -245,15 +267,38 @@ export function buildSuggestionCardMarkup(
         },
         related,
         footer: {
+            researchLabel: t(LABEL_I18N_KEYS.research, LABEL_DEFAULT_TEXT.research),
+            researchAriaLabel: contextualActionLabel(
+                t(LABEL_I18N_KEYS.researchAria, LABEL_DEFAULT_TEXT.researchAria),
+                suggestion,
+                kindLabel,
+            ),
             acceptLabel: t(LABEL_I18N_KEYS.accept, LABEL_DEFAULT_TEXT.accept),
-            acceptAriaLabel: t(LABEL_I18N_KEYS.acceptAria, LABEL_DEFAULT_TEXT.acceptAria),
+            acceptAriaLabel: contextualActionLabel(
+                t(LABEL_I18N_KEYS.acceptAria, LABEL_DEFAULT_TEXT.acceptAria),
+                suggestion,
+                kindLabel,
+            ),
             dismissLabel: t(LABEL_I18N_KEYS.dismiss, LABEL_DEFAULT_TEXT.dismiss),
-            dismissAriaLabel: t(LABEL_I18N_KEYS.dismissAria, LABEL_DEFAULT_TEXT.dismissAria),
+            dismissAriaLabel: contextualActionLabel(
+                t(LABEL_I18N_KEYS.dismissAria, LABEL_DEFAULT_TEXT.dismissAria),
+                suggestion,
+                kindLabel,
+            ),
+            showResearch,
             showAccept: typeof onAccept === "function",
             showDismiss: typeof onDismiss === "function",
             cost,
         },
     };
+}
+
+function contextualActionLabel(
+    label: string,
+    suggestion: PageletSuggestion,
+    kindLabel: string,
+): string {
+    return `${label}: ${kindLabel}, ${suggestion.source_id}`;
 }
 
 // ---------------------------------------------------------------------------
