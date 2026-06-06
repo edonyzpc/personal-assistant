@@ -13,13 +13,13 @@
 | 项 | 值 |
 |----|----|
 | Spec version | 0.1 |
-| 实现状态 | **v1 implemented (beta)** — `v2.2.0-beta.1` 发布（2026-06-03） |
+| 实现状态 | **v1 beta MVP implemented** — 当前笔记 review → preview → confirmed write |
 | 对应版本 | PA `v2.2.0-beta.1`（沿用 D013 通道） |
 | 决策依据 | `docs/review-assistant-decisions.md` D001-D031 |
 | 产品意图 | `docs/review-assistant-product-design.md` |
-| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Resolved（2026-06-05 spike + live 测试制度化到 smoke checklist） |
+| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Resolved（2026-06-05 spike + live 测试制度化到 smoke checklist）；完整 workbench / related-note read / WebSearch 为后续范围 |
 | 主作者 | PA core |
-| 上次更新 | 2026-06-05 |
+| 上次更新 | 2026-06-06 |
 
 > **解阻塞标记（2026-06-03）**：D025 + D030 决定写路径走 **Write Action Framework v1**（基础设施层）。`docs/write-action-framework-sdd.md` 已落地、`src/ai-services/write-action-framework/**` 4 子模块 + PolicyEngine 参数化已实现、`pagelet.write_review_output` 作为首个真实 caller 跑通端到端测试。本 SDD §2.4 / §3 / §14 的契约面占位已去 stub 化，Pagelet beta 随 `v2.2.0-beta.1` 发布（详见 [[D031]]）。
 >
@@ -94,9 +94,9 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 
 | 文件 | 状态 | 责任 | 原计划占位 |
 |------|------|------|-----------|
-| `src/pagelet/pa-review-runtime.ts` | NEW | RunKindAdapter 装配、settings 读取、cost gate 串联 | ↔ 计划同名 |
+| `src/pagelet/pa-review-runtime.ts` | NEW | Write Action Framework 装配、settings 读取、自写入 guard；当前 MVP 由 plugin 触发当前笔记 review | ↔ 计划同名 |
 | `src/pagelet/pa-review-model.ts` | NEW | `PaAgentModel` 实现：单 turn structured output + 降级 parser | ↔ 计划同名 |
-| `src/pagelet/pa-review-tool-provider.ts` | NEW | `CapabilityProvider`：`pagelet.read_source_note` / `pagelet.search_related_notes` / `pagelet.write_review_output` | ↔ 计划同名 |
+| `src/pagelet/pa-review-tool-provider.ts` | NEW | `CapabilityProvider`：当前实现 `pagelet.write_review_output`；`read_source_note` / `search_related_notes` 为后续 workbench/agent 模式范围 | ↔ 计划同名 |
 | `src/pagelet/pa-review-schemas.ts` | NEW | zod schemas + EN/ZH few-shot 样本 + few-shot 注入策略 | ↔ 计划同名 |
 | `src/pagelet/pa-review-cost.ts` | NEW | provider/model 定价表 + `computeCost` | (未在计划单列；§7.4) |
 | `src/pagelet/pa-review-rate-limit.ts` | NEW | 滑窗 cost gate（10/h、100/d）+ 强制跳过 | (未在计划单列；§7.2) |
@@ -123,7 +123,7 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 |------|------|------|
 | `src/ai-services/policy-engine.ts` | MODIFIED | 参数化 `runKind` + `allowWrite`（§3） |
 | `src/ai-services/write-action-framework/**` | NEW | 4 gate（target-confinement / preview-confirmation / stale-reread / runtime-integration）+ debug-observer + types。Pagelet 的 `pagelet.write_review_output` 是首个真实 caller |
-| `src/plugin.ts` | MODIFIED | 注册 view / commands / ribbon / Pagelet runtime wiring |
+| `src/plugin.ts` | MODIFIED | 注册 commands / ribbon / Pagelet runtime wiring；ribbon 触发当前 Markdown note review |
 
 > 测试文件清单见 §12.1（实际名称已与本节对齐）。
 
@@ -209,12 +209,10 @@ class PageletHostPolicy implements PaAgentHostPolicy {
 
 | Capability | kind | permission | 责任 |
 |-----------|------|------------|------|
-| `pagelet.read_source_note` | tool | read-only | 给 LLM 提供切分后的笔记片段（带 source_id） |
-| `pagelet.search_related_notes` | tool | read-only | 复用 PA 的 VSS（D006-D = vault-aware） |
-| `pagelet.write_review_output` | action | write | 走 **Write Action Framework v1**；当前 stub 仅持久化 schema 校验通过的 JSON |
+| `pagelet.read_source_note` | tool | read-only | **Planned**：给 LLM 提供切分后的笔记片段（带 source_id）；当前 MVP 在 plugin 触发器内直接构造 segments |
+| `pagelet.search_related_notes` | tool | read-only | **Planned**：复用 PA 的 VSS（D006-D = vault-aware）；当前 MVP 不读 related notes |
+| `pagelet.write_review_output` | action | write | 走 **Write Action Framework v1**；preview 后写入冻结的 `.pagelet/...md` 目标 |
 
-> **写 capability 暂为 stub（Hard Blocker）**：必须等 [[OQ001]] 落地（`docs/write-action-framework-sdd.md` + framework 最小实现 + PolicyEngine 参数化）后才能接入 preview / confirmation / target confinement / stale re-read / audit 5 个子模块。本 SDD 仅给契约面占位以避免后续返工（D025 = B-full，D030 = 框架先行 + 二层命名）。
->
 > Pagelet 的 `pagelet.write_review_output` 是 Write Action Framework v1 的**首个真实 caller**——意味着 framework 的 API 设计必须以本 capability 为最小验收用例，但 capability 本身不允许 Pagelet-specific 假设漏到 framework 内部。
 
 ---
@@ -419,14 +417,13 @@ this.registerEvent(
 
 见 §5.2。**不要** 用 `app.vault.modify` 或 `app.vault.create`，避免触发 `vault.on("modify")` 让 Templater/Linter/Tag Wrangler 误处理产物文件。
 
-#### R4 · Ribbon 排序可调整
+#### R4 · Ribbon 可隐藏
 
-不强制把 Pagelet ribbon icon 加到最上方。提供 settings 选项 `pagelet.ribbonPosition: "default" | "top" | "hidden"`，对接 Commander 插件常见模式：
+不强制把 Pagelet ribbon icon 加到最上方。当前 beta 仅提供 settings 选项 `pagelet.ribbonPosition: "default" | "hidden"`：
 
 ```ts
 const icon = this.addRibbonIcon("scroll-text", "Pagelet (Beta)", () => this.openPageletPanel());
 if (settings.ribbonPosition === "hidden") icon.style.display = "none";
-// "top" 仅记录意图，Obsidian 不暴露 ribbon 顺序 API；建议用户用 Commander 调整
 ```
 
 ### 6.2 8 中等风险缓解
@@ -446,7 +443,7 @@ if (settings.ribbonPosition === "hidden") icon.style.display = "none";
 
 | 范畴 | 规范 |
 |------|------|
-| Command ID | `pa-pagelet:review-current` / `pa-pagelet:open-panel` ... |
+| Command ID | Current beta: `pa-pagelet:review-current`; future panel: `pa-pagelet:open-panel` ... |
 | Command display name | 中文 `拾页：...` / 英文 `Pagelet: ...` |
 | CSS class | `.pa-pagelet-mascot` / `.pa-pagelet-card` / `.pa-pagelet-callout` |
 | HTML data attr | `data-plugin="pa-pagelet"` 加在 view 根节点 |
@@ -608,7 +605,8 @@ src/i18n/
 ### 9.1 焦点管理
 
 - 默认不抢焦点（用户继续写作）。
-- 全局命令 `Pagelet: focus latest suggestion`（可绑快捷键，默认不绑——D007.1）。
+- 全局命令 `Pagelet: Review current note` 启动当前 beta 审阅路径。
+- 全局命令 `Pagelet: focus latest suggestion` 默认绑定 `Mod+/`；当前 beta 无生产 panel 时可安全 no-op，完整 Pagelet panel 接入后聚焦最新 suggestion card。
 - Suggestion panel 内的 card 用 `tabindex="0"` + roving tabindex 模式。
 
 ### 9.2 屏幕阅读器
@@ -687,7 +685,7 @@ Pagelet
 ├── General
 │   ├── Reviews folder        (default: .pagelet)            D010
 │   ├── Output language       [auto | zh | en]               D015
-│   └── Ribbon position       [default | top | hidden]       R4
+│   └── Ribbon icon           [default | hidden]             R4
 ├── Model
 │   ├── Provider              (复用 PA chat provider)
 │   ├── Model                 (复用)

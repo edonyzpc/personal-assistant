@@ -186,6 +186,23 @@ User-facing copy across all surfaces (UI, settings, README, community descriptio
 - Streaming structured output rendering (deferred to v2 — D026e).
 - Advanced exception circuit breakers (deferred to v2 — D023).
 
+### Current Beta Cut
+
+The current Pagelet beta is intentionally narrower than the full V1 product
+surface above. It ships the safe review-note path only:
+
+- Entry from the Pagelet ribbon icon or `Pagelet: Review current note`.
+- Current Markdown note review.
+- Preview and explicit confirmation through the Write Action Framework v1.
+- Creation of one independent Markdown review note under `.pagelet/` (or the
+  configured review folder).
+- Frontmatter metadata, including `pagelet_cost_usd` when cost diagnostics are
+  available.
+
+The full Pagelet panel, production-mounted mascot state, SuggestionCard list,
+focus jump-in, draft editing, UI cost totals, multi-note range review, related
+note controls, and WebSearch action flow remain the next product milestone.
+
 ## Enablement
 
 Pagelet is delivered as a feature inside PA `2.(x+1).0-beta.N` and is **on by default** for beta installs (D013).
@@ -935,17 +952,19 @@ Language coverage: English + Chinese day 1 (D014). Mascot copy follows UI langua
 
 ### Shared Runtime
 
-Pagelet does **NOT** introduce a new Runtime. It reuses PA's unified Agent Runtime via a lightweight RunKindAdapter (D024):
+Pagelet does **not** introduce a separate user-facing agent runtime. The current beta MVP uses a direct Pagelet trigger path:
 
-- `PaAgentLoop` is runtime-agnostic via three DI interfaces (`PaAgentModel.stream`, `PaAgentToolExecutor.execute`, `PaAgentHostPolicy.afterTurn`).
-- Pagelet provides its own implementations of those interfaces (`pa-review-model.ts`, `pa-review-tool-provider.ts`, `pa-review-host-policy.ts`) plus a thin coordinator (`pa-review-runtime.ts`).
-- `CapabilityRegistry`, the budget mechanism, and event plumbing are 100% shared with PA Chat.
+- The plugin reads the active Markdown note and builds bounded source segments.
+- `PageletReviewModel` produces structured review output.
+- `pagelet.write_review_output` persists the confirmed review note through the shared Write Action Framework.
+
+The broader PA Agent loop / CapabilityRegistry reuse remains the direction for future related-note tools, WebSearch actions, and Operations Agent orchestration; it is not required for the current single-note MVP.
 
 Details in [review-assistant-sdd.md](./review-assistant-sdd.md).
 
 ### Capability Reuse
 
-- Reuse existing PA Agent/capability boundaries for Memory, vault read-only context, and builtin WebSearch.
+- Reuse existing PA Agent/capability boundaries for future Memory, vault read-only context, and builtin WebSearch expansion.
 - Preserve source bucket separation: note/Memory context and web sources stay distinct.
 - Use structured schemas and validation for review output (D026).
 

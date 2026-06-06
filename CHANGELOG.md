@@ -5,13 +5,17 @@ All notable changes to this project will be documented in this file. See [standa
 ## [Unreleased]
 
 ### Improvements
+- pagelet: wire the ribbon into a usable current-note review MVP. Clicking Pagelet on an active Markdown note now reads the note, runs the review model, freezes a non-colliding target path, shows the Write Action Framework preview, and writes the confirmed review note.
+- pagelet: freeze previewed write targets through execute, allow the reviews folder to be created only after confirmation, and let same-day reviews use collision suffixes instead of failing at Gate 1.
+- pagelet: apply `outputLanguage` to the prompt, count rate-limit slots per real model invoke, surface all-invalid `source_id` output as retry/error instead of empty success, and add `zod` as a direct runtime dependency.
+- pagelet/ui: add scoped baseline styles for Pagelet settings and suggestion cards, and keep mascot status announcements in the dedicated live region.
 - framework(write-action): Gate 1 now has an intrinsic top-level dotfolder denylist (`.obsidian / .git / .trash / .obsidian.bak`, NFC + case-fold) at both construction time (`validateAllowedRoots` throws `ConfinementConfigError`) and candidate-write time (`forbidden_dotfolder` reject reason). The settings-layer guard introduced in `2.2.0-beta.1` remains the first line; the framework layer is now a true defense-in-depth second line that holds even if a future capability provider bypasses the settings scrub. Closes #358.
 - framework(write-action): Gate 1 also mirrors the settings-layer Cf-category invisible-char check (ZWSP/ZWNJ/ZWJ, WJ, BOM, LRM/RLM, bidi-isolates → `invisible_chars`) and the per-segment trailing dot/space check (NTFS silent-strip bypass → `trailing_dot_or_space`). Both run at construction time via `validateAllowedRoots` and at candidate-write time in the sync validator, in lock-step with the dotfolder denylist. NFKC fullwidth lookalikes remain an accepted residual risk in both layers (see SDD §2.2). Closes #360.
 
 ## [2.2.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.1.2...2.2.0-beta.1) (2026-06-03)
 
 ### Beta Features
-- **Pagelet (Review Assistant) v1 — beta**: a quiet reviewer for your notes. Inline mascot + structured suggestion cards + per-segment review, with cost ceiling and rate limiting. Configurable per-vault folder, prefers-reduced-motion respected, EN + ZH UI.
+- **Pagelet (Review Assistant) v1 — beta foundations**: a quiet reviewer for your notes. Ships mascot/settings foundations, structured review schemas, per-segment source binding, cost ceiling, rate limiting, configurable per-vault folder, prefers-reduced-motion support, and EN + ZH UI.
 - **Write Action Framework v1**: PA-level infrastructure providing the 4-gate write path (target-confinement → preview-confirmation → stale-reread → execute) plus auto-rollback for `create-file` actions. First caller is Pagelet's `pagelet.write_review_output` capability.
 
 ### Improvements

@@ -388,7 +388,7 @@
   - **R1** Mascot view-type gating：只在 `view.getViewType() === 'markdown'` 时挂载
   - **R2** file-open debounce + idempotent：≥ 300ms debounce，多次触发幂等
   - **R3** `.pagelet/` 写入用 `vault.adapter.write` 绕过 modify 事件
-  - **R4** Ribbon 排序支持用户调整（参考 Commander 插件思路）
+  - **R4** Ribbon 可隐藏；不承诺插件内置置顶排序
 - **8 中等风险缓解**：见 SDD 兼容性章节
 - **命名规范**：
   - 所有命令固定 `Pagelet:` 前缀

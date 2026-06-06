@@ -1,17 +1,26 @@
 # Pagelet Review v1 — Manual Smoke Checklist (Track C · C2)
 
 Manual smoke covering the parts of Pagelet that automated jest specs cannot
-exercise: the real Obsidian modal lifecycle, ribbon affordance, mobile
-rendering, view-type gating against a live workspace, screen-reader
-behaviour, and end-to-end LLM-driven prompt-injection resilience against a
-real provider.
+exercise for the current beta path: the real Obsidian modal lifecycle,
+ribbon affordance, view-type gating against a live workspace, and
+end-to-end LLM-driven prompt-injection resilience against a real provider.
 
-The automated suite (4 spec files in `__tests__/`) already covers:
+Current beta scope: Pagelet is a safe review-note generator
+(`ribbon → preview modal → .pagelet/*.md → Notice`). The full Pagelet panel
+with SuggestionCard, mascot state, focus jump-in, and UI cost totals remains
+the next product milestone, not a release blocker for this checklist.
+
+The automated suite already covers:
 
 - 4-gate happy path through `PaReviewRuntime` (`e2e-pagelet-write.spec.ts`)
 - Self-write reentrancy guard (`pagelet-self-write-no-loop.spec.ts`)
 - Cancel / abort / ESC paths produce zero writes (`pagelet-cancel-abort.spec.ts`)
-- 5 prompt-injection fixtures rejected at Gate 1 (`pagelet-prompt-injection.spec.ts`)
+- Prompt-injection path confinement fixtures (`pagelet-prompt-injection.spec.ts`)
+- Cost estimation / rate limits / structured-output behavior
+  (`pa-review-cost.test.ts`, `pa-review-model.test.ts`)
+- Component-level Pagelet panel foundations (`pagelet-suggestion-card.test.ts`,
+  `pagelet-mascot*.test.ts`, `pagelet-compat-focus-command.test.ts`)
+- Command-palette review entry (`pagelet-compat-review-command.test.ts`)
 
 The checks below verify behaviour the test mocks cannot reproduce.
 
@@ -34,14 +43,14 @@ shows what blocks tag vs what merely needs follow-up:
 - **P1 — track but don't block tag.** Open `S1` bugs may ship with a
   filed follow-up ticket (linked in release notes). Sections:
   - Provider structured output (OQ002)
-  - Cost indicator
-  - A11y
-  - Ribbon position setting
-  - Mobile smoke (one platform mandatory; the other becomes P2 if the
-    runner only has one device)
+  - Ribbon icon setting
 - **P2 — note for post-beta.** Captured for future iteration; do not
   block tag and do not require a ticket unless severity escalates.
-  Sections: anything not listed above.
+  Sections:
+  - Pagelet panel / mascot / SuggestionCard a11y
+  - Mobile smoke
+  - Real screen-reader smoke
+  - Anything not listed above
 
 ### Bug severity rubric (used by the Bugs table below)
 
@@ -61,24 +70,16 @@ shows what blocks tag vs what merely needs follow-up:
 
 ## Setup
 
-- [ ] Checkout `feat/pagelet-non-write` locally (or `master` after PR #355 + this PR merge)
-- [ ] `npm install` and `npm run build` from the repo root
-- [ ] Stop Obsidian, then install the build artefacts into
-      `<your-vault>/.obsidian/plugins/personal-assistant/`. Pick the
-      command for your OS — the three files (`main.js`, `styles.css`,
-      `manifest.json`) MUST land alongside each other:
-    - macOS / Linux (symlink, recommended): from the repo root,
-      `ln -sf "$(pwd)/main.js" <vault>/.obsidian/plugins/personal-assistant/main.js`
-      (repeat for `styles.css` and `manifest.json`)
-    - macOS / Linux (copy, safer for read-only filesystems):
-      `cp main.js styles.css manifest.json <vault>/.obsidian/plugins/personal-assistant/`
-    - Windows (symlink, requires admin shell or Developer Mode enabled):
-      `mklink "<vault>\.obsidian\plugins\personal-assistant\main.js" "<repo>\main.js"`
-      — repeat for `styles.css` and `manifest.json`. If the `mklink`
-      call fails with `You do not have sufficient privilege…`, fall back
-      to `copy` (next bullet).
-    - Windows (copy, no admin required):
-      `copy main.js styles.css manifest.json <vault>\.obsidian\plugins\personal-assistant\`
+- [ ] Checkout the branch under test.
+- [ ] `npm install` from the repo root.
+- [ ] For the repo's local `test/` vault, run `make deploy`. This builds and
+      copies `dist/main.js`, `dist/styles.css`, `dist/manifest.json`, and
+      `dist/manifest-beta.json` into `test/.obsidian/plugins/personal-assistant/`.
+- [ ] For a different desktop vault, run `npm run build`, then copy the build
+      artefacts from `dist/` into
+      `<your-vault>/.obsidian/plugins/personal-assistant/`:
+      `main.js`, `styles.css`, and `manifest.json` must land alongside each
+      other. Copy `manifest-beta.json` too when testing the beta manifest path.
 - [ ] Restart Obsidian, enable "Personal Assistant" in Community Plugins
 - [ ] Settings → Personal Assistant → Pagelet → **Enable Pagelet beta** = on
 - [ ] Pick a small test vault (10–20 notes) so cost stays predictable
@@ -89,7 +90,9 @@ shows what blocks tag vs what merely needs follow-up:
 
 - [ ] Open a markdown note in a **MarkdownView** (regular `.md` tab — NOT
       canvas / settings / preview-only PDF)
-- [ ] Click the Pagelet ribbon icon (sparkle / mascot) in the left ribbon
+- [ ] Start Pagelet from either supported beta entry:
+    - [ ] Click the Pagelet ribbon icon (sparkle / mascot) in the left ribbon
+    - [ ] Or run command palette → `Pagelet: Review current note`
 - [ ] Within ~2–3 seconds (network-dependent), the preview modal appears
 - [ ] Modal shows the 5 SDD §2.1 sections in order:
     - [ ] Header: `create-file · pagelet.write_review_output`
@@ -105,6 +108,8 @@ shows what blocks tag vs what merely needs follow-up:
     - [ ] Frontmatter contains: `pagelet: true`, `pagelet_schema_version: 1`,
           `pagelet_source: <source-path>`, `pagelet_created_at` (ISO + `+00:00`),
           `pagelet_mode`, `pagelet_detected_language`
+    - [ ] When cost diagnostics are available, frontmatter contains numeric
+          `pagelet_cost_usd` (unknown pricing may persist as `0`)
     - [ ] Body has `## Suggestions` heading (or `## 建议` for Chinese notes)
     - [ ] Body has `## Overall remark` (or `## 总体评价`) when remark was non-empty
 - [ ] (Debug mode) Console shows full event chain:
@@ -162,11 +167,16 @@ For **each** provider below, configure it in Settings → Personal Assistant
   and note it in the Bugs table. At least TWO providers must be tested
   for the checklist to pass.
 
-## Cost indicator
+## Cost metadata
 
-- [ ] After confirming, the Pagelet UI (status bar / sidebar / mascot panel)
-      shows the per-review cost in cents
-- [ ] Multiple back-to-back reviews accumulate; running total is monotonic
+Current beta does not ship a status bar / sidebar / mascot-panel cost
+indicator. The release check is metadata persistence only; UI cost totals move
+to the future Pagelet panel milestone.
+
+- [ ] Confirmed review notes persist `pagelet_cost_usd` in frontmatter when
+      the model layer produced a cost entry
+- [ ] Unknown provider/model pricing persists safely as `0` rather than
+      blocking the review
 
 ## Cancel + abort paths
 
@@ -182,23 +192,22 @@ For **each** provider below, configure it in Settings → Personal Assistant
 ## Self-write no-loop
 
 - [ ] Trigger Pagelet → confirm → wait at least 10 seconds → confirm via
-      console that the modify event for the `.pagelet/...md` file was
-      observed but the Pagelet listener short-circuited (no second review
-      ran). With debug mode on, `vault.on("modify")` should NOT log a
-      "Pagelet retrigger" line for the written path.
-- [ ] Modify the SOURCE note (add a sentence and save) → if you have an
-      auto-trigger workflow, Pagelet responds normally (this proves the
-      registry is path-scoped, not a global gate)
+      console or file count that the `.pagelet/...md` create/modify ripple
+      did not trigger a second review note. Pagelet review is user-triggered;
+      the self-write guard mainly prevents downstream dirty-state/indexing
+      side effects for the review file.
+- [ ] Modify the SOURCE note (add a sentence and save) → no Pagelet review
+      auto-runs unless the user explicitly invokes Pagelet again
 
-## A11y
+## Pagelet panel / mascot a11y (future milestone)
+
+These checks do not block the current review-note beta. Run them once the full
+Pagelet panel is wired into production.
 
 - [ ] With Pagelet's suggestion panel open, press `Cmd+/` (macOS) /
       `Ctrl+/` (Windows / Linux) → focus jumps to the latest suggestion card
-- [ ] Enable OS-level "Reduce motion":
-    - macOS: System Settings → Accessibility → Display → Reduce motion
-    - Windows: Settings → Accessibility → Visual effects → Animation effects = Off
-- [ ] Re-open Pagelet → mascot animations are stopped (no rotation /
-      breathing); CSS `prefers-reduced-motion` short-circuit is honored
+- [ ] Enable OS-level Reduce motion and re-open Pagelet → mascot animations
+      are stopped; CSS `prefers-reduced-motion` short-circuit is honored
 - [ ] Enable a screen reader (VoiceOver on macOS / NVDA on Windows)
 - [ ] Trigger Pagelet → confirm → screen reader announces "Pagelet review
       complete" (or localized equivalent) via the aria-live region
@@ -211,15 +220,15 @@ For **each** provider below, configure it in Settings → Personal Assistant
       modal, no console exception). The ribbon should remain interactive
       but Pagelet should silently decline.
 
-## Ribbon position setting
+## Ribbon icon setting
 
-- [ ] Settings → Personal Assistant → Pagelet → Ribbon position toggle
+- [ ] Settings → Personal Assistant → Pagelet → Ribbon icon toggle
 - [ ] `default` → ribbon icon appears in the left ribbon's default slot
       (alongside built-in icons)
-- [ ] `top` → ribbon icon appears at the top of the ribbon (above the
-      built-ins)
-- [ ] `hidden` → ribbon icon disappears entirely; the `Cmd+/` command and
-      command-palette entry still work
+- [ ] `hidden` → ribbon icon disappears entirely; command palette →
+      `Pagelet: Review current note` still starts the same review flow
+- [ ] `Cmd+/` / `Ctrl+/` focus command remains discoverable, but it is a
+      no-op until the future Pagelet panel mounts real suggestion cards
 
 ## Mobile smoke (iOS or Android Obsidian)
 
@@ -235,7 +244,7 @@ setup; subsequent runs reuse the same vault.
       vault first; enable it.
     - In BRAT settings, "Add beta plugin" → paste the URL of your fork
       / branch (e.g. `https://github.com/<you>/personal-assistant` with
-      the `manifest.json` from the `feat/pagelet-c2-tests` branch).
+      a branch that contains built `main.js`, `styles.css`, and `manifest.json`).
     - BRAT downloads the built artefacts; reload Obsidian to enable
       Personal Assistant.
     - Prereq: you have pushed the build (`main.js`, `styles.css`,
@@ -259,17 +268,17 @@ setup; subsequent runs reuse the same vault.
       folder, Obsidian will choke on the extra files.
     - This is the most fragile path; treat as fallback when A and B fail.
 
-If none of A/B/C is feasible in the time budget, document it in the Bugs
-table below with `S2` ("mobile setup blocked, deferred to next beta") and
-skip this section — the desktop smoke alone is sufficient for tag if
-mobile-blocking issues are tracked separately.
+Mobile smoke is a post-beta / full-panel follow-up for now. If none of A/B/C
+is feasible in the time budget, document it in the Bugs table with `S2`
+("mobile setup blocked, deferred to next beta") and skip this section — the
+desktop smoke alone is sufficient for the current beta tag.
 
 ### Mobile smoke items
 
 - [ ] Repeat the golden path on a mobile vault
 - [ ] Modal is responsive (no horizontal scrollbar, buttons reachable with
       one thumb)
-- [ ] Ribbon icon visible in the mobile toolbar (per ribbon-position
+- [ ] Ribbon icon visible in the mobile toolbar (per ribbon icon
       setting)
 - [ ] Suggested-action confirm + cancel both reachable without keyboard
 

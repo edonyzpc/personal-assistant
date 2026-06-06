@@ -273,8 +273,8 @@ B6 文件结构+frontmatter (0.5d)
 | **B1 Structured Output** | §2.2 + §4 全部 | `src/pagelet/pa-review-model.ts`、`src/pagelet/pa-review-schemas.ts` | zod schemas 编译；3 provider 模拟测试通过；失败矩阵 8 行 fallback 触发正确 |
 | **B2 UI Mascot+Card** | §10.1 + §10.2 | `src/ui/pagelet/mascot/*`、`src/ui/pagelet/suggestion-card/*` | Mascot 4 状态渲染（idle/thinking/done/error）对照 `pagelet-visual-spec.html`；SuggestionCard 5 区块渲染 |
 | **B3 Settings+i18n** | §10.3 + §8 全部 | `src/settings/pagelet/*`、`src/locales/pagelet/{en,zh}.json` | Settings 页面 7 配置项（advanced 含 reviews folder）；EN/ZH 全数 i18n key 覆盖；语言检测 regex 单测 |
-| **B4 Cost Ceiling** | §7 全部（D018-D023） | `src/pagelet/pa-review-cost.ts`、`src/pagelet/pa-review-rate-limit.ts` | token 限额（8K/2K → 36K hard cap）、call 计数（hr/day cap）、触达上限 modal、费用展示 |
-| **B5 a11y + 兼容性** | §6.1 R1/R2/R4 + §6.2 + §9 | `src/pagelet/compat/*`、`src/ui/pagelet/mascot/*` | R1 view-type gating；R2 debounce + idempotent；R4 ribbon 排序；prefers-reduced-motion；aria-live；Cmd+/ 焦点跳入 |
+| **B4 Cost Ceiling** | §7 全部（D018-D023） | `src/pagelet/pa-review-cost.ts`、`src/pagelet/pa-review-rate-limit.ts` | token 限额（8K/2K → 36K hard cap）、call 计数（hr/day cap）、触达上限、review note 费用 metadata；UI 展示留给后续 Pagelet panel |
+| **B5 a11y + 兼容性** | §6.1 R1/R2/R4 + §6.2 + §9 | `src/pagelet/compat/*`、`src/ui/pagelet/mascot/*` | R1 view-type gating；R2 debounce + idempotent；R4 ribbon hidden/default；prefers-reduced-motion；aria-live；Cmd+/ 焦点跳入 |
 | **B6 文件结构+frontmatter** | §5.1 + §5.3 + §5.4 | `src/pagelet/pa-review-file-io.ts` | `.pagelet/` 路径创建；`{原笔记名}-pagelet-review-{YYYY-MM-DD}.md` 命名；frontmatter `pagelet: true`；自定义路径 settings 联动 |
 
 ### 4.4 Stub 策略（B 阶段写路径处）
@@ -349,11 +349,11 @@ gh pr merge <pagelet-pr-id> --squash
 
 | 测试 | 内容 |
 |------|------|
-| `e2e-pagelet-write.spec.ts` | LLM → 5 区块 preview modal → 用户 confirm → `.pagelet/` 出文件 → cost 显示 |
+| `e2e-pagelet-write.spec.ts` | LLM → 5 区块 preview modal → 用户 confirm → `.pagelet/` 出文件 → cost metadata |
 | Self-write 不循环 smoke | framework write → Pagelet modify listener 跳过 → 不再次召唤 |
 | Cancel / abort 路径 | preview modal 关闭 / ESC / cancel → 无文件、无 debug emit `execute.*` |
 | Prompt-injection fixture | 5 个 fixture（framework SDD §8.3）全部被 Gate 1 拒绝 |
-| Obsidian 真实 vault | desktop + mobile 各跑一次完整流 |
+| Obsidian 真实 vault | desktop 跑当前 beta 完整流；mobile 作为 post-beta/full-panel follow-up |
 
 发现的 bug 在 master 直接修，commit message 标 `fix(pagelet|framework): ...`
 

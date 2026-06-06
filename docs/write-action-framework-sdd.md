@@ -225,6 +225,7 @@ export interface TargetConfinementRule {
     allowedRoots: string[];                     // vault-relative, e.g. [".pagelet/"]
     allowedExtensions: string[];                // e.g. [".md"]
     maxPathLength: number;                      // 默认 200
+    allowMissingParent?: boolean;               // default false; create parent after confirm
     rejectPatterns: RegExp[];                   // 默认 [/\.\./, /^\//, /^[a-zA-Z]:/, /[\x00-\x1f]/]
 }
 
@@ -255,7 +256,7 @@ export interface TargetCheckResult {
 11. **Allowlist**：normalizedPath 必须以 `allowedRoots` 中任一前缀开头
 12. **Extension**：必须在 `allowedExtensions`
 13. **Custom rejectPatterns**：caller 自定义 RegExp（caller 通过 `ConfinementConfig.rejectPatterns` 注入；framework 不提供默认值）
-14. **(async) Folder 检查**：父目录必须存在 → reject `folder_missing`
+14. **(async) Folder 检查**：默认父目录必须存在 → reject `folder_missing`；若 capability 明确设置 `allowMissingParent: true`，允许 preview 一个尚不存在的父目录，由 capability 在用户确认后创建
 15. **(async) Collision 检查**：`vault.adapter.exists(normalizedPath)` 为 false（v1 create-file 不覆盖；Pagelet D008 已有"撞名自动避让"策略，但属 caller 责任，framework 仅报 collision）
 
 **NFC 残余风险（issue #360）：** invisible_chars / trailing_dot_or_space / forbidden_dotfolder 三步都在 NFC + lowercase fold 路径里跑，与 settings 层一致。NFKC fullwidth 变体（如 `．ｏｂｓｉｄｉａｎ`，U+FF0E + fullwidth letters）当前**不**拦截——可接受，因为 Obsidian / APFS / NTFS dispatch 规则不会把 fullwidth 折成 ASCII。如果未来真遇到 OS dispatch fullwidth → ASCII 的现实案例，**两层必须 lock-step 升到 NFKC**（settings + framework 同时改），否则会重新打开 issue #358 关掉的那类 bypass。
@@ -741,6 +742,7 @@ const writeReviewOutput: WriteActionCapability = {
         allowedRoots: [".pagelet/", ".pagelet-reviews/"],
         allowedExtensions: [".md"],
         maxPathLength: 200,
+        allowMissingParent: true,
         // rejectPatterns 可选；framework 不提供默认值，caller 按需注入
     },
 
