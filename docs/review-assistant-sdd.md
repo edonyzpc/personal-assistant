@@ -13,11 +13,11 @@
 | 项 | 值 |
 |----|----|
 | Spec version | 0.1 |
-| 实现状态 | **v1 beta MVP implemented** — 当前笔记 review → preview → confirmed write |
+| 实现状态 | **v1 beta workbench implemented** — panel scope → review → preview → confirmed write |
 | 对应版本 | PA `v2.2.0-beta.1`（沿用 D013 通道） |
 | 决策依据 | `docs/review-assistant-decisions.md` D001-D031 |
 | 产品意图 | `docs/review-assistant-product-design.md` |
-| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Resolved（2026-06-05 spike + live 测试制度化到 smoke checklist）；完整 workbench / related-note read / WebSearch 为后续范围 |
+| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Resolved（2026-06-05 spike + live 测试制度化到 smoke checklist）；自动 related-note read / 自动 WebSearch 为后续范围 |
 | 主作者 | PA core |
 | 上次更新 | 2026-06-06 |
 
@@ -101,7 +101,9 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 | `src/pagelet/pa-review-cost.ts` | NEW | provider/model 定价表 + `computeCost` | (未在计划单列；§7.4) |
 | `src/pagelet/pa-review-rate-limit.ts` | NEW | 滑窗 cost gate（10/h、100/d）+ 强制跳过 | (未在计划单列；§7.2) |
 | `src/pagelet/pa-review-file-io.ts` | NEW | `.pagelet/` 目录与 `vault.adapter.write` 持久化 + frontmatter | (未在计划单列；§5) |
-| `src/pagelet/compat/{view-type,debounce,ribbon,focus-command}.ts` | NEW (5) | R1/R2/R4 兼容隔离 + D007 focus 命令 | ↔ 原 plugin.ts/main.ts diff 拆分 |
+| `src/pagelet/scope.ts` | NEW | Panel scope selection：current/yesterday/last3/last7、included/skipped rows、multi-note segment/source-id map | (当前 workbench follow-up) |
+| `src/pagelet/compat/{view-type,debounce,ribbon,focus-command,review-command}.ts` | NEW | R1/R2/R4 兼容隔离 + D007 focus 命令 + command-palette review/panel entry | ↔ 原 plugin.ts/main.ts diff 拆分 |
+| `src/pagelet/view.ts` | NEW | `pa-pagelet-view` 生产 panel：mascot 状态、scope controls、SuggestionCard 列表、source/related actions、session cost、editable draft collect/restore |
 | `src/pagelet/index.ts` | NEW | barrel | — |
 
 > v1 没有单独的 `pa-review-host-policy.ts`：basic/deeper 单 turn 流程目前在 `pa-review-runtime.ts` 内联完成，未拆出独立 HostPolicy 类。Deeper 多 turn 真正需要时再抽。
@@ -134,17 +136,22 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 ### 2.1 入口流程
 
 ```
-[user 触发 "Pagelet: review current note"]
-  → PageletRunKindAdapter.run({ file, mode: "basic" | "deeper" })
-  → 1. 读取笔记内容 + frontmatter
-  → 2. 截断到 settings.maxInputTokens（D018）
+[user 触发 "Pagelet: Open Pagelet"]
+  → 打开/更新 Pagelet panel（只计算本地文件 metadata scope，不读正文，不调用 AI）
+  → 用户选择 Current / Yesterday / Last 3 days / Last 7 days，手动 include/exclude
+  → 点击 panel review
+  → 1. 读取选中 Markdown 笔记正文（`.pagelet/` review 输出 locked skipped）
+  → 2. 构造 multi-note segment bundle，source_id 映射到 note path，并截断到 settings.maxInputTokens（D018）
   → 3. cost-gate：检查小时/天计数（D020）
   → 4. 检测语言（D015 + D017）
-  → 5. 实例化 PageletAgentModel / PageletHostPolicy / PageletToolProvider
-  → 6. PaAgentLoop.run({ model, hostPolicy, toolExecutor, maxTurns: mode==='basic'?1:5 })
-  → 7. parse 流式 chunk → structured suggestions[]
-  → 8. 持久化到 .pagelet/{原笔记名}-pagelet-review-{YYYY-MM-DD}.md（D008-D009）
-  → 9. 渲染 SuggestionCard，更新 cost-counter + 显示实际花费（D022）
+  → 5. 实例化 PageletReviewModel / PaReviewRuntime / PageletToolProvider
+  → 6. 单 turn structured review（withStructuredOutput → JSON fallback）
+  → 7. panel 渲染 SuggestionCard，更新 session cost total + editable draft list（D022）
+  → 8. Write Action Framework preview/confirm
+  → 9. 持久化到 .pagelet/{原笔记名}-pagelet-review-{YYYY-MM-DD}.md（D008-D009）
+
+[user 触发 "Pagelet: Review current note" 或 ribbon]
+  → 使用严格 active MarkdownView 作为 Current scope，进入同一 review/write 流程
 ```
 
 ### 2.2 `PageletAgentModel.stream()`（D026 落地）
@@ -606,7 +613,7 @@ src/i18n/
 
 - 默认不抢焦点（用户继续写作）。
 - 全局命令 `Pagelet: Review current note` 启动当前 beta 审阅路径。
-- 全局命令 `Pagelet: focus latest suggestion` 默认绑定 `Mod+/`；当前 beta 无生产 panel 时可安全 no-op，完整 Pagelet panel 接入后聚焦最新 suggestion card。
+- 全局命令 `Pagelet: focus latest suggestion` 默认绑定 `Mod+/`；当 Pagelet panel 有可见 SuggestionCard 时聚焦首个交互控件，没有 card 时安全 no-op。
 - Suggestion panel 内的 card 用 `tabindex="0"` + roving tabindex 模式。
 
 ### 9.2 屏幕阅读器

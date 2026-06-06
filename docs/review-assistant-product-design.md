@@ -189,19 +189,31 @@ User-facing copy across all surfaces (UI, settings, README, community descriptio
 ### Current Beta Cut
 
 The current Pagelet beta is intentionally narrower than the full V1 product
-surface above. It ships the safe review-note path only:
+surface above. It ships the safe workbench path:
 
 - Entry from the Pagelet ribbon icon or `Pagelet: Review current note`.
-- Current Markdown note review.
+- `Pagelet: Open Pagelet` opens the panel without reading note text or calling AI.
+- Current Markdown note review from the ribbon/command path.
+- Pagelet panel scope selection for current note, yesterday, last 3 days, and
+  last 7 days.
+- Included/skipped note summary with manual include/exclude adjustment before
+  a panel-triggered run.
+- Multi-note review bundle with source ids mapped back to source note paths.
+- Production Pagelet panel with mascot state, SuggestionCard findings, source
+  jump, related-note open, session cost total, and editable draft blocks.
+- Pending draft restore across panel close/reopen through vault-local browser
+  storage.
+- Research action handoff: Evidence/Link cards can prefill PA Chat with a
+  web-search-oriented research prompt; the prompt is not auto-submitted.
 - Preview and explicit confirmation through the Write Action Framework v1.
 - Creation of one independent Markdown review note under `.pagelet/` (or the
   configured review folder).
 - Frontmatter metadata, including `pagelet_cost_usd` when cost diagnostics are
   available.
 
-The full Pagelet panel, production-mounted mascot state, SuggestionCard list,
-focus jump-in, draft editing, UI cost totals, multi-note range review, related
-note controls, and WebSearch action flow remain the next product milestone.
+Automatic related-note reading, automatic WebSearch, mobile polish, real
+screen-reader smoke, custom ranges, and richer draft-to-review-note shaping
+remain the next product milestone.
 
 ## Enablement
 

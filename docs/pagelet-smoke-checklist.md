@@ -5,10 +5,13 @@ exercise for the current beta path: the real Obsidian modal lifecycle,
 ribbon affordance, view-type gating against a live workspace, and
 end-to-end LLM-driven prompt-injection resilience against a real provider.
 
-Current beta scope: Pagelet is a safe review-note generator
-(`ribbon → preview modal → .pagelet/*.md → Notice`). The full Pagelet panel
-with SuggestionCard, mascot state, focus jump-in, and UI cost totals remains
-the next product milestone, not a release blocker for this checklist.
+Current beta scope: Pagelet is a safe review workbench
+(`panel scope → review → preview modal → .pagelet/*.md → Notice`). The panel
+renders mascot state, range/scope selection, included/skipped notes,
+SuggestionCard findings, session cost totals, editable draft blocks, source
+jump, related-note open, and a Chat handoff for research actions. Mobile,
+real screen-reader smoke, automatic related-note reading, and automatic
+WebSearch remain follow-up scope.
 
 The automated suite already covers:
 
@@ -21,8 +24,215 @@ The automated suite already covers:
 - Component-level Pagelet panel foundations (`pagelet-suggestion-card.test.ts`,
   `pagelet-mascot*.test.ts`, `pagelet-compat-focus-command.test.ts`)
 - Command-palette review entry (`pagelet-compat-review-command.test.ts`)
+- Pagelet scope selection and multi-note segment/source map
+  (`pagelet-scope.test.ts`)
 
 The checks below verify behaviour the test mocks cannot reproduce.
+
+---
+
+## Latest Verification Log
+
+### 2026-06-06 · Desktop test vault · Full Pagelet regression smoke
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: `make deploy`
+- Obsidian: 1.13.0 desktop
+- Provider/model: `qwen` / `deepseek-v4-pro`
+- Runtime result artifact: `test/pagelet-smoke-runtime-result.json`
+- Durable regression runner: `scripts/pagelet-smoke-runner.js`
+
+Automated validation:
+
+- PASS: `make deploy`
+  - Full Jest: 86 suites passed, 1581 tests passed.
+  - Lint passed.
+  - Build passed and copied plugin assets to
+    `test/.obsidian/plugins/personal-assistant/`.
+
+Obsidian GUI/runtime smoke:
+
+- PASS: Obsidian loaded the deployed Pagelet bundle and showed the selected-note
+  CTA copy: `Review selected (1)`.
+- PASS: Current scope included only `pagelet-smoke-golden.md`.
+- PASS: Last 7 days scope updated locally without calling the provider.
+- PASS: `.pagelet/` review outputs were summarized as
+  `Excluded: 10 Pagelet review notes` without listing generated review paths as
+  individual skipped rows.
+- PASS: `.trash/` and hidden/system folder paths stayed out of scope rows.
+- PASS: `#no-ai` and `pagelet: true` fixtures were locked out of provider scope.
+- PASS: Manual uncheck moved an included candidate to Skipped with reason
+  `unchecked`.
+- PASS: Cancel path returned a review preview and wrote no `.pagelet/*.md`
+  output.
+- PASS: Golden save path wrote exactly one review note:
+  `.pagelet/pagelet-smoke-golden-pagelet-review-2026-06-06-11.md`.
+- PASS: Saved review note contained Pagelet frontmatter and a suggestions
+  heading.
+- PASS: Self-write no-loop guard held after saving the review note; no extra
+  `.pagelet/*.md` output was created during the 10 second observation window.
+- PASS: SuggestionCard actions worked in the live panel: Add to draft created
+  an editable textarea, draft edits persisted to `localStorage`, Remove cleared
+  the draft block, and Dismiss hid only the current card.
+- PASS: Source chip opened the source note without replacing the Pagelet panel.
+- PASS: Research handoff did not overwrite an existing Chat draft.
+- PASS: Suggestions region exposed live-region semantics and card action aria
+  labels included source context.
+- PASS: Provider zh fixture returned structured suggestions with the configured
+  provider/model and wrote no review note when cancelled.
+- BLOCKED: Provider en fixture hit the configured provider's hourly call limit
+  before a fresh structured response could be asserted.
+- BLOCKED: Prompt-injection fixture also hit the provider hourly call limit
+  before a fresh live-provider response could be asserted.
+- PASS: Prompt-injection provider-limit path wrote no source mutation or
+  sidecar output.
+- PASS: Non-Markdown canvas view no-oped without provider call and without a new
+  `.pagelet/*.md` output.
+
+Scope explainability verified in this rerun:
+
+- `.pagelet/` review outputs do not appear as individual locked skipped rows.
+  The panel shows a compact aggregate summary, keeping generated review notes
+  explainable without making the scope noisy.
+- `.trash/` and hidden/system folder paths remain out of scope rows. This keeps
+  provider scope safe without exposing hidden file names in the normal review
+  workflow.
+- Blocked by external provider quota: English provider fixture and live
+  prompt-injection fixture could not get a fresh model response after the
+  provider returned `Pagelet hit the hourly call limit. Try again later.`
+
+Runner note:
+
+- The raw runtime artifact shows 27 PASS / 4 BLOCKED / 0 FAIL. The durable
+  runner in `scripts/pagelet-smoke-runner.js` classifies provider quota limits
+  as `BLOCKED` instead of Pagelet product failures.
+
+### 2026-06-06 · Desktop test vault · Pagelet workbench path
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: `make deploy`
+- Obsidian: 1.13.0 desktop
+- Source note: `pagelet-smoke-golden.md`
+- Provider matrix: follow-up provider matrix test passed after the original
+  golden current-note smoke.
+
+Automated validation:
+
+- `npm test -- --runInBand __tests__/pagelet-scope.test.ts __tests__/pagelet-suggestion-card.test.ts __tests__/pagelet-compat-review-command.test.ts`
+- `npm test -- --runInBand __tests__/pagelet-view.test.ts __tests__/pagelet-suggestion-card.test.ts __tests__/pagelet-scope.test.ts`
+- `npm test -- --runInBand __tests__/plugin-record-note.test.ts __tests__/pagelet-compat-review-command.test.ts`
+- `npx tsc -noEmit -skipLibCheck`
+- `make deploy` (full jest, lint, build)
+- `git diff --check`
+
+Follow-up automated closeout:
+
+- PASS: PageletView persists edited accepted draft blocks and restores them
+  for the same source note after panel reopen.
+- PASS: Removing the last draft block clears the pending draft snapshot.
+- PASS: Pending draft restore is source-bound and does not carry a draft from
+  one active note onto another.
+- PASS: Source chip, related-note chip, and Research card actions cross the
+  plugin boundary with the expected payloads.
+
+Manual GUI smoke result:
+
+- PASS: Full app reload picked up the deployed bundle; `Reload plugins`
+  alone can leave stale development-time bundle state during local smoke.
+- PASS: Command palette `Pagelet: Open Pagelet` opened the Pagelet panel
+  without running a review or calling the provider.
+- PASS: Panel header showed `pagelet-smoke-golden.md`; Current scope showed
+  exactly one included current note.
+- PASS: Switching to Last 3 days updated the local scope list to 7 included
+  notes without running a review.
+- PASS: Unchecking one included note moved it to Skipped with reason
+  `unchecked`, and the included count dropped from 7 to 6.
+- PASS: Switching back to Current restored single-note review scope.
+- PASS: `Pagelet: Review current note` sent only `pagelet-smoke-golden.md`
+  content to the configured AI provider and returned 4 suggestion cards.
+- PASS: Preview modal showed `create-file · pagelet.write_review_output`
+  and target
+  `.pagelet/pagelet-smoke-golden-pagelet-review-2026-06-06-3.md`.
+- PASS: `Save review note` created the review note; panel status changed to
+  `Review note saved`.
+- PASS: Suggestion cards rendered source chips, Accept/Dismiss controls,
+  cost footer, related-note chips, and Research for the link suggestion.
+- PASS: Clicking Accept added an editable textarea draft item.
+- PASS: Clicking Research opened Personal Assistant Chat and prefilled the
+  research prompt without auto-submitting.
+- PASS: Smoke 1 follow-up after Pagelet header/layout fix: Draft edit,
+  close/reopen restore, and Remove all passed in the desktop test vault.
+- PASS: Smoke 2 follow-up: Source chip click opened or focused the expected
+  source note without triggering a new provider call.
+- PASS: Smoke 3 follow-up: Related-note chip click behaved correctly without
+  auto-submitting Chat or writing a new file.
+- PASS: Smoke 4 follow-up: Triggering Pagelet from a non-Markdown view was a
+  safe no-op with no provider call and no new `.pagelet/*.md` output.
+- PASS: Smoke 5 follow-up: With macOS Reduce motion enabled, the Pagelet mascot
+  stayed visible and its animation stopped or was visibly reduced.
+- PASS: Provider structured-output matrix follow-up passed.
+- PASS: Mobile Pagelet smoke passed after the mobile layout optimization.
+- PASS: Real screen-reader smoke passed with VoiceOver.
+- PASS: AI plugin coexistence smoke passed.
+
+Not exercised in this run:
+None.
+
+---
+
+## Fast Regression Runner
+
+Use this path when validating a Pagelet regression in the repo-local test vault.
+It exercises the same live Obsidian/plugin/provider surface as the manual
+checklist, while keeping the repeatable DOM assertions in one script.
+
+From the repo root:
+
+```bash
+make deploy
+cp scripts/pagelet-smoke-runner.js test/pagelet-smoke-runner.js
+/Applications/Obsidian.app/Contents/MacOS/obsidian "obsidian://open?vault=test&file=pagelet-smoke-golden.md"
+```
+
+In Obsidian:
+
+- Open Developer Tools.
+- Use the Console tab.
+- Run:
+
+```js
+eval(await app.vault.adapter.read("pagelet-smoke-runner.js"))
+```
+
+After it completes, inspect the summary from the repo root:
+
+```bash
+node - <<'NODE'
+const result = require("./test/pagelet-smoke-runtime-result.json");
+const totals = result.checks.reduce((memo, check) => {
+  memo[check.status] = (memo[check.status] || 0) + 1;
+  return memo;
+}, {});
+console.log({ env: result.env, totals, bugs: result.bugs });
+NODE
+```
+
+Interpretation:
+
+- `PASS`: expected product behavior was observed in the live app.
+- `FAIL`: likely regression or an open product/implementation gap; check the
+  `detail` field before classifying severity.
+- `BLOCKED`: external dependency prevented a full assertion, usually provider
+  quota/rate limits.
+- `SKIP`: fixture or model output did not expose an optional UI affordance in
+  that run.
+
+The runner writes `test/pagelet-smoke-runtime-result.json`; the file is ignored
+by git because the `test/` vault is local smoke state.
 
 ---
 
@@ -47,7 +257,6 @@ shows what blocks tag vs what merely needs follow-up:
 - **P2 — note for post-beta.** Captured for future iteration; do not
   block tag and do not require a ticket unless severity escalates.
   Sections:
-  - Pagelet panel / mascot / SuggestionCard a11y
   - Mobile smoke
   - Real screen-reader smoke
   - Anything not listed above
@@ -93,7 +302,11 @@ shows what blocks tag vs what merely needs follow-up:
 - [ ] Start Pagelet from either supported beta entry:
     - [ ] Click the Pagelet ribbon icon (sparkle / mascot) in the left ribbon
     - [ ] Or run command palette → `Pagelet: Review current note`
-- [ ] Within ~2–3 seconds (network-dependent), the preview modal appears
+- [ ] Or run command palette → `Pagelet: Open Pagelet`; verify the panel opens
+      without reviewing or calling the AI provider until the panel button is used
+- [ ] Pagelet panel opens in the right sidebar and mascot enters reviewing state
+- [ ] Within ~2–3 seconds (network-dependent), the panel shows SuggestionCards
+      and the preview modal appears
 - [ ] Modal shows the 5 SDD §2.1 sections in order:
     - [ ] Header: `create-file · pagelet.write_review_output`
     - [ ] Target: `create-file → .pagelet/<source-basename>-pagelet-review-<YYYY-MM-DD>.md`
@@ -116,6 +329,31 @@ shows what blocks tag vs what merely needs follow-up:
       `gate.target-confinement.ok` → `gate.preview.shown` →
       `gate.confirmation.received` (outcome: confirmed) →
       `gate.stale-reread.ok` → `execute.ok`
+
+## Pagelet panel smoke
+
+- [ ] Panel header shows the source note path and current status.
+- [ ] Scope shows range controls: Current, Yesterday, Last 3 days, Last 7 days.
+- [ ] Switching ranges updates included/skipped note rows without calling the AI provider.
+- [ ] Unchecking an included note removes it from the next run.
+- [ ] `.pagelet/` review output notes are excluded and summarized without
+      listing individual generated review-note paths.
+- [ ] Hidden/system folder paths do not appear in normal scope rows.
+- [ ] Mascot state changes: idle → reviewing → saved/done (or error on failure).
+- [ ] SuggestionCards render with source, rationale, proposed action, Accept,
+      Dismiss, and cost footer when cost diagnostics are available.
+- [ ] Click Accept on one suggestion → it appears in the Draft list.
+- [ ] Edit the Draft textarea → close/reopen the Pagelet panel → edited text is restored.
+- [ ] Click Remove in the Draft list → the draft item disappears.
+- [ ] Click Dismiss on one suggestion → the card disappears from the current
+      visible list without deleting the created review note.
+- [ ] Click a source chip → Obsidian opens the source note for that segment.
+- [ ] Click a related-note chip when the note exists → Obsidian opens that note;
+      when it does not exist, the panel reports a missing related note.
+- [ ] Click Research on an Evidence/Link suggestion → Personal Assistant Chat
+      opens with a research prompt prefilled. The prompt is not auto-submitted.
+- [ ] `Cmd+/` / `Ctrl+/` focuses an interactive element in the latest visible
+      SuggestionCard when the panel has cards.
 
 ## Provider structured output (OQ002)
 
@@ -169,12 +407,12 @@ For **each** provider below, configure it in Settings → Personal Assistant
 
 ## Cost metadata
 
-Current beta does not ship a status bar / sidebar / mascot-panel cost
-indicator. The release check is metadata persistence only; UI cost totals move
-to the future Pagelet panel milestone.
+Current beta persists cost metadata in the review note and shows the session
+cost total in the Pagelet panel. It does not ship a status-bar cost indicator.
 
 - [ ] Confirmed review notes persist `pagelet_cost_usd` in frontmatter when
       the model layer produced a cost entry
+- [ ] Pagelet panel shows the session total after a successful model call
 - [ ] Unknown provider/model pricing persists safely as `0` rather than
       blocking the review
 
@@ -199,18 +437,14 @@ to the future Pagelet panel milestone.
 - [ ] Modify the SOURCE note (add a sentence and save) → no Pagelet review
       auto-runs unless the user explicitly invokes Pagelet again
 
-## Pagelet panel / mascot a11y (future milestone)
+## Pagelet panel / mascot a11y
 
-These checks do not block the current review-note beta. Run them once the full
-Pagelet panel is wired into production.
-
-- [ ] With Pagelet's suggestion panel open, press `Cmd+/` (macOS) /
-      `Ctrl+/` (Windows / Linux) → focus jumps to the latest suggestion card
 - [ ] Enable OS-level Reduce motion and re-open Pagelet → mascot animations
       are stopped; CSS `prefers-reduced-motion` short-circuit is honored
 - [ ] Enable a screen reader (VoiceOver on macOS / NVDA on Windows)
 - [ ] Trigger Pagelet → confirm → screen reader announces "Pagelet review
-      complete" (or localized equivalent) via the aria-live region
+      complete" (or localized equivalent) via the aria-live region. Real
+      screen-reader execution remains P2 unless this check uncovers an S0/S1.
 
 ## View-type gating
 
@@ -227,8 +461,8 @@ Pagelet panel is wired into production.
       (alongside built-in icons)
 - [ ] `hidden` → ribbon icon disappears entirely; command palette →
       `Pagelet: Review current note` still starts the same review flow
-- [ ] `Cmd+/` / `Ctrl+/` focus command remains discoverable, but it is a
-      no-op until the future Pagelet panel mounts real suggestion cards
+- [ ] `Pagelet: Open Pagelet` opens the panel without reading note text or
+      calling the AI provider
 
 ## Mobile smoke (iOS or Android Obsidian)
 
