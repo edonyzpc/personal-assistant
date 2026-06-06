@@ -298,10 +298,10 @@ function mountInitial(args: {
 
     const root = host.createHtmlElement("div");
     root.setAttribute("data-plugin", dataPlugin);
-    // role="status" is the SDD §9.2 a11y baseline. B5 will toggle
-    // `aria-live="polite"` for the suggestion region; the mascot
-    // itself is a status indicator, not a live region.
-    root.setAttribute("role", "status");
+    // The visual mascot is a labelled group. State announcements are isolated
+    // in the hidden live region below so assistive tech does not announce the
+    // same transition twice.
+    root.setAttribute("role", "group");
 
     const svg = host.createSvgElement("svg");
     svg.setAttribute("xmlns", SVG_NAMESPACE);
@@ -325,10 +325,8 @@ function mountInitial(args: {
     // `aria-atomic="true"` so AT re-reads the whole announcement instead
     // of trying to diff. Atomic is correct for short status messages.
     liveEl.setAttribute("aria-atomic", "true");
-    // `role="status"` is the SDD §9.2 baseline for transient updates;
-    // we keep `role="status"` on the dedicated live element rather than
-    // doubling it on the root (which would conflict with the mascot's
-    // own `role="status"` set above and confuse some AT).
+    // `role="status"` is scoped to the dedicated live element rather than
+    // duplicated on the visual root.
     liveEl.setAttribute("role", "status");
     root.appendChild(liveEl);
 

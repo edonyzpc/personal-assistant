@@ -80,6 +80,12 @@ export interface ConfinementConfig {
     allowedExtensions: string[];
     /** Max normalized path length. Default 200 (framework SDD §2.2). */
     maxPathLength?: number;
+    /**
+     * Allow create-file capabilities to target a file in a parent folder that
+     * does not exist yet. The capability remains responsible for creating the
+     * folder only after preview confirmation.
+     */
+    allowMissingParent?: boolean;
     /** Optional caller-supplied additional reject patterns; runs after built-in categorized checks. */
     rejectPatterns?: readonly RegExp[];
 }

@@ -27,20 +27,33 @@ import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
 import { ChatHistoryManager } from './chat/chat-history-manager';
+import { AIUtils } from './ai-services/ai-utils';
 import {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
+    PAGELET_REVIEW_CURRENT_COMMAND_ID,
+    PageletCostTracker,
+    PageletRateLimiter,
+    PageletReviewModel,
     createPaReviewRuntime,
+    isPageletEligibleView,
+    mintNonCollidingReviewNotePath,
     registerPageletFocusCommand,
+    registerPageletReviewCurrentCommand,
     registerPageletRibbonIcon,
+    type PageletLanguageCode,
+    type PageletReviewInput,
+    type PageletSegment,
     type PaReviewRuntime,
 } from './pagelet';
-import { getPageletUiLanguage, pageletT } from './locales/pagelet';
+import { detectNoteLanguage, getPageletUiLanguage, pageletT } from './locales/pagelet';
 import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
+const PAGELET_APPROX_CHARS_PER_TOKEN = 4;
+const PAGELET_SEGMENT_TARGET_CHARS = 4_000;
 
 interface TechnicalMemoryDetail {
     label: string;
@@ -101,6 +114,19 @@ function arraysEqual(left: string[], right: string[]): boolean {
     return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function buildPageletSegments(content: string, maxInputTokens: number): PageletSegment[] {
+    const maxChars = Math.max(1, Math.floor(maxInputTokens || 1) * PAGELET_APPROX_CHARS_PER_TOKEN);
+    const clipped = content.length > maxChars ? content.slice(0, maxChars) : content;
+    const segments: PageletSegment[] = [];
+    for (let start = 0; start < clipped.length; start += PAGELET_SEGMENT_TARGET_CHARS) {
+        segments.push({
+            id: `seg-${segments.length + 1}`,
+            content: clipped.slice(start, start + PAGELET_SEGMENT_TARGET_CHARS),
+        });
+    }
+    return segments;
+}
+
 /**
  * localStorage key guarding the one-time Notice fired when a stored
  * `pagelet.reviewsFolder` is coerced by the validator. Set to "1" after the
@@ -155,6 +181,9 @@ export class PluginManager extends Plugin {
      * per-streamTurn inside chat-service.ts).
      */
     private pageletRuntime: PaReviewRuntime | null = null;
+    private pageletReviewInFlight = false;
+    private pageletCostTracker = new PageletCostTracker();
+    private pageletRateLimiter = new PageletRateLimiter();
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
      * was coerced to the default by the now-stricter validator. Consumed once
@@ -540,28 +569,29 @@ export class PluginManager extends Plugin {
         this.addSettingTab(this.settingTab);
 
         // ── Pagelet (Review Assistant) wiring ──────────────────────────
-        // Ribbon icon + Cmd+/ focus command. The ribbon click lazily mints
-        // the framework runtime via `getOrCreatePageletRuntime` so cold-start
-        // cost stays zero for users who never click it. The focus command
-        // is registered unconditionally so the hotkey is discoverable in
-        // Settings → Hotkeys even before the first review.
+        // Ribbon icon + command-palette review entry + Cmd+/ focus command.
+        // The review entry and ribbon click both lazily mint the framework
+        // runtime via `getOrCreatePageletRuntime` so cold-start cost stays zero
+        // for users who never invoke Pagelet.
         // The optional-chain guard lets tests that ship a partial settings
         // object (no `pagelet` key) reach onload() without throwing.
         if (this.settings.pagelet?.enabled) {
             try {
+                registerPageletReviewCurrentCommand(
+                    this as unknown as Parameters<typeof registerPageletReviewCurrentCommand>[0],
+                    {
+                        name: pageletT("pagelet.command.reviewCurrent", this.getPageletLocale()),
+                        onReviewCurrent: () => this.runPageletReviewForActiveNote(),
+                    },
+                );
+            } catch (error) {
+                this.log("Failed to register Pagelet review command", error);
+            }
+            try {
                 registerPageletRibbonIcon(this, {
                     position: this.settings.pagelet.ribbonPosition,
                     onClick: () => {
-                        // Lazy init — first click mints the runtime + framework
-                        // wiring. Subsequent clicks reuse the singleton.
-                        const runtime = this.getOrCreatePageletRuntime();
-                        // The actual "open Pagelet panel + trigger review"
-                        // glue lives in Track B5's view layer; once that
-                        // view registers, this callback will route through
-                        // it. For now, mounting the runtime is enough to
-                        // arm the self-write reentrancy guard above.
-                        void runtime;
-                        new Notice(pageletT("pagelet.mascot.idle", this.getPageletLocale()), 2000);
+                        void this.runPageletReviewForActiveNote();
                     },
                 });
             } catch (error) {
@@ -580,6 +610,7 @@ export class PluginManager extends Plugin {
             }
             // Acknowledge stable constant (used only when an external caller
             // wants to query the registered command id, e.g. for tests).
+            void PAGELET_REVIEW_CURRENT_COMMAND_ID;
             void PAGELET_FOCUS_LATEST_COMMAND_ID;
         }
     }
@@ -606,6 +637,152 @@ export class PluginManager extends Plugin {
             this.log("Pagelet runtime initialized");
         }
         return this.pageletRuntime;
+    }
+
+    private async runPageletReviewForActiveNote(): Promise<void> {
+        const locale = this.getPageletLocale();
+        if (this.pageletReviewInFlight) {
+            new Notice(pageletT("pagelet.trigger.alreadyRunning", locale), 2500);
+            return;
+        }
+        const activeMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
+        if (!activeMarkdownView || !isPageletEligibleView(activeMarkdownView)) {
+            return;
+        }
+        const file = activeMarkdownView.file;
+        if (!file || file.extension.toLowerCase() !== "md") {
+            return;
+        }
+        const abortController = new AbortController();
+        const abortIfSourceViewChanged = () => {
+            const currentView = this.app.workspace.getActiveViewOfType(MarkdownView);
+            if (currentView !== activeMarkdownView || currentView.file?.path !== file.path) {
+                abortController.abort();
+            }
+        };
+        const activeLeafRef = this.app.workspace.on("active-leaf-change", abortIfSourceViewChanged);
+        const fileOpenRef = this.app.workspace.on("file-open", abortIfSourceViewChanged);
+        const runtime = this.getOrCreatePageletRuntime();
+        if (!runtime) {
+            this.app.workspace.offref(activeLeafRef);
+            this.app.workspace.offref(fileOpenRef);
+            new Notice(pageletT("pagelet.mascot.error", locale), 3000);
+            return;
+        }
+
+        this.pageletReviewInFlight = true;
+        new Notice(pageletT("pagelet.mascot.thinking", locale), 2000);
+
+        try {
+            const content = await this.app.vault.cachedRead(file);
+            if (content.trim().length === 0) {
+                new Notice(pageletT("pagelet.trigger.emptyNote", locale), 3000);
+                return;
+            }
+
+            const pageletSettings = this.settings.pagelet;
+            const detectedLanguage = detectNoteLanguage(content);
+            const outputLanguage: PageletLanguageCode = pageletSettings.outputLanguage === "auto"
+                ? detectedLanguage
+                : pageletSettings.outputLanguage;
+            const segments = buildPageletSegments(content, pageletSettings.maxInputTokens);
+            if (segments.length === 0) {
+                new Notice(pageletT("pagelet.trigger.emptyNote", locale), 3000);
+                return;
+            }
+
+            const reviewInput: PageletReviewInput = {
+                notePath: file.path,
+                noteContent: segments.map((segment) => segment.content).join("\n\n"),
+                detectedLanguage,
+                mode: "basic",
+                segments,
+                uiLanguage: locale,
+                ...(pageletSettings.outputLanguage === "auto"
+                    ? {}
+                    : { outputLanguageOverride: outputLanguage }),
+            };
+            const aiUtils = new AIUtils(this);
+            const reviewModel = new PageletReviewModel(
+                (temperature, options) => aiUtils.createChatModel(temperature, {
+                    modelName: options?.modelName,
+                }),
+                {
+                    temperature: pageletSettings.temperature,
+                    modelName: this.settings.chatModelName,
+                    costBudget: {
+                        maxInputTokens: pageletSettings.maxInputTokens,
+                        maxOutputTokens: pageletSettings.maxOutputTokens,
+                    },
+                    costTracker: this.pageletCostTracker,
+                    rateLimiter: this.pageletRateLimiter,
+                    providerForPricing: this.settings.aiProvider,
+                    modelForPricing: this.settings.chatModelName,
+                    userMessageLocale: locale,
+                },
+            );
+            const outcome = await reviewModel.reviewNote(reviewInput);
+            if (outcome.status === "error") {
+                new Notice(outcome.userMessage, 6000);
+                return;
+            }
+            if (outcome.status === "empty") {
+                new Notice(pageletT("pagelet.trigger.noSuggestions", locale), 4000);
+                return;
+            }
+            if (abortController.signal.aborted) {
+                return;
+            }
+
+            const date = new Date();
+            const targetPath = await mintNonCollidingReviewNotePath({
+                adapter: this.app.vault.adapter,
+                sourcePath: file.path,
+                settings: pageletSettings,
+                date,
+            });
+            const writeResult = await runtime.actionExecutor.execute(
+                runtime.toolProvider.capability,
+                {
+                    sourcePath: file.path,
+                    reviewResult: outcome.result,
+                    mode: reviewInput.mode,
+                    detectedLanguage,
+                    targetPath,
+                    dateOverride: date,
+                    ...(outcome.diagnostics.costEntry
+                        ? { costUsd: outcome.diagnostics.costEntry.estimatedCost }
+                        : {}),
+                    ...(this.settings.aiProvider ? { provider: this.settings.aiProvider } : {}),
+                    ...(this.settings.chatModelName ? { model: this.settings.chatModelName } : {}),
+                },
+                {
+                    plugin: this,
+                    turnId: `pagelet-${date.getTime()}`,
+                    platform: Platform.isMobile ? "mobile" : "desktop",
+                    signal: abortController.signal,
+                },
+            );
+            if (writeResult.status === "ok") {
+                new Notice(pageletT("pagelet.mascot.done", locale), 4000);
+                return;
+            }
+            if (writeResult.error?.includes("user did not confirm")) {
+                return;
+            }
+            new Notice(
+                writeResult.userSafeMessage
+                    ?? pageletT("pagelet.trigger.writeFailed", locale),
+                6000,
+            );
+        } catch (error) {
+            this.log("Pagelet review failed", error);
+            new Notice(pageletT("pagelet.mascot.error", locale), 6000);
+        } finally {
+            this.app.workspace.offref(activeLeafRef);
+            this.app.workspace.offref(fileOpenRef);
+            this.pageletReviewInFlight = false;
+        }
     }
 
     /**

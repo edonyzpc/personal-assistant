@@ -5,8 +5,8 @@
  *
  * Spec source: `docs/review-assistant-sdd.md` §6.1 R4.
  *
- * Rule: Pagelet must register its ribbon icon in a deterministic
- * position relative to PA's existing ribbon icons.
+ * Rule: Pagelet must register its ribbon icon with deterministic
+ * visibility behavior.
  *
  * Obsidian-specific reality (the SDD calls this out):
  *  - Obsidian does NOT expose a stable "insert at index N" ribbon API.
@@ -14,18 +14,16 @@
  *    the end of the ribbon at registration time.
  *  - Reordering is left to the user (or to the Commander plugin).
  *
- * So "deterministic position" means:
+ * So "deterministic visibility" means:
  *  1. Default placement: append (= AFTER the existing PA chat icon),
  *     because the chat icon registers earlier in `plugin.ts:163`. This
  *     gives a consistent visual order even without the user touching
  *     Commander.
- *  2. The `ribbonPosition` setting (B3) lets the user pick `"default"`,
- *     `"top"` (intent recorded, requires Commander to fully honor —
- *     SDD §6.1 R4 acknowledges this limitation), or `"hidden"` (we
- *     hide the element entirely via `display: none`).
+ *  2. The `ribbonPosition` setting (B3) lets the user pick `"default"`
+ *     or `"hidden"` (we hide the element entirely via `display: none`).
  *  3. We tag the element with a stable CSS class
  *     (`pa-pagelet-ribbon-icon`) and a `data-plugin="pa-pagelet"`
- *     attribute so Commander / user-CSS can reorder it deterministically.
+ *     attribute so Commander / user-CSS can still find it.
  *
  * Why this lives in compat:
  *  - It's a compatibility surface (3rd-party plugins observe ribbon
@@ -104,7 +102,7 @@ export interface PageletRibbonHost {
 
 export interface RegisterPageletRibbonOptions {
     /**
-     * One of "default" | "top" | "hidden" — pulled from
+     * One of "default" | "hidden" — pulled from
      * `settings.pagelet.ribbonPosition`. Required so the caller has to
      * make an intentional choice.
      */
@@ -134,8 +132,6 @@ export interface RegisterPageletRibbonResult {
  *   position      | DOM effect
  *   --------------|--------------------------------------------------------
  *   "default"     | append (relies on registration-order being stable)
- *   "top"         | append + `pa-pagelet-ribbon-icon--top` modifier class
- *                 |   (Commander / user CSS honors the modifier)
  *   "hidden"      | append + style.display = "none"
  *
  * The element is ALWAYS tagged with the stable class + data-plugin
@@ -164,12 +160,6 @@ export function registerPageletRibbonIcon(
         case "default":
             // Append-order is the natural deterministic position
             // (chat first, Pagelet second). Nothing else to do.
-            break;
-        case "top":
-            // Intent flag — actual reordering needs Commander. Modifier
-            // class is stable so user-CSS can target it (e.g. via
-            // `order: -1` in a flex ribbon).
-            element.addClass(`${PAGELET_RIBBON_CSS_CLASS}--top`);
             break;
         case "hidden":
             element.style.display = "none";

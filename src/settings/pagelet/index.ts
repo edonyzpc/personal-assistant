@@ -7,7 +7,7 @@
  *  - `docs/review-assistant-sdd.md` §10.3 (Settings UI layout)
  *  - D008-D010 (storage path), D013 (beta default on), D015 (output lang),
  *    D018 (token caps), D020 (call limits — read-only display only),
- *    R4 (ribbon position)
+ *    R4 (ribbon icon visibility)
  *
  * Shape contract:
  *  - 7 user-editable fields. Two more (`hourlyCallLimit` / `dailyCallLimit`)
@@ -53,8 +53,8 @@ import {
 /** Output language preference, mirrors D015 (Auto = follow detection). */
 export type PageletOutputLanguageSetting = "auto" | "zh" | "en";
 
-/** Where the Pagelet ribbon icon appears (R4). */
-export type PageletRibbonPosition = "default" | "top" | "hidden";
+/** Whether the Pagelet ribbon icon is visible (R4). */
+export type PageletRibbonPosition = "default" | "hidden";
 
 /**
  * 7 persisted Pagelet settings.
@@ -216,24 +216,20 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
  * Validate + normalize a user-supplied `reviewsFolder` value.
  *
  * This is the **fail-closed settings boundary** that backs `PaReviewToolProvider`'s
- * `targetConfinement.allowedRoots`. The capability derives its allowlist
- * from `settings.reviewsFolder` directly (see
- * `src/pagelet/pa-review-tool-provider.ts:285-296`), so a misconfigured
- * folder (e.g. `.obsidian/`, `/`, `..`, `C:\…`) would otherwise let the
- * Write Action Framework's Gate 1 accept paths that escape Pagelet's
- * intended sandbox. We block those classes here, **before** the value
- * persists to data.json.
+ * `targetConfinement.allowedRoots`. A misconfigured folder (e.g.
+ * `.obsidian/`, `/`, `..`, `C:\…`) would otherwise let the Write Action
+ * Framework's Gate 1 accept paths that escape Pagelet's intended sandbox.
+ * We block those classes here, **before** the value persists to data.json.
  *
  * On any rejection, the function returns the default folder (`.pagelet`) so
  * the rest of the runtime stays safe even if a caller forgets to inspect
  * `error`. The UI layer is responsible for surfacing the error and reverting
  * the editable text input (see `renderPageletSection`).
  *
- * `PaReviewToolProvider` does NOT call this validator directly — it still
- * resolves the persisted value through `pa-review-file-io.ts`'s sibling
- * `normalizeReviewsFolder`, which trusts that the settings layer already
- * scrubbed forbidden shapes. Keeping the fix here (one boundary) instead
- * of in the capability avoids a per-call branch on every write.
+ * `PaReviewToolProvider` also calls this validator when deriving the write
+ * allowlist. That is intentional defense in depth: normal settings are already
+ * scrubbed at load time, but direct tests or future callers may hand the
+ * capability an unsanitized object.
  */
 export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderValidation {
     if (typeof value !== "string") {
@@ -363,7 +359,7 @@ function normalizeOutputLanguage(value: unknown): PageletOutputLanguageSetting {
 }
 
 function normalizeRibbonPosition(value: unknown): PageletRibbonPosition {
-    if (value === "default" || value === "top" || value === "hidden") return value;
+    if (value === "default" || value === "hidden") return value;
     return PAGELET_DEFAULTS.ribbonPosition;
 }
 
@@ -585,7 +581,6 @@ export function renderPageletSection(
         .addDropdown((dropdown) => {
             dropdown
                 .addOption("default", t("pagelet.settings.ribbonPosition.option.default"))
-                .addOption("top", t("pagelet.settings.ribbonPosition.option.top"))
                 .addOption("hidden", t("pagelet.settings.ribbonPosition.option.hidden"))
                 .setValue(settings.ribbonPosition)
                 .onChange((value) => saveOnChange(() => {

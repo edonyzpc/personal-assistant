@@ -58,3 +58,9 @@ export {
     type PageletQueryRoot,
     type RegisterPageletFocusCommandOptions,
 } from "./focus-command";
+
+export {
+    PAGELET_REVIEW_CURRENT_COMMAND_ID,
+    registerPageletReviewCurrentCommand,
+    type RegisterPageletReviewCurrentCommandOptions,
+} from "./review-command";

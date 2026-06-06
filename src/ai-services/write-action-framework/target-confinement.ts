@@ -331,7 +331,7 @@ export async function validateTargetConfinement(
     // Probe folder first so a missing parent is reported distinctly from collision.
     if (folder !== "") {
         const folderExists = await fs.exists(folder);
-        if (!folderExists) {
+        if (!folderExists && !config.allowMissingParent) {
             return { ok: false, reason: "folder_missing", detail: folder };
         }
     }

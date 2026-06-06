@@ -178,6 +178,12 @@ export interface WriteReviewNoteInput {
     /** Detected note language (B1 D015). */
     detectedLanguage: PageletLanguageCode;
     /**
+     * Vault-relative path already shown in preview and accepted by the user.
+     * When present, the writer MUST use this exact path and MUST NOT remint a
+     * collision suffix during execute.
+     */
+    targetPath?: string;
+    /**
      * Optional injected date — defaults to `new Date()`. Tests use this
      * for deterministic filenames; future "scheduled reviews" can leverage.
      */
@@ -359,6 +365,25 @@ export function resolveReviewNotePath(input: ResolveReviewNotePathInput): string
         ? `-${input.collisionIndex + 1}`
         : "";
     return normalizePath(`${folder}/${stem}-${PAGELET_FILENAME_INFIX}-${date}${suffix}.md`);
+}
+
+/**
+ * Async path resolver for callers that need to freeze the exact write target
+ * before preview. The returned path is non-colliding at the time of probing;
+ * the Write Action Framework re-checks it immediately before execute.
+ */
+export async function mintNonCollidingReviewNotePath(args: {
+    adapter: PageletReviewIOAdapter;
+    sourcePath: string;
+    settings: PageletReviewFileIOSettings;
+    date?: Date;
+}): Promise<string> {
+    return mintNonCollidingPath({
+        adapter: args.adapter,
+        sourcePath: args.sourcePath,
+        settings: args.settings,
+        date: args.date ?? new Date(),
+    });
 }
 
 // ---------------------------------------------------------------------------
@@ -563,16 +588,21 @@ export async function writeReviewNote(
     input: WriteReviewNoteInput,
 ): Promise<WriteReviewNoteResult> {
     const date = input.dateOverride ?? new Date();
-    const folder = resolveReviewsFolderPath(input.settings.reviewsFolder);
+    const finalPath = input.targetPath
+        ? normalizePath(input.targetPath)
+        : await mintNonCollidingPath({
+            adapter: input.vault.adapter,
+            sourcePath: input.sourcePath,
+            settings: input.settings,
+            date,
+        });
+    const folder = folderFromPath(finalPath) ?? resolveReviewsFolderPath(input.settings.reviewsFolder);
 
     await ensureFolder(input.vault.adapter, folder);
 
-    const finalPath = await mintNonCollidingPath({
-        adapter: input.vault.adapter,
-        sourcePath: input.sourcePath,
-        settings: input.settings,
-        date,
-    });
+    if (await input.vault.adapter.exists(finalPath)) {
+        throw new Error(`Pagelet review target already exists: ${finalPath}`);
+    }
 
     const nowIso = input.nowIso ? input.nowIso() : formatPageletIsoTimestamp(date);
     const metadata = buildReviewMetadata({
@@ -658,4 +688,11 @@ function formatHmsSuffix(date: Date): string {
     const mm = String(date.getUTCMinutes()).padStart(2, "0");
     const ss = String(date.getUTCSeconds()).padStart(2, "0");
     return `${hh}${mm}${ss}`;
+}
+
+function folderFromPath(path: string): string | null {
+    const normalized = normalizePath(path);
+    const lastSlash = normalized.lastIndexOf("/");
+    if (lastSlash <= 0) return null;
+    return normalized.substring(0, lastSlash);
 }

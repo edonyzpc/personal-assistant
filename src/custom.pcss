@@ -2445,6 +2445,92 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 }
 
 /* ──────────────────────────────────────────────────────────────────────
+ * Pagelet (Review Assistant) — beta settings and suggestion card baseline.
+ * ────────────────────────────────────────────────────────────────────── */
+.pa-pagelet-beta-callout {
+	margin: 8px 0 16px;
+	padding: 10px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	line-height: 1.4;
+}
+
+.pa-pagelet-settings-error {
+	margin-top: 6px;
+	color: var(--text-error);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.35;
+}
+
+.pa-pagelet-suggestion-card {
+	box-sizing: border-box;
+	display: grid;
+	gap: 10px;
+	width: 100%;
+	padding: 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+	color: var(--text-normal);
+}
+
+.pa-pagelet-suggestion-card__header,
+.pa-pagelet-suggestion-card__footer,
+.pa-pagelet-suggestion-card__badges {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	flex-wrap: wrap;
+	min-width: 0;
+}
+
+.pa-pagelet-suggestion-card__kind,
+.pa-pagelet-suggestion-card__badge {
+	display: inline-flex;
+	align-items: center;
+	min-height: 22px;
+	padding: 2px 7px;
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	line-height: 1.2;
+}
+
+.pa-pagelet-suggestion-card__section-label {
+	display: block;
+	margin-bottom: 3px;
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+}
+
+.pa-pagelet-suggestion-card__rationale-text,
+.pa-pagelet-suggestion-card__action-text,
+.pa-pagelet-suggestion-card__related-item {
+	overflow-wrap: anywhere;
+	line-height: 1.45;
+}
+
+.pa-pagelet-suggestion-card__related-list {
+	margin: 0;
+	padding-inline-start: 18px;
+}
+
+.pa-pagelet-suggestion-card__source-chip,
+.pa-pagelet-suggestion-card__btn {
+	border-radius: 6px;
+}
+
+.pa-pagelet-suggestion-card__footer {
+	justify-content: flex-end;
+}
+
+/* ──────────────────────────────────────────────────────────────────────
  * Pagelet (Review Assistant) — mascot a11y / reduced-motion baseline.
  *
  * The mascot DOM renderer (`src/ui/pagelet/mascot/dom-renderer.ts`) emits

@@ -3,6 +3,11 @@
     "pagelet.mascot.thinking": "让我看看…",
     "pagelet.mascot.done": "看完了，看看我发现了什么。",
     "pagelet.mascot.error": "出了点问题。重试或发送反馈。",
+    "pagelet.trigger.alreadyRunning": "拾页正在审阅另一篇笔记。",
+    "pagelet.trigger.noActiveNote": "请先打开一篇 Markdown 笔记再运行拾页。",
+    "pagelet.trigger.emptyNote": "拾页需要一些笔记正文才能审阅。",
+    "pagelet.trigger.noSuggestions": "拾页已完成审阅，但没有发现值得保存的建议。",
+    "pagelet.trigger.writeFailed": "拾页无法保存审阅笔记。",
 
     "pagelet.suggestion.kind.clarify": "澄清",
     "pagelet.suggestion.kind.expand": "展开",
@@ -50,10 +55,9 @@
     "pagelet.settings.outputLanguage.option.zh": "中文（简体）",
     "pagelet.settings.outputLanguage.option.en": "英文",
 
-    "pagelet.settings.ribbonPosition.name": "Ribbon 位置",
-    "pagelet.settings.ribbonPosition.desc": "拾页 ribbon 图标在 Obsidian 左侧栏的位置。",
+    "pagelet.settings.ribbonPosition.name": "Ribbon 图标",
+    "pagelet.settings.ribbonPosition.desc": "显示或隐藏 Obsidian 左侧栏里的拾页图标。",
     "pagelet.settings.ribbonPosition.option.default": "默认",
-    "pagelet.settings.ribbonPosition.option.top": "顶部",
     "pagelet.settings.ribbonPosition.option.hidden": "隐藏",
 
     "pagelet.settings.temperature.name": "Temperature",
@@ -69,11 +73,17 @@
     "pagelet.errors.parse_failed": "拾页审阅失败：无法解析模型返回的内容。请重试或发送反馈。",
     "pagelet.errors.timeout": "拾页审阅超时。请重试，或先缩短笔记再重试。",
     "pagelet.errors.provider_error": "拾页审阅失败：AI 服务商返回了错误。请在设置中检查你的 API key、provider 和模型。",
+    "pagelet.errors.input_too_large": "拾页拒绝了这次审阅：笔记超过了设置中的输入 token 上限。请先缩短或拆分笔记。",
+    "pagelet.errors.hard_cap_exceeded": "拾页拒绝了这次审阅：输入加预留输出超过硬性 token 上限。请在设置中降低输入或输出上限。",
+    "pagelet.errors.rate_limit_hourly": "拾页已达到每小时调用上限，请稍后再试。",
+    "pagelet.errors.rate_limit_daily": "拾页已达到每日调用上限，明日恢复。",
 
     "pagelet.cost.label": "费用",
     "pagelet.cost.todayTotal": "今日费用",
     "pagelet.cost.estimate": "预估费用：{usd}",
     "pagelet.cost.limitReached": "拾页已达今日调用上限，明日恢复。",
+
+    "pagelet.command.reviewCurrent": "拾页：审阅当前笔记",
 
     "pagelet.a11y.suggestionsRegion": "拾页建议",
     "pagelet.a11y.mascotLabel": "拾页状态指示",

@@ -3,6 +3,11 @@
     "pagelet.mascot.thinking": "Let me take a look…",
     "pagelet.mascot.done": "Done — see what I noticed.",
     "pagelet.mascot.error": "Something went wrong. Try again or send feedback.",
+    "pagelet.trigger.alreadyRunning": "Pagelet is already reviewing a note.",
+    "pagelet.trigger.noActiveNote": "Open a Markdown note before running Pagelet.",
+    "pagelet.trigger.emptyNote": "Pagelet needs some note text to review.",
+    "pagelet.trigger.noSuggestions": "Pagelet finished, but did not find suggestions worth saving.",
+    "pagelet.trigger.writeFailed": "Pagelet could not save the review note.",
 
     "pagelet.suggestion.kind.clarify": "Clarify",
     "pagelet.suggestion.kind.expand": "Expand",
@@ -50,10 +55,9 @@
     "pagelet.settings.outputLanguage.option.zh": "Chinese (Simplified)",
     "pagelet.settings.outputLanguage.option.en": "English",
 
-    "pagelet.settings.ribbonPosition.name": "Ribbon position",
-    "pagelet.settings.ribbonPosition.desc": "Where the Pagelet ribbon icon appears in Obsidian's left bar.",
+    "pagelet.settings.ribbonPosition.name": "Ribbon icon",
+    "pagelet.settings.ribbonPosition.desc": "Show or hide the Pagelet icon in Obsidian's left bar.",
     "pagelet.settings.ribbonPosition.option.default": "Default",
-    "pagelet.settings.ribbonPosition.option.top": "Top",
     "pagelet.settings.ribbonPosition.option.hidden": "Hidden",
 
     "pagelet.settings.temperature.name": "Temperature",
@@ -69,11 +73,17 @@
     "pagelet.errors.parse_failed": "Pagelet review failed: the model's response could not be parsed. Please try again or send feedback.",
     "pagelet.errors.timeout": "Pagelet review timed out. Try again, or shorten the note before retrying.",
     "pagelet.errors.provider_error": "Pagelet review failed: the AI provider returned an error. Check your API key, provider, and model in settings.",
+    "pagelet.errors.input_too_large": "Pagelet refused this review because the note exceeds the configured input token limit. Try shortening or splitting the note.",
+    "pagelet.errors.hard_cap_exceeded": "Pagelet refused this review because input plus reserved output exceeds the hard token cap. Lower max input or max output tokens in settings.",
+    "pagelet.errors.rate_limit_hourly": "Pagelet hit the hourly call limit. Try again later.",
+    "pagelet.errors.rate_limit_daily": "Pagelet hit the daily call limit. It will resume tomorrow.",
 
     "pagelet.cost.label": "Cost",
     "pagelet.cost.todayTotal": "Today's cost",
     "pagelet.cost.estimate": "Estimated cost: {usd}",
     "pagelet.cost.limitReached": "Pagelet hit the daily call limit. It will resume tomorrow.",
+
+    "pagelet.command.reviewCurrent": "Pagelet: Review current note",
 
     "pagelet.a11y.suggestionsRegion": "Pagelet suggestions",
     "pagelet.a11y.mascotLabel": "Pagelet status indicator",

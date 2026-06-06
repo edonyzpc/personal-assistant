@@ -40,7 +40,7 @@
  *    `execute` directly would bypass all 4 gates; we make that loud.
  */
 
-import type { App, TFile } from "obsidian";
+import { normalizePath, type App, type TFile } from "obsidian";
 
 import type {
     AgentCapabilityContext,
@@ -62,13 +62,15 @@ import type {
     WriteActionExecuteHooks,
 } from "../ai-services/write-action-framework";
 import { pageletT, type PageletLocale } from "../locales/pagelet";
-import type { PageletSettings } from "../settings/pagelet";
+import {
+    normalizeReviewsFolder as normalizeConfiguredReviewsFolder,
+    type PageletSettings,
+} from "../settings/pagelet";
 
 import {
     assembleReviewNote,
     buildReviewMetadata,
     formatPageletIsoTimestamp,
-    normalizeReviewsFolder as normalizePageletReviewsFolder,
     resolveReviewNotePath,
     writeReviewNote,
     type PageletReviewFileIOSettings,
@@ -133,6 +135,8 @@ export interface PageletWriteReviewOutputInput {
     provider?: string;
     /** Optional model id for frontmatter (e.g., "qwen-plus"). */
     model?: string;
+    /** Exact vault-relative path accepted in preview. */
+    targetPath?: string;
     /**
      * Optional injected date — defaults to `new Date()`. Tests use this for
      * deterministic filenames; scheduled-review prototypes can lean on it.
@@ -251,6 +255,9 @@ function parseWriteInput(input: unknown): PageletWriteReviewOutputInput {
         ...(typeof candidate.costUsd === "number" ? { costUsd: candidate.costUsd } : {}),
         ...(typeof candidate.provider === "string" ? { provider: candidate.provider } : {}),
         ...(typeof candidate.model === "string" ? { model: candidate.model } : {}),
+        ...(typeof candidate.targetPath === "string" && candidate.targetPath.length > 0
+            ? { targetPath: candidate.targetPath }
+            : {}),
         ...(candidate.dateOverride instanceof Date ? { dateOverride: candidate.dateOverride } : {}),
         ...(typeof candidate.nowIso === "function" ? { nowIso: candidate.nowIso as () => string } : {}),
     };
@@ -267,11 +274,16 @@ function computeTargetPath(
     input: PageletWriteReviewOutputInput,
     settings: PageletReviewToolSettings,
 ): string {
+    if (input.targetPath) return normalizePath(input.targetPath);
     return resolveReviewNotePath({
         sourcePath: input.sourcePath,
         settings,
         date: input.dateOverride ?? new Date(),
     });
+}
+
+function resolveAllowedReviewsFolder(settings: PageletReviewToolSettings): string {
+    return normalizeConfiguredReviewsFolder(settings.reviewsFolder).value;
 }
 
 /**
@@ -287,21 +299,21 @@ function buildConfinement(settings: PageletReviewToolSettings): {
     allowedRoots: string[];
     allowedExtensions: string[];
     maxPathLength: number;
+    allowMissingParent: true;
 } {
-    const folder = normalizePageletReviewsFolder(settings.reviewsFolder);
+    const folder = resolveAllowedReviewsFolder(settings);
     const allowedRoots = [`${folder}/`];
     // Issue #358 AC #1: construction-time defense-in-depth assert. Throws
     // ConfinementConfigError if a forbidden top-level dotfolder slipped past
-    // the settings-layer scrub. In practice unreachable for Pagelet today
-    // (`normalizePageletReviewsFolder` already coerces forbidden inputs to
-    // `.pagelet`), but guarantees that any future caller wiring this builder
-    // — or a regression in the settings layer — fails loudly at capability
-    // registration instead of silently at first write.
+    // the settings-layer scrub. The allowlist itself is derived from the same
+    // fail-closed validator used at load time so a compromised caller cannot
+    // widen Pagelet confinement by bypassing `mergePageletSettings`.
     validateAllowedRoots(allowedRoots);
     return {
         allowedRoots,
         allowedExtensions: [".md"],
         maxPathLength: PAGELET_MAX_PATH_LENGTH,
+        allowMissingParent: true,
     };
 }
 
@@ -494,6 +506,7 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
                 ...(typeof parsed.costUsd === "number" ? { costUsd: parsed.costUsd } : {}),
                 ...(parsed.provider ? { provider: parsed.provider } : {}),
                 ...(parsed.model ? { model: parsed.model } : {}),
+                ...(parsed.targetPath ? { targetPath: parsed.targetPath } : {}),
                 ...(parsed.nowIso ? { nowIso: parsed.nowIso } : {}),
                 markSelfWrite: composedMarkSelfWrite,
             });

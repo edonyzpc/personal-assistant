@@ -314,14 +314,15 @@ export function buildSystemPrompt(language: PageletLanguageCode): string {
  * format so a single user message keeps system prompt token cost flat.
  */
 export function buildUserPrompt(input: PageletReviewInput): string {
-    const fewShot = input.detectedLanguage === "zh" ? FEW_SHOT_ZH : FEW_SHOT_EN;
+    const outputLanguage = input.outputLanguageOverride ?? input.detectedLanguage;
+    const fewShot = outputLanguage === "zh" ? FEW_SHOT_ZH : FEW_SHOT_EN;
     const segmentLines = input.segments
         .map((seg) => `  - id: "${seg.id}": ${JSON.stringify(seg.content)}`)
         .join("\n");
-    const noteIntro = input.detectedLanguage === "zh"
+    const noteIntro = outputLanguage === "zh"
         ? `笔记路径：${input.notePath}，${input.segments.length} 个片段：`
         : `Note (path: ${input.notePath}), ${input.segments.length} segments:`;
-    const closer = input.detectedLanguage === "zh"
+    const closer = outputLanguage === "zh"
         ? "请基于上述片段生成 Pagelet review。"
         : "Produce a Pagelet review based on the segments above.";
 

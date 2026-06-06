@@ -258,6 +258,8 @@ const DEFAULT_OPTIONS: Required<
     userMessageLocale: "en",
 };
 
+type EffectiveReviewModelOptions = typeof DEFAULT_OPTIONS & PageletReviewModelOptions;
+
 // ---------------------------------------------------------------------------
 // Friendly error copy.
 //
@@ -281,23 +283,10 @@ const ERROR_MESSAGE_KEYS: Record<PageletReviewErrorCode, string> = {
     parse_failed: "pagelet.errors.parse_failed",
     timeout: "pagelet.errors.timeout",
     provider_error: "pagelet.errors.provider_error",
-    // B4 — the four new error codes deliberately reuse `pagelet.cost.*` keys
-    // that B3 already registered. Mapping rationale:
-    //   - rate_limit_hourly / rate_limit_daily reuse `pagelet.cost.limitReached`
-    //     because the user-facing copy ("Pagelet hit the daily call limit. It
-    //     will resume tomorrow.") is close enough for both cases. A future
-    //     B3 follow-up may split these into distinct hourly vs daily strings;
-    //     the codes already exist so that split is purely a translation edit.
-    //   - input_too_large / hard_cap_exceeded fall through to the key itself
-    //     for now — the `pageletT` loader surfaces the key string, which is
-    //     loudly visible during the v1 beta so missing translations get
-    //     caught in user feedback rather than silently degrading. The
-    //     `ERROR_MESSAGE_FALLBACKS` below provides a sane English fallback
-    //     so end users still get a readable sentence.
     input_too_large: "pagelet.errors.input_too_large",
     hard_cap_exceeded: "pagelet.errors.hard_cap_exceeded",
-    rate_limit_hourly: "pagelet.cost.limitReached",
-    rate_limit_daily: "pagelet.cost.limitReached",
+    rate_limit_hourly: "pagelet.errors.rate_limit_hourly",
+    rate_limit_daily: "pagelet.errors.rate_limit_daily",
 };
 
 /**
@@ -358,9 +347,13 @@ export class PageletReviewModel {
             schemaErrors: [],
             elapsedMs: 0,
         };
+        if (signal?.aborted) {
+            return errorOutcome("timeout", diagnostics, effectiveOpts.userMessageLocale);
+        }
 
         const validSegmentIds = parsedInput.segments.map((s) => s.id);
-        const systemPrompt = buildSystemPrompt(parsedInput.detectedLanguage);
+        const outputLanguage = parsedInput.outputLanguageOverride ?? parsedInput.detectedLanguage;
+        const systemPrompt = buildSystemPrompt(outputLanguage);
         const userPrompt = buildUserPrompt(parsedInput);
 
         // ---- B4 gate 1: cost pre-flight (D018) ----------------------------
@@ -379,9 +372,9 @@ export class PageletReviewModel {
         );
         if (costGateResult) return costGateResult;
 
-        // ---- B4 gate 2: rate-limit reservation (D020) ---------------------
-        const rateGateResult = await this.runRateLimitGate(diagnostics, effectiveOpts);
-        if (rateGateResult) return rateGateResult;
+        // ---- B4 gate 2: rate-limit pre-flight (D020) ---------------------
+        const ratePeekResult = await this.runRateLimitPeek(diagnostics, effectiveOpts);
+        if (ratePeekResult) return ratePeekResult;
 
         let model: PageletChatModelLike;
         try {
@@ -454,7 +447,7 @@ export class PageletReviewModel {
         systemPrompt: string,
         userPrompt: string,
         diagnostics: PageletReviewDiagnostics,
-        opts: typeof DEFAULT_OPTIONS & PageletReviewModelOptions,
+        opts: EffectiveReviewModelOptions,
     ): PageletReviewOutcome | null {
         const budget = opts.costBudget;
         if (!budget) return null;
@@ -478,11 +471,29 @@ export class PageletReviewModel {
      */
     private async runRateLimitGate(
         diagnostics: PageletReviewDiagnostics,
-        opts: typeof DEFAULT_OPTIONS & PageletReviewModelOptions,
+        opts: EffectiveReviewModelOptions,
     ): Promise<PageletReviewOutcome | null> {
         const limiter = opts.rateLimiter;
         if (!limiter) return null;
         const decision: RateLimitDecision = await limiter.reserve();
+        if (decision.ok) return null;
+        diagnostics.gateRejection = {
+            kind: "rate-limit",
+            reason: decision.reason,
+            resumeAt: decision.resumeAt,
+        };
+        const code: PageletReviewErrorCode =
+            decision.reason === "hr-cap" ? "rate_limit_hourly" : "rate_limit_daily";
+        return errorOutcome(code, diagnostics, opts.userMessageLocale);
+    }
+
+    private async runRateLimitPeek(
+        diagnostics: PageletReviewDiagnostics,
+        opts: EffectiveReviewModelOptions,
+    ): Promise<PageletReviewOutcome | null> {
+        const limiter = opts.rateLimiter;
+        if (!limiter) return null;
+        const decision: RateLimitDecision = await limiter.peek();
         if (decision.ok) return null;
         diagnostics.gateRejection = {
             kind: "rate-limit",
@@ -508,12 +519,12 @@ export class PageletReviewModel {
     private maybeRecordCost(
         outcome: PageletReviewOutcome,
         diagnostics: PageletReviewDiagnostics,
-        opts: typeof DEFAULT_OPTIONS & PageletReviewModelOptions,
+        opts: EffectiveReviewModelOptions,
     ): void {
         const tracker = opts.costTracker;
         if (!tracker) return;
         if (outcome.status !== "ok" && outcome.status !== "empty") return;
-        const inputTokens = diagnostics.estimatedInputTokens ?? 0;
+        const inputTokens = (diagnostics.estimatedInputTokens ?? 0) * Math.max(1, diagnostics.attempts);
         const outputTokens = estimateTokens(safeStringify(outcome.result));
         const entry = tracker.record({
             inputTokens,
@@ -537,7 +548,7 @@ export class PageletReviewModel {
         userPrompt: string,
         validSegmentIds: string[],
         input: PageletReviewInput,
-        opts: typeof DEFAULT_OPTIONS,
+        opts: EffectiveReviewModelOptions,
         diagnostics: PageletReviewDiagnostics,
         now: () => number,
         signal?: AbortSignal,
@@ -546,7 +557,7 @@ export class PageletReviewModel {
         // overload signature that may shift between LangChain releases.
         const structured = model.withStructuredOutput!<unknown>(
             PageletReviewResultSchema as unknown,
-            { name: "pagelet_review", method: "json_schema", strict: true },
+            { name: "pagelet_review", method: "jsonSchema", strict: true },
         );
 
         let attempt = 0;
@@ -556,6 +567,8 @@ export class PageletReviewModel {
         // 1 attempt + N retries
         while (attempt <= opts.maxRetries) {
             diagnostics.path = attempt === 0 ? "structured" : "structured_retry";
+            const rateGateResult = await this.runRateLimitGate(diagnostics, opts);
+            if (rateGateResult) return rateGateResult;
             diagnostics.attempts += 1;
             const started = now();
             let raw: unknown;
@@ -603,7 +616,7 @@ export class PageletReviewModel {
         userPrompt: string,
         validSegmentIds: string[],
         input: PageletReviewInput,
-        opts: typeof DEFAULT_OPTIONS,
+        opts: EffectiveReviewModelOptions,
         diagnostics: PageletReviewDiagnostics,
         now: () => number,
         signal?: AbortSignal,
@@ -616,6 +629,8 @@ export class PageletReviewModel {
 
         while (attempt <= opts.maxRetries) {
             diagnostics.path = attempt === 0 ? "json_mode" : "json_mode_retry";
+            const rateGateResult = await this.runRateLimitGate(diagnostics, opts);
+            if (rateGateResult) return rateGateResult;
             diagnostics.attempts += 1;
             const started = now();
             let response: { content: unknown };
@@ -737,6 +752,12 @@ function finalizeStructuredPayload(
     if (filtered.droppedCount > 0) {
         diagnostics.droppedSuggestionsCount += filtered.droppedCount;
         diagnostics.partial = true;
+    }
+    if (parseResult.data.suggestions.length > 0 && filtered.suggestions.length === 0) {
+        return {
+            ok: false,
+            errors: ["every suggestion.source_id referenced an unknown segment id"],
+        };
     }
 
     const finalized: PageletReviewResult = {
