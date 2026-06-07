@@ -5,10 +5,12 @@ import { normalizePath } from "obsidian";
 import { detectNoteLanguage } from "../locales/pagelet/language-detect";
 import type { PageletSettings } from "../settings/pagelet";
 
-import type {
-    PageletLanguageCode,
-    PageletReviewInput,
-    PageletSegment,
+import {
+    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
+    resolvePageletTargetSuggestionCount,
+    type PageletLanguageCode,
+    type PageletReviewInput,
+    type PageletSegment,
 } from "./pa-review-schemas";
 
 export type PageletReviewRange = "current" | "yesterday" | "last3" | "last7";
@@ -102,6 +104,7 @@ export interface BuildPageletScopeReviewBundleOptions {
     range: PageletReviewRange;
     settings: Pick<PageletSettings, "maxInputTokens" | "outputLanguage">;
     uiLanguage: PageletLanguageCode;
+    targetSuggestionCount?: number;
 }
 
 export const PAGELET_SCOPE_DEFAULT_MAX_INCLUDED = 20;
@@ -299,6 +302,9 @@ export function buildPageletScopeReviewBundle(
             mode: "basic",
             segments,
             uiLanguage: options.uiLanguage,
+            targetSuggestionCount: resolvePageletTargetSuggestionCount(
+                options.targetSuggestionCount ?? PAGELET_DEFAULT_TARGET_SUGGESTIONS,
+            ),
             ...(options.settings.outputLanguage === "auto"
                 ? {}
                 : { outputLanguageOverride: outputLanguage }),

@@ -9,6 +9,7 @@ import {
     selectPageletScope,
     type PageletScopeFileLike,
 } from "../src/pagelet/scope";
+import { PAGELET_DEFAULT_TARGET_SUGGESTIONS } from "../src/pagelet/pa-review-schemas";
 
 function file(path: string, mtime: string): PageletScopeFileLike {
     const ms = new Date(mtime).getTime();
@@ -196,6 +197,7 @@ describe("buildPageletScopeReviewBundle", () => {
 
         expect(bundle).not.toBeNull();
         expect(bundle!.input.notePath).toBe("Last 3 days · 2 notes");
+        expect(bundle!.input.targetSuggestionCount).toBe(PAGELET_DEFAULT_TARGET_SUGGESTIONS);
         expect(bundle!.input.segments.map((segment) => segment.id)).toEqual([
             "note-1-seg-1",
             "note-2-seg-1",
@@ -242,5 +244,22 @@ describe("buildPageletScopeReviewBundle", () => {
         expect(totalChars).toBeLessThanOrEqual(40);
         expect(bundle!.sourcePaths).toEqual(["a.md"]);
         expect(bundle!.input.notePath).toBe("a.md");
+    });
+
+    it("passes through a lower target suggestion count", () => {
+        const bundle = buildPageletScopeReviewBundle({
+            entries: [{ path: "a.md", content: "Alpha note has a missing citation." }],
+            primarySourcePath: "a.md",
+            range: "current",
+            settings: {
+                maxInputTokens: 1000,
+                outputLanguage: "auto",
+            },
+            uiLanguage: "en",
+            targetSuggestionCount: 1,
+        });
+
+        expect(bundle).not.toBeNull();
+        expect(bundle!.input.targetSuggestionCount).toBe(1);
     });
 });

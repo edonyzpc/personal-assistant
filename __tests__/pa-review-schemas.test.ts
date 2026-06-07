@@ -3,17 +3,20 @@ import { describe, it, expect } from "@jest/globals";
 import {
     FEW_SHOT_EN,
     FEW_SHOT_ZH,
+    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
     PAGELET_FIELD_LIMITS,
     PAGELET_SCHEMA_VERSION,
     PageletReviewInputSchema,
     PageletReviewMetadataSchema,
     PageletReviewResultSchema,
+    PageletStructuredReviewResultSchema,
     PageletSuggestionSchema,
     buildJsonModeSchemaHint,
     buildSystemPrompt,
     buildUserPrompt,
     extractJsonPayload,
     filterSuggestionsBySourceIds,
+    resolvePageletTargetSuggestionCount,
     summarizeZodIssues,
     tolerantJsonParse,
     truncateOverlongFields,
@@ -140,6 +143,29 @@ describe("PageletReviewResultSchema", () => {
     });
 });
 
+describe("PageletStructuredReviewResultSchema", () => {
+    it("accepts provider strict payloads with nullable optional semantics", () => {
+        const result = PageletStructuredReviewResultSchema.safeParse({
+            schema_version: PAGELET_SCHEMA_VERSION,
+            detected_language: "en",
+            suggestions: [
+                validSuggestion({ related_notes: null }),
+            ],
+            overall_remark: null,
+        });
+        expect(result.success).toBe(true);
+    });
+
+    it("requires fields that the runtime schema treats as optional", () => {
+        const result = PageletStructuredReviewResultSchema.safeParse(validResult());
+        expect(result.success).toBe(false);
+        if (result.success) return;
+        const issues = summarizeZodIssues(result.error).join("\n");
+        expect(issues).toContain("related_notes");
+        expect(issues).toContain("overall_remark");
+    });
+});
+
 describe("PageletReviewInputSchema", () => {
     it("requires at least one segment (LLM needs source_ids to reference)", () => {
         const result = PageletReviewInputSchema.safeParse({
@@ -148,6 +174,30 @@ describe("PageletReviewInputSchema", () => {
             detectedLanguage: "en",
             mode: "basic",
             segments: [],
+        });
+        expect(result.success).toBe(false);
+    });
+
+    it("accepts targetSuggestionCount within the schema hard cap", () => {
+        const result = PageletReviewInputSchema.safeParse({
+            notePath: "notes/a.md",
+            noteContent: "body",
+            detectedLanguage: "en",
+            mode: "basic",
+            segments: [{ id: "seg-1", content: "body" }],
+            targetSuggestionCount: PAGELET_DEFAULT_TARGET_SUGGESTIONS,
+        });
+        expect(result.success).toBe(true);
+    });
+
+    it("rejects targetSuggestionCount above the schema hard cap", () => {
+        const result = PageletReviewInputSchema.safeParse({
+            notePath: "notes/a.md",
+            noteContent: "body",
+            detectedLanguage: "en",
+            mode: "basic",
+            segments: [{ id: "seg-1", content: "body" }],
+            targetSuggestionCount: PAGELET_FIELD_LIMITS.suggestionsMax + 1,
         });
         expect(result.success).toBe(false);
     });
@@ -207,6 +257,19 @@ describe("buildUserPrompt", () => {
         });
         expect(en).toContain(FEW_SHOT_EN.assistant);
         expect(en).not.toContain(FEW_SHOT_ZH.assistant);
+        expect(en).toContain(`Return at most ${PAGELET_DEFAULT_TARGET_SUGGESTIONS} suggestions`);
+    });
+
+    it("includes the requested target suggestion count", () => {
+        const prompt = buildUserPrompt({
+            notePath: "notes/a.md",
+            noteContent: "body",
+            detectedLanguage: "en",
+            mode: "basic",
+            targetSuggestionCount: 2,
+            segments: [{ id: "seg-1", content: "X" }],
+        });
+        expect(prompt).toContain("Return at most 2 suggestions");
     });
 
     it("uses outputLanguageOverride instead of detectedLanguage when provided", () => {
@@ -221,6 +284,7 @@ describe("buildUserPrompt", () => {
         expect(prompt).toContain(FEW_SHOT_ZH.assistant);
         expect(prompt).not.toContain(FEW_SHOT_EN.assistant);
         expect(prompt).toContain("请基于上述片段生成 Pagelet review。");
+        expect(prompt).toContain(`最多返回 ${PAGELET_DEFAULT_TARGET_SUGGESTIONS} 条建议`);
     });
 
     it("lists every segment id so the LLM can map source_id back", () => {
@@ -254,6 +318,22 @@ describe("buildJsonModeSchemaHint", () => {
         expect(hint).toContain("proposed_action");
         expect(hint).toContain("related_notes");
         expect(hint).toContain("overall_remark");
+        expect(hint).toContain("required, use []");
+        expect(hint).toContain("required, use empty string");
+    });
+});
+
+describe("resolvePageletTargetSuggestionCount", () => {
+    it("defaults to the lightweight review target", () => {
+        expect(resolvePageletTargetSuggestionCount(undefined)).toBe(
+            PAGELET_DEFAULT_TARGET_SUGGESTIONS,
+        );
+    });
+
+    it("clamps callers to the schema hard cap", () => {
+        expect(resolvePageletTargetSuggestionCount(PAGELET_FIELD_LIMITS.suggestionsMax + 5))
+            .toBe(PAGELET_FIELD_LIMITS.suggestionsMax);
+        expect(resolvePageletTargetSuggestionCount(0)).toBe(1);
     });
 });
 

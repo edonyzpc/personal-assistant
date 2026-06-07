@@ -46,12 +46,14 @@ import {
     PageletReviewInputSchema,
     PageletReviewResultSchema,
     PageletSuggestionSchema,
+    PageletStructuredReviewResultSchema,
     PAGELET_SCHEMA_VERSION,
     buildJsonModeSchemaHint,
     buildSystemPrompt,
     buildUserPrompt,
     extractJsonPayload,
     filterSuggestionsBySourceIds,
+    resolvePageletTargetSuggestionCount,
     summarizeZodIssues,
     tolerantJsonParse,
     truncateOverlongFields,
@@ -137,6 +139,10 @@ export interface PageletReviewDiagnostics {
     providerError?: string;
     /** ms spent in LLM invocations (sum across attempts). */
     elapsedMs: number;
+    /** End-to-end reviewNote wall-clock duration, including gates and model setup. */
+    totalElapsedMs?: number;
+    /** Fine-grained timings for gates, model setup, paths, and per-attempt LLM calls. */
+    timings?: PageletReviewTimingEntry[];
     /**
      * B4: pre-flight estimate of input tokens (system + user prompt). Always
      * populated when the orchestrator passes a `costBudget`; otherwise 0 so
@@ -175,6 +181,28 @@ export type PageletReviewOutcome =
           userMessage: string;
           diagnostics: PageletReviewDiagnostics;
       };
+
+export interface PageletReviewTimingEntry {
+    phase: string;
+    elapsedMs: number;
+    metadata?: Record<string, unknown>;
+}
+
+export type PageletReviewProgressPhase =
+    | "cost_precheck"
+    | "rate_limit"
+    | "model_setup"
+    | "structured_attempt"
+    | "json_mode_attempt"
+    | "json_mode_fallback";
+
+export interface PageletReviewProgressEvent {
+    phase: PageletReviewProgressPhase;
+    path?: PageletReviewPath;
+    attempt?: number;
+    maxAttempts?: number;
+    elapsedMs?: number;
+}
 
 export interface PageletReviewModelOptions {
     /** Max corrective retries after schema-invalid (failure-matrix row 1-3). Default 1. */
@@ -235,6 +263,10 @@ export interface PageletReviewModelOptions {
      */
     providerForPricing?: string;
     modelForPricing?: string;
+    /** Production wall-clock timeout for reviewNote. Omitted keeps legacy tests unbounded. */
+    reviewTimeoutMs?: number;
+    /** Emits user-visible progress hooks and testable progress telemetry. */
+    onProgress?: (event: PageletReviewProgressEvent) => void;
 }
 
 const DEFAULT_OPTIONS: Required<
@@ -337,6 +369,7 @@ export class PageletReviewModel {
         const parsedInput = PageletReviewInputSchema.parse(rawInput);
         const effectiveOpts = { ...DEFAULT_OPTIONS, ...this.options };
         const now = this.options.now ?? Date.now;
+        const reviewStartedAt = now();
 
         const diagnostics: PageletReviewDiagnostics = {
             path: "structured",
@@ -348,51 +381,134 @@ export class PageletReviewModel {
             elapsedMs: 0,
         };
         if (signal?.aborted) {
-            return errorOutcome("timeout", diagnostics, effectiveOpts.userMessageLocale);
+            return finalizeReviewOutcome(
+                errorOutcome("timeout", diagnostics, effectiveOpts.userMessageLocale),
+                diagnostics,
+                reviewStartedAt,
+                now,
+            );
         }
+        const deadline = new PageletReviewDeadline(signal, this.options.reviewTimeoutMs);
 
-        const validSegmentIds = parsedInput.segments.map((s) => s.id);
-        const outputLanguage = parsedInput.outputLanguageOverride ?? parsedInput.detectedLanguage;
-        const systemPrompt = buildSystemPrompt(outputLanguage);
-        const userPrompt = buildUserPrompt(parsedInput);
-
-        // ---- B4 gate 1: cost pre-flight (D018) ----------------------------
-        // Pre-flight FIRST because we don't want to burn a rate-limit slot
-        // on a request we'd reject for size. The order is:
-        //   1. estimate input tokens
-        //   2. preCheckCost → may return input_too_large / hard_cap_exceeded
-        //   3. rateLimiter.reserve → may return rate_limit_*
-        //   4. factory + LLM
-        //   5. cost record on success
-        const costGateResult = this.runCostPreCheck(
-            systemPrompt,
-            userPrompt,
-            diagnostics,
-            effectiveOpts,
-        );
-        if (costGateResult) return costGateResult;
-
-        // ---- B4 gate 2: rate-limit pre-flight (D020) ---------------------
-        const ratePeekResult = await this.runRateLimitPeek(diagnostics, effectiveOpts);
-        if (ratePeekResult) return ratePeekResult;
-
-        let model: PageletChatModelLike;
         try {
-            model = await this.factory(effectiveOpts.temperature, {
-                modelName: effectiveOpts.modelName,
+            const validSegmentIds = parsedInput.segments.map((s) => s.id);
+            const outputLanguage = parsedInput.outputLanguageOverride ?? parsedInput.detectedLanguage;
+            const targetSuggestionCount = resolvePageletTargetSuggestionCount(
+                parsedInput.targetSuggestionCount,
+            );
+            const promptStartedAt = now();
+            const systemPrompt = buildSystemPrompt(outputLanguage);
+            const userPrompt = buildUserPrompt(parsedInput);
+            recordPageletTiming(diagnostics, "prompt_build", now() - promptStartedAt, {
+                segmentCount: parsedInput.segments.length,
+                mode: parsedInput.mode,
+                targetSuggestionCount,
             });
-        } catch (err) {
-            diagnostics.providerError = errorMessage(err);
-            return errorOutcome("provider_error", diagnostics, effectiveOpts.userMessageLocale);
-        }
 
-        const canUseStructured =
-            !effectiveOpts.disableStructuredOutput
-            && typeof model.withStructuredOutput === "function";
+            // ---- B4 gate 1: cost pre-flight (D018) ----------------------------
+            // Pre-flight FIRST because we don't want to burn a rate-limit slot
+            // on a request we'd reject for size. The order is:
+            //   1. estimate input tokens
+            //   2. preCheckCost → may return input_too_large / hard_cap_exceeded
+            //   3. rateLimiter.reserve → may return rate_limit_*
+            //   4. factory + LLM
+            //   5. cost record on success
+            effectiveOpts.onProgress?.({ phase: "cost_precheck" });
+            const costStartedAt = now();
+            const costGateResult = this.runCostPreCheck(
+                systemPrompt,
+                userPrompt,
+                diagnostics,
+                effectiveOpts,
+            );
+            recordPageletTiming(diagnostics, "cost_precheck", now() - costStartedAt, {
+                inputEstimateCount: diagnostics.estimatedInputTokens ?? 0,
+                rejected: Boolean(costGateResult),
+            });
+            if (costGateResult) {
+                return finalizeReviewOutcome(costGateResult, diagnostics, reviewStartedAt, now);
+            }
 
-        // Path A: structured output. Provider supports schema enforcement.
-        if (canUseStructured) {
-            const structuredOutcome = await this.runStructured(
+            // ---- B4 gate 2: rate-limit pre-flight (D020) ---------------------
+            effectiveOpts.onProgress?.({ phase: "rate_limit" });
+            const ratePeekStartedAt = now();
+            const ratePeekResult = await this.runRateLimitPeek(diagnostics, effectiveOpts, deadline);
+            recordPageletTiming(diagnostics, "rate_limit_peek", now() - ratePeekStartedAt, {
+                rejected: Boolean(ratePeekResult),
+            });
+            if (ratePeekResult) {
+                return finalizeReviewOutcome(ratePeekResult, diagnostics, reviewStartedAt, now);
+            }
+
+            let model: PageletChatModelLike;
+            try {
+                effectiveOpts.onProgress?.({ phase: "model_setup" });
+                const factoryStartedAt = now();
+                model = await deadline.race(this.factory(effectiveOpts.temperature, {
+                    modelName: effectiveOpts.modelName,
+                }));
+                recordPageletTiming(diagnostics, "model_factory", now() - factoryStartedAt, {
+                    modelName: effectiveOpts.modelName,
+                });
+            } catch (err) {
+                diagnostics.providerError = errorMessage(err);
+                const code = deadline.isDeadlineError(err) || isAbortError(err) ? "timeout" : "provider_error";
+                return finalizeReviewOutcome(
+                    errorOutcome(code, diagnostics, effectiveOpts.userMessageLocale),
+                    diagnostics,
+                    reviewStartedAt,
+                    now,
+                );
+            }
+
+            const canUseStructured =
+                !effectiveOpts.disableStructuredOutput
+                && typeof model.withStructuredOutput === "function";
+
+            // Path A: structured output. Provider supports schema enforcement.
+            if (canUseStructured) {
+                const structuredStartedAt = now();
+                const structuredOutcome = await this.runStructured(
+                    model,
+                    systemPrompt,
+                    userPrompt,
+                    validSegmentIds,
+                    parsedInput,
+                    effectiveOpts,
+                    diagnostics,
+                    now,
+                    deadline,
+                );
+                recordPageletTiming(diagnostics, "structured_path", now() - structuredStartedAt, {
+                    returnedOutcome: Boolean(structuredOutcome),
+                    maxRetries: effectiveOpts.maxRetries,
+                });
+                if (structuredOutcome) {
+                    this.maybeRecordCost(structuredOutcome, diagnostics, effectiveOpts);
+                    return finalizeReviewOutcome(structuredOutcome, diagnostics, reviewStartedAt, now);
+                }
+                // structuredOutcome returns null when we should fall through to JSON mode.
+            }
+
+            // Path B: JSON mode (prompt-engineered) — fires either when the
+            // provider has no withStructuredOutput, or when the structured path
+            // exhausted retries AND free-form fallback is allowed.
+            if (effectiveOpts.disableFreeFormFallback) {
+                return finalizeReviewOutcome(
+                    errorOutcome(
+                        diagnostics.schemaErrors.length > 0 ? "schema_invalid" : "parse_failed",
+                        diagnostics,
+                        effectiveOpts.userMessageLocale,
+                    ),
+                    diagnostics,
+                    reviewStartedAt,
+                    now,
+                );
+            }
+
+            effectiveOpts.onProgress?.({ phase: "json_mode_fallback" });
+            const jsonModeStartedAt = now();
+            const jsonModeOutcome = await this.runWithJsonMode(
                 model,
                 systemPrompt,
                 userPrompt,
@@ -401,39 +517,26 @@ export class PageletReviewModel {
                 effectiveOpts,
                 diagnostics,
                 now,
-                signal,
+                deadline,
             );
-            if (structuredOutcome) {
-                this.maybeRecordCost(structuredOutcome, diagnostics, effectiveOpts);
-                return structuredOutcome;
+            recordPageletTiming(diagnostics, "json_mode_path", now() - jsonModeStartedAt, {
+                maxRetries: effectiveOpts.maxRetries,
+            });
+            this.maybeRecordCost(jsonModeOutcome, diagnostics, effectiveOpts);
+            return finalizeReviewOutcome(jsonModeOutcome, diagnostics, reviewStartedAt, now);
+        } catch (err) {
+            if (deadline.isDeadlineError(err) || isAbortError(err)) {
+                return finalizeReviewOutcome(
+                    errorOutcome("timeout", diagnostics, effectiveOpts.userMessageLocale),
+                    diagnostics,
+                    reviewStartedAt,
+                    now,
+                );
             }
-            // structuredOutcome returns null when we should fall through to JSON mode.
+            throw err;
+        } finally {
+            deadline.dispose();
         }
-
-        // Path B: JSON mode (prompt-engineered) — fires either when the
-        // provider has no withStructuredOutput, or when the structured path
-        // exhausted retries AND free-form fallback is allowed.
-        if (effectiveOpts.disableFreeFormFallback) {
-            return errorOutcome(
-                diagnostics.schemaErrors.length > 0 ? "schema_invalid" : "parse_failed",
-                diagnostics,
-                effectiveOpts.userMessageLocale,
-            );
-        }
-
-        const jsonModeOutcome = await this.runWithJsonMode(
-            model,
-            systemPrompt,
-            userPrompt,
-            validSegmentIds,
-            parsedInput,
-            effectiveOpts,
-            diagnostics,
-            now,
-            signal,
-        );
-        this.maybeRecordCost(jsonModeOutcome, diagnostics, effectiveOpts);
-        return jsonModeOutcome;
     }
 
     // ----- B4 gate helpers ---------------------------------------------------
@@ -472,10 +575,13 @@ export class PageletReviewModel {
     private async runRateLimitGate(
         diagnostics: PageletReviewDiagnostics,
         opts: EffectiveReviewModelOptions,
+        deadline?: PageletReviewDeadline,
     ): Promise<PageletReviewOutcome | null> {
         const limiter = opts.rateLimiter;
         if (!limiter) return null;
-        const decision: RateLimitDecision = await limiter.reserve();
+        const decision: RateLimitDecision = deadline
+            ? await deadline.race(limiter.reserve())
+            : await limiter.reserve();
         if (decision.ok) return null;
         diagnostics.gateRejection = {
             kind: "rate-limit",
@@ -490,10 +596,13 @@ export class PageletReviewModel {
     private async runRateLimitPeek(
         diagnostics: PageletReviewDiagnostics,
         opts: EffectiveReviewModelOptions,
+        deadline?: PageletReviewDeadline,
     ): Promise<PageletReviewOutcome | null> {
         const limiter = opts.rateLimiter;
         if (!limiter) return null;
-        const decision: RateLimitDecision = await limiter.peek();
+        const decision: RateLimitDecision = deadline
+            ? await deadline.race(limiter.peek())
+            : await limiter.peek();
         if (decision.ok) return null;
         diagnostics.gateRejection = {
             kind: "rate-limit",
@@ -551,12 +660,12 @@ export class PageletReviewModel {
         opts: EffectiveReviewModelOptions,
         diagnostics: PageletReviewDiagnostics,
         now: () => number,
-        signal?: AbortSignal,
+        deadline: PageletReviewDeadline,
     ): Promise<PageletReviewOutcome | null> {
         // Cast through unknown so we don't lock into a specific zod->Runnable
         // overload signature that may shift between LangChain releases.
         const structured = model.withStructuredOutput!<unknown>(
-            PageletReviewResultSchema as unknown,
+            PageletStructuredReviewResultSchema as unknown,
             { name: "pagelet_review", method: "jsonSchema", strict: true },
         );
 
@@ -567,37 +676,76 @@ export class PageletReviewModel {
         // 1 attempt + N retries
         while (attempt <= opts.maxRetries) {
             diagnostics.path = attempt === 0 ? "structured" : "structured_retry";
-            const rateGateResult = await this.runRateLimitGate(diagnostics, opts);
+            opts.onProgress?.({
+                phase: "structured_attempt",
+                path: diagnostics.path,
+                attempt: attempt + 1,
+                maxAttempts: opts.maxRetries + 1,
+            });
+            const rateGateResult = await this.runRateLimitGate(diagnostics, opts, deadline);
             if (rateGateResult) return rateGateResult;
             diagnostics.attempts += 1;
             const started = now();
             let raw: unknown;
             try {
-                raw = await structured.invoke(
-                    buildMessages(systemPrompt, currentUserPrompt),
-                    signal ? { signal } : undefined,
+                raw = await deadline.race(
+                    structured.invoke(
+                        buildMessages(systemPrompt, currentUserPrompt),
+                        { signal: deadline.signal },
+                    ),
                 );
             } catch (err) {
-                diagnostics.elapsedMs += Math.max(0, now() - started);
-                if (isAbortError(err)) return errorOutcome("timeout", diagnostics, opts.userMessageLocale);
+                const elapsedMs = Math.max(0, now() - started);
+                diagnostics.elapsedMs += elapsedMs;
+                if (deadline.isDeadlineError(err) || isAbortError(err)) {
+                    recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                        path: diagnostics.path,
+                        attempt: attempt + 1,
+                        outcome: "timeout",
+                    });
+                    return errorOutcome("timeout", diagnostics, opts.userMessageLocale);
+                }
                 // withStructuredOutput throws on schema validation failure;
                 // treat the throw as a schema-invalid signal and either
                 // retry or fall through to free-form fallback.
                 lastZodErrors = summarizeZodIssues(err);
                 diagnostics.schemaErrors = lastZodErrors;
                 diagnostics.providerError = errorMessage(err);
+                recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                    path: diagnostics.path,
+                    attempt: attempt + 1,
+                    outcome: "schema_invalid",
+                    error: diagnostics.providerError,
+                });
                 if (attempt === opts.maxRetries) break;
                 currentUserPrompt = appendRetryHint(userPrompt, lastZodErrors);
                 attempt += 1;
                 continue;
             }
-            diagnostics.elapsedMs += Math.max(0, now() - started);
+            const elapsedMs = Math.max(0, now() - started);
+            diagnostics.elapsedMs += elapsedMs;
 
             const finalized = finalizeStructuredPayload(raw, validSegmentIds, diagnostics);
-            if (finalized.ok) return finalized.outcome;
+            if (finalized.ok) {
+                recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                    path: diagnostics.path,
+                    attempt: attempt + 1,
+                    outcome: finalized.outcome.status,
+                    suggestionCount: "result" in finalized.outcome
+                        ? finalized.outcome.result.suggestions.length
+                        : 0,
+                });
+                return finalized.outcome;
+            }
 
             lastZodErrors = finalized.errors;
             diagnostics.schemaErrors = lastZodErrors;
+            recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                path: diagnostics.path,
+                attempt: attempt + 1,
+                outcome: "schema_invalid",
+                errorCount: lastZodErrors.length,
+            });
             if (attempt === opts.maxRetries) break;
             currentUserPrompt = appendRetryHint(userPrompt, lastZodErrors);
             attempt += 1;
@@ -619,7 +767,7 @@ export class PageletReviewModel {
         opts: EffectiveReviewModelOptions,
         diagnostics: PageletReviewDiagnostics,
         now: () => number,
-        signal?: AbortSignal,
+        deadline: PageletReviewDeadline,
     ): Promise<PageletReviewOutcome> {
         const augmentedSystem = `${systemPrompt}${buildJsonModeSchemaHint()}`;
         let attempt = 0;
@@ -629,28 +777,56 @@ export class PageletReviewModel {
 
         while (attempt <= opts.maxRetries) {
             diagnostics.path = attempt === 0 ? "json_mode" : "json_mode_retry";
-            const rateGateResult = await this.runRateLimitGate(diagnostics, opts);
+            opts.onProgress?.({
+                phase: "json_mode_attempt",
+                path: diagnostics.path,
+                attempt: attempt + 1,
+                maxAttempts: opts.maxRetries + 1,
+            });
+            const rateGateResult = await this.runRateLimitGate(diagnostics, opts, deadline);
             if (rateGateResult) return rateGateResult;
             diagnostics.attempts += 1;
             const started = now();
             let response: { content: unknown };
             try {
-                response = await model.invoke(
-                    buildMessages(augmentedSystem, currentUserPrompt),
-                    signal ? { signal } : undefined,
+                response = await deadline.race(
+                    model.invoke(
+                        buildMessages(augmentedSystem, currentUserPrompt),
+                        { signal: deadline.signal },
+                    ),
                 );
             } catch (err) {
-                diagnostics.elapsedMs += Math.max(0, now() - started);
-                if (isAbortError(err)) return errorOutcome("timeout", diagnostics, opts.userMessageLocale);
+                const elapsedMs = Math.max(0, now() - started);
+                diagnostics.elapsedMs += elapsedMs;
+                if (deadline.isDeadlineError(err) || isAbortError(err)) {
+                    recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                        path: diagnostics.path,
+                        attempt: attempt + 1,
+                        outcome: "timeout",
+                    });
+                    return errorOutcome("timeout", diagnostics, opts.userMessageLocale);
+                }
                 diagnostics.providerError = errorMessage(err);
+                recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                    path: diagnostics.path,
+                    attempt: attempt + 1,
+                    outcome: "provider_error",
+                    error: diagnostics.providerError,
+                });
                 return errorOutcome("provider_error", diagnostics, opts.userMessageLocale);
             }
-            diagnostics.elapsedMs += Math.max(0, now() - started);
+            const elapsedMs = Math.max(0, now() - started);
+            diagnostics.elapsedMs += elapsedMs;
 
             const text = coerceTextContent(response.content);
             const payloadStr = extractJsonPayload(text);
             if (!payloadStr) {
                 lastErrorCode = "parse_failed";
+                recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                    path: diagnostics.path,
+                    attempt: attempt + 1,
+                    outcome: "parse_failed",
+                });
                 if (attempt === opts.maxRetries) break;
                 currentUserPrompt = appendParseRetryHint(userPrompt);
                 attempt += 1;
@@ -660,6 +836,11 @@ export class PageletReviewModel {
             const parsed = tolerantJsonParse(payloadStr);
             if (parsed == null) {
                 lastErrorCode = "parse_failed";
+                recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                    path: diagnostics.path,
+                    attempt: attempt + 1,
+                    outcome: "parse_failed",
+                });
                 if (attempt === opts.maxRetries) break;
                 currentUserPrompt = appendParseRetryHint(userPrompt);
                 attempt += 1;
@@ -667,11 +848,27 @@ export class PageletReviewModel {
             }
 
             const finalized = finalizeStructuredPayload(parsed, validSegmentIds, diagnostics);
-            if (finalized.ok) return finalized.outcome;
+            if (finalized.ok) {
+                recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                    path: diagnostics.path,
+                    attempt: attempt + 1,
+                    outcome: finalized.outcome.status,
+                    suggestionCount: "result" in finalized.outcome
+                        ? finalized.outcome.result.suggestions.length
+                        : 0,
+                });
+                return finalized.outcome;
+            }
 
             lastZodErrors = finalized.errors;
             lastErrorCode = "schema_invalid";
             diagnostics.schemaErrors = lastZodErrors;
+            recordPageletTiming(diagnostics, "llm_attempt", elapsedMs, {
+                path: diagnostics.path,
+                attempt: attempt + 1,
+                outcome: "schema_invalid",
+                errorCount: lastZodErrors.length,
+            });
             if (attempt === opts.maxRetries) break;
             currentUserPrompt = appendRetryHint(userPrompt, lastZodErrors);
             attempt += 1;
@@ -739,7 +936,8 @@ function finalizeStructuredPayload(
     // an otherwise-valid suggestion list isn't thrown out for a missing
     // literal — this is intentional schema repair, not laxness; the field
     // is a constant.
-    const stampedCandidate = stampDefaultSchemaVersion(candidate);
+    const normalizedCandidate = normalizePageletReviewPayload(candidate);
+    const stampedCandidate = stampDefaultSchemaVersion(normalizedCandidate);
     const truncation = truncateOverlongFields(stampedCandidate);
     if (truncation.truncated) diagnostics.truncated = true;
 
@@ -783,6 +981,30 @@ function stampDefaultSchemaVersion(payload: unknown): unknown {
     return obj;
 }
 
+function normalizePageletReviewPayload(payload: unknown): unknown {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+    const root = payload as Record<string, unknown>;
+    const suggestions = Array.isArray(root.suggestions)
+        ? root.suggestions.map((item) => {
+            if (!item || typeof item !== "object" || Array.isArray(item)) return item;
+            const suggestion = item as Record<string, unknown>;
+            return {
+                ...suggestion,
+                related_notes: Array.isArray(suggestion.related_notes)
+                    ? suggestion.related_notes
+                    : [],
+            };
+        })
+        : root.suggestions;
+    return {
+        ...root,
+        suggestions,
+        overall_remark: typeof root.overall_remark === "string"
+            ? root.overall_remark
+            : "",
+    };
+}
+
 function coerceTextContent(content: unknown): string {
     if (typeof content === "string") return content;
     if (Array.isArray(content)) {
@@ -806,6 +1028,116 @@ function isAbortError(err: unknown): boolean {
     const name = (err as { name?: unknown }).name;
     const code = (err as { code?: unknown }).code;
     return name === "AbortError" || code === "ABORT_ERR";
+}
+
+const PAGELET_REVIEW_TIMEOUT_ERROR_NAME = "PageletReviewTimeoutError";
+
+function createPageletReviewTimeoutError(): Error {
+    const error = new Error("Pagelet review timed out.");
+    error.name = PAGELET_REVIEW_TIMEOUT_ERROR_NAME;
+    return error;
+}
+
+function createPageletAbortError(): Error {
+    const error = new Error("Pagelet review aborted.");
+    error.name = "AbortError";
+    return error;
+}
+
+class PageletReviewDeadline {
+    private readonly controller = new AbortController();
+    private timeoutId: ReturnType<typeof setTimeout> | null = null;
+    private timedOut = false;
+    private readonly onExternalAbort = () => {
+        this.controller.abort();
+    };
+
+    constructor(
+        private readonly externalSignal: AbortSignal | undefined,
+        timeoutMs: number | undefined,
+    ) {
+        if (externalSignal?.aborted) {
+            this.controller.abort();
+        } else {
+            externalSignal?.addEventListener("abort", this.onExternalAbort, { once: true });
+        }
+
+        if (timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0) {
+            this.timeoutId = setTimeout(() => {
+                this.timedOut = true;
+                this.controller.abort();
+            }, timeoutMs);
+        }
+    }
+
+    get signal(): AbortSignal {
+        return this.controller.signal;
+    }
+
+    dispose(): void {
+        if (this.timeoutId !== null) {
+            clearTimeout(this.timeoutId);
+            this.timeoutId = null;
+        }
+        this.externalSignal?.removeEventListener("abort", this.onExternalAbort);
+    }
+
+    isDeadlineError(error: unknown): boolean {
+        return error instanceof Error && error.name === PAGELET_REVIEW_TIMEOUT_ERROR_NAME;
+    }
+
+    race<T>(promise: PromiseLike<T>): Promise<T> {
+        if (this.timedOut) {
+            return Promise.reject(createPageletReviewTimeoutError());
+        }
+        if (this.signal.aborted) {
+            return Promise.reject(createPageletAbortError());
+        }
+        return new Promise<T>((resolve, reject) => {
+            const cleanup = () => this.signal.removeEventListener("abort", onAbort);
+            const onAbort = () => {
+                cleanup();
+                reject(this.timedOut
+                    ? createPageletReviewTimeoutError()
+                    : createPageletAbortError());
+            };
+            this.signal.addEventListener("abort", onAbort, { once: true });
+            Promise.resolve(promise).then(
+                (value) => {
+                    cleanup();
+                    resolve(value);
+                },
+                (error) => {
+                    cleanup();
+                    reject(error);
+                },
+            );
+        });
+    }
+}
+
+function recordPageletTiming(
+    diagnostics: PageletReviewDiagnostics,
+    phase: string,
+    elapsedMs: number,
+    metadata?: Record<string, unknown>,
+): void {
+    const entry: PageletReviewTimingEntry = {
+        phase,
+        elapsedMs: Math.max(0, Math.round(elapsedMs)),
+        ...(metadata ? { metadata } : {}),
+    };
+    diagnostics.timings = [...(diagnostics.timings ?? []), entry];
+}
+
+function finalizeReviewOutcome(
+    outcome: PageletReviewOutcome,
+    diagnostics: PageletReviewDiagnostics,
+    startedAt: number,
+    now: () => number,
+): PageletReviewOutcome {
+    diagnostics.totalElapsedMs = Math.max(0, Math.round(now() - startedAt));
+    return outcome;
 }
 
 function errorMessage(err: unknown): string {

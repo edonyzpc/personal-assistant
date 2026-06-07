@@ -18,11 +18,15 @@ export {
     type PageletReviewModelOptions,
     type PageletReviewOutcome,
     type PageletReviewPath,
+    type PageletReviewProgressEvent,
+    type PageletReviewProgressPhase,
+    type PageletReviewTimingEntry,
 } from "./pa-review-model";
 
 export {
     FEW_SHOT_EN,
     FEW_SHOT_ZH,
+    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
     PAGELET_FIELD_LIMITS,
     PAGELET_LANGUAGE_CODES,
     PAGELET_SCHEMA_VERSION,
@@ -33,11 +37,14 @@ export {
     PageletReviewResultSchema,
     PageletSegmentSchema,
     PageletSuggestionSchema,
+    PageletStructuredReviewResultSchema,
+    PageletStructuredSuggestionSchema,
     buildJsonModeSchemaHint,
     buildSystemPrompt,
     buildUserPrompt,
     extractJsonPayload,
     filterSuggestionsBySourceIds,
+    resolvePageletTargetSuggestionCount,
     summarizeZodIssues,
     tolerantJsonParse,
     truncateOverlongFields,
@@ -48,6 +55,7 @@ export {
     type PageletSegment,
     type PageletSuggestion,
     type PageletSuggestionKind,
+    type PageletStructuredReviewResult,
     type SourceIdFilterResult,
     type TruncationResult,
 } from "./pa-review-schemas";

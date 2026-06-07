@@ -66,6 +66,14 @@ export const PAGELET_FIELD_LIMITS = {
     sourceIdMin: 1,
 } as const;
 
+/**
+ * Default review target after the latency instrumentation pass. The schema
+ * hard cap remains 8 for compatibility, but production prompts should ask for
+ * fewer high-signal suggestions first so small notes don't pay for verbose
+ * output by default.
+ */
+export const PAGELET_DEFAULT_TARGET_SUGGESTIONS = 3;
+
 // ---------------------------------------------------------------------------
 // Output schemas — what the LLM is expected to emit.
 // ---------------------------------------------------------------------------
@@ -104,6 +112,38 @@ export const PageletSuggestionSchema = z
 export type PageletSuggestion = z.infer<typeof PageletSuggestionSchema>;
 
 /**
+ * Provider-facing strict structured-output schema.
+ *
+ * OpenAI-compatible strict JSON Schema providers require object fields to be
+ * present; optional semantics must be represented as nullable values instead
+ * of omitted properties. Keep this separate from the runtime schema above so
+ * Pagelet can still parse older/fallback payloads that omit optional fields.
+ */
+export const PageletStructuredSuggestionSchema = z
+    .object({
+        source_id: z
+            .string()
+            .min(
+                PAGELET_FIELD_LIMITS.sourceIdMin,
+                "source_id must be a non-empty string matching a provided segment id",
+            ),
+        kind: z.enum(PAGELET_SUGGESTION_KINDS),
+        rationale: z
+            .string()
+            .min(PAGELET_FIELD_LIMITS.rationaleMin)
+            .max(PAGELET_FIELD_LIMITS.rationaleMax),
+        proposed_action: z
+            .string()
+            .min(PAGELET_FIELD_LIMITS.proposedActionMin)
+            .max(PAGELET_FIELD_LIMITS.proposedActionMax),
+        related_notes: z
+            .array(z.string())
+            .max(PAGELET_FIELD_LIMITS.relatedNotesMax)
+            .nullable(),
+    })
+    .strict();
+
+/**
  * Full review result envelope. Schema version is a discriminant for future
  * forward-compat work; v1 only accepts literal `1`.
  */
@@ -121,6 +161,21 @@ export const PageletReviewResultSchema = z
     })
     .strict();
 export type PageletReviewResult = z.infer<typeof PageletReviewResultSchema>;
+
+export const PageletStructuredReviewResultSchema = z
+    .object({
+        schema_version: z.literal(PAGELET_SCHEMA_VERSION),
+        detected_language: z.enum(PAGELET_LANGUAGE_CODES),
+        suggestions: z
+            .array(PageletStructuredSuggestionSchema)
+            .max(PAGELET_FIELD_LIMITS.suggestionsMax),
+        overall_remark: z
+            .string()
+            .max(PAGELET_FIELD_LIMITS.overallRemarkMax)
+            .nullable(),
+    })
+    .strict();
+export type PageletStructuredReviewResult = z.infer<typeof PageletStructuredReviewResultSchema>;
 
 // ---------------------------------------------------------------------------
 // Input descriptor — `pa-review-model.reviewNote()` accepts this shape.
@@ -162,6 +217,13 @@ export const PageletReviewInputSchema = z
         uiLanguage: z.enum(PAGELET_LANGUAGE_CODES).optional(),
         /** Settings override; when set, language detection is bypassed. */
         outputLanguageOverride: z.enum(PAGELET_LANGUAGE_CODES).optional(),
+        /** Soft target for model output; schema still enforces the hard max. */
+        targetSuggestionCount: z
+            .number()
+            .int()
+            .min(1)
+            .max(PAGELET_FIELD_LIMITS.suggestionsMax)
+            .optional(),
     })
     .strict();
 export type PageletReviewInput = z.infer<typeof PageletReviewInputSchema>;
@@ -206,7 +268,7 @@ export type PageletReviewMetadata = z.infer<typeof PageletReviewMetadataSchema>;
 export const PAGELET_SYSTEM_PROMPT_BASE = [
     "You are Pagelet, a quiet reviewer for a user's Obsidian note.",
     "You receive segmented note content via the `read_source_note` tool; each segment has an `id`.",
-    "Your job is to surface up to 8 short suggestions that help the author improve the note.",
+    "Your job is to surface a small set of short suggestions that help the author improve the note.",
     "",
     "STRICT RULES:",
     "- Respond with a JSON object that strictly conforms to the provided schema; no prose outside JSON.",
@@ -214,6 +276,7 @@ export const PAGELET_SYSTEM_PROMPT_BASE = [
     "- Every suggestion's `source_id` MUST equal one of the segment ids you were given; do not invent ids.",
     "- `kind` MUST be one of: clarify, expand, link, trim, evidence.",
     "- Keep `rationale` <= 280 chars and `proposed_action` <= 500 chars.",
+    "- Obey the requested suggestion target; never return more than 8 suggestions.",
     "- Return an empty `suggestions` array if the note is in good shape.",
     "- NEVER propose edits that change the original note in place; you only suggest.",
 ].join("\n");
@@ -248,6 +311,7 @@ export const FEW_SHOT_ZH = {
                     rationale: "声称源自卡片盒但无引用，缺失支撑会削弱说服力。",
                     proposed_action:
                         "在第 2 段补一条来源链接或书目（如 Luhmann 的卡片盒方法），可加入 [[Zettelkasten]] 双链。",
+                    related_notes: [],
                 },
             ],
             overall_remark: "结构清晰，但需要补充范围与来源以增强可信度。",
@@ -285,6 +349,7 @@ export const FEW_SHOT_EN = {
                         "Claims a Zettelkasten origin with no citation; unsupported claims weaken trust.",
                     proposed_action:
                         "Add a citation in segment 2 (e.g., Luhmann's Zettelkasten) and consider a [[Zettelkasten]] backlink.",
+                    related_notes: [],
                 },
             ],
             overall_remark: "Clear structure, but scope and sourcing need strengthening.",
@@ -316,6 +381,7 @@ export function buildSystemPrompt(language: PageletLanguageCode): string {
 export function buildUserPrompt(input: PageletReviewInput): string {
     const outputLanguage = input.outputLanguageOverride ?? input.detectedLanguage;
     const fewShot = outputLanguage === "zh" ? FEW_SHOT_ZH : FEW_SHOT_EN;
+    const targetSuggestionCount = resolvePageletTargetSuggestionCount(input.targetSuggestionCount);
     const segmentLines = input.segments
         .map((seg) => `  - id: "${seg.id}": ${JSON.stringify(seg.content)}`)
         .join("\n");
@@ -325,6 +391,9 @@ export function buildUserPrompt(input: PageletReviewInput): string {
     const closer = outputLanguage === "zh"
         ? "请基于上述片段生成 Pagelet review。"
         : "Produce a Pagelet review based on the segments above.";
+    const targetInstruction = outputLanguage === "zh"
+        ? `最多返回 ${targetSuggestionCount} 条建议；优先选择最重要、最可执行的问题。少于 ${targetSuggestionCount} 条或 0 条都可以。`
+        : `Return at most ${targetSuggestionCount} suggestions; prioritize the most important, actionable issues. Fewer than ${targetSuggestionCount}, or zero, is fine.`;
 
     return [
         "Example:",
@@ -335,8 +404,19 @@ export function buildUserPrompt(input: PageletReviewInput): string {
         noteIntro,
         segmentLines,
         "",
+        targetInstruction,
         closer,
     ].join("\n");
+}
+
+export function resolvePageletTargetSuggestionCount(value: unknown): number {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+        return PAGELET_DEFAULT_TARGET_SUGGESTIONS;
+    }
+    return Math.min(
+        PAGELET_FIELD_LIMITS.suggestionsMax,
+        Math.max(1, Math.floor(value)),
+    );
 }
 
 /**
@@ -358,10 +438,10 @@ export function buildJsonModeSchemaHint(): string {
         '      "kind": "clarify"|"expand"|"link"|"trim"|"evidence",',
         '      "rationale": "<<=280 chars>",',
         '      "proposed_action": "<<=500 chars>",',
-        '      "related_notes": ["<note-name>", ...]   // optional, <=5',
+        '      "related_notes": ["<note-name>", ...]   // required, use [] when none, <=5',
         "    }",
         "  ],   // <=8 entries",
-        '  "overall_remark": "<<=280 chars, optional>"',
+        '  "overall_remark": "<<=280 chars, required, use empty string when none>"',
         "}",
         "Return ONLY this JSON object. No code fences, no commentary.",
     ].join("\n");

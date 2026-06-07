@@ -2,11 +2,13 @@ import { describe, it, expect, jest } from "@jest/globals";
 
 import {
     InMemoryRateLimitStorage,
+    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
     PAGELET_FIELD_LIMITS,
     PAGELET_SCHEMA_VERSION,
     PageletCostTracker,
     PageletRateLimiter,
     PageletReviewModel,
+    PageletStructuredReviewResultSchema,
     reviewNote,
     type PageletChatModelFactory,
     type PageletChatModelLike,
@@ -42,6 +44,7 @@ interface StructuredModelHarness {
     factory: PageletChatModelFactory;
     structuredInvocations: number;
     invokeInvocations: number;
+    capturedStructuredSchemas: unknown[];
     capturedStructuredInputs: unknown[];
     capturedStructuredOptions: unknown[];
     capturedInvokeInputs: unknown[];
@@ -52,6 +55,7 @@ function makeStructuredModel(steps: StructuredStep[]): StructuredModelHarness {
         factory: async () => model,
         structuredInvocations: 0,
         invokeInvocations: 0,
+        capturedStructuredSchemas: [],
         capturedStructuredInputs: [],
         capturedStructuredOptions: [],
         capturedInvokeInputs: [],
@@ -64,7 +68,8 @@ function makeStructuredModel(steps: StructuredStep[]): StructuredModelHarness {
             harness.capturedInvokeInputs.push(input);
             return { content: "" };
         }),
-        withStructuredOutput: (_schema: unknown, options?: unknown) => {
+        withStructuredOutput: (schema: unknown, options?: unknown) => {
+            harness.capturedStructuredSchemas.push(schema);
             harness.capturedStructuredOptions.push(options);
             return {
                 invoke: async (input: unknown) => {
@@ -171,11 +176,72 @@ describe("PageletReviewModel — happy path (structured output, 3 provider perso
         expect(outcome.diagnostics.attempts).toBe(1);
         expect(outcome.diagnostics.truncated).toBe(false);
         expect(outcome.diagnostics.partial).toBe(false);
+        expect(harness.capturedStructuredSchemas[0]).toBe(PageletStructuredReviewResultSchema);
         expect(harness.capturedStructuredOptions[0]).toMatchObject({
             name: "pagelet_review",
             method: "jsonSchema",
             strict: true,
         });
+    });
+
+    it("records redaction-safe input size and output count in timing metadata", async () => {
+        const harness = makeStructuredModel([
+            { kind: "ok", payload: validResultPayload() },
+        ]);
+
+        const outcome = await reviewNote(harness.factory, defaultInput(), {
+            costBudget: { maxInputTokens: 32_000, maxOutputTokens: 4_000 },
+        });
+
+        expect(outcome.status).toBe("ok");
+        if (outcome.status !== "ok") return;
+        const timings = outcome.diagnostics.timings ?? [];
+        const costMetadata = timings.find((entry) => entry.phase === "cost_precheck")?.metadata;
+        expect(costMetadata).toEqual(expect.objectContaining({
+            inputEstimateCount: expect.any(Number),
+            rejected: false,
+        }));
+        expect((costMetadata?.inputEstimateCount as number)).toBeGreaterThan(0);
+        expect(costMetadata).not.toHaveProperty("estimatedInputTokens");
+
+        const promptMetadata = timings.find((entry) => entry.phase === "prompt_build")?.metadata;
+        expect(promptMetadata).toEqual(expect.objectContaining({
+            targetSuggestionCount: PAGELET_DEFAULT_TARGET_SUGGESTIONS,
+        }));
+
+        const llmMetadata = timings.find((entry) => entry.phase === "llm_attempt")?.metadata;
+        expect(llmMetadata).toEqual(expect.objectContaining({
+            outcome: "ok",
+            suggestionCount: 1,
+        }));
+    });
+
+    it("normalizes provider strict nullable fields before runtime validation", async () => {
+        const harness = makeStructuredModel([
+            {
+                kind: "ok",
+                payload: validResultPayload({
+                    suggestions: [
+                        {
+                            source_id: "seg-1",
+                            kind: "clarify",
+                            rationale: "the opening line needs a sharper scope statement",
+                            proposed_action: "add one concrete sentence that defines the intended reader and scope",
+                            related_notes: null,
+                        },
+                    ],
+                    overall_remark: null,
+                }),
+            },
+        ]);
+
+        const outcome = await reviewNote(harness.factory, defaultInput());
+
+        expect(outcome.status).toBe("ok");
+        if (outcome.status !== "ok") return;
+        expect(outcome.result.suggestions[0].related_notes).toEqual([]);
+        expect(outcome.result.overall_remark).toBe("");
+        expect(outcome.diagnostics.path).toBe("structured");
     });
 
     it("uses outputLanguageOverride for the system prompt while preserving detectedLanguage input", async () => {
@@ -532,6 +598,40 @@ describe("PageletReviewModel — provider degradation paths", () => {
         expect(outcome.diagnostics.attempts).toBe(0);
     });
 
+    it("reviewTimeoutMs bounds a provider that never resolves", async () => {
+        jest.useFakeTimers();
+        try {
+            let structuredInvocations = 0;
+            const factory: PageletChatModelFactory = async () => ({
+                invoke: jest.fn(async () => ({ content: "" })),
+                withStructuredOutput: () => ({
+                    invoke: async () => {
+                        structuredInvocations += 1;
+                        return new Promise<never>(() => undefined);
+                    },
+                }),
+            });
+
+            const outcomePromise = reviewNote(factory, defaultInput(), { reviewTimeoutMs: 25 });
+            await jest.advanceTimersByTimeAsync(25);
+            const outcome = await outcomePromise;
+
+            expect(outcome.status).toBe("error");
+            if (outcome.status !== "error") return;
+            expect(outcome.errorCode).toBe("timeout");
+            expect(structuredInvocations).toBe(1);
+            expect(outcome.diagnostics.attempts).toBe(1);
+            expect(outcome.diagnostics.timings).toEqual(expect.arrayContaining([
+                expect.objectContaining({
+                    phase: "llm_attempt",
+                    metadata: expect.objectContaining({ outcome: "timeout" }),
+                }),
+            ]));
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     it("JSON-mode parse fails twice → outcome.errorCode='parse_failed'", async () => {
         // Free-form fallback exhausted: model emits unparseable garbage on both attempts.
         // We surface "parse_failed" (NOT schema_invalid) because we never got far enough to
@@ -546,6 +646,31 @@ describe("PageletReviewModel — provider degradation paths", () => {
         if (outcome.status !== "error") return;
         expect(outcome.errorCode).toBe("parse_failed");
         expect(outcome.diagnostics.attempts).toBe(2);
+    });
+
+    it("maxRetries=0 limits fallback to one structured attempt plus one JSON-mode attempt", async () => {
+        let structuredInvocations = 0;
+        let jsonInvocations = 0;
+        const factory: PageletChatModelFactory = async () => ({
+            withStructuredOutput: () => ({
+                invoke: async () => {
+                    structuredInvocations += 1;
+                    throw schemaError([{ path: ["suggestions", 0, "rationale"], message: "Required" }]);
+                },
+            }),
+            invoke: async () => {
+                jsonInvocations += 1;
+                return { content: JSON.stringify(validResultPayload()) };
+            },
+        });
+
+        const outcome = await reviewNote(factory, defaultInput(), { maxRetries: 0 });
+
+        expect(outcome.status).toBe("ok");
+        expect(structuredInvocations).toBe(1);
+        expect(jsonInvocations).toBe(1);
+        expect(outcome.diagnostics.attempts).toBe(2);
+        expect(outcome.diagnostics.path).toBe("json_mode");
     });
 
     it("disableStructuredOutput=true on a capable model still uses JSON mode", async () => {
