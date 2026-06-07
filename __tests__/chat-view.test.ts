@@ -908,7 +908,7 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].chatHistory?.[1]).not.toBe(view.chatHistory[1]);
     });
 
-    it('shows a live assistant loader before the first response chunk and reuses the placeholder', async () => {
+    it('shows a live assistant placeholder before the first response chunk and reuses it without a side loader', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
 
@@ -935,7 +935,6 @@ describe('LLMView turn lifecycle', () => {
         expect(userRole.children[0]).toBe(userIdenticon);
         const assistantRole = getElementByClass(liveAssistantMessages[0], 'message-role');
         const assistantIdenticon = getElementByClass(assistantRole, 'pa-chat-role-identicon-assistant');
-        const assistantLoader = getElementByClass(assistantRole, 'pa-chat-role-loader-assistant');
         expect(assistantIdenticon.tagName).toBe('span');
         expect(assistantIdenticon.classList.contains('pa-chat-role-identicon-active')).toBe(true);
         expect(assistantIdenticon.style.getPropertyValue('--pa-chat-role-identicon-fill')).toMatch(/^var\(--pa-chat-role-identicon-/);
@@ -946,8 +945,8 @@ describe('LLMView turn lifecycle', () => {
         expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-empty-scan').length).toBeGreaterThan(0);
         expect(getElementsByClass(assistantIdenticon, 'pa-chat-role-identicon-cell')).toHaveLength(25);
         expect(assistantRole.children[0]).toBe(assistantIdenticon);
-        expect(assistantRole.children[2]).toBe(assistantLoader);
-        expect(walk(liveAssistantMessages[0], (el) => el.tagName === 'l-bouncy-arc')).not.toBeNull();
+        expect(getElementsByClass(assistantRole, 'pa-chat-role-loader-assistant')).toHaveLength(0);
+        expect(walk(liveAssistantMessages[0], (el) => el.tagName === 'l-bouncy-arc')).toBeNull();
         expect(liveUserMessage.classList.contains('llm-message-enter')).toBe(true);
         expect(liveAssistantMessage.classList.contains('llm-message-enter')).toBe(true);
 

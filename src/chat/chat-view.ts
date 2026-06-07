@@ -100,7 +100,6 @@ function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) =>
     ldrsLoadersRequested = true;
     void Promise.all([
         import('ldrs/quantum'),
-        import('ldrs/bouncyArc'),
     ]).catch((error) => {
         ldrsLoadersRequested = false;
         log?.('Could not load chat waiting animations', error);
@@ -563,18 +562,17 @@ export class LLMView extends ItemView {
         };
         const createRoleLoader = (
             parent: HTMLElement,
-            kind: 'thinking' | 'assistant',
+            kind: 'thinking',
         ): HTMLElement => {
             const wrapper = parent.createSpan({
                 cls: `pa-chat-role-loader pa-chat-role-loader-${kind}`,
                 attr: { 'aria-hidden': 'true' },
             });
-            const tagName = kind === 'thinking' ? 'l-quantum' : 'l-bouncy-arc';
-            wrapper.createEl(tagName as keyof HTMLElementTagNameMap, {
+            wrapper.createEl('l-quantum' as keyof HTMLElementTagNameMap, {
                 cls: 'pa-chat-role-loader-element',
                 attr: {
-                    size: kind === 'thinking' ? '16' : '24',
-                    speed: kind === 'thinking' ? '1.75' : '1.65',
+                    size: '16',
+                    speed: '1.75',
                     color: 'currentColor',
                 },
             });
@@ -675,7 +673,8 @@ export class LLMView extends ItemView {
             options: {
                 extraClass?: string;
                 identicon?: ChatRoleIdenticon;
-                loader?: 'thinking' | 'assistant';
+                loader?: 'thinking';
+                activeIdenticon?: boolean;
             } = {},
         ): { roleEl: HTMLElement; loaderEl?: HTMLElement } => {
             const roleEl = parent.createDiv({
@@ -686,14 +685,14 @@ export class LLMView extends ItemView {
                     roleEl,
                     options.identicon,
                     getChatRoleIdenticonModel(options.identicon),
-                    options.loader === 'assistant' && options.identicon === 'assistant',
+                    Boolean(options.activeIdenticon && options.identicon === 'assistant'),
                 );
             }
-            const loaderEl = !options.identicon && options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
+            const loaderEl = options.loader ? createRoleLoader(roleEl, options.loader) : undefined;
             roleEl.createSpan({ cls: 'pa-chat-role-text', text });
             return {
                 roleEl,
-                loaderEl: options.identicon && options.loader ? createRoleLoader(roleEl, options.loader) : loaderEl,
+                loaderEl,
             };
         };
         const stopThinkingLoader = (statusView?: ThinkingStatusView) => {
@@ -1257,7 +1256,7 @@ export class LLMView extends ItemView {
             }
             const { roleEl, loaderEl } = createRoleLabel(messageDiv, message.role === 'user' ? 'You' : 'Assistant', {
                 identicon: message.role,
-                loader: options.showAssistantLoader ? 'assistant' : undefined,
+                activeIdenticon: options.showAssistantLoader,
             });
             const contentDiv = messageDiv.createDiv({ cls: 'message-content' }) as HTMLElement;
             const actionDiv = messageDiv.createDiv({
