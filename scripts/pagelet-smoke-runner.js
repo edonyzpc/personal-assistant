@@ -27,8 +27,11 @@
   const panelText = () => textOf(panelRoot());
   const getButton = (regex) => [...document.querySelectorAll("button")]
     .find((button) => regex.test(textOf(button)) || regex.test(button.getAttribute("aria-label") || ""));
+  const getPanelPreviewButton = (regex) => [...document.querySelectorAll(".pa-pagelet-write-preview button")]
+    .find((button) => regex.test(textOf(button)) || regex.test(button.getAttribute("aria-label") || ""));
   const getModalButton = (regex) => [...document.querySelectorAll(".modal button")]
     .find((button) => regex.test(textOf(button)) || regex.test(button.getAttribute("aria-label") || ""));
+  const hasWriteActionModal = () => Boolean(document.querySelector(".pa-write-action-modal, .modal .pa-write-action-modal"));
   const providerLimitPattern = /hourly call limit|rate limit|quota|too many requests/i;
 
   const record = (name, status, detail = "") => {
@@ -98,9 +101,17 @@
     let clicked = false;
     const deadline = Date.now() + timeoutMs;
     while (Date.now() < deadline) {
-      const button = getModalButton(actionRegex);
-      if (button) {
-        button.click();
+      const panelButton = getPanelPreviewButton(actionRegex);
+      if (panelButton) {
+        assert(`${name}: uses panel confirmation`, !hasWriteActionModal(), "Pagelet should not show the generic write-action modal");
+        panelButton.click();
+        clicked = true;
+        break;
+      }
+      const modalButton = getModalButton(actionRegex);
+      if (modalButton) {
+        record(`${name}: uses panel confirmation`, "FAIL", "generic write-action modal appeared instead of Pagelet panel confirmation");
+        modalButton.click();
         clicked = true;
         break;
       }
@@ -131,7 +142,7 @@
     if (providerLimited) {
       record(`${name}: provider call blocked`, "BLOCKED", "configured provider returned a rate/quota limit");
     } else if (requireAction && !clicked) {
-      record(`${name}: modal action`, "FAIL", "review completed without the expected confirmation action");
+      record(`${name}: confirmation action`, "FAIL", "review completed without the expected panel confirmation action");
     } else {
       record(`${name}: review resolved`, "PASS", `created=${created.join(",") || "none"}`);
     }
@@ -185,11 +196,11 @@
   }
 
   await configureCurrentScope("pagelet-smoke-cancel.md");
-  const cancelRun = await runReviewAndResolve("cancel path", /Cancel|Close/);
+  const cancelRun = await runReviewAndResolve("cancel path", /Cancel|Close|取消|关闭/);
   assert("cancel path writes no review note", cancelRun.created.length === 0, `created=${cancelRun.created.join(",") || "none"}`);
 
   await configureCurrentScope("pagelet-smoke-golden.md");
-  const goldenRun = await runReviewAndResolve("golden save path", /Save review note|Confirm/);
+  const goldenRun = await runReviewAndResolve("golden save path", /Save review note|Confirm|保存审阅笔记|确认/);
   assert("golden path writes exactly one review note", goldenRun.created.length === 1, `created=${goldenRun.created.join(",") || "none"}`);
   const goldenOutput = goldenRun.created[0];
   if (goldenOutput) {
