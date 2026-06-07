@@ -1,7 +1,7 @@
 # Chat Agent Phase 2 只读工具扩展方案
 
 > [!IMPORTANT]
-> Archived historical record. This document is no longer a design or execution source of truth. Use [Chat Agent Native Ralpha Loop Refactor Plan](../chat-agent-native-ralpha-loop-plan.md) for current work. Any guidance below is historical evidence only; if it conflicts with the Ralpha plan, the Ralpha plan wins.
+> Archived historical record. This document is no longer a design or execution source of truth. Use [PA Agent Architecture Plan](../pa-agent-architecture-plan.md) and [PA Agent Runtime Lifecycle Plan](../pa-agent-runtime-lifecycle-plan.md) for current PA Agent work. Any guidance below is historical evidence only; if it conflicts with the current PA Agent docs, the current PA Agent docs win.
 
 ## 文档目的
 

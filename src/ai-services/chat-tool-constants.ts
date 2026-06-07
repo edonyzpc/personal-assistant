@@ -2,7 +2,7 @@
  * Numeric / string constants used across chat-tool sub-modules.
  *
  * Moved here from the original chat-tools.ts monolith as part of Phase 3.1
- * (sdd-chat-tools-split.md). Leaf module — zero internal dependencies.
+ * (docs/archive/sdd-chat-tools-split.md). Leaf module — zero internal dependencies.
  */
 
 export const CURRENT_NOTE_CONTENT_BUDGET_CHARS = 3000;

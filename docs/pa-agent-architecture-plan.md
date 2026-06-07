@@ -2,7 +2,7 @@
 
 ## Status And Source Of Truth
 
-> Last revised: 2026-05-24 — see [PA Agent v1 Plan Revisions](./pa-agent-v1-plan-revisions.md) for the 14-decision revision history.
+> Last revised: 2026-05-24. Revision history and closeout evidence have been folded into [PA Agent Design Completion Audit](./pa-agent-design-completion-audit.md).
 
 This document is the product, architecture, runtime, capability, source-boundary, platform, and migration contract for evolving Personal Assistant Chat into PA Agent.
 

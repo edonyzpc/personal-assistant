@@ -1,7 +1,7 @@
 # Vault-native Assistant Development Tracker
 
 > [!IMPORTANT]
-> Archived historical record. This document is no longer an active implementation tracker. Use [Chat Agent Native Ralpha Loop Refactor Plan](../chat-agent-native-ralpha-loop-plan.md) for current Chat Agent refactor design, phase tracking, risks, and verification. Any guidance below is historical evidence only; if it conflicts with the Ralpha plan, the Ralpha plan wins.
+> Archived historical record. This document is no longer an active implementation tracker. Use [PA Agent Architecture Plan](../pa-agent-architecture-plan.md) and [PA Agent Runtime Lifecycle Plan](../pa-agent-runtime-lifecycle-plan.md) for current PA Agent design, runtime boundaries, and verification. Any guidance below is historical evidence only; if it conflicts with the current PA Agent docs, the current PA Agent docs win.
 
 ## Purpose
 
@@ -11,7 +11,7 @@
 
 - [Archived Vault-native Obsidian Assistant Refactor Plan](./vault-native-assistant-refactor-plan.md)
 
-本文档不是当前架构设计的替代品。当前 Ralpha Loop 方案的产品定位、架构边界、Memory workflow、native rollout、隐私和写入边界以 `docs/chat-agent-native-ralpha-loop-plan.md` 为准。
+本文档不是当前架构设计的替代品。当前 PA Agent 当前产品定位、架构边界、Memory workflow、native rollout、隐私和写入边界以 `docs/pa-agent-architecture-plan.md` 和 `docs/pa-agent-runtime-lifecycle-plan.md` 为准。
 
 ## Status Legend
 

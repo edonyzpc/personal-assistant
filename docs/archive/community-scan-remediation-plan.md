@@ -1,6 +1,6 @@
 # Obsidian Community Scan 修复方案
 
-> **Status (2026-05-25)**: Historical — Ollama support was removed in v2.0.0. References below to Ollama as a supported provider are no longer accurate; see [`CHANGELOG.md`](../CHANGELOG.md) for the v2.0.0 break-change release notes.
+> **Status (2026-05-25)**: Historical — Ollama support was removed in v2.0.0. References below to Ollama as a supported provider are no longer accurate; see [`CHANGELOG.md`](../../CHANGELOG.md) for the v2.0.0 break-change release notes.
 ## Summary
 
 - 目标：优先修复会影响社区审核、用户信任和发布资产可信度的问题，同时把大范围兼容性告警拆成后续低风险批次处理。

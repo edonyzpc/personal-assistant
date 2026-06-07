@@ -1,7 +1,7 @@
 # Vault-native Obsidian Assistant Refactor Plan
 
 > [!IMPORTANT]
-> Archived historical record. This document is no longer an active design or execution source of truth. Use [Chat Agent Native Ralpha Loop Refactor Plan](../chat-agent-native-ralpha-loop-plan.md) for current Chat Agent refactor work. Any guidance below is historical evidence only; if it conflicts with the Ralpha plan, the Ralpha plan wins.
+> Archived historical record. This document is no longer an active design or execution source of truth. Use [PA Agent Architecture Plan](../pa-agent-architecture-plan.md) and [PA Agent Runtime Lifecycle Plan](../pa-agent-runtime-lifecycle-plan.md) for current PA Agent work. Any guidance below is historical evidence only; if it conflicts with the current PA Agent docs, the current PA Agent docs win.
 
 ## Historical Status
 
@@ -488,7 +488,7 @@ Diagnostics and metrics privacy contract:
 
 ## Future Write Action Contract
 
-Phase 6 handoff doc: [Write Action Design Handoff](./write-action-design-handoff.md).
+Phase 6 handoff doc: [Write Action Design Handoff](../write-action-design-handoff.md).
 
 本轮不实现直接写入笔记、不创建或删除笔记、不新增 bash、不提供任意文件系统 edit。未来写入能力只保留设计契约。
 

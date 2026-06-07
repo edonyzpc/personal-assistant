@@ -55,7 +55,7 @@ v2.5 一个 PR 内一次性删除 apiToken 明文链相关全部死代码：
 - 不需要"keychain 迁移工具"或独立工具版本：迁移逻辑已在 v2.0 自动完成，无需补做
 - 不需要 v2.4 出"迁移过渡版本"：5 个 minor 已是过渡窗口本身
 - 不需要 banner 通知：6 个月 + ≥ 5 minor 自动迁移机会已是足够触达
-- 不动其他 deprecated flag 清理（参见 `./docs/sdd-deprecated-flags-removal.md`，那是 v2.2 范围）
+- 不动其他 deprecated flag 清理（参见 `./docs/archive/sdd-deprecated-flags-removal.md`，那是 v2.2 范围）
 - 不重写 SecretStorage 接入：现有 vault-scoped id 路径保持
 
 ---

@@ -142,11 +142,11 @@ hasConfiguredAPIToken(): boolean {
 
 新用户三步上手：
 
-1. 安装插件后点击左侧 ribbon 的 ![chat-icon](docs/onboarding-ribbon.png) "Open AI Chat" 图标
+1. 安装插件后点击左侧 ribbon 的 "Open AI Chat" 图标
 2. 在空白聊天界面点击 "打开 Settings" 跳转配置（截图）
 3. 选择 AI Provider（Qwen / OpenAI / 等）→ 填入 API Token → 回到 chat 开始对话
 
-完整说明见 [Manual / Chat 章节](Manual.md#chat)
+完整说明见 [Manual / Chat 章节](../../Manual.md#chat)
 ```
 
 **Manual.md Chat 章节框架:**
@@ -182,7 +182,7 @@ hasConfiguredAPIToken(): boolean {
 ### 文档一致性
 
 - README 三张截图与 v2.2 实际 UI 一致（ribbon icon 形状 / banner 文案 / Settings 布局）
-- Manual.md 链接锚点（`#chat`）有效
+- `Manual.md#chat` 链接锚点有效（`../../Manual.md#chat`）
 - README "AI Chat in 60s" 内引用的 Settings 路径与 Manual 描述一致
 
 ---
@@ -236,7 +236,7 @@ hasConfiguredAPIToken(): boolean {
 
 **新增:**
 
-- `docs/onboarding-ribbon.png` / `docs/onboarding-empty-state.png` / `docs/onboarding-settings.png`
+- Planned screenshot artifacts: `docs/onboarding-ribbon.png` / `docs/onboarding-empty-state.png` / `docs/onboarding-settings.png`
 
 **阅读参考（无改动）:**
 

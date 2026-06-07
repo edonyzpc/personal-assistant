@@ -3,7 +3,7 @@
  * constants + `buildV1APlannerGuidance` + `normalizeQueryWithOptionalLimit`.
  *
  * Moved here from the original chat-tools.ts monolith as part of Phase 3.1
- * (sdd-chat-tools-split.md). Depends on Module A (types), Module B (constants),
+ * (docs/archive/sdd-chat-tools-split.md). Depends on Module A (types), Module B (constants),
  * Module E (execution helpers + `*Like` interfaces), Module F (validators),
  * and `chat-tool-prepare-helpers` sibling module.
  */

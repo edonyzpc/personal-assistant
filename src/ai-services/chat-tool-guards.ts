@@ -3,7 +3,7 @@
  * + `isChatToolName` discriminator.
  *
  * Moved here from the original chat-tools.ts monolith as part of Phase 3.1
- * (sdd-chat-tools-split.md). Depends on Module A (types), Module B (constants),
+ * (docs/archive/sdd-chat-tools-split.md). Depends on Module A (types), Module B (constants),
  * and Module E (limitInputText / normalizeLimit / validateVaultRelativeTargetPath).
  */
 

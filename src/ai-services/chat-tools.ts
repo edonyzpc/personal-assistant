@@ -2,7 +2,7 @@
  * Barrel re-export for the chat-tools module.
  *
  * The original 3043-line monolith has been split into six sub-modules
- * (see docs/sdd-chat-tools-split.md). External consumers continue to import
+ * (see docs/archive/sdd-chat-tools-split.md). External consumers continue to import
  * public registry, factories, types, and result guards from `"./chat-tools"`.
  * Internal vault I/O and parser helpers stay in their implementation modules.
  *

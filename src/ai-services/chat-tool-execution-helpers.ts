@@ -5,7 +5,7 @@
  * that adapt obsidian-api shapes for testability.
  *
  * Moved here from the original chat-tools.ts monolith as part of Phase 3.1
- * (sdd-chat-tools-split.md). Depends on Module A (types) and Module B
+ * (docs/archive/sdd-chat-tools-split.md). Depends on Module A (types) and Module B
  * (constants); leaf in the DAG aside from those.
  *
  * The `*Like` interfaces live here (not in chat-tool-types) per the SDD —

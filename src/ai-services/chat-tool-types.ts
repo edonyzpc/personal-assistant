@@ -2,7 +2,7 @@
  * Type definitions, type guards, and v1A tool-name policy constants for chat tools.
  *
  * Moved here from the original chat-tools.ts monolith as part of Phase 3.1
- * (sdd-chat-tools-split.md). Leaf module — depends only on `./chat-types`
+ * (docs/archive/sdd-chat-tools-split.md). Leaf module — depends only on `./chat-types`
  * and `../plugin`.
  *
  * NOTE: `*Like` (EditorLike/VaultFileLike/MarkdownFileLike/MarkdownViewLike/

@@ -7,7 +7,7 @@
 
 ## 1. Context
 
-v2.1.2 review 阶段定位到 2 个 settings flag 已无实际消费者，属于 no-op 或仅在内部留痕的隐藏开关。继续保留这些字段会让新成员误以为有功能可调用，增加心智负担。趁 v2.2 这次小版本顺手清掉，与 apiToken 链清理（v2.5，参见 `./docs/sdd-apitoken-cleanup.md`）拆开为两次推进。
+v2.1.2 review 阶段定位到 2 个 settings flag 已无实际消费者，属于 no-op 或仅在内部留痕的隐藏开关。继续保留这些字段会让新成员误以为有功能可调用，增加心智负担。趁 v2.2 这次小版本顺手清掉，与 apiToken 链清理（v2.5，参见 `../sdd-apitoken-cleanup.md`）拆开为两次推进。
 
 涉及字段与定位：
 
@@ -36,7 +36,7 @@ v2.1.2 review 阶段定位到 2 个 settings flag 已无实际消费者，属于
 ## 3. Non-goals
 
 - 不动其他 flag（如 `qwenThinkingEnabled`、`enableMetadataUpdating` 等仍在用的）
-- 不动 apiToken 明文链（v2.5 范围，参见 `./docs/sdd-apitoken-cleanup.md`）
+- 不动 apiToken 明文链（v2.5 范围，参见 `../sdd-apitoken-cleanup.md`）
 - 不重构 settings 类型层结构（仅做字段移除）
 - 不改 `chat-service.ts` 的 native tool planning 主链路 —— 仅删 smoke 分支条件
 

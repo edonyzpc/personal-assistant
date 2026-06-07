@@ -1,12 +1,12 @@
 # v2.0.0 代码审查修复方案
 
 **Status:** Code-led status reconciled on 2026-05-30; original Phase 1-2 remains mostly open; Phase 3 implementation status reconciled against current code
-**Source:** `docs/v2-comprehensive-code-review.md`
+**Source:** `docs/archive/v2-comprehensive-code-review.md`
 **Plan file mirror:** `~/.claude/plans/breezy-wiggling-gem.md`
 
 ## Context
 
-基于 `docs/v2-comprehensive-code-review.md` 审查报告和讨论确认的决策，制定从简单到复杂的分阶段修复方案。
+基于 `docs/archive/v2-comprehensive-code-review.md` 审查报告和讨论确认的决策，制定从简单到复杂的分阶段修复方案。
 
 **不动的项：** 三层工具管线 / PolicyEngine / 双事件系统（action mode 预留）、Skill 系统基础设施（计划扩展）、LangChain 依赖（保留）、React 19（不降级）。
 
@@ -36,19 +36,19 @@
 
 | Item | Status | SDD | Commit |
 | --- | --- | --- | --- |
-| 1.1 Prompt same-language/citation/no-guess lines | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `7d84584` |
-| 1.2 `getVSSFiles()` filter optimization | ✅ Done | [sdd-trivial-cleanups](./sdd-trivial-cleanups.md) | `a9b48cd` |
-| 1.3 `getReadOnlyToolContextInfo` lookup map | ✅ Done | [sdd-trivial-cleanups](./sdd-trivial-cleanups.md) | `776812f` |
-| 1.4 `tsconfig` `strict: true` | ✅ Done | [sdd-strict-mode-and-coverage](./sdd-strict-mode-and-coverage.md) | `f2682f1` + `f87d5d7` + `7dfc275` |
-| 1.5 Jest `coverageThreshold` | ✅ Done | [sdd-strict-mode-and-coverage](./sdd-strict-mode-and-coverage.md) | `046774b` (baseline -5%: 75/71/74/75) |
-| 1.6 Rerank excerpt 200 → 400 | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `5980a47` |
+| 1.1 Prompt same-language/citation/no-guess lines | ✅ Done | [sdd-prompt-and-token-quality](./archive/sdd-prompt-and-token-quality.md) | `7d84584` |
+| 1.2 `getVSSFiles()` filter optimization | ✅ Done | [sdd-trivial-cleanups](./archive/sdd-trivial-cleanups.md) | `a9b48cd` |
+| 1.3 `getReadOnlyToolContextInfo` lookup map | ✅ Done | [sdd-trivial-cleanups](./archive/sdd-trivial-cleanups.md) | `776812f` |
+| 1.4 `tsconfig` `strict: true` | ✅ Done | [sdd-strict-mode-and-coverage](./archive/sdd-strict-mode-and-coverage.md) | `f2682f1` + `f87d5d7` + `7dfc275` |
+| 1.5 Jest `coverageThreshold` | ✅ Done | [sdd-strict-mode-and-coverage](./archive/sdd-strict-mode-and-coverage.md) | `046774b` (baseline -5%: 75/71/74/75) |
+| 1.6 Rerank excerpt 200 → 400 | ✅ Done | [sdd-prompt-and-token-quality](./archive/sdd-prompt-and-token-quality.md) | `5980a47` |
 | 1.7 Chinese capability signals | Done, adjusted | (covered by Phase 3.6) | superseded by `pa-agent-required-capability-policy.ts` CJK tables |
-| 2.1 Planner tool definition de-dup | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `42126f4` |
-| 2.2 Canonical chat history sandbox/limit | ✅ Done | [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) | `5d58d55` (MAX_CHAT_HISTORY_TURNS=20) |
-| 2.3 Operations capability catalog simplification | ✅ Done | [sdd-trivial-cleanups](./sdd-trivial-cleanups.md) | `c858e5b` (359 → 76 lines, validator removed) |
-| 2.4 Rewrite + embedding parallelization | ✅ Done | [sdd-search-pipeline-parallelization](./sdd-search-pipeline-parallelization.md) | `a031185` + `178b7ac` |
+| 2.1 Planner tool definition de-dup | ✅ Done | [sdd-prompt-and-token-quality](./archive/sdd-prompt-and-token-quality.md) | `42126f4` |
+| 2.2 Canonical chat history sandbox/limit | ✅ Done | [sdd-prompt-and-token-quality](./archive/sdd-prompt-and-token-quality.md) | `5d58d55` (MAX_CHAT_HISTORY_TURNS=20) |
+| 2.3 Operations capability catalog simplification | ✅ Done | [sdd-trivial-cleanups](./archive/sdd-trivial-cleanups.md) | `c858e5b` (359 → 76 lines, validator removed) |
+| 2.4 Rewrite + embedding parallelization | ✅ Done | [sdd-search-pipeline-parallelization](./archive/sdd-search-pipeline-parallelization.md) | `a031185` + `178b7ac` |
 
-实施方式：SDD docs PR (`2ebf211`) + Wave 1 并行 worktrees (PR-1/PR-2/PR-4) + Wave 2 worktree (PR-3 strict + coverage)；全量门禁（tsc / 全量 test+coverage / lint / build）每 PR 单独通过 + 集成后再过一遍。Obsidian 手动 smoke 仍待用户验证（参见 [sdd-prompt-and-token-quality](./sdd-prompt-and-token-quality.md) §4.6 / [sdd-search-pipeline-parallelization](./sdd-search-pipeline-parallelization.md) §4.5）。
+实施方式：SDD docs PR (`2ebf211`) + Wave 1 并行 worktrees (PR-1/PR-2/PR-4) + Wave 2 worktree (PR-3 strict + coverage)；全量门禁（tsc / 全量 test+coverage / lint / build）每 PR 单独通过 + 集成后再过一遍。Obsidian 手动 smoke 仍待用户验证（参见 [sdd-prompt-and-token-quality](./archive/sdd-prompt-and-token-quality.md) §4.6 / [sdd-search-pipeline-parallelization](./archive/sdd-search-pipeline-parallelization.md) §4.5）。
 
 ### Smoke status and remaining high-risk checks
 
@@ -101,11 +101,11 @@ Runtime/test changes were split by module (`vss`, `settings`, `chat-history`, `u
 
 | # | 文档 | 状态 |
 |---|------|------|
-| 3.1 | [docs/sdd-chat-tools-split.md](./sdd-chat-tools-split.md) | ✅ 已实现；SDD 保留为历史设计记录 |
-| 3.2 | [docs/sdd-calc-snapshot-incremental.md](./sdd-calc-snapshot-incremental.md) | ✅ 已实现；SDD 保留为历史设计记录 |
-| 3.3 | [docs/sdd-wasm-lazy-load.md](./sdd-wasm-lazy-load.md) | ✅ 已实现；SDD 保留为历史设计记录 |
-| 3.5 | [docs/sdd-chat-history-persistence.md](./sdd-chat-history-persistence.md) | ✅ 已实现；SDD 保留为历史设计记录 |
-| 3.6 | [docs/sdd-required-capability-refactor.md](./sdd-required-capability-refactor.md) | ✅ 已实现；SDD 保留为历史设计记录 |
+| 3.1 | [docs/archive/sdd-chat-tools-split.md](./archive/sdd-chat-tools-split.md) | ✅ 已实现；SDD 保留为历史设计记录 |
+| 3.2 | [docs/archive/sdd-calc-snapshot-incremental.md](./archive/sdd-calc-snapshot-incremental.md) | ✅ 已实现；SDD 保留为历史设计记录 |
+| 3.3 | [docs/archive/sdd-wasm-lazy-load.md](./archive/sdd-wasm-lazy-load.md) | ✅ 已实现；SDD 保留为历史设计记录 |
+| 3.5 | [docs/archive/sdd-chat-history-persistence.md](./archive/sdd-chat-history-persistence.md) | ✅ 已实现；SDD 保留为历史设计记录 |
+| 3.6 | [docs/archive/sdd-required-capability-refactor.md](./archive/sdd-required-capability-refactor.md) | ✅ 已实现；SDD 保留为历史设计记录 |
 
 ---
 
@@ -263,20 +263,20 @@ Runtime/test changes were split by module (`vss`, `settings`, `chat-history`, `u
 > 本节保留最初 SDD 拆解方案，并在每项下记录当前代码状态。Phase 3 的 SDD 文件不再作为待实施计划，而是作为历史设计记录和实现审计入口。
 
 ### 3.1 chat-tools.ts 拆分（3043 行 → 6 模块）
-- **SDD 文档:** [docs/sdd-chat-tools-split.md](./sdd-chat-tools-split.md)
+- **SDD 文档:** [docs/archive/sdd-chat-tools-split.md](./archive/sdd-chat-tools-split.md)
 - **当前状态:** 已实现。`src/ai-services/chat-tools.ts` 是 barrel re-export，逻辑拆到 `chat-tool-types.ts`、`chat-tool-registry.ts`、`chat-tool-factories.ts`、`chat-tool-guards.ts`、`chat-tool-constants.ts`、`chat-tool-prepare-helpers.ts` 和 `chat-tool-execution-helpers.ts`。
 - **核心方案:** 拆分为 6 个子模块 + barrel re-export
 - **兼容策略:** 保留 `chat-tools.ts` 作为 barrel re-export，10 个消费文件无需修改
 - **风险:** 中（纯重构，barrel 兜底）
 
 ### 3.2 calcSnapshot() 增量优化
-- **SDD 文档:** [docs/sdd-calc-snapshot-incremental.md](./sdd-calc-snapshot-incremental.md)
+- **SDD 文档:** [docs/archive/sdd-calc-snapshot-incremental.md](./archive/sdd-calc-snapshot-incremental.md)
 - **当前状态:** 已实现。`StatsLocalStore` 提供 `fileCountCache` 持久化；`StatsManager` 加载、校验、增量失效并在需要时回退全量 snapshot。
 - **核心方案:** IndexedDB 文件计数缓存 + 批处理 + 基于 vault 事件的增量更新
 - **风险:** 高（核心统计管线，错误增量 → 持久化错误数据）
 
 ### 3.3 WASM 懒加载
-- **SDD 文档:** [docs/sdd-wasm-lazy-load.md](./sdd-wasm-lazy-load.md)
+- **SDD 文档:** [docs/archive/sdd-wasm-lazy-load.md](./archive/sdd-wasm-lazy-load.md)
 - **当前状态:** 已实现。构建使用 `lazyBinaryPlugin`，SQLite inline assets 在首次创建 WASM URL 时才取 `Uint8Array`。
 - **核心方案:** 自定义 esbuild `lazyBinaryPlugin`，模块评估时不解码，首次使用时 `atob` 并 GC base64 字符串
 - **改动范围:** 3 文件（esbuild.config.mjs / sqlite-inline-assets.ts / __mocks__/asset-string.js）
@@ -288,13 +288,13 @@ Runtime/test changes were split by module (`vss`, `settings`, `chat-history`, `u
 - **不在当前批次:** 保留为 release 前可接受/延期的产品决策，而不是已经完成项。
 
 ### 3.5 聊天历史持久化
-- **SDD 文档:** [docs/sdd-chat-history-persistence.md](./sdd-chat-history-persistence.md)
+- **SDD 文档:** [docs/archive/sdd-chat-history-persistence.md](./archive/sdd-chat-history-persistence.md)
 - **当前状态:** 已实现。当前代码已有 IndexedDB chat history store、manager、active conversation 恢复、历史选择、turn 删除/清空和 finalize 后持久化。
 - **核心方案:** IndexedDB 三层模式（conversations + turns 两个 store），LRU prune 50 个，turn finalize 后写入
 - **风险:** 中（新功能，但复用成熟模式）
 
 ### 3.6 RequiredCapabilityClassification 重构
-- **SDD 文档:** [docs/sdd-required-capability-refactor.md](./sdd-required-capability-refactor.md)
+- **SDD 文档:** [docs/archive/sdd-required-capability-refactor.md](./archive/sdd-required-capability-refactor.md)
 - **当前状态:** 已实现。`RequiredCapabilityLevel` 的旧 `ignore` arm 已移除；分类逻辑使用统一 score 表和 CJK token 表；运行时策略使用 phase 状态。
 - **核心方案:** 类型扁平化 / score 统一 / CJK 双语关键词表 / phase 状态机 / 4 阶段增量迁移
 - **覆盖 1.7:** 实施 3.6 后会替换 1.7 的临时 CJK 缓解措施

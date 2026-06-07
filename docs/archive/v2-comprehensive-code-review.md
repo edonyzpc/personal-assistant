@@ -350,7 +350,7 @@ Problems:
 
 ### Short-term (1-2 months)
 
-6. ⏸️ Deferred — Remove LangChain dependencies (decision: keep, see [project_langchain_keep](../.claude/memory) memory)
+6. ⏸️ Deferred — Remove LangChain dependencies (decision: keep; historical memory reference omitted from this archived copy)
 7. ⏸️ Deferred — Collapse triple-registry tool pipeline (reserved for action-mode roadmap)
 8. ⏸️ Deferred — Retire v1 event system (reserved for action-mode roadmap)
 9. 🔲 Partial — Simplify settings page (high-risk fixes done; full IA simplification still open)

@@ -8,7 +8,7 @@
  * `capability-adapter.ts` (validateInput parity, output budget enforcement,
  * prepareArguments repair detection).
  *
- * Module C in the chat-tools split (sdd-chat-tools-split.md). Depends on Module
+ * Module C in the chat-tools split (docs/archive/sdd-chat-tools-split.md). Depends on Module
  * A (types), Module B (constants), Module E (createToolFailureResult, truncate),
  * and Module F (isChatToolName).
  */

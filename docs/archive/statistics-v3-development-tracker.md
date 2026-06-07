@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This tracker records the SPEC-driven development plan, phase status, review evidence, verification results, and risk handling for [Statistics v3 Plan](./statistics-v3-plan.md).
+This tracker records the SPEC-driven development plan, phase status, review evidence, verification results, and risk handling for [Statistics v3 Plan](../statistics-v3-plan.md).
 
 This document is not the architecture source of truth. Product goals, storage model, migration rules, sync semantics, and UI copy boundaries come from `docs/statistics-v3-plan.md`. If the plan and tracker drift, update both in the same reviewed change before implementation continues.
 
@@ -105,8 +105,8 @@ Goal: Lock the product and architecture plan before runtime code changes.
 
 Expected commands:
 
-- `git diff --check -- docs/statistics-v3-plan.md docs/statistics-v3-development-tracker.md`
-- `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/statistics-v3-development-tracker.md`
+- `git diff --check -- docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`
+- `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`
 
 ### Phase 1: Store Facade Without Behavior Change
 
@@ -313,16 +313,16 @@ Expected commands:
 
 | Date | Scope | Command / Evidence | Result | Notes |
 | --- | --- | --- | --- | --- |
-| 2026-05-19 | SPEC-00 docs creation | Create `docs/statistics-v3-plan.md` and `docs/statistics-v3-development-tracker.md` | Passed | Docs-only setup; no runtime code changed |
-| 2026-05-19 | SPEC-00 docs whitespace | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/statistics-v3-development-tracker.md` | Passed | No trailing whitespace matches |
+| 2026-05-19 | SPEC-00 docs creation | Create `docs/statistics-v3-plan.md` and `docs/archive/statistics-v3-development-tracker.md` | Passed | Docs-only setup; no runtime code changed |
+| 2026-05-19 | SPEC-00 docs whitespace | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md` | Passed | No trailing whitespace matches |
 | 2026-05-19 | SPEC-00 new-file diff checks | `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings after removing extra EOF blank lines; `--no-index` returns non-zero because the files are new |
-| 2026-05-19 | SPEC-00 review incorporation checks | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/statistics-v3-development-tracker.md`; `git diff --check -- docs/statistics-v3-plan.md docs/statistics-v3-development-tracker.md`; `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings or trailing whitespace matches after review-driven revisions; new-file `--no-index` returns non-zero because the files are new |
+| 2026-05-19 | SPEC-00 review incorporation checks | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`; `git diff --check -- docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`; `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings or trailing whitespace matches after review-driven revisions; new-file `--no-index` returns non-zero because the files are new |
 | 2026-05-19 | SPEC-01 focused tests | `npm test -- __tests__/stats-store.test.ts __tests__/stats-manager.test.ts __tests__/statistics.test.ts --runInBand` | Passed | 3 suites passed, 18 tests passed |
 | 2026-05-19 | SPEC-01 typecheck | `npx tsc -noEmit -skipLibCheck` | Passed | No TypeScript errors |
 | 2026-05-19 | SPEC-01 lint | `npm run lint` | Passed | ESLint passed |
 | 2026-05-19 | SPEC-01 whitespace checks | `git diff --check`; `git diff --no-index --check -- /dev/null src/stats/stats-repository.ts`; new-doc `--no-index --check` checks | Passed | No whitespace warnings; `--no-index` returns non-zero because the files are new |
 | 2026-05-19 | SPEC-01 post-review focused tests | `npm test -- __tests__/stats-store.test.ts __tests__/stats-manager.test.ts __tests__/statistics.test.ts --runInBand` | Passed | 3 suites passed, 18 tests passed after review follow-up docs fixes |
-| 2026-05-19 | SPEC-01 post-review whitespace checks | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/statistics-v3-development-tracker.md src/stats/stats-repository.ts src/stats/stats-manager.ts`; `git diff --check` | Passed | No trailing whitespace matches and no diff whitespace warnings |
+| 2026-05-19 | SPEC-01 post-review whitespace checks | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md src/stats/stats-repository.ts src/stats/stats-manager.ts`; `git diff --check` | Passed | No trailing whitespace matches and no diff whitespace warnings |
 | 2026-05-19 | SPEC-02A focused implementation tests | `npm test -- __tests__/stats-repository.test.ts __tests__/stats-local-store.test.ts __tests__/stats-store.test.ts __tests__/stats-manager.test.ts __tests__/statistics.test.ts __tests__/settings.test.ts __tests__/plugin-record-note.test.ts --runInBand` | Passed | 7 suites passed, 40 tests passed |
 | 2026-05-19 | SPEC-02A typecheck | `npx tsc -noEmit -skipLibCheck` | Passed | No TypeScript errors |
 | 2026-05-19 | SPEC-02A lint | `npm run lint` | Passed | ESLint passed |

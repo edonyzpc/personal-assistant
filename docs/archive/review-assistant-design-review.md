@@ -402,7 +402,7 @@ L450 假定能识别 daily/periodic note，但跨插件高度分裂。**建议 V
   - `docs/obsidian-operations-agent-plan.md`
   - `docs/pa-agent-telemetry-baseline.md`
   - `docs/pa-agent-product-safety-review.md`
-  - `docs/community-scan-remediation-plan.md`
+  - `docs/archive/community-scan-remediation-plan.md`
 - 关键代码定位：
   - `src/ai-services/policy-engine.ts:35-40`（写入边界冲突点）
   - `src/ai-services/capability-types.ts:112`

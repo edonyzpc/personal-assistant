@@ -1,6 +1,6 @@
 # Obsidian 插件移动端网络兼容优化方案
 
-> **Status (2026-05-25)**: Historical — Ollama support was removed in v2.0.0. References below to Ollama as a supported provider are no longer accurate; see [`CHANGELOG.md`](../CHANGELOG.md) for the v2.0.0 break-change release notes.
+> **Status (2026-05-25)**: Historical — Ollama support was removed in v2.0.0. References below to Ollama as a supported provider are no longer accurate; see [`CHANGELOG.md`](../../CHANGELOG.md) for the v2.0.0 break-change release notes.
 ## Summary
 
 - 目标：移除 `node-fetch`、`ChatAlibabaTongyi`、`@langchain/community` 以及全局 `fetch` monkey patch，让 AI 网络调用兼容 Obsidian Desktop 和 Mobile。
@@ -8,7 +8,7 @@
 - 移动端策略：Mobile 默认不自动初始化 VSS 后台任务；聊天可尝试原生流式，失败时回退为非流式响应。
 - 开发顺序：先网络 adapter，再服务替换，再 Mobile gating，最后构建和验证。
 
-> VSS lifecycle note: this document records the older mobile-network compatibility plan. Current SQLite/WASM Memory behavior is documented in [VSS SQLite/WASM 架构设计](./vss-sqlite-wasm-architecture.md) and [VSS Embedding 刷新方案说明](./vss-embedding-refresh.md): first prepare/rebuild still requires user confirmation, while changed notes can be maintained automatically after successful approval when the durable SQLite/WASM backend is ready.
+> VSS lifecycle note: this document records the older mobile-network compatibility plan. Current SQLite/WASM Memory behavior is documented in [VSS SQLite/WASM 架构设计](../vss-sqlite-wasm-architecture.md) and [VSS Embedding 刷新方案说明](../vss-embedding-refresh.md): first prepare/rebuild still requires user confirmation, while changed notes can be maintained automatically after successful approval when the durable SQLite/WASM backend is ready.
 
 ## Implementation Changes
 

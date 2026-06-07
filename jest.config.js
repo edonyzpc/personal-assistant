@@ -50,7 +50,7 @@ module.exports = {
 
   // Minimum coverage floor — baseline (2026-06-01) minus 5%, intended as a
   // "do not regress" gate rather than an aspirational target. Bump quarterly
-  // as coverage improves. See docs/sdd-strict-mode-and-coverage.md §3.2.
+  // as coverage improves. See docs/archive/sdd-strict-mode-and-coverage.md §3.2.
   // Baseline: statements 80.04% / branches 76.54% / functions 79.16% / lines 80.04%.
   coverageThreshold: {
     global: {

@@ -174,7 +174,7 @@ function getReadOnlyToolContextInfo(
 2. **validator 调用点**：`assertObsidianOperationsCatalogValid()` 仅在 `__tests__/obsidian-operations-capability-catalog.test.ts:15` 被调用，**无任何生产代码路径触发**
 3. **validator 抓 bug 历史**：`obsidian-operations-capability-catalog.ts` 自 commit `880ddfe` 引入以来仅有这一次提交，**validator 从未在生产抓到过 catalog 内容偏移**——所有抓 bug 历史都是测试构造的人为输入
 
-`docs/v2-comprehensive-code-review.md` Section 2.6 原话即是 "for a constraint that could be a comment"，明确指向删除 validator。
+`docs/archive/v2-comprehensive-code-review.md` Section 2.6 原话即是 "for a constraint that could be a comment"，明确指向删除 validator。
 
 #### 现状字段消费分析
 
