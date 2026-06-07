@@ -9,6 +9,10 @@ import {
     recordAnswerCompletionTurn,
     type AnswerCompletionLedger,
 } from "./pa-agent-answer-completion-policy";
+import {
+    deriveAnswerReadyAgentControlSnapshot,
+    deriveSameSourceFollowUpAgentControlSnapshot,
+} from "./pa-agent-control-policy";
 
 export const REQUIRED_CAPABILITY_CLASSIFIER_TIMEOUT_MS = 800;
 
@@ -99,7 +103,10 @@ const CAPABILITY_LABELS: Record<RequiredCapability, string> = {
 export function createRequiredCapabilityHostPolicy(
     options: RequiredCapabilityHostPolicyOptions,
 ): RequiredCapabilityHostPolicyResult {
-    const classification = options.classification ?? classifyRequiredCapabilitiesDeterministic(options.userInput);
+    const classification = applyUserExplicitCapabilityConstraints(
+        options.classification ?? classifyRequiredCapabilitiesDeterministic(options.userInput),
+        options.userInput,
+    );
     const state: RequiredCapabilityRuntimeState = {
         classification,
         availableCapabilities: options.availableCapabilities,
@@ -189,7 +196,7 @@ export async function resolveRequiredCapabilityClassification(
     }
 }
 
-function applyUserExplicitCapabilityConstraints(
+export function applyUserExplicitCapabilityConstraints(
     classification: RequiredCapabilityClassification,
     userInput: string,
 ): RequiredCapabilityClassification {
@@ -212,8 +219,8 @@ export function classifyRequiredCapabilitiesDeterministic(userInput: string): Re
 // Definition moved to `./chat-tool-prepare-helpers` so chat-tools.ts prepareArguments
 // can call it without a circular import. Re-exported here for backward compatibility
 // with existing callers in pa-agent-runtime.ts and other modules.
-export { isExplicitCurrentNoteOnlyRequest, shouldUseFullCurrentNoteContext } from "./chat-tool-prepare-helpers";
-import { isExplicitCurrentNoteOnlyRequest } from "./chat-tool-prepare-helpers";
+export { isExplicitCurrentNoteOnlyRequest, isExplicitNoWebRequest, shouldUseFullCurrentNoteContext } from "./chat-tool-prepare-helpers";
+import { isExplicitCurrentNoteOnlyRequest, isExplicitNoWebRequest } from "./chat-tool-prepare-helpers";
 
 function normalizeClassifierResult(result: unknown): RequiredCapabilityClassification | null {
     const parsed = typeof result === "string" ? parseJsonObject(result) : result;
@@ -284,6 +291,12 @@ function decideAfterTurn(
             toolMode: completionDecision.toolMode,
         };
     }
+    if (completionDecision?.action === "continue_tooling" && shouldOpenSameSourceFollowUp(summary)) {
+        return buildSameSourceFollowUpDecision(summary);
+    }
+    if (completionDecision?.action === "continue_tooling" && facts.hasPromptIncludedObservation) {
+        return buildAnswerReadyDecision(summary, completionDecision.reason);
+    }
     if (completionDecision?.action === "stop_incomplete") {
         state.phase = phaseToTerminal(state.phase);
         return {
@@ -319,6 +332,69 @@ function decideAfterTurn(
         action: "stop",
         reason: summary.status,
         status: mapTerminalStatus(summary.status),
+    };
+}
+
+function buildAnswerReadyDecision(
+    summary: PaAgentTurnSummary,
+    reason: "new_tool_evidence" | "tool_chain_allowed",
+): ReturnType<PaAgentHostPolicy["afterTurn"]> {
+    const runtimeInstruction = buildAnswerReadyInstruction(reason);
+    return {
+        action: "continue",
+        reason: "tool_results_ready",
+        runtimeInstruction,
+        controlSnapshot: deriveAnswerReadyAgentControlSnapshot(summary.controlSnapshot, {
+            runtimeInstruction,
+            diagnostics: [{
+                type: "answer_ready_decision",
+                message: "Host policy marked the next turn as answer-ready after useful tool observations.",
+                metadata: { reason },
+            }],
+        }),
+    };
+}
+
+function buildAnswerReadyInstruction(reason: "new_tool_evidence" | "tool_chain_allowed"): string {
+    return [
+        reason === "new_tool_evidence"
+            ? "Tool observations are now available."
+            : "Tool observations or status information are now available.",
+        "Answer directly if the existing observations are sufficient.",
+        "Call another allowed tool only when a specific missing fact is needed; do not repeat an identical source/query.",
+    ].join(" ");
+}
+
+function shouldOpenSameSourceFollowUp(summary: PaAgentTurnSummary): boolean {
+    return summary.toolResults.some((result) =>
+        result.toolName === "search_memory"
+        && !result.isError
+        && result.content.includeInNextPrompt
+        && (
+            result.content.metadata?.needsSnippetFollowup === true
+            || result.content.metadata?.needsFollowup === true
+        ));
+}
+
+function buildSameSourceFollowUpDecision(
+    summary: PaAgentTurnSummary,
+): ReturnType<PaAgentHostPolicy["afterTurn"]> {
+    const runtimeInstruction = [
+        "The Memory result indicates that a targeted note follow-up may be useful.",
+        "Use one allowed notes follow-up tool only if it resolves a specific missing fact; otherwise answer from the existing observations.",
+    ].join(" ");
+    return {
+        action: "continue",
+        reason: "needs_follow_up",
+        runtimeInstruction,
+        controlSnapshot: deriveSameSourceFollowUpAgentControlSnapshot(summary.controlSnapshot, {
+            sourceScope: "notes",
+            runtimeInstruction,
+            diagnostics: [{
+                type: "same_source_follow_up_decision",
+                message: "Host policy opened notes follow-up tools because Memory requested snippet follow-up.",
+            }],
+        }),
     };
 }
 
@@ -615,8 +691,27 @@ const CAPABILITY_SIGNALS: readonly CapabilitySignalTable[] = [
                 /\bwhat(?:'s| is) (?:the )?(latest|newest)\b.*\b(news|version|release|update|status|price|weather|docs|documentation)\b/,
                 /\btoday(?:'s)?\b.*\b(news|version|release|update|status|price|weather|schedule|events)\b/,
                 /\b(latest|newest) (docs|documentation|guide|api|sdk|model|pricing|rules|regulations|law|standard|schedule)\b/,
+                /(今天|今日|现在|实时).*空气质量/,
+                /当前(?!笔记).*空气质量/,
             ],
-            chineseTokens: ["搜索网", "网上查", "网络搜索", "在线查", "上网查", "查一下网"],
+            chineseTokens: [
+                "搜索网",
+                "网上查",
+                "网络搜索",
+                "在线查",
+                "上网查",
+                "查一下网",
+                "今天的天气",
+                "今日天气",
+                "天气预报",
+                "现在气温",
+                "当前气温",
+                "今天空气质量",
+                "今日空气质量",
+                "现在空气质量",
+                "当前空气质量",
+                "实时空气质量",
+            ],
         },
         weak: {
             regex: [/\b(recent|may have changed|up to date|newest)\b/],
@@ -668,7 +763,7 @@ function scoreCapability(
 export function getExplicitlySuppressedRequiredCapabilities(text: string): Set<RequiredCapability> {
     const normalized = text.toLowerCase();
     const suppressed = new Set<RequiredCapability>();
-    if (/\b(do not|don't|without|no)\s+(use\s+)?(web\s*search|searching the web|web search results)\b/.test(normalized)
+    if (isExplicitNoWebRequest(text)
         || isExplicitCurrentNoteOnlyRequest(normalized)) {
         suppressed.add("webSearch");
     }

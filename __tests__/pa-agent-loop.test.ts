@@ -2,6 +2,10 @@ import { beforeEach, describe, expect, it } from "@jest/globals";
 
 import { RUN_SCOPE_TURN_ID } from "../src/ai-services/agent-runtime-primitives";
 import {
+    createAgentControlSnapshot,
+    createInitialAgentControlSnapshot,
+} from "../src/ai-services/pa-agent-control-policy";
+import {
     PaAgentLoop,
     type PaAgentModel,
     type PaAgentModelInput,
@@ -94,6 +98,124 @@ describe("PaAgentLoop", () => {
         });
         expect(committedSnapshots).toEqual([{ snapshot: "Hello world", lastEventType: "message_end" }]);
         expect(result.committedFinalText).toBe("Hello world");
+    });
+
+    it("records diagnostic stream chunks as metrics without counting them as model output chunks", async () => {
+        const events: AgentEvent[] = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "hello",
+            model: {
+                stream: () => streamChunks([
+                    { type: "diagnostic", diagnostic: { type: "model_input_metrics", inputChars: 12 } },
+                    { type: "text_delta", text: "Hello" },
+                ]),
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        await loop.run();
+
+        expect(events.find((event) => event.type === "turn_end")).toMatchObject({
+            metadata: {
+                modelChunkCount: 1,
+                metrics: [expect.objectContaining({ type: "model_input_metrics", inputChars: 12 })],
+            },
+        });
+        expect(events.find((event) => event.type === "turn_end")).not.toMatchObject({
+            metadata: {
+                diagnostics: [expect.objectContaining({ type: "model_input_metrics" })],
+            },
+        });
+    });
+
+    it("publishes end-to-end timing in the agent_end payload", async () => {
+        const events: AgentEvent[] = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "use memory",
+            model: {
+                stream: async function* (input) {
+                    if (input.turnIndex === 0) {
+                        yield {
+                            type: "toolcall_delta",
+                            id: "call_1",
+                            name: "search_memory",
+                            input: { query: "周至" },
+                            index: 0,
+                        } as const;
+                        return;
+                    }
+                    yield { type: "text_delta", text: "Answer from memory." } as const;
+                },
+            },
+            toolExecutor: {
+                execute: async () => ({
+                    outcome: "success",
+                    promptText: "Memory observation.",
+                }),
+            },
+            hostPolicy: {
+                afterTurn: (summary) => summary.status === "tool_results_ready"
+                    ? { action: "continue", reason: "tool_results_ready" }
+                    : { action: "stop", status: "completed", reason: "done" },
+            },
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        const result = await loop.run();
+        const agentEnd = events.find((event) => event.type === "agent_end");
+
+        expect(agentEnd).toMatchObject({
+            type: "agent_end",
+            status: "completed",
+            metadata: {
+                loopElapsedMs: expect.any(Number),
+                turnCount: 2,
+                endTiming: {
+                    elapsedMs: expect.any(Number),
+                    turnCount: 2,
+                    toolCallCount: 1,
+                    executedToolCallCount: 1,
+                },
+                turnTimings: [
+                    expect.objectContaining({
+                        turnIndex: 0,
+                        status: "tool_results_ready",
+                        toolCallCount: 1,
+                        toolResultCount: 1,
+                        toolNames: ["search_memory"],
+                        toolOutcomes: [
+                            expect.objectContaining({
+                                toolName: "search_memory",
+                                outcome: "success",
+                                isError: false,
+                                includeInNextPrompt: true,
+                            }),
+                        ],
+                    }),
+                    expect.objectContaining({
+                        turnIndex: 1,
+                        status: "completed",
+                        toolCallCount: 0,
+                    }),
+                ],
+            },
+        });
+        expect(result.endPayload).toMatchObject({
+            loopElapsedMs: expect.any(Number),
+            turnCount: 2,
+            endTiming: expect.objectContaining({
+                turnCount: 2,
+                toolCallCount: 1,
+                executedToolCallCount: 1,
+            }),
+            turnTimings: expect.any(Array),
+        });
     });
 
     it("keeps thinking deltas out of committed final answer snapshots", async () => {
@@ -263,6 +385,173 @@ describe("PaAgentLoop", () => {
                 toolMode: "final_answer_only",
             },
         });
+    });
+
+    it("passes control snapshots to model input and turn metadata", async () => {
+        const events: AgentEvent[] = [];
+        const modelInputs: PaAgentModelInput[] = [];
+        const initialControlSnapshot = createAgentControlSnapshot({
+            exposureMode: "source-scoped",
+            sourceScope: "notes",
+            allowedToolNames: new Set(["search_memory"]),
+            blockedToolNames: new Set(["webSearch"]),
+        });
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "find from notes",
+            model: {
+                stream: async function* (input) {
+                    modelInputs.push(input);
+                    yield {
+                        type: "text_delta",
+                        text: input.turnIndex === 0 ? "Draft." : "Final.",
+                    };
+                },
+            },
+            hostPolicy: {
+                afterTurn: (summary) => summary.turnIndex === 0
+                    ? {
+                        action: "continue",
+                        reason: "needs_follow_up",
+                        runtimeInstruction: "finalize from gathered context",
+                        toolMode: "final_answer_only",
+                    }
+                    : { action: "stop", status: "completed", reason: "done" },
+            },
+            initialControlSnapshot,
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        await loop.run();
+
+        expect(modelInputs[0]?.controlSnapshot).toMatchObject({
+            exposureMode: "source-scoped",
+            sourceScope: "notes",
+        });
+        expect([...modelInputs[0]!.controlSnapshot!.allowedToolNames!]).toEqual(["search_memory"]);
+        expect([...modelInputs[0]!.controlSnapshot!.blockedToolNames!]).toEqual(["webSearch"]);
+        expect(modelInputs[1]?.controlSnapshot).toMatchObject({
+            exposureMode: "final-only",
+            sourceScope: "none",
+            runtimeInstruction: "finalize from gathered context",
+            toolMode: "final_answer_only",
+        });
+        expect(modelInputs[1]?.controlSnapshot?.allowedToolNames).toBeUndefined();
+        expect(events.find((event) =>
+            event.type === "turn_start" && event.metadata?.turnIndex === 0,
+        )).toMatchObject({
+            metadata: {
+                controlSnapshot: {
+                    exposureMode: "source-scoped",
+                    sourceScope: "notes",
+                    allowedToolNames: ["search_memory"],
+                    blockedToolNames: ["webSearch"],
+                },
+            },
+        });
+        expect(events.find((event) =>
+            event.type === "turn_start" && event.metadata?.turnIndex === 1,
+        )).toMatchObject({
+            metadata: {
+                controlSnapshot: {
+                    exposureMode: "final-only",
+                    sourceScope: "none",
+                    toolMode: "final_answer_only",
+                },
+                runtimeInstruction: "finalize from gathered context",
+                toolMode: "final_answer_only",
+            },
+        });
+        const turnEndEvents = events.filter((event) => event.type === "turn_end");
+        expect(turnEndEvents[0]).toMatchObject({
+            metadata: {
+                elapsedMs: expect.any(Number),
+                modelElapsedMs: expect.any(Number),
+                firstModelChunkElapsedMs: expect.any(Number),
+                modelChunkCount: 1,
+                toolCallCount: 0,
+                toolResultCount: 0,
+                controlSnapshot: {
+                    exposureMode: "source-scoped",
+                    sourceScope: "notes",
+                    allowedToolNames: ["search_memory"],
+                    blockedToolNames: ["webSearch"],
+                },
+            },
+        });
+        expect(turnEndEvents[1]).toMatchObject({
+            metadata: {
+                elapsedMs: expect.any(Number),
+                modelElapsedMs: expect.any(Number),
+                firstModelChunkElapsedMs: expect.any(Number),
+                modelChunkCount: 1,
+                toolCallCount: 0,
+                toolResultCount: 0,
+                controlSnapshot: {
+                    exposureMode: "final-only",
+                    sourceScope: "none",
+                    toolMode: "final_answer_only",
+                },
+            },
+        });
+    });
+
+    it("creates semantic-first and narrowed-required initial control snapshots", () => {
+        const semanticFirst = createInitialAgentControlSnapshot({
+            availableSemanticToolNames: new Set(["search_memory", "webSearch", "get_current_note_context"]),
+        });
+        expect(semanticFirst).toMatchObject({
+            exposureMode: "semantic-first",
+            sourceScope: "mixed",
+        });
+        expect([...semanticFirst.allowedToolNames!].sort()).toEqual([
+            "get_current_note_context",
+            "search_memory",
+            "webSearch",
+        ]);
+
+        const narrowedRequired = createInitialAgentControlSnapshot({
+            availableSemanticToolNames: new Set(["search_memory", "webSearch", "get_current_note_context"]),
+            availableMetaToolNames: new Set(["load_skill"]),
+            requiredToolNames: new Set(["webSearch"]),
+        });
+        expect(narrowedRequired).toMatchObject({
+            exposureMode: "narrowed-required",
+            sourceScope: "web",
+        });
+        expect([...narrowedRequired.allowedToolNames!].sort()).toEqual(["load_skill", "webSearch"]);
+
+        const notesOnly = createInitialAgentControlSnapshot({
+            availableSemanticToolNames: new Set(["search_memory", "webSearch", "get_current_note_context"]),
+            availableMetaToolNames: new Set(["load_skill"]),
+            constraints: {
+                allowedToolNames: new Set(["search_memory"]),
+                blockedToolNames: new Set(["webSearch", "get_current_note_context"]),
+            },
+        });
+        expect(notesOnly).toMatchObject({
+            exposureMode: "source-scoped",
+            sourceScope: "notes",
+        });
+        expect([...notesOnly.allowedToolNames!].sort()).toEqual(["load_skill", "search_memory"]);
+        expect([...notesOnly.blockedToolNames!].sort()).toEqual(["get_current_note_context", "webSearch"]);
+
+        const requiredSourceBlocked = createInitialAgentControlSnapshot({
+            availableSemanticToolNames: new Set(["search_memory", "get_current_note_context"]),
+            availableMetaToolNames: new Set(["load_skill"]),
+            requiredToolNames: new Set(["webSearch"]),
+        });
+        expect(requiredSourceBlocked).toMatchObject({
+            exposureMode: "semantic-first",
+            sourceScope: "mixed",
+        });
+        expect([...requiredSourceBlocked.allowedToolNames!].sort()).toEqual([
+            "get_current_note_context",
+            "load_skill",
+            "search_memory",
+        ]);
     });
 
     it("turns no-first-chunk idle into incomplete without an empty answer", async () => {
@@ -773,6 +1062,58 @@ describe("PaAgentLoop", () => {
         expect(turnEnd).toMatchObject({
             status: "tool_results_ready",
             toolResults: [expect.objectContaining({ toolCallId: "call_1" })],
+        });
+    });
+
+    it("rejects tool calls outside the current control snapshot before invoking executor", async () => {
+        const events: AgentEvent[] = [];
+        const executorCalls: string[] = [];
+        const loop = new PaAgentLoop({
+            runId: "run_1",
+            userInput: "search notes",
+            model: {
+                stream: () => streamChunks([
+                    { type: "toolcall_delta", id: "call_1", name: "search_vault_metadata", input: { query: "x" }, index: 0 },
+                ]),
+            },
+            toolExecutor: {
+                execute: async ({ toolCall }) => {
+                    executorCalls.push(toolCall.name);
+                    return { outcome: "success", promptText: "should not run" };
+                },
+            },
+            initialControlSnapshot: createAgentControlSnapshot({
+                exposureMode: "semantic-first",
+                sourceScope: "notes",
+                allowedToolNames: new Set(["search_memory"]),
+            }),
+            createId: createDeterministicId,
+            now: () => 100,
+            onEvent: (event) => events.push(event),
+        });
+
+        const result = await loop.run();
+
+        expect(executorCalls).toEqual([]);
+        expect(result.turns[0].toolResults[0]).toMatchObject({
+            toolName: "search_vault_metadata",
+            isError: true,
+            content: {
+                metadata: {
+                    outcome: "policy_rejected",
+                    reason: "control_snapshot_tool_not_allowed",
+                    exposureMode: "semantic-first",
+                    sourceScope: "notes",
+                    allowedToolNames: ["search_memory"],
+                },
+            },
+        });
+        expect(events.find((event) => event.type === "tool_execution_end")).toMatchObject({
+            toolName: "search_vault_metadata",
+            outcome: "policy_rejected",
+            metadata: expect.objectContaining({
+                preflightOnly: true,
+            }),
         });
     });
 

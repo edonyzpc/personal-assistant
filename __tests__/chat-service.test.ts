@@ -12,7 +12,7 @@ import {
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
 import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
-import type { AgentEvent as CanonicalAgentEvent, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
+import type { AgentEvent as CanonicalAgentEvent, ChatMessage, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
 import {
     BAILIAN_INTL_WEB_SEARCH_MCP_ENDPOINT,
     BAILIAN_WEB_SEARCH_MCP_ENDPOINT,
@@ -192,6 +192,8 @@ function createPlugin(overrides: {
     baseURL?: string;
     qwenThinkingEnabled?: boolean;
     webSearchEnabled?: boolean;
+    skillContextEnabled?: boolean;
+    enabledSkillIds?: string[];
 } = {}) {
     const markdownFiles = overrides.markdownFiles ?? [];
     const abstractFiles = [...markdownFiles, ...(overrides.abstractFiles ?? [])];
@@ -204,8 +206,8 @@ function createPlugin(overrides: {
             qwenThinkingEnabled: overrides.qwenThinkingEnabled ?? false,
             webSearchEnabled: overrides.webSearchEnabled ?? false,
             policyModelName: '',
-            skillContextEnabled: false,
-            enabledSkillIds: [],
+            skillContextEnabled: overrides.skillContextEnabled ?? false,
+            enabledSkillIds: overrides.enabledSkillIds ?? [],
             shareAnonymousCapabilityUsage: false,
         },
         app: {
@@ -548,6 +550,7 @@ describe('ChatService.streamLLM integration', () => {
 
         const chunks: string[] = [];
         const events: AgentEvent[] = [];
+        const canonicalEvents: CanonicalAgentEvent[] = [];
 
         await service.streamLLM(
             'hello',
@@ -556,6 +559,7 @@ describe('ChatService.streamLLM integration', () => {
             undefined,
             {
                 onEvent: (event) => events.push(event),
+                onLifecycleEvent: (event) => canonicalEvents.push(event),
             },
         );
 
@@ -566,6 +570,26 @@ describe('ChatService.streamLLM integration', () => {
         const eventKinds = events.map((e) => e.kind);
         expect(eventKinds).toContain('answer-snapshot');
         expect(eventKinds).toContain('answer-complete');
+        expect(canonicalEvents.find((event) => event.type === 'turn_end')).toMatchObject({
+            metadata: {
+                metrics: [expect.objectContaining({
+                    type: 'model_input_metrics',
+                    inputChars: expect.any(Number),
+                    exportedProviderSchemaCount: expect.any(Number),
+                    boundProviderSchemaCount: expect.any(Number),
+                    toolDefinitionsChars: expect.any(Number),
+                })],
+            },
+        });
+        expect(canonicalEvents.find((event) => event.type === 'turn_end')).not.toMatchObject({
+            metadata: {
+                diagnostics: [expect.objectContaining({ type: 'model_input_metrics' })],
+            },
+        });
+        const boundToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name)
+            .sort();
+        expect(boundToolNames).toEqual(['get_current_note_context', 'search_memory']);
     });
 
     it('exports builtin WebSearch capability when enabled for a DashScope-compatible provider', async () => {
@@ -579,5 +603,82 @@ describe('ChatService.streamLLM integration', () => {
         const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
             .map((tool) => tool.function?.name);
         expect(exportedToolNames).toContain('webSearch');
+    });
+
+    it('honors explicit notes-only source scope when WebSearch is available', async () => {
+        const model = createStreamChunksModel([{ content: 'notes only' }]);
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ webSearchEnabled: true });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('只从我的笔记里找周至擅长什么', jest.fn());
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name)
+            .sort();
+        expect(exportedToolNames).toEqual(['search_memory']);
+    });
+
+    it('honors Chinese explicit no-web when weather/current-info would otherwise route to WebSearch', async () => {
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamChunksModel([{ content: 'no web weather answer' }], (input) => {
+            modelInputs.push(input);
+        });
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({ webSearchEnabled: true });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+        const canonicalEvents: CanonicalAgentEvent[] = [];
+        const chatHistory: ChatMessage[] = [
+            {
+                role: 'user',
+                content: '不要联网，看一下杭州今天的天气',
+            },
+            {
+                role: 'assistant',
+                content: '我目前只有 webSearch 这个工具可以查天气。',
+            },
+        ];
+
+        await service.streamLLM(
+            '不要联网，看一下杭州今天的天气',
+            jest.fn(),
+            undefined,
+            chatHistory,
+            { onLifecycleEvent: (event) => canonicalEvents.push(event) },
+        );
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name)
+            .sort();
+        expect(exportedToolNames).toEqual(['get_current_note_context', 'search_memory']);
+        expect(modelInputs[0]?.tool_definitions).not.toContain('webSearch');
+        expect(modelInputs[0]?.input).toContain('Recent chat history');
+        expect(modelInputs[0]?.input).toContain('我目前只有 webSearch');
+        expect(modelInputs[0]?.input).toContain('explicitly forbids web or internet access');
+        expect(modelInputs[0]?.input).toContain('Ignore any prior assistant message that described webSearch as available');
+        expect(canonicalEvents.find((event) => event.type === 'agent_end')).toMatchObject({
+            status: 'completed',
+            metadata: expect.not.objectContaining({
+                warnings: expect.any(Array),
+            }),
+        });
+    });
+
+    it('keeps load_skill bound when a skill catalog is rendered in narrowed source-scoped turns', async () => {
+        const model = createStreamChunksModel([{ content: 'weather answer' }]);
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({
+            webSearchEnabled: true,
+            skillContextEnabled: true,
+            enabledSkillIds: ['obsidian-markdown'],
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('看一下杭州今天的天气', jest.fn());
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name)
+            .sort();
+        expect(exportedToolNames).toEqual(['load_skill', 'webSearch']);
     });
 });

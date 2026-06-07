@@ -3,6 +3,12 @@ import {
 } from "./agent-runtime-primitives";
 import { errorMessage, stableStringify } from "./agent-utils";
 import type { AgentCapabilityExecutionMode } from "./capability-types";
+import {
+    deriveContinuedAgentControlSnapshot,
+    summarizeAgentControlSnapshot,
+    toolConstraintsFromAgentControlSnapshot,
+    type AgentControlSnapshot,
+} from "./pa-agent-control-policy";
 import type {
     AgentEndStatus,
     AgentEvent,
@@ -27,7 +33,8 @@ export type PaAgentToolExecutionMode = "sequential" | "parallel" | "hybrid";
 export type PaAgentModelStreamChunk =
     | { type: "thinking_delta"; text: string }
     | { type: "text_delta"; text: string }
-    | { type: "toolcall_delta"; id?: string; name: string; input?: unknown; argsText?: string; index?: number };
+    | { type: "toolcall_delta"; id?: string; name: string; input?: unknown; argsText?: string; index?: number }
+    | { type: "diagnostic"; diagnostic: Record<string, unknown> };
 
 export interface PaAgentModelInput {
     runId: string;
@@ -38,6 +45,7 @@ export interface PaAgentModelInput {
     hostContext?: Record<string, unknown>;
     runtimeInstruction?: string;
     toolMode?: PaAgentToolMode;
+    controlSnapshot?: AgentControlSnapshot;
 }
 
 export interface PaAgentModel {
@@ -97,6 +105,8 @@ export interface PaAgentTurnToolOutcome {
 }
 
 export interface PaAgentTurnTiming {
+    turnIndex: number;
+    status: TurnEndStatus;
     elapsedMs: number;
     modelElapsedMs: number;
     firstModelChunkElapsedMs?: number;
@@ -116,6 +126,7 @@ export type PaAgentAfterTurnDecision =
         reason: "tool_results_ready" | "needs_follow_up" | "corrective_turn";
         runtimeInstruction?: string;
         toolMode?: PaAgentToolMode;
+        controlSnapshot?: AgentControlSnapshot;
     }
     | {
         action: "stop";
@@ -135,7 +146,9 @@ export interface PaAgentTurnSummary {
     toolCalls: AssistantMessagePart[];
     toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>>;
     diagnostics: Array<Record<string, unknown>>;
-    timing?: PaAgentTurnTiming;
+    metrics: Array<Record<string, unknown>>;
+    timing: PaAgentTurnTiming;
+    controlSnapshot?: AgentControlSnapshot;
 }
 
 export interface PaAgentHostPolicy {
@@ -155,6 +168,7 @@ export interface PaAgentLoopOptions {
     onCommittedFinalText?: (snapshot: string) => void;
     hostContext?: Record<string, unknown>;
     initialRuntimeInstruction?: string;
+    initialControlSnapshot?: AgentControlSnapshot;
     maxTurns?: number;
     maxToolCalls?: number;
     maxObservationChars?: number;
@@ -209,6 +223,7 @@ export class PaAgentLoop {
     private remainingObservationChars: number;
     private endPayload?: Record<string, unknown>;
     private currentTurnToolMode: PaAgentToolMode | undefined;
+    private currentTurnControlSnapshot: AgentControlSnapshot | undefined;
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
@@ -238,6 +253,7 @@ export class PaAgentLoop {
 
         let nextRuntimeInstruction = this.options.initialRuntimeInstruction;
         let nextToolMode: PaAgentToolMode | undefined;
+        let nextControlSnapshot = this.options.initialControlSnapshot;
         for (let turnIndex = 0; turnIndex < this.maxTurns; turnIndex++) {
             if (this.isAborted()) {
                 this.endAgent("aborted", { reason: "user_abort" });
@@ -251,10 +267,16 @@ export class PaAgentLoop {
                 return this.createResult("incomplete");
             }
 
-            const turnSummary = await this.runTurn(turnIndex, nextRuntimeInstruction, nextToolMode);
+            const turnSummary = await this.runTurn(
+                turnIndex,
+                nextRuntimeInstruction,
+                nextToolMode,
+                nextControlSnapshot,
+            );
             this.turns.push(turnSummary);
             nextRuntimeInstruction = undefined;
             nextToolMode = undefined;
+            nextControlSnapshot = undefined;
 
             if (turnSummary.status === "aborted" || turnSummary.status === "error") {
                 const status = this.agentStatusFromTurn(turnSummary.status);
@@ -269,6 +291,11 @@ export class PaAgentLoop {
             if (decision.action === "continue") {
                 nextRuntimeInstruction = decision.runtimeInstruction;
                 nextToolMode = decision.toolMode;
+                nextControlSnapshot = decision.controlSnapshot
+                    ?? deriveContinuedAgentControlSnapshot(turnSummary.controlSnapshot, {
+                        runtimeInstruction: decision.runtimeInstruction,
+                        toolMode: decision.toolMode,
+                    });
                 continue;
             }
 
@@ -294,15 +321,18 @@ export class PaAgentLoop {
         turnIndex: number,
         runtimeInstruction?: string,
         toolMode?: PaAgentToolMode,
+        controlSnapshot?: AgentControlSnapshot,
     ): Promise<PaAgentTurnSummary> {
         const turnStartedAt = this.now();
         this.currentTurnToolMode = toolMode;
+        this.currentTurnControlSnapshot = controlSnapshot;
         const turnId = this.createId("turn");
         this.events.turnStart(turnId, {
             turnIndex,
             ...(this.options.hostContext ? { hostContext: this.options.hostContext } : {}),
             ...(runtimeInstruction ? { runtimeInstruction } : {}),
             ...(toolMode ? { toolMode } : {}),
+            ...(controlSnapshot ? { controlSnapshot: summarizeAgentControlSnapshot(controlSnapshot) } : {}),
         });
 
         if (turnIndex === 0) {
@@ -339,10 +369,12 @@ export class PaAgentLoop {
             ...(this.options.hostContext ? { hostContext: this.options.hostContext } : {}),
             runtimeInstruction,
             toolMode,
+            controlSnapshot,
         };
         let terminalStatus: TurnEndStatus | undefined;
         let stopReason: "stop" | "tool_calls" | "error" | "aborted" | "idle_timeout" | "wall_clock_exceeded" | undefined;
         const diagnostics: Array<Record<string, unknown>> = [];
+        const metrics: Array<Record<string, unknown>> = [];
 
         let iterator: AsyncIterator<PaAgentModelStreamChunk> | undefined;
         try {
@@ -384,8 +416,14 @@ export class PaAgentLoop {
             }
 
             const chunk = next.chunk;
+            if (chunk.type === "diagnostic") {
+                metrics.push(chunk.diagnostic);
+                continue;
+            }
             modelChunkCount += 1;
-            firstModelChunkElapsedMs ??= Math.max(0, this.now() - modelStartedAt);
+            if (firstModelChunkElapsedMs === undefined) {
+                firstModelChunkElapsedMs = elapsedSince(modelStartedAt, this.now());
+            }
             switch (chunk.type) {
                 case "thinking_delta":
                     if (!sawThinking) {
@@ -452,7 +490,7 @@ export class PaAgentLoop {
         const toolCalls = toolCallBuffers.map((buffer) => assistantMessage.content[buffer.partIndex]).filter(isToolCallPart);
         const hasToolCall = toolCalls.length > 0;
         assistantMessage.stopReason = stopReason ?? (hasToolCall ? "tool_calls" : "stop");
-        const modelElapsedMs = Math.max(0, this.now() - modelStartedAt);
+        const modelElapsedMs = elapsedSince(modelStartedAt, this.now());
         this.events.messageEnd(turnId, assistantMessage, {
             timing: {
                 elapsedMs: modelElapsedMs,
@@ -470,7 +508,7 @@ export class PaAgentLoop {
         if (hasToolCall && terminalStatus === undefined) {
             const toolExecutionStartedAt = this.now();
             const execution = await this.executeBufferedToolCalls(turnId, turnIndex, toolCallBuffers);
-            toolExecutionElapsedMs = Math.max(0, this.now() - toolExecutionStartedAt);
+            toolExecutionElapsedMs = elapsedSince(toolExecutionStartedAt, this.now());
             toolResults.push(...execution.toolResults);
             diagnostics.push(...execution.diagnostics);
             toolExecutionStoppedBy = execution.stoppedBy;
@@ -513,23 +551,29 @@ export class PaAgentLoop {
         }
 
         const turnToolTiming = summarizeTurnToolTiming(toolCalls, toolResults);
-        const turnTiming = {
-            elapsedMs: Math.max(0, this.now() - turnStartedAt),
+        const turnTiming: PaAgentTurnTiming = {
+            ...turnToolTiming,
+            elapsedMs: elapsedSince(turnStartedAt, this.now()),
+            turnIndex,
+            status,
             modelElapsedMs,
             ...(firstModelChunkElapsedMs !== undefined ? { firstModelChunkElapsedMs } : {}),
             modelChunkCount,
             toolCallCount: toolCalls.length,
             toolResultCount: toolResults.length,
             ...(toolExecutionElapsedMs !== undefined ? { toolExecutionElapsedMs } : {}),
-            ...turnToolTiming,
+        };
+        const turnEndMetadata: Record<string, unknown> = {
+            ...turnTiming,
+            timing: turnTiming,
+            ...(controlSnapshot ? { controlSnapshot: summarizeAgentControlSnapshot(controlSnapshot) } : {}),
+            ...(metrics.length > 0 ? { metrics } : {}),
+            ...(diagnostics.length > 0 ? { diagnostics } : {}),
         };
         this.events.turnEnd(
             turnId,
             status,
-            {
-                timing: turnTiming,
-                ...(diagnostics.length > 0 ? { diagnostics } : {}),
-            },
+            turnEndMetadata,
             toolResults.length > 0 ? toolResults : undefined,
         );
 
@@ -543,7 +587,9 @@ export class PaAgentLoop {
             toolCalls,
             toolResults,
             diagnostics,
+            metrics,
             timing: turnTiming,
+            ...(controlSnapshot ? { controlSnapshot } : {}),
         };
     }
 
@@ -703,9 +749,12 @@ export class PaAgentLoop {
                     outcome: "policy_rejected",
                     reason: "final_answer_only_violation",
                     toolName: toolCall.name,
+                    preflightOnly: true,
                 },
             };
         }
+        const controlSnapshotSkip = this.classifyControlSnapshotSkip(toolCall);
+        if (controlSnapshotSkip) return controlSnapshotSkip;
         if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) {
             return {
                 outcome: "duplicate_skipped",
@@ -755,6 +804,33 @@ export class PaAgentLoop {
             };
         }
         return null;
+    }
+
+    private classifyControlSnapshotSkip(toolCall: ParsedBufferedToolCall): PaAgentToolExecutionResult | null {
+        const snapshot = this.currentTurnControlSnapshot;
+        const constraints = toolConstraintsFromAgentControlSnapshot(snapshot);
+        if (!snapshot || !constraints) return null;
+        const notAllowed = constraints.allowedToolNames !== undefined
+            && !constraints.allowedToolNames.has(toolCall.name);
+        const blocked = constraints.blockedToolNames?.has(toolCall.name) === true;
+        if (!notAllowed && !blocked) return null;
+        const reason = blocked ? "control_snapshot_tool_blocked" : "control_snapshot_tool_not_allowed";
+        return {
+            outcome: "policy_rejected",
+            promptText: `Tool call ${toolCall.name} was not executed because it is outside the current allowed tool scope. Use available tools or answer from existing observations.`,
+            previewText: `Skipped ${toolCall.name}; ${reason}.`,
+            metadata: {
+                outcome: "policy_rejected",
+                reason,
+                toolName: toolCall.name,
+                preflightOnly: true,
+                exposureMode: snapshot.exposureMode,
+                sourceScope: snapshot.sourceScope,
+                ...(snapshot.blockedReasons[toolCall.name] ? { blockedReason: snapshot.blockedReasons[toolCall.name] } : {}),
+                ...(constraints.allowedToolNames ? { allowedToolNames: [...constraints.allowedToolNames].sort() } : {}),
+                ...(constraints.blockedToolNames ? { blockedToolNames: [...constraints.blockedToolNames].sort() } : {}),
+            },
+        };
     }
 
     private async executeRealToolCall(
@@ -970,9 +1046,7 @@ export class PaAgentLoop {
         this.events.toolExecutionEnd(turnId, toolCall.id, toolCall.name, result.outcome, {
             index: toolCall.index,
             isError,
-            preflightOnly: result.outcome === "schema_invalid"
-                || result.outcome === "budget_exceeded"
-                || result.outcome === "duplicate_skipped",
+            preflightOnly: isPreflightOnlyToolResult(result),
             ...(typeof content.metadata?.executionElapsedMs === "number"
                 ? { timing: { elapsedMs: content.metadata.executionElapsedMs } }
                 : {}),
@@ -1117,16 +1191,30 @@ export class PaAgentLoop {
     }
 
     private endAgent(status: AgentEndStatus, payload: Record<string, unknown>): void {
-        const enrichedPayload = {
+        const elapsedMs = elapsedSince(this.runStartedAt, this.now());
+        const emittedToolCallCount = this.turns.reduce((total, turn) => {
+            const value = turn.timing.toolCallCount;
+            return total + (typeof value === "number" ? value : 0);
+        }, 0);
+        const timedPayload: Record<string, unknown> = {
             ...payload,
+            loopElapsedMs: elapsedMs,
+            turnCount: this.turns.length,
+            turnTimings: this.turns.map((turn) => turn.timing),
             timing: {
-                elapsedMs: Math.max(0, this.now() - this.runStartedAt),
+                elapsedMs,
                 turnCount: this.turns.length,
-                toolCallCount: this.toolCallCount,
+                toolCallCount: emittedToolCallCount,
+            },
+            endTiming: {
+                elapsedMs,
+                turnCount: this.turns.length,
+                toolCallCount: emittedToolCallCount,
+                executedToolCallCount: this.toolCallCount,
             },
         };
-        this.endPayload = enrichedPayload;
-        this.events.agentEnd(status, enrichedPayload);
+        this.endPayload = timedPayload;
+        this.events.agentEnd(status, timedPayload);
     }
 
     private agentStatusFromTurn(status: TurnEndStatus): AgentEndStatus {
@@ -1293,6 +1381,17 @@ function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
         type: "provider_error",
         message: errorMessage(error),
     };
+}
+
+function isPreflightOnlyToolResult(result: PaAgentToolExecutionResult): boolean {
+    if (result.metadata?.preflightOnly === true) return true;
+    return result.outcome === "schema_invalid"
+        || result.outcome === "budget_exceeded"
+        || result.outcome === "duplicate_skipped";
+}
+
+function elapsedSince(startedAt: number, endedAt: number): number {
+    return Math.max(0, endedAt - startedAt);
 }
 
 function appendTextPart(parts: AssistantMessagePart[], type: "thinking" | "text", text: string): void {
