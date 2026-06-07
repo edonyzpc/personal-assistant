@@ -81,6 +81,35 @@ export interface PaAgentToolExecutor {
 
 export type PaAgentToolMode = "normal" | "final_answer_only";
 
+export interface PaAgentTimingEntry {
+    phase: string;
+    elapsedMs: number;
+    metadata?: Record<string, unknown>;
+}
+
+export interface PaAgentTurnToolOutcome {
+    toolName: string;
+    outcome?: string;
+    reason?: string;
+    isError: boolean;
+    includeInNextPrompt: boolean;
+    executionElapsedMs?: number;
+}
+
+export interface PaAgentTurnTiming {
+    elapsedMs: number;
+    modelElapsedMs: number;
+    firstModelChunkElapsedMs?: number;
+    modelChunkCount: number;
+    toolCallCount: number;
+    toolResultCount: number;
+    toolExecutionElapsedMs?: number;
+    toolNames?: string[];
+    executorInvokedToolNames?: string[];
+    preflightSkippedToolNames?: string[];
+    toolOutcomes?: PaAgentTurnToolOutcome[];
+}
+
 export type PaAgentAfterTurnDecision =
     | {
         action: "continue";
@@ -106,6 +135,7 @@ export interface PaAgentTurnSummary {
     toolCalls: AssistantMessagePart[];
     toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>>;
     diagnostics: Array<Record<string, unknown>>;
+    timing?: PaAgentTurnTiming;
 }
 
 export interface PaAgentHostPolicy {
@@ -139,6 +169,7 @@ export interface PaAgentLoopOptions {
      * "hybrid" so read-only tools execute concurrently.
      */
     toolExecutionMode?: PaAgentToolExecutionMode;
+    startupTimings?: readonly PaAgentTimingEntry[];
     signal?: AbortSignal;
 }
 
@@ -169,6 +200,7 @@ export class PaAgentLoop {
     private readonly toolTimeoutOutcome: ToolExecutionOutcome;
     private readonly toolAbortGraceMs: number;
     private readonly runStartedAt: number;
+    private readonly startupTimings: readonly PaAgentTimingEntry[];
     private readonly transcript: PaAgentMessage[] = [];
     private readonly turns: PaAgentTurnSummary[] = [];
     private readonly seenToolCallKeys = new Set<string>();
@@ -191,6 +223,7 @@ export class PaAgentLoop {
         this.toolTimeoutOutcome = options.toolTimeoutOutcome ?? "recoverable_error";
         this.toolAbortGraceMs = options.toolAbortGraceMs ?? 2_000;
         this.runStartedAt = this.now();
+        this.startupTimings = options.startupTimings ?? [];
         this.events = new AgentLifecycleEventEmitter({
             runId: options.runId,
             now: this.now,
@@ -199,7 +232,9 @@ export class PaAgentLoop {
     }
 
     async run(): Promise<PaAgentLoopResult> {
-        this.events.agentStart();
+        this.events.agentStart(this.startupTimings.length > 0
+            ? { timing: { startup: this.startupTimings } }
+            : undefined);
 
         let nextRuntimeInstruction = this.options.initialRuntimeInstruction;
         let nextToolMode: PaAgentToolMode | undefined;
@@ -260,6 +295,7 @@ export class PaAgentLoop {
         runtimeInstruction?: string,
         toolMode?: PaAgentToolMode,
     ): Promise<PaAgentTurnSummary> {
+        const turnStartedAt = this.now();
         this.currentTurnToolMode = toolMode;
         const turnId = this.createId("turn");
         this.events.turnStart(turnId, {
@@ -290,6 +326,9 @@ export class PaAgentLoop {
         let pendingText = "";
         let pendingTextReclassified = false;
         const toolCallBuffers: BufferedToolCall[] = [];
+        const modelStartedAt = this.now();
+        let firstModelChunkElapsedMs: number | undefined;
+        let modelChunkCount = 0;
 
         const modelInput = {
             runId: this.options.runId,
@@ -345,6 +384,8 @@ export class PaAgentLoop {
             }
 
             const chunk = next.chunk;
+            modelChunkCount += 1;
+            firstModelChunkElapsedMs ??= Math.max(0, this.now() - modelStartedAt);
             switch (chunk.type) {
                 case "thinking_delta":
                     if (!sawThinking) {
@@ -411,13 +452,25 @@ export class PaAgentLoop {
         const toolCalls = toolCallBuffers.map((buffer) => assistantMessage.content[buffer.partIndex]).filter(isToolCallPart);
         const hasToolCall = toolCalls.length > 0;
         assistantMessage.stopReason = stopReason ?? (hasToolCall ? "tool_calls" : "stop");
-        this.events.messageEnd(turnId, assistantMessage);
+        const modelElapsedMs = Math.max(0, this.now() - modelStartedAt);
+        this.events.messageEnd(turnId, assistantMessage, {
+            timing: {
+                elapsedMs: modelElapsedMs,
+                ...(firstModelChunkElapsedMs !== undefined ? { firstChunkElapsedMs: firstModelChunkElapsedMs } : {}),
+                chunkCount: modelChunkCount,
+                stopReason: assistantMessage.stopReason,
+                toolCallCount: toolCalls.length,
+            },
+        });
         this.transcript.push(assistantMessage);
 
         const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
         let toolExecutionStoppedBy: "aborted" | "wall_clock_exceeded" | undefined;
+        let toolExecutionElapsedMs: number | undefined;
         if (hasToolCall && terminalStatus === undefined) {
+            const toolExecutionStartedAt = this.now();
             const execution = await this.executeBufferedToolCalls(turnId, turnIndex, toolCallBuffers);
+            toolExecutionElapsedMs = Math.max(0, this.now() - toolExecutionStartedAt);
             toolResults.push(...execution.toolResults);
             diagnostics.push(...execution.diagnostics);
             toolExecutionStoppedBy = execution.stoppedBy;
@@ -459,10 +512,24 @@ export class PaAgentLoop {
             this.options.onCommittedFinalText?.(this.committedFinalText);
         }
 
+        const turnToolTiming = summarizeTurnToolTiming(toolCalls, toolResults);
+        const turnTiming = {
+            elapsedMs: Math.max(0, this.now() - turnStartedAt),
+            modelElapsedMs,
+            ...(firstModelChunkElapsedMs !== undefined ? { firstModelChunkElapsedMs } : {}),
+            modelChunkCount,
+            toolCallCount: toolCalls.length,
+            toolResultCount: toolResults.length,
+            ...(toolExecutionElapsedMs !== undefined ? { toolExecutionElapsedMs } : {}),
+            ...turnToolTiming,
+        };
         this.events.turnEnd(
             turnId,
             status,
-            diagnostics.length > 0 ? { diagnostics } : undefined,
+            {
+                timing: turnTiming,
+                ...(diagnostics.length > 0 ? { diagnostics } : {}),
+            },
             toolResults.length > 0 ? toolResults : undefined,
         );
 
@@ -476,6 +543,7 @@ export class PaAgentLoop {
             toolCalls,
             toolResults,
             diagnostics,
+            timing: turnTiming,
         };
     }
 
@@ -694,12 +762,15 @@ export class PaAgentLoop {
         turnIndex: number,
         toolCall: ParsedBufferedToolCall,
     ): Promise<PaAgentToolExecutionResult> {
+        const startedAt = this.now();
+        const finalize = (result: PaAgentToolExecutionResult): PaAgentToolExecutionResult =>
+            this.withToolExecutionTiming(result, startedAt);
         if (!this.options.toolExecutor) {
-            return {
+            return finalize({
                 outcome: "recoverable_error",
                 promptText: `Tool ${toolCall.name} could not run because no executor is available.`,
                 metadata: { outcome: "recoverable_error", reason: "missing_tool_executor" },
-            };
+            });
         }
 
         const controller = new AbortController();
@@ -730,11 +801,11 @@ export class PaAgentLoop {
 
             switch (first.type) {
                 case "completed":
-                    return normalizeToolExecutionResult(first.result);
+                    return finalize(normalizeToolExecutionResult(first.result));
                 case "rejected":
-                    return this.toolExceptionResult(toolCall, first.error);
+                    return finalize(this.toolExceptionResult(toolCall, first.error));
                 case "tool_timeout":
-                    return {
+                    return finalize({
                         outcome: this.toolTimeoutOutcome,
                         promptText: `Tool ${toolCall.name} timed out.`,
                         previewText: `Timed out after ${this.toolTimeoutMs}ms.`,
@@ -743,12 +814,12 @@ export class PaAgentLoop {
                             reason: "tool_timeout",
                             timeoutMs: this.toolTimeoutMs,
                         },
-                    };
+                    });
                 case "aborted":
                 case "wall_clock_exceeded":
-                    return await this.waitForInterruptedTool(first.type, executionPromise);
+                    return finalize(await this.waitForInterruptedTool(first.type, executionPromise));
                 case "abort_timeout":
-                    return {
+                    return finalize({
                         outcome: "abort_timeout",
                         promptText: "",
                         includeInNextPrompt: false,
@@ -757,17 +828,30 @@ export class PaAgentLoop {
                             reason: "user_abort",
                             stoppedBy: "aborted",
                         },
-                    };
+                    });
             }
-            return {
+            return finalize({
                 outcome: "recoverable_error",
                 promptText: `Tool ${toolCall.name} ended with an unknown runtime state.`,
                 metadata: { outcome: "recoverable_error", reason: "unknown_tool_runtime_state" },
-            };
+            });
         } finally {
             interrupt.cleanup();
             this.options.signal?.removeEventListener("abort", onAbort);
         }
+    }
+
+    private withToolExecutionTiming(
+        result: PaAgentToolExecutionResult,
+        startedAt: number,
+    ): PaAgentToolExecutionResult {
+        return {
+            ...result,
+            metadata: {
+                ...result.metadata,
+                executionElapsedMs: Math.max(0, this.now() - startedAt),
+            },
+        };
     }
 
     private toolExceptionResult(
@@ -889,6 +973,9 @@ export class PaAgentLoop {
             preflightOnly: result.outcome === "schema_invalid"
                 || result.outcome === "budget_exceeded"
                 || result.outcome === "duplicate_skipped",
+            ...(typeof content.metadata?.executionElapsedMs === "number"
+                ? { timing: { elapsedMs: content.metadata.executionElapsedMs } }
+                : {}),
             ...(content.metadata ? { contentMetadata: content.metadata } : {}),
         });
 
@@ -1030,8 +1117,16 @@ export class PaAgentLoop {
     }
 
     private endAgent(status: AgentEndStatus, payload: Record<string, unknown>): void {
-        this.endPayload = payload;
-        this.events.agentEnd(status, payload);
+        const enrichedPayload = {
+            ...payload,
+            timing: {
+                elapsedMs: Math.max(0, this.now() - this.runStartedAt),
+                turnCount: this.turns.length,
+                toolCallCount: this.toolCallCount,
+            },
+        };
+        this.endPayload = enrichedPayload;
+        this.events.agentEnd(status, enrichedPayload);
     }
 
     private agentStatusFromTurn(status: TurnEndStatus): AgentEndStatus {
@@ -1383,6 +1478,52 @@ function isPlaceholderParsedToolCall(toolCall: ParsedBufferedToolCall): boolean 
 
 function normalizeToolCallKey(toolCall: ParsedBufferedToolCall): string {
     return `${toolCall.name}:${stableStringify(toolCall.input)}`;
+}
+
+function summarizeTurnToolTiming(
+    toolCalls: readonly AssistantMessagePart[],
+    toolResults: readonly Extract<PaAgentMessage, { role: "toolResult" }>[],
+): Pick<
+    PaAgentTurnTiming,
+    "toolNames" | "executorInvokedToolNames" | "preflightSkippedToolNames" | "toolOutcomes"
+> {
+    const toolNames = toolCalls
+        .filter(isToolCallPart)
+        .map((toolCall) => toolCall.name);
+    const toolOutcomes = toolResults.map((result): PaAgentTurnToolOutcome => {
+        const metadata = result.content.metadata;
+        const executionElapsedMs = readMetadataNumber(metadata, "executionElapsedMs");
+        return {
+            toolName: result.toolName,
+            isError: result.isError,
+            includeInNextPrompt: result.content.includeInNextPrompt,
+            ...(readMetadataString(metadata, "outcome") ? { outcome: readMetadataString(metadata, "outcome") } : {}),
+            ...(readMetadataString(metadata, "reason") ? { reason: readMetadataString(metadata, "reason") } : {}),
+            ...(executionElapsedMs !== undefined ? { executionElapsedMs } : {}),
+        };
+    });
+    const executorInvokedToolNames = toolOutcomes
+        .filter((outcome) => outcome.executionElapsedMs !== undefined)
+        .map((outcome) => outcome.toolName);
+    const preflightSkippedToolNames = toolOutcomes
+        .filter((outcome) => outcome.executionElapsedMs === undefined)
+        .map((outcome) => outcome.toolName);
+    return {
+        ...(toolNames.length > 0 ? { toolNames } : {}),
+        ...(executorInvokedToolNames.length > 0 ? { executorInvokedToolNames } : {}),
+        ...(preflightSkippedToolNames.length > 0 ? { preflightSkippedToolNames } : {}),
+        ...(toolOutcomes.length > 0 ? { toolOutcomes } : {}),
+    };
+}
+
+function readMetadataString(metadata: Record<string, unknown> | undefined, key: string): string | undefined {
+    const value = metadata?.[key];
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readMetadataNumber(metadata: Record<string, unknown> | undefined, key: string): number | undefined {
+    const value = metadata?.[key];
+    return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
 function normalizeToolExecutionResult(result: PaAgentToolExecutionResult): PaAgentToolExecutionResult {

@@ -76,6 +76,7 @@ import {
     type PaAgentModel,
     type PaAgentModelInput,
     type PaAgentModelStreamChunk,
+    type PaAgentTimingEntry,
     type PaAgentToolExecutor,
 } from "./pa-agent-loop";
 import type {
@@ -777,14 +778,52 @@ export class PaAgentRuntime {
         const runId = createAgentRunId();
         const legacyEvents = new AgentEventEmitter(options.onEvent);
         const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent);
+        const startupTimings: PaAgentTimingEntry[] = [];
+        const runtimeStartedAt = Date.now();
+        const recordStartupTiming = (
+            phase: string,
+            startedAt: number,
+            metadata?: Record<string, unknown>,
+        ) => {
+            startupTimings.push({
+                phase,
+                elapsedMs: Math.max(0, Date.now() - startedAt),
+                ...(metadata ? { metadata } : {}),
+            });
+        };
+        const measureStartup = async <T>(
+            phase: string,
+            work: () => Promise<T>,
+            metadata?: Record<string, unknown>,
+        ): Promise<T> => {
+            const startedAt = Date.now();
+            try {
+                return await work();
+            } finally {
+                recordStartupTiming(phase, startedAt, metadata);
+            }
+        };
         let additionalProvidersLoaded = false;
-        await this.loadAdditionalCapabilityProviders(`${runId}:capability-preload`, options.signal);
+        await measureStartup(
+            "capability_preload",
+            () => this.loadAdditionalCapabilityProviders(`${runId}:capability-preload`, options.signal),
+        );
         additionalProvidersLoaded = true;
-        const hostContext = await this.loadCanonicalHostContextForRun(options, runId, options.signal);
-        const requiredCapabilityClassification = await resolveRequiredCapabilityClassification({
-            userInput: options.prompt,
-            classifier: this.createRequiredCapabilityClassifier(),
-            signal: options.signal,
+        const hostContext = await measureStartup(
+            "host_context",
+            () => this.loadCanonicalHostContextForRun(options, runId, options.signal),
+        );
+        const requiredCapabilityClassification = await measureStartup(
+            "required_capability_classification",
+            () => resolveRequiredCapabilityClassification({
+                userInput: options.prompt,
+                classifier: this.createRequiredCapabilityClassifier(),
+                signal: options.signal,
+            }),
+        );
+        recordStartupTiming("runtime_startup_total", runtimeStartedAt, {
+            promptLength: options.prompt.length,
+            memoryMode: options.memoryMode,
         });
         const requiredCapabilityPolicy = createRequiredCapabilityHostPolicy({
             userInput: options.prompt,
@@ -898,13 +937,28 @@ export class PaAgentRuntime {
             maxWallClockMs: this.options.maxWallClockMs ?? MAX_TURN_WALL_CLOCK_MS,
             maxToolCalls: this.options.answerStreamMaxToolCalls ?? 30,
             maxObservationChars: this.options.answerStreamMaxObservationChars ?? 24_000,
+            startupTimings,
             // pi hybrid dispatch (P0-A): read-only/idempotent v2.0.0 tools run concurrently when the model
             // requests multiple in one batch. Any future tool that declares executionMode === "sequential"
             // (e.g., write tools) forces the whole batch serial via PaAgentToolExecutor.getExecutionMode.
             toolExecutionMode: "hybrid",
         });
 
+        const loopStartedAt = Date.now();
         const result = await loop.run();
+        this.plugin.log("PA Agent timing", {
+            runId,
+            startupTimings,
+            loopElapsedMs: Math.max(0, Date.now() - loopStartedAt),
+            status: result.status,
+            turnCount: result.turns.length,
+            turnTimings: result.turns.map((turn) => ({
+                turnIndex: turn.turnIndex,
+                status: turn.status,
+                ...(turn.timing ?? {}),
+            })),
+            endTiming: result.endPayload?.timing,
+        });
         if (result.status === "aborted") {
             throw createAbortError();
         }

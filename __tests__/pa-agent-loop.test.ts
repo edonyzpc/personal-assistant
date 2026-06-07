@@ -66,6 +66,31 @@ describe("PaAgentLoop", () => {
         expect(events.find((event) => event.type === "turn_end")).toMatchObject({
             type: "turn_end",
             status: "completed",
+            metadata: {
+                timing: expect.objectContaining({
+                    modelChunkCount: 2,
+                    toolCallCount: 0,
+                    toolResultCount: 0,
+                }),
+            },
+        });
+        expect(events.find((event) =>
+            event.type === "message_end" && event.message.role === "assistant")).toMatchObject({
+            type: "message_end",
+            metadata: {
+                timing: expect.objectContaining({
+                    chunkCount: 2,
+                    toolCallCount: 0,
+                }),
+            },
+        });
+        expect(events.at(-1)).toMatchObject({
+            metadata: {
+                timing: expect.objectContaining({
+                    turnCount: 1,
+                    toolCallCount: 0,
+                }),
+            },
         });
         expect(committedSnapshots).toEqual([{ snapshot: "Hello world", lastEventType: "message_end" }]);
         expect(result.committedFinalText).toBe("Hello world");
@@ -713,6 +738,26 @@ describe("PaAgentLoop", () => {
             toolName: "search_memory",
         });
         expect(result.turns[0]).toMatchObject({ status: "tool_results_ready" });
+        expect(result.turns[0].timing).toMatchObject({
+            elapsedMs: 0,
+            modelElapsedMs: 0,
+            modelChunkCount: 2,
+            toolCallCount: 1,
+            toolResultCount: 1,
+            toolExecutionElapsedMs: 0,
+            toolNames: ["search_memory"],
+            executorInvokedToolNames: ["search_memory"],
+            toolOutcomes: [
+                expect.objectContaining({
+                    toolName: "search_memory",
+                    outcome: "success",
+                    isError: false,
+                    includeInNextPrompt: true,
+                    executionElapsedMs: 0,
+                }),
+            ],
+        });
+        expect(result.turns[0].timing?.preflightSkippedToolNames).toBeUndefined();
         expect(result.turns[0].toolResults).toHaveLength(1);
         expect(result.turns[0].toolResults[0]).toMatchObject({
             role: "toolResult",
@@ -1045,6 +1090,23 @@ describe("PaAgentLoop", () => {
         expect(result.turns[0].toolResults[1]).toMatchObject({
             isError: false,
             content: { includeInNextPrompt: false, promptText: "" },
+        });
+        expect(result.turns[0].timing).toMatchObject({
+            toolNames: ["search_memory", "search_memory"],
+            executorInvokedToolNames: ["search_memory"],
+            preflightSkippedToolNames: ["search_memory"],
+            toolOutcomes: [
+                expect.objectContaining({
+                    toolName: "search_memory",
+                    outcome: "success",
+                    executionElapsedMs: 0,
+                }),
+                expect.objectContaining({
+                    toolName: "search_memory",
+                    outcome: "duplicate_skipped",
+                    includeInNextPrompt: false,
+                }),
+            ],
         });
     });
 
