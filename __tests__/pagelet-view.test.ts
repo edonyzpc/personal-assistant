@@ -6,6 +6,7 @@ jest.mock("obsidian");
 
 import type { WorkspaceLeaf } from "obsidian";
 
+import type { PreviewSpec } from "../src/ai-services/write-action-framework";
 import type { PluginManager } from "../src/plugin";
 import type { PageletCostSummary } from "../src/pagelet/pa-review-cost";
 import type { PageletReviewDiagnostics } from "../src/pagelet/pa-review-model";
@@ -36,6 +37,18 @@ class FakeClassList {
         return this.tokens().includes(cls);
     }
 
+    toggle(cls: string, force?: boolean): boolean {
+        const tokens = new Set(this.tokens());
+        const shouldAdd = force ?? !tokens.has(cls);
+        if (shouldAdd) {
+            tokens.add(cls);
+        } else {
+            tokens.delete(cls);
+        }
+        this.owner.className = [...tokens].join(" ");
+        return shouldAdd;
+    }
+
     private tokens(): string[] {
         return splitClasses(this.owner.className);
     }
@@ -58,6 +71,7 @@ class FakeElement {
     readonly style = new FakeStyle();
     checked = false;
     disabled = false;
+    hidden = false;
     value = "";
     private readonly listeners = new Map<string, FakeListener[]>();
     private textValue = "";
@@ -268,6 +282,36 @@ function makeScopePlan(activePath: string): PageletScopePlan {
     };
 }
 
+function makePreviewSpec(overrides: Partial<PreviewSpec> = {}): PreviewSpec {
+    return {
+        operationType: "create-file",
+        actionFamily: "create-file",
+        capabilityId: "pagelet.write_review_output",
+        target: {
+            kind: "vault-path",
+            displayPath: ".pagelet/alpha-pagelet-review.md",
+            folder: ".pagelet/",
+            filename: "alpha-pagelet-review.md",
+        },
+        contentPreview: {
+            format: "markdown",
+            body: "# Review\n\n- Keep this suggestion.",
+            byteSize: 32,
+        },
+        impact: {
+            usesAiProvider: false,
+            usesAiCredits: false,
+            affectsExternalState: false,
+        },
+        riskNotes: [],
+        confirmCopy: {
+            confirmLabel: "Save review note",
+            cancelLabel: "Cancel",
+        },
+        ...overrides,
+    };
+}
+
 function getDraftSnapshot(storage: Map<string, string>): unknown {
     const raw = storage.get(DRAFT_STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -462,5 +506,57 @@ describe("PageletView workbench interactions", () => {
 
         expect(findByClass(contentEl, "pa-pagelet-status__state").textContent)
             .toBe("Chat already has text; prompt not replaced");
+    });
+
+    it("renders write confirmation in the Pagelet panel and resolves confirmed", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+
+        const resultPromise = view.showWritePreview(makePreviewSpec());
+        expect(findByClass(contentEl, "pa-pagelet-write-preview__target").textContent)
+            .toBe("Target: .pagelet/alpha-pagelet-review.md");
+        const toggle = findByClass(contentEl, "pa-pagelet-write-preview__toggle");
+        const markdown = findByClass(contentEl, "pa-pagelet-write-preview__markdown");
+        expect(toggle.getAttribute("aria-expanded")).toBe("false");
+        expect(markdown.hidden).toBe(true);
+        toggle.dispatch("click");
+        expect(toggle.getAttribute("aria-expanded")).toBe("true");
+        expect(markdown.hidden).toBe(false);
+        expect(markdown.textContent).toContain("Keep this suggestion");
+
+        findByClass(contentEl, "pa-pagelet-write-preview__confirm").dispatch("click");
+        await expect(resultPromise).resolves.toEqual({ outcome: "confirmed" });
+        expect(findByClass(contentEl, "pa-pagelet-status__state").textContent)
+            .toBe("Saving review note...");
+        expect(findByClass(contentEl, "pa-pagelet-write-preview__confirm").disabled).toBe(true);
+    });
+
+    it("resolves cancelled and clears the panel write confirmation", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+
+        const resultPromise = view.showWritePreview(makePreviewSpec());
+        findByClass(contentEl, "pa-pagelet-write-preview__cancel").dispatch("click");
+
+        await expect(resultPromise).resolves.toEqual({ outcome: "cancelled" });
+        expect(findAllByClass(contentEl, "pa-pagelet-write-preview")).toHaveLength(0);
+    });
+
+    it("maps AbortSignal and view close to non-write outcomes", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+
+        const controller = new AbortController();
+        const aborted = view.showWritePreview(makePreviewSpec(), { signal: controller.signal });
+        controller.abort();
+        await expect(aborted).resolves.toEqual({ outcome: "aborted" });
+        expect(findAllByClass(contentEl, "pa-pagelet-write-preview")).toHaveLength(0);
+
+        const closed = view.showWritePreview(makePreviewSpec());
+        await view.onClose();
+        await expect(closed).resolves.toEqual({ outcome: "cancelled" });
     });
 });

@@ -124,6 +124,7 @@
     "pagelet.panel.status.notSaved": "建议已就绪；审阅笔记未保存",
     "pagelet.panel.status.empty": "没有值得保存的建议",
     "pagelet.panel.status.aborted": "审阅已停止",
+    "pagelet.panel.status.saving": "正在保存审阅笔记…",
     "pagelet.panel.status.source": "来源",
     "pagelet.panel.status.added": "已加入草稿",
     "pagelet.panel.status.dismissed": "已忽略建议",
@@ -155,6 +156,11 @@
     "pagelet.research.prompt.action": "建议动作",
     "pagelet.research.prompt.output": "返回简明的外部证据、有用链接和不确定性。",
 
+    "pagelet.preview.panel.label": "保存审阅笔记",
+    "pagelet.preview.panel.title": "保存审阅笔记",
+    "pagelet.preview.panel.description": "创建一篇 Markdown 审阅笔记。源笔记不会被修改。",
+    "pagelet.preview.panel.target": "目标",
+    "pagelet.preview.panel.markdown": "预览 Markdown",
     "pagelet.preview.confirm": "保存审阅笔记",
     "pagelet.preview.cancel": "取消"
 }

@@ -124,6 +124,7 @@
     "pagelet.panel.status.notSaved": "Suggestions ready; note not saved",
     "pagelet.panel.status.empty": "No suggestions worth saving",
     "pagelet.panel.status.aborted": "Review stopped",
+    "pagelet.panel.status.saving": "Saving review note...",
     "pagelet.panel.status.source": "Source",
     "pagelet.panel.status.added": "Added to draft",
     "pagelet.panel.status.dismissed": "Suggestion dismissed",
@@ -155,6 +156,11 @@
     "pagelet.research.prompt.action": "Suggested action",
     "pagelet.research.prompt.output": "Return concise external evidence, useful links, and any uncertainty.",
 
+    "pagelet.preview.panel.label": "Save review note",
+    "pagelet.preview.panel.title": "Save review note",
+    "pagelet.preview.panel.description": "Create one Markdown review note. Source notes are not modified.",
+    "pagelet.preview.panel.target": "Target",
+    "pagelet.preview.panel.markdown": "Preview Markdown",
     "pagelet.preview.confirm": "Save review note",
     "pagelet.preview.cancel": "Cancel"
 }

@@ -2,6 +2,11 @@
 
 import { ItemView, WorkspaceLeaf } from "obsidian";
 
+import type {
+    PreviewShowOptions,
+    PreviewShowResult,
+    PreviewSpec,
+} from "../ai-services/write-action-framework";
 import type { PluginManager } from "../plugin";
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../locales/pagelet";
 import {
@@ -80,6 +85,7 @@ export class PageletView extends ItemView {
     private summaryEl: HTMLElement | null = null;
     private cardsEl: HTMLElement | null = null;
     private draftEl: HTMLElement | null = null;
+    private writePreviewEl: HTMLElement | null = null;
     private targetEl: HTMLElement | null = null;
     private scopeEl: HTMLElement | null = null;
     private scopeRangeEl: HTMLElement | null = null;
@@ -95,6 +101,13 @@ export class PageletView extends ItemView {
     private dismissedKeys = new Set<string>();
     private acceptedDraft: AcceptedDraftItem[] = [];
     private acceptedDraftSourcePath: string | undefined;
+    private writePreviewMarkdownExpanded = false;
+    private pendingWritePreview: {
+        spec: PreviewSpec;
+        resolve: (result: PreviewShowResult) => void;
+        signal?: AbortSignal;
+        onAbort?: () => void;
+    } | null = null;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -124,6 +137,7 @@ export class PageletView extends ItemView {
     }
 
     async onClose(): Promise<void> {
+        this.settleWritePreview({ outcome: "cancelled" });
         this.closed = true;
         this.destroyCards();
         this.mascot?.destroy();
@@ -136,6 +150,7 @@ export class PageletView extends ItemView {
         this.summaryEl = null;
         this.cardsEl = null;
         this.draftEl = null;
+        this.writePreviewEl = null;
         this.targetEl = null;
         this.scopeEl = null;
         this.scopeRangeEl = null;
@@ -173,6 +188,8 @@ export class PageletView extends ItemView {
 
     showReviewResult(data: PageletPanelReviewData): void {
         this.renderShell();
+        this.settleWritePreview({ outcome: "cancelled" });
+        this.clearWritePreview();
         this.currentReview = data;
         this.sourceReferences = new Map(
             (data.sourceReferences ?? []).map((reference) => [reference.sourceId, reference]),
@@ -180,6 +197,7 @@ export class PageletView extends ItemView {
         this.dismissedKeys.clear();
         this.acceptedDraft = [];
         this.acceptedDraftSourcePath = data.sourcePath;
+        this.writePreviewMarkdownExpanded = false;
         this.setStatus("done", this.t("pagelet.panel.status.ready", "Suggestions ready"));
         this.setSource(data.sourcePath);
         this.renderSummary(data.result);
@@ -191,6 +209,7 @@ export class PageletView extends ItemView {
 
     showReviewSaved(targetPath: string, costSummary: PageletCostSummary): void {
         this.renderShell();
+        this.clearWritePreview();
         this.setStatus("done", this.t("pagelet.panel.status.saved", "Review note saved"));
         this.renderCost(costSummary);
         this.setTarget(targetPath, true);
@@ -199,6 +218,7 @@ export class PageletView extends ItemView {
 
     showReviewNotSaved(): void {
         this.renderShell();
+        this.clearWritePreview();
         this.setStatus("done", this.t("pagelet.panel.status.notSaved", "Suggestions ready; note not saved"));
     }
 
@@ -220,6 +240,29 @@ export class PageletView extends ItemView {
         this.clearReview();
         this.setStatus("error", message);
         if (sourcePath) this.setSource(sourcePath);
+    }
+
+    showWritePreview(spec: PreviewSpec, options?: PreviewShowOptions): Promise<PreviewShowResult> {
+        if (options?.signal?.aborted) {
+            return Promise.resolve({ outcome: "aborted" });
+        }
+        this.renderShell();
+        if (this.closed || !this.writePreviewEl) {
+            return Promise.resolve({ outcome: "cancelled" });
+        }
+        this.settleWritePreview({ outcome: "cancelled" });
+        return new Promise<PreviewShowResult>((resolve) => {
+            const onAbort = (): void => {
+                this.settleWritePreview({ outcome: "aborted" });
+            };
+            this.pendingWritePreview = {
+                spec,
+                resolve,
+                ...(options?.signal ? { signal: options.signal, onAbort } : {}),
+            };
+            options?.signal?.addEventListener("abort", onAbort, { once: true });
+            this.renderWritePreview(spec, false);
+        });
     }
 
     private renderShell(): void {
@@ -271,6 +314,7 @@ export class PageletView extends ItemView {
         const draft = this.createEl("aside", "pa-pagelet-draft", body);
         this.createEl("h3", "pa-pagelet-draft__title", draft, this.t("pagelet.panel.draft.title", "Draft"));
         this.draftEl = this.createEl("div", "pa-pagelet-draft__items", draft);
+        this.writePreviewEl = this.createEl("div", "pa-pagelet-write-preview-host", draft);
         this.renderDraft();
 
         this.contentEl.appendChild(root);
@@ -384,6 +428,7 @@ export class PageletView extends ItemView {
     }
 
     private clearReview(): void {
+        this.settleWritePreview({ outcome: "cancelled" });
         this.currentReview = null;
         this.sourceReferences.clear();
         this.dismissedKeys.clear();
@@ -398,6 +443,7 @@ export class PageletView extends ItemView {
             this.costEl.textContent = this.t("pagelet.panel.cost.none", "No review cost yet");
         }
         if (this.targetEl) this.targetEl.textContent = "";
+        this.clearWritePreview();
         this.renderDraft();
     }
 
@@ -571,6 +617,107 @@ export class PageletView extends ItemView {
                 this.savePendingDraftSnapshot();
             });
         }
+    }
+
+    private renderWritePreview(spec: PreviewSpec, busy: boolean): void {
+        if (!this.writePreviewEl) return;
+        this.writePreviewEl.textContent = "";
+        const panel = this.createEl("section", "pa-pagelet-write-preview", this.writePreviewEl);
+        panel.setAttribute("role", "region");
+        panel.setAttribute(
+            "aria-label",
+            this.t("pagelet.preview.panel.label", "Save review note"),
+        );
+
+        const header = this.createEl("div", "pa-pagelet-write-preview__header", panel);
+        this.createEl(
+            "h3",
+            "pa-pagelet-write-preview__title",
+            header,
+            this.t("pagelet.preview.panel.title", "Save review note"),
+        );
+        this.createEl(
+            "p",
+            "pa-pagelet-write-preview__body",
+            panel,
+            this.t(
+                "pagelet.preview.panel.description",
+                "Create one Markdown review note. Source notes are not modified.",
+            ),
+        );
+        this.createEl(
+            "div",
+            "pa-pagelet-write-preview__target",
+            panel,
+            this.t("pagelet.preview.panel.target", "Target") + `: ${spec.target.displayPath}`,
+        ).setAttribute("title", spec.target.displayPath);
+
+        const previewToggle = this.createEl(
+            "button",
+            this.writePreviewMarkdownExpanded
+                ? "pa-pagelet-write-preview__toggle is-expanded"
+                : "pa-pagelet-write-preview__toggle",
+            panel,
+            this.t("pagelet.preview.panel.markdown", "Preview Markdown"),
+        );
+        previewToggle.setAttribute("type", "button");
+        previewToggle.setAttribute("aria-expanded", String(this.writePreviewMarkdownExpanded));
+        previewToggle.addEventListener("click", () => {
+            this.writePreviewMarkdownExpanded = !this.writePreviewMarkdownExpanded;
+            previewToggle.classList.toggle("is-expanded", this.writePreviewMarkdownExpanded);
+            previewToggle.setAttribute("aria-expanded", String(this.writePreviewMarkdownExpanded));
+            pre.hidden = !this.writePreviewMarkdownExpanded;
+        });
+        const pre = this.createEl("pre", "pa-pagelet-write-preview__markdown", panel);
+        pre.textContent = spec.contentPreview.body;
+        pre.hidden = !this.writePreviewMarkdownExpanded;
+
+        const actions = this.createEl("div", "pa-pagelet-write-preview__actions", panel);
+        const confirm = this.createEl(
+            "button",
+            "pa-pagelet-button pa-pagelet-button--primary pa-pagelet-write-preview__confirm",
+            actions,
+            busy
+                ? this.t("pagelet.panel.status.saving", "Saving review note...")
+                : spec.confirmCopy.confirmLabel,
+        );
+        confirm.setAttribute("type", "button");
+        confirm.disabled = busy;
+        confirm.addEventListener("click", () => {
+            this.settleWritePreview({ outcome: "confirmed" });
+        });
+
+        const cancel = this.createEl(
+            "button",
+            "pa-pagelet-button pa-pagelet-button--ghost pa-pagelet-write-preview__cancel",
+            actions,
+            spec.confirmCopy.cancelLabel,
+        );
+        cancel.setAttribute("type", "button");
+        cancel.disabled = busy;
+        cancel.addEventListener("click", () => {
+            this.settleWritePreview({ outcome: "cancelled" });
+        });
+    }
+
+    private clearWritePreview(): void {
+        if (this.writePreviewEl) this.writePreviewEl.textContent = "";
+    }
+
+    private settleWritePreview(result: PreviewShowResult): void {
+        const pending = this.pendingWritePreview;
+        if (!pending) return;
+        if (pending.signal && pending.onAbort) {
+            pending.signal.removeEventListener("abort", pending.onAbort);
+        }
+        this.pendingWritePreview = null;
+        if (result.outcome === "confirmed") {
+            this.renderWritePreview(pending.spec, true);
+            this.setStatus("thinking", this.t("pagelet.panel.status.saving", "Saving review note..."));
+        } else {
+            this.clearWritePreview();
+        }
+        pending.resolve(result);
     }
 
     private savePendingDraftSnapshot(): void {

@@ -28,6 +28,7 @@ import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-s
 import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
 import { ChatHistoryManager } from './chat/chat-history-manager';
 import { AIUtils } from './ai-services/ai-utils';
+import type { PreviewRenderer } from './ai-services/write-action-framework';
 import {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
@@ -647,11 +648,24 @@ export class PluginManager extends Plugin {
                 app: this.app,
                 getPageletSettings: () => this.settings.pagelet,
                 getLocale: () => this.getPageletLocale(),
+                previewRenderer: this.createPageletPanelPreviewRenderer(),
                 debug: this.settings.debug,
             });
             this.log("Pagelet runtime initialized");
         }
         return this.pageletRuntime;
+    }
+
+    private createPageletPanelPreviewRenderer(): PreviewRenderer {
+        return {
+            show: async (spec, options) => {
+                const pageletView = this.getOpenPageletView() ?? await this.activePageletView();
+                if (!pageletView) {
+                    return { outcome: "cancelled" };
+                }
+                return pageletView.showWritePreview(spec, options);
+            },
+        };
     }
 
     async refreshPageletScope(range: PageletReviewRange, preferredActivePath?: string): Promise<void> {

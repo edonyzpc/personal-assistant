@@ -951,12 +951,6 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 	animation: pa-chat-loader-color-cycle 3s linear infinite;
 }
 
-.llm-view .pa-chat-role-loader-assistant {
-	width: 24px;
-	height: 14px;
-	animation: pa-chat-loader-color-cycle 3s linear infinite;
-}
-
 .llm-view .pa-chat-role-loader-element {
 	display: inline-flex;
 	flex: 0 0 auto;
@@ -1946,11 +1940,6 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 		color: var(--pa-chat-loader-color-rose);
 	}
 
-	.llm-view .pa-chat-role-loader-assistant {
-		animation: none;
-		color: var(--pa-chat-loader-color-rose);
-	}
-
 	.llm-view .pa-chat-role-identicon,
 	.llm-view .pa-chat-role-identicon-svg {
 		transition: none;
@@ -2565,6 +2554,11 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	color: var(--text-muted);
 }
 
+.pa-pagelet-button:disabled {
+	cursor: not-allowed;
+	opacity: 0.55;
+}
+
 .pa-pagelet-scope {
 	display: grid;
 	gap: 8px;
@@ -2796,6 +2790,119 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	resize: vertical;
 }
 
+.pa-pagelet-write-preview-host:empty {
+	display: none;
+}
+
+.pa-pagelet-write-preview {
+	display: grid;
+	gap: 8px;
+	min-width: 0;
+	padding: 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 8px;
+	background: var(--background-primary);
+}
+
+.pa-pagelet-write-preview__header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	min-width: 0;
+}
+
+.pa-pagelet-write-preview__title {
+	margin: 0;
+	font-size: var(--font-ui-medium);
+	line-height: 1.3;
+}
+
+.pa-pagelet-write-preview__body,
+.pa-pagelet-write-preview__target {
+	margin: 0;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	line-height: 1.45;
+	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-write-preview__target {
+	padding: 6px 8px;
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-size: var(--font-ui-smaller);
+}
+
+.pa-pagelet-write-preview__toggle {
+	appearance: none;
+	display: inline-flex;
+	align-items: center;
+	justify-self: start;
+	gap: 6px;
+	min-height: 28px;
+	padding: 0;
+	border: 0;
+	background: transparent;
+	box-shadow: none;
+	cursor: pointer;
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	font-weight: 650;
+	line-height: 1.35;
+	text-align: left;
+}
+
+.pa-pagelet-write-preview__toggle::before {
+	content: "";
+	width: 0;
+	height: 0;
+	border-top: 5px solid transparent;
+	border-bottom: 5px solid transparent;
+	border-left: 7px solid currentColor;
+	transform-origin: center;
+	transition: transform 0.12s ease;
+}
+
+.pa-pagelet-write-preview__toggle.is-expanded::before {
+	transform: rotate(90deg);
+}
+
+.pa-pagelet-write-preview__toggle:hover,
+.pa-pagelet-write-preview__toggle:focus-visible {
+	color: var(--text-normal);
+}
+
+.pa-pagelet-write-preview__markdown {
+	box-sizing: border-box;
+	max-height: min(42vh, 360px);
+	margin: 8px 0 0;
+	padding: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-family: var(--font-monospace);
+	font-size: var(--font-ui-smaller);
+	line-height: 1.45;
+	overflow: auto;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-write-preview__markdown[hidden] {
+	display: none;
+}
+
+.pa-pagelet-write-preview__actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	justify-content: flex-end;
+	min-width: 0;
+}
+
 @media (max-width: 760px) {
 	.pa-pagelet-view {
 		overflow: auto;
@@ -2860,6 +2967,15 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	.pa-pagelet-status__cost {
 		text-align: left;
 	}
+
+	.pa-pagelet-write-preview__actions {
+		align-items: stretch;
+		justify-content: stretch;
+	}
+
+	.pa-pagelet-write-preview__actions .pa-pagelet-button {
+		flex: 1 1 140px;
+	}
 }
 
 @container pa-pagelet-view (max-width: 820px) {
@@ -2921,6 +3037,15 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 
 	.pa-pagelet-status__cost {
 		text-align: left;
+	}
+
+	.pa-pagelet-write-preview__actions {
+		align-items: stretch;
+		justify-content: stretch;
+	}
+
+	.pa-pagelet-write-preview__actions .pa-pagelet-button {
+		flex: 1 1 140px;
 	}
 }
 
