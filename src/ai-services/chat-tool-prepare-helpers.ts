@@ -123,7 +123,31 @@ export function summarizeRawInput(raw: unknown, maxChars = 200): string {
 export function isExplicitCurrentNoteOnlyRequest(text: string): boolean {
     const normalized = text.toLowerCase();
     return /\b(current note|this note)\s+only\b/.test(normalized)
-        || /\buse\s+(the\s+)?current note\s+only\b/.test(normalized);
+        || /\buse\s+(the\s+)?current note\s+only\b/.test(normalized)
+        || /只(看|用|从)?(当前|这篇|本篇)笔记/.test(text)
+        || /仅(看|用|从)?(当前|这篇|本篇)笔记/.test(text);
+}
+
+export function isExplicitNoWebRequest(text: string): boolean {
+    const normalized = text.toLowerCase();
+    return /\b(do not|don't|without|no)\s+(use\s+)?(web\s*search|searching the web|web search results|internet|online search)\b/.test(normalized)
+        || /\b(do not|don't)\s+(go\s+)?online\b/.test(normalized)
+        || [
+            "不要联网",
+            "不联网",
+            "无需联网",
+            "别联网",
+            "不要上网",
+            "不上网",
+            "别上网",
+            "不要网络搜索",
+            "不要网页搜索",
+            "不要搜索网页",
+            "不要查网",
+            "不查网",
+            "不查网络",
+            "不查网页",
+        ].some((token) => text.includes(token));
 }
 
 /**

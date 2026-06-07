@@ -31,6 +31,11 @@ export interface CapabilityRegistryOptions {
     onCapabilityEvent?: (event: CapabilityUsageEvent) => void;
 }
 
+export interface CapabilityExportFilter {
+    allowedToolNames?: ReadonlySet<string>;
+    blockedToolNames?: ReadonlySet<string>;
+}
+
 export class CapabilityRegistry {
     private readonly capabilities = new Map<string, AgentCapability>();
     private readonly diagnostics: CapabilityDiagnostic[] = [];
@@ -147,8 +152,8 @@ export class CapabilityRegistry {
         return this.get(name)?.toRegistryDefinition();
     }
 
-    listDefinitions(): ChatToolRegistryDefinition[] {
-        return this.listCapabilitiesForExport().map((capability) => capability.toRegistryDefinition());
+    listDefinitions(filter?: CapabilityExportFilter): ChatToolRegistryDefinition[] {
+        return this.listCapabilitiesForExport(filter).map((capability) => capability.toRegistryDefinition());
     }
 
     listCapabilities(): AgentCapability[] {
@@ -159,13 +164,13 @@ export class CapabilityRegistry {
         return this.diagnostics.map((diagnostic) => ({ ...diagnostic }));
     }
 
-    exportProviderSchemas(): ChatToolProviderSchema[] {
-        return this.listCapabilitiesForExport().map((capability) => capability.toProviderSchema());
+    exportProviderSchemas(filter?: CapabilityExportFilter): ChatToolProviderSchema[] {
+        return this.listCapabilitiesForExport(filter).map((capability) => capability.toProviderSchema());
     }
 
-    exportProviderSchemasSafe(): ChatToolProviderSchemaExportResult {
+    exportProviderSchemasSafe(filter?: CapabilityExportFilter): ChatToolProviderSchemaExportResult {
         try {
-            return { ok: true, schemas: this.exportProviderSchemas() };
+            return { ok: true, schemas: this.exportProviderSchemas(filter) };
         } catch (error) {
             return {
                 ok: false,
@@ -286,15 +291,25 @@ export class CapabilityRegistry {
         }
     }
 
-    private listCapabilitiesForExport(): AgentCapability[] {
+    private listCapabilitiesForExport(filter?: CapabilityExportFilter): AgentCapability[] {
         return this.policyEngine.filterExportable(this.listCapabilities())
-            .filter((capability) => capability.kind === "tool");
+            .filter((capability) => capability.kind === "tool")
+            .filter((capability) => isCapabilityAllowedForExport(capability.name, filter));
     }
 
     private emitCapabilityEvent(event: CapabilityUsageEvent): void {
         if (!this.telemetryEnabled) return;
         this.onCapabilityEvent?.({ ...event });
     }
+}
+
+function isCapabilityAllowedForExport(
+    capabilityName: string,
+    filter?: CapabilityExportFilter,
+): boolean {
+    if (filter?.allowedToolNames && !filter.allowedToolNames.has(capabilityName)) return false;
+    if (filter?.blockedToolNames?.has(capabilityName)) return false;
+    return true;
 }
 
 function getObsidianOperationsV1ACapabilityPolicyError(capability: AgentCapability): string | null {

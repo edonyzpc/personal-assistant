@@ -83,6 +83,8 @@ export interface MemorySearchResult {
     sources: ChatAgentSource[];
     candidates?: MemoryCandidate[];
     skipReason?: string;
+    hasAnswerableContent?: boolean;
+    needsSnippetFollowup?: boolean;
 }
 
 export interface AgentPromptPlan {
