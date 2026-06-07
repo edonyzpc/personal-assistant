@@ -21,6 +21,7 @@ import {
     type SearchMemoryInput,
 } from "../src/ai-services/chat-tools";
 import {
+    chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
 } from "../src/ai-services/pa-agent-host-tools";
 import { formatSkillCatalog, formatToolObservations } from "../src/ai-services/pa-agent-runtime";
@@ -39,6 +40,40 @@ import type { AgentEvent, MemorySearchResult } from "../src/ai-services/chat-typ
 jest.mock("obsidian");
 
 describe("PA Agent canonical host tool executor", () => {
+    it("propagates Memory answerability metadata for same-source follow-up policy", () => {
+        const result = chatToolResultToPaAgentToolExecutionResult(
+            { type: "toolCall", id: "call-memory", index: 0, name: "search_memory", input: { query: "周至" } },
+            {
+                ok: true,
+                tool: "search_memory",
+                inputSummary: "周至",
+                content: {
+                    usedMemory: false,
+                    query: "周至",
+                    documents: [],
+                    sources: [],
+                    candidates: [{
+                        candidateId: "cand-1",
+                        path: "People/周至.md",
+                        score: 0.87,
+                        documents: [],
+                        excerpt: "",
+                    }],
+                    hasAnswerableContent: false,
+                    needsSnippetFollowup: true,
+                },
+                sources: [],
+            },
+        );
+
+        expect(result.metadata).toMatchObject({
+            hitCount: 0,
+            candidateCount: 1,
+            hasAnswerableContent: false,
+            needsSnippetFollowup: true,
+        });
+    });
+
     it("represents skill catalog as host pre-context (A3 progressive disclosure: L1 only)", async () => {
         const modelInputs: PaAgentModelInput[] = [];
         const events: AgentEvent[] = [];

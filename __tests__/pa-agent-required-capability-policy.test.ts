@@ -7,6 +7,7 @@ import {
     resolveRequiredCapabilityClassification,
     type RequiredCapability,
 } from "../src/ai-services/pa-agent-required-capability-policy";
+import { createAgentControlSnapshot } from "../src/ai-services/pa-agent-control-policy";
 import type { PaAgentTurnSummary } from "../src/ai-services/pa-agent-loop";
 
 describe("PA Agent required capability HostPolicy", () => {
@@ -76,6 +77,24 @@ describe("PA Agent required capability HostPolicy", () => {
             expect(classifyRequiredCapabilitiesDeterministic("上网查一下今天的天气").items).toEqual([
                 expect.objectContaining({ capability: "webSearch", level: "required" }),
             ]);
+            expect(classifyRequiredCapabilitiesDeterministic("看一下杭州今天的天气").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("杭州现在气温多少").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("今天北京空气质量怎么样").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+        });
+
+        it("does not trigger WebSearch from standalone air-quality wording without a current-info cue", () => {
+            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里提到空气质量的段落").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
+            expect(classifyRequiredCapabilitiesDeterministic("当前笔记里空气质量是什么意思").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
         });
 
         it("classifies Chinese memory strong-signal inputs as required", () => {
@@ -164,6 +183,25 @@ describe("PA Agent required capability HostPolicy", () => {
             capability: "get_current_note_context",
             level: "required",
         })]);
+    });
+
+    it("honors Chinese explicit no-web constraints over weather/current-info routes", async () => {
+        const classification = await resolveRequiredCapabilityClassification({
+            userInput: "不要联网，看一下杭州今天的天气",
+            classifier: {
+                classify: async () => ({
+                    items: [{
+                        capability: "webSearch",
+                        confidence: 0.95,
+                        reason: "weather route",
+                    }],
+                }),
+            },
+        });
+
+        expect(classification.items).not.toEqual(expect.arrayContaining([
+            expect.objectContaining({ capability: "webSearch" }),
+        ]));
     });
 
     it("honors explicit no-memory wording without suppressing WebSearch", async () => {
@@ -326,6 +364,30 @@ describe("PA Agent required capability HostPolicy", () => {
             classifier: { classify: async () => { throw new Error("policy model failed"); } },
         })).resolves.toMatchObject({
             items: [expect.objectContaining({ capability: "webSearch" })],
+        });
+    });
+
+    it("applies explicit no-web constraints again at host-policy construction", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "不要联网，看一下杭州今天的天气",
+            availableCapabilities: new Set<RequiredCapability>(["webSearch"]),
+            classification: {
+                items: [{
+                    capability: "webSearch",
+                    confidence: 0.95,
+                    level: "required",
+                    reason: "classifier false positive",
+                }],
+            },
+        });
+
+        expect(policy.classification.items).toEqual([]);
+        expect(policy.initialRuntimeInstruction).toBeUndefined();
+        expect(await policy.hostPolicy.afterTurn(createSummary({
+            committedFinalText: "不联网时无法核验实时天气。",
+        }))).toMatchObject({
+            action: "stop",
+            status: "completed",
         });
     });
 
@@ -779,6 +841,68 @@ describe("PA Agent required capability HostPolicy", () => {
         });
         expect(stop.action === "stop" ? stop.warnings?.map((warning) => warning.capability) : []).toEqual(["webSearch"]);
     });
+
+    it("continues successful observations with answer-ready guidance instead of final-only", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for Zhou Zhi.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const decision = await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory")],
+            controlSnapshot: createAgentControlSnapshot({
+                exposureMode: "narrowed-required",
+                sourceScope: "notes",
+                allowedToolNames: new Set(["search_memory"]),
+            }),
+        }));
+
+        expect(decision).toMatchObject({
+            action: "continue",
+            reason: "tool_results_ready",
+            runtimeInstruction: expect.stringContaining("Answer directly if the existing observations are sufficient."),
+            controlSnapshot: {
+                exposureMode: "answer-ready",
+                sourceScope: "notes",
+            },
+        });
+        if (decision.action === "continue") {
+            expect(decision.toolMode).toBeUndefined();
+            expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["search_memory"]);
+            expect(decision.controlSnapshot!.diagnostics.map((diagnostic) => diagnostic.type)).toContain("answer_ready_decision");
+        }
+    });
+
+    it("opens notes follow-up tools only when Memory explicitly requests snippet follow-up", async () => {
+        const policy = createRequiredCapabilityHostPolicy({
+            userInput: "Check my notes for Zhou Zhi.",
+            availableCapabilities: new Set<RequiredCapability>(["search_memory"]),
+        });
+        const decision = await policy.hostPolicy.afterTurn(createSummary({
+            status: "tool_results_ready",
+            toolResults: [createToolResult("search_memory", {
+                metadata: { needsSnippetFollowup: true },
+            })],
+            controlSnapshot: createAgentControlSnapshot({
+                exposureMode: "narrowed-required",
+                sourceScope: "notes",
+                allowedToolNames: new Set(["search_memory"]),
+            }),
+        }));
+
+        expect(decision).toMatchObject({
+            action: "continue",
+            reason: "needs_follow_up",
+            runtimeInstruction: expect.stringContaining("targeted note follow-up"),
+            controlSnapshot: {
+                exposureMode: "follow-up",
+                sourceScope: "notes",
+            },
+        });
+        if (decision.action === "continue") {
+            expect([...decision.controlSnapshot!.allowedToolNames!]).toEqual(["search_vault_snippets"]);
+        }
+    });
 });
 
 function createSummary(overrides: Partial<PaAgentTurnSummary> = {}): PaAgentTurnSummary {
@@ -797,13 +921,23 @@ function createSummary(overrides: Partial<PaAgentTurnSummary> = {}): PaAgentTurn
         toolCalls: [],
         toolResults: [],
         diagnostics: [],
+        metrics: [],
+        timing: {
+            turnIndex: 0,
+            status: "completed",
+            elapsedMs: 0,
+            modelElapsedMs: 0,
+            modelChunkCount: 0,
+            toolCallCount: 0,
+            toolResultCount: 0,
+        },
         ...overrides,
     };
 }
 
 function createToolResult(
     toolName: string,
-    options: { isError?: boolean; outcome?: string } = {},
+    options: { isError?: boolean; outcome?: string; metadata?: Record<string, unknown> } = {},
 ): PaAgentTurnSummary["toolResults"][number] {
     return {
         role: "toolResult",
@@ -815,6 +949,7 @@ function createToolResult(
             includeInNextPrompt: true,
             metadata: {
                 outcome: options.outcome ?? "success",
+                ...(options.metadata ?? {}),
             },
         },
         isError: options.isError ?? false,

@@ -76,6 +76,25 @@ describe("CapabilityRegistry and core tool capabilities", () => {
         expect(namesByTurn[2]).toEqual(namesByTurn[0]);
     });
 
+    it("filters capabilities before provider schema generation", () => {
+        const [searchMemory, , , , readNoteOutline] = createCoreCapabilities();
+        const registry = new CapabilityRegistry();
+        registry.register(searchMemory);
+        registry.register({
+            ...readNoteOutline,
+            toProviderSchema: () => {
+                throw new Error("hidden schema should not be serialized");
+            },
+        });
+
+        expect(registry.exportProviderSchemasSafe({
+            allowedToolNames: new Set(["search_memory"]),
+        })).toEqual({
+            ok: true,
+            schemas: [searchMemory.toProviderSchema()],
+        });
+    });
+
     it("rejects duplicate capability names with a diagnostic and keeps the earlier registration", () => {
         const registry = new CapabilityRegistry();
         const first = createCapabilityFromChatToolDefinition(

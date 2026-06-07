@@ -69,4 +69,15 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(joined).toContain("insufficient");
         expect(joined.toLowerCase()).toContain("instead of guessing");
     });
+
+    it("treats current-run tool definitions as the source of truth for tool availability", () => {
+        // PA Agent runs include prior chat history for continuity, but tool exposure can change
+        // per run when explicit constraints such as no-web apply. The model must not copy stale
+        // tool-availability claims from older assistant messages.
+        const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
+        expect(joined).toContain("Recent chat history is context only");
+        expect(joined).toContain("do not infer current tool availability");
+        expect(joined).toContain("Available tool definitions");
+        expect(joined).toContain("if a tool is absent or blocked");
+    });
 });

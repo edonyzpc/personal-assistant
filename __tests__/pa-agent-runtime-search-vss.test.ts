@@ -149,6 +149,8 @@ describe("MemorySearchTool searchVss contract", () => {
             documents: [],
             sources: [],
             candidates: [],
+            hasAnswerableContent: false,
+            needsSnippetFollowup: false,
         });
     });
 

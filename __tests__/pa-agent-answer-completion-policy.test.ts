@@ -159,6 +159,16 @@ function createSummary(overrides: Partial<PaAgentTurnSummary> = {}): PaAgentTurn
         toolCalls: [],
         toolResults: [],
         diagnostics: [],
+        metrics: [],
+        timing: {
+            turnIndex: 0,
+            status: "completed",
+            elapsedMs: 0,
+            modelElapsedMs: 0,
+            modelChunkCount: 0,
+            toolCallCount: 0,
+            toolResultCount: 0,
+        },
         ...overrides,
     };
 }
