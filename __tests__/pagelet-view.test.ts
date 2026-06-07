@@ -444,6 +444,31 @@ describe("PageletView workbench interactions", () => {
         });
     });
 
+    it("shows a stop action while review is running and restores review controls afterward", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showScopePlan(makeScopePlan("notes/alpha.md"));
+
+        const reviewButton = findByClass(contentEl, "pa-pagelet-button--primary");
+        const stopButton = findAllByTag(contentEl, "button")
+            .find((button) => button.textContent === "Stop");
+        expect(stopButton).toBeDefined();
+        expect(stopButton?.hidden).toBe(true);
+        expect(reviewButton.disabled).toBe(false);
+
+        const onCancel = jest.fn();
+        view.showReviewStarted("notes/alpha.md", { onCancel });
+
+        expect(reviewButton.disabled).toBe(true);
+        expect(stopButton?.hidden).toBe(false);
+        stopButton?.dispatch("click");
+        expect(onCancel).toHaveBeenCalledTimes(1);
+
+        view.showReviewAborted("notes/alpha.md");
+        expect(reviewButton.disabled).toBe(false);
+        expect(stopButton?.hidden).toBe(true);
+    });
+
     it("renders review-output exclusions as an aggregate scope summary", async () => {
         const { view, contentEl } = makeView();
         await view.onOpen();

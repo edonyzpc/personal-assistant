@@ -91,6 +91,7 @@ export class PageletView extends ItemView {
     private scopeRangeEl: HTMLElement | null = null;
     private scopeListEl: HTMLElement | null = null;
     private reviewButtonEl: HTMLButtonElement | null = null;
+    private cancelReviewButtonEl: HTMLButtonElement | null = null;
     private mascot: MascotRenderer | null = null;
     private cardRenderers: SuggestionCardRenderer[] = [];
     private currentReview: PageletPanelReviewData | null = null;
@@ -102,6 +103,8 @@ export class PageletView extends ItemView {
     private acceptedDraft: AcceptedDraftItem[] = [];
     private acceptedDraftSourcePath: string | undefined;
     private writePreviewMarkdownExpanded = false;
+    private reviewRunning = false;
+    private reviewCancelHandler: (() => void) | null = null;
     private pendingWritePreview: {
         spec: PreviewSpec;
         resolve: (result: PreviewShowResult) => void;
@@ -156,6 +159,9 @@ export class PageletView extends ItemView {
         this.scopeRangeEl = null;
         this.scopeListEl = null;
         this.reviewButtonEl = null;
+        this.cancelReviewButtonEl = null;
+        this.reviewCancelHandler = null;
+        this.reviewRunning = false;
     }
 
     getScopeSelection(): PageletScopeSelection {
@@ -179,15 +185,26 @@ export class PageletView extends ItemView {
         this.setStatus("idle", this.t("pagelet.panel.status.idle", "Ready"));
     }
 
-    showReviewStarted(sourcePath: string): void {
+    showReviewStarted(sourcePath: string, options?: { onCancel?: () => void }): void {
         this.renderShell();
         this.clearReview();
+        this.reviewRunning = true;
+        this.reviewCancelHandler = options?.onCancel ?? null;
+        this.updateReviewButton();
+        this.updateCancelReviewButton();
         this.setStatus("thinking", this.t("pagelet.panel.status.thinking", "Reviewing current note..."));
         this.setSource(sourcePath);
     }
 
+    showReviewProgress(message: string): void {
+        this.renderShell();
+        if (!this.reviewRunning) return;
+        this.setStatus("thinking", message);
+    }
+
     showReviewResult(data: PageletPanelReviewData): void {
         this.renderShell();
+        this.clearReviewRunningState();
         this.settleWritePreview({ outcome: "cancelled" });
         this.clearWritePreview();
         this.currentReview = data;
@@ -209,6 +226,7 @@ export class PageletView extends ItemView {
 
     showReviewSaved(targetPath: string, costSummary: PageletCostSummary): void {
         this.renderShell();
+        this.clearReviewRunningState();
         this.clearWritePreview();
         this.setStatus("done", this.t("pagelet.panel.status.saved", "Review note saved"));
         this.renderCost(costSummary);
@@ -218,12 +236,14 @@ export class PageletView extends ItemView {
 
     showReviewNotSaved(): void {
         this.renderShell();
+        this.clearReviewRunningState();
         this.clearWritePreview();
         this.setStatus("done", this.t("pagelet.panel.status.notSaved", "Suggestions ready; note not saved"));
     }
 
     showReviewEmpty(sourcePath: string): void {
         this.renderShell();
+        this.clearReviewRunningState();
         this.clearReview();
         this.setStatus("done", this.t("pagelet.panel.status.empty", "No suggestions worth saving"));
         this.setSource(sourcePath);
@@ -231,12 +251,14 @@ export class PageletView extends ItemView {
 
     showReviewAborted(sourcePath: string): void {
         this.renderShell();
+        this.clearReviewRunningState();
         this.setStatus("idle", this.t("pagelet.panel.status.aborted", "Review stopped"));
         this.setSource(sourcePath);
     }
 
     showReviewError(message: string, sourcePath?: string): void {
         this.renderShell();
+        this.clearReviewRunningState();
         this.clearReview();
         this.setStatus("error", message);
         if (sourcePath) this.setSource(sourcePath);
@@ -292,7 +314,15 @@ export class PageletView extends ItemView {
             void this.plugin.runPageletReviewForPageletScope();
         });
         this.reviewButtonEl = reviewButton;
+
+        const cancelButton = this.createEl("button", "pa-pagelet-button pa-pagelet-review-stop", actions, this.t("pagelet.panel.action.stopReview", "Stop"));
+        cancelButton.setAttribute("type", "button");
+        cancelButton.addEventListener("click", () => {
+            this.reviewCancelHandler?.();
+        });
+        this.cancelReviewButtonEl = cancelButton;
         this.updateReviewButton();
+        this.updateCancelReviewButton();
 
         this.scopeEl = this.createEl("section", "pa-pagelet-scope", root);
         this.renderScope();
@@ -429,6 +459,7 @@ export class PageletView extends ItemView {
 
     private clearReview(): void {
         this.settleWritePreview({ outcome: "cancelled" });
+        this.clearReviewRunningState();
         this.currentReview = null;
         this.sourceReferences.clear();
         this.dismissedKeys.clear();
@@ -484,7 +515,22 @@ export class PageletView extends ItemView {
         this.reviewButtonEl.textContent = label;
         this.reviewButtonEl.setAttribute("title", description);
         this.reviewButtonEl.setAttribute("aria-label", description);
-        this.reviewButtonEl.disabled = count === 0;
+        this.reviewButtonEl.disabled = this.reviewRunning || count === 0;
+    }
+
+    private updateCancelReviewButton(): void {
+        if (!this.cancelReviewButtonEl) return;
+        const visible = this.reviewRunning && this.reviewCancelHandler !== null;
+        this.cancelReviewButtonEl.hidden = !visible;
+        this.cancelReviewButtonEl.disabled = !visible;
+    }
+
+    private clearReviewRunningState(): void {
+        if (!this.reviewRunning && this.reviewCancelHandler === null) return;
+        this.reviewRunning = false;
+        this.reviewCancelHandler = null;
+        this.updateReviewButton();
+        this.updateCancelReviewButton();
     }
 
     private renderSummary(result: PageletReviewResult): void {

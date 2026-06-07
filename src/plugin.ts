@@ -37,6 +37,7 @@ import {
     PAGELET_VIEW_TYPE,
     PAGELET_REVIEW_CURRENT_COMMAND_ID,
     PageletCostTracker,
+    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
     PageletRateLimiter,
     PageletReviewModel,
     PageletView,
@@ -50,6 +51,8 @@ import {
     registerPageletReviewCurrentCommand,
     registerPageletRibbonIcon,
     type PageletReviewRange,
+    type PageletReviewProgressEvent,
+    type PageletReviewTimingEntry,
     type PageletScopeMetadataLike,
     type PageletScopePlan,
     type PageletScopeSelection,
@@ -63,6 +66,8 @@ import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settin
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
+const PAGELET_REVIEW_TIMEOUT_MS = 90_000;
+const PAGELET_PRODUCTION_MAX_RETRIES = 0;
 
 interface TechnicalMemoryDetail {
     label: string;
@@ -744,8 +749,38 @@ export class PluginManager extends Plugin {
         const file = options.primaryFile;
         const pageletView = await this.activePageletView();
         const sourceLabel = options.files.length === 1 ? options.files[0].path : `${options.files.length} notes`;
-        pageletView?.showReviewStarted(sourceLabel);
+        const runStartedAt = Date.now();
+        const timings: PageletReviewTimingEntry[] = [];
         const abortController = new AbortController();
+        let abortReason: "user" | "source_changed" | undefined;
+        const abortReview = (reason: "user" | "source_changed") => {
+            abortReason ??= reason;
+            abortController.abort();
+        };
+        const recordTiming = (
+            phase: string,
+            startedAt: number,
+            metadata?: Record<string, unknown>,
+        ) => {
+            timings.push({
+                phase,
+                elapsedMs: Math.max(0, Date.now() - startedAt),
+                metadata: {
+                    source: "plugin",
+                    ...(metadata ?? {}),
+                },
+            });
+        };
+        const mergeOutcomeTimings = (diagnostics: { timings?: PageletReviewTimingEntry[] }) => {
+            diagnostics.timings = [
+                ...timings,
+                ...(diagnostics.timings ?? []).filter((entry) =>
+                    (entry.metadata as { source?: unknown } | undefined)?.source !== "plugin"),
+            ];
+        };
+        pageletView?.showReviewStarted(sourceLabel, {
+            onCancel: () => abortReview("user"),
+        });
         const abortIfSourceViewChanged = () => {
             if (!options.abortOnActiveViewChange) return;
             const currentView = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -753,7 +788,7 @@ export class PluginManager extends Plugin {
                 currentView !== options.abortOnActiveViewChange.view
                 || currentView.file?.path !== options.abortOnActiveViewChange.path
             ) {
-                abortController.abort();
+                abortReview("source_changed");
             }
         };
         const activeLeafRef = this.app.workspace.on("active-leaf-change", abortIfSourceViewChanged);
@@ -771,14 +806,42 @@ export class PluginManager extends Plugin {
         new Notice(pageletT("pagelet.mascot.thinking", locale), 2000);
 
         try {
+            pageletView?.showReviewProgress(pageletT("pagelet.panel.status.reading", locale));
+            const readStartedAt = Date.now();
             const entries = await this.readPageletScopeEntries(options.files);
+            recordTiming("read_scope_entries", readStartedAt, {
+                requestedFileCount: options.files.length,
+                loadedEntryCount: entries.length,
+            });
+            if (abortController.signal.aborted) {
+                recordTiming("aborted", runStartedAt, { reason: abortReason ?? "user" });
+                this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
+                pageletView?.showReviewAborted(file.path);
+                return;
+            }
+            pageletView?.showReviewProgress(pageletT("pagelet.panel.status.preparing", locale));
+            const bundleStartedAt = Date.now();
             const bundle = buildPageletScopeReviewBundle({
                 entries,
                 primarySourcePath: file.path,
                 range: options.range,
                 settings: this.settings.pagelet,
                 uiLanguage: locale,
+                targetSuggestionCount: Math.min(
+                    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
+                    this.settings.previewLimits,
+                ),
             });
+            recordTiming("build_scope_bundle", bundleStartedAt, {
+                hasBundle: Boolean(bundle),
+                range: options.range,
+            });
+            if (abortController.signal.aborted) {
+                recordTiming("aborted", runStartedAt, { reason: abortReason ?? "user" });
+                this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
+                pageletView?.showReviewAborted(file.path);
+                return;
+            }
             if (!bundle) {
                 pageletView?.showReviewEmpty(file.path);
                 new Notice(pageletT("pagelet.trigger.emptyNote", locale), 3000);
@@ -803,15 +866,39 @@ export class PluginManager extends Plugin {
                     providerForPricing: this.settings.aiProvider,
                     modelForPricing: this.settings.chatModelName,
                     userMessageLocale: locale,
+                    reviewTimeoutMs: PAGELET_REVIEW_TIMEOUT_MS,
+                    maxRetries: PAGELET_PRODUCTION_MAX_RETRIES,
+                    onProgress: (event) => {
+                        pageletView?.showReviewProgress(
+                            this.formatPageletReviewProgress(event, locale),
+                        );
+                    },
                 },
             );
+            const llmStartedAt = Date.now();
             const outcome = await reviewModel.reviewNote(bundle.input, abortController.signal);
+            recordTiming("llm_review", llmStartedAt, {
+                status: outcome.status,
+                path: outcome.diagnostics.path,
+                attempts: outcome.diagnostics.attempts,
+                modelElapsedMs: outcome.diagnostics.elapsedMs,
+                timeoutMs: PAGELET_REVIEW_TIMEOUT_MS,
+                maxRetries: PAGELET_PRODUCTION_MAX_RETRIES,
+            });
+            mergeOutcomeTimings(outcome.diagnostics);
+            if (abortReason) {
+                this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
+                pageletView?.showReviewAborted(file.path);
+                return;
+            }
             if (outcome.status === "error") {
+                this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
                 pageletView?.showReviewError(outcome.userMessage, file.path);
                 new Notice(outcome.userMessage, 6000);
                 return;
             }
             if (outcome.status === "empty") {
+                this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
                 pageletView?.showReviewEmpty(file.path);
                 new Notice(pageletT("pagelet.trigger.noSuggestions", locale), 4000);
                 return;
@@ -822,12 +909,23 @@ export class PluginManager extends Plugin {
             }
 
             const date = new Date();
+            const targetPathStartedAt = Date.now();
             const targetPath = await mintNonCollidingReviewNotePath({
                 adapter: this.app.vault.adapter,
                 sourcePath: file.path,
                 settings: pageletSettings,
                 date,
             });
+            recordTiming("mint_target_path", targetPathStartedAt, { targetPath });
+            mergeOutcomeTimings(outcome.diagnostics);
+            this.logPageletReviewTiming(
+                sourceLabel,
+                options,
+                timings,
+                outcome.diagnostics,
+                runStartedAt,
+                "suggestions_ready",
+            );
             pageletView?.showReviewResult({
                 sourcePath: bundle.sourceLabel,
                 targetPath,
@@ -837,6 +935,7 @@ export class PluginManager extends Plugin {
                 sourceReferences: bundle.sourceReferences,
                 sourcePaths: bundle.sourcePaths,
             });
+            const writeStartedAt = Date.now();
             const writeResult = await runtime.actionExecutor.execute(
                 runtime.toolProvider.capability,
                 {
@@ -859,6 +958,12 @@ export class PluginManager extends Plugin {
                     signal: abortController.signal,
                 },
             );
+            recordTiming("write_action", writeStartedAt, {
+                status: writeResult.status,
+                includesUserConfirmation: true,
+            });
+            mergeOutcomeTimings(outcome.diagnostics);
+            this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
             if (writeResult.status === "ok") {
                 pageletView?.showReviewSaved(targetPath, this.pageletCostTracker.getSummary());
                 new Notice(pageletT("pagelet.mascot.done", locale), 4000);
@@ -879,7 +984,14 @@ export class PluginManager extends Plugin {
                 6000,
             );
         } catch (error) {
+            if (abortReason) {
+                recordTiming("aborted", runStartedAt, { reason: abortReason });
+                this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
+                pageletView?.showReviewAborted(file.path);
+                return;
+            }
             this.log("Pagelet review failed", error);
+            this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
             pageletView?.showReviewError(pageletT("pagelet.mascot.error", locale), file.path);
             new Notice(pageletT("pagelet.mascot.error", locale), 6000);
         } finally {
@@ -896,6 +1008,63 @@ export class PluginManager extends Plugin {
      */
     private getPageletLocale(): "zh" | "en" {
         return getPageletUiLanguage();
+    }
+
+    private formatPageletReviewProgress(
+        event: PageletReviewProgressEvent,
+        locale: "zh" | "en",
+    ): string {
+        switch (event.phase) {
+            case "cost_precheck":
+                return pageletT("pagelet.panel.status.checkingLimits", locale);
+            case "rate_limit":
+                return pageletT("pagelet.panel.status.checkingRateLimit", locale);
+            case "model_setup":
+                return pageletT("pagelet.panel.status.settingUpModel", locale);
+            case "structured_attempt":
+                return pageletT("pagelet.panel.status.generatingAttempt", locale, {
+                    attempt: event.attempt ?? 1,
+                    max: event.maxAttempts ?? 1,
+                });
+            case "json_mode_attempt":
+                return pageletT("pagelet.panel.status.generatingFallbackAttempt", locale, {
+                    attempt: event.attempt ?? 1,
+                    max: event.maxAttempts ?? 1,
+                });
+            case "json_mode_fallback":
+                return pageletT("pagelet.panel.status.generatingFallback", locale);
+        }
+    }
+
+    private logPageletReviewTiming(
+        sourceLabel: string,
+        options: {
+            files: readonly TFile[];
+            range: PageletReviewRange;
+        },
+        timings: readonly PageletReviewTimingEntry[],
+        diagnostics: {
+            timings?: readonly PageletReviewTimingEntry[];
+            elapsedMs?: number;
+            totalElapsedMs?: number;
+            attempts?: number;
+            path?: string;
+        } | undefined,
+        startedAt: number,
+        stage = "final",
+    ): void {
+        this.log("Pagelet review timing", {
+            stage,
+            sourceLabel,
+            range: options.range,
+            fileCount: options.files.length,
+            totalElapsedMs: Math.max(0, Date.now() - startedAt),
+            llmElapsedMs: diagnostics?.elapsedMs,
+            modelTotalElapsedMs: diagnostics?.totalElapsedMs,
+            attempts: diagnostics?.attempts,
+            path: diagnostics?.path,
+            timings: diagnostics?.timings ?? timings,
+        });
     }
 
     async onunload() {
