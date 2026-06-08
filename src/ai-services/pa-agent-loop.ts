@@ -1,12 +1,10 @@
 import {
     AgentLifecycleEventEmitter,
 } from "./agent-runtime-primitives";
-import { errorMessage, stableStringify } from "./agent-utils";
-import type { AgentCapabilityExecutionMode } from "./capability-types";
+import { errorMessage } from "./agent-utils";
 import {
     deriveContinuedAgentControlSnapshot,
     summarizeAgentControlSnapshot,
-    toolConstraintsFromAgentControlSnapshot,
     type AgentControlSnapshot,
 } from "./pa-agent-control-policy";
 import type {
@@ -19,22 +17,40 @@ import type {
     TurnEndStatus,
     UserMessageContent,
 } from "./chat-types";
+import { ModelChunkConsumer, appendTextPart } from "./pa-agent-chunk-consumer";
+import {
+    ToolExecutionDispatcher,
+    defaultIncludeInNextPrompt,
+    hasMeaningfulStructuredToolInput,
+} from "./pa-agent-tool-dispatcher";
+import type {
+    BufferedToolCall,
+    PaAgentAfterTurnDecision,
+    PaAgentModelStreamChunk,
+    PaAgentToolCall,
+    PaAgentToolExecutionInput,
+    PaAgentToolExecutionMode,
+    PaAgentToolExecutionResult,
+    PaAgentToolExecutor,
+    PaAgentToolMode,
+    ParsedBufferedToolCall,
+    PolicyDecisionRaceResult,
+} from "./pa-agent-types";
 
-/**
- * Dispatch policy for a buffered tool-call batch (pi hybrid pattern).
- * - "sequential" (default): tools run one at a time, abort/wall-clock short-circuits remaining tools.
- *   Preserved as the default for backward compatibility with the v1 lifecycle plan tests.
- * - "parallel": all tools launch concurrently; abort cancels in-flight tools but each emits a toolResult.
- * - "hybrid": per-tool dispatch via `PaAgentToolExecutor.getExecutionMode`. If any tool in the batch reports
- *   "sequential" the whole batch runs serially; otherwise the batch runs in parallel.
- */
-export type PaAgentToolExecutionMode = "sequential" | "parallel" | "hybrid";
-
-export type PaAgentModelStreamChunk =
-    | { type: "thinking_delta"; text: string }
-    | { type: "text_delta"; text: string }
-    | { type: "toolcall_delta"; id?: string; name: string; input?: unknown; argsText?: string; index?: number }
-    | { type: "diagnostic"; diagnostic: Record<string, unknown> };
+/** @deprecated Import from `./pa-agent-types` instead. Will be removed in v2.5. */
+export type {
+    BufferedToolCall,
+    PaAgentAfterTurnDecision,
+    PaAgentModelStreamChunk,
+    PaAgentToolCall,
+    PaAgentToolExecutionInput,
+    PaAgentToolExecutionMode,
+    PaAgentToolExecutionResult,
+    PaAgentToolExecutor,
+    PaAgentToolMode,
+    ParsedBufferedToolCall,
+    PolicyDecisionRaceResult,
+} from "./pa-agent-types";
 
 export interface PaAgentModelInput {
     runId: string;
@@ -51,43 +67,6 @@ export interface PaAgentModelInput {
 export interface PaAgentModel {
     stream(input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk>;
 }
-
-export type PaAgentToolCall = Extract<AssistantMessagePart, { type: "toolCall" }> & {
-    id: string;
-    index: number;
-    rawInputText?: string;
-};
-
-export interface PaAgentToolExecutionInput {
-    runId: string;
-    turnId: string;
-    turnIndex: number;
-    userInput: string;
-    toolCall: PaAgentToolCall;
-    signal: AbortSignal;
-}
-
-export interface PaAgentToolExecutionResult {
-    outcome: ToolExecutionOutcome;
-    promptText: string;
-    previewText?: string;
-    includeInNextPrompt?: boolean;
-    sourceRecords?: PaToolResultContent["sourceRecords"];
-    contextUsed?: PaToolResultContent["contextUsed"];
-    metadata?: Record<string, unknown>;
-}
-
-export interface PaAgentToolExecutor {
-    execute(input: PaAgentToolExecutionInput): Promise<PaAgentToolExecutionResult>;
-    /**
-     * Optional hybrid-dispatch lookup. Returns the tool's preferred execution mode (defaults to "parallel"
-     * when omitted). When the loop is in "hybrid" mode, any tool returning "sequential" forces the whole
-     * batch to run serially.
-     */
-    getExecutionMode?(toolName: string): AgentCapabilityExecutionMode | undefined;
-}
-
-export type PaAgentToolMode = "normal" | "final_answer_only";
 
 export interface PaAgentTimingEntry {
     phase: string;
@@ -119,22 +98,6 @@ export interface PaAgentTurnTiming {
     preflightSkippedToolNames?: string[];
     toolOutcomes?: PaAgentTurnToolOutcome[];
 }
-
-export type PaAgentAfterTurnDecision =
-    | {
-        action: "continue";
-        reason: "tool_results_ready" | "needs_follow_up" | "corrective_turn";
-        runtimeInstruction?: string;
-        toolMode?: PaAgentToolMode;
-        controlSnapshot?: AgentControlSnapshot;
-    }
-    | {
-        action: "stop";
-        status?: AgentEndStatus;
-        reason: string;
-        warnings?: Array<Record<string, unknown>>;
-        diagnostics?: Array<Record<string, unknown>>;
-    };
 
 export interface PaAgentTurnSummary {
     turnId: string;
@@ -206,43 +169,49 @@ export class PaAgentLoop {
     private readonly now: () => number;
     private readonly createId: (prefix: string) => string;
     private readonly maxTurns: number;
-    private readonly maxToolCalls: number;
     private readonly maxObservationChars: number;
     private readonly assistantIdleTimeoutMs: number;
     private readonly maxWallClockMs: number;
-    private readonly toolTimeoutMs: number;
-    private readonly toolTimeoutOutcome: ToolExecutionOutcome;
-    private readonly toolAbortGraceMs: number;
     private readonly runStartedAt: number;
     private readonly startupTimings: readonly PaAgentTimingEntry[];
     private readonly transcript: PaAgentMessage[] = [];
     private readonly turns: PaAgentTurnSummary[] = [];
-    private readonly seenToolCallKeys = new Set<string>();
+    private readonly dispatcher: ToolExecutionDispatcher;
     private committedFinalText = "";
-    private toolCallCount = 0;
     private remainingObservationChars: number;
     private endPayload?: Record<string, unknown>;
-    private currentTurnToolMode: PaAgentToolMode | undefined;
-    private currentTurnControlSnapshot: AgentControlSnapshot | undefined;
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
         this.createId = options.createId ?? createIncrementingIdFactory();
         this.maxTurns = options.maxTurns ?? 20;
-        this.maxToolCalls = options.maxToolCalls ?? 30;
         this.maxObservationChars = options.maxObservationChars ?? 24_000;
         this.remainingObservationChars = this.maxObservationChars;
         this.assistantIdleTimeoutMs = options.assistantIdleTimeoutMs ?? 60_000;
         this.maxWallClockMs = options.maxWallClockMs ?? 180_000;
-        this.toolTimeoutMs = options.toolTimeoutMs ?? 30_000;
-        this.toolTimeoutOutcome = options.toolTimeoutOutcome ?? "recoverable_error";
-        this.toolAbortGraceMs = options.toolAbortGraceMs ?? 2_000;
         this.runStartedAt = this.now();
         this.startupTimings = options.startupTimings ?? [];
         this.events = new AgentLifecycleEventEmitter({
             runId: options.runId,
             now: this.now,
             onEvent: options.onEvent,
+        });
+        this.dispatcher = new ToolExecutionDispatcher({
+            toolExecutor: options.toolExecutor,
+            toolExecutionMode: options.toolExecutionMode ?? "sequential",
+            signal: options.signal,
+            runId: options.runId,
+            userInput: options.userInput,
+            toolTimeoutMs: options.toolTimeoutMs ?? 30_000,
+            toolTimeoutOutcome: options.toolTimeoutOutcome ?? "recoverable_error",
+            toolAbortGraceMs: options.toolAbortGraceMs ?? 2_000,
+            maxToolCalls: options.maxToolCalls ?? 30,
+            now: this.now,
+            isAborted: () => this.isAborted(),
+            isWallClockExceeded: () => this.isWallClockExceeded(),
+            wallClockRemainingMs: () => this.wallClockRemainingMs(),
+            events: this.events,
+            emitToolResult: (turnId, toolCall, result) => this.emitToolResult(turnId, toolCall, result),
         });
     }
 
@@ -324,8 +293,6 @@ export class PaAgentLoop {
         controlSnapshot?: AgentControlSnapshot,
     ): Promise<PaAgentTurnSummary> {
         const turnStartedAt = this.now();
-        this.currentTurnToolMode = toolMode;
-        this.currentTurnControlSnapshot = controlSnapshot;
         const turnId = this.createId("turn");
         this.events.turnStart(turnId, {
             turnIndex,
@@ -385,8 +352,18 @@ export class PaAgentLoop {
             diagnostics.push(providerErrorDiagnostic(error));
         }
 
-        while (iterator) {
-            const next = await this.nextModelChunk(iterator);
+        const consumer = iterator
+            ? new ModelChunkConsumer(iterator, {
+                signal: this.options.signal,
+                assistantIdleTimeoutMs: this.assistantIdleTimeoutMs,
+                isAborted: () => this.isAborted(),
+                isWallClockExceeded: () => this.isWallClockExceeded(),
+                wallClockRemainingMs: () => this.wallClockRemainingMs(),
+            })
+            : undefined;
+
+        while (consumer) {
+            const next = await consumer.nextChunk();
             if (next.type === "done") {
                 break;
             }
@@ -507,7 +484,9 @@ export class PaAgentLoop {
         let toolExecutionElapsedMs: number | undefined;
         if (hasToolCall && terminalStatus === undefined) {
             const toolExecutionStartedAt = this.now();
-            const execution = await this.executeBufferedToolCalls(turnId, turnIndex, toolCallBuffers);
+            const execution = await this.dispatcher.executeBufferedToolCalls(
+                turnId, turnIndex, toolCallBuffers, toolMode, controlSnapshot,
+            );
             toolExecutionElapsedMs = elapsedSince(toolExecutionStartedAt, this.now());
             toolResults.push(...execution.toolResults);
             diagnostics.push(...execution.diagnostics);
@@ -591,448 +570,6 @@ export class PaAgentLoop {
             timing: turnTiming,
             ...(controlSnapshot ? { controlSnapshot } : {}),
         };
-    }
-
-    private async executeBufferedToolCalls(
-        turnId: string,
-        turnIndex: number,
-        buffers: BufferedToolCall[],
-    ): Promise<ToolExecutionSummary> {
-        const parsedToolCalls = [...buffers]
-            .sort(compareBufferedToolCallOrder)
-            .map((buffer) => parseBufferedToolCall(buffer));
-        const dispatch = this.resolveBatchExecutionMode(parsedToolCalls);
-        if (dispatch === "parallel") {
-            return this.executeToolCallsParallel(turnId, turnIndex, parsedToolCalls);
-        }
-        return this.executeToolCallsSequential(turnId, turnIndex, parsedToolCalls);
-    }
-
-    private resolveBatchExecutionMode(parsedToolCalls: ParsedBufferedToolCall[]): "sequential" | "parallel" {
-        const requested: PaAgentToolExecutionMode = this.options.toolExecutionMode ?? "sequential";
-        if (requested === "sequential") return "sequential";
-        if (requested === "parallel") return "parallel";
-        // hybrid: per-tool dispatch — any tool reporting "sequential" forces the whole batch serial.
-        const executor = this.options.toolExecutor;
-        const getMode = executor?.getExecutionMode;
-        if (!executor || !getMode) return "parallel";
-        for (const toolCall of parsedToolCalls) {
-            if (getMode.call(executor, toolCall.name) === "sequential") {
-                return "sequential";
-            }
-        }
-        return "parallel";
-    }
-
-    private async executeToolCallsSequential(
-        turnId: string,
-        turnIndex: number,
-        parsedToolCalls: ParsedBufferedToolCall[],
-    ): Promise<ToolExecutionSummary> {
-        const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
-        const diagnostics: Array<Record<string, unknown>> = [];
-        const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
-
-        for (const toolCall of parsedToolCalls) {
-            if (this.isAborted()) {
-                return { toolResults, diagnostics, stoppedBy: "aborted" };
-            }
-            if (this.isWallClockExceeded()) {
-                return { toolResults, diagnostics, stoppedBy: "wall_clock_exceeded" };
-            }
-
-            this.events.toolExecutionStart(turnId, toolCall.id, toolCall.name, toolCall.input, {
-                index: toolCall.index,
-            });
-
-            const skipResult = this.classifyPreflightSkip(toolCall, meaningfulToolCallNames);
-            let executionResult: PaAgentToolExecutionResult;
-            if (skipResult) {
-                executionResult = skipResult;
-            } else {
-                this.seenToolCallKeys.add(normalizeToolCallKey(toolCall));
-                this.toolCallCount += 1;
-                executionResult = await this.executeRealToolCall(turnId, turnIndex, toolCall);
-            }
-
-            const toolResult = this.emitToolResult(turnId, toolCall, executionResult);
-            toolResults.push(toolResult);
-
-            if (executionResult.metadata?.stoppedBy === "wall_clock_exceeded") {
-                return { toolResults, diagnostics, stoppedBy: "wall_clock_exceeded" };
-            }
-            if (executionResult.outcome === "aborted" || executionResult.outcome === "abort_timeout") {
-                return { toolResults, diagnostics, stoppedBy: "aborted" };
-            }
-        }
-
-        return { toolResults, diagnostics };
-    }
-
-    private async executeToolCallsParallel(
-        turnId: string,
-        turnIndex: number,
-        parsedToolCalls: ParsedBufferedToolCall[],
-    ): Promise<ToolExecutionSummary> {
-        const toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>> = [];
-        const diagnostics: Array<Record<string, unknown>> = [];
-
-        if (this.isAborted()) {
-            return { toolResults, diagnostics, stoppedBy: "aborted" };
-        }
-        if (this.isWallClockExceeded()) {
-            return { toolResults, diagnostics, stoppedBy: "wall_clock_exceeded" };
-        }
-
-        const meaningfulToolCallNames = collectMeaningfulToolCallNames(parsedToolCalls);
-        // Pre-flight pass: classify each tool call in deterministic order so state mutations
-        // (seenToolCallKeys, toolCallCount) mirror the sequential path. Only the "real" executes run concurrently.
-        const entries: ParallelToolEntry[] = [];
-        for (const toolCall of parsedToolCalls) {
-            const skipResult = this.classifyPreflightSkip(toolCall, meaningfulToolCallNames);
-            if (skipResult) {
-                entries.push({ toolCall, skipResult });
-                continue;
-            }
-            this.seenToolCallKeys.add(normalizeToolCallKey(toolCall));
-            this.toolCallCount += 1;
-            entries.push({ toolCall });
-        }
-
-        for (const entry of entries) {
-            this.events.toolExecutionStart(turnId, entry.toolCall.id, entry.toolCall.name, entry.toolCall.input, {
-                index: entry.toolCall.index,
-            });
-        }
-
-        const pending: Array<Promise<PaAgentToolExecutionResult>> = entries.map((entry) =>
-            entry.skipResult !== undefined
-                ? Promise.resolve(entry.skipResult)
-                : this.executeRealToolCall(turnId, turnIndex, entry.toolCall),
-        );
-        const results = await Promise.all(pending);
-
-        let stoppedBy: "aborted" | "wall_clock_exceeded" | undefined;
-        for (let i = 0; i < entries.length; i++) {
-            const executionResult = results[i];
-            const toolResult = this.emitToolResult(turnId, entries[i].toolCall, executionResult);
-            toolResults.push(toolResult);
-            if (stoppedBy === undefined) {
-                if (executionResult.metadata?.stoppedBy === "wall_clock_exceeded") {
-                    stoppedBy = "wall_clock_exceeded";
-                } else if (executionResult.outcome === "aborted" || executionResult.outcome === "abort_timeout") {
-                    stoppedBy = "aborted";
-                }
-            }
-        }
-
-        return { toolResults, diagnostics, ...(stoppedBy ? { stoppedBy } : {}) };
-    }
-
-    private classifyPreflightSkip(
-        toolCall: ParsedBufferedToolCall,
-        meaningfulToolCallNames: Set<string>,
-    ): PaAgentToolExecutionResult | null {
-        // Ops Agent prerequisite: when toolMode=final_answer_only, the runtime exports zero tool
-        // schemas (see pa-agent-runtime.ts `tool_definitions: input.toolMode === "final_answer_only" ? []`)
-        // and the answer-completion policy expects the model to produce a final answer. If a model
-        // still emits a tool call (hallucinated against the empty schema list, or a malformed
-        // provider response), reject it hard rather than executing — same fail-loud spirit as
-        // SPEC-TCR-04. Must run before any other classifyPreflightSkip branch so the rejection
-        // surfaces even when the call is also a duplicate / over-budget / schema-invalid.
-        if (this.currentTurnToolMode === "final_answer_only") {
-            return {
-                outcome: "policy_rejected",
-                promptText: `Tool call ${toolCall.name} was not executed because this turn is final_answer_only. Produce a final answer from the existing observations.`,
-                previewText: `Skipped ${toolCall.name}; toolMode=final_answer_only.`,
-                metadata: {
-                    outcome: "policy_rejected",
-                    reason: "final_answer_only_violation",
-                    toolName: toolCall.name,
-                    preflightOnly: true,
-                },
-            };
-        }
-        const controlSnapshotSkip = this.classifyControlSnapshotSkip(toolCall);
-        if (controlSnapshotSkip) return controlSnapshotSkip;
-        if (isPlaceholderParsedToolCall(toolCall) && meaningfulToolCallNames.has(toolCall.name)) {
-            return {
-                outcome: "duplicate_skipped",
-                promptText: "",
-                previewText: `Skipped placeholder tool call ${toolCall.name}.`,
-                includeInNextPrompt: false,
-                metadata: {
-                    outcome: "duplicate_skipped",
-                    reason: "placeholder_tool_call",
-                },
-            };
-        }
-        if (this.toolCallCount >= this.maxToolCalls) {
-            return {
-                outcome: "budget_exceeded",
-                promptText: `Tool call budget exceeded before running ${toolCall.name}.`,
-                previewText: `Skipped ${toolCall.name}; maxToolCalls=${this.maxToolCalls}.`,
-                metadata: {
-                    outcome: "budget_exceeded",
-                    maxToolCalls: this.maxToolCalls,
-                },
-            };
-        }
-        if (toolCall.parseError) {
-            return {
-                outcome: "schema_invalid",
-                promptText: `Tool call ${toolCall.name} was not executed because its input JSON is invalid.`,
-                previewText: toolCall.parseError,
-                metadata: {
-                    outcome: "schema_invalid",
-                    reason: "invalid_tool_input",
-                    parseError: toolCall.parseError,
-                },
-            };
-        }
-        const toolCallKey = normalizeToolCallKey(toolCall);
-        if (this.seenToolCallKeys.has(toolCallKey)) {
-            return {
-                outcome: "duplicate_skipped",
-                promptText: "",
-                previewText: `Skipped duplicate tool call ${toolCall.name}.`,
-                includeInNextPrompt: false,
-                metadata: {
-                    outcome: "duplicate_skipped",
-                    reason: "duplicate_tool_call",
-                },
-            };
-        }
-        return null;
-    }
-
-    private classifyControlSnapshotSkip(toolCall: ParsedBufferedToolCall): PaAgentToolExecutionResult | null {
-        const snapshot = this.currentTurnControlSnapshot;
-        const constraints = toolConstraintsFromAgentControlSnapshot(snapshot);
-        if (!snapshot || !constraints) return null;
-        const notAllowed = constraints.allowedToolNames !== undefined
-            && !constraints.allowedToolNames.has(toolCall.name);
-        const blocked = constraints.blockedToolNames?.has(toolCall.name) === true;
-        if (!notAllowed && !blocked) return null;
-        const reason = blocked ? "control_snapshot_tool_blocked" : "control_snapshot_tool_not_allowed";
-        return {
-            outcome: "policy_rejected",
-            promptText: `Tool call ${toolCall.name} was not executed because it is outside the current allowed tool scope. Use available tools or answer from existing observations.`,
-            previewText: `Skipped ${toolCall.name}; ${reason}.`,
-            metadata: {
-                outcome: "policy_rejected",
-                reason,
-                toolName: toolCall.name,
-                preflightOnly: true,
-                exposureMode: snapshot.exposureMode,
-                sourceScope: snapshot.sourceScope,
-                ...(snapshot.blockedReasons[toolCall.name] ? { blockedReason: snapshot.blockedReasons[toolCall.name] } : {}),
-                ...(constraints.allowedToolNames ? { allowedToolNames: [...constraints.allowedToolNames].sort() } : {}),
-                ...(constraints.blockedToolNames ? { blockedToolNames: [...constraints.blockedToolNames].sort() } : {}),
-            },
-        };
-    }
-
-    private async executeRealToolCall(
-        turnId: string,
-        turnIndex: number,
-        toolCall: ParsedBufferedToolCall,
-    ): Promise<PaAgentToolExecutionResult> {
-        const startedAt = this.now();
-        const finalize = (result: PaAgentToolExecutionResult): PaAgentToolExecutionResult =>
-            this.withToolExecutionTiming(result, startedAt);
-        if (!this.options.toolExecutor) {
-            return finalize({
-                outcome: "recoverable_error",
-                promptText: `Tool ${toolCall.name} could not run because no executor is available.`,
-                metadata: { outcome: "recoverable_error", reason: "missing_tool_executor" },
-            });
-        }
-
-        const controller = new AbortController();
-        const onAbort = () => controller.abort();
-        this.options.signal?.addEventListener("abort", onAbort, { once: true });
-        if (this.options.signal?.aborted) {
-            controller.abort();
-        }
-
-        const interrupt = this.createToolInterruptPromise(controller);
-        const executionPromise: Promise<ToolExecutionRaceResult> = Promise.resolve().then(() =>
-            this.options.toolExecutor!.execute({
-                runId: this.options.runId,
-                turnId,
-                turnIndex,
-                userInput: this.options.userInput,
-                toolCall,
-                signal: controller.signal,
-            }),
-        ).then(
-            (result) => ({ type: "completed" as const, result }),
-            (error) => ({ type: "rejected" as const, error }),
-        );
-
-        try {
-            const first = await Promise.race([executionPromise, interrupt.promise]);
-            interrupt.cleanup();
-
-            switch (first.type) {
-                case "completed":
-                    return finalize(normalizeToolExecutionResult(first.result));
-                case "rejected":
-                    return finalize(this.toolExceptionResult(toolCall, first.error));
-                case "tool_timeout":
-                    return finalize({
-                        outcome: this.toolTimeoutOutcome,
-                        promptText: `Tool ${toolCall.name} timed out.`,
-                        previewText: `Timed out after ${this.toolTimeoutMs}ms.`,
-                        metadata: {
-                            outcome: this.toolTimeoutOutcome,
-                            reason: "tool_timeout",
-                            timeoutMs: this.toolTimeoutMs,
-                        },
-                    });
-                case "aborted":
-                case "wall_clock_exceeded":
-                    return finalize(await this.waitForInterruptedTool(first.type, executionPromise));
-                case "abort_timeout":
-                    return finalize({
-                        outcome: "abort_timeout",
-                        promptText: "",
-                        includeInNextPrompt: false,
-                        metadata: {
-                            outcome: "abort_timeout",
-                            reason: "user_abort",
-                            stoppedBy: "aborted",
-                        },
-                    });
-            }
-            return finalize({
-                outcome: "recoverable_error",
-                promptText: `Tool ${toolCall.name} ended with an unknown runtime state.`,
-                metadata: { outcome: "recoverable_error", reason: "unknown_tool_runtime_state" },
-            });
-        } finally {
-            interrupt.cleanup();
-            this.options.signal?.removeEventListener("abort", onAbort);
-        }
-    }
-
-    private withToolExecutionTiming(
-        result: PaAgentToolExecutionResult,
-        startedAt: number,
-    ): PaAgentToolExecutionResult {
-        return {
-            ...result,
-            metadata: {
-                ...result.metadata,
-                executionElapsedMs: Math.max(0, this.now() - startedAt),
-            },
-        };
-    }
-
-    private toolExceptionResult(
-        toolCall: ParsedBufferedToolCall,
-        error: unknown,
-    ): PaAgentToolExecutionResult {
-        if (this.isAborted()) {
-            return {
-                outcome: "aborted",
-                promptText: "",
-                includeInNextPrompt: false,
-                metadata: { outcome: "aborted", reason: "user_abort" },
-            };
-        }
-        return {
-            outcome: "recoverable_error",
-            promptText: `Tool ${toolCall.name} failed: ${error instanceof Error ? error.message : String(error)}`,
-            previewText: error instanceof Error ? error.message : String(error),
-            metadata: {
-                outcome: "recoverable_error",
-                reason: "tool_exception",
-            },
-        };
-    }
-
-    private async waitForInterruptedTool(
-        interruptedBy: "aborted" | "wall_clock_exceeded",
-        executionPromise: Promise<ToolExecutionRaceResult>,
-    ): Promise<PaAgentToolExecutionResult> {
-        const graceResult = await Promise.race([
-            executionPromise,
-            delay(this.toolAbortGraceMs).then<ToolExecutionRaceResult>(() => ({ type: "abort_timeout" })),
-        ]);
-        const reason = interruptedBy === "wall_clock_exceeded" ? "wall_clock_exceeded" : "user_abort";
-        const stoppedBy = interruptedBy === "wall_clock_exceeded" ? "wall_clock_exceeded" : "aborted";
-        if (graceResult.type === "abort_timeout") {
-            return {
-                outcome: "abort_timeout",
-                promptText: "",
-                includeInNextPrompt: false,
-                metadata: {
-                    outcome: "abort_timeout",
-                    reason,
-                    stoppedBy,
-                    toolAbortGraceMs: this.toolAbortGraceMs,
-                },
-            };
-        }
-        return {
-            outcome: "aborted",
-            promptText: "",
-            includeInNextPrompt: false,
-            metadata: {
-                outcome: "aborted",
-                reason,
-                stoppedBy,
-            },
-        };
-    }
-
-    private createToolInterruptPromise(controller: AbortController): {
-        promise: Promise<ToolExecutionRaceResult>;
-        cleanup: () => void;
-    } {
-        let settled = false;
-        let toolTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
-        let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-        let settle: (result: ToolExecutionRaceResult) => void = () => undefined;
-
-        const cleanup = () => {
-            if (toolTimeoutTimer !== undefined) {
-                clearTimeout(toolTimeoutTimer);
-            }
-            if (wallClockTimer !== undefined) {
-                clearTimeout(wallClockTimer);
-            }
-            this.options.signal?.removeEventListener("abort", onAbort);
-        };
-        const finish = (result: ToolExecutionRaceResult) => {
-            if (settled) return;
-            settled = true;
-            controller.abort();
-            settle(result);
-        };
-        const onAbort = () => finish({ type: "aborted" });
-
-        const promise = new Promise<ToolExecutionRaceResult>((resolve) => {
-            settle = resolve;
-            this.options.signal?.addEventListener("abort", onAbort, { once: true });
-
-            if (this.options.signal?.aborted) {
-                finish({ type: "aborted" });
-                return;
-            }
-
-            if (Number.isFinite(this.toolTimeoutMs) && this.toolTimeoutMs >= 0) {
-                toolTimeoutTimer = setTimeout(() => finish({ type: "tool_timeout" }), this.toolTimeoutMs);
-            }
-            const wallClockRemainingMs = this.wallClockRemainingMs();
-            if (wallClockRemainingMs !== undefined) {
-                wallClockTimer = setTimeout(() => finish({ type: "wall_clock_exceeded" }), wallClockRemainingMs);
-            }
-        });
-
-        return { promise, cleanup };
     }
 
     private emitToolResult(
@@ -1154,42 +691,6 @@ export class PaAgentLoop {
         };
     }
 
-    private createPolicyInterruptPromise(): {
-        promise: Promise<PolicyDecisionRaceResult>;
-        cleanup: () => void;
-    } {
-        let settled = false;
-        let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-        let settle: (result: PolicyDecisionRaceResult) => void = () => undefined;
-        const cleanup = () => {
-            if (wallClockTimer !== undefined) {
-                clearTimeout(wallClockTimer);
-            }
-            this.options.signal?.removeEventListener("abort", onAbort);
-        };
-        const finish = (result: PolicyDecisionRaceResult) => {
-            if (settled) return;
-            settled = true;
-            settle(result);
-        };
-        const onAbort = () => finish({ type: "aborted" });
-
-        const promise = new Promise<PolicyDecisionRaceResult>((resolve) => {
-            settle = resolve;
-            this.options.signal?.addEventListener("abort", onAbort, { once: true });
-            if (this.options.signal?.aborted) {
-                finish({ type: "aborted" });
-                return;
-            }
-            const wallClockRemainingMs = this.wallClockRemainingMs();
-            if (wallClockRemainingMs !== undefined) {
-                wallClockTimer = setTimeout(() => finish({ type: "wall_clock_exceeded" }), wallClockRemainingMs);
-            }
-        });
-
-        return { promise, cleanup };
-    }
-
     private endAgent(status: AgentEndStatus, payload: Record<string, unknown>): void {
         const elapsedMs = elapsedSince(this.runStartedAt, this.now());
         const emittedToolCallCount = this.turns.reduce((total, turn) => {
@@ -1210,7 +711,7 @@ export class PaAgentLoop {
                 elapsedMs,
                 turnCount: this.turns.length,
                 toolCallCount: emittedToolCallCount,
-                executedToolCallCount: this.toolCallCount,
+                executedToolCallCount: this.dispatcher.toolCallCount,
             },
         };
         this.endPayload = timedPayload;
@@ -1243,65 +744,6 @@ export class PaAgentLoop {
         };
     }
 
-    private async nextModelChunk(iterator: AsyncIterator<PaAgentModelStreamChunk>): Promise<NextModelChunkResult> {
-        if (this.isAborted()) return { type: "aborted" };
-        if (this.isWallClockExceeded()) return { type: "wall_clock_exceeded" };
-
-        return new Promise<NextModelChunkResult>((resolve) => {
-            let settled = false;
-            let idleTimer: ReturnType<typeof setTimeout> | undefined;
-            let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
-
-            const cleanup = () => {
-                if (idleTimer !== undefined) {
-                    clearTimeout(idleTimer);
-                }
-                if (wallClockTimer !== undefined) {
-                    clearTimeout(wallClockTimer);
-                }
-                this.options.signal?.removeEventListener("abort", onAbort);
-            };
-            const settle = (result: NextModelChunkResult) => {
-                if (settled) return;
-                settled = true;
-                cleanup();
-                resolve(result);
-            };
-            const onAbort = () => {
-                void iterator.return?.();
-                settle({ type: "aborted" });
-            };
-
-            this.options.signal?.addEventListener("abort", onAbort, { once: true });
-            if (Number.isFinite(this.assistantIdleTimeoutMs) && this.assistantIdleTimeoutMs > 0) {
-                idleTimer = setTimeout(() => {
-                    void iterator.return?.();
-                    settle({ type: "idle" });
-                }, this.assistantIdleTimeoutMs);
-            }
-            const wallClockRemainingMs = this.wallClockRemainingMs();
-            if (wallClockRemainingMs !== undefined) {
-                wallClockTimer = setTimeout(() => {
-                    void iterator.return?.();
-                    settle({ type: "wall_clock_exceeded" });
-                }, wallClockRemainingMs);
-            }
-
-            iterator.next().then(
-                (result) => {
-                    if (this.isWallClockExceeded()) {
-                        settle({ type: "wall_clock_exceeded" });
-                        return;
-                    }
-                    settle(result.done
-                        ? { type: "done" }
-                        : { type: "chunk", chunk: result.value });
-                },
-                (error) => settle({ type: "error", error }),
-            );
-        });
-    }
-
     private isAborted(): boolean {
         return this.options.signal?.aborted === true;
     }
@@ -1318,62 +760,36 @@ export class PaAgentLoop {
         }
         return Math.max(0, this.maxWallClockMs - (this.now() - this.runStartedAt));
     }
-}
 
-type NextModelChunkResult =
-    | { type: "chunk"; chunk: PaAgentModelStreamChunk }
-    | { type: "done" }
-    | { type: "idle" }
-    | { type: "aborted" }
-    | { type: "wall_clock_exceeded" }
-    | { type: "error"; error: unknown };
-
-type ToolExecutionRaceResult =
-    | { type: "completed"; result: PaAgentToolExecutionResult }
-    | { type: "rejected"; error: unknown }
-    | { type: "tool_timeout" }
-    | { type: "aborted" }
-    | { type: "wall_clock_exceeded" }
-    | { type: "abort_timeout" };
-
-type PolicyDecisionRaceResult =
-    | { type: "completed"; decision: PaAgentAfterTurnDecision }
-    | { type: "rejected"; error: unknown }
-    | { type: "aborted" }
-    | { type: "wall_clock_exceeded" };
-
-interface BufferedToolCall {
-    key: string;
-    id: string;
-    name: string;
-    index: number;
-    argsText: string;
-    input?: unknown;
-    hasStructuredInput: boolean;
-    partIndex: number;
-}
-
-type ParsedBufferedToolCall = PaAgentToolCall & {
-    parseError?: string;
-};
-
-interface ToolExecutionSummary {
-    toolResults: Array<Extract<PaAgentMessage, { role: "toolResult" }>>;
-    diagnostics: Array<Record<string, unknown>>;
-    stoppedBy?: "aborted" | "wall_clock_exceeded";
-}
-
-interface ParallelToolEntry {
-    toolCall: ParsedBufferedToolCall;
-    skipResult?: PaAgentToolExecutionResult;
-}
-
-function collectMeaningfulToolCallNames(parsedToolCalls: ParsedBufferedToolCall[]): Set<string> {
-    return new Set(
-        parsedToolCalls
-            .filter(isMeaningfulParsedToolCall)
-            .map((toolCall) => toolCall.name),
-    );
+    private createPolicyInterruptPromise(): {
+        promise: Promise<PolicyDecisionRaceResult>;
+        cleanup: () => void;
+    } {
+        let settled = false;
+        let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+        let settle: (result: PolicyDecisionRaceResult) => void = () => undefined;
+        const cleanup = () => {
+            if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
+            this.options.signal?.removeEventListener("abort", onAbort);
+        };
+        const finish = (result: PolicyDecisionRaceResult) => {
+            if (settled) return;
+            settled = true;
+            cleanup();
+            settle(result);
+        };
+        const onAbort = () => finish({ type: "aborted" });
+        const promise = new Promise<PolicyDecisionRaceResult>((resolve) => {
+            settle = resolve;
+            this.options.signal?.addEventListener("abort", onAbort, { once: true });
+            if (this.options.signal?.aborted) { finish({ type: "aborted" }); return; }
+            const remaining = this.wallClockRemainingMs();
+            if (remaining !== undefined) {
+                wallClockTimer = setTimeout(() => finish({ type: "wall_clock_exceeded" }), remaining);
+            }
+        });
+        return { promise, cleanup };
+    }
 }
 
 function providerErrorDiagnostic(error: unknown): Record<string, unknown> {
@@ -1394,15 +810,6 @@ function elapsedSince(startedAt: number, endedAt: number): number {
     return Math.max(0, endedAt - startedAt);
 }
 
-function appendTextPart(parts: AssistantMessagePart[], type: "thinking" | "text", text: string): void {
-    const last = parts.at(-1);
-    if (last?.type === type) {
-        last.text += text;
-        return;
-    }
-    parts.push({ type, text });
-}
-
 function reclassifyTextPartsAsThinking(parts: AssistantMessagePart[]): void {
     for (let index = 0; index < parts.length; index++) {
         const part = parts[index];
@@ -1414,10 +821,6 @@ function reclassifyTextPartsAsThinking(parts: AssistantMessagePart[]): void {
 
 function isToolCallPart(part: AssistantMessagePart | undefined): part is Extract<AssistantMessagePart, { type: "toolCall" }> {
     return part?.type === "toolCall";
-}
-
-function compareBufferedToolCallOrder(a: BufferedToolCall, b: BufferedToolCall): number {
-    return a.index - b.index || a.partIndex - b.partIndex;
 }
 
 function upsertToolCallBuffer(
@@ -1473,16 +876,6 @@ function upsertToolCallBuffer(
     return { buffer, isNew };
 }
 
-function hasMeaningfulStructuredToolInput(input: unknown): boolean {
-    if (input === null || input === undefined) return false;
-    if (typeof input === "string") return input.trim().length > 0;
-    if (Array.isArray(input)) return input.some(hasMeaningfulStructuredToolInput);
-    if (typeof input === "object") {
-        return Object.values(input as Record<string, unknown>).some(hasMeaningfulStructuredToolInput);
-    }
-    return true;
-}
-
 function createToolCallBufferKey(
     chunk: Extract<PaAgentModelStreamChunk, { type: "toolcall_delta" }>,
     fallbackIndex: number,
@@ -1490,93 +883,6 @@ function createToolCallBufferKey(
     if (chunk.id) return `id:${chunk.id}`;
     if (chunk.index !== undefined) return `index:${chunk.index}`;
     return `order:${fallbackIndex}`;
-}
-
-function parseBufferedToolCall(buffer: BufferedToolCall): ParsedBufferedToolCall {
-    const rawInputText = buffer.argsText;
-    const trimmed = rawInputText.trim();
-    if (trimmed.length > 0) {
-        try {
-            const parsed = JSON.parse(trimmed) as unknown;
-            if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-                if (hasMeaningfulStructuredToolInput(parsed) || !buffer.hasStructuredInput) {
-                    return {
-                        type: "toolCall",
-                        id: buffer.id,
-                        name: buffer.name,
-                        input: parsed,
-                        index: buffer.index,
-                        rawInputText,
-                    };
-                }
-            } else if (!buffer.hasStructuredInput) {
-                return {
-                    type: "toolCall",
-                    id: buffer.id,
-                    name: buffer.name,
-                    input: rawInputText,
-                    index: buffer.index,
-                    rawInputText,
-                    parseError: "Tool call input JSON must be an object.",
-                };
-            }
-        } catch (error) {
-            if (!buffer.hasStructuredInput) {
-                return {
-                    type: "toolCall",
-                    id: buffer.id,
-                    name: buffer.name,
-                    input: rawInputText,
-                    index: buffer.index,
-                    rawInputText,
-                    parseError: error instanceof Error ? error.message : String(error),
-                };
-            }
-        }
-    }
-
-    if (buffer.hasStructuredInput) {
-        return {
-            type: "toolCall",
-            id: buffer.id,
-            name: buffer.name,
-            input: buffer.input,
-            index: buffer.index,
-            rawInputText: buffer.argsText || undefined,
-        };
-    }
-
-    if (trimmed.length === 0) {
-        return {
-            type: "toolCall",
-            id: buffer.id,
-            name: buffer.name,
-            input: {},
-            index: buffer.index,
-        };
-    }
-
-    return {
-        type: "toolCall",
-        id: buffer.id,
-        name: buffer.name,
-        input: rawInputText,
-        index: buffer.index,
-        rawInputText,
-        parseError: "Tool call input JSON must be an object.",
-    };
-}
-
-function isMeaningfulParsedToolCall(toolCall: ParsedBufferedToolCall): boolean {
-    return !toolCall.parseError && hasMeaningfulStructuredToolInput(toolCall.input);
-}
-
-function isPlaceholderParsedToolCall(toolCall: ParsedBufferedToolCall): boolean {
-    return !toolCall.parseError && !hasMeaningfulStructuredToolInput(toolCall.input);
-}
-
-function normalizeToolCallKey(toolCall: ParsedBufferedToolCall): string {
-    return `${toolCall.name}:${stableStringify(toolCall.input)}`;
 }
 
 function summarizeTurnToolTiming(
@@ -1625,32 +931,6 @@ function readMetadataNumber(metadata: Record<string, unknown> | undefined, key: 
     return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
-function normalizeToolExecutionResult(result: PaAgentToolExecutionResult): PaAgentToolExecutionResult {
-    return {
-        ...result,
-        includeInNextPrompt: result.includeInNextPrompt ?? defaultIncludeInNextPrompt(result.outcome),
-        metadata: {
-            outcome: result.outcome,
-            ...result.metadata,
-        },
-    };
-}
-
-function defaultIncludeInNextPrompt(outcome: ToolExecutionOutcome): boolean {
-    switch (outcome) {
-        case "success":
-        case "recoverable_error":
-        case "schema_invalid":
-        case "policy_rejected":
-        case "budget_exceeded":
-            return true;
-        case "duplicate_skipped":
-        case "aborted":
-        case "abort_timeout":
-            return false;
-    }
-}
-
 function isErrorToolOutcome(outcome: ToolExecutionOutcome): boolean {
     return outcome !== "success" && outcome !== "duplicate_skipped";
 }
@@ -1659,10 +939,6 @@ function stringifyToolInput(input: unknown): string {
     if (typeof input === "string") return input;
     if (input === undefined) return "";
     return JSON.stringify(input);
-}
-
-function delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
 }
 
 function createIncrementingIdFactory(): (prefix: string) => string {
