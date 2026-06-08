@@ -1127,7 +1127,7 @@ function recordPageletTiming(
         elapsedMs: Math.max(0, Math.round(elapsedMs)),
         ...(metadata ? { metadata } : {}),
     };
-    diagnostics.timings = [...(diagnostics.timings ?? []), entry];
+    (diagnostics.timings ??= []).push(entry);
 }
 
 function finalizeReviewOutcome(

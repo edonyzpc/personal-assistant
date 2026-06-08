@@ -348,7 +348,7 @@ function buildPreviewSpec(
         ...(input.model ? { model: input.model } : {}),
     });
     const body = assembleReviewNote(metadata, input.reviewResult);
-    const byteSize = Buffer.byteLength(body, "utf8");
+    const byteSize = new TextEncoder().encode(body).length;
 
     return {
         operationType: "create-file",

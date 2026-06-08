@@ -603,6 +603,9 @@ export function createWriteActionAwareToolExecutor(
                 return options.baseExecutor.execute(input);
             }
             const writeCapability = capability as WriteActionCapability;
+            if (typeof writeCapability.executeWrite !== "function") {
+                return options.baseExecutor.execute(input);
+            }
             // Fix #6: honor allowedToolNames/blockedToolNames before any
             // action-specific work so out-of-scope writes never reach the
             // framework (matches `createPaAgentCapabilityToolExecutor` semantics).

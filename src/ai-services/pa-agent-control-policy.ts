@@ -95,7 +95,10 @@ export function createAgentControlSnapshot(
             ...DEFAULT_BUDGET_STATE,
             ...(options.budgetState ?? {}),
         },
-        diagnostics: [...(options.diagnostics ?? [])],
+        diagnostics: (options.diagnostics ?? []).map((d) => ({
+            ...d,
+            ...(d.metadata ? { metadata: { ...d.metadata } } : {}),
+        })),
     };
 }
 
