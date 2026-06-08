@@ -66,7 +66,7 @@ describe("pageletT lookup", () => {
     it("interpolates {placeholders} from params", () => {
         expect(
             pageletT("pagelet.cost.estimate", "en", { usd: "$0.04" }),
-        ).toBe("Estimated cost: $0.04");
+        ).toBe("Estimated cost: $0.04 (USD)");
     });
 
     it("leaves unknown placeholders intact instead of substituting undefined", () => {
@@ -82,7 +82,7 @@ describe("pageletT lookup", () => {
     it("coerces numeric params via String()", () => {
         expect(
             pageletT("pagelet.cost.estimate", "en", { usd: 0.04 as unknown as string }),
-        ).toBe("Estimated cost: 0.04");
+        ).toBe("Estimated cost: 0.04 (USD)");
     });
 });
 
@@ -96,7 +96,7 @@ describe("makePageletTranslator", () => {
 
     it("forwards params + fallback to the underlying translator", () => {
         const t = makePageletTranslator("en");
-        expect(t("pagelet.cost.estimate", { usd: "$1" })).toBe("Estimated cost: $1");
+        expect(t("pagelet.cost.estimate", { usd: "$1" })).toBe("Estimated cost: $1 (USD)");
         expect(t("pagelet.missing.key", undefined, "default")).toBe("default");
     });
 });

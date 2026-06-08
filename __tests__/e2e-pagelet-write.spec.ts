@@ -489,4 +489,64 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
 
         runtime.dispose();
     });
+
+    it("does not write when the user cancels the preview confirmation", async () => {
+        const adapter = makeAdapter();
+        const observer = recordingObserver();
+        const cancellingRenderer: PreviewRenderer = {
+            show: jest.fn(async (): Promise<PreviewShowResult> => {
+                return { outcome: "cancelled" };
+            }) as unknown as PreviewRenderer["show"],
+        };
+        const runtime = createPaReviewRuntime({
+            app: { vault: { adapter } } as unknown as Parameters<typeof createPaReviewRuntime>[0]["app"],
+            getPageletSettings: () => ({ ...PAGELET_DEFAULTS }),
+            previewRenderer: cancellingRenderer,
+            fsProbe: adapter as unknown as FsProbe,
+            debugObserver: observer,
+        });
+
+        const input = makeInput();
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            input,
+            makeContext(),
+        );
+
+        expect(result.status).not.toBe("ok");
+        const writeCalls = adapter.calls.filter((c) => c.method === "write");
+        expect(writeCalls).toHaveLength(0);
+
+        runtime.dispose();
+    });
+
+    it("surfaces an error result when the adapter write throws", async () => {
+        const adapter = makeAdapter();
+        const originalWrite = adapter.write;
+        adapter.write = async (path: string, _data: string): Promise<void> => {
+            throw new Error(`EACCES: permission denied, write '${path}'`);
+        };
+        const observer = recordingObserver();
+        const renderer = confirmedRenderer();
+        const runtime = createPaReviewRuntime({
+            app: { vault: { adapter } } as unknown as Parameters<typeof createPaReviewRuntime>[0]["app"],
+            getPageletSettings: () => ({ ...PAGELET_DEFAULTS }),
+            previewRenderer: renderer,
+            fsProbe: adapter as unknown as FsProbe,
+            debugObserver: observer,
+        });
+
+        const input = makeInput();
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            input,
+            makeContext(),
+        );
+
+        expect(result.status).not.toBe("ok");
+        const types = observer.events.map((e) => e.type);
+        expect(types).toContain("execute.fail");
+
+        runtime.dispose();
+    });
 });

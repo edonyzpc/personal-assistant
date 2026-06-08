@@ -159,6 +159,26 @@ describe("buildPageletScopePlan", () => {
             .toMatchObject({ included: false, locked: true, skippedReason: "empty-note" });
     });
 
+    it("includes notes modified yesterday and excludes today and day-before", () => {
+        const plan = buildPageletScopePlan({
+            files: [
+                file("active.md", "2026-06-07T10:00:00+08:00"),
+                file("notes/yesterday.md", "2026-06-06T15:00:00+08:00"),
+                file("notes/today.md", "2026-06-07T08:00:00+08:00"),
+                file("notes/old.md", "2026-06-05T23:00:00+08:00"),
+            ],
+            activePath: "active.md",
+            range: "yesterday",
+            reviewsFolder: ".pagelet",
+            now: new Date("2026-06-07T12:00:00+08:00"),
+        });
+
+        const selected = selectPageletScope(plan).paths;
+        expect(selected).toContain("notes/yesterday.md");
+        expect(selected).not.toContain("notes/today.md");
+        expect(selected).not.toContain("notes/old.md");
+    });
+
     it("locks overflow candidates so maxIncluded remains a real cap", () => {
         const plan = buildPageletScopePlan({
             files: [
