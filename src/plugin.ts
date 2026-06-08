@@ -289,6 +289,7 @@ export class PluginManager extends Plugin {
                 return new PageletView(leaf, {
                     refreshScope: (range, activePath) => void this.refreshPageletScope(range, activePath),
                     runReview: () => void this.runPageletReviewForPageletScope(),
+                    saveDraftReview: (request) => this.savePageletDraftReview(request),
                     openSourceReference: (ref) => this.openPageletSourceReference(ref),
                     openRelatedNote: (name, source) => this.openPageletRelatedNote(name, source),
                     prepareResearchPrompt: (suggestion) => this.preparePageletResearchPrompt(suggestion),
@@ -668,6 +669,13 @@ export class PluginManager extends Plugin {
     async runPageletReviewForPageletScope(): Promise<void> {
         if (!this.pageletOrchestrator) return;
         return this.pageletOrchestrator.runPageletReviewForPageletScope();
+    }
+
+    async savePageletDraftReview(
+        request: Parameters<PageletReviewOrchestrator["savePageletDraftReview"]>[0],
+    ): Promise<void> {
+        if (!this.pageletOrchestrator) return;
+        return this.pageletOrchestrator.savePageletDraftReview(request);
     }
 
     async openPageletSourceReference(reference: PageletScopeSourceReference): Promise<boolean> {

@@ -152,6 +152,7 @@
     "pagelet.panel.draft.title": "草稿",
     "pagelet.panel.draft.empty": "采纳建议以收集草稿。",
     "pagelet.panel.draft.remove": "移除",
+    "pagelet.panel.draft.save": "保存审阅笔记",
     "pagelet.panel.draft.placeholder": "编辑这段草稿…",
 
     "pagelet.a11y.suggestionsRegion": "拾页建议",
