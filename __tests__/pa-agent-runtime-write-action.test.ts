@@ -55,6 +55,7 @@ import { createCurrentNoteContextTool } from "../src/ai-services/chat-tools";
 import type {
     AgentCapability,
     AgentCapabilityContext,
+    AgentCapabilityResult,
     AgentPermissionFuture,
 } from "../src/ai-services/capability-types";
 import type {
@@ -479,6 +480,81 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
         // populated all 5 events).
         expect(harness.events.filter((e) => e.capabilityId === "get_current_note_context")).toHaveLength(0);
         expect(harness.events.filter((e) => e.capabilityId === WRITE_TOOL_NAME).length).toBeGreaterThan(0);
+    });
+
+    it("rejects malformed action capabilities instead of falling back to direct execute", async () => {
+        const harness = buildReviewModeHarness();
+        const directExecute = jest.fn(async (): Promise<AgentCapabilityResult> => ({
+            status: "ok",
+            observation: { bypassed: true },
+            sourceRecords: [],
+            inputSummary: "bypassed",
+            sources: [],
+        }));
+        const capability = {
+            ...makeWriteCapability({ execute: directExecute as AgentCapability["execute"] }),
+            executeWrite: undefined,
+        } as unknown as WriteActionCapability;
+        harness.registry.register(capability);
+
+        const baseExecutor = createPaAgentCapabilityToolExecutor({
+            registry: harness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+        const executor = createWriteActionAwareToolExecutor({
+            baseExecutor,
+            actionExecutor: harness.actionExecutor,
+            registry: harness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+        const baseSpy = jest.spyOn(baseExecutor, "execute");
+
+        const result = await executor.execute(buildExecutionInput(WRITE_TOOL_NAME));
+
+        expect(result.outcome).toBe("policy_rejected");
+        expect(result.metadata?.reason).toBe("missing_execute_write");
+        expect(baseSpy).not.toHaveBeenCalled();
+        expect(directExecute).not.toHaveBeenCalled();
+        expect(harness.events).toHaveLength(0);
+    });
+
+    it("preserves scope rejection semantics for malformed action capabilities", async () => {
+        const harness = buildReviewModeHarness();
+        const directExecute = jest.fn(async (): Promise<AgentCapabilityResult> => ({
+            status: "ok",
+            observation: { bypassed: true },
+            sourceRecords: [],
+            inputSummary: "bypassed",
+            sources: [],
+        }));
+        const capability = {
+            ...makeWriteCapability({ execute: directExecute as AgentCapability["execute"] }),
+            executeWrite: undefined,
+        } as unknown as WriteActionCapability;
+        harness.registry.register(capability);
+
+        const baseExecutor = createPaAgentCapabilityToolExecutor({
+            registry: harness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+        });
+        const executor = createWriteActionAwareToolExecutor({
+            baseExecutor,
+            actionExecutor: harness.actionExecutor,
+            registry: harness.registry,
+            plugin: fakePlugin(),
+            platform: "desktop",
+            allowedToolNames: new Set<string>(["something_else"]),
+        });
+
+        const result = await executor.execute(buildExecutionInput(WRITE_TOOL_NAME));
+
+        expect(result.outcome).toBe("policy_rejected");
+        expect(result.metadata?.reason).toBe("tool_outside_user_requested_scope");
+        expect(directExecute).not.toHaveBeenCalled();
+        expect(harness.events).toHaveLength(0);
     });
 
     it("returns schema_invalid before invoking ActionExecutor when prepareAndValidate fails", async () => {

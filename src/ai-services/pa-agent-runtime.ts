@@ -603,9 +603,6 @@ export function createWriteActionAwareToolExecutor(
                 return options.baseExecutor.execute(input);
             }
             const writeCapability = capability as WriteActionCapability;
-            if (typeof writeCapability.executeWrite !== "function") {
-                return options.baseExecutor.execute(input);
-            }
             // Fix #6: honor allowedToolNames/blockedToolNames before any
             // action-specific work so out-of-scope writes never reach the
             // framework (matches `createPaAgentCapabilityToolExecutor` semantics).
@@ -639,6 +636,18 @@ export function createWriteActionAwareToolExecutor(
                         reason: "policy_denied_capability",
                         tool: toolCall.name,
                         policyReason: policyDecision.reason ?? "policy rejected",
+                    },
+                };
+            }
+            if (typeof writeCapability.executeWrite !== "function") {
+                return {
+                    outcome: "policy_rejected",
+                    promptText: `Tool ${toolCall.name} was not executed because its write action implementation is incomplete.`,
+                    previewText: `Skipped ${toolCall.name}; missing executeWrite.`,
+                    metadata: {
+                        outcome: "policy_rejected",
+                        reason: "missing_execute_write",
+                        toolName: toolCall.name,
                     },
                 };
             }
