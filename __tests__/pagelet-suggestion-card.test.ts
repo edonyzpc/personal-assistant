@@ -32,6 +32,7 @@ import {
     type SuggestionCardDomNode,
 } from "../src/ui/pagelet/suggestion-card/dom-renderer";
 import { pageletT } from "../src/locales/pagelet";
+import { DomStubNode, findByClass, findAllByClass } from "./helpers/dom-stub";
 
 // ---------------------------------------------------------------------------
 // Fixtures
@@ -65,106 +66,21 @@ function recordingTranslator(): {
 }
 
 // ---------------------------------------------------------------------------
-// Stub DOM host
+// Stub DOM host (backed by shared DomStubNode)
 // ---------------------------------------------------------------------------
 
-interface StubNode extends SuggestionCardDomNode {
-    tag: string;
-    attrs: Record<string, string>;
-    classList: string[];
-    style: Record<string, string>;
-    text: string;
-    children: StubNode[];
-    parent: StubNode | null;
-    listeners: { event: string; handler: (e: unknown) => void }[];
-    dispatch(event: string, payload?: unknown): void;
+function toNode(stub: DomStubNode): SuggestionCardDomNode {
+    return stub as unknown as SuggestionCardDomNode;
 }
 
-function makeStubNode(tag: string): StubNode {
-    const node = {
-        tag,
-        attrs: {} as Record<string, string>,
-        classList: [] as string[],
-        style: {} as Record<string, string>,
-        text: "",
-        children: [] as StubNode[],
-        parent: null as StubNode | null,
-        listeners: [] as { event: string; handler: (e: unknown) => void }[],
-    } as StubNode;
-    node.setAttribute = (name, value) => {
-        node.attrs[name] = value;
-        // Keep classList in sync with the "class" attribute.
-        if (name === "class") {
-            node.classList = value.length > 0 ? value.split(/\s+/) : [];
-        }
-    };
-    node.removeAttribute = (name) => { delete node.attrs[name]; };
-    node.appendChild = ((child) => {
-        const stub = child as unknown as StubNode;
-        stub.parent = node;
-        node.children.push(stub);
-        return child;
-    }) as StubNode["appendChild"];
-    node.setText = (text) => { node.text = text; };
-    node.setClassList = (classes) => {
-        node.classList = [...classes];
-        node.attrs["class"] = classes.join(" ");
-    };
-    node.setStyleProperty = (name, value) => { node.style[name] = value; };
-    node.addEventListener = (event, handler) => {
-        node.listeners.push({ event, handler });
-    };
-    node.removeEventListener = (event, handler) => {
-        const idx = node.listeners.findIndex(
-            (entry) => entry.event === event && entry.handler === handler,
-        );
-        if (idx >= 0) node.listeners.splice(idx, 1);
-    };
-    node.remove = () => {
-        if (node.parent) {
-            const idx = node.parent.children.indexOf(node);
-            if (idx >= 0) node.parent.children.splice(idx, 1);
-            node.parent = null;
-        }
-    };
-    node.dispatch = (event, payload) => {
-        for (const entry of node.listeners) {
-            if (entry.event === event) entry.handler(payload);
-        }
-    };
-    return node;
-}
-
-function makeStubHost(): { host: SuggestionCardDomHost; root: StubNode } {
-    const root = makeStubNode("__root__");
+function makeStubHost(): { host: SuggestionCardDomHost; root: DomStubNode } {
+    const root = new DomStubNode("__root__");
     const host: SuggestionCardDomHost = {
         createHtmlElement(tag) {
-            return makeStubNode(tag);
+            return toNode(new DomStubNode(tag));
         },
     };
     return { host, root };
-}
-
-function findByClass(node: StubNode, cls: string): StubNode {
-    const results: StubNode[] = [];
-    const walk = (n: StubNode) => {
-        if (n.classList.includes(cls)) results.push(n);
-        for (const c of n.children) walk(c);
-    };
-    walk(node);
-    if (results.length === 0) throw new Error(`no node with class ${cls}`);
-    if (results.length > 1) throw new Error(`multiple (${results.length}) with class ${cls}`);
-    return results[0];
-}
-
-function findAllByClass(node: StubNode, cls: string): StubNode[] {
-    const results: StubNode[] = [];
-    const walk = (n: StubNode) => {
-        if (n.classList.includes(cls)) results.push(n);
-        for (const c of n.children) walk(c);
-    };
-    walk(node);
-    return results;
 }
 
 // ---------------------------------------------------------------------------
@@ -572,7 +488,7 @@ describe("createSuggestionCardRendererWithHost", () => {
         expect(root.children).toHaveLength(1);
         const card = root.children[0];
         expect(card.attrs["role"]).toBe("article");
-        expect(card.classList).toContain("pa-pagelet-suggestion-card");
+        expect(card.classNames).toContain("pa-pagelet-suggestion-card");
         expect(card.attrs["data-suggestion-kind"]).toBe("clarify");
         // Renderer holds onto initial props.
         expect(renderer.props.suggestion.source_id).toBe("seg-3");

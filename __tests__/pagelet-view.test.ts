@@ -7,7 +7,7 @@ jest.mock("obsidian");
 import type { WorkspaceLeaf } from "obsidian";
 
 import type { PreviewSpec } from "../src/ai-services/write-action-framework";
-import type { PluginManager } from "../src/plugin";
+import type { PageletViewCallbacks } from "../src/pagelet/view";
 import type { PageletCostSummary } from "../src/pagelet/pa-review-cost";
 import type { PageletReviewDiagnostics } from "../src/pagelet/pa-review-model";
 import type { PageletSuggestion } from "../src/pagelet/pa-review-schemas";
@@ -17,192 +17,33 @@ import type {
     PageletScopeSourceReference,
 } from "../src/pagelet/scope";
 import { PageletView } from "../src/pagelet/view";
+import { DomStubNode, findByClass, findAllByClass, findAllByTag } from "./helpers/dom-stub";
 
 const DRAFT_STORAGE_KEY = "personal-assistant:pagelet:pending-draft:v1";
 
-type FakeListener = (event: unknown) => void;
-
-class FakeClassList {
-    constructor(private readonly owner: FakeElement) { }
-
-    add(...classes: string[]): void {
-        const tokens = new Set(this.tokens());
-        for (const cls of classes) {
-            if (cls.length > 0) tokens.add(cls);
-        }
-        this.owner.className = [...tokens].join(" ");
-    }
-
-    contains(cls: string): boolean {
-        return this.tokens().includes(cls);
-    }
-
-    toggle(cls: string, force?: boolean): boolean {
-        const tokens = new Set(this.tokens());
-        const shouldAdd = force ?? !tokens.has(cls);
-        if (shouldAdd) {
-            tokens.add(cls);
-        } else {
-            tokens.delete(cls);
-        }
-        this.owner.className = [...tokens].join(" ");
-        return shouldAdd;
-    }
-
-    private tokens(): string[] {
-        return splitClasses(this.owner.className);
-    }
-}
-
-class FakeStyle {
-    readonly props = new Map<string, string>();
-
-    setProperty(name: string, value: string): void {
-        this.props.set(name, value);
-    }
-}
-
-class FakeElement {
-    className = "";
-    readonly attributes = new Map<string, string>();
-    readonly children: FakeElement[] = [];
-    parentElement: FakeElement | null = null;
-    readonly classList = new FakeClassList(this);
-    readonly style = new FakeStyle();
-    checked = false;
-    disabled = false;
-    hidden = false;
-    value = "";
-    private readonly listeners = new Map<string, FakeListener[]>();
-    private textValue = "";
-
-    constructor(
-        readonly tagName: string,
-        readonly namespace: "html" | "svg" = "html",
-    ) { }
-
-    get textContent(): string {
-        return this.textValue;
-    }
-
-    set textContent(value: string | null) {
-        this.textValue = value ?? "";
-        for (const child of this.children) child.parentElement = null;
-        this.children.splice(0);
-    }
-
-    setAttribute(name: string, value: string): void {
-        this.attributes.set(name, value);
-        if (name === "class") this.className = value;
-    }
-
-    getAttribute(name: string): string | null {
-        return this.attributes.get(name) ?? null;
-    }
-
-    removeAttribute(name: string): void {
-        this.attributes.delete(name);
-        if (name === "class") this.className = "";
-    }
-
-    appendChild<T extends FakeElement>(child: T): T {
-        if (child.parentElement) child.parentElement.removeChild(child);
-        child.parentElement = this;
-        this.children.push(child);
-        return child;
-    }
-
-    removeChild<T extends FakeElement>(child: T): T {
-        const index = this.children.indexOf(child);
-        if (index >= 0) this.children.splice(index, 1);
-        child.parentElement = null;
-        return child;
-    }
-
-    remove(): void {
-        this.parentElement?.removeChild(this);
-    }
-
-    addEventListener(event: string, listener: unknown): void {
-        const listeners = this.listeners.get(event) ?? [];
-        listeners.push(listener as FakeListener);
-        this.listeners.set(event, listeners);
-    }
-
-    removeEventListener(event: string, listener: unknown): void {
-        const listeners = this.listeners.get(event);
-        if (!listeners) return;
-        const index = listeners.indexOf(listener as FakeListener);
-        if (index >= 0) listeners.splice(index, 1);
-    }
-
-    dispatch(event: string, payload: unknown = { type: event }): void {
-        for (const listener of [...(this.listeners.get(event) ?? [])]) {
-            listener(payload);
-        }
-    }
-}
-
-function splitClasses(className: string): string[] {
-    return className.split(/\s+/).filter(Boolean);
-}
-
-function hasClass(node: FakeElement, className: string): boolean {
-    return splitClasses(node.className).includes(className);
-}
-
-function findAllByClass(root: FakeElement, className: string): FakeElement[] {
-    const results: FakeElement[] = [];
-    const walk = (node: FakeElement): void => {
-        if (hasClass(node, className)) results.push(node);
-        for (const child of node.children) walk(child);
-    };
-    walk(root);
-    return results;
-}
-
-function findByClass(root: FakeElement, className: string): FakeElement {
-    const results = findAllByClass(root, className);
-    if (results.length !== 1) {
-        throw new Error(`expected exactly one .${className}, got ${results.length}`);
-    }
-    return results[0];
-}
-
-function findAllByTag(root: FakeElement, tagName: string): FakeElement[] {
-    const expected = tagName.toLowerCase();
-    const results: FakeElement[] = [];
-    const walk = (node: FakeElement): void => {
-        if (node.tagName.toLowerCase() === expected) results.push(node);
-        for (const child of node.children) walk(child);
-    };
-    walk(root);
-    return results;
-}
-
-function makePluginStub() {
+function makeCallbacks() {
     return {
-        refreshPageletScope: jest.fn(async (_range: PageletReviewRange) => undefined),
-        runPageletReviewForPageletScope: jest.fn(async () => undefined),
-        openPageletSourceReference: jest.fn(async (_reference: PageletScopeSourceReference) => true),
-        openPageletRelatedNote: jest.fn(async (_noteName: string, _sourcePath: string) => true),
-        preparePageletResearchPrompt: jest.fn(async (_suggestion: PageletSuggestion) => true),
+        refreshScope: jest.fn((_range: PageletReviewRange, _activePath?: string) => undefined),
+        runReview: jest.fn(() => undefined),
+        openSourceReference: jest.fn(async (_reference: PageletScopeSourceReference) => true),
+        openRelatedNote: jest.fn(async (_noteName: string, _sourcePath: string) => true),
+        prepareResearchPrompt: jest.fn(async (_suggestion: PageletSuggestion) => true),
     };
 }
 
-function makeView(plugin = makePluginStub()): {
+function makeView(callbacks = makeCallbacks()): {
     view: PageletView;
-    plugin: ReturnType<typeof makePluginStub>;
-    contentEl: FakeElement;
+    callbacks: ReturnType<typeof makeCallbacks>;
+    contentEl: DomStubNode;
 } {
-    const contentEl = new FakeElement("div");
+    const contentEl = new DomStubNode("div");
     const leaf = {
         app: {},
-        containerEl: new FakeElement("div") as unknown as HTMLElement,
+        containerEl: new DomStubNode("div") as unknown as HTMLElement,
     } as unknown as WorkspaceLeaf;
-    const view = new PageletView(leaf, plugin as unknown as PluginManager);
+    const view = new PageletView(leaf, callbacks as unknown as PageletViewCallbacks);
     (view as unknown as { contentEl: HTMLElement }).contentEl = contentEl as unknown as HTMLElement;
-    return { view, plugin, contentEl };
+    return { view, callbacks, contentEl };
 }
 
 function makeSuggestion(overrides: Partial<PageletSuggestion> = {}): PageletSuggestion {
@@ -317,51 +158,44 @@ function getDraftSnapshot(storage: Map<string, string>): unknown {
     return raw ? JSON.parse(raw) : null;
 }
 
-let previousDocument: PropertyDescriptor | undefined;
-let previousLocalStorage: PropertyDescriptor | undefined;
-let storage: Map<string, string>;
-
-beforeEach(() => {
-    previousDocument = Object.getOwnPropertyDescriptor(globalThis, "document");
-    previousLocalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
-    storage = new Map<string, string>();
-
-    Object.defineProperty(globalThis, "document", {
-        configurable: true,
-        value: {
-            createElement: (tagName: string) => new FakeElement(tagName) as unknown as HTMLElement,
-            createElementNS: (_namespace: string, tagName: string) =>
-                new FakeElement(tagName, "svg") as unknown as SVGElement,
+function installGlobalStub(
+    name: string,
+    value: unknown,
+): { restore(): void } {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+    Object.defineProperty(globalThis, name, { configurable: true, value });
+    return {
+        restore() {
+            if (previous) {
+                Object.defineProperty(globalThis, name, previous);
+            } else {
+                delete (globalThis as Record<string, unknown>)[name];
+            }
         },
-    });
-    Object.defineProperty(globalThis, "localStorage", {
-        configurable: true,
-        value: {
-            getItem: (key: string) => storage.get(key) ?? null,
-            setItem: (key: string, value: string) => {
-                storage.set(key, value);
-            },
-            removeItem: (key: string) => {
-                storage.delete(key);
-            },
-        },
-    });
-});
-
-afterEach(() => {
-    if (previousDocument) {
-        Object.defineProperty(globalThis, "document", previousDocument);
-    } else {
-        delete (globalThis as { document?: Document }).document;
-    }
-    if (previousLocalStorage) {
-        Object.defineProperty(globalThis, "localStorage", previousLocalStorage);
-    } else {
-        delete (globalThis as { localStorage?: Storage }).localStorage;
-    }
-});
+    };
+}
 
 describe("PageletView workbench interactions", () => {
+    let storage: Map<string, string>;
+    const stubs: Array<{ restore(): void }> = [];
+
+    beforeEach(() => {
+        storage = new Map<string, string>();
+        stubs.push(installGlobalStub("document", {
+            createElement: (tagName: string) => new DomStubNode(tagName) as unknown as HTMLElement,
+            createElementNS: (_namespace: string, tagName: string) =>
+                new DomStubNode(tagName, "svg") as unknown as SVGElement,
+        }));
+        stubs.push(installGlobalStub("localStorage", {
+            getItem: (key: string) => storage.get(key) ?? null,
+            setItem: (key: string, value: string) => { storage.set(key, value); },
+            removeItem: (key: string) => { storage.delete(key); },
+        }));
+    });
+
+    afterEach(() => {
+        while (stubs.length > 0) stubs.pop()!.restore();
+    });
     it("persists accepted draft edits, restores them for the same source, and clears them on remove", async () => {
         const { view, contentEl } = makeView();
         await view.onOpen();
@@ -497,8 +331,8 @@ describe("PageletView workbench interactions", () => {
         expect(textarea.getAttribute("aria-label")).toBe("Draft block: seg-1");
     });
 
-    it("wires source, related-note, and research card actions through the plugin boundary", async () => {
-        const { view, plugin, contentEl } = makeView();
+    it("wires source, related-note, and research card actions through the callback boundary", async () => {
+        const { view, callbacks, contentEl } = makeView();
         const suggestion = makeSuggestion();
         const data = makeReviewData("notes/alpha.md", suggestion);
         await view.onOpen();
@@ -509,20 +343,20 @@ describe("PageletView workbench interactions", () => {
         findByClass(contentEl, "pa-pagelet-suggestion-card__btn--research").dispatch("click");
         await Promise.resolve();
 
-        expect(plugin.openPageletSourceReference).toHaveBeenCalledWith(data.sourceReferences[0]);
-        expect(plugin.openPageletRelatedNote).toHaveBeenCalledWith(
+        expect(callbacks.openSourceReference).toHaveBeenCalledWith(data.sourceReferences[0]);
+        expect(callbacks.openRelatedNote).toHaveBeenCalledWith(
             "[[Related Concept]]",
             "notes/alpha.md",
         );
-        expect(plugin.preparePageletResearchPrompt).toHaveBeenCalledWith(suggestion);
+        expect(callbacks.prepareResearchPrompt).toHaveBeenCalledWith(suggestion);
     });
 
     it("reports when Chat already has a draft and research prompt is not replaced", async () => {
-        const plugin = {
-            ...makePluginStub(),
-            preparePageletResearchPrompt: jest.fn(async () => false),
+        const cbs = {
+            ...makeCallbacks(),
+            prepareResearchPrompt: jest.fn(async () => false),
         };
-        const { view, contentEl } = makeView(plugin);
+        const { view, contentEl } = makeView(cbs);
         await view.onOpen();
         view.showReviewResult(makeReviewData("notes/alpha.md", makeSuggestion({ kind: "evidence" })));
 
@@ -583,5 +417,43 @@ describe("PageletView workbench interactions", () => {
         const closed = view.showWritePreview(makePreviewSpec());
         await view.onClose();
         await expect(closed).resolves.toEqual({ outcome: "cancelled" });
+    });
+
+    it("showReviewError sets error status and clears review cards", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+
+        view.showReviewError("Provider returned an error", "notes/alpha.md");
+
+        expect(findByClass(contentEl, "pa-pagelet-status__state").textContent)
+            .toBe("Provider returned an error");
+        expect(findByClass(contentEl, "pa-pagelet-source").textContent)
+            .toBe("notes/alpha.md");
+        expect(findAllByClass(contentEl, "pa-pagelet-suggestion-card")).toHaveLength(0);
+    });
+
+    it("showReviewError works without a source path", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+
+        view.showReviewError("Network failure");
+
+        expect(findByClass(contentEl, "pa-pagelet-status__state").textContent)
+            .toBe("Network failure");
+    });
+
+    it("showReviewEmpty shows no-suggestions status and clears review cards", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+
+        view.showReviewEmpty("notes/alpha.md");
+
+        expect(findByClass(contentEl, "pa-pagelet-status__state").textContent)
+            .toBe("No suggestions worth saving");
+        expect(findByClass(contentEl, "pa-pagelet-source").textContent)
+            .toBe("notes/alpha.md");
+        expect(findAllByClass(contentEl, "pa-pagelet-suggestion-card")).toHaveLength(0);
     });
 });

@@ -39,6 +39,12 @@ export class Component {
     addChild<T extends Component>(component: T) { return component; }
     removeChild<T extends Component>(component: T) { return component; }
     register(_cb: () => unknown) { }
+    registerEvent(_eventRef: unknown) { }
+    registerDomEvent(el: unknown, event: string, handler: unknown, options?: unknown) {
+        if (el && typeof (el as HTMLElement).addEventListener === "function") {
+            (el as HTMLElement).addEventListener(event, handler as EventListener, options as AddEventListenerOptions | undefined);
+        }
+    }
 }
 
 export class Setting {
@@ -66,11 +72,12 @@ export class MarkdownView {
     }
 }
 
-export class ItemView {
+export class ItemView extends Component {
     app: App;
     containerEl: HTMLElement;
 
     constructor(leaf: { app?: App; containerEl?: HTMLElement } = {}) {
+        super();
         this.app = leaf.app ?? new App();
         this.containerEl = leaf.containerEl ?? {} as HTMLElement;
     }
