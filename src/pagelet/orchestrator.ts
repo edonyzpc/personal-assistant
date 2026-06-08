@@ -43,12 +43,21 @@ import {
     type PageletSuggestion,
     type PaReviewRuntime,
 } from "./index";
-import { PageletView } from "./view";
+import { PageletView, type PageletDraftReviewSaveRequest } from "./view";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const PAGELET_REVIEW_TIMEOUT_MS = 90_000;
 const PAGELET_PRODUCTION_MAX_RETRIES = 0;
+
+function hasStringProperty<Key extends string>(
+    value: unknown,
+    key: Key,
+): value is Record<Key, string> {
+    return Boolean(value)
+        && typeof value === "object"
+        && typeof (value as Record<Key, unknown>)[key] === "string";
+}
 
 // ── Host interface ───────────────────────────────────────────────────────────
 
@@ -263,6 +272,91 @@ export class PageletReviewOrchestrator {
         const chatView = await this.host.activeChatView();
         if (!chatView) return false;
         return chatView.prefillComposer(prompt);
+    }
+
+    async savePageletDraftReview(
+        request: PageletDraftReviewSaveRequest,
+    ): Promise<void> {
+        const locale = this.getPageletLocale();
+        const pageletView =
+            this.host.getOpenPageletView() ?? (await this.host.activePageletView());
+        const runtime = this.host.getOrCreatePageletRuntime();
+        if (!runtime) {
+            pageletView?.showReviewSaveError(
+                pageletT("pagelet.mascot.error", locale),
+                request.sourcePath,
+            );
+            new Notice(pageletT("pagelet.mascot.error", locale), 3000);
+            return;
+        }
+
+        try {
+            const date = new Date();
+            const writeResult = await runtime.actionExecutor.execute(
+                runtime.toolProvider.capability,
+                {
+                    sourcePath: request.sourcePath,
+                    reviewResult: request.result,
+                    mode: request.mode,
+                    detectedLanguage: request.detectedLanguage,
+                    ...(request.targetPath ? { targetPath: request.targetPath } : {}),
+                    dateOverride: date,
+                    ...(request.diagnostics.costEntry
+                        ? {
+                              costUsd:
+                                  request.diagnostics.costEntry.estimatedCost,
+                          }
+                        : {}),
+                    ...(this.host.settings.aiProvider
+                        ? { provider: this.host.settings.aiProvider }
+                        : {}),
+                    ...(this.host.settings.chatModelName
+                        ? { model: this.host.settings.chatModelName }
+                        : {}),
+                },
+                {
+                    plugin: this.host.capabilityPlugin,
+                    turnId: `pagelet-save-${date.getTime()}`,
+                    platform: Platform.isMobile ? "mobile" : "desktop",
+                },
+            );
+            if (writeResult.status === "ok") {
+                const observation = writeResult.observation;
+                const createdPath = hasStringProperty(observation, "createdPath")
+                    ? observation.createdPath
+                    : request.targetPath ?? request.sourcePath;
+                pageletView?.showReviewSaved(
+                    createdPath,
+                    this.host.pageletCostTracker.getSummary(),
+                );
+                new Notice(
+                    pageletT("pagelet.mascot.done", locale),
+                    4000,
+                );
+                return;
+            }
+            if (writeResult.error?.includes("user did not confirm")) {
+                pageletView?.showReviewNotSaved();
+                return;
+            }
+            pageletView?.showReviewSaveError(
+                writeResult.userSafeMessage ??
+                    pageletT("pagelet.trigger.writeFailed", locale),
+                request.sourcePath,
+            );
+            new Notice(
+                writeResult.userSafeMessage ??
+                    pageletT("pagelet.trigger.writeFailed", locale),
+                6000,
+            );
+        } catch (error) {
+            this.host.log("Pagelet draft save failed", error);
+            pageletView?.showReviewSaveError(
+                pageletT("pagelet.mascot.error", locale),
+                request.sourcePath,
+            );
+            new Notice(pageletT("pagelet.mascot.error", locale), 6000);
+        }
     }
 
     // ── Private helpers ──────────────────────────────────────────────────
@@ -788,80 +882,16 @@ export class PageletReviewOrchestrator {
             );
             pageletView?.showReviewResult({
                 sourcePath: bundle.sourceLabel,
+                primarySourcePath: file.path,
                 targetPath,
                 result: outcome.result,
                 diagnostics: outcome.diagnostics,
                 costSummary: this.host.pageletCostTracker.getSummary(),
+                detectedLanguage: bundle.detectedLanguage,
+                mode: bundle.input.mode,
                 sourceReferences: bundle.sourceReferences,
                 sourcePaths: bundle.sourcePaths,
             });
-            const writeStartedAt = Date.now();
-            const writeResult = await runtime.actionExecutor.execute(
-                runtime.toolProvider.capability,
-                {
-                    sourcePath: file.path,
-                    reviewResult: outcome.result,
-                    mode: bundle.input.mode,
-                    detectedLanguage: bundle.detectedLanguage,
-                    targetPath,
-                    dateOverride: date,
-                    ...(outcome.diagnostics.costEntry
-                        ? {
-                              costUsd:
-                                  outcome.diagnostics.costEntry.estimatedCost,
-                          }
-                        : {}),
-                    ...(this.host.settings.aiProvider
-                        ? { provider: this.host.settings.aiProvider }
-                        : {}),
-                    ...(this.host.settings.chatModelName
-                        ? { model: this.host.settings.chatModelName }
-                        : {}),
-                },
-                {
-                    plugin: this.host.capabilityPlugin,
-                    turnId: `pagelet-${date.getTime()}`,
-                    platform: Platform.isMobile ? "mobile" : "desktop",
-                    signal: abortController.signal,
-                },
-            );
-            recordTiming("write_action", writeStartedAt, {
-                status: writeResult.status,
-                includesUserConfirmation: true,
-            });
-            mergeOutcomeTimings(outcome.diagnostics);
-            this.logPageletReviewTiming(
-                sourceLabel,
-                options,
-                timings,
-                outcome.diagnostics,
-                runStartedAt,
-            );
-            if (writeResult.status === "ok") {
-                pageletView?.showReviewSaved(
-                    targetPath,
-                    this.host.pageletCostTracker.getSummary(),
-                );
-                new Notice(
-                    pageletT("pagelet.mascot.done", locale),
-                    4000,
-                );
-                return;
-            }
-            if (writeResult.error?.includes("user did not confirm")) {
-                pageletView?.showReviewNotSaved();
-                return;
-            }
-            pageletView?.showReviewError(
-                writeResult.userSafeMessage ??
-                    pageletT("pagelet.trigger.writeFailed", locale),
-                file.path,
-            );
-            new Notice(
-                writeResult.userSafeMessage ??
-                    pageletT("pagelet.trigger.writeFailed", locale),
-                6000,
-            );
         } catch (error) {
             if (abortController.signal.aborted) {
                 recordTiming("aborted", runStartedAt, {

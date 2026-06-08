@@ -7,7 +7,7 @@ jest.mock("obsidian");
 import type { WorkspaceLeaf } from "obsidian";
 
 import type { PreviewSpec } from "../src/ai-services/write-action-framework";
-import type { PageletViewCallbacks } from "../src/pagelet/view";
+import type { PageletDraftReviewSaveRequest, PageletViewCallbacks } from "../src/pagelet/view";
 import type { PageletCostSummary } from "../src/pagelet/pa-review-cost";
 import type { PageletReviewDiagnostics } from "../src/pagelet/pa-review-model";
 import type { PageletSuggestion } from "../src/pagelet/pa-review-schemas";
@@ -25,6 +25,7 @@ function makeCallbacks() {
     return {
         refreshScope: jest.fn((_range: PageletReviewRange, _activePath?: string) => undefined),
         runReview: jest.fn(() => undefined),
+        saveDraftReview: jest.fn(async (_request: PageletDraftReviewSaveRequest): Promise<void> => undefined),
         openSourceReference: jest.fn(async (_reference: PageletScopeSourceReference) => true),
         openRelatedNote: jest.fn(async (_noteName: string, _sourcePath: string) => true),
         prepareResearchPrompt: jest.fn(async (_suggestion: PageletSuggestion) => true),
@@ -220,6 +221,138 @@ describe("PageletView workbench interactions", () => {
 
         findByClass(reopened.contentEl, "pa-pagelet-button--ghost").dispatch("click");
         expect(findAllByTag(reopened.contentEl, "textarea")).toHaveLength(0);
+        expect(storage.get(DRAFT_STORAGE_KEY)).toBeUndefined();
+    });
+
+    it("saves the user-edited draft instead of the raw review result", async () => {
+        const { view, callbacks, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult({
+            ...makeReviewData("Last 3 days · 2 notes"),
+            primarySourcePath: "notes/alpha.md",
+            targetPath: ".pagelet/alpha-pagelet-review-2026-06-06.md",
+            detectedLanguage: "en",
+            mode: "basic",
+            sourcePaths: ["notes/alpha.md", "notes/beta.md"],
+        });
+
+        findByClass(contentEl, "pa-pagelet-suggestion-card__btn--accept").dispatch("click");
+        const textarea = findAllByTag(contentEl, "textarea")[0];
+        textarea.value = "Edited draft action";
+        textarea.dispatch("input");
+
+        findByClass(contentEl, "pa-pagelet-draft__save").dispatch("click");
+        await Promise.resolve();
+
+        expect(callbacks.saveDraftReview).toHaveBeenCalledTimes(1);
+        expect(callbacks.saveDraftReview.mock.calls[0][0]).toMatchObject({
+            sourcePath: "notes/alpha.md",
+            targetPath: ".pagelet/alpha-pagelet-review-2026-06-06.md",
+            detectedLanguage: "en",
+            mode: "basic",
+            result: {
+                suggestions: [
+                    {
+                        source_id: "seg-1",
+                        proposed_action: "Edited draft action",
+                    },
+                ],
+            },
+        });
+    });
+
+    it("keeps multi-note draft identity on the primary source path", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult({
+            ...makeReviewData("Last 3 days · 2 notes"),
+            primarySourcePath: "notes/alpha.md",
+            sourcePaths: ["notes/alpha.md", "notes/beta.md"],
+        });
+
+        findByClass(contentEl, "pa-pagelet-suggestion-card__btn--accept").dispatch("click");
+        const textarea = findAllByTag(contentEl, "textarea")[0];
+        textarea.value = "Multi-note draft action";
+        textarea.dispatch("input");
+
+        expect(getDraftSnapshot(storage)).toMatchObject({
+            sourcePath: "notes/alpha.md",
+            items: [{ text: "Multi-note draft action" }],
+        });
+
+        view.showScopePlan(makeScopePlan("notes/alpha.md"));
+
+        expect(findAllByTag(contentEl, "textarea")[0].value).toBe("Multi-note draft action");
+        expect(storage.get(DRAFT_STORAGE_KEY)).toBeDefined();
+    });
+
+    it("does not submit draft save twice while a save is pending", async () => {
+        const { view, callbacks, contentEl } = makeView();
+        let resolveSave!: () => void;
+        const savePromise = new Promise<void>((resolve) => {
+            resolveSave = resolve;
+        });
+        callbacks.saveDraftReview.mockImplementation(async (_request: PageletDraftReviewSaveRequest) => savePromise);
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+        callbacks.refreshScope.mockClear();
+
+        findByClass(contentEl, "pa-pagelet-suggestion-card__btn--accept").dispatch("click");
+        findByClass(contentEl, "pa-pagelet-draft__save").dispatch("click");
+        findByClass(contentEl, "pa-pagelet-draft__save").dispatch("click");
+
+        expect(callbacks.saveDraftReview).toHaveBeenCalledTimes(1);
+        const reviewButton = findAllByTag(contentEl, "button")
+            .find((button) => button.textContent.startsWith("Review selected"));
+        expect(reviewButton?.disabled).toBe(true);
+        reviewButton?.dispatch("click");
+        expect(callbacks.runReview).not.toHaveBeenCalled();
+        const scopeButtons = findAllByClass(contentEl, "pa-pagelet-scope__range");
+        expect(scopeButtons.every((button) => button.disabled)).toBe(true);
+        scopeButtons[1].dispatch("click");
+        expect(callbacks.refreshScope).not.toHaveBeenCalled();
+
+        resolveSave();
+        await savePromise;
+        await Promise.resolve();
+    });
+
+    it("preserves the draft and cards when saving fails", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+
+        findByClass(contentEl, "pa-pagelet-suggestion-card__btn--accept").dispatch("click");
+        const textarea = findAllByTag(contentEl, "textarea")[0];
+        textarea.value = "Retryable draft";
+        textarea.dispatch("input");
+
+        view.showReviewSaveError("Vault write failed", "notes/alpha.md");
+
+        expect(findByClass(contentEl, "pa-pagelet-status__state").textContent)
+            .toBe("Vault write failed");
+        expect(findAllByTag(contentEl, "textarea")[0].value).toBe("Retryable draft");
+        expect(findAllByClass(contentEl, "pa-pagelet-suggestion-card")).toHaveLength(1);
+        expect(findAllByClass(contentEl, "pa-pagelet-draft__save")).toHaveLength(1);
+        expect(getDraftSnapshot(storage)).toMatchObject({
+            sourcePath: "notes/alpha.md",
+            items: [{ text: "Retryable draft" }],
+        });
+    });
+
+    it("makes a saved review result complete instead of reusing its target path", async () => {
+        const { view, contentEl } = makeView();
+        await view.onOpen();
+        view.showReviewResult(makeReviewData("notes/alpha.md"));
+
+        findByClass(contentEl, "pa-pagelet-suggestion-card__btn--accept").dispatch("click");
+        view.showReviewSaved(".pagelet/alpha-pagelet-review-2026-06-06.md", makeCostSummary());
+
+        expect(findByClass(contentEl, "pa-pagelet-status__state").textContent)
+            .toBe("Review note saved");
+        expect(findAllByClass(contentEl, "pa-pagelet-suggestion-card")).toHaveLength(0);
+        expect(findAllByTag(contentEl, "textarea")).toHaveLength(0);
+        expect(findAllByClass(contentEl, "pa-pagelet-draft__save")).toHaveLength(0);
         expect(storage.get(DRAFT_STORAGE_KEY)).toBeUndefined();
     });
 

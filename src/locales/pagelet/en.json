@@ -152,6 +152,7 @@
     "pagelet.panel.draft.title": "Draft",
     "pagelet.panel.draft.empty": "Add suggestions to collect a draft.",
     "pagelet.panel.draft.remove": "Remove",
+    "pagelet.panel.draft.save": "Save review note",
     "pagelet.panel.draft.placeholder": "Edit this draft block...",
 
     "pagelet.a11y.suggestionsRegion": "Pagelet suggestions",

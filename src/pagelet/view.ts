@@ -18,7 +18,7 @@ import {
 
 import { formatUsd, type PageletCostSummary } from "./pa-review-cost";
 import type { PageletReviewDiagnostics } from "./pa-review-model";
-import type { PageletReviewResult, PageletSuggestion } from "./pa-review-schemas";
+import type { PageletLanguageCode, PageletReviewResult, PageletSuggestion } from "./pa-review-schemas";
 import {
     applyPageletScopeToggle,
     selectPageletScope,
@@ -35,13 +35,28 @@ const PAGELET_PENDING_DRAFT_STORAGE_KEY = "personal-assistant:pagelet:pending-dr
 const UNDO_TIMEOUT_MS = 5000;
 
 export interface PageletPanelReviewData {
+    /** Display label shown in the Pagelet panel. May summarize multiple notes. */
+    sourcePath: string;
+    /** Primary vault path used when saving frontmatter and write-action context. */
+    primarySourcePath?: string;
+    result: PageletReviewResult;
+    diagnostics: PageletReviewDiagnostics;
+    costSummary: PageletCostSummary;
+    targetPath?: string;
+    detectedLanguage?: PageletLanguageCode;
+    mode?: "basic" | "deeper";
+    sourceReferences?: readonly PageletScopeSourceReference[];
+    sourcePaths?: readonly string[];
+}
+
+export interface PageletDraftReviewSaveRequest {
     sourcePath: string;
     result: PageletReviewResult;
     diagnostics: PageletReviewDiagnostics;
     costSummary: PageletCostSummary;
     targetPath?: string;
-    sourceReferences?: readonly PageletScopeSourceReference[];
-    sourcePaths?: readonly string[];
+    detectedLanguage: PageletLanguageCode;
+    mode: "basic" | "deeper";
 }
 
 interface AcceptedDraftItem {
@@ -106,6 +121,7 @@ function emptyDomRefs(): PageletDomRefs {
 export interface PageletViewCallbacks {
     refreshScope(range: PageletReviewRange, activePath?: string): void;
     runReview(): void;
+    saveDraftReview(request: PageletDraftReviewSaveRequest): Promise<void>;
     openSourceReference(reference: PageletScopeSourceReference): Promise<boolean>;
     openRelatedNote(noteName: string, sourcePath: string): Promise<boolean>;
     prepareResearchPrompt(suggestion: PageletSuggestion): Promise<boolean>;
@@ -118,6 +134,7 @@ export class PageletView extends ItemView {
     private currentReview: PageletPanelReviewData | null = null;
     private sourceReferences = new Map<string, PageletScopeSourceReference>();
     private scopePlan: PageletScopePlan | null = null;
+    private scopeRangeButtons: HTMLButtonElement[] = [];
     private scopeRange: PageletReviewRange = "current";
     private closed = true;
     private dismissedKeys = new Set<string>();
@@ -133,6 +150,7 @@ export class PageletView extends ItemView {
         signal?: AbortSignal;
         onAbort?: () => void;
     } | null = null;
+    private draftSaveInFlight = false;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -217,12 +235,13 @@ export class PageletView extends ItemView {
         this.settleWritePreview({ outcome: "cancelled" });
         this.clearWritePreview();
         this.currentReview = data;
+        this.draftSaveInFlight = false;
         this.sourceReferences = new Map(
             (data.sourceReferences ?? []).map((reference) => [reference.sourceId, reference]),
         );
         this.dismissedKeys.clear();
         this.acceptedDraft = [];
-        this.acceptedDraftSourcePath = data.sourcePath;
+        this.acceptedDraftSourcePath = this.reviewDraftIdentity(data);
         this.writePreviewMarkdownExpanded = false;
         this.setStatus("done", this.t("pagelet.panel.status.ready", "Suggestions ready"));
         this.setSource(data.sourcePath);
@@ -231,23 +250,48 @@ export class PageletView extends ItemView {
         this.renderDraft();
         this.renderCost(data.costSummary);
         if (data.targetPath) this.setTarget(data.targetPath, false);
+        this.refreshInteractionLocks();
     }
 
     showReviewSaved(targetPath: string, costSummary: PageletCostSummary): void {
         this.renderShell();
         this.clearReviewRunningState();
         this.clearWritePreview();
+        this.draftSaveInFlight = false;
         this.setStatus("done", this.t("pagelet.panel.status.saved", "Review note saved"));
         this.renderCost(costSummary);
         this.setTarget(targetPath, true);
+        this.currentReview = null;
+        this.sourceReferences.clear();
+        this.dismissedKeys.clear();
+        this.destroyCards();
+        if (this.dom.cards) this.dom.cards.textContent = "";
+        this.acceptedDraft = [];
+        this.acceptedDraftSourcePath = undefined;
+        this.renderDraft();
         this.clearPendingDraftSnapshot();
+        this.refreshInteractionLocks();
     }
 
     showReviewNotSaved(): void {
         this.renderShell();
         this.clearReviewRunningState();
         this.clearWritePreview();
+        this.draftSaveInFlight = false;
         this.setStatus("done", this.t("pagelet.panel.status.notSaved", "Suggestions ready; note not saved"));
+        this.renderDraft();
+        this.refreshInteractionLocks();
+    }
+
+    showReviewSaveError(message: string, sourcePath?: string): void {
+        this.renderShell();
+        this.clearReviewRunningState();
+        this.clearWritePreview();
+        this.draftSaveInFlight = false;
+        this.setStatus("error", message);
+        this.setSource(this.currentReview?.sourcePath ?? sourcePath ?? this.t("pagelet.panel.source.none", "No note selected"));
+        this.renderDraft();
+        this.refreshInteractionLocks();
     }
 
     showReviewEmpty(sourcePath: string): void {
@@ -292,6 +336,7 @@ export class PageletView extends ItemView {
                 ...(options?.signal ? { signal: options.signal, onAbort } : {}),
             };
             options?.signal?.addEventListener("abort", onAbort, { once: true });
+            this.refreshInteractionLocks();
             this.renderWritePreview(spec, false);
         });
     }
@@ -320,6 +365,7 @@ export class PageletView extends ItemView {
         const reviewButton = this.createEl("button", "pa-pagelet-button pa-pagelet-button--primary", actions, this.t("pagelet.command.reviewCurrent", "Pagelet: Review current note"));
         reviewButton.setAttribute("type", "button");
         this.registerDomEvent(reviewButton, "click", () => {
+            if (this.isSaveInteractionLocked()) return;
             void this.callbacks.runReview();
         });
         this.dom.reviewButton = reviewButton;
@@ -363,6 +409,7 @@ export class PageletView extends ItemView {
     private renderScope(): void {
         if (!this.dom.scope) return;
         this.dom.scope.textContent = "";
+        this.scopeRangeButtons = [];
         const header = this.createEl("div", "pa-pagelet-scope__header", this.dom.scope);
         this.createEl("h3", "pa-pagelet-scope__title", header, this.t("pagelet.panel.scope.title", "Scope"));
         this.dom.scopeRange = this.createEl("div", "pa-pagelet-scope__ranges", header);
@@ -382,7 +429,10 @@ export class PageletView extends ItemView {
             button.setAttribute("role", "radio");
             button.setAttribute("aria-checked", String(range === this.scopeRange));
             button.setAttribute("aria-label", this.t("pagelet.panel.scope.rangeLabel", "Scope: {range}", { range: this.scopeLabel(range) }));
+            button.disabled = this.isSaveInteractionLocked();
+            this.scopeRangeButtons.push(button);
             this.registerDomEvent(button, "click", () => {
+                if (this.isSaveInteractionLocked()) return;
                 this.scopeRange = range;
                 void this.callbacks.refreshScope(range, this.scopePlan?.activePath);
             });
@@ -474,6 +524,7 @@ export class PageletView extends ItemView {
         this.settleWritePreview({ outcome: "cancelled" });
         this.clearReviewRunningState();
         this.currentReview = null;
+        this.draftSaveInFlight = false;
         this.sourceReferences.clear();
         this.dismissedKeys.clear();
         this.acceptedDraft = [];
@@ -489,6 +540,7 @@ export class PageletView extends ItemView {
         if (this.dom.target) this.dom.target.textContent = "";
         this.clearWritePreview();
         this.renderDraft();
+        this.refreshInteractionLocks();
     }
 
     private setStatus(state: MascotState, message: string): void {
@@ -510,6 +562,25 @@ export class PageletView extends ItemView {
             : this.t("pagelet.panel.target.pending", "Review note");
         this.dom.target.textContent = `${label}: ${targetPath}`;
         this.dom.target.setAttribute("title", targetPath);
+    }
+
+    private isSaveInteractionLocked(): boolean {
+        return this.draftSaveInFlight || this.pendingWritePreview !== null;
+    }
+
+    private reviewDraftIdentity(review: PageletPanelReviewData | null = this.currentReview): string | undefined {
+        return review?.primarySourcePath ?? review?.sourcePath;
+    }
+
+    private refreshInteractionLocks(): void {
+        const locked = this.isSaveInteractionLocked();
+        if (this.dom.reviewButton) {
+            const count = this.getScopeSelection().paths.length;
+            this.dom.reviewButton.disabled = this.reviewRunning || count === 0 || locked;
+        }
+        for (const button of this.scopeRangeButtons) {
+            button.disabled = locked;
+        }
     }
 
     private updateReviewButton(): void {
@@ -535,7 +606,7 @@ export class PageletView extends ItemView {
         this.dom.reviewButton.textContent = label;
         this.dom.reviewButton.setAttribute("title", description);
         this.dom.reviewButton.setAttribute("aria-label", description);
-        this.dom.reviewButton.disabled = this.reviewRunning || count === 0;
+        this.dom.reviewButton.disabled = this.reviewRunning || count === 0 || this.isSaveInteractionLocked();
         if (this.dom.target && !this.reviewRunning) {
             this.dom.target.textContent = tokens
                 ? this.t("pagelet.panel.scope.tokenEstimate", "Est. ~{tokens} input tokens", { tokens: tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens) })
@@ -596,7 +667,7 @@ export class PageletView extends ItemView {
 
     private acceptSuggestion(suggestion: PageletSuggestion): void {
         const key = suggestionKey(suggestion);
-        this.acceptedDraftSourcePath = this.currentReview?.sourcePath ?? this.acceptedDraftSourcePath;
+        this.acceptedDraftSourcePath = this.reviewDraftIdentity() ?? this.acceptedDraftSourcePath;
         if (!this.acceptedDraft.some((item) => item.key === key)) {
             this.acceptedDraft.push({ key, suggestion, text: suggestion.proposed_action });
         }
@@ -696,6 +767,55 @@ export class PageletView extends ItemView {
                 this.savePendingDraftSnapshot();
             });
         }
+        const save = this.createEl("button", "pa-pagelet-button pa-pagelet-button--primary pa-pagelet-draft__save", this.dom.draft, this.t("pagelet.panel.draft.save", "Save review note"));
+        save.setAttribute("type", "button");
+        save.setAttribute("aria-label", this.t("pagelet.panel.draft.save", "Save review note"));
+        if (this.pendingWritePreview || this.draftSaveInFlight) save.disabled = true;
+        save.addEventListener("click", () => {
+            this.saveDraftReview();
+        });
+    }
+
+    private saveDraftReview(): void {
+        if (this.pendingWritePreview || this.draftSaveInFlight) return;
+        const request = this.buildDraftReviewSaveRequest();
+        if (!request) {
+            this.flashStatus(this.t("pagelet.panel.draft.empty", "Add suggestions to collect a draft."));
+            return;
+        }
+        this.draftSaveInFlight = true;
+        this.refreshInteractionLocks();
+        this.renderDraft();
+        void this.callbacks.saveDraftReview(request)
+            .catch(() => {
+                this.flashStatus(this.t("pagelet.panel.status.actionFailed", "Action failed"));
+            })
+            .finally(() => {
+                this.draftSaveInFlight = false;
+                this.refreshInteractionLocks();
+                this.renderDraft();
+            });
+    }
+
+    private buildDraftReviewSaveRequest(): PageletDraftReviewSaveRequest | null {
+        if (!this.currentReview || this.acceptedDraft.length === 0) return null;
+        const suggestions = this.acceptedDraft.map((item) => ({
+            ...item.suggestion,
+            proposed_action: item.text.trim() || item.suggestion.proposed_action,
+        }));
+        const result: PageletReviewResult = {
+            ...this.currentReview.result,
+            suggestions,
+        };
+        return {
+            sourcePath: this.currentReview.primarySourcePath ?? this.currentReview.sourcePath,
+            result,
+            diagnostics: this.currentReview.diagnostics,
+            costSummary: this.currentReview.costSummary,
+            ...(this.currentReview.targetPath ? { targetPath: this.currentReview.targetPath } : {}),
+            detectedLanguage: this.currentReview.detectedLanguage ?? result.detected_language,
+            mode: this.currentReview.mode ?? "basic",
+        };
     }
 
     private renderWritePreview(spec: PreviewSpec, busy: boolean): void {
@@ -797,6 +917,7 @@ export class PageletView extends ItemView {
             this.clearWritePreview();
         }
         pending.resolve(result);
+        this.refreshInteractionLocks();
     }
 
     private savePendingDraftSnapshot(): void {
@@ -806,7 +927,7 @@ export class PageletView extends ItemView {
         }
         const snapshot: PendingDraftSnapshot = {
             version: 1,
-            sourcePath: this.acceptedDraftSourcePath ?? this.currentReview?.sourcePath,
+            sourcePath: this.acceptedDraftSourcePath ?? this.reviewDraftIdentity(),
             items: this.acceptedDraft,
         };
         try {
