@@ -36,7 +36,7 @@
     "pagelet.settings.advanced.heading": "高级",
 
     "pagelet.settings.enabled.name": "启用拾页",
-    "pagelet.settings.enabled.desc": "开启拾页审阅器。关闭后，吉祥物、ribbon 图标和审阅命令都会隐藏。",
+    "pagelet.settings.enabled.desc": "开启拾页审阅器。关闭后，吉祥物、左侧栏图标和审阅命令都会隐藏。",
 
     "pagelet.settings.reviewsFolder.name": "审阅笔记目录",
     "pagelet.settings.reviewsFolder.desc": "审阅笔记保存的 vault 路径。默认 .pagelet（dotfolder，其他插件会跳过）。",
@@ -54,16 +54,16 @@
 
     "pagelet.settings.outputLanguage.name": "输出语言",
     "pagelet.settings.outputLanguage.desc": "审阅建议使用的语言。Auto 跟随笔记语言；选择具体值则强制使用。",
-    "pagelet.settings.outputLanguage.option.auto": "Auto（跟随笔记语言）",
+    "pagelet.settings.outputLanguage.option.auto": "自动（跟随笔记语言）",
     "pagelet.settings.outputLanguage.option.zh": "中文（简体）",
     "pagelet.settings.outputLanguage.option.en": "英文",
 
-    "pagelet.settings.ribbonPosition.name": "Ribbon 图标",
+    "pagelet.settings.ribbonPosition.name": "左侧栏图标",
     "pagelet.settings.ribbonPosition.desc": "显示或隐藏 Obsidian 左侧栏里的拾页图标。",
     "pagelet.settings.ribbonPosition.option.default": "默认",
     "pagelet.settings.ribbonPosition.option.hidden": "隐藏",
 
-    "pagelet.settings.temperature.name": "Temperature",
+    "pagelet.settings.temperature.name": "温度",
     "pagelet.settings.temperature.desc": "模型创造性。值越低，审阅结果越确定。范围 0.0 至 0.5，默认 0.2。",
 
     "pagelet.settings.maxInputTokens.name": "输入 token 上限",
@@ -83,7 +83,7 @@
 
     "pagelet.cost.label": "费用",
     "pagelet.cost.todayTotal": "今日费用",
-    "pagelet.cost.estimate": "预估费用：{usd}",
+    "pagelet.cost.estimate": "预估费用：{usd} (USD)",
     "pagelet.cost.limitReached": "拾页已达今日调用上限，明日恢复。",
 
     "pagelet.command.reviewCurrent": "拾页：审阅当前笔记",
@@ -112,10 +112,15 @@
     "pagelet.panel.scope.skipped.excluded-frontmatter": "拾页笔记",
     "pagelet.panel.scope.skipped.excluded-tag": "排除标签",
     "pagelet.panel.scope.summary.review-output": "已排除：{count} 篇拾页审阅笔记",
+    "pagelet.panel.scope.tokenEstimate": "预估 ~{tokens} 输入 token（仅供参考）",
+    "pagelet.panel.scope.tokenEstimateShort": "~{tokens} token",
+    "pagelet.panel.scope.rangeLabel": "范围：{range}",
     "pagelet.panel.action.reviewSelected": "审阅已选（{count}）",
     "pagelet.panel.action.reviewSelectedDescription": "审阅 {count} 篇已选笔记。已选笔记正文可能会发送给当前 AI 服务商，并可能消耗额度。",
     "pagelet.panel.action.stopReview": "停止",
-    "pagelet.panel.summary.empty": "拾页为这篇笔记找到了建议。",
+    "pagelet.panel.action.undo": "撤销",
+    "pagelet.panel.action.undoDismiss": "撤销忽略",
+    "pagelet.panel.summary.fallback": "拾页为这篇笔记找到了建议。",
     "pagelet.panel.cards.empty": "没有可见建议。",
     "pagelet.panel.cost.none": "暂无审阅费用",
     "pagelet.panel.status.idle": "就绪",
@@ -127,7 +132,7 @@
     "pagelet.panel.status.settingUpModel": "正在准备 AI 模型…",
     "pagelet.panel.status.generatingAttempt": "正在请求 AI 服务商（{attempt}/{max}）…",
     "pagelet.panel.status.generatingFallback": "正在尝试更简单的返回格式…",
-    "pagelet.panel.status.generatingFallbackAttempt": "正在尝试 fallback（{attempt}/{max}）…",
+    "pagelet.panel.status.generatingFallbackAttempt": "正在尝试备选格式（{attempt}/{max}）…",
     "pagelet.panel.status.ready": "建议已就绪",
     "pagelet.panel.status.saved": "审阅笔记已保存",
     "pagelet.panel.status.notSaved": "建议已就绪；审阅笔记未保存",
