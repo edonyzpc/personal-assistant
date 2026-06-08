@@ -7,7 +7,6 @@ import type {
     PreviewShowResult,
     PreviewSpec,
 } from "../ai-services/write-action-framework";
-import type { PluginManager } from "../plugin";
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../locales/pagelet";
 import {
     createMascotRenderer,
@@ -32,6 +31,8 @@ import {
 
 export const PAGELET_VIEW_TYPE = "pa-pagelet-view";
 const PAGELET_PENDING_DRAFT_STORAGE_KEY = "personal-assistant:pagelet:pending-draft:v1";
+
+const UNDO_TIMEOUT_MS = 5000;
 
 export interface PageletPanelReviewData {
     sourcePath: string;
@@ -76,22 +77,42 @@ function isAcceptedDraftItem(value: unknown): value is AcceptedDraftItem {
         && typeof (item.suggestion as Partial<PageletSuggestion>).proposed_action === "string";
 }
 
+interface PageletDomRefs {
+    root: HTMLElement | null;
+    mascotHost: HTMLElement | null;
+    status: HTMLElement | null;
+    source: HTMLElement | null;
+    cost: HTMLElement | null;
+    summary: HTMLElement | null;
+    cards: HTMLElement | null;
+    draft: HTMLElement | null;
+    writePreview: HTMLElement | null;
+    target: HTMLElement | null;
+    scope: HTMLElement | null;
+    scopeRange: HTMLElement | null;
+    scopeList: HTMLElement | null;
+    reviewButton: HTMLButtonElement | null;
+    cancelReview: HTMLButtonElement | null;
+}
+
+function emptyDomRefs(): PageletDomRefs {
+    return {
+        root: null, mascotHost: null, status: null, source: null, cost: null,
+        summary: null, cards: null, draft: null, writePreview: null, target: null,
+        scope: null, scopeRange: null, scopeList: null, reviewButton: null, cancelReview: null,
+    };
+}
+
+export interface PageletViewCallbacks {
+    refreshScope(range: PageletReviewRange, activePath?: string): void;
+    runReview(): void;
+    openSourceReference(reference: PageletScopeSourceReference): Promise<boolean>;
+    openRelatedNote(noteName: string, sourcePath: string): Promise<boolean>;
+    prepareResearchPrompt(suggestion: PageletSuggestion): Promise<boolean>;
+}
+
 export class PageletView extends ItemView {
-    private rootEl: HTMLElement | null = null;
-    private mascotHostEl: HTMLElement | null = null;
-    private statusEl: HTMLElement | null = null;
-    private sourceEl: HTMLElement | null = null;
-    private costEl: HTMLElement | null = null;
-    private summaryEl: HTMLElement | null = null;
-    private cardsEl: HTMLElement | null = null;
-    private draftEl: HTMLElement | null = null;
-    private writePreviewEl: HTMLElement | null = null;
-    private targetEl: HTMLElement | null = null;
-    private scopeEl: HTMLElement | null = null;
-    private scopeRangeEl: HTMLElement | null = null;
-    private scopeListEl: HTMLElement | null = null;
-    private reviewButtonEl: HTMLButtonElement | null = null;
-    private cancelReviewButtonEl: HTMLButtonElement | null = null;
+    private dom = emptyDomRefs();
     private mascot: MascotRenderer | null = null;
     private cardRenderers: SuggestionCardRenderer[] = [];
     private currentReview: PageletPanelReviewData | null = null;
@@ -105,6 +126,7 @@ export class PageletView extends ItemView {
     private writePreviewMarkdownExpanded = false;
     private reviewRunning = false;
     private reviewCancelHandler: (() => void) | null = null;
+    private undoTimer: ReturnType<typeof setTimeout> | null = null;
     private pendingWritePreview: {
         spec: PreviewSpec;
         resolve: (result: PreviewShowResult) => void;
@@ -114,7 +136,7 @@ export class PageletView extends ItemView {
 
     constructor(
         leaf: WorkspaceLeaf,
-        private readonly plugin: PluginManager,
+        private readonly callbacks: PageletViewCallbacks,
     ) {
         super(leaf);
     }
@@ -135,31 +157,18 @@ export class PageletView extends ItemView {
         this.closed = false;
         this.renderShell();
         this.renderDraft();
-        void this.plugin.refreshPageletScope(this.scopeRange);
+        void this.callbacks.refreshScope(this.scopeRange);
         this.setStatus("idle", this.t("pagelet.panel.status.idle", "Ready"));
     }
 
     async onClose(): Promise<void> {
         this.settleWritePreview({ outcome: "cancelled" });
+        if (this.undoTimer !== null) { clearTimeout(this.undoTimer); this.undoTimer = null; }
         this.closed = true;
         this.destroyCards();
         this.mascot?.destroy();
         this.mascot = null;
-        this.rootEl = null;
-        this.mascotHostEl = null;
-        this.statusEl = null;
-        this.sourceEl = null;
-        this.costEl = null;
-        this.summaryEl = null;
-        this.cardsEl = null;
-        this.draftEl = null;
-        this.writePreviewEl = null;
-        this.targetEl = null;
-        this.scopeEl = null;
-        this.scopeRangeEl = null;
-        this.scopeListEl = null;
-        this.reviewButtonEl = null;
-        this.cancelReviewButtonEl = null;
+        this.dom = emptyDomRefs();
         this.reviewCancelHandler = null;
         this.reviewRunning = false;
     }
@@ -269,7 +278,7 @@ export class PageletView extends ItemView {
             return Promise.resolve({ outcome: "aborted" });
         }
         this.renderShell();
-        if (this.closed || !this.writePreviewEl) {
+        if (this.closed || !this.dom.writePreview) {
             return Promise.resolve({ outcome: "cancelled" });
         }
         this.settleWritePreview({ outcome: "cancelled" });
@@ -289,7 +298,7 @@ export class PageletView extends ItemView {
 
     private renderShell(): void {
         if (this.closed) return;
-        if (this.rootEl) return;
+        if (this.dom.root) return;
 
         this.contentEl.textContent = "";
         this.contentEl.classList.add("pa-pagelet-view");
@@ -297,66 +306,68 @@ export class PageletView extends ItemView {
 
         const root = this.createEl("div", "pa-pagelet-shell");
         const header = this.createEl("header", "pa-pagelet-header", root);
-        this.mascotHostEl = this.createEl("div", "pa-pagelet-header__mascot", header);
-        this.mascot = createMascotRenderer(this.mascotHostEl, {
+        this.dom.mascotHost = this.createEl("div", "pa-pagelet-header__mascot", header);
+        this.mascot = createMascotRenderer(this.dom.mascotHost, {
             locale: this.locale(),
             initialState: "idle",
         });
 
         const titleGroup = this.createEl("div", "pa-pagelet-header__title", header);
         this.createEl("h2", "pa-pagelet-title", titleGroup, this.t("pagelet.panel.title", "Pagelet"));
-        this.sourceEl = this.createEl("p", "pa-pagelet-source", titleGroup, this.t("pagelet.panel.source.none", "No note selected"));
+        this.dom.source = this.createEl("p", "pa-pagelet-source", titleGroup, this.t("pagelet.panel.source.none", "No note selected"));
 
         const actions = this.createEl("div", "pa-pagelet-header__actions", header);
         const reviewButton = this.createEl("button", "pa-pagelet-button pa-pagelet-button--primary", actions, this.t("pagelet.command.reviewCurrent", "Pagelet: Review current note"));
         reviewButton.setAttribute("type", "button");
-        reviewButton.addEventListener("click", () => {
-            void this.plugin.runPageletReviewForPageletScope();
+        this.registerDomEvent(reviewButton, "click", () => {
+            void this.callbacks.runReview();
         });
-        this.reviewButtonEl = reviewButton;
+        this.dom.reviewButton = reviewButton;
 
         const cancelButton = this.createEl("button", "pa-pagelet-button pa-pagelet-review-stop", actions, this.t("pagelet.panel.action.stopReview", "Stop"));
         cancelButton.setAttribute("type", "button");
-        cancelButton.addEventListener("click", () => {
+        this.registerDomEvent(cancelButton, "click", () => {
             this.reviewCancelHandler?.();
         });
-        this.cancelReviewButtonEl = cancelButton;
+        this.dom.cancelReview = cancelButton;
         this.updateReviewButton();
         this.updateCancelReviewButton();
 
-        this.scopeEl = this.createEl("section", "pa-pagelet-scope", root);
+        this.dom.scope = this.createEl("section", "pa-pagelet-scope", root);
         this.renderScope();
 
         const statusBar = this.createEl("section", "pa-pagelet-status", root);
-        this.statusEl = this.createEl("div", "pa-pagelet-status__state", statusBar);
-        this.costEl = this.createEl("div", "pa-pagelet-status__cost", statusBar, this.t("pagelet.panel.cost.none", "No review cost yet"));
-        this.targetEl = this.createEl("div", "pa-pagelet-status__target", statusBar);
+        this.dom.status = this.createEl("div", "pa-pagelet-status__state", statusBar);
+        this.dom.cost = this.createEl("div", "pa-pagelet-status__cost", statusBar, this.t("pagelet.panel.cost.none", "No review cost yet"));
+        this.dom.target = this.createEl("div", "pa-pagelet-status__target", statusBar);
 
         const body = this.createEl("main", "pa-pagelet-workspace", root);
         const findings = this.createEl("section", "pa-pagelet-findings", body);
-        this.summaryEl = this.createEl("div", "pa-pagelet-summary", findings, this.t("pagelet.panel.empty", "Run Pagelet to review the current note."));
-        this.cardsEl = this.createEl("div", "pa-pagelet-cards", findings);
-        this.cardsEl.setAttribute("aria-label", this.t("pagelet.a11y.suggestionsRegion", "Pagelet suggestions"));
-        this.cardsEl.setAttribute("role", "region");
-        this.cardsEl.setAttribute("aria-live", "polite");
-        this.cardsEl.setAttribute("aria-atomic", "false");
+        this.dom.summary = this.createEl("div", "pa-pagelet-summary", findings, this.t("pagelet.panel.empty", "Run Pagelet to review the current note."));
+        this.dom.cards = this.createEl("div", "pa-pagelet-cards", findings);
+        this.dom.cards.setAttribute("aria-label", this.t("pagelet.a11y.suggestionsRegion", "Pagelet suggestions"));
+        this.dom.cards.setAttribute("role", "region");
+        this.dom.cards.setAttribute("aria-live", "polite");
+        this.dom.cards.setAttribute("aria-atomic", "false");
 
         const draft = this.createEl("aside", "pa-pagelet-draft", body);
         this.createEl("h3", "pa-pagelet-draft__title", draft, this.t("pagelet.panel.draft.title", "Draft"));
-        this.draftEl = this.createEl("div", "pa-pagelet-draft__items", draft);
-        this.writePreviewEl = this.createEl("div", "pa-pagelet-write-preview-host", draft);
+        this.dom.draft = this.createEl("div", "pa-pagelet-draft__items", draft);
+        this.dom.writePreview = this.createEl("div", "pa-pagelet-write-preview-host", draft);
         this.renderDraft();
 
         this.contentEl.appendChild(root);
-        this.rootEl = root;
+        this.dom.root = root;
     }
 
     private renderScope(): void {
-        if (!this.scopeEl) return;
-        this.scopeEl.textContent = "";
-        const header = this.createEl("div", "pa-pagelet-scope__header", this.scopeEl);
+        if (!this.dom.scope) return;
+        this.dom.scope.textContent = "";
+        const header = this.createEl("div", "pa-pagelet-scope__header", this.dom.scope);
         this.createEl("h3", "pa-pagelet-scope__title", header, this.t("pagelet.panel.scope.title", "Scope"));
-        this.scopeRangeEl = this.createEl("div", "pa-pagelet-scope__ranges", header);
+        this.dom.scopeRange = this.createEl("div", "pa-pagelet-scope__ranges", header);
+        this.dom.scopeRange.setAttribute("role", "radiogroup");
+        this.dom.scopeRange.setAttribute("aria-label", this.t("pagelet.panel.scope.title", "Scope"));
         const ranges: PageletReviewRange[] = ["current", "yesterday", "last3", "last7"];
         for (const range of ranges) {
             const button = this.createEl(
@@ -364,28 +375,30 @@ export class PageletView extends ItemView {
                 range === this.scopeRange
                     ? "pa-pagelet-scope__range is-active"
                     : "pa-pagelet-scope__range",
-                this.scopeRangeEl,
+                this.dom.scopeRange,
                 this.scopeLabel(range),
             );
             button.setAttribute("type", "button");
-            button.setAttribute("aria-pressed", String(range === this.scopeRange));
-            button.addEventListener("click", () => {
+            button.setAttribute("role", "radio");
+            button.setAttribute("aria-checked", String(range === this.scopeRange));
+            button.setAttribute("aria-label", this.t("pagelet.panel.scope.rangeLabel", "Scope: {range}", { range: this.scopeLabel(range) }));
+            this.registerDomEvent(button, "click", () => {
                 this.scopeRange = range;
-                void this.plugin.refreshPageletScope(range, this.scopePlan?.activePath);
+                void this.callbacks.refreshScope(range, this.scopePlan?.activePath);
             });
         }
 
-        this.scopeListEl = this.createEl("div", "pa-pagelet-scope__list", this.scopeEl);
+        this.dom.scopeList = this.createEl("div", "pa-pagelet-scope__list", this.dom.scope);
         const excludedReviewOutputCount = this.scopePlan?.excludedReviewOutputCount ?? 0;
         if (!this.scopePlan || (this.scopePlan.candidates.length === 0 && excludedReviewOutputCount === 0)) {
-            this.createEl("p", "pa-pagelet-scope__empty", this.scopeListEl, this.t("pagelet.panel.scope.empty", "No notes in scope."));
+            this.createEl("p", "pa-pagelet-scope__empty", this.dom.scopeList, this.t("pagelet.panel.scope.empty", "No notes in scope."));
             return;
         }
 
         const included = this.scopePlan.candidates.filter((candidate) => candidate.included);
         const skipped = this.scopePlan.candidates.filter((candidate) => !candidate.included);
         if (included.length === 0 && skipped.length === 0) {
-            this.createEl("p", "pa-pagelet-scope__empty", this.scopeListEl, this.t("pagelet.panel.scope.empty", "No notes in scope."));
+            this.createEl("p", "pa-pagelet-scope__empty", this.dom.scopeList, this.t("pagelet.panel.scope.empty", "No notes in scope."));
         }
         this.renderScopeGroup(this.t("pagelet.panel.scope.included", "Included"), included);
         if (skipped.length > 0) {
@@ -396,13 +409,13 @@ export class PageletView extends ItemView {
     }
 
     private renderScopeSummaries(): void {
-        if (!this.scopeListEl || !this.scopePlan) return;
+        if (!this.dom.scopeList || !this.scopePlan) return;
         const count = this.scopePlan.excludedReviewOutputCount ?? 0;
         if (count <= 0) return;
         this.createEl(
             "p",
             "pa-pagelet-scope__summary",
-            this.scopeListEl,
+            this.dom.scopeList,
             this.t(
                 "pagelet.panel.scope.summary.review-output",
                 "Excluded: {count} Pagelet review notes",
@@ -412,8 +425,8 @@ export class PageletView extends ItemView {
     }
 
     private renderScopeGroup(label: string, candidates: PageletScopePlan["candidates"]): void {
-        if (!this.scopeListEl || candidates.length === 0) return;
-        const group = this.createEl("div", "pa-pagelet-scope__group", this.scopeListEl);
+        if (!this.dom.scopeList || candidates.length === 0) return;
+        const group = this.createEl("div", "pa-pagelet-scope__group", this.dom.scopeList);
         this.createEl("div", "pa-pagelet-scope__group-label", group, `${label} (${candidates.length})`);
         for (const candidate of candidates) {
             const row = this.createEl("label", "pa-pagelet-scope__row", group);
@@ -467,62 +480,74 @@ export class PageletView extends ItemView {
         this.acceptedDraftSourcePath = undefined;
         this.clearPendingDraftSnapshot();
         this.destroyCards();
-        if (this.summaryEl) {
-            this.summaryEl.textContent = this.t("pagelet.panel.empty", "Run Pagelet to review the current note.");
+        if (this.dom.summary) {
+            this.dom.summary.textContent = this.t("pagelet.panel.empty", "Run Pagelet to review the current note.");
         }
-        if (this.costEl) {
-            this.costEl.textContent = this.t("pagelet.panel.cost.none", "No review cost yet");
+        if (this.dom.cost) {
+            this.dom.cost.textContent = this.t("pagelet.panel.cost.none", "No review cost yet");
         }
-        if (this.targetEl) this.targetEl.textContent = "";
+        if (this.dom.target) this.dom.target.textContent = "";
         this.clearWritePreview();
         this.renderDraft();
     }
 
     private setStatus(state: MascotState, message: string): void {
-        if (this.statusEl) this.statusEl.textContent = message;
+        if (this.dom.status) this.dom.status.textContent = message;
         this.mascot?.setState(state, { message });
     }
 
     private setSource(sourcePath: string): void {
-        if (this.sourceEl) {
-            this.sourceEl.textContent = sourcePath;
-            this.sourceEl.setAttribute("title", sourcePath);
+        if (this.dom.source) {
+            this.dom.source.textContent = sourcePath;
+            this.dom.source.setAttribute("title", sourcePath);
         }
     }
 
     private setTarget(targetPath: string, saved: boolean): void {
-        if (!this.targetEl) return;
+        if (!this.dom.target) return;
         const label = saved
             ? this.t("pagelet.panel.target.saved", "Saved to")
             : this.t("pagelet.panel.target.pending", "Review note");
-        this.targetEl.textContent = `${label}: ${targetPath}`;
-        this.targetEl.setAttribute("title", targetPath);
+        this.dom.target.textContent = `${label}: ${targetPath}`;
+        this.dom.target.setAttribute("title", targetPath);
     }
 
     private updateReviewButton(): void {
-        if (!this.reviewButtonEl) return;
+        if (!this.dom.reviewButton) return;
         const count = this.getScopeSelection().paths.length;
         const label = this.t(
             "pagelet.panel.action.reviewSelected",
             "Review selected ({count})",
             { count },
         );
+        const tokens = this.scopePlan?.estimatedInputTokens;
+        const tokenLabel = tokens
+            ? tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens)
+            : undefined;
+        const tokenHint = tokenLabel
+            ? ` (${this.t("pagelet.panel.scope.tokenEstimateShort", "~{tokens} tokens", { tokens: tokenLabel })})`
+            : "";
         const description = this.t(
             "pagelet.panel.action.reviewSelectedDescription",
             "Review {count} selected notes. Selected note text may be sent to your configured AI provider and may use credits.",
             { count },
-        );
-        this.reviewButtonEl.textContent = label;
-        this.reviewButtonEl.setAttribute("title", description);
-        this.reviewButtonEl.setAttribute("aria-label", description);
-        this.reviewButtonEl.disabled = this.reviewRunning || count === 0;
+        ) + tokenHint;
+        this.dom.reviewButton.textContent = label;
+        this.dom.reviewButton.setAttribute("title", description);
+        this.dom.reviewButton.setAttribute("aria-label", description);
+        this.dom.reviewButton.disabled = this.reviewRunning || count === 0;
+        if (this.dom.target && !this.reviewRunning) {
+            this.dom.target.textContent = tokens
+                ? this.t("pagelet.panel.scope.tokenEstimate", "Est. ~{tokens} input tokens", { tokens: tokens >= 1000 ? `${(tokens / 1000).toFixed(1)}k` : String(tokens) })
+                : "";
+        }
     }
 
     private updateCancelReviewButton(): void {
-        if (!this.cancelReviewButtonEl) return;
+        if (!this.dom.cancelReview) return;
         const visible = this.reviewRunning && this.reviewCancelHandler !== null;
-        this.cancelReviewButtonEl.hidden = !visible;
-        this.cancelReviewButtonEl.disabled = !visible;
+        this.dom.cancelReview.hidden = !visible;
+        this.dom.cancelReview.disabled = !visible;
     }
 
     private clearReviewRunningState(): void {
@@ -534,25 +559,25 @@ export class PageletView extends ItemView {
     }
 
     private renderSummary(result: PageletReviewResult): void {
-        if (!this.summaryEl) return;
-        this.summaryEl.textContent = result.overall_remark?.trim()
-            || this.t("pagelet.panel.summary.empty", "Pagelet found suggestions for this note.");
+        if (!this.dom.summary) return;
+        this.dom.summary.textContent = result.overall_remark?.trim()
+            || this.t("pagelet.panel.summary.fallback", "Pagelet found suggestions for this note.");
     }
 
     private renderCards(): void {
-        if (!this.cardsEl || !this.currentReview) return;
+        if (!this.dom.cards || !this.currentReview) return;
         this.destroyCards();
         const locale = this.locale();
         const visibleSuggestions = this.currentReview.result.suggestions
             .filter((suggestion) => !this.dismissedKeys.has(suggestionKey(suggestion)));
         if (visibleSuggestions.length === 0) {
-            this.cardsEl.textContent = this.t("pagelet.panel.cards.empty", "No visible suggestions.");
+            this.dom.cards.textContent = this.t("pagelet.panel.cards.empty", "No visible suggestions.");
             return;
         }
-        this.cardsEl.textContent = "";
+        this.dom.cards.textContent = "";
         for (const suggestion of visibleSuggestions) {
             const renderer = createSuggestionCardRenderer(
-                this.cardsEl,
+                this.dom.cards,
                 {
                     suggestion,
                     diagnostics: this.currentReview.diagnostics,
@@ -581,9 +606,17 @@ export class PageletView extends ItemView {
     }
 
     private dismissSuggestion(suggestion: PageletSuggestion): void {
-        this.dismissedKeys.add(suggestionKey(suggestion));
+        const key = suggestionKey(suggestion);
+        this.dismissedKeys.add(key);
         this.renderCards();
-        this.flashStatus(this.t("pagelet.panel.status.dismissed", "Suggestion dismissed"));
+        this.flashStatusWithUndo(
+            this.t("pagelet.panel.status.dismissed", "Suggestion dismissed"),
+            () => {
+                this.dismissedKeys.delete(key);
+                this.renderCards();
+                this.flashStatus(this.t("pagelet.panel.status.idle", "Ready"));
+            },
+        );
     }
 
     private openSourceReference(sourceId: string): void {
@@ -592,7 +625,7 @@ export class PageletView extends ItemView {
             this.flashStatus(this.t("pagelet.panel.status.source", "Source") + `: ${sourceId}`);
             return;
         }
-        this.runPanelAction(this.plugin.openPageletSourceReference(reference), (opened) => {
+        this.runPanelAction(this.callbacks.openSourceReference(reference), (opened) => {
             this.flashStatus(opened
                 ? `${this.t("pagelet.panel.status.source", "Source")}: ${reference.label}`
                 : this.t("pagelet.panel.status.relatedMissing", "Related note not found"));
@@ -603,7 +636,7 @@ export class PageletView extends ItemView {
         const source = this.sourceReferences.get(suggestion.source_id)?.path
             ?? this.currentReview?.sourcePath
             ?? "";
-        this.runPanelAction(this.plugin.openPageletRelatedNote(noteName, source), (opened) => {
+        this.runPanelAction(this.callbacks.openRelatedNote(noteName, source), (opened) => {
             this.flashStatus(opened
                 ? this.t("pagelet.panel.status.relatedOpened", "Opened related note")
                 : this.t("pagelet.panel.status.relatedMissing", "Related note not found"));
@@ -611,7 +644,7 @@ export class PageletView extends ItemView {
     }
 
     private prepareResearchPrompt(suggestion: PageletSuggestion): void {
-        this.runPanelAction(this.plugin.preparePageletResearchPrompt(suggestion), (prepared) => {
+        this.runPanelAction(this.callbacks.prepareResearchPrompt(suggestion), (prepared) => {
             if (prepared) {
                 this.flashStatus(this.t("pagelet.panel.status.researchReady", "Research prompt prepared in Chat"));
             } else {
@@ -629,13 +662,13 @@ export class PageletView extends ItemView {
     }
 
     private renderDraft(): void {
-        if (!this.draftEl) return;
-        this.draftEl.textContent = "";
+        if (!this.dom.draft) return;
+        this.dom.draft.textContent = "";
         if (this.acceptedDraft.length === 0) {
-            this.createEl("p", "pa-pagelet-draft__empty", this.draftEl, this.t("pagelet.panel.draft.empty", "Add suggestions to collect a draft."));
+            this.createEl("p", "pa-pagelet-draft__empty", this.dom.draft, this.t("pagelet.panel.draft.empty", "Add suggestions to collect a draft."));
             return;
         }
-        const list = this.createEl("ol", "pa-pagelet-draft__list", this.draftEl);
+        const list = this.createEl("ol", "pa-pagelet-draft__list", this.dom.draft);
         for (const item of this.acceptedDraft) {
             const li = this.createEl("li", "pa-pagelet-draft__item", list);
             this.createEl("div", "pa-pagelet-draft__source", li, item.suggestion.source_id);
@@ -666,9 +699,9 @@ export class PageletView extends ItemView {
     }
 
     private renderWritePreview(spec: PreviewSpec, busy: boolean): void {
-        if (!this.writePreviewEl) return;
-        this.writePreviewEl.textContent = "";
-        const panel = this.createEl("section", "pa-pagelet-write-preview", this.writePreviewEl);
+        if (!this.dom.writePreview) return;
+        this.dom.writePreview.textContent = "";
+        const panel = this.createEl("section", "pa-pagelet-write-preview", this.dom.writePreview);
         panel.setAttribute("role", "region");
         panel.setAttribute(
             "aria-label",
@@ -719,6 +752,18 @@ export class PageletView extends ItemView {
         pre.hidden = !this.writePreviewMarkdownExpanded;
 
         const actions = this.createEl("div", "pa-pagelet-write-preview__actions", panel);
+        const cancel = this.createEl(
+            "button",
+            "pa-pagelet-button pa-pagelet-button--ghost pa-pagelet-write-preview__cancel",
+            actions,
+            spec.confirmCopy.cancelLabel,
+        );
+        cancel.setAttribute("type", "button");
+        cancel.disabled = busy;
+        cancel.addEventListener("click", () => {
+            this.settleWritePreview({ outcome: "cancelled" });
+        });
+
         const confirm = this.createEl(
             "button",
             "pa-pagelet-button pa-pagelet-button--primary pa-pagelet-write-preview__confirm",
@@ -732,22 +777,10 @@ export class PageletView extends ItemView {
         confirm.addEventListener("click", () => {
             this.settleWritePreview({ outcome: "confirmed" });
         });
-
-        const cancel = this.createEl(
-            "button",
-            "pa-pagelet-button pa-pagelet-button--ghost pa-pagelet-write-preview__cancel",
-            actions,
-            spec.confirmCopy.cancelLabel,
-        );
-        cancel.setAttribute("type", "button");
-        cancel.disabled = busy;
-        cancel.addEventListener("click", () => {
-            this.settleWritePreview({ outcome: "cancelled" });
-        });
     }
 
     private clearWritePreview(): void {
-        if (this.writePreviewEl) this.writePreviewEl.textContent = "";
+        if (this.dom.writePreview) this.dom.writePreview.textContent = "";
     }
 
     private settleWritePreview(result: PreviewShowResult): void {
@@ -830,10 +863,10 @@ export class PageletView extends ItemView {
     }
 
     private renderCost(summary: PageletCostSummary): void {
-        if (!this.costEl) return;
+        if (!this.dom.cost) return;
         const label = this.t("pagelet.cost.todayTotal", "Today's cost");
-        this.costEl.textContent = `${label}: ${formatUsd(summary.estimatedCost)}`;
-        this.costEl.setAttribute("data-pricing-known", String(summary.pricingKnown));
+        this.dom.cost.textContent = `${label}: ${formatUsd(summary.estimatedCost)}`;
+        this.dom.cost.setAttribute("data-pricing-known", String(summary.pricingKnown));
     }
 
     private destroyCards(): void {
@@ -841,11 +874,38 @@ export class PageletView extends ItemView {
             renderer.destroy();
         }
         this.cardRenderers = [];
-        if (this.cardsEl) this.cardsEl.textContent = "";
+        if (this.dom.cards) this.dom.cards.textContent = "";
     }
 
     private flashStatus(message: string): void {
-        if (this.statusEl) this.statusEl.textContent = message;
+        if (this.dom.status) this.dom.status.textContent = message;
+    }
+
+    private flashStatusWithUndo(message: string, onUndo: () => void): void {
+        const el = this.dom.status;
+        if (!el) return;
+        el.textContent = "";
+        const span = document.createElement("span");
+        span.textContent = message + " ";
+        el.appendChild(span);
+        const btn = document.createElement("button");
+        btn.textContent = this.t("pagelet.panel.action.undo", "Undo");
+        btn.className = "pa-pagelet-status__undo";
+        btn.setAttribute("type", "button");
+        btn.setAttribute("aria-label", this.t("pagelet.panel.action.undoDismiss", "Undo dismiss"));
+        let expired = this.closed;
+        btn.addEventListener("click", () => {
+            if (expired) return;
+            expired = true;
+            onUndo();
+        });
+        el.appendChild(btn);
+        if (this.undoTimer !== null) clearTimeout(this.undoTimer);
+        this.undoTimer = setTimeout(() => {
+            this.undoTimer = null;
+            expired = true;
+            if (el.contains(btn)) el.textContent = message;
+        }, UNDO_TIMEOUT_MS);
     }
 
     private createEl<K extends keyof HTMLElementTagNameMap>(
