@@ -27,8 +27,6 @@ import type {
     BufferedToolCall,
     PaAgentAfterTurnDecision,
     PaAgentModelStreamChunk,
-    PaAgentToolCall,
-    PaAgentToolExecutionInput,
     PaAgentToolExecutionMode,
     PaAgentToolExecutionResult,
     PaAgentToolExecutor,

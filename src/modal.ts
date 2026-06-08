@@ -64,7 +64,7 @@ export class PluginControlModal extends SuggestModal<Plugin> {
         } else {
             setIcon(div, 'SWITCH_OFF_STATUS');
         }
-        div.querySelector('svg')?.addClass("plugin-swith-on-off-svg");
+        div.querySelector('svg')?.addClass("plugin-switch-on-off-svg");
         div.createSpan({ text: plugin.name, attr: { style: "color: var(--text-normal)" } });
         el.createEl("small", { text: plugin.desc });
     }
