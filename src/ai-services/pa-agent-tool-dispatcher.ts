@@ -10,14 +10,11 @@ import type {
 import type { AgentLifecycleEventEmitter } from "./agent-runtime-primitives";
 import type {
     BufferedToolCall,
-    PaAgentAfterTurnDecision,
-    PaAgentToolCall,
     PaAgentToolExecutionMode,
     PaAgentToolExecutionResult,
     PaAgentToolExecutor,
     PaAgentToolMode,
     ParsedBufferedToolCall,
-    PolicyDecisionRaceResult,
 } from "./pa-agent-types";
 
 /** @deprecated Import from `./pa-agent-types` instead. Will be removed in v2.5. */
