@@ -55,6 +55,7 @@ export interface PageletScopePlan {
     rangeEndMs: number;
     candidates: PageletScopeCandidate[];
     excludedReviewOutputCount?: number;
+    estimatedInputTokens?: number;
 }
 
 export interface PageletScopeSelection {
@@ -191,6 +192,19 @@ export function buildPageletScopePlan(options: BuildPageletScopePlanOptions): Pa
         visibleReviewOutputCount,
     );
 
+    let totalIncludedBytes = 0;
+    for (const file of options.files) {
+        const path = normalizePath(file.path);
+        const candidate = candidates.find((c) => c.path === path);
+        if (candidate?.included) {
+            totalIncludedBytes += finiteNumber(file.stat?.size) ?? 0;
+        }
+    }
+    const APPROX_BYTES_PER_TOKEN = 3;
+    const estimatedInputTokens = totalIncludedBytes > 0
+        ? Math.ceil(totalIncludedBytes / APPROX_BYTES_PER_TOKEN)
+        : undefined;
+
     return {
         range: options.range,
         activePath,
@@ -198,6 +212,7 @@ export function buildPageletScopePlan(options: BuildPageletScopePlanOptions): Pa
         rangeEndMs: endMs,
         candidates,
         ...(excludedReviewOutputCount > 0 ? { excludedReviewOutputCount } : {}),
+        ...(estimatedInputTokens ? { estimatedInputTokens } : {}),
     };
 }
 
@@ -385,19 +400,17 @@ function chooseCandidateReason(
 }
 
 function resolveRangeWindow(range: PageletReviewRange, now: Date): { startMs: number; endMs: number } {
-    const todayStart = startOfLocalDay(now).getTime();
+    const y = now.getFullYear(), m = now.getMonth(), d = now.getDate();
+    const todayStart = new Date(y, m, d).getTime();
     if (range === "current") return { startMs: todayStart, endMs: todayStart };
     if (range === "yesterday") {
-        const start = todayStart - 24 * 60 * 60 * 1000;
-        return { startMs: start, endMs: todayStart };
+        return { startMs: new Date(y, m, d - 1).getTime(), endMs: todayStart };
     }
     const days = RANGE_DAYS[range];
-    const start = todayStart - (days - 1) * 24 * 60 * 60 * 1000;
-    return { startMs: start, endMs: todayStart + 24 * 60 * 60 * 1000 };
-}
-
-function startOfLocalDay(date: Date): Date {
-    return new Date(date.getFullYear(), date.getMonth(), date.getDate());
+    return {
+        startMs: new Date(y, m, d - (days - 1)).getTime(),
+        endMs: new Date(y, m, d + 1).getTime(),
+    };
 }
 
 function extractDailyDateMs(path: string): number | null {
