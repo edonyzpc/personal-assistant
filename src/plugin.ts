@@ -5,6 +5,7 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
+import { AIUtils } from "./ai-services/ai-utils";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
@@ -27,48 +28,32 @@ import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
 import { ChatHistoryManager } from './chat/chat-history-manager';
-import { AIUtils } from './ai-services/ai-utils';
-import type { PreviewRenderer } from './ai-services/write-action-framework';
 import {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
     PAGELET_OPEN_PANEL_COMMAND_ID,
-    PAGELET_APPROX_CHARS_PER_TOKEN,
     PAGELET_VIEW_TYPE,
     PAGELET_REVIEW_CURRENT_COMMAND_ID,
     PageletCostTracker,
-    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
     PageletRateLimiter,
-    PageletReviewModel,
     PageletView,
-    buildPageletScopePlan,
-    buildPageletScopeReviewBundle,
     createPaReviewRuntime,
-    isPageletEligibleView,
-    mintNonCollidingReviewNotePath,
     registerPageletFocusCommand,
     registerPageletOpenPanelCommand,
     registerPageletReviewCurrentCommand,
     registerPageletRibbonIcon,
     type PageletReviewRange,
-    type PageletReviewProgressEvent,
-    type PageletReviewTimingEntry,
-    type PageletScopeMetadataLike,
-    type PageletScopePlan,
-    type PageletScopeSelection,
     type PageletScopeSourceReference,
     type PageletSuggestion,
     type PaReviewRuntime,
 } from './pagelet';
 import { getPageletUiLanguage, pageletT } from './locales/pagelet';
 import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
+import { PageletReviewOrchestrator, type PageletOrchestratorHost } from './pagelet/orchestrator';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
-const PAGELET_REVIEW_TIMEOUT_MS = 90_000;
-const PAGELET_PRODUCTION_MAX_RETRIES = 0;
-
 interface TechnicalMemoryDetail {
     label: string;
     value: string;
@@ -182,9 +167,9 @@ export class PluginManager extends Plugin {
      * per-streamTurn inside chat-service.ts).
      */
     private pageletRuntime: PaReviewRuntime | null = null;
-    private pageletReviewInFlight = false;
-    private pageletCostTracker = new PageletCostTracker();
-    private pageletRateLimiter = new PageletRateLimiter();
+    readonly pageletCostTracker = new PageletCostTracker();
+    readonly pageletRateLimiter = new PageletRateLimiter();
+    private pageletOrchestrator: PageletReviewOrchestrator | null = null;
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
      * was coerced to the default by the now-stricter validator. Consumed once
@@ -238,6 +223,7 @@ export class PluginManager extends Plugin {
                         if (this.resizeDebounceTimer !== null) clearTimeout(this.resizeDebounceTimer);
                         this.resizeDebounceTimer = setTimeout(() => {
                             this.resizeDebounceTimer = null;
+                            if (!this.hoverPopoverObserver) return;
                             this.localGraph.resize();
                         }, 150);
                         return;
@@ -300,7 +286,13 @@ export class PluginManager extends Plugin {
         this.registerView(
             PAGELET_VIEW_TYPE,
             (leaf) => {
-                return new PageletView(leaf, this);
+                return new PageletView(leaf, {
+                    refreshScope: (range, activePath) => void this.refreshPageletScope(range, activePath),
+                    runReview: () => void this.runPageletReviewForPageletScope(),
+                    openSourceReference: (ref) => this.openPageletSourceReference(ref),
+                    openRelatedNote: (name, source) => this.openPageletRelatedNote(name, source),
+                    prepareResearchPrompt: (suggestion) => this.preparePageletResearchPrompt(suggestion),
+                });
             }
         );
 
@@ -583,6 +575,7 @@ export class PluginManager extends Plugin {
         // The optional-chain guard lets tests that ship a partial settings
         // object (no `pagelet` key) reach onload() without throwing.
         if (this.settings.pagelet?.enabled) {
+            this.pageletOrchestrator = new PageletReviewOrchestrator(this as unknown as PageletOrchestratorHost);
             try {
                 registerPageletOpenPanelCommand(
                     this as unknown as Parameters<typeof registerPageletOpenPanelCommand>[0],
@@ -649,11 +642,12 @@ export class PluginManager extends Plugin {
             return null;
         }
         if (!this.pageletRuntime) {
+            if (!this.pageletOrchestrator) return null;
             this.pageletRuntime = createPaReviewRuntime({
                 app: this.app,
                 getPageletSettings: () => this.settings.pagelet,
                 getLocale: () => this.getPageletLocale(),
-                previewRenderer: this.createPageletPanelPreviewRenderer(),
+                previewRenderer: this.pageletOrchestrator.createPageletPanelPreviewRenderer(),
                 debug: this.settings.debug,
             });
             this.log("Pagelet runtime initialized");
@@ -661,344 +655,34 @@ export class PluginManager extends Plugin {
         return this.pageletRuntime;
     }
 
-    private createPageletPanelPreviewRenderer(): PreviewRenderer {
-        return {
-            show: async (spec, options) => {
-                const pageletView = this.getOpenPageletView() ?? await this.activePageletView();
-                if (!pageletView) {
-                    return { outcome: "cancelled" };
-                }
-                return pageletView.showWritePreview(spec, options);
-            },
-        };
-    }
-
     async refreshPageletScope(range: PageletReviewRange, preferredActivePath?: string): Promise<void> {
-        const anchor = this.resolvePageletAnchorMarkdownFile(preferredActivePath)
-            ?? this.getPageletAnchorMarkdownFile();
-        const pageletView = await this.activePageletView();
-        if (!pageletView || !anchor) return;
-        pageletView.showScopePlan(await this.createPageletScopePlan(range, anchor));
+        if (!this.pageletOrchestrator) return;
+        return this.pageletOrchestrator.refreshPageletScope(range, preferredActivePath);
     }
 
     async runPageletReviewForActiveNote(): Promise<void> {
-        const locale = this.getPageletLocale();
-        if (!this.reservePageletReview(locale)) return;
-        const activeMarkdownView = this.getStrictActivePageletMarkdownView();
-        if (!activeMarkdownView) {
-            this.pageletReviewInFlight = false;
-            return;
-        }
-        const file = activeMarkdownView.file;
-        if (!file || file.extension.toLowerCase() !== "md") {
-            this.pageletReviewInFlight = false;
-            return;
-        }
-        await this.runPageletReviewForFiles({
-            primaryFile: file,
-            files: [file],
-            range: "current",
-            abortOnActiveViewChange: { view: activeMarkdownView, path: file.path },
-        });
+        if (!this.pageletOrchestrator) return;
+        return this.pageletOrchestrator.runPageletReviewForActiveNote();
     }
 
     async runPageletReviewForPageletScope(): Promise<void> {
-        const locale = this.getPageletLocale();
-        if (!this.reservePageletReview(locale)) return;
-        let pageletView = this.getOpenPageletView();
-        let selection = pageletView?.getScopeSelection();
-        const anchor = this.resolvePageletAnchorMarkdownFile(selection?.activePath)
-            ?? this.getPageletAnchorMarkdownFile();
-        if (!anchor) {
-            this.pageletReviewInFlight = false;
-            new Notice(pageletT("pagelet.trigger.noActiveNote", locale), 3000);
-            return;
-        }
-        pageletView = pageletView ?? await this.activePageletView();
-        if (!pageletView) {
-            this.pageletReviewInFlight = false;
-            return;
-        }
-        selection = selection ?? pageletView.getScopeSelection();
-        if (selection.paths.length === 0) {
-            const plan = await this.createPageletScopePlan(selection.range, anchor);
-            pageletView.showScopePlan(plan);
-            selection = pageletView.getScopeSelection();
-        }
-        const primaryFile = this.resolvePageletAnchorMarkdownFile(selection.activePath) ?? anchor;
-        const files = this.resolvePageletScopeFiles(selection);
-        if (files.length === 0) {
-            this.pageletReviewInFlight = false;
-            new Notice(pageletT("pagelet.trigger.emptyNote", locale), 3000);
-            return;
-        }
-        await this.runPageletReviewForFiles({
-            primaryFile,
-            files,
-            range: selection.range,
-        });
+        if (!this.pageletOrchestrator) return;
+        return this.pageletOrchestrator.runPageletReviewForPageletScope();
     }
 
-    private async runPageletReviewForFiles(options: {
-        primaryFile: TFile;
-        files: readonly TFile[];
-        range: PageletReviewRange;
-        abortOnActiveViewChange?: { view: MarkdownView; path: string };
-    }): Promise<void> {
-        const locale = this.getPageletLocale();
-        const file = options.primaryFile;
-        const pageletView = await this.activePageletView();
-        const sourceLabel = options.files.length === 1 ? options.files[0].path : `${options.files.length} notes`;
-        const runStartedAt = Date.now();
-        const timings: PageletReviewTimingEntry[] = [];
-        const abortController = new AbortController();
-        let abortReason: "user" | "source_changed" | undefined;
-        const abortReview = (reason: "user" | "source_changed") => {
-            abortReason ??= reason;
-            abortController.abort();
-        };
-        const recordTiming = (
-            phase: string,
-            startedAt: number,
-            metadata?: Record<string, unknown>,
-        ) => {
-            timings.push({
-                phase,
-                elapsedMs: Math.max(0, Date.now() - startedAt),
-                metadata: {
-                    source: "plugin",
-                    ...(metadata ?? {}),
-                },
-            });
-        };
-        const mergeOutcomeTimings = (diagnostics: { timings?: PageletReviewTimingEntry[] }) => {
-            diagnostics.timings = [
-                ...timings,
-                ...(diagnostics.timings ?? []).filter((entry) =>
-                    (entry.metadata as { source?: unknown } | undefined)?.source !== "plugin"),
-            ];
-        };
-        pageletView?.showReviewStarted(sourceLabel, {
-            onCancel: () => abortReview("user"),
-        });
-        const abortIfSourceViewChanged = () => {
-            if (!options.abortOnActiveViewChange) return;
-            const currentView = this.app.workspace.getActiveViewOfType(MarkdownView);
-            if (
-                currentView !== options.abortOnActiveViewChange.view
-                || currentView.file?.path !== options.abortOnActiveViewChange.path
-            ) {
-                abortReview("source_changed");
-            }
-        };
-        const activeLeafRef = this.app.workspace.on("active-leaf-change", abortIfSourceViewChanged);
-        const fileOpenRef = this.app.workspace.on("file-open", abortIfSourceViewChanged);
-        const runtime = this.getOrCreatePageletRuntime();
-        if (!runtime) {
-            this.app.workspace.offref(activeLeafRef);
-            this.app.workspace.offref(fileOpenRef);
-            pageletView?.showReviewError(pageletT("pagelet.mascot.error", locale), file.path);
-            new Notice(pageletT("pagelet.mascot.error", locale), 3000);
-            this.pageletReviewInFlight = false;
-            return;
-        }
+    async openPageletSourceReference(reference: PageletScopeSourceReference): Promise<boolean> {
+        if (!this.pageletOrchestrator) return false;
+        return this.pageletOrchestrator.openPageletSourceReference(reference);
+    }
 
-        new Notice(pageletT("pagelet.mascot.thinking", locale), 2000);
+    async openPageletRelatedNote(noteName: string, sourcePath: string): Promise<boolean> {
+        if (!this.pageletOrchestrator) return false;
+        return this.pageletOrchestrator.openPageletRelatedNote(noteName, sourcePath);
+    }
 
-        try {
-            pageletView?.showReviewProgress(pageletT("pagelet.panel.status.reading", locale));
-            const readStartedAt = Date.now();
-            const entries = await this.readPageletScopeEntries(options.files);
-            recordTiming("read_scope_entries", readStartedAt, {
-                requestedFileCount: options.files.length,
-                loadedEntryCount: entries.length,
-            });
-            if (abortController.signal.aborted) {
-                recordTiming("aborted", runStartedAt, { reason: abortReason ?? "user" });
-                this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            pageletView?.showReviewProgress(pageletT("pagelet.panel.status.preparing", locale));
-            const bundleStartedAt = Date.now();
-            const bundle = buildPageletScopeReviewBundle({
-                entries,
-                primarySourcePath: file.path,
-                range: options.range,
-                settings: this.settings.pagelet,
-                uiLanguage: locale,
-                targetSuggestionCount: Math.min(
-                    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
-                    this.settings.previewLimits,
-                ),
-            });
-            recordTiming("build_scope_bundle", bundleStartedAt, {
-                hasBundle: Boolean(bundle),
-                range: options.range,
-            });
-            if (abortController.signal.aborted) {
-                recordTiming("aborted", runStartedAt, { reason: abortReason ?? "user" });
-                this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            if (!bundle) {
-                pageletView?.showReviewEmpty(file.path);
-                new Notice(pageletT("pagelet.trigger.emptyNote", locale), 3000);
-                return;
-            }
-
-            const pageletSettings = this.settings.pagelet;
-            const aiUtils = new AIUtils(this);
-            const reviewModel = new PageletReviewModel(
-                (temperature, options) => aiUtils.createChatModel(temperature, {
-                    modelName: options?.modelName,
-                }),
-                {
-                    temperature: pageletSettings.temperature,
-                    modelName: this.settings.chatModelName,
-                    costBudget: {
-                        maxInputTokens: pageletSettings.maxInputTokens,
-                        maxOutputTokens: pageletSettings.maxOutputTokens,
-                    },
-                    costTracker: this.pageletCostTracker,
-                    rateLimiter: this.pageletRateLimiter,
-                    providerForPricing: this.settings.aiProvider,
-                    modelForPricing: this.settings.chatModelName,
-                    userMessageLocale: locale,
-                    reviewTimeoutMs: PAGELET_REVIEW_TIMEOUT_MS,
-                    maxRetries: PAGELET_PRODUCTION_MAX_RETRIES,
-                    onProgress: (event) => {
-                        pageletView?.showReviewProgress(
-                            this.formatPageletReviewProgress(event, locale),
-                        );
-                    },
-                },
-            );
-            const llmStartedAt = Date.now();
-            const outcome = await reviewModel.reviewNote(bundle.input, abortController.signal);
-            recordTiming("llm_review", llmStartedAt, {
-                status: outcome.status,
-                path: outcome.diagnostics.path,
-                attempts: outcome.diagnostics.attempts,
-                modelElapsedMs: outcome.diagnostics.elapsedMs,
-                timeoutMs: PAGELET_REVIEW_TIMEOUT_MS,
-                maxRetries: PAGELET_PRODUCTION_MAX_RETRIES,
-            });
-            mergeOutcomeTimings(outcome.diagnostics);
-            if (abortReason) {
-                this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            if (outcome.status === "error") {
-                this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
-                pageletView?.showReviewError(outcome.userMessage, file.path);
-                new Notice(outcome.userMessage, 6000);
-                return;
-            }
-            if (outcome.status === "empty") {
-                this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
-                pageletView?.showReviewEmpty(file.path);
-                new Notice(pageletT("pagelet.trigger.noSuggestions", locale), 4000);
-                return;
-            }
-            if (abortController.signal.aborted) {
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-
-            const date = new Date();
-            const targetPathStartedAt = Date.now();
-            const targetPath = await mintNonCollidingReviewNotePath({
-                adapter: this.app.vault.adapter,
-                sourcePath: file.path,
-                settings: pageletSettings,
-                date,
-            });
-            recordTiming("mint_target_path", targetPathStartedAt, { targetPath });
-            mergeOutcomeTimings(outcome.diagnostics);
-            this.logPageletReviewTiming(
-                sourceLabel,
-                options,
-                timings,
-                outcome.diagnostics,
-                runStartedAt,
-                "suggestions_ready",
-            );
-            pageletView?.showReviewResult({
-                sourcePath: bundle.sourceLabel,
-                targetPath,
-                result: outcome.result,
-                diagnostics: outcome.diagnostics,
-                costSummary: this.pageletCostTracker.getSummary(),
-                sourceReferences: bundle.sourceReferences,
-                sourcePaths: bundle.sourcePaths,
-            });
-            const writeStartedAt = Date.now();
-            const writeResult = await runtime.actionExecutor.execute(
-                runtime.toolProvider.capability,
-                {
-                    sourcePath: file.path,
-                    reviewResult: outcome.result,
-                    mode: bundle.input.mode,
-                    detectedLanguage: bundle.detectedLanguage,
-                    targetPath,
-                    dateOverride: date,
-                    ...(outcome.diagnostics.costEntry
-                        ? { costUsd: outcome.diagnostics.costEntry.estimatedCost }
-                        : {}),
-                    ...(this.settings.aiProvider ? { provider: this.settings.aiProvider } : {}),
-                    ...(this.settings.chatModelName ? { model: this.settings.chatModelName } : {}),
-                },
-                {
-                    plugin: this,
-                    turnId: `pagelet-${date.getTime()}`,
-                    platform: Platform.isMobile ? "mobile" : "desktop",
-                    signal: abortController.signal,
-                },
-            );
-            recordTiming("write_action", writeStartedAt, {
-                status: writeResult.status,
-                includesUserConfirmation: true,
-            });
-            mergeOutcomeTimings(outcome.diagnostics);
-            this.logPageletReviewTiming(sourceLabel, options, timings, outcome.diagnostics, runStartedAt);
-            if (writeResult.status === "ok") {
-                pageletView?.showReviewSaved(targetPath, this.pageletCostTracker.getSummary());
-                new Notice(pageletT("pagelet.mascot.done", locale), 4000);
-                return;
-            }
-            if (writeResult.error?.includes("user did not confirm")) {
-                pageletView?.showReviewNotSaved();
-                return;
-            }
-            pageletView?.showReviewError(
-                writeResult.userSafeMessage
-                    ?? pageletT("pagelet.trigger.writeFailed", locale),
-                file.path,
-            );
-            new Notice(
-                writeResult.userSafeMessage
-                    ?? pageletT("pagelet.trigger.writeFailed", locale),
-                6000,
-            );
-        } catch (error) {
-            if (abortReason) {
-                recordTiming("aborted", runStartedAt, { reason: abortReason });
-                this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            this.log("Pagelet review failed", error);
-            this.logPageletReviewTiming(sourceLabel, options, timings, undefined, runStartedAt);
-            pageletView?.showReviewError(pageletT("pagelet.mascot.error", locale), file.path);
-            new Notice(pageletT("pagelet.mascot.error", locale), 6000);
-        } finally {
-            this.app.workspace.offref(activeLeafRef);
-            this.app.workspace.offref(fileOpenRef);
-            this.pageletReviewInFlight = false;
-        }
+    async preparePageletResearchPrompt(suggestion: PageletSuggestion): Promise<boolean> {
+        if (!this.pageletOrchestrator) return false;
+        return this.pageletOrchestrator.preparePageletResearchPrompt(suggestion);
     }
 
     /**
@@ -1008,63 +692,6 @@ export class PluginManager extends Plugin {
      */
     private getPageletLocale(): "zh" | "en" {
         return getPageletUiLanguage();
-    }
-
-    private formatPageletReviewProgress(
-        event: PageletReviewProgressEvent,
-        locale: "zh" | "en",
-    ): string {
-        switch (event.phase) {
-            case "cost_precheck":
-                return pageletT("pagelet.panel.status.checkingLimits", locale);
-            case "rate_limit":
-                return pageletT("pagelet.panel.status.checkingRateLimit", locale);
-            case "model_setup":
-                return pageletT("pagelet.panel.status.settingUpModel", locale);
-            case "structured_attempt":
-                return pageletT("pagelet.panel.status.generatingAttempt", locale, {
-                    attempt: event.attempt ?? 1,
-                    max: event.maxAttempts ?? 1,
-                });
-            case "json_mode_attempt":
-                return pageletT("pagelet.panel.status.generatingFallbackAttempt", locale, {
-                    attempt: event.attempt ?? 1,
-                    max: event.maxAttempts ?? 1,
-                });
-            case "json_mode_fallback":
-                return pageletT("pagelet.panel.status.generatingFallback", locale);
-        }
-    }
-
-    private logPageletReviewTiming(
-        sourceLabel: string,
-        options: {
-            files: readonly TFile[];
-            range: PageletReviewRange;
-        },
-        timings: readonly PageletReviewTimingEntry[],
-        diagnostics: {
-            timings?: readonly PageletReviewTimingEntry[];
-            elapsedMs?: number;
-            totalElapsedMs?: number;
-            attempts?: number;
-            path?: string;
-        } | undefined,
-        startedAt: number,
-        stage = "final",
-    ): void {
-        this.log("Pagelet review timing", {
-            stage,
-            sourceLabel,
-            range: options.range,
-            fileCount: options.files.length,
-            totalElapsedMs: Math.max(0, Date.now() - startedAt),
-            llmElapsedMs: diagnostics?.elapsedMs,
-            modelTotalElapsedMs: diagnostics?.totalElapsedMs,
-            attempts: diagnostics?.attempts,
-            path: diagnostics?.path,
-            timings: diagnostics?.timings ?? timings,
-        });
     }
 
     async onunload() {
@@ -1411,154 +1038,33 @@ export class PluginManager extends Plugin {
         return leaf.view instanceof PageletView ? leaf.view : null;
     }
 
-    private reservePageletReview(locale: "zh" | "en"): boolean {
-        if (this.pageletReviewInFlight) {
-            new Notice(pageletT("pagelet.trigger.alreadyRunning", locale), 2500);
-            return false;
-        }
-        this.pageletReviewInFlight = true;
-        return true;
-    }
-
-    private getOpenPageletView(): PageletView | null {
+    getOpenPageletView(): PageletView | null {
         const leaf = this.app.workspace.getLeavesOfType(PAGELET_VIEW_TYPE)[0];
         return leaf?.view instanceof PageletView ? leaf.view : null;
     }
 
-    private async createPageletScopePlan(range: PageletReviewRange, anchor: TFile): Promise<PageletScopePlan> {
-        return buildPageletScopePlan({
-            files: this.app.vault.getMarkdownFiles(),
-            activePath: anchor.path,
-            range,
-            reviewsFolder: this.settings.pagelet.reviewsFolder,
-            reviewOutputCount: range === "current"
-                ? 0
-                : await this.countPageletReviewOutputNotes(),
-            getMetadata: (path) => this.getPageletScopeMetadata(path),
+    /**
+     * Opaque plugin reference for the orchestrator host contract.
+     * Satisfies {@link AgentCapabilityContext['plugin']} at runtime
+     * since PluginManager extends Plugin.
+     */
+    get capabilityPlugin(): PluginManager {
+        return this;
+    }
+
+    /**
+     * Chat-model factory for the orchestrator host contract.
+     * Delegates to {@link AIUtils.createChatModel}.
+     */
+    async createChatModel(
+        temperature: number,
+        options?: { modelName?: string; transport?: string },
+    ) {
+        const aiUtils = new AIUtils(this);
+        return aiUtils.createChatModel(temperature, {
+            modelName: options?.modelName,
+            transport: options?.transport as "obsidian" | "native" | undefined,
         });
-    }
-
-    private async countPageletReviewOutputNotes(): Promise<number> {
-        const reviewsFolder = normalizePath(this.settings.pagelet.reviewsFolder);
-        try {
-            const listing = await this.app.vault.adapter.list(reviewsFolder);
-            return listing.files
-                .filter((path) => normalizePath(path).toLowerCase().endsWith(".md"))
-                .length;
-        } catch {
-            return 0;
-        }
-    }
-
-    private resolvePageletAnchorMarkdownFile(path?: string): TFile | null {
-        if (!path) return null;
-        const abstractFile = this.app.vault.getAbstractFileByPath(normalizePath(path));
-        if (abstractFile instanceof TFile && abstractFile.extension.toLowerCase() === "md") {
-            return abstractFile;
-        }
-        return null;
-    }
-
-    private getPageletScopeMetadata(path: string): PageletScopeMetadataLike | undefined {
-        const file = this.resolvePageletAnchorMarkdownFile(path);
-        if (!file) return undefined;
-        const cache = this.app.metadataCache.getFileCache(file);
-        return {
-            frontmatter: cache?.frontmatter,
-            tags: cache?.tags,
-        };
-    }
-
-    private async readPageletScopeEntries(files: readonly TFile[]): Promise<Array<{ path: string; content: string }>> {
-        const entries: Array<{ path: string; content: string }> = [];
-        const maxChars = Math.max(
-            1,
-            Math.floor(this.settings.pagelet.maxInputTokens || 1) * PAGELET_APPROX_CHARS_PER_TOKEN,
-        );
-        let remaining = maxChars;
-        const multiNote = files.length > 1;
-        for (const file of files) {
-            const prefixLength = multiNote ? `Source note: ${file.path}\n`.length : 0;
-            if (remaining <= prefixLength) break;
-            const content = await this.app.vault.cachedRead(file);
-            const trimmedLength = content.trim().length;
-            entries.push({ path: file.path, content });
-            if (trimmedLength > 0) {
-                remaining -= Math.min(remaining, trimmedLength + prefixLength);
-            }
-            if (remaining <= 0) break;
-        }
-        return entries;
-    }
-
-    private resolvePageletScopeFiles(selection: PageletScopeSelection): TFile[] {
-        const files: TFile[] = [];
-        for (const path of selection.paths) {
-            const abstractFile = this.app.vault.getAbstractFileByPath(normalizePath(path));
-            if (abstractFile instanceof TFile && abstractFile.extension.toLowerCase() === "md") {
-                files.push(abstractFile);
-            }
-        }
-        return files;
-    }
-
-    private getStrictActivePageletMarkdownView(): MarkdownView | null {
-        const activeMarkdownView = this.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!activeMarkdownView || !isPageletEligibleView(activeMarkdownView)) return null;
-        return activeMarkdownView;
-    }
-
-    private getPageletAnchorMarkdownFile(): TFile | null {
-        const strictView = this.getStrictActivePageletMarkdownView();
-        if (strictView?.file instanceof TFile) return strictView.file;
-
-        const mostRecentLeaf = this.app.workspace.getMostRecentLeaf?.();
-        const mostRecentView = mostRecentLeaf?.view as (MarkdownView & { file?: TFile | null }) | undefined;
-        if (mostRecentView && isPageletEligibleView(mostRecentView) && mostRecentView.file instanceof TFile) {
-            return mostRecentView.file;
-        }
-
-        for (const leaf of this.app.workspace.getLeavesOfType("markdown")) {
-            const view = leaf.view as (MarkdownView & { file?: TFile | null }) | undefined;
-            if (view?.file instanceof TFile) return view.file;
-        }
-        return null;
-    }
-
-    async openPageletSourceReference(reference: PageletScopeSourceReference): Promise<boolean> {
-        const abstractFile = this.app.vault.getAbstractFileByPath(normalizePath(reference.path));
-        if (!(abstractFile instanceof TFile)) return false;
-        await this.app.workspace.getLeaf('tab').openFile(abstractFile);
-        return true;
-    }
-
-    async openPageletRelatedNote(noteName: string, sourcePath: string): Promise<boolean> {
-        const linkpath = noteName
-            .replace(/^\[\[/, "")
-            .replace(/\]\]$/, "")
-            .split("|")[0]
-            .trim();
-        if (!linkpath) return false;
-        const destination = this.app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
-        if (!destination) return false;
-        await this.app.workspace.getLeaf('tab').openFile(destination);
-        return true;
-    }
-
-    async preparePageletResearchPrompt(suggestion: PageletSuggestion): Promise<boolean> {
-        const locale = this.getPageletLocale();
-        const prompt = [
-            pageletT("pagelet.research.prompt.search", locale),
-            "",
-            pageletT("pagelet.research.prompt.task", locale),
-            `${pageletT("pagelet.research.prompt.kind", locale)}: ${suggestion.kind}`,
-            `${pageletT("pagelet.research.prompt.action", locale)}: ${suggestion.proposed_action}`,
-            "",
-            pageletT("pagelet.research.prompt.output", locale),
-        ].join("\n");
-        const chatView = await this.activeChatView();
-        if (!chatView) return false;
-        return chatView.prefillComposer(prompt);
     }
 
     getVSSFiles() {
