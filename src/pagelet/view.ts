@@ -183,6 +183,7 @@ export class PageletView extends ItemView {
 
     async onClose(): Promise<void> {
         this.settleWritePreview({ outcome: "cancelled" });
+        this.abortDraftSave();
         if (this.undoTimer !== null) { clearTimeout(this.undoTimer); this.undoTimer = null; }
         this.closed = true;
         this.destroyCards();
