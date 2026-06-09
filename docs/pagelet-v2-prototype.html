@@ -1,0 +1,2495 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Pagelet v2 -- Pet 交互原型</title>
+<style>
+  /* ============ CSS Custom Properties ============ */
+  :root {
+    --pagelet-neutral: #e8e8e8;
+    --pagelet-thinking: #7c9eff;
+    --pagelet-done: #5dd39e;
+    --pagelet-error: #ff6b6b;
+
+    --bg: #1e1e1e;
+    --bg-2: #252525;
+    --bg-3: #2d2d2d;
+    --fg: #e8e8e8;
+    --fg-2: #a0a0a0;
+    --fg-3: #707070;
+    --border: #3a3a3a;
+    --card-bg: #232323;
+    --shadow: rgba(0,0,0,0.4);
+    --bubble-bg: #2a2a2a;
+    --panel-bg: #222222;
+    --overlay: rgba(0,0,0,0.3);
+  }
+
+  [data-theme="light"] {
+    --bg: #f5f5f5;
+    --bg-2: #ebebeb;
+    --bg-3: #e0e0e0;
+    --fg: #2c2c2c;
+    --fg-2: #666666;
+    --fg-3: #999999;
+    --border: #d0d0d0;
+    --card-bg: #ffffff;
+    --shadow: rgba(0,0,0,0.12);
+    --bubble-bg: #ffffff;
+    --panel-bg: #fafafa;
+    --overlay: rgba(0,0,0,0.08);
+  }
+
+  /* ============ Light Theme Pet Enhancements ============ */
+  [data-theme="light"] .pet-container {
+    filter: none;
+  }
+  [data-theme="light"] .pet-wrapper {
+    background: rgba(255,255,255,0.6);
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05);
+  }
+  [data-theme="light"] .pet-container[data-state="sleeping"] .pet-svg-wrap {
+    filter: saturate(0);
+  }
+  [data-theme="light"] .pet-container[data-state="watching"] .pet-wrapper {
+    box-shadow: 0 2px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
+  }
+  [data-theme="light"] .pet-container[data-state="idle"] .pet-wrapper {
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04);
+  }
+  [data-theme="light"] .pet-container[data-state="nudge"] .pet-wrapper {
+    box-shadow: 0 2px 16px rgba(93,211,158,0.3), 0 0 0 1px rgba(93,211,158,0.15);
+  }
+  [data-theme="light"] .pet-container[data-state="nudge"] .pet-notification {
+    box-shadow: 0 0 8px rgba(93,211,158,0.5), 0 0 16px rgba(93,211,158,0.25);
+  }
+
+  /* ============ Reset & Base ============ */
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--fg);
+    font-family: -apple-system, "SF Pro Text", "PingFang SC", "Microsoft YaHei", sans-serif;
+    font-size: 14px;
+    line-height: 1.6;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    transition: background 0.3s ease, color 0.3s ease;
+  }
+
+  /* ============ Fake Obsidian Background ============ */
+  .obsidian-bg {
+    position: fixed;
+    inset: 0;
+    padding: 48px 64px;
+    overflow-y: auto;
+    z-index: 0;
+  }
+
+  .obsidian-bg h1 {
+    font-size: 28px;
+    font-weight: 600;
+    margin-bottom: 12px;
+    color: var(--fg);
+    opacity: 0.4;
+  }
+  .obsidian-bg p {
+    color: var(--fg-2);
+    opacity: 0.3;
+    max-width: 640px;
+    margin-bottom: 12px;
+    font-size: 15px;
+    line-height: 1.8;
+  }
+  .obsidian-bg .tag {
+    display: inline-block;
+    color: var(--pagelet-thinking);
+    opacity: 0.3;
+    font-size: 13px;
+  }
+
+  /* ============ Theme Toggle ============ */
+  .theme-toggle {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 9999;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 6px 14px;
+    color: var(--fg-2);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  .theme-toggle:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+
+  /* ============ Pet Container ============ */
+  .pet-container {
+    position: fixed;
+    z-index: 1000;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: filter 0.4s ease;
+  }
+  .pet-container:active {
+    cursor: grabbing;
+  }
+  .pet-container.pinned {
+    cursor: pointer;
+  }
+  .pet-container.pinned::after {
+    content: '';
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    width: 10px;
+    height: 10px;
+    background: var(--fg-3);
+    border-radius: 50%;
+    border: 2px solid var(--bg);
+    opacity: 0.6;
+  }
+
+  .pet-wrapper {
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  /* Notification dot for nudge state */
+  .pet-notification {
+    position: absolute;
+    top: 0px;
+    right: -2px;
+    width: 10px;
+    height: 10px;
+    background: var(--pagelet-done);
+    border-radius: 50%;
+    border: 2px solid var(--bg);
+    opacity: 0;
+    transform: scale(0);
+    transition: all 0.3s ease;
+  }
+  .pet-container[data-state="nudge"] .pet-notification {
+    opacity: 1;
+    transform: scale(1);
+    animation: nudge-dot-glow 2s ease-in-out infinite;
+  }
+
+  /* Watching state awareness dot */
+  .pet-awareness-dot {
+    position: absolute;
+    top: 4px;
+    right: 2px;
+    width: 6px;
+    height: 6px;
+    background: var(--pagelet-done);
+    border-radius: 50%;
+    border: 1.5px solid var(--bg);
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .pet-container[data-state="watching"] .pet-awareness-dot {
+    opacity: 0.7;
+  }
+
+  /* ============ Pet SVG Animations ============ */
+  @keyframes pet-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+  }
+  @keyframes pet-breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+  }
+  @keyframes pet-scan {
+    0%, 100% { transform: translateX(0); }
+    25% { transform: translateX(2px); }
+    75% { transform: translateX(-2px); }
+  }
+  @keyframes pet-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+  }
+  @keyframes pet-bounce {
+    0%, 100% { transform: translateY(0); }
+    25% { transform: translateY(-8px); }
+    45% { transform: translateY(-2px); }
+    65% { transform: translateY(-6px); }
+    85% { transform: translateY(-1px); }
+  }
+  @keyframes pet-blink {
+    0%, 92%, 100% { transform: scaleY(1); }
+    95% { transform: scaleY(0.1); }
+  }
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+  @keyframes eye-scan-lr {
+    0%, 100% { transform: translateX(0); }
+    30% { transform: translateX(1.5px); }
+    70% { transform: translateX(-1.5px); }
+  }
+  @keyframes pet-float-active {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-6px); }
+  }
+  @keyframes nudge-dot-glow {
+    0%, 100% { box-shadow: 0 0 4px var(--pagelet-done); }
+    50% { box-shadow: 0 0 10px var(--pagelet-done), 0 0 18px rgba(93,211,158,0.3); }
+  }
+  @keyframes zzz-float-1 {
+    0% { transform: translate(0, 0) scale(1); opacity: 0.5; }
+    100% { transform: translate(4px, -14px) scale(0.8); opacity: 0; }
+  }
+  @keyframes zzz-float-2 {
+    0% { transform: translate(0, 0) scale(1); opacity: 0.35; }
+    100% { transform: translate(6px, -18px) scale(0.7); opacity: 0; }
+  }
+  @keyframes bubble-slide-up {
+    from { transform: translateY(100%); opacity: 0; }
+    to { transform: translateY(0); opacity: 1; }
+  }
+  @keyframes panel-slide-up {
+    from { transform: translateY(100%); }
+    to { transform: translateY(0); }
+  }
+
+  /* State: sleeping */
+  .pet-container[data-state="sleeping"] .pet-svg-wrap {
+    animation: pet-breathe 5s ease-in-out infinite;
+  }
+  .pet-container[data-state="sleeping"] {
+    opacity: 0.55;
+  }
+  .pet-container[data-state="sleeping"] .sleep-zzz .zzz1 {
+    animation: zzz-float-1 3s ease-out infinite;
+  }
+  .pet-container[data-state="sleeping"] .sleep-zzz .zzz2 {
+    animation: zzz-float-2 3s ease-out infinite 0.8s;
+  }
+  /* State: watching */
+  .pet-container[data-state="watching"] .pet-svg-wrap {
+    animation: pet-float-active 2.4s ease-in-out infinite;
+  }
+  /* State: reading */
+  .pet-container[data-state="reading"] .pet-svg-wrap {
+    animation: pet-pulse 2s ease-in-out infinite;
+  }
+  .pet-container[data-state="reading"] .eye-group {
+    animation: eye-scan-lr 1.6s ease-in-out infinite;
+  }
+  /* State: thinking */
+  .pet-container[data-state="thinking"] .pet-svg-wrap {
+    animation: pet-pulse 1.4s ease-in-out infinite;
+  }
+  /* State: nudge */
+  .pet-container[data-state="nudge"] .pet-svg-wrap {
+    animation: pet-bounce 1.6s ease-in-out infinite;
+  }
+  /* State: idle */
+  .pet-container[data-state="idle"] .pet-svg-wrap {
+    animation: pet-float 2.8s ease-in-out infinite;
+  }
+  .pet-container[data-state="idle"] .blink-group {
+    animation: pet-blink 5s infinite;
+    transform-origin: center;
+  }
+  /* Restore full opacity for non-sleeping states */
+  .pet-container[data-state="watching"],
+  .pet-container[data-state="reading"],
+  .pet-container[data-state="thinking"],
+  .pet-container[data-state="nudge"],
+  .pet-container[data-state="idle"] {
+    opacity: 1;
+  }
+
+  /* ============ Bubble ============ */
+  .bubble {
+    position: fixed;
+    z-index: 999;
+    background: var(--bubble-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 18px;
+    width: 300px;
+    box-shadow: 0 8px 32px var(--shadow), 0 2px 8px var(--shadow);
+    opacity: 0;
+    transform: scale(0.9) translateY(8px);
+    transform-origin: bottom right;
+    pointer-events: none;
+    transition: opacity 0.25s ease, transform 0.25s ease;
+  }
+  .bubble.visible {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+    pointer-events: auto;
+  }
+
+  .bubble-tail {
+    position: absolute;
+    bottom: -7px;
+    right: 24px;
+    width: 14px;
+    height: 14px;
+    background: var(--bubble-bg);
+    border-right: 1px solid var(--border);
+    border-bottom: 1px solid var(--border);
+    transform: rotate(45deg);
+  }
+
+  .bubble-items {
+    list-style: none;
+    margin-bottom: 14px;
+  }
+  .bubble-items li {
+    padding: 8px 10px;
+    font-size: 13px;
+    color: var(--fg-2);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    line-height: 1.5;
+  }
+  .bubble-items li:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+  .bubble-items li .bullet {
+    flex-shrink: 0;
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: var(--fg-3);
+    margin-top: 7px;
+  }
+
+  .bubble-actions {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .bubble-btn {
+    padding: 6px 14px;
+    border-radius: 6px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+    white-space: nowrap;
+  }
+  .bubble-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+    border-color: var(--fg-3);
+  }
+  .bubble-btn.primary {
+    background: var(--pagelet-thinking);
+    color: #1a1a1a;
+    border-color: transparent;
+    font-weight: 500;
+  }
+  .bubble-btn.primary:hover {
+    filter: brightness(1.1);
+  }
+
+  /* ============ Side Panel ============ */
+  .side-panel {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 380px;
+    height: 100vh;
+    background: var(--panel-bg);
+    border-left: 1px solid var(--border);
+    z-index: 900;
+    transform: translateX(100%);
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+    display: flex;
+    flex-direction: column;
+    box-shadow: -4px 0 24px var(--shadow);
+  }
+  .side-panel.visible {
+    transform: translateX(0);
+  }
+
+  .panel-header {
+    padding: 16px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-shrink: 0;
+  }
+  .panel-header h3 {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--fg);
+  }
+  .panel-header-actions {
+    display: flex;
+    gap: 6px;
+  }
+  .panel-icon-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 14px;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .panel-icon-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+
+  .panel-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 0;
+  }
+
+  /* Timeline view */
+  .timeline {
+    padding: 20px;
+  }
+  .timeline-section-label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-3);
+    margin-bottom: 12px;
+    padding-left: 24px;
+  }
+  .timeline-item {
+    display: flex;
+    gap: 12px;
+    padding: 10px 0;
+    position: relative;
+  }
+  .timeline-line {
+    width: 24px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .timeline-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--fg-3);
+    flex-shrink: 0;
+    margin-top: 5px;
+  }
+  .timeline-dot.blue { background: var(--pagelet-thinking); }
+  .timeline-dot.green { background: var(--pagelet-done); }
+  .timeline-connector {
+    width: 1px;
+    flex: 1;
+    background: var(--border);
+    margin-top: 4px;
+  }
+  .timeline-content {
+    flex: 1;
+    min-width: 0;
+  }
+  .timeline-title {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--fg);
+    margin-bottom: 2px;
+  }
+  .timeline-meta {
+    font-size: 11px;
+    color: var(--fg-3);
+    margin-bottom: 6px;
+  }
+  .timeline-insight {
+    background: var(--bg-2);
+    border-radius: 6px;
+    padding: 8px 10px;
+    font-size: 12px;
+    color: var(--fg-2);
+    margin-top: 6px;
+    border-left: 2px solid var(--pagelet-thinking);
+  }
+  .timeline-actions {
+    display: flex;
+    gap: 6px;
+    margin-top: 8px;
+  }
+  .timeline-action-btn {
+    padding: 3px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .timeline-action-btn:hover {
+    color: var(--fg-2);
+    border-color: var(--fg-3);
+  }
+
+  .timeline-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 16px 0 16px 24px;
+  }
+
+  /* Panel footer */
+  .panel-footer {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .expand-tab-btn {
+    width: 100%;
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-2);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .expand-tab-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+
+  /* ============ Tab View (Full) ============ */
+  .tab-view {
+    position: fixed;
+    inset: 0;
+    background: var(--bg);
+    z-index: 950;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+    display: flex;
+    flex-direction: column;
+  }
+  .tab-view.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  .tab-header {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 16px;
+    flex-shrink: 0;
+    background: var(--bg-2);
+  }
+  .tab-pill {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 14px;
+    border-radius: 6px;
+    background: var(--bg-3);
+    font-size: 13px;
+    color: var(--fg);
+    font-weight: 500;
+  }
+  .tab-pill svg { flex-shrink: 0; }
+  .tab-close {
+    margin-left: auto;
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    border: none;
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    transition: all 0.15s;
+  }
+  .tab-close:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+
+  .tab-body {
+    flex: 1;
+    overflow-y: auto;
+    padding: 32px 48px;
+    max-width: 800px;
+  }
+
+  .tab-section {
+    margin-bottom: 32px;
+  }
+  .tab-section h2 {
+    font-size: 18px;
+    font-weight: 600;
+    margin-bottom: 16px;
+    color: var(--fg);
+  }
+  .tab-section h4 {
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--fg);
+    margin-bottom: 8px;
+  }
+  .tab-insight-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .tab-insight-card p {
+    font-size: 13px;
+    color: var(--fg-2);
+    line-height: 1.7;
+  }
+  .tab-insight-card .tag-row {
+    display: flex;
+    gap: 6px;
+    margin-top: 10px;
+    flex-wrap: wrap;
+  }
+  .tab-insight-card .tag-chip {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    background: var(--bg-2);
+    color: var(--fg-3);
+    border: 1px solid var(--border);
+  }
+
+  /* Connection map mockup */
+  .connection-map {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    min-height: 280px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+  .map-node {
+    position: absolute;
+    padding: 8px 14px;
+    border-radius: 8px;
+    font-size: 12px;
+    border: 1.6px solid;
+    background: var(--card-bg);
+    color: var(--fg-2);
+    white-space: nowrap;
+  }
+  .map-node.center {
+    border-color: var(--pagelet-thinking);
+    color: var(--fg);
+    font-weight: 500;
+    z-index: 2;
+  }
+  .map-node.related {
+    border-color: var(--fg-3);
+  }
+  .map-line {
+    position: absolute;
+    height: 1.6px;
+    background: var(--border);
+    transform-origin: left center;
+    z-index: 1;
+  }
+
+  /* ============ Control Panel ============ */
+  .control-panel {
+    position: fixed;
+    bottom: 16px;
+    left: 16px;
+    z-index: 9998;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px;
+    width: 260px;
+    opacity: 0.85;
+    transition: opacity 0.2s;
+    box-shadow: 0 4px 16px var(--shadow);
+  }
+  .control-panel:hover {
+    opacity: 1;
+  }
+  .control-panel h4 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--fg-3);
+    margin-bottom: 10px;
+  }
+  .control-group {
+    margin-bottom: 14px;
+  }
+  .control-group:last-child {
+    margin-bottom: 0;
+  }
+
+  .state-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+  }
+  .state-btn {
+    padding: 4px 10px;
+    border-radius: 5px;
+    font-size: 11px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    transition: all 0.15s;
+    font-family: inherit;
+  }
+  .state-btn:hover {
+    border-color: var(--fg-3);
+    color: var(--fg-2);
+  }
+  .state-btn.active {
+    background: var(--bg-3);
+    border-color: var(--fg-2);
+    color: var(--fg);
+  }
+
+  /* Toggle switch */
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .toggle-label {
+    font-size: 12px;
+    color: var(--fg-2);
+  }
+  .toggle-switch {
+    width: 36px;
+    height: 20px;
+    border-radius: 10px;
+    background: var(--bg-3);
+    border: 1px solid var(--border);
+    cursor: pointer;
+    position: relative;
+    transition: background 0.2s;
+    flex-shrink: 0;
+  }
+  .toggle-switch.on {
+    background: var(--pagelet-done);
+    border-color: var(--pagelet-done);
+  }
+  .toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: white;
+    transition: transform 0.2s;
+  }
+  .toggle-switch.on::after {
+    transform: translateX(16px);
+  }
+
+  .scenario-buttons {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+  }
+  .scenario-btn {
+    padding: 6px 12px;
+    border-radius: 6px;
+    font-size: 12px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-2);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: left;
+    font-family: inherit;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .scenario-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+    border-color: var(--fg-3);
+  }
+  .scenario-btn .sc-num {
+    font-size: 10px;
+    width: 18px;
+    height: 18px;
+    border-radius: 4px;
+    background: var(--bg-3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--fg-3);
+    flex-shrink: 0;
+    font-weight: 600;
+  }
+
+  /* Divider */
+  .ctrl-divider {
+    height: 1px;
+    background: var(--border);
+    margin: 10px 0;
+  }
+
+  /* ============ Notification Toast ============ */
+  .toast {
+    position: fixed;
+    bottom: 80px;
+    right: 24px;
+    z-index: 2000;
+    background: var(--card-bg);
+    border: 1px solid var(--pagelet-done);
+    border-radius: 8px;
+    padding: 12px 18px;
+    font-size: 13px;
+    color: var(--fg);
+    box-shadow: 0 4px 16px var(--shadow);
+    opacity: 0;
+    transform: translateY(12px);
+    transition: all 0.3s ease;
+    pointer-events: none;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .toast.visible {
+    opacity: 1;
+    transform: translateY(0);
+    pointer-events: auto;
+  }
+  .toast-icon {
+    color: var(--pagelet-done);
+    font-size: 16px;
+  }
+
+  /* ============ Generation animation overlay ============ */
+  .gen-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 1500;
+    background: var(--overlay);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.3s ease;
+  }
+  .gen-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .gen-card {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 32px 40px;
+    text-align: center;
+    box-shadow: 0 8px 32px var(--shadow);
+  }
+  .gen-card p {
+    font-size: 14px;
+    color: var(--fg-2);
+    margin-top: 16px;
+  }
+  @keyframes gen-spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+  }
+  .gen-spinner {
+    display: inline-block;
+    animation: gen-spin 1.5s linear infinite;
+  }
+
+  /* ============ Context Menu ============ */
+  .context-menu {
+    position: fixed;
+    z-index: 10000;
+    background: #1a1a1a;
+    border: 1px solid #333;
+    border-radius: 8px;
+    padding: 4px;
+    min-width: 180px;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
+    opacity: 0;
+    transform: scale(0.95);
+    transform-origin: top left;
+    pointer-events: none;
+    transition: opacity 0.12s ease, transform 0.12s ease;
+    font-size: 13px;
+  }
+  .context-menu.visible {
+    opacity: 1;
+    transform: scale(1);
+    pointer-events: auto;
+  }
+  [data-theme="light"] .context-menu {
+    background: #2a2a2a;
+    border-color: #444;
+  }
+  .context-menu-item {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 7px 12px;
+    color: #e0e0e0;
+    border-radius: 5px;
+    cursor: pointer;
+    transition: background 0.1s;
+    gap: 12px;
+    white-space: nowrap;
+  }
+  .context-menu-item:hover {
+    background: rgba(255,255,255,0.1);
+  }
+  .context-menu-divider {
+    height: 1px;
+    background: #333;
+    margin: 3px 6px;
+  }
+  .toggle-switch.mini {
+    width: 30px;
+    height: 16px;
+    border-radius: 8px;
+    flex-shrink: 0;
+  }
+  .toggle-switch.mini::after {
+    width: 11px;
+    height: 11px;
+    top: 1.5px;
+    left: 1.5px;
+  }
+  .toggle-switch.mini.on::after {
+    transform: translateX(14px);
+  }
+
+  /* ============ Debug Section in Control Panel ============ */
+  .debug-section {
+    border: 1px dashed var(--fg-3);
+    border-radius: 8px;
+    padding: 10px;
+    margin-top: 4px;
+    opacity: 0.7;
+    transition: opacity 0.2s;
+  }
+  .debug-section:hover {
+    opacity: 1;
+  }
+  .debug-section h4 {
+    font-size: 10px;
+    color: var(--fg-3);
+    margin-bottom: 8px;
+    letter-spacing: 0.3px;
+  }
+  .debug-section .control-group:last-child {
+    margin-bottom: 0;
+  }
+
+  /* ============ Mobile Preview Frame ============ */
+  .mobile-frame {
+    display: none;
+    position: fixed;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 375px;
+    height: 667px;
+    border: 3px solid var(--fg-3);
+    border-radius: 36px;
+    z-index: 9996;
+    pointer-events: none;
+    box-shadow: 0 0 0 4000px rgba(0,0,0,0.12);
+  }
+  .mobile-frame.visible {
+    display: block;
+  }
+  .mobile-frame-notch {
+    position: absolute;
+    top: 10px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 90px;
+    height: 20px;
+    background: var(--fg-3);
+    border-radius: 0 0 10px 10px;
+    opacity: 0.25;
+  }
+  .mobile-frame-home {
+    position: absolute;
+    bottom: 8px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 100px;
+    height: 4px;
+    background: var(--fg-3);
+    border-radius: 2px;
+    opacity: 0.3;
+  }
+  .mobile-frame-label {
+    position: absolute;
+    bottom: -30px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 11px;
+    color: var(--fg-3);
+    white-space: nowrap;
+    background: var(--bg-2);
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+
+  /* ============ Mobile Mode Styles ============ */
+  /* Applied via .mobile-mode class (toggle) or @media query */
+
+  body.mobile-mode .pet-container {
+    cursor: pointer !important;
+  }
+  body.mobile-mode .pet-container:active {
+    cursor: pointer !important;
+  }
+  body.mobile-mode .pet-wrapper {
+    transform: scale(0.8);
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  /* Mobile bubble: full-width at bottom */
+  body.mobile-mode .bubble {
+    left: 8px !important;
+    right: 8px !important;
+    bottom: 80px !important;
+    top: auto !important;
+    width: auto !important;
+    max-width: none !important;
+    border-radius: 16px 16px 12px 12px;
+    transform: none;
+    animation: bubble-slide-up 0.25s ease-out;
+  }
+  body.mobile-mode .bubble .bubble-tail {
+    display: none;
+  }
+  body.mobile-mode .bubble-items li {
+    padding: 10px 12px;
+    font-size: 14px;
+  }
+  body.mobile-mode .bubble-btn {
+    padding: 10px 18px;
+    font-size: 13px;
+  }
+
+  /* Mobile side panel: full-screen overlay from bottom */
+  body.mobile-mode .side-panel {
+    width: 100%;
+    height: 100%;
+    top: 0;
+    left: 0;
+    right: 0;
+    border-left: none;
+    border-radius: 0;
+    transform: translateY(100%);
+    transition: transform 0.35s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+  body.mobile-mode .side-panel.visible {
+    transform: translateY(0);
+  }
+  body.mobile-mode .panel-footer {
+    display: none;
+  }
+
+  /* Mobile tab view */
+  body.mobile-mode .tab-body {
+    padding: 20px 16px;
+  }
+
+  /* Natural mobile viewport breakpoint */
+  @media (max-width: 768px) {
+    .pet-container {
+      cursor: pointer !important;
+    }
+    .pet-container:active {
+      cursor: pointer !important;
+    }
+    .pet-wrapper {
+      transform: scale(0.8);
+      min-width: 44px;
+      min-height: 44px;
+    }
+    .bubble {
+      left: 8px !important;
+      right: 8px !important;
+      bottom: 80px !important;
+      top: auto !important;
+      width: auto !important;
+      max-width: none !important;
+      border-radius: 16px 16px 12px 12px;
+    }
+    .bubble .bubble-tail {
+      display: none;
+    }
+    .bubble-items li {
+      padding: 10px 12px;
+      font-size: 14px;
+    }
+    .bubble-btn {
+      padding: 10px 18px;
+      font-size: 13px;
+    }
+    .side-panel {
+      width: 100%;
+      height: 100%;
+      top: 0;
+      left: 0;
+      right: 0;
+      border-left: none;
+      border-radius: 0;
+      transform: translateY(100%);
+    }
+    .side-panel.visible {
+      transform: translateY(0);
+    }
+    .panel-footer {
+      display: none;
+    }
+    .tab-body {
+      padding: 20px 16px;
+    }
+    .control-panel {
+      width: 220px;
+      font-size: 12px;
+    }
+  }
+
+  /* ============ Reduce Motion ============ */
+  @media (prefers-reduced-motion: reduce) {
+    .pet-container[data-state] .pet-svg-wrap,
+    .pet-container[data-state] .eye-group,
+    .pet-container[data-state] .blink-group,
+    .pet-container[data-state] .sleep-zzz .zzz1,
+    .pet-container[data-state] .sleep-zzz .zzz2,
+    .pet-notification,
+    .gen-spinner {
+      animation: none !important;
+    }
+    .bubble, .side-panel, .tab-view, .toast, .gen-overlay, .context-menu {
+      transition-duration: 0.01s !important;
+    }
+  }
+</style>
+</head>
+<body>
+
+<!-- Fake Obsidian note background -->
+<div class="obsidian-bg">
+  <h1># 2026 年产品规划</h1>
+  <p>本季度的核心目标是完成 Pagelet v2 的交互重构。新的 Pet 模型将取代传统的侧边栏，用更自然的方式与用户互动。</p>
+  <p>核心改动包括：浮动 Pet 角色、渐进式信息展开、四大使用场景的 UX 闭环。</p>
+  <p><span class="tag">#产品规划</span> <span class="tag">#pagelet</span> <span class="tag">#v2</span></p>
+  <br>
+  <p>接下来需要验证的假设：用户是否愿意通过一个不起眼的纸片角色，获取笔记回顾建议？相比侧边栏，这种模式是否降低了认知负担？</p>
+  <p>关键指标：气泡点开率、建议采纳率、从 Pet 到完成操作的步骤数。</p>
+  <br>
+  <p>## TODO</p>
+  <p>- [ ] 完成 v2 原型并发给 PO 评审</p>
+  <p>- [ ] 确认 Pet 状态机设计</p>
+  <p>- [ ] 性能测试：拖拽流畅度、动画帧率</p>
+</div>
+
+<!-- Theme toggle -->
+<button class="theme-toggle" onclick="toggleTheme()">
+  <span id="theme-icon">&#9789;</span> 切换主题
+</button>
+
+<!-- ============ The Pet ============ -->
+<div class="pet-container" id="pet" data-state="idle" tabindex="0" role="button" aria-label="拾页助手">
+  <div class="pet-wrapper">
+    <div class="pet-notification"></div>
+    <div class="pet-awareness-dot"></div>
+    <div class="pet-svg-wrap">
+      <svg id="pet-svg" width="52" height="52" viewBox="0 0 44 44" aria-hidden="true">
+        <!-- Paper body -->
+        <path class="pet-body" d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z"
+              fill="none" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <!-- Dog-ear fold -->
+        <path class="pet-fold" d="M30 8.1 L29.9 14.2 L36 14"
+              fill="none" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <!-- Eyes group (for reading scan animation) -->
+        <g class="eye-group">
+          <!-- Left eye -->
+          <g class="blink-group">
+            <path class="pet-eye-left" d="M16.8 22.1 Q19 22.9 21.2 21.8"
+                  fill="none" stroke-width="1.4" stroke-linecap="round"/>
+          </g>
+          <!-- Right eye -->
+          <g class="blink-group">
+            <path class="pet-eye-right" d="M24.8 22 Q27 23 29.1 21.9"
+                  fill="none" stroke-width="1.4" stroke-linecap="round"/>
+          </g>
+        </g>
+        <!-- Sleeping eyes (hidden by default) -->
+        <g class="sleep-eyes" style="display:none;">
+          <path d="M16 22.5 L21 22.5" fill="none" stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M25 22.5 L30 22.5" fill="none" stroke-width="1.4" stroke-linecap="round"/>
+        </g>
+        <!-- Thinking dots (hidden by default) -->
+        <g class="think-dots" style="display:none;">
+          <circle cx="18" cy="28" r="1.2" class="dot dot1"/>
+          <circle cx="23" cy="28" r="1.2" class="dot dot2"/>
+          <circle cx="28" cy="28" r="1.2" class="dot dot3"/>
+        </g>
+        <!-- Mouth (for nudge/done smile) -->
+        <path class="pet-mouth" d="M19 28 Q23 31 27 28" fill="none"
+              stroke-width="1.4" stroke-linecap="round" style="display:none;"/>
+        <!-- Z's for sleeping -->
+        <g class="sleep-zzz" style="display:none;">
+          <text x="34" y="12" font-size="7" fill="currentColor" opacity="0.4"
+                font-family="monospace" class="zzz1">z</text>
+          <text x="37" y="7" font-size="5" fill="currentColor" opacity="0.25"
+                font-family="monospace" class="zzz2">z</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Bubble ============ -->
+<div class="bubble" id="bubble">
+  <div class="bubble-tail"></div>
+  <ul class="bubble-items" id="bubble-items">
+    <li onclick="handleBubbleItem(0)"><span class="bullet"></span>最近 3 天写了 7 篇笔记</li>
+    <li onclick="handleBubbleItem(1)"><span class="bullet"></span>发现 2 个待处理的 TODO</li>
+    <li onclick="handleBubbleItem(2)"><span class="bullet"></span>「项目规划」和「技术方案」可能有关联</li>
+  </ul>
+  <div class="bubble-actions" id="bubble-actions">
+    <button class="bubble-btn primary" onclick="handleAction('review')">回顾最近</button>
+    <button class="bubble-btn" onclick="handleAction('current')">看当前笔记</button>
+    <button class="bubble-btn" onclick="handleAction('discover')">发现关联</button>
+  </div>
+</div>
+
+<!-- ============ Side Panel ============ -->
+<div class="side-panel" id="sidePanel">
+  <div class="panel-header">
+    <h3 id="panelTitle">最近回顾</h3>
+    <div class="panel-header-actions">
+      <button class="panel-icon-btn" onclick="expandToTab()" title="展开为标签页">&nearr;</button>
+      <button class="panel-icon-btn" onclick="closePanel()" title="关闭">&times;</button>
+    </div>
+  </div>
+  <div class="panel-body" id="panelBody">
+    <!-- Content injected by JS -->
+  </div>
+  <div class="panel-footer">
+    <button class="expand-tab-btn" onclick="expandToTab()">展开为标签页 &rarr;</button>
+  </div>
+</div>
+
+<!-- ============ Tab View ============ -->
+<div class="tab-view" id="tabView">
+  <div class="tab-header">
+    <div class="tab-pill">
+      <svg width="16" height="16" viewBox="0 0 44 44">
+        <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+      </svg>
+      <span id="tabTitle">拾页 -- 详细视图</span>
+    </div>
+    <button class="tab-close" onclick="closeTab()">&times;</button>
+  </div>
+  <div class="tab-body" id="tabBody">
+    <!-- Content injected by JS -->
+  </div>
+</div>
+
+<!-- ============ Generation Overlay ============ -->
+<div class="gen-overlay" id="genOverlay">
+  <div class="gen-card">
+    <div class="gen-spinner">
+      <svg width="48" height="48" viewBox="0 0 44 44">
+        <path d="M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z" fill="none" stroke="var(--pagelet-thinking)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <path d="M30 8.1 L29.9 14.2 L36 14" fill="none" stroke="var(--pagelet-thinking)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+        <circle cx="18" cy="24" r="1.2" fill="var(--pagelet-thinking)"/>
+        <circle cx="23" cy="24" r="1.2" fill="var(--pagelet-thinking)"/>
+        <circle cx="28" cy="24" r="1.2" fill="var(--pagelet-thinking)"/>
+      </svg>
+    </div>
+    <p id="genText">正在生成周报...</p>
+  </div>
+</div>
+
+<!-- ============ Toast ============ -->
+<div class="toast" id="toast">
+  <span class="toast-icon">&#10003;</span>
+  <span id="toastText">操作完成</span>
+</div>
+
+<!-- ============ Control Panel ============ -->
+<div class="control-panel">
+  <h4>产品控制</h4>
+  <div class="control-group">
+    <div class="toggle-row">
+      <span class="toggle-label">Nudge Mode <span style="font-size:10px;color:var(--fg-3)">Ctrl+Alt+N</span></span>
+      <div class="toggle-switch" id="nudgeToggle" onclick="toggleNudge()"></div>
+    </div>
+  </div>
+
+  <div class="control-group" style="margin-top: 8px;">
+    <button class="scenario-btn" id="mobileToggleBtn" onclick="toggleMobilePreview()">
+      <span class="sc-num" style="font-size:13px;">📱</span> 移动端预览
+    </button>
+  </div>
+
+  <div class="ctrl-divider"></div>
+
+  <div class="debug-section">
+    <h4>🔧 开发者调试 · 原型演示工具</h4>
+    <div class="control-group">
+      <div class="state-buttons" id="stateButtons">
+        <button class="state-btn" data-state="sleeping">sleeping</button>
+        <button class="state-btn" data-state="watching">watching</button>
+        <button class="state-btn" data-state="reading">reading</button>
+        <button class="state-btn" data-state="thinking">thinking</button>
+        <button class="state-btn" data-state="nudge">nudge</button>
+        <button class="state-btn active" data-state="idle">idle</button>
+      </div>
+    </div>
+
+    <div class="ctrl-divider"></div>
+
+    <h4 style="margin-top: 4px;">场景演示</h4>
+    <div class="control-group">
+      <div class="scenario-buttons">
+        <button class="scenario-btn" onclick="runScenario('quick')">
+          <span class="sc-num">1</span> 快速回顾
+        </button>
+        <button class="scenario-btn" onclick="runScenario('writing')">
+          <span class="sc-num">2</span> 写作辅助
+        </button>
+        <button class="scenario-btn" onclick="runScenario('discover')">
+          <span class="sc-num">3</span> 知识发现
+        </button>
+        <button class="scenario-btn" onclick="runScenario('weekly')">
+          <span class="sc-num">4</span> 周期性整理
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ============ Context Menu ============ -->
+<div class="context-menu" id="contextMenu">
+  <div class="context-menu-item" id="ctxNudgeItem">
+    <span>Nudge 模式</span>
+    <div class="toggle-switch mini" id="ctxNudgeToggle"></div>
+  </div>
+  <div class="context-menu-divider"></div>
+  <div class="context-menu-item" onclick="hidePet(); hideContextMenu();">隐藏拾页</div>
+  <div class="context-menu-item" onclick="showToast('打开设置页面'); hideContextMenu();">设置...</div>
+</div>
+
+<!-- ============ Mobile Preview Frame ============ -->
+<div class="mobile-frame" id="mobileFrame">
+  <div class="mobile-frame-notch"></div>
+  <div class="mobile-frame-home"></div>
+  <div class="mobile-frame-label">iPhone SE -- 375 x 667</div>
+</div>
+
+<script>
+// ============ State & DOM refs ============
+const pet = document.getElementById('pet');
+const petSvg = document.getElementById('pet-svg');
+const bubble = document.getElementById('bubble');
+const sidePanel = document.getElementById('sidePanel');
+const tabView = document.getElementById('tabView');
+const genOverlay = document.getElementById('genOverlay');
+const toast = document.getElementById('toast');
+const contextMenu = document.getElementById('contextMenu');
+const mobileFrame = document.getElementById('mobileFrame');
+
+let currentState = 'idle';
+let nudgeMode = false;
+let bubbleVisible = false;
+let panelVisible = false;
+let tabVisible = false;
+let isDragging = false;
+let dragStartX, dragStartY, petStartX, petStartY;
+let wasDragged = false;
+let isMobileMode = false;
+let petHidden = false;
+let contextMenuVisible = false;
+let longPressTimer = null;
+let longPressTriggered = false;
+
+// ============ Mobile mode detection ============
+function isEffectiveMobile() {
+  return isMobileMode || window.innerWidth <= 768;
+}
+
+// ============ Position management ============
+function getDefaultPos() {
+  return {
+    x: window.innerWidth - 80,
+    y: window.innerHeight - 80
+  };
+}
+
+function getMobilePos() {
+  if (isMobileMode) {
+    // Position within the phone frame bounds
+    const frame = mobileFrame.getBoundingClientRect();
+    return {
+      x: frame.right - 70,
+      y: frame.bottom - 70
+    };
+  }
+  return {
+    x: window.innerWidth - 70,
+    y: window.innerHeight - 70
+  };
+}
+
+function loadPosition() {
+  if (isEffectiveMobile()) return getMobilePos();
+  try {
+    const saved = localStorage.getItem('pagelet-pet-pos');
+    if (saved) {
+      const pos = JSON.parse(saved);
+      pos.x = Math.min(Math.max(8, pos.x), window.innerWidth - 64);
+      pos.y = Math.min(Math.max(8, pos.y), window.innerHeight - 64);
+      return pos;
+    }
+  } catch(e) {}
+  return getDefaultPos();
+}
+
+function savePosition(x, y) {
+  if (isEffectiveMobile()) return;
+  try {
+    localStorage.setItem('pagelet-pet-pos', JSON.stringify({x, y}));
+  } catch(e) {}
+}
+
+function setPetPosition(x, y) {
+  pet.style.left = x + 'px';
+  pet.style.top = y + 'px';
+  pet.style.right = 'auto';
+  pet.style.bottom = 'auto';
+}
+
+// Initialize position
+const initPos = loadPosition();
+setPetPosition(initPos.x, initPos.y);
+
+// ============ Drag handling ============
+pet.addEventListener('mousedown', onDragStart);
+pet.addEventListener('touchstart', onTouchStart, { passive: false });
+document.addEventListener('mousemove', onDragMove);
+document.addEventListener('touchmove', onTouchMove, { passive: false });
+document.addEventListener('mouseup', onDragEnd);
+document.addEventListener('touchend', onTouchEnd);
+
+function getClientXY(e) {
+  if (e.touches && e.touches.length) {
+    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+  }
+  return { x: e.clientX, y: e.clientY };
+}
+
+function onDragStart(e) {
+  if (isEffectiveMobile()) return; // No drag on mobile
+  if (e.target.closest('.bubble') || e.target.closest('.control-panel') || e.target.closest('.context-menu')) return;
+  isDragging = true;
+  wasDragged = false;
+  const pos = getClientXY(e);
+  dragStartX = pos.x;
+  dragStartY = pos.y;
+  petStartX = pet.offsetLeft;
+  petStartY = pet.offsetTop;
+}
+
+// Touch: long-press detection for mobile context menu
+function onTouchStart(e) {
+  if (e.target.closest('.bubble') || e.target.closest('.control-panel') || e.target.closest('.context-menu')) return;
+  const pos = getClientXY(e);
+  longPressTriggered = false;
+  wasDragged = false;
+
+  if (isEffectiveMobile()) {
+    // Long-press for context menu (500ms)
+    longPressTimer = setTimeout(() => {
+      longPressTriggered = true;
+      showContextMenu(pos.x, pos.y);
+    }, 500);
+    e.preventDefault();
+  } else {
+    // Desktop touch = drag
+    isDragging = true;
+    dragStartX = pos.x;
+    dragStartY = pos.y;
+    petStartX = pet.offsetLeft;
+    petStartY = pet.offsetTop;
+    e.preventDefault();
+  }
+}
+
+function onTouchMove(e) {
+  if (longPressTimer) {
+    // Cancel long-press if finger moves
+    const pos = getClientXY(e);
+    const dx = Math.abs(pos.x - (dragStartX || pos.x));
+    const dy = Math.abs(pos.y - (dragStartY || pos.y));
+    if (dx > 8 || dy > 8) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
+  }
+  if (!isDragging) return;
+  onDragMove(e);
+}
+
+function onTouchEnd(e) {
+  if (longPressTimer) {
+    clearTimeout(longPressTimer);
+    longPressTimer = null;
+  }
+  if (longPressTriggered) {
+    longPressTriggered = false;
+    return; // Don't trigger click after long-press
+  }
+  if (isDragging) {
+    onDragEnd(e);
+  } else if (isEffectiveMobile() && !wasDragged) {
+    // Tap on mobile = toggle bubble
+    toggleBubble();
+  }
+}
+
+function onDragMove(e) {
+  if (!isDragging) return;
+  const pos = getClientXY(e);
+  const dx = pos.x - dragStartX;
+  const dy = pos.y - dragStartY;
+
+  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
+    wasDragged = true;
+  }
+
+  let newX = Math.min(Math.max(8, petStartX + dx), window.innerWidth - 64);
+  let newY = Math.min(Math.max(8, petStartY + dy), window.innerHeight - 64);
+  setPetPosition(newX, newY);
+
+  if (e.type === 'touchmove') e.preventDefault();
+}
+
+function onDragEnd(e) {
+  if (!isDragging) return;
+  isDragging = false;
+  savePosition(pet.offsetLeft, pet.offsetTop);
+  updateBubblePosition();
+}
+
+// Click to toggle bubble (desktop)
+pet.addEventListener('click', (e) => {
+  if (wasDragged || longPressTriggered) return;
+  toggleBubble();
+});
+
+// Right-click to show context menu (desktop)
+pet.addEventListener('contextmenu', (e) => {
+  e.preventDefault();
+  showContextMenu(e.clientX, e.clientY);
+});
+
+// Keyboard support
+pet.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' || e.key === ' ') {
+    e.preventDefault();
+    toggleBubble();
+  }
+});
+
+// ============ Context Menu ============
+function showContextMenu(x, y) {
+  hideContextMenu();
+  hideBubble();
+
+  // Sync the nudge toggle state
+  const ctxToggle = document.getElementById('ctxNudgeToggle');
+  ctxToggle.classList.toggle('on', nudgeMode);
+
+  // Position context menu
+  const menuW = 190;
+  const menuH = 120;
+  let mx = x;
+  let my = y;
+  if (mx + menuW > window.innerWidth - 8) mx = window.innerWidth - menuW - 8;
+  if (my + menuH > window.innerHeight - 8) my = window.innerHeight - menuH - 8;
+  if (mx < 8) mx = 8;
+  if (my < 8) my = 8;
+
+  contextMenu.style.left = mx + 'px';
+  contextMenu.style.top = my + 'px';
+  contextMenu.classList.add('visible');
+  contextMenuVisible = true;
+}
+
+function hideContextMenu() {
+  contextMenu.classList.remove('visible');
+  contextMenuVisible = false;
+}
+
+// Context menu nudge toggle
+document.getElementById('ctxNudgeItem').addEventListener('click', () => {
+  toggleNudge();
+  document.getElementById('ctxNudgeToggle').classList.toggle('on', nudgeMode);
+});
+
+// Close context menu on click outside
+document.addEventListener('click', (e) => {
+  if (contextMenuVisible && !e.target.closest('.context-menu') && !e.target.closest('.pet-container')) {
+    hideContextMenu();
+  }
+});
+
+// ============ Hide / Show Pet ============
+function hidePet() {
+  pet.style.display = 'none';
+  petHidden = true;
+  showToast('拾页已隐藏，刷新页面可恢复');
+}
+
+function showPet() {
+  pet.style.display = '';
+  petHidden = false;
+}
+
+// ============ State management ============
+function getLightThemeStrokeColor(state) {
+  const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+  if (!isLight) return null;
+  // Use darker strokes in light theme for visibility
+  const lightColors = {
+    sleeping: '#a0a0a0',
+    watching: '#666666',
+    reading: '#5a7de6',
+    thinking: '#5a7de6',
+    nudge: '#3dba82',
+    idle: '#666666'
+  };
+  return lightColors[state] || '#666666';
+}
+
+function setPetState(state) {
+  currentState = state;
+  pet.setAttribute('data-state', state);
+
+  const stateColors = {
+    sleeping: '#e8e8e8',
+    watching: '#e8e8e8',
+    reading: '#7c9eff',
+    thinking: '#7c9eff',
+    nudge: '#5dd39e',
+    idle: '#e8e8e8'
+  };
+
+  let color = stateColors[state] || '#e8e8e8';
+
+  // Override with light theme colors if applicable
+  const lightColor = getLightThemeStrokeColor(state);
+  if (lightColor) color = lightColor;
+
+  // Update SVG stroke colors
+  petSvg.querySelectorAll('.pet-body, .pet-fold').forEach(el => {
+    el.setAttribute('stroke', color);
+  });
+  petSvg.querySelectorAll('.pet-eye-left, .pet-eye-right').forEach(el => {
+    el.setAttribute('stroke', color);
+  });
+
+  // Hide all optional elements
+  petSvg.querySelector('.sleep-eyes').style.display = 'none';
+  petSvg.querySelector('.sleep-zzz').style.display = 'none';
+  petSvg.querySelector('.think-dots').style.display = 'none';
+  petSvg.querySelector('.pet-mouth').style.display = 'none';
+  petSvg.querySelectorAll('.blink-group').forEach(g => g.style.display = '');
+
+  // State-specific visuals
+  switch(state) {
+    case 'sleeping':
+      petSvg.querySelectorAll('.blink-group').forEach(g => g.style.display = 'none');
+      petSvg.querySelector('.sleep-eyes').style.display = '';
+      petSvg.querySelector('.sleep-eyes').querySelectorAll('path').forEach(p => p.setAttribute('stroke', color));
+      petSvg.querySelector('.sleep-zzz').style.display = '';
+      petSvg.querySelector('.sleep-zzz').style.color = color;
+      break;
+
+    case 'thinking':
+      petSvg.querySelector('.think-dots').style.display = '';
+      const dots = petSvg.querySelectorAll('.think-dots .dot');
+      dots.forEach((d, i) => {
+        d.setAttribute('fill', color);
+        d.style.animation = `dot-pulse 1.4s infinite ${i * 0.2}s`;
+      });
+      break;
+
+    case 'nudge':
+      petSvg.querySelector('.pet-mouth').style.display = '';
+      petSvg.querySelector('.pet-mouth').setAttribute('stroke', color);
+      break;
+
+    case 'reading':
+      // Eyes visible with scan animation (handled in CSS)
+      break;
+  }
+
+  // Update state buttons
+  document.querySelectorAll('.state-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.state === state);
+  });
+
+  // Auto-show bubble in nudge state when nudge mode is on
+  if (state === 'nudge' && nudgeMode && !bubbleVisible) {
+    setTimeout(() => showBubbleWithContent('nudge'), 400);
+  }
+}
+
+// State button handlers
+document.querySelectorAll('.state-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    setPetState(btn.dataset.state);
+  });
+});
+
+// ============ Bubble ============
+function toggleBubble() {
+  if (bubbleVisible) {
+    hideBubble();
+  } else {
+    showBubbleWithContent('default');
+  }
+}
+
+function showBubbleWithContent(type) {
+  const items = document.getElementById('bubble-items');
+  const actions = document.getElementById('bubble-actions');
+
+  switch(type) {
+    case 'nudge':
+      items.innerHTML = `
+        <li onclick="handleBubbleItem(0)"><span class="bullet"></span>你在写「产品规划」，要不要回顾一下去年的规划笔记？</li>
+        <li onclick="handleBubbleItem(1)"><span class="bullet"></span>发现 3 个相关笔记可以参考</li>
+      `;
+      actions.innerHTML = `
+        <button class="bubble-btn primary" onclick="handleAction('review')">查看建议</button>
+        <button class="bubble-btn" onclick="hideBubble()">稍后再说</button>
+      `;
+      break;
+
+    case 'writing':
+      items.innerHTML = `
+        <li onclick="handleBubbleItem(0)"><span class="bullet"></span>当前段落结构建议：将 TODO 移到开头</li>
+        <li onclick="handleBubbleItem(1)"><span class="bullet"></span>发现 2 处可以补充的引用链接</li>
+        <li onclick="handleBubbleItem(2)"><span class="bullet"></span>「技术方案」中有类似表述，建议统一</li>
+      `;
+      actions.innerHTML = `
+        <button class="bubble-btn primary" onclick="handleAction('review')">查看详情</button>
+        <button class="bubble-btn" onclick="hideBubble()">忽略</button>
+      `;
+      break;
+
+    case 'discover':
+      items.innerHTML = `
+        <li onclick="handleBubbleItem(0)"><span class="bullet"></span>「项目规划」和「技术方案」有 5 处关联</li>
+        <li onclick="handleBubbleItem(1)"><span class="bullet"></span>「周报 W22」引用了 3 篇相关笔记</li>
+        <li onclick="handleBubbleItem(2)"><span class="bullet"></span>发现一个未链接的概念集群</li>
+      `;
+      actions.innerHTML = `
+        <button class="bubble-btn primary" onclick="handleAction('discover')">发现关联</button>
+        <button class="bubble-btn" onclick="handleAction('current')">看当前笔记</button>
+      `;
+      break;
+
+    default:
+      items.innerHTML = `
+        <li onclick="handleBubbleItem(0)"><span class="bullet"></span>最近 3 天写了 7 篇笔记</li>
+        <li onclick="handleBubbleItem(1)"><span class="bullet"></span>发现 2 个待处理的 TODO</li>
+        <li onclick="handleBubbleItem(2)"><span class="bullet"></span>「项目规划」和「技术方案」可能有关联</li>
+      `;
+      actions.innerHTML = `
+        <button class="bubble-btn primary" onclick="handleAction('review')">回顾最近</button>
+        <button class="bubble-btn" onclick="handleAction('current')">看当前笔记</button>
+        <button class="bubble-btn" onclick="handleAction('discover')">发现关联</button>
+      `;
+      break;
+  }
+
+  if (isEffectiveMobile()) {
+    // Mobile: full-width at bottom, no positioning needed (CSS handles it)
+    bubble.style.left = '';
+    bubble.style.top = '';
+    bubble.style.right = '';
+    bubble.style.bottom = '';
+  } else {
+    updateBubblePosition();
+  }
+  bubble.classList.add('visible');
+  bubbleVisible = true;
+
+  // Mobile: swipe down to dismiss
+  if (isEffectiveMobile()) {
+    setupBubbleSwipeDismiss();
+  }
+}
+
+function hideBubble() {
+  bubble.classList.remove('visible');
+  bubbleVisible = false;
+}
+
+function updateBubblePosition() {
+  if (isEffectiveMobile()) return; // CSS handles mobile positioning
+
+  const petRect = pet.getBoundingClientRect();
+  const bubbleW = 300;
+  const bubbleH = bubble.offsetHeight || 200;
+  const margin = 12;
+  const tail = bubble.querySelector('.bubble-tail');
+
+  let bx = petRect.left + petRect.width / 2 - bubbleW + 40;
+  let by = petRect.top - bubbleH - margin;
+
+  if (bx < 16) bx = 16;
+  if (bx + bubbleW > window.innerWidth - 16) {
+    bx = window.innerWidth - bubbleW - 16;
+  }
+
+  if (by < 16) {
+    by = petRect.bottom + margin;
+    tail.style.top = '-7px';
+    tail.style.bottom = 'auto';
+    tail.style.transform = 'rotate(-135deg)';
+  } else {
+    tail.style.top = 'auto';
+    tail.style.bottom = '-7px';
+    tail.style.transform = 'rotate(45deg)';
+  }
+
+  const tailX = petRect.left + petRect.width / 2 - bx - 7;
+  tail.style.right = 'auto';
+  tail.style.left = Math.max(16, Math.min(tailX, bubbleW - 30)) + 'px';
+
+  bubble.style.left = bx + 'px';
+  bubble.style.top = by + 'px';
+}
+
+// Swipe-down to dismiss bubble on mobile
+function setupBubbleSwipeDismiss() {
+  let startY = null;
+  function onSwipeStart(e) {
+    if (!isEffectiveMobile() || !bubbleVisible) return;
+    startY = e.touches[0].clientY;
+  }
+  function onSwipeMove(e) {
+    if (startY === null) return;
+    const dy = e.touches[0].clientY - startY;
+    if (dy > 40) {
+      hideBubble();
+      startY = null;
+    }
+  }
+  function onSwipeEnd() { startY = null; }
+  bubble.addEventListener('touchstart', onSwipeStart, { passive: true });
+  bubble.addEventListener('touchmove', onSwipeMove, { passive: true });
+  bubble.addEventListener('touchend', onSwipeEnd, { passive: true });
+}
+
+function handleBubbleItem(idx) {
+  hideBubble();
+  showToast('已标记，将在下次回顾中展示');
+}
+
+function handleAction(action) {
+  hideBubble();
+  switch(action) {
+    case 'review':
+      openPanel('review');
+      break;
+    case 'current':
+      openPanel('current');
+      break;
+    case 'discover':
+      openPanel('discover');
+      break;
+  }
+}
+
+// Close bubble on click outside
+document.addEventListener('click', (e) => {
+  if (bubbleVisible && !e.target.closest('.bubble') && !e.target.closest('.pet-container')) {
+    hideBubble();
+  }
+});
+
+// ============ Side Panel ============
+function openPanel(type) {
+  const body = document.getElementById('panelBody');
+  const title = document.getElementById('panelTitle');
+
+  switch(type) {
+    case 'review':
+      title.textContent = '最近回顾';
+      body.innerHTML = getReviewTimelineHTML();
+      break;
+    case 'current':
+      title.textContent = '当前笔记分析';
+      body.innerHTML = getCurrentNoteHTML();
+      break;
+    case 'discover':
+      title.textContent = '关联发现';
+      body.innerHTML = getDiscoverHTML();
+      break;
+    default:
+      title.textContent = '拾页';
+      body.innerHTML = getReviewTimelineHTML();
+  }
+
+  sidePanel.classList.add('visible');
+  panelVisible = true;
+}
+
+function closePanel() {
+  sidePanel.classList.remove('visible');
+  panelVisible = false;
+}
+
+function getReviewTimelineHTML() {
+  return `
+    <div class="timeline">
+      <div class="timeline-section-label">今天</div>
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot blue"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">2026 年产品规划</div>
+          <div class="timeline-meta">编辑于 14:23 &middot; 修改了 3 个段落</div>
+          <div class="timeline-insight">
+            AI 洞察：这篇笔记包含 3 个未完成的 TODO，建议在周五前回顾。
+          </div>
+          <div class="timeline-actions">
+            <button class="timeline-action-btn" onclick="showToast('已保存为回顾笔记')">保存为回顾笔记</button>
+            <button class="timeline-action-btn" onclick="showToast('已记录')">深入探索</button>
+            <button class="timeline-action-btn" onclick="showToast('已忽略')">忽略</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">会议纪要 - 周会</div>
+          <div class="timeline-meta">编辑于 10:15 &middot; 新建</div>
+        </div>
+      </div>
+
+      <div class="timeline-divider"></div>
+      <div class="timeline-section-label">昨天</div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot green"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">Pagelet SDD 更新</div>
+          <div class="timeline-meta">编辑于 20:47 &middot; 大量修改</div>
+          <div class="timeline-insight">
+            AI 洞察：与「产品规划」有关联 -- 两篇都提到了 "Pet 模型" 和 "渐进式交互"。
+          </div>
+          <div class="timeline-actions">
+            <button class="timeline-action-btn" onclick="showToast('已保存为回顾笔记')">保存为回顾笔记</button>
+            <button class="timeline-action-btn" onclick="showToast('已忽略')">忽略</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">技术方案 v3</div>
+          <div class="timeline-meta">编辑于 16:30 &middot; 修改了 1 个段落</div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">阅读笔记 - DDD 实践</div>
+          <div class="timeline-meta">编辑于 09:12 &middot; 新建</div>
+        </div>
+      </div>
+
+      <div class="timeline-divider"></div>
+      <div class="timeline-section-label">前天</div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">周报 W22</div>
+          <div class="timeline-meta">编辑于 18:00 &middot; 修改了 2 个段落</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function getCurrentNoteHTML() {
+  return `
+    <div class="timeline">
+      <div class="timeline-section-label">笔记概要</div>
+      <div style="padding: 0 4px;">
+        <div style="background: var(--bg-2); border-radius: 8px; padding: 14px 16px; margin-bottom: 16px;">
+          <div style="font-size: 15px; font-weight: 500; color: var(--fg); margin-bottom: 4px;">2026 年产品规划</div>
+          <div style="font-size: 12px; color: var(--fg-3);">约 320 字 &middot; 3 个 TODO &middot; 3 个标签 &middot; 上次修改: 14:23</div>
+        </div>
+      </div>
+
+      <div class="timeline-section-label">AI 分析</div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot blue"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">结构建议</div>
+          <div class="timeline-insight">
+            将 TODO 列表移到笔记开头，方便在 Daily Note 中快速扫读。
+          </div>
+          <div class="timeline-actions">
+            <button class="timeline-action-btn" onclick="showToast('建议已采纳')">采纳</button>
+            <button class="timeline-action-btn" onclick="showToast('已忽略')">忽略</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot blue"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">引用补充</div>
+          <div class="timeline-insight">
+            第 2 段提到了 "Pagelet v2 交互重构"，但没有链接到 [[Pagelet SDD]]。建议添加双向链接。
+          </div>
+          <div class="timeline-actions">
+            <button class="timeline-action-btn" onclick="showToast('链接已添加')">添加链接</button>
+            <button class="timeline-action-btn" onclick="showToast('已忽略')">忽略</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">整体评价</div>
+          <div style="font-size: 12px; color: var(--fg-2); margin-top: 4px;">
+            这篇笔记结构清晰，核心目标明确。建议下次回顾时检查 TODO 进度。
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function getDiscoverHTML() {
+  return `
+    <div class="timeline">
+      <div class="timeline-section-label">关联图谱</div>
+      <div style="padding: 0 4px;">
+        <div class="connection-map" style="min-height: 220px;">
+          <div class="map-node center" style="left: 50%; top: 50%; transform: translate(-50%, -50%);">产品规划</div>
+          <div class="map-node related" style="left: 15%; top: 20%;">Pagelet SDD</div>
+          <div class="map-node related" style="left: 70%; top: 18%;">技术方案 v3</div>
+          <div class="map-node related" style="left: 10%; top: 72%;">周报 W22</div>
+          <div class="map-node related" style="left: 72%; top: 75%;">会议纪要</div>
+          <svg style="position:absolute;inset:0;width:100%;height:100%;pointer-events:none;" aria-hidden="true">
+            <line x1="50%" y1="50%" x2="20%" y2="25%" stroke="var(--border)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <line x1="50%" y1="50%" x2="75%" y2="23%" stroke="var(--border)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <line x1="50%" y1="50%" x2="18%" y2="77%" stroke="var(--border)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <line x1="50%" y1="50%" x2="77%" y2="80%" stroke="var(--border)" stroke-width="1.2" stroke-dasharray="4 3"/>
+            <line x1="20%" y1="25%" x2="75%" y2="23%" stroke="var(--border)" stroke-width="0.8" stroke-dasharray="2 4" opacity="0.5"/>
+          </svg>
+        </div>
+      </div>
+
+      <div class="timeline-divider"></div>
+      <div class="timeline-section-label">发现的关联</div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot blue"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">产品规划 &harr; Pagelet SDD</div>
+          <div class="timeline-meta">5 处关联 &middot; 强关联</div>
+          <div class="timeline-insight">
+            共享概念：Pet 模型、渐进式交互、状态机设计。建议将两篇笔记建立 MOC 索引。
+          </div>
+          <div class="timeline-actions">
+            <button class="timeline-action-btn" onclick="showToast('已创建 MOC 索引')">创建索引</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot"></div>
+          <div class="timeline-connector"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">产品规划 &harr; 技术方案 v3</div>
+          <div class="timeline-meta">3 处关联 &middot; 中关联</div>
+          <div class="timeline-insight">
+            重叠内容：v2 架构、WASM 优化。建议核实两处对 WASM 的描述是否一致。
+          </div>
+        </div>
+      </div>
+
+      <div class="timeline-item">
+        <div class="timeline-line">
+          <div class="timeline-dot"></div>
+        </div>
+        <div class="timeline-content">
+          <div class="timeline-title">未链接概念集群</div>
+          <div class="timeline-meta">发现 1 个集群</div>
+          <div style="font-size: 12px; color: var(--fg-2); margin-top: 4px;">
+            "渐进式交互" 在 4 篇笔记中出现，但它们之间没有双向链接。
+          </div>
+          <div class="timeline-actions">
+            <button class="timeline-action-btn" onclick="showToast('已自动添加链接')">自动链接</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+// ============ Tab View ============
+function expandToTab() {
+  if (isEffectiveMobile()) {
+    // No tab expansion on mobile - just show toast
+    showToast('移动端暂不支持标签页展开');
+    return;
+  }
+  closePanel();
+  const body = document.getElementById('tabBody');
+  const title = document.getElementById('tabTitle');
+  const panelTitle = document.getElementById('panelTitle').textContent;
+  title.textContent = '拾页 -- ' + panelTitle;
+
+  body.innerHTML = `
+    <div class="tab-section">
+      <h2>概览</h2>
+      <div class="tab-insight-card">
+        <p>基于过去 7 天的笔记活动，以下是自动整理的要点：</p>
+        <div class="tag-row">
+          <span class="tag-chip">7 篇笔记</span>
+          <span class="tag-chip">3 个 TODO</span>
+          <span class="tag-chip">5 个关联</span>
+          <span class="tag-chip">2 个建议</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-section">
+      <h2>主题聚类</h2>
+      <div class="tab-insight-card">
+        <h4 style="margin-bottom:8px;font-size:14px;font-weight:500;">集群 A：产品设计</h4>
+        <p>包含「产品规划」「Pagelet SDD」「技术方案 v3」。三篇笔记共享 "Pet 模型" "渐进式交互" "状态机" 等核心概念。</p>
+        <div class="tag-row">
+          <span class="tag-chip">Pet 模型</span>
+          <span class="tag-chip">渐进式交互</span>
+          <span class="tag-chip">状态机</span>
+        </div>
+      </div>
+      <div class="tab-insight-card">
+        <h4 style="margin-bottom:8px;font-size:14px;font-weight:500;">集群 B：日常记录</h4>
+        <p>包含「会议纪要」「周报 W22」。偏记录性质，可考虑归档或合并到周报。</p>
+        <div class="tag-row">
+          <span class="tag-chip">周报</span>
+          <span class="tag-chip">会议</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-section">
+      <h2>行动建议</h2>
+      <div class="tab-insight-card">
+        <p>1. 为「产品规划」和「Pagelet SDD」创建一个 MOC（Map of Content）索引笔记。</p>
+      </div>
+      <div class="tab-insight-card">
+        <p>2. 检查 3 个未完成的 TODO 项，考虑设置截止日期。</p>
+      </div>
+      <div class="tab-insight-card">
+        <p>3. 「DDD 实践」阅读笔记是孤立的 -- 考虑将其链接到相关的技术方案笔记。</p>
+      </div>
+    </div>
+  `;
+
+  tabView.classList.add('visible');
+  tabVisible = true;
+}
+
+function closeTab() {
+  tabView.classList.remove('visible');
+  tabVisible = false;
+}
+
+// ============ Nudge toggle ============
+function toggleNudge() {
+  nudgeMode = !nudgeMode;
+  document.getElementById('nudgeToggle').classList.toggle('on', nudgeMode);
+  // Sync context menu toggle
+  document.getElementById('ctxNudgeToggle').classList.toggle('on', nudgeMode);
+
+  if (nudgeMode && currentState === 'nudge') {
+    setTimeout(() => showBubbleWithContent('nudge'), 300);
+  }
+}
+
+// ============ Theme toggle ============
+function toggleTheme() {
+  const current = document.documentElement.getAttribute('data-theme');
+  const next = current === 'light' ? '' : 'light';
+  if (next) {
+    document.documentElement.setAttribute('data-theme', 'light');
+    document.getElementById('theme-icon').innerHTML = '&#9788;';
+  } else {
+    document.documentElement.removeAttribute('data-theme');
+    document.getElementById('theme-icon').innerHTML = '&#9789;';
+  }
+  // Re-apply state colors for theme change
+  setPetState(currentState);
+}
+
+// ============ Toast ============
+function showToast(text) {
+  document.getElementById('toastText').textContent = text;
+  toast.classList.add('visible');
+  setTimeout(() => toast.classList.remove('visible'), 2200);
+}
+
+// ============ Mobile Preview Toggle ============
+function toggleMobilePreview() {
+  isMobileMode = !isMobileMode;
+  document.body.classList.toggle('mobile-mode', isMobileMode);
+  mobileFrame.classList.toggle('visible', isMobileMode);
+
+  const btn = document.getElementById('mobileToggleBtn');
+  if (isMobileMode) {
+    btn.style.background = 'var(--bg-3)';
+    btn.style.borderColor = 'var(--fg-3)';
+    // Reposition pet to mobile position (fixed bottom-right of frame)
+    const pos = getMobilePos();
+    setPetPosition(pos.x, pos.y);
+  } else {
+    btn.style.background = '';
+    btn.style.borderColor = '';
+    // Restore saved desktop position
+    const pos = loadPosition();
+    setPetPosition(pos.x, pos.y);
+  }
+
+  // Close any open overlays
+  hideBubble();
+  closePanel();
+  closeTab();
+  hideContextMenu();
+}
+
+// ============ Scenarios ============
+let scenarioRunning = false;
+
+function runScenario(name) {
+  if (scenarioRunning) return;
+  scenarioRunning = true;
+
+  // Reset state
+  hideBubble();
+  closePanel();
+  closeTab();
+  hideContextMenu();
+
+  switch(name) {
+    case 'quick':
+      scenarioQuickReview();
+      break;
+    case 'writing':
+      scenarioWriting();
+      break;
+    case 'discover':
+      scenarioDiscover();
+      break;
+    case 'weekly':
+      scenarioWeekly();
+      break;
+  }
+}
+
+function scenarioQuickReview() {
+  setPetState('watching');
+  setTimeout(() => {
+    setPetState('idle');
+    showBubbleWithContent('default');
+    setTimeout(() => {
+      hideBubble();
+      showToast('快速回顾完成 -- 不产生任何输出');
+      scenarioRunning = false;
+    }, 3000);
+  }, 800);
+}
+
+function scenarioWriting() {
+  setPetState('reading');
+  setTimeout(() => {
+    setPetState('nudge');
+    setTimeout(() => {
+      showBubbleWithContent('writing');
+      scenarioRunning = false;
+    }, 600);
+  }, 1000);
+}
+
+function scenarioDiscover() {
+  setPetState('thinking');
+  setTimeout(() => {
+    setPetState('idle');
+    showBubbleWithContent('discover');
+    scenarioRunning = false;
+  }, 1200);
+}
+
+function scenarioWeekly() {
+  setPetState('thinking');
+  document.getElementById('genText').textContent = '正在生成周报...';
+  setTimeout(() => {
+    genOverlay.classList.add('visible');
+    setTimeout(() => {
+      genOverlay.classList.remove('visible');
+      setPetState('nudge');
+      setTimeout(() => {
+        showToast('review note 已创建：周报 W23');
+        setPetState('idle');
+        scenarioRunning = false;
+      }, 400);
+    }, 2500);
+  }, 600);
+}
+
+// ============ Window resize ============
+window.addEventListener('resize', () => {
+  if (isEffectiveMobile()) {
+    const pos = getMobilePos();
+    setPetPosition(pos.x, pos.y);
+  } else {
+    const x = Math.min(Math.max(8, pet.offsetLeft), window.innerWidth - 64);
+    const y = Math.min(Math.max(8, pet.offsetTop), window.innerHeight - 64);
+    setPetPosition(x, y);
+    savePosition(x, y);
+  }
+  if (bubbleVisible) updateBubblePosition();
+});
+
+// ============ Keyboard shortcuts ============
+document.addEventListener('keydown', (e) => {
+  // Ctrl+Alt+N -> toggle nudge mode
+  if (e.ctrlKey && e.altKey && e.key === 'n') {
+    e.preventDefault();
+    toggleNudge();
+  }
+  // Ctrl+Alt+Shift+N -> nudge state
+  if (e.ctrlKey && e.altKey && e.shiftKey && e.key === 'N') {
+    e.preventDefault();
+    setPetState('nudge');
+  }
+  // Escape -> close overlays
+  if (e.key === 'Escape') {
+    if (contextMenuVisible) hideContextMenu();
+    else if (tabVisible) closeTab();
+    else if (panelVisible) closePanel();
+    else if (bubbleVisible) hideBubble();
+  }
+});
+
+// ============ Init ============
+setPetState('idle');
+</script>
+</body>
+</html>
