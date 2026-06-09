@@ -358,6 +358,7 @@ export class PageletReviewOrchestrator {
                 6000,
             );
         } catch (error) {
+            if (request.signal?.aborted) return;
             this.host.log("Pagelet draft save failed", error);
             pageletView?.showReviewSaveError(
                 pageletT("pagelet.mascot.error", locale),
