@@ -14,7 +14,7 @@
  <mark><b><span style="font-size:18px;">💯</span>Tips</b></mark>: If you are not a developer, please refer to the manual for optimal use.
 </p>
 
-> ***NOTE***: New shiny feature: Support an LLM chat assistant that can use Memory from your notes. Before preparing memory, the assistant explains data flow, AI provider usage, and possible cost, then asks for your approval.
+> ***NOTE***: Newest beta feature: **Pagelet** — a quiet review assistant for your notes (produces structured suggestions, saves as review notes). Also supports LLM chat with Memory. Before preparing memory, the assistant explains data flow, AI provider usage, and possible cost, then asks for your approval.
 
 ## AI Chat in 60 seconds
 
@@ -92,6 +92,7 @@ https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 7. automatically set color of graph view
 8. list all callouts css configuration for quickly inserting
 9. chat with AI using Memory from your notes, or answer immediately without reading memory
+10. **(beta)** Pagelet — a quiet review assistant that reads selected notes, produces structured suggestions, and lets you save them as review notes without modifying originals
 
 ## Develop
 

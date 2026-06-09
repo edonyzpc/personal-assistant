@@ -1,5 +1,7 @@
+/** Determines whether the agent may call arbitrary tools or only produce a final answer. */
 export type PaAgentControlToolMode = "normal" | "final_answer_only";
 
+/** Classifies which category of tools the agent currently sees in its tool list. */
 export type PaAgentToolExposureMode =
     | "semantic-first"
     | "source-scoped"
@@ -9,6 +11,7 @@ export type PaAgentToolExposureMode =
     | "final-only"
     | "blocked-unavailable";
 
+/** Describes where the agent's knowledge originates: vault notes, web, current note, or a mix. */
 export type PaAgentSourceScope =
     | "none"
     | "notes"
@@ -16,6 +19,7 @@ export type PaAgentSourceScope =
     | "web"
     | "mixed";
 
+/** Tracks budget consumption across semantic rounds, follow-ups, and tool calls. */
 export interface PaAgentControlBudgetState {
     semanticRoundCount: number;
     followUpRoundCount: number;
@@ -25,17 +29,20 @@ export interface PaAgentControlBudgetState {
     exhaustedReason?: "tool_calls" | "semantic_rounds" | "follow_up_rounds" | "wall_clock";
 }
 
+/** A single diagnostic entry recording a control-policy decision for debugging. */
 export interface PaAgentControlDiagnostic {
     type: string;
     message: string;
     metadata?: Record<string, unknown>;
 }
 
+/** Allowlist/blocklist pair controlling which tools the agent may invoke this turn. */
 export interface AgentControlToolConstraints {
     allowedToolNames?: ReadonlySet<string>;
     blockedToolNames?: ReadonlySet<string>;
 }
 
+/** Immutable snapshot of the agent's tool-exposure, source-scope, budget, and constraint state at a point in time. */
 export interface AgentControlSnapshot {
     exposureMode: PaAgentToolExposureMode;
     sourceScope: PaAgentSourceScope;
@@ -48,6 +55,7 @@ export interface AgentControlSnapshot {
     diagnostics: PaAgentControlDiagnostic[];
 }
 
+/** Options for constructing a control snapshot with explicit overrides. */
 export interface CreateAgentControlSnapshotOptions extends AgentControlToolConstraints {
     exposureMode?: PaAgentToolExposureMode;
     sourceScope?: PaAgentSourceScope;
@@ -58,6 +66,7 @@ export interface CreateAgentControlSnapshotOptions extends AgentControlToolConst
     diagnostics?: PaAgentControlDiagnostic[];
 }
 
+/** Options for building the very first control snapshot from the full set of available tools. */
 export interface CreateInitialAgentControlSnapshotOptions {
     constraints?: AgentControlToolConstraints;
     availableSemanticToolNames: ReadonlySet<string>;
@@ -78,6 +87,7 @@ const NOTES_FOLLOW_UP_TOOL_NAMES = new Set([
     "search_vault_snippets",
 ]);
 
+/** Builds a control snapshot from explicit option overrides, inferring exposure and scope when omitted. */
 export function createAgentControlSnapshot(
     options: CreateAgentControlSnapshotOptions = {},
 ): AgentControlSnapshot {
@@ -102,6 +112,7 @@ export function createAgentControlSnapshot(
     };
 }
 
+/** Wraps pre-existing PA Agent tool constraints into the new control-snapshot shape for backward compatibility. */
 export function createLegacyAgentControlSnapshot(options: {
     constraints?: AgentControlToolConstraints;
     initialRuntimeInstruction?: string;
@@ -123,6 +134,7 @@ export function createLegacyAgentControlSnapshot(options: {
     });
 }
 
+/** Computes the initial control snapshot by intersecting available tools with user constraints and required capabilities. */
 export function createInitialAgentControlSnapshot(
     options: CreateInitialAgentControlSnapshotOptions,
 ): AgentControlSnapshot {
@@ -178,6 +190,7 @@ export function createInitialAgentControlSnapshot(
     });
 }
 
+/** Derives the next snapshot from a previous one, optionally injecting a new instruction or switching to final-answer mode. */
 export function deriveContinuedAgentControlSnapshot(
     previous: AgentControlSnapshot | undefined,
     options: {
@@ -209,6 +222,7 @@ export function deriveContinuedAgentControlSnapshot(
     });
 }
 
+/** Derives a snapshot indicating the agent has enough observations and may answer or request one more targeted tool call. */
 export function deriveAnswerReadyAgentControlSnapshot(
     previous: AgentControlSnapshot | undefined,
     options: {
@@ -239,6 +253,7 @@ export function deriveAnswerReadyAgentControlSnapshot(
     });
 }
 
+/** Derives a snapshot enabling only follow-up tools scoped to the same source type. */
 export function deriveSameSourceFollowUpAgentControlSnapshot(
     previous: AgentControlSnapshot | undefined,
     options: {
@@ -273,6 +288,7 @@ export function deriveSameSourceFollowUpAgentControlSnapshot(
     });
 }
 
+/** Extracts the allowed/blocked tool-name sets from a snapshot, returning undefined if unconstrained. */
 export function toolConstraintsFromAgentControlSnapshot(
     snapshot: AgentControlSnapshot | undefined,
 ): AgentControlToolConstraints | undefined {
@@ -292,6 +308,7 @@ export function toolConstraintsFromAgentControlSnapshot(
     };
 }
 
+/** Produces a JSON-serializable summary of a snapshot for logging and diagnostics. */
 export function summarizeAgentControlSnapshot(
     snapshot: AgentControlSnapshot,
 ): Record<string, unknown> {

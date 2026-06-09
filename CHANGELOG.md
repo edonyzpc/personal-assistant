@@ -4,6 +4,13 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## [Unreleased]
 
+### Features
+- pagelet: draft review save flow — accepted suggestions can be saved as a review note via the Pagelet panel without going through the full Write Action preview.
+
+### Fix
+- pagelet: harden draft save lifecycle — abort in-flight saves on view close, forward `AbortSignal` to the orchestrator, and suppress the error notice when a save is intentionally aborted.
+- pa-agent: reject malformed write-action capabilities at runtime registration instead of failing silently at invoke time.
+
 ### Improvements
 - pagelet: wire the ribbon into a usable current-note review MVP. Clicking Pagelet on an active Markdown note now reads the note, runs the review model, freezes a non-colliding target path, shows the Write Action Framework preview, and writes the confirmed review note.
 - pagelet: freeze previewed write targets through execute, allow the reviews folder to be created only after confirmation, and let same-day reviews use collision suffixes instead of failing at Gate 1.
