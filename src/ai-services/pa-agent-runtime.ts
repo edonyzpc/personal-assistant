@@ -602,6 +602,8 @@ export function createWriteActionAwareToolExecutor(
                 // Non-action tool → standard chat-runtime path.
                 return options.baseExecutor.execute(input);
             }
+            // Cast is safe here: scope/policy checks below only use toolCall.name,
+            // not capability-specific fields. executeWrite is validated after them.
             const writeCapability = capability as WriteActionCapability;
             // Fix #6: honor allowedToolNames/blockedToolNames before any
             // action-specific work so out-of-scope writes never reach the
