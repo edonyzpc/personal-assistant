@@ -46,24 +46,45 @@
     filter: none;
   }
   [data-theme="light"] .pet-wrapper {
-    background: rgba(255,255,255,0.6);
+    background: rgba(255,255,255,0.75);
     border-radius: 10px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.05);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.10), 0 1px 4px rgba(0,0,0,0.06);
   }
-  [data-theme="light"] .pet-container[data-state="sleeping"] .pet-svg-wrap {
-    filter: saturate(0);
+
+  /* resting in light: very muted, desaturated, dimmer, clearly "asleep" */
+  [data-theme="light"] .pet-container[data-state="resting"] {
+    opacity: 0.4;
   }
-  [data-theme="light"] .pet-container[data-state="watching"] .pet-wrapper {
-    box-shadow: 0 2px 12px rgba(0,0,0,0.10), 0 0 0 1px rgba(0,0,0,0.06);
+  [data-theme="light"] .pet-container[data-state="resting"] .pet-svg-wrap {
+    filter: saturate(0) brightness(0.85);
   }
+  [data-theme="light"] .pet-container[data-state="resting"] .pet-wrapper {
+    background: rgba(200,200,200,0.3);
+    box-shadow: 0 1px 6px rgba(0,0,0,0.04);
+  }
+  [data-theme="light"] .pet-container[data-state="resting"] .sleep-zzz text {
+    fill: #999;
+    opacity: 0.6;
+  }
+
+  /* idle in light: neutral, standard shadow, clearly "awake but calm" */
   [data-theme="light"] .pet-container[data-state="idle"] .pet-wrapper {
-    box-shadow: 0 2px 12px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.04);
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08), 0 0 0 1px rgba(0,0,0,0.05);
   }
+
+  /* working in light: blue glow */
+  [data-theme="light"] .pet-container[data-state="working"] .pet-wrapper {
+    box-shadow: 0 2px 16px rgba(124,158,255,0.3), 0 0 0 1.5px rgba(124,158,255,0.4);
+  }
+
+  /* nudge in light: prominent green glow + large pulsing dot */
   [data-theme="light"] .pet-container[data-state="nudge"] .pet-wrapper {
-    box-shadow: 0 2px 16px rgba(93,211,158,0.3), 0 0 0 1px rgba(93,211,158,0.15);
+    box-shadow: 0 2px 20px rgba(93,211,158,0.35), 0 0 0 2px rgba(93,211,158,0.2);
   }
   [data-theme="light"] .pet-container[data-state="nudge"] .pet-notification {
-    box-shadow: 0 0 8px rgba(93,211,158,0.5), 0 0 16px rgba(93,211,158,0.25);
+    width: 12px;
+    height: 12px;
+    box-shadow: 0 0 8px rgba(93,211,158,0.6), 0 0 20px rgba(93,211,158,0.3);
   }
 
   /* ============ Reset & Base ============ */
@@ -136,29 +157,13 @@
   /* ============ Pet Container ============ */
   .pet-container {
     position: fixed;
+    bottom: 16px;
+    right: 16px;
     z-index: 1000;
-    cursor: grab;
+    cursor: pointer;
     user-select: none;
     -webkit-user-select: none;
     transition: filter 0.4s ease;
-  }
-  .pet-container:active {
-    cursor: grabbing;
-  }
-  .pet-container.pinned {
-    cursor: pointer;
-  }
-  .pet-container.pinned::after {
-    content: '';
-    position: absolute;
-    top: -4px;
-    right: -4px;
-    width: 10px;
-    height: 10px;
-    background: var(--fg-3);
-    border-radius: 50%;
-    border: 2px solid var(--bg);
-    opacity: 0.6;
   }
 
   .pet-wrapper {
@@ -173,10 +178,10 @@
   /* Notification dot for nudge state */
   .pet-notification {
     position: absolute;
-    top: 0px;
-    right: -2px;
-    width: 10px;
-    height: 10px;
+    top: -2px;
+    right: -4px;
+    width: 12px;
+    height: 12px;
     background: var(--pagelet-done);
     border-radius: 50%;
     border: 2px solid var(--bg);
@@ -187,24 +192,7 @@
   .pet-container[data-state="nudge"] .pet-notification {
     opacity: 1;
     transform: scale(1);
-    animation: nudge-dot-glow 2s ease-in-out infinite;
-  }
-
-  /* Watching state awareness dot */
-  .pet-awareness-dot {
-    position: absolute;
-    top: 4px;
-    right: 2px;
-    width: 6px;
-    height: 6px;
-    background: var(--pagelet-done);
-    border-radius: 50%;
-    border: 1.5px solid var(--bg);
-    opacity: 0;
-    transition: opacity 0.3s ease;
-  }
-  .pet-container[data-state="watching"] .pet-awareness-dot {
-    opacity: 0.7;
+    animation: nudge-dot-glow 1.8s ease-in-out infinite;
   }
 
   /* ============ Pet SVG Animations ============ */
@@ -215,11 +203,6 @@
   @keyframes pet-breathe {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.02); }
-  }
-  @keyframes pet-scan {
-    0%, 100% { transform: translateX(0); }
-    25% { transform: translateX(2px); }
-    75% { transform: translateX(-2px); }
   }
   @keyframes pet-pulse {
     0%, 100% { transform: scale(1); }
@@ -240,18 +223,9 @@
     0%, 100% { opacity: 1; }
     50% { opacity: 0.3; }
   }
-  @keyframes eye-scan-lr {
-    0%, 100% { transform: translateX(0); }
-    30% { transform: translateX(1.5px); }
-    70% { transform: translateX(-1.5px); }
-  }
-  @keyframes pet-float-active {
-    0%, 100% { transform: translateY(0); }
-    50% { transform: translateY(-6px); }
-  }
   @keyframes nudge-dot-glow {
-    0%, 100% { box-shadow: 0 0 4px var(--pagelet-done); }
-    50% { box-shadow: 0 0 10px var(--pagelet-done), 0 0 18px rgba(93,211,158,0.3); }
+    0%, 100% { box-shadow: 0 0 4px var(--pagelet-done); transform: scale(1); }
+    50% { box-shadow: 0 0 12px var(--pagelet-done), 0 0 24px rgba(93,211,158,0.35); transform: scale(1.15); }
   }
   @keyframes zzz-float-1 {
     0% { transform: translate(0, 0) scale(1); opacity: 0.5; }
@@ -270,32 +244,21 @@
     to { transform: translateY(0); }
   }
 
-  /* State: sleeping */
-  .pet-container[data-state="sleeping"] .pet-svg-wrap {
+  /* State: resting (low opacity, closed eyes, zzz) */
+  .pet-container[data-state="resting"] .pet-svg-wrap {
     animation: pet-breathe 5s ease-in-out infinite;
   }
-  .pet-container[data-state="sleeping"] {
+  .pet-container[data-state="resting"] {
     opacity: 0.55;
   }
-  .pet-container[data-state="sleeping"] .sleep-zzz .zzz1 {
+  .pet-container[data-state="resting"] .sleep-zzz .zzz1 {
     animation: zzz-float-1 3s ease-out infinite;
   }
-  .pet-container[data-state="sleeping"] .sleep-zzz .zzz2 {
+  .pet-container[data-state="resting"] .sleep-zzz .zzz2 {
     animation: zzz-float-2 3s ease-out infinite 0.8s;
   }
-  /* State: watching */
-  .pet-container[data-state="watching"] .pet-svg-wrap {
-    animation: pet-float-active 2.4s ease-in-out infinite;
-  }
-  /* State: reading */
-  .pet-container[data-state="reading"] .pet-svg-wrap {
-    animation: pet-pulse 2s ease-in-out infinite;
-  }
-  .pet-container[data-state="reading"] .eye-group {
-    animation: eye-scan-lr 1.6s ease-in-out infinite;
-  }
-  /* State: thinking */
-  .pet-container[data-state="thinking"] .pet-svg-wrap {
+  /* State: working (blue + pulsing dots) */
+  .pet-container[data-state="working"] .pet-svg-wrap {
     animation: pet-pulse 1.4s ease-in-out infinite;
   }
   /* State: nudge */
@@ -310,10 +273,8 @@
     animation: pet-blink 5s infinite;
     transform-origin: center;
   }
-  /* Restore full opacity for non-sleeping states */
-  .pet-container[data-state="watching"],
-  .pet-container[data-state="reading"],
-  .pet-container[data-state="thinking"],
+  /* Restore full opacity for non-resting states */
+  .pet-container[data-state="working"],
   .pet-container[data-state="nudge"],
   .pet-container[data-state="idle"] {
     opacity: 1;
@@ -339,6 +300,43 @@
     opacity: 1;
     transform: scale(1) translateY(0);
     pointer-events: auto;
+  }
+  .bubble.degraded {
+    opacity: 0.4;
+    transform: scale(1) translateY(0);
+    pointer-events: none;
+  }
+  .bubble.degraded .bubble-close-btn {
+    pointer-events: auto;
+  }
+
+  .bubble-header {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    margin-bottom: 4px;
+  }
+  .bubble-close-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 5px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--fg-3);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    transition: all 0.15s;
+    line-height: 1;
+    padding: 0;
+    font-family: inherit;
+  }
+  .bubble-close-btn:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+    border-color: var(--fg-3);
   }
 
   .bubble-tail {
@@ -953,68 +951,6 @@
     animation: gen-spin 1.5s linear infinite;
   }
 
-  /* ============ Context Menu ============ */
-  .context-menu {
-    position: fixed;
-    z-index: 10000;
-    background: #1a1a1a;
-    border: 1px solid #333;
-    border-radius: 8px;
-    padding: 4px;
-    min-width: 180px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3);
-    opacity: 0;
-    transform: scale(0.95);
-    transform-origin: top left;
-    pointer-events: none;
-    transition: opacity 0.12s ease, transform 0.12s ease;
-    font-size: 13px;
-  }
-  .context-menu.visible {
-    opacity: 1;
-    transform: scale(1);
-    pointer-events: auto;
-  }
-  [data-theme="light"] .context-menu {
-    background: #2a2a2a;
-    border-color: #444;
-  }
-  .context-menu-item {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 7px 12px;
-    color: #e0e0e0;
-    border-radius: 5px;
-    cursor: pointer;
-    transition: background 0.1s;
-    gap: 12px;
-    white-space: nowrap;
-  }
-  .context-menu-item:hover {
-    background: rgba(255,255,255,0.1);
-  }
-  .context-menu-divider {
-    height: 1px;
-    background: #333;
-    margin: 3px 6px;
-  }
-  .toggle-switch.mini {
-    width: 30px;
-    height: 16px;
-    border-radius: 8px;
-    flex-shrink: 0;
-  }
-  .toggle-switch.mini::after {
-    width: 11px;
-    height: 11px;
-    top: 1.5px;
-    left: 1.5px;
-  }
-  .toggle-switch.mini.on::after {
-    transform: translateX(14px);
-  }
-
   /* ============ Debug Section in Control Panel ============ */
   .debug-section {
     border: 1px dashed var(--fg-3);
@@ -1093,12 +1029,6 @@
   /* ============ Mobile Mode Styles ============ */
   /* Applied via .mobile-mode class (toggle) or @media query */
 
-  body.mobile-mode .pet-container {
-    cursor: pointer !important;
-  }
-  body.mobile-mode .pet-container:active {
-    cursor: pointer !important;
-  }
   body.mobile-mode .pet-wrapper {
     transform: scale(0.8);
     min-width: 44px;
@@ -1155,12 +1085,6 @@
 
   /* Natural mobile viewport breakpoint */
   @media (max-width: 768px) {
-    .pet-container {
-      cursor: pointer !important;
-    }
-    .pet-container:active {
-      cursor: pointer !important;
-    }
     .pet-wrapper {
       transform: scale(0.8);
       min-width: 44px;
@@ -1222,7 +1146,7 @@
     .gen-spinner {
       animation: none !important;
     }
-    .bubble, .side-panel, .tab-view, .toast, .gen-overlay, .context-menu {
+    .bubble, .side-panel, .tab-view, .toast, .gen-overlay {
       transition-duration: 0.01s !important;
     }
   }
@@ -1255,7 +1179,6 @@
 <div class="pet-container" id="pet" data-state="idle" tabindex="0" role="button" aria-label="拾页助手">
   <div class="pet-wrapper">
     <div class="pet-notification"></div>
-    <div class="pet-awareness-dot"></div>
     <div class="pet-svg-wrap">
       <svg id="pet-svg" width="52" height="52" viewBox="0 0 44 44" aria-hidden="true">
         <!-- Paper body -->
@@ -1264,7 +1187,7 @@
         <!-- Dog-ear fold -->
         <path class="pet-fold" d="M30 8.1 L29.9 14.2 L36 14"
               fill="none" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
-        <!-- Eyes group (for reading scan animation) -->
+        <!-- Eyes group -->
         <g class="eye-group">
           <!-- Left eye -->
           <g class="blink-group">
@@ -1277,12 +1200,12 @@
                   fill="none" stroke-width="1.4" stroke-linecap="round"/>
           </g>
         </g>
-        <!-- Sleeping eyes (hidden by default) -->
+        <!-- Resting eyes (hidden by default) -->
         <g class="sleep-eyes" style="display:none;">
           <path d="M16 22.5 L21 22.5" fill="none" stroke-width="1.4" stroke-linecap="round"/>
           <path d="M25 22.5 L30 22.5" fill="none" stroke-width="1.4" stroke-linecap="round"/>
         </g>
-        <!-- Thinking dots (hidden by default) -->
+        <!-- Working dots (hidden by default) -->
         <g class="think-dots" style="display:none;">
           <circle cx="18" cy="28" r="1.2" class="dot dot1"/>
           <circle cx="23" cy="28" r="1.2" class="dot dot2"/>
@@ -1291,7 +1214,7 @@
         <!-- Mouth (for nudge/done smile) -->
         <path class="pet-mouth" d="M19 28 Q23 31 27 28" fill="none"
               stroke-width="1.4" stroke-linecap="round" style="display:none;"/>
-        <!-- Z's for sleeping -->
+        <!-- Z's for resting -->
         <g class="sleep-zzz" style="display:none;">
           <text x="34" y="12" font-size="7" fill="currentColor" opacity="0.4"
                 font-family="monospace" class="zzz1">z</text>
@@ -1306,6 +1229,9 @@
 <!-- ============ Bubble ============ -->
 <div class="bubble" id="bubble">
   <div class="bubble-tail"></div>
+  <div class="bubble-header">
+    <button class="bubble-close-btn" onclick="closeBubbleFull()" title="关闭">&times;</button>
+  </div>
   <ul class="bubble-items" id="bubble-items">
     <li onclick="handleBubbleItem(0)"><span class="bullet"></span>最近 3 天写了 7 篇笔记</li>
     <li onclick="handleBubbleItem(1)"><span class="bullet"></span>发现 2 个待处理的 TODO</li>
@@ -1378,13 +1304,6 @@
 <div class="control-panel">
   <h4>产品控制</h4>
   <div class="control-group">
-    <div class="toggle-row">
-      <span class="toggle-label">Nudge Mode <span style="font-size:10px;color:var(--fg-3)">Ctrl+Alt+N</span></span>
-      <div class="toggle-switch" id="nudgeToggle" onclick="toggleNudge()"></div>
-    </div>
-  </div>
-
-  <div class="control-group" style="margin-top: 8px;">
     <button class="scenario-btn" id="mobileToggleBtn" onclick="toggleMobilePreview()">
       <span class="sc-num" style="font-size:13px;">📱</span> 移动端预览
     </button>
@@ -1396,12 +1315,10 @@
     <h4>🔧 开发者调试 · 原型演示工具</h4>
     <div class="control-group">
       <div class="state-buttons" id="stateButtons">
-        <button class="state-btn" data-state="sleeping">sleeping</button>
-        <button class="state-btn" data-state="watching">watching</button>
-        <button class="state-btn" data-state="reading">reading</button>
-        <button class="state-btn" data-state="thinking">thinking</button>
-        <button class="state-btn" data-state="nudge">nudge</button>
+        <button class="state-btn" data-state="resting">resting</button>
         <button class="state-btn active" data-state="idle">idle</button>
+        <button class="state-btn" data-state="working">working</button>
+        <button class="state-btn" data-state="nudge">nudge</button>
       </div>
     </div>
 
@@ -1427,17 +1344,6 @@
   </div>
 </div>
 
-<!-- ============ Context Menu ============ -->
-<div class="context-menu" id="contextMenu">
-  <div class="context-menu-item" id="ctxNudgeItem">
-    <span>Nudge 模式</span>
-    <div class="toggle-switch mini" id="ctxNudgeToggle"></div>
-  </div>
-  <div class="context-menu-divider"></div>
-  <div class="context-menu-item" onclick="hidePet(); hideContextMenu();">隐藏拾页</div>
-  <div class="context-menu-item" onclick="showToast('打开设置页面'); hideContextMenu();">设置...</div>
-</div>
-
 <!-- ============ Mobile Preview Frame ============ -->
 <div class="mobile-frame" id="mobileFrame">
   <div class="mobile-frame-notch"></div>
@@ -1454,22 +1360,16 @@ const sidePanel = document.getElementById('sidePanel');
 const tabView = document.getElementById('tabView');
 const genOverlay = document.getElementById('genOverlay');
 const toast = document.getElementById('toast');
-const contextMenu = document.getElementById('contextMenu');
 const mobileFrame = document.getElementById('mobileFrame');
 
 let currentState = 'idle';
 let nudgeMode = false;
 let bubbleVisible = false;
+let bubbleDegraded = false;
 let panelVisible = false;
 let tabVisible = false;
-let isDragging = false;
-let dragStartX, dragStartY, petStartX, petStartY;
-let wasDragged = false;
 let isMobileMode = false;
 let petHidden = false;
-let contextMenuVisible = false;
-let longPressTimer = null;
-let longPressTriggered = false;
 
 // ============ Mobile mode detection ============
 function isEffectiveMobile() {
@@ -1477,13 +1377,6 @@ function isEffectiveMobile() {
 }
 
 // ============ Position management ============
-function getDefaultPos() {
-  return {
-    x: window.innerWidth - 80,
-    y: window.innerHeight - 80
-  };
-}
-
 function getMobilePos() {
   if (isMobileMode) {
     // Position within the phone frame bounds
@@ -1493,162 +1386,37 @@ function getMobilePos() {
       y: frame.bottom - 70
     };
   }
-  return {
-    x: window.innerWidth - 70,
-    y: window.innerHeight - 70
-  };
+  return null; // Use CSS fixed positioning
 }
 
-function loadPosition() {
-  if (isEffectiveMobile()) return getMobilePos();
-  try {
-    const saved = localStorage.getItem('pagelet-pet-pos');
-    if (saved) {
-      const pos = JSON.parse(saved);
-      pos.x = Math.min(Math.max(8, pos.x), window.innerWidth - 64);
-      pos.y = Math.min(Math.max(8, pos.y), window.innerHeight - 64);
-      return pos;
-    }
-  } catch(e) {}
-  return getDefaultPos();
-}
-
-function savePosition(x, y) {
-  if (isEffectiveMobile()) return;
-  try {
-    localStorage.setItem('pagelet-pet-pos', JSON.stringify({x, y}));
-  } catch(e) {}
-}
-
-function setPetPosition(x, y) {
-  pet.style.left = x + 'px';
-  pet.style.top = y + 'px';
-  pet.style.right = 'auto';
-  pet.style.bottom = 'auto';
-}
-
-// Initialize position
-const initPos = loadPosition();
-setPetPosition(initPos.x, initPos.y);
-
-// ============ Drag handling ============
-pet.addEventListener('mousedown', onDragStart);
-pet.addEventListener('touchstart', onTouchStart, { passive: false });
-document.addEventListener('mousemove', onDragMove);
-document.addEventListener('touchmove', onTouchMove, { passive: false });
-document.addEventListener('mouseup', onDragEnd);
-document.addEventListener('touchend', onTouchEnd);
-
-function getClientXY(e) {
-  if (e.touches && e.touches.length) {
-    return { x: e.touches[0].clientX, y: e.touches[0].clientY };
-  }
-  return { x: e.clientX, y: e.clientY };
-}
-
-function onDragStart(e) {
-  if (isEffectiveMobile()) return; // No drag on mobile
-  if (e.target.closest('.bubble') || e.target.closest('.control-panel') || e.target.closest('.context-menu')) return;
-  isDragging = true;
-  wasDragged = false;
-  const pos = getClientXY(e);
-  dragStartX = pos.x;
-  dragStartY = pos.y;
-  petStartX = pet.offsetLeft;
-  petStartY = pet.offsetTop;
-}
-
-// Touch: long-press detection for mobile context menu
-function onTouchStart(e) {
-  if (e.target.closest('.bubble') || e.target.closest('.control-panel') || e.target.closest('.context-menu')) return;
-  const pos = getClientXY(e);
-  longPressTriggered = false;
-  wasDragged = false;
-
-  if (isEffectiveMobile()) {
-    // Long-press for context menu (500ms)
-    longPressTimer = setTimeout(() => {
-      longPressTriggered = true;
-      showContextMenu(pos.x, pos.y);
-    }, 500);
-    e.preventDefault();
+function setPetPosition() {
+  // Pet is fixed to bottom-right corner via CSS.
+  // In mobile preview mode, override with absolute pixel position.
+  if (isMobileMode) {
+    const pos = getMobilePos();
+    pet.style.left = pos.x + 'px';
+    pet.style.top = pos.y + 'px';
+    pet.style.right = 'auto';
+    pet.style.bottom = 'auto';
   } else {
-    // Desktop touch = drag
-    isDragging = true;
-    dragStartX = pos.x;
-    dragStartY = pos.y;
-    petStartX = pet.offsetLeft;
-    petStartY = pet.offsetTop;
+    pet.style.left = '';
+    pet.style.top = '';
+    pet.style.right = '';
+    pet.style.bottom = '';
+  }
+}
+
+// ============ Touch handling (mobile tap = toggle bubble) ============
+pet.addEventListener('touchend', (e) => {
+  if (isEffectiveMobile()) {
     e.preventDefault();
-  }
-}
-
-function onTouchMove(e) {
-  if (longPressTimer) {
-    // Cancel long-press if finger moves
-    const pos = getClientXY(e);
-    const dx = Math.abs(pos.x - (dragStartX || pos.x));
-    const dy = Math.abs(pos.y - (dragStartY || pos.y));
-    if (dx > 8 || dy > 8) {
-      clearTimeout(longPressTimer);
-      longPressTimer = null;
-    }
-  }
-  if (!isDragging) return;
-  onDragMove(e);
-}
-
-function onTouchEnd(e) {
-  if (longPressTimer) {
-    clearTimeout(longPressTimer);
-    longPressTimer = null;
-  }
-  if (longPressTriggered) {
-    longPressTriggered = false;
-    return; // Don't trigger click after long-press
-  }
-  if (isDragging) {
-    onDragEnd(e);
-  } else if (isEffectiveMobile() && !wasDragged) {
-    // Tap on mobile = toggle bubble
     toggleBubble();
   }
-}
-
-function onDragMove(e) {
-  if (!isDragging) return;
-  const pos = getClientXY(e);
-  const dx = pos.x - dragStartX;
-  const dy = pos.y - dragStartY;
-
-  if (Math.abs(dx) > 3 || Math.abs(dy) > 3) {
-    wasDragged = true;
-  }
-
-  let newX = Math.min(Math.max(8, petStartX + dx), window.innerWidth - 64);
-  let newY = Math.min(Math.max(8, petStartY + dy), window.innerHeight - 64);
-  setPetPosition(newX, newY);
-
-  if (e.type === 'touchmove') e.preventDefault();
-}
-
-function onDragEnd(e) {
-  if (!isDragging) return;
-  isDragging = false;
-  savePosition(pet.offsetLeft, pet.offsetTop);
-  updateBubblePosition();
-}
+}, { passive: false });
 
 // Click to toggle bubble (desktop)
 pet.addEventListener('click', (e) => {
-  if (wasDragged || longPressTriggered) return;
   toggleBubble();
-});
-
-// Right-click to show context menu (desktop)
-pet.addEventListener('contextmenu', (e) => {
-  e.preventDefault();
-  showContextMenu(e.clientX, e.clientY);
 });
 
 // Keyboard support
@@ -1656,49 +1424,6 @@ pet.addEventListener('keydown', (e) => {
   if (e.key === 'Enter' || e.key === ' ') {
     e.preventDefault();
     toggleBubble();
-  }
-});
-
-// ============ Context Menu ============
-function showContextMenu(x, y) {
-  hideContextMenu();
-  hideBubble();
-
-  // Sync the nudge toggle state
-  const ctxToggle = document.getElementById('ctxNudgeToggle');
-  ctxToggle.classList.toggle('on', nudgeMode);
-
-  // Position context menu
-  const menuW = 190;
-  const menuH = 120;
-  let mx = x;
-  let my = y;
-  if (mx + menuW > window.innerWidth - 8) mx = window.innerWidth - menuW - 8;
-  if (my + menuH > window.innerHeight - 8) my = window.innerHeight - menuH - 8;
-  if (mx < 8) mx = 8;
-  if (my < 8) my = 8;
-
-  contextMenu.style.left = mx + 'px';
-  contextMenu.style.top = my + 'px';
-  contextMenu.classList.add('visible');
-  contextMenuVisible = true;
-}
-
-function hideContextMenu() {
-  contextMenu.classList.remove('visible');
-  contextMenuVisible = false;
-}
-
-// Context menu nudge toggle
-document.getElementById('ctxNudgeItem').addEventListener('click', () => {
-  toggleNudge();
-  document.getElementById('ctxNudgeToggle').classList.toggle('on', nudgeMode);
-});
-
-// Close context menu on click outside
-document.addEventListener('click', (e) => {
-  if (contextMenuVisible && !e.target.closest('.context-menu') && !e.target.closest('.pet-container')) {
-    hideContextMenu();
   }
 });
 
@@ -1720,12 +1445,10 @@ function getLightThemeStrokeColor(state) {
   if (!isLight) return null;
   // Use darker strokes in light theme for visibility
   const lightColors = {
-    sleeping: '#a0a0a0',
-    watching: '#666666',
-    reading: '#5a7de6',
-    thinking: '#5a7de6',
-    nudge: '#3dba82',
-    idle: '#666666'
+    resting: '#a0a0a0',
+    idle: '#666666',
+    working: '#5a7de6',
+    nudge: '#3dba82'
   };
   return lightColors[state] || '#666666';
 }
@@ -1735,12 +1458,10 @@ function setPetState(state) {
   pet.setAttribute('data-state', state);
 
   const stateColors = {
-    sleeping: '#e8e8e8',
-    watching: '#e8e8e8',
-    reading: '#7c9eff',
-    thinking: '#7c9eff',
-    nudge: '#5dd39e',
-    idle: '#e8e8e8'
+    resting: '#e8e8e8',
+    idle: '#e8e8e8',
+    working: '#7c9eff',
+    nudge: '#5dd39e'
   };
 
   let color = stateColors[state] || '#e8e8e8';
@@ -1766,7 +1487,8 @@ function setPetState(state) {
 
   // State-specific visuals
   switch(state) {
-    case 'sleeping':
+    case 'resting':
+      // Closed eyes + zzz (same visual as old sleeping)
       petSvg.querySelectorAll('.blink-group').forEach(g => g.style.display = 'none');
       petSvg.querySelector('.sleep-eyes').style.display = '';
       petSvg.querySelector('.sleep-eyes').querySelectorAll('path').forEach(p => p.setAttribute('stroke', color));
@@ -1774,7 +1496,8 @@ function setPetState(state) {
       petSvg.querySelector('.sleep-zzz').style.color = color;
       break;
 
-    case 'thinking':
+    case 'working':
+      // Blue + pulsing dots (same visual as old thinking)
       petSvg.querySelector('.think-dots').style.display = '';
       const dots = petSvg.querySelectorAll('.think-dots .dot');
       dots.forEach((d, i) => {
@@ -1788,8 +1511,8 @@ function setPetState(state) {
       petSvg.querySelector('.pet-mouth').setAttribute('stroke', color);
       break;
 
-    case 'reading':
-      // Eyes visible with scan animation (handled in CSS)
+    case 'idle':
+      // Default eyes with blink (handled in CSS)
       break;
   }
 
@@ -1813,8 +1536,13 @@ document.querySelectorAll('.state-btn').forEach(btn => {
 
 // ============ Bubble ============
 function toggleBubble() {
+  if (bubbleDegraded) {
+    // Restore from degraded state
+    restoreBubble();
+    return;
+  }
   if (bubbleVisible) {
-    hideBubble();
+    closeBubbleFull();
   } else {
     showBubbleWithContent('default');
   }
@@ -1883,8 +1611,10 @@ function showBubbleWithContent(type) {
   } else {
     updateBubblePosition();
   }
+  bubble.classList.remove('degraded');
   bubble.classList.add('visible');
   bubbleVisible = true;
+  bubbleDegraded = false;
 
   // Mobile: swipe down to dismiss
   if (isEffectiveMobile()) {
@@ -1894,7 +1624,27 @@ function showBubbleWithContent(type) {
 
 function hideBubble() {
   bubble.classList.remove('visible');
+  bubble.classList.remove('degraded');
   bubbleVisible = false;
+  bubbleDegraded = false;
+}
+
+function closeBubbleFull() {
+  hideBubble();
+}
+
+function degradeBubble() {
+  bubble.classList.remove('visible');
+  bubble.classList.add('degraded');
+  bubbleDegraded = true;
+  // Keep bubbleVisible true so we know there's content to restore
+}
+
+function restoreBubble() {
+  bubble.classList.remove('degraded');
+  bubble.classList.add('visible');
+  bubbleDegraded = false;
+  bubbleVisible = true;
 }
 
 function updateBubblePosition() {
@@ -1974,10 +1724,10 @@ function handleAction(action) {
   }
 }
 
-// Close bubble on click outside
+// Click outside: degrade bubble (semi-transparent) instead of closing
 document.addEventListener('click', (e) => {
-  if (bubbleVisible && !e.target.closest('.bubble') && !e.target.closest('.pet-container')) {
-    hideBubble();
+  if (bubbleVisible && !bubbleDegraded && !e.target.closest('.bubble') && !e.target.closest('.pet-container')) {
+    degradeBubble();
   }
 });
 
@@ -2315,9 +2065,6 @@ function closeTab() {
 // ============ Nudge toggle ============
 function toggleNudge() {
   nudgeMode = !nudgeMode;
-  document.getElementById('nudgeToggle').classList.toggle('on', nudgeMode);
-  // Sync context menu toggle
-  document.getElementById('ctxNudgeToggle').classList.toggle('on', nudgeMode);
 
   if (nudgeMode && currentState === 'nudge') {
     setTimeout(() => showBubbleWithContent('nudge'), 300);
@@ -2356,22 +2103,16 @@ function toggleMobilePreview() {
   if (isMobileMode) {
     btn.style.background = 'var(--bg-3)';
     btn.style.borderColor = 'var(--fg-3)';
-    // Reposition pet to mobile position (fixed bottom-right of frame)
-    const pos = getMobilePos();
-    setPetPosition(pos.x, pos.y);
   } else {
     btn.style.background = '';
     btn.style.borderColor = '';
-    // Restore saved desktop position
-    const pos = loadPosition();
-    setPetPosition(pos.x, pos.y);
   }
+  setPetPosition();
 
   // Close any open overlays
   hideBubble();
   closePanel();
   closeTab();
-  hideContextMenu();
 }
 
 // ============ Scenarios ============
@@ -2385,7 +2126,6 @@ function runScenario(name) {
   hideBubble();
   closePanel();
   closeTab();
-  hideContextMenu();
 
   switch(name) {
     case 'quick':
@@ -2404,9 +2144,9 @@ function runScenario(name) {
 }
 
 function scenarioQuickReview() {
-  setPetState('watching');
+  // idle -> bubble -> close
+  setPetState('idle');
   setTimeout(() => {
-    setPetState('idle');
     showBubbleWithContent('default');
     setTimeout(() => {
       hideBubble();
@@ -2417,7 +2157,8 @@ function scenarioQuickReview() {
 }
 
 function scenarioWriting() {
-  setPetState('reading');
+  // working -> nudge -> bubble
+  setPetState('working');
   setTimeout(() => {
     setPetState('nudge');
     setTimeout(() => {
@@ -2428,7 +2169,8 @@ function scenarioWriting() {
 }
 
 function scenarioDiscover() {
-  setPetState('thinking');
+  // working -> idle -> bubble -> panel
+  setPetState('working');
   setTimeout(() => {
     setPetState('idle');
     showBubbleWithContent('discover');
@@ -2437,7 +2179,8 @@ function scenarioDiscover() {
 }
 
 function scenarioWeekly() {
-  setPetState('thinking');
+  // working -> generation overlay -> toast
+  setPetState('working');
   document.getElementById('genText').textContent = '正在生成周报...';
   setTimeout(() => {
     genOverlay.classList.add('visible');
@@ -2455,36 +2198,17 @@ function scenarioWeekly() {
 
 // ============ Window resize ============
 window.addEventListener('resize', () => {
-  if (isEffectiveMobile()) {
-    const pos = getMobilePos();
-    setPetPosition(pos.x, pos.y);
-  } else {
-    const x = Math.min(Math.max(8, pet.offsetLeft), window.innerWidth - 64);
-    const y = Math.min(Math.max(8, pet.offsetTop), window.innerHeight - 64);
-    setPetPosition(x, y);
-    savePosition(x, y);
-  }
+  setPetPosition();
   if (bubbleVisible) updateBubblePosition();
 });
 
 // ============ Keyboard shortcuts ============
 document.addEventListener('keydown', (e) => {
-  // Ctrl+Alt+N -> toggle nudge mode
-  if (e.ctrlKey && e.altKey && e.key === 'n') {
-    e.preventDefault();
-    toggleNudge();
-  }
-  // Ctrl+Alt+Shift+N -> nudge state
-  if (e.ctrlKey && e.altKey && e.shiftKey && e.key === 'N') {
-    e.preventDefault();
-    setPetState('nudge');
-  }
   // Escape -> close overlays
   if (e.key === 'Escape') {
-    if (contextMenuVisible) hideContextMenu();
-    else if (tabVisible) closeTab();
+    if (tabVisible) closeTab();
     else if (panelVisible) closePanel();
-    else if (bubbleVisible) hideBubble();
+    else if (bubbleVisible || bubbleDegraded) hideBubble();
   }
 });
 
