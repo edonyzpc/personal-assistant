@@ -9,10 +9,10 @@
 | Document type | v2 Product Design (supersedes v1 `review-assistant-product-design.md`) |
 | Status | Design — pending implementation |
 | Last revised | 2026-06-09 |
-| Primary surface | Floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
-| Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended for background async analysis (D032) |
+| Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
+| Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` preloading (D032) |
 | Write boundary | Review note creation under **Write Action Framework v1** (D025, D030); periodic summary bypasses draft-collection step (D035) |
-| Background AI | Timed polling with rate-limited background analysis (D032); replaces v1 "no background analysis" principle |
+| Preload engine | Timed polling with rate-limited background preloading (D032); makes review responses instant. Replaces v1 "no background analysis" principle |
 | v1 reference | [review-assistant-product-design.md](./review-assistant-product-design.md) (historical, unchanged) |
 | Decisions record | See [review-assistant-decisions.md](./review-assistant-decisions.md) (D001-D031 active; D032+ proposed in this document) |
 | Technical design | See [review-assistant-sdd.md](./review-assistant-sdd.md) (v2 SDD update pending) |
@@ -29,7 +29,7 @@ This document defines the second product version of **Pagelet**. It is a complet
 
 The core promise is preserved from v1. v2 expands the delivery surface:
 
-Pagelet helps users revisit recent notes, discover connections, receive proactive insights, and optionally turn findings into review notes.
+Pagelet helps users revisit recent notes, discover connections, receive instant review insights, and optionally turn findings into review notes.
 
 The promise stays intentionally narrow:
 
@@ -38,7 +38,7 @@ The promise stays intentionally narrow:
 - The user decides when to view, when to go deeper, and when to produce output. **[CHANGED — replaces "the user selects what matters, not the model"]**
 - It creates review notes only after explicit confirmation. **[PRESERVED]**
 - The Pet is a memorable, always-present entry and context-aware companion, not the product's core value. **[CHANGED — from "mascot is a memorable entry"]**
-- The quiet reviewer works proactively in the background, silently preparing insights. **[NEW]**
+- Background preloading ensures insights are ready the instant the user asks — a performance optimization, not a behavior change. **[NEW]**
 
 ---
 
@@ -51,7 +51,7 @@ The product value is a multi-path review loop:
 ```mermaid
 flowchart LR
   subgraph "Always Present"
-    Pet["Floating Pet<br/>(context-aware)"]
+    Pet["Fixed-corner Pet<br/>(context-aware)"]
   end
 
   subgraph "Quick Path"
@@ -69,14 +69,14 @@ flowchart LR
     Tab -->|"create note"| Note
   end
 
-  subgraph "Background"
-    BG["Background AI polling"] -->|insights ready| Pet
+  subgraph "Preload"
+    BG["Preload engine"] -->|results cached| Pet
   end
 ```
 
 The memorable UI line (updated for v2):
 
-> A recognizable little paper companion floats quietly in the workspace, silently preparing insights in the background. When summoned — by click, hotkey, or its own gentle nudge — it opens a speech bubble with quick findings. The user can go deeper into a panel, explore connections, or turn selected findings into a review note.
+> A recognizable little paper companion sits quietly in the corner of the workspace. Background preloading ensures insights are ready instantly when the user asks. When summoned — by click or hotkey — it opens a speech bubble with quick findings. If the user has opted into proactive hints, the Pet can also gently signal when something noteworthy is ready. The user can go deeper into a panel, explore connections, or turn selected findings into a review note.
 
 **[CHANGED from v1]**: v1 described a linear pipeline (open -> select range -> analyze -> findings -> collect -> confirm -> note). v2 replaces this with progressive disclosure across four layers (Pet -> Bubble -> Panel -> Tab) and four usage scenarios.
 
@@ -109,7 +109,7 @@ Secondary (expanded in v2):
 
 - Users who prepare weekly reviews, project retrospectives, newsletters, research summaries, or planning notes.
 - Users who need a low-friction way to transform scattered recent notes into a working draft.
-- **[NEW]** Users who want subtle, non-intrusive writing assistance — gentle nudges while writing, not autocomplete or inline suggestions.
+- **[NEW]** Users who want subtle, non-intrusive writing assistance — gentle hints while writing, not autocomplete or inline suggestions.
 - **[NEW]** Users who want to discover unexpected connections between notes without manually searching.
 
 Non-target for v2:
@@ -117,7 +117,7 @@ Non-target for v2:
 - Users who rarely write notes.
 - Users who expect a task manager with completion tracking and due dates.
 - Users who want a highly playful pet (growth, emotion, feeding, decoration).
-- **[CHANGED]** ~~Users who want an autonomous assistant that monitors notes in the background.~~ — v2 explicitly supports background AI analysis with user-controlled nudge mode. Users who want **uncontrollable** autonomous assistants remain non-target.
+- **[CHANGED]** ~~Users who want an autonomous assistant that monitors notes in the background.~~ — v2 uses background preloading as a performance optimization, with opt-in proactive hints. Users who want **uncontrollable** autonomous assistants remain non-target.
 
 ---
 
@@ -133,9 +133,9 @@ Preserved from v1:
 
 New in v2:
 
-- **[NEW] Review initiation friction.** v1 requires opening a panel, selecting a time range, and clicking Run. This is too many steps for a quick check. Users need a zero-step path (background AI + Pet bubble) and a one-step path (hotkey -> bubble).
-- **[NEW] Writing-time blindness.** While writing a note, users cannot see connections to their past notes without stopping to search. Background analysis can surface these connections when they are most useful.
-- **[NEW] Knowledge silos within the vault.** Notes on related topics written days or weeks apart remain disconnected. Proactive analysis can bridge these silos.
+- **[NEW] Review initiation friction.** v1 requires opening a panel, selecting a time range, and clicking Run. This is too many steps for a quick check. Users need a zero-step path (preloaded results + Pet bubble) and a one-step path (hotkey -> bubble).
+- **[NEW] Writing-time blindness.** While writing a note, users cannot see connections to their past notes without stopping to search. Preloaded insights can surface these connections when they are most useful.
+- **[NEW] Knowledge silos within the vault.** Notes on related topics written days or weeks apart remain disconnected. Preloaded analysis can bridge these silos.
 - **[NEW] Periodic review ceremony is too heavy.** v1's periodic review requires scope selection, manual include/exclude, draft collection, editing, and confirmation. For a "weekly summary," this is too much friction.
 
 Pagelet does NOT try to solve (preserved from v1):
@@ -144,7 +144,7 @@ Pagelet does NOT try to solve (preserved from v1):
 - Full task management.
 - Automatic rewriting of source notes.
 - Whole-vault intelligence by default.
-- ~~Autonomous long-running agent work.~~ **[REVISED]** v2 supports bounded background analysis, but not unbounded autonomous agent work.
+- ~~Autonomous long-running agent work.~~ **[REVISED]** v2 supports bounded background preloading, but not unbounded autonomous agent work.
 
 ---
 
@@ -152,8 +152,8 @@ Pagelet does NOT try to solve (preserved from v1):
 
 1. **Review first, Pet second.** The Pet exists to make the entry recognizable, the state legible, and context accessible. It must not pull scope toward decoration. **[PRESERVED — "mascot" renamed to "Pet"]**
 
-2. **安静审视者主动工作。** AI 在后台定时分析你的笔记变化，静默准备洞察。成本通过频率限制和预算控制。用户决定何时查看、何时深入、何时产出。 **[CHANGED — supersedes v1 "User-triggered by default. Pagelet does not analyze notes in the background."]**
-   - English: "The quiet reviewer works proactively. AI periodically analyzes note changes in the background, silently preparing insights. Cost is controlled through rate limits and budget. The user decides when to view, when to go deeper, and when to produce output."
+2. **安静审视者，即时响应。** 后台预加载确保洞察在用户询问时即时就绪。预加载是性能优化，不是行为变化——审视者保持安静，直到被召唤。 **[CHANGED — supersedes v1 "User-triggered by default. Pagelet does not analyze notes in the background."]**
+   - English: "The quiet reviewer, instant response. Background preloading ensures insights are ready when the user asks. The reviewer stays quiet until called — preloading is a performance optimization, not a behavior change."
    - Proposed decision: **D032**
 
 3. **Evidence over fluency.** Every suggestion must point back to source evidence. Suggestions without sources should be discarded, downgraded, or shown as "needs review". **[PRESERVED]**
@@ -166,7 +166,7 @@ Pagelet does NOT try to solve (preserved from v1):
 
 7. **Narrow write boundary.** v2 creates only independent review notes after explicit confirmation, under the **Write Action Framework v1** contract (D025, D030). It must not modify source notes, append to daily notes, change tasks, or update frontmatter. Broader action orchestration belongs to the future **Operations Agent mode**. **[PRESERVED]**
 
-8. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. When nudge mode is active, the Pet changes visual state gently — it never pops up a modal, plays a sound, or demands attention. **[PRESERVED, CLARIFIED for nudge mode]**
+8. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. The Pet never pops up a modal, plays a sound, or demands attention. **[PRESERVED]**
 
 ---
 
@@ -192,9 +192,9 @@ User-facing copy across all surfaces (UI, settings, README, community descriptio
 The Pet is Pagelet's always-present, context-aware companion:
 
 - It makes Pagelet visible and memorable. **[PRESERVED from v1 mascot]**
-- It communicates current state (sleeping, watching, reading, thinking, nudge, idle). **[CHANGED — 6 states replace 4]**
+- It communicates current state (resting, idle, working, nudge). **[CHANGED — 4 states replace v1's 4, refined]**
 - It opens progressive disclosure layers (Bubble -> Panel -> Tab). **[NEW]**
-- It provides a draggable, pinnable, position-remembered anchor point. **[NEW]**
+- It is fixed to a configurable corner of the active markdown leaf (default bottom-right). **[NEW]**
 - It auto-senses the current note context. **[NEW]**
 
 It is NOT a full pet-care product, complex notification system, or autonomous agent surface.
@@ -218,74 +218,73 @@ Avoid (preserved from v1):
 - Strong animations that compete with editing.
 - Cute or clingy language ("主人，我发现啦！" etc.).
 
-### States — [CHANGED — 6 states replace 4]
+### States — [CHANGED — 4 states, refined from v1's 4]
 
 | State | Stroke / Fill | Animation | Meaning | v1 mapping |
 | --- | --- | --- | --- | --- |
-| `sleeping` | `#d0d0d0` muted gray | Eyes closed, no float | No note activity, long idle | NEW |
-| `watching` | `#e8e8e8` neutral | Slight float + eyes following cursor region | User is actively editing | ~`idle` |
-| `reading` | `#a8c8ff` reading blue | Page-turning animation on paper body | AI background analysis running | NEW |
-| `thinking` | `#7c9eff` thinking blue | Pulsing dots in mouth area | User-triggered AI analysis in progress | = v1 `thinking` |
-| `nudge` | `#ffd066` nudge amber | Gentle bounce + speech indicator | AI found something noteworthy, ready to show | NEW |
-| `idle` | `#e8e8e8` neutral | Slight float + occasional blink | Standby, no new findings | = v1 `idle` |
+| `resting` | `#d0d0d0` gray, low opacity | Eyes closed, no float | Long idle, no note activity | NEW (merges v1 concept of deep idle) |
+| `idle` | `#e8e8e8` neutral gray | Slight float + occasional blink | Standby, awake | = v1 `idle` |
+| `working` | `#7c9eff` blue | Pulsing dots in mouth area | AI preloading or user-triggered analysis in progress | = v1 `thinking` (merges background + foreground analysis) |
+| `nudge` | `#5dd39e` green, notification dot | Gentle bounce + small dot indicator | Insights ready; only visible when proactive hints are enabled | NEW |
 
 State not preserved from v1:
 
 - v1 `done` (`#5dd39e` success green) — in v2, review completion is signaled by the Bubble/Panel closing, not by a Pet state. The Pet returns to `idle` after the user finishes interacting.
 - v1 `error` (`#ff6b6b` error red) — in v2, errors are shown as a brief `error` flash on the Pet (1.5s) then the Pet returns to `idle` with a small error badge. The error details appear in the Bubble if the user clicks.
 
-Proposed decision: **D033** — Pet state expansion from 4 to 6 states.
+States removed from earlier v2 draft:
+
+- `sleeping` — merged into `resting`.
+- `watching` — removed. "Eyes following cursor" felt uncomfortable ("staring at you").
+- `reading` — merged into `working`. Background preloading uses the same visual state as foreground analysis.
+- `thinking` — renamed to `working` to cover both preloading and user-triggered analysis.
+
+Proposed decision: **D033** — Pet states: 4 states (resting, idle, working, nudge).
 
 `prefers-reduced-motion` users keep color state changes but lose float/jitter/animation (D007/4).
 
-> **State transitions are automatic.** Pet states are driven by system events (note activity detection, background AI scheduling, analysis results). Users do not manually control Pet state. The only user-controlled mode is the **Nudge toggle**, which controls whether the Pet proactively shows AI-generated insights. State cycling is NOT exposed as a setting.
+> **State transitions are automatic.** Pet states are driven by system events (note activity detection, preload scheduling, analysis results). Users do not manually control Pet state. The only user-controlled mode is the **proactive hints (主动提示) toggle**, which controls whether the Pet enters `nudge` state when insights are ready. State cycling is NOT exposed as a setting.
 
-### Draggable, Pinnable, Position Memory — [NEW]
+### Corner Position — [NEW]
 
-- The Pet can be dragged to any edge or corner of the workspace.
-- Double-click pins the Pet to the current position; the pin indicator is a small tack icon.
-- Position is persisted per vault in `settings.pagelet.petPosition: { x, y, pinned }`.
-- Default position: bottom-right corner of the active editor pane.
+- The Pet is fixed to a configurable corner of the active markdown leaf. No drag, no pin, no double-click.
+- Position is one of four corners: `bottom-right` (default), `bottom-left`, `top-right`, `top-left`.
+- Switchable via Settings (dropdown) or Command Palette (`Pagelet: Move Pet to corner`).
+- Position is persisted per vault in `settings.pagelet.petCorner`.
 - The Pet avoids overlapping the scrollbar, status bar, and ribbon.
 
-Proposed decision: **D034** — Pet drag/pin/position memory.
+Proposed decision: **D034** — Pet fixed corner position (replaces drag/pin/position memory).
 
-### Nudge Mode — [NEW]
+### Proactive Hints (主动提示) — [NEW]
 
-Nudge mode controls whether the Pet proactively shows insights from background AI analysis.
+Proactive hints control whether the Pet signals when preloaded insights are ready. This is an opt-in feature, **OFF by default**, respecting the "quiet reviewer" positioning. User-facing language uses "主动提示" (proactive hints), not "Nudge mode".
 
 | Setting | Behavior |
 | --- | --- |
-| Nudge ON | When background AI discovers insights, Pet transitions to `nudge` state + shows a minimal speech indicator. User clicks to see the Bubble. |
-| Nudge OFF | Pet stays quiet. Background AI still runs and caches results, but Pet does not change state. User must explicitly click or hotkey to see cached insights. |
+| 主动提示 ON | When preloading discovers insights, Pet transitions to `nudge` state (green notification dot). User clicks to see the Bubble. |
+| 主动提示 OFF (default) | Pet stays quiet. Preloading still runs and caches results, but Pet does not change state. User must explicitly click or hotkey to see cached insights. |
 
-### Nudge Control Placement — Multi-point — [NEW]
+### Proactive Hints Control Placement — [NEW]
 
-Nudge mode is controlled from multiple surfaces for convenience. Each surface offers a different level of control:
+Proactive hints (主动提示) are controlled from three surfaces. No right-click menu, no long-press context menu on the Pet.
 
 | Control Point | Action | Notes |
 | --- | --- | --- |
-| Settings → Pagelet | Full Nudge configuration: enable/disable, cooldown interval, quiet hours | Primary configuration surface |
-| Pet right-click menu (desktop) | Quick toggle: "Nudge 模式 开/关" | Contextual quick access; also shows "隐藏拾页" and "设置..." |
-| Pet long-press menu (mobile) | Same as right-click | Touch-adapted; 500ms hold triggers |
-| Keyboard shortcut | Toggle nudge mode (e.g., `Ctrl+Alt+N` / `Ctrl+Alt+Shift+N`) | Follows Obsidian command convention — registered but no default binding |
+| Settings → Pagelet | Full configuration: enable/disable, cooldown interval, quiet hours | Primary configuration surface |
+| Panel header | Quick toggle: "主动提示 开/关" | Visible when Panel is open, convenient in-context toggle |
+| Command Palette | `Pagelet: Toggle proactive hints` | Accessible from anywhere |
+| Keyboard shortcut | Toggle proactive hints (e.g., `Ctrl+Alt+N` / `Ctrl+Alt+Shift+N`) | Follows Obsidian command convention — registered but no default binding |
 
-**Right-click / long-press context menu items:**
+Proposed decision: **D039** — Proactive hints control placement: Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. No right-click menu, no long-press context menu.
 
-- **Nudge 模式** — toggle switch (on/off)
-- **隐藏拾页** — hides Pet, recoverable from Settings or command palette
-- **设置...** — opens Pagelet Settings section
+Proactive hints behavior constraints:
 
-Proposed decision: **D039** — Nudge control placement: Multi-point (Settings for full config + Pet context menu for quick toggle + keyboard shortcut for toggle). Right-click on desktop, long-press on mobile.
-
-Nudge behavior constraints:
-
-- Nudge never opens a modal or dialog.
-- Nudge never plays a sound.
-- Nudge never moves focus away from the editor.
-- Nudge visual change is subtle (amber glow + gentle bounce, respects `prefers-reduced-motion`).
-- After the user views the Bubble, the nudge clears. It does not re-nudge for the same insight set.
-- Nudge cooldown: at most once per configurable interval (default 30 minutes).
+- Proactive hints never open a modal or dialog.
+- Proactive hints never play a sound.
+- Proactive hints never move focus away from the editor.
+- Visual change is subtle (green notification dot + gentle bounce, respects `prefers-reduced-motion`).
+- After the user views the Bubble, the hint clears. It does not re-signal for the same insight set.
+- Cooldown: at most once per configurable interval (default 30 minutes).
 
 ### Mounting Rules — [PRESERVED from D029/R1]
 
@@ -318,11 +317,17 @@ Tab (main window tab, full-size workspace)
 | Layer | Size | Lifespan | Output | Entry |
 | --- | --- | --- | --- | --- |
 | Pet | ~48x48px | Always present | None | — |
-| Bubble | ~280px wide, 3-5 items | Ephemeral (~5-15s typical) | None | Click Pet / hotkey / nudge |
+| Bubble | ~280px wide, 3-5 items | Persistent until dismissed (degrades on click-outside) | None | Click Pet / hotkey |
 | Panel | Side panel (~360px) | Session-persistent | Optional (review note) | "展开" from Bubble / command palette |
 | Tab | Full editor tab | Session-persistent | Optional (review note) | "在新标签页打开" from Panel / command palette |
 
+**Bubble dismiss behavior**: Click outside the Bubble does NOT close it — instead the Bubble degrades to a semi-transparent/minimized state. Click the Pet again to restore it. Press Escape or click the X button to fully close the Bubble. This prevents accidental loss of context.
+
+**Note on proactive hints**: When proactive hints (主动提示) are enabled and the Pet enters `nudge` state, clicking the Pet opens the Bubble as usual. Proactive hints are opt-in (OFF by default), so the default entry path is always user-initiated click or hotkey.
+
 ### Four Usage Scenarios
+
+**Delivery order**: Scenario 1 (Quick Review, v2-alpha.1) -> Scenario 4 (Periodic Summary, v2-alpha.1) -> Scenario 2 (Writing Assistance, v2-alpha.2+) -> Scenario 3 (Knowledge Discovery, v2-alpha.3+).
 
 #### Scenario 1: Quick Review (快速回顾) — [NEW]
 
@@ -330,13 +335,13 @@ Tab (main window tab, full-size workspace)
 
 **Flow**:
 1. User clicks Pet or presses hotkey.
-2. Bubble appears with 2-3 AI-generated summary items from cached background analysis.
+2. Bubble appears with 2-3 AI-generated summary items from cached preload results.
 3. User reads items. Clicks "dismiss" or clicks away.
 4. Bubble closes. No output artifact.
 
 **Key property**: "看完就走." Zero output, zero friction, under 10 seconds.
 
-**AI source**: Cached background analysis result. If no cached result exists, Bubble shows "还没有新发现" with an option to trigger immediate analysis.
+**AI source**: Cached preload result. If no cached result exists, Bubble shows "还没有新发现" with an option to trigger immediate analysis.
 
 #### Scenario 2: Writing Assistance (写作辅助) — [NEW]
 
@@ -347,14 +352,14 @@ Tab (main window tab, full-size workspace)
 2. Bubble shows suggestions relevant to the current note's content (e.g., "this paragraph could cite your note from 3 days ago", "you discussed a similar topic in [[meeting-2026-06-05]]").
 3. User can click a suggestion to open the referenced note, or dismiss.
 
-**Flow (nudge-initiated, requires nudge mode ON)**:
-1. User is editing a note. Background AI detects a signal (e.g., current note mentions a topic that appears in recent vault notes).
-2. Pet transitions to `nudge` state (amber glow).
+**Flow (proactive-hint-initiated, requires 主动提示 ON)**:
+1. User is editing a note. Preload engine detects a signal (e.g., current note mentions a topic that appears in recent vault notes).
+2. Pet transitions to `nudge` state (green notification dot).
 3. User notices and clicks Pet.
 4. Bubble shows the AI-generated suggestion.
 5. User reads and dismisses, or clicks "展开" for more detail in the Panel.
 
-**Key property**: Both user-initiated and AI-nudge paths converge on the same Bubble surface.
+**Key property**: Both user-initiated and proactive-hint paths converge on the same Bubble surface.
 
 #### Scenario 3: Knowledge Discovery (知识发现) — [NEW]
 
@@ -378,13 +383,13 @@ Tab (main window tab, full-size workspace)
 
 | Aspect | v1 | v2 |
 | --- | --- | --- |
-| Trigger | Open panel -> select range -> adjust notes -> run | One-click from Pet/command or scheduled |
+| Trigger | Open panel -> select range -> adjust notes -> run | One-click from command palette / Panel header, or scheduled |
 | Scope selection | Manual time range + include/exclude | Auto (configurable default range, e.g., "last 7 days") |
 | Draft collection | User selects findings -> collects into draft -> edits -> previews -> confirms | Removed. AI generates complete draft directly. |
 | Output | Review note in `.pagelet/` after preview + confirm | Review note in `.pagelet/` after preview + confirm (same output, fewer steps) |
 
 **Flow**:
-1. User clicks Pet context menu "周期性整理" or uses command palette `Pagelet: Generate periodic summary`.
+1. User uses command palette `Pagelet: Generate periodic summary` or triggers from Panel header.
 2. AI analyzes recent notes (default: last 7 days, configurable).
 3. Preview of the generated review note appears.
 4. User confirms -> review note created in `.pagelet/`.
@@ -395,17 +400,19 @@ Proposed decision: **D035** — Periodic summary simplified flow (supersedes v1 
 
 ---
 
-## Background AI Model — [NEW MAJOR SECTION — replaces v1 "no background analysis"]
+## Preload Engine — [NEW MAJOR SECTION — replaces v1 "no background analysis"]
 
 ### Design Principle
 
-v1 prohibited all background analysis. v2 replaces this with a bounded, rate-limited background AI model:
+v1 prohibited all background analysis. v2 introduces a **preload engine** — a performance optimization that makes review responses instant rather than requiring the user to wait for AI analysis after each click.
 
-> The quiet reviewer works proactively. AI periodically analyzes note changes in the background, silently preparing insights. Cost is controlled through rate limits and budget. The user decides when to view, when to go deeper, and when to produce output.
+> Background preloading ensures insights are ready the instant the user asks. The reviewer stays quiet until called — preloading is a performance optimization, not a behavior change. Proactive hints (主动提示) are an independent opt-in feature that piggybacks on preload results.
 
-**Critical constraint**: There is NO local preprocessing, no regex-based TODO detection, no rule-based scanning in the background path. **AI does ALL intelligence.** The background system is a simple timer + change detector + AI call + cache.
+**Critical constraint**: There is NO local preprocessing, no regex-based TODO detection, no rule-based scanning in the background path. **AI does ALL intelligence.** The preload system is a simple timer + change detector + AI call + cache.
 
-Proposed decision: **D032** — Background AI model introduction (supersedes v1 Product Principle #2).
+**Security constraint**: Background preloading uses `runKind="background"` with hardcoded `allowWrite=false`. The background path can NEVER trigger write operations. Token budget is lower (4K+1K) vs foreground (8K+2K).
+
+Proposed decision: **D032** — Preload engine introduction (supersedes v1 Product Principle #2).
 
 ### Trigger Mechanism
 
@@ -413,8 +420,8 @@ Proposed decision: **D032** — Background AI model introduction (supersedes v1 
 flowchart TD
   Timer["Timer fires<br/>(configurable interval)"]
   Changed{"Notes changed<br/>since last check?"}
-  Budget{"Background budget<br/>remaining?"}
-  Analyze["AI analyzes<br/>changed notes"]
+  Budget{"Preload budget<br/>remaining?"}
+  Analyze["AI preloads<br/>changed notes<br/>(runKind=background)"]
   Cache["Cache result"]
   Skip["Skip this cycle"]
 
@@ -424,37 +431,38 @@ flowchart TD
   Budget -- no --> Skip
   Budget -- yes --> Analyze
   Analyze --> Cache
-  Cache --> |"Pet state update<br/>(if nudge ON)"| NudgeCheck["Pet -> nudge state"]
+  Cache --> |"Pet state update<br/>(if 主动提示 ON)"| NudgeCheck["Pet -> nudge state"]
 ```
 
 - **Polling interval**: configurable, default every 30 minutes. Range: 5 minutes to 4 hours.
-- **Change detection**: compare vault's file modification timestamps against last-analyzed timestamps. Only notes that changed since the last background run are candidates.
+- **Change detection**: compare vault's file modification timestamps against last-analyzed timestamps. Only notes that changed since the last preload run are candidates.
 - **Scope**: same exclusion rules as foreground analysis (`.trash`, hidden folders, excluded tags, etc.).
-- **Result**: cached in memory (not persisted to disk in v2). Cache invalidated when new changes are detected and a new background run completes.
+- **Result**: cached in memory (not persisted to disk in v2). Cache invalidated when new changes are detected and a new preload run completes.
+- **runKind**: `"background"` with hardcoded `allowWrite=false`. Lower token budget than foreground.
 
 ### Cost Control — [CHANGED from v1 D018-D023]
 
-v2 introduces separate rate limits for background vs foreground AI calls.
+v2 introduces separate rate limits for preload (background) vs foreground AI calls.
 
-| Dimension | Background | Foreground (user-triggered) | v1 comparison |
+| Dimension | Preload (background) | Foreground (user-triggered) | v1 comparison |
 | --- | --- | --- | --- |
 | Per-call token budget | 4K input + 1K output (smaller) | 8K input + 2K output (default, same as v1) | v1: 8K+2K unified |
-| Hard ceiling | 5K total per background call | 36K total (same as v1) | v1: 36K unified |
-| Per-hour cap | 2 background calls | 10 foreground calls | v1: 10 unified |
-| Per-day cap | 20 background calls | 100 foreground calls | v1: 100 unified |
+| Hard ceiling | 5K total per preload call | 36K total (same as v1) | v1: 36K unified |
+| Per-hour cap | 2 preload calls | 10 foreground calls | v1: 10 unified |
+| Per-day cap | 20 preload calls | 100 foreground calls | v1: 100 unified |
 | On ceiling hit | Silently skip cycle | Reject + `[Override this once]` button | v1: reject + override |
 
-**Key rule**: Foreground user-triggered calls are NOT constrained by background quota. The two pools are independent.
+**Key rule**: Foreground user-triggered calls are NOT constrained by preload quota. The two pools are independent.
 
-Decisions D018-D023 are **preserved** for the foreground pool. Background pool limits are proposed as **D036** — Background AI cost control.
+Decisions D018-D023 are **preserved** for the foreground pool. Preload pool limits are proposed as **D036** — Preload engine cost control.
 
 ### Result Caching
 
-- Background analysis results are cached in memory per vault.
-- When the user summons the Pet (click or hotkey), cached insights are displayed instantly in the Bubble — no wait.
+- Preload results are cached in memory per vault.
+- When the user summons the Pet (click or hotkey), cached insights are displayed instantly in the Bubble — no wait. This is the core value of preloading.
 - If no cached result exists (first launch, cache cleared, all notes unchanged), the Bubble shows a brief "还没有新发现" message with an option to trigger immediate foreground analysis.
 - Cache is cleared when:
-  - A new background analysis completes (replaces old cache).
+  - A new preload run completes (replaces old cache).
   - The user closes and reopens the vault.
   - The user explicitly clears it from settings.
 
@@ -474,13 +482,13 @@ For user-triggered analysis (Scenario 1-3), v2 auto-scopes to the **current note
 
 **[CHANGED from v1]**: v1 required manual scope selection before every run. v2 defaults to current note for quick interactions and auto-selects for periodic summary.
 
-### Background Scope
+### Preload Scope
 
-For background analysis, scope is determined by change detection:
+For background preloading, scope is determined by change detection:
 
-- All notes modified since the last background analysis cycle.
+- All notes modified since the last preload cycle.
 - Subject to the same exclusion rules as foreground (`.trash`, hidden folders, excluded tags, `#no-ai`, `#no-review`).
-- Background analysis does NOT read the entire vault — only changed notes.
+- Preloading does NOT read the entire vault — only changed notes.
 
 ### Periodic Summary Scope
 
@@ -531,7 +539,7 @@ The Bubble is a lightweight, ephemeral speech bubble that appears near the Pet. 
 - Width: ~280px. Height: dynamic, up to ~320px.
 - Background: follows Obsidian theme (light/dark aware).
 - Border: 1px hand-drawn style stroke (consistent with Pet visual direction, D005).
-- Dismisses on: click outside, Escape key, or explicit close button.
+- Degrades to semi-transparent/minimized on: click outside. Fully dismisses on: Escape key or explicit X close button. Click Pet again to restore from degraded state.
 
 ### Content Structure
 
@@ -556,7 +564,8 @@ The Bubble is a lightweight, ephemeral speech bubble that appears near the Pet. 
 
 - Click a finding's source link -> opens the source note in the editor.
 - Click "展开" -> opens Panel with full findings.
-- Click outside or press Escape -> Bubble dismisses.
+- Click outside -> Bubble degrades to semi-transparent/minimized state (not closed). Click Pet again to restore.
+- Press Escape or click X button -> Bubble fully closes.
 - Bubble does not steal focus from the editor. It is a passive overlay.
 
 ---
@@ -595,13 +604,12 @@ The v2 Panel is **completely redesigned** from the v1 suggestion card system. Th
 
 ### Pet on Mobile
 
-- Fixed position (bottom-right corner), NOT draggable.
+- Fixed to configurable corner (default bottom-right), NOT draggable. Same corner position model as desktop.
 - Slightly smaller than desktop (~80% scale).
 - Minimum touch target: 44x44px (iOS HIG / WCAG 2.5.5).
-- Tap = show Bubble.
-- Long-press (500ms) = show context menu (Nudge toggle, hide Pet, settings).
+- Tap = show Bubble. Single gesture only — no long-press context menu.
 - No hover interactions (mobile has no hover).
-- States and animations same as desktop but may use reduced-motion by default on low-power mode.
+- States and animations same as desktop (4 states) but may use reduced-motion by default on low-power mode.
 
 ### Bubble on Mobile
 
@@ -625,7 +633,7 @@ The v2 Panel is **completely redesigned** from the v1 suggestion card system. Th
 ### Mobile Design Principles
 
 - Same feature parity as desktop (all 4 scenarios work).
-- Adapted interaction patterns (tap / long-press instead of click / right-click / hover).
+- Adapted interaction patterns (tap instead of click; no long-press context menu, no right-click).
 - Bottom-anchored surfaces (Bubble and Panel slide up from bottom edge).
 - Larger touch targets and text.
 - Respect system-level `prefers-reduced-motion` and low-power mode.
@@ -744,7 +752,7 @@ Conflict handling (preserved):
 
 ## Persistence — [PRESERVED, EXTENDED]
 
-v2 persists the same data as v1, plus background analysis cache:
+v2 persists the same data as v1, plus preload cache:
 
 Persist locally per vault:
 
@@ -752,25 +760,25 @@ Persist locally per vault:
 - Selected draft blocks (for Panel interactions that use draft). **[PRESERVED]**
 - User edits to pending draft. **[PRESERVED]**
 - Basic state needed to restore the Panel. **[PRESERVED]**
-- Pet position and pin state. **[NEW]**
-- Nudge mode on/off preference. **[NEW]**
-- Background analysis cache (in-memory only, not persisted to disk). **[NEW]**
+- Pet corner position preference. **[NEW]**
+- 主动提示 (proactive hints) on/off preference. **[NEW]**
+- Preload cache (in-memory only, not persisted to disk). **[NEW]**
 
 Clear:
 
 - Pending draft after successful note creation or explicit discard. **[PRESERVED]**
-- Background cache on vault close. **[NEW]**
+- Preload cache on vault close. **[NEW]**
 
 Do NOT:
 
 - Automatically create review history notes. **[PRESERVED]**
 - Persist every full AI intermediate result as long-term product history. **[PRESERVED]**
 - Store pending review state across vaults as a product feature. **[PRESERVED]**
-- Persist background analysis results to disk (privacy consideration). **[NEW]**
+- Persist preload results to disk (privacy consideration). **[NEW]**
 
 ---
 
-## Settings — [CHANGED — extended for Pet, Nudge, Background AI]
+## Settings — [CHANGED — extended for Pet, Proactive Hints, Preload]
 
 Top-level Pagelet settings group inside PA settings:
 
@@ -781,18 +789,18 @@ Top-level Pagelet settings group inside PA settings:
 
 **Pet** — [NEW]
 - Pet visibility: show / hide (hide recoverable from command palette or this setting).
-- Pet position reset (button; position itself is auto-persisted, not a manual setting).
-- Nudge mode: `on` / `off` (default: `on`). Also togglable from Pet context menu and keyboard shortcut (D039).
-- Nudge cooldown: `15 min` / `30 min` / `1 hour` / `2 hours` (default: `30 min`).
-- Nudge quiet hours: start time / end time (default: off). When active, nudge is suppressed during the specified window.
+- Pet corner position: `bottom-right` (default) / `bottom-left` / `top-right` / `top-left`.
+- 主动提示 (proactive hints): `on` / `off` (default: `off`). Also togglable from Panel header, Command Palette, and keyboard shortcut (D039).
+- 主动提示 cooldown: `15 min` / `30 min` / `1 hour` / `2 hours` (default: `30 min`).
+- 主动提示 quiet hours: start time / end time (default: off). When active, proactive hints are suppressed during the specified window.
 
-> **Not a setting:** Pet state (sleeping, watching, reading, thinking, nudge, idle) is system-driven. Users do not manually cycle states. See the "State transitions are automatic" note in Pet Design.
+> **Not a setting:** Pet state (resting, idle, working, nudge) is system-driven. Users do not manually cycle states. See the "State transitions are automatic" note in Pet Design.
 
-**Background AI** — [NEW]
-- Enable background analysis: `on` / `off` (default: `on`).
+**Preload** — [NEW]
+- Enable background preloading: `on` / `off` (default: `on`). This is a performance optimization — it pre-computes insights so they are ready instantly.
 - Polling interval: `5 min` / `15 min` / `30 min` / `1 hour` / `2 hours` / `4 hours` (default: `30 min`).
-- Background per-hour cap (default 2, configurable).
-- Background per-day cap (default 20, configurable).
+- Preload per-hour cap (default 2, configurable).
+- Preload per-day cap (default 20, configurable).
 
 **Storage** — [PRESERVED]
 - Review notes folder (default `.pagelet/`; configurable in advanced).
@@ -807,13 +815,13 @@ Top-level Pagelet settings group inside PA settings:
 - UI language (follows PA i18n).
 - Review response language: `Follow source note` (default) / `Always English` / `Always Chinese`.
 
-**Cost** — [PRESERVED for foreground; NEW for background]
+**Cost** — [PRESERVED for foreground; NEW for preload]
 - Foreground per-call token budget (default 8K + 2K, max 32K + 4K).
 - Foreground per-hour cap (default 10).
 - Foreground per-day cap (default 100).
-- Background per-call token budget (default 4K + 1K, max 8K + 2K).
-- Background per-hour cap (default 2).
-- Background per-day cap (default 20).
+- Preload per-call token budget (default 4K + 1K, max 8K + 2K).
+- Preload per-hour cap (default 2).
+- Preload per-day cap (default 20).
 
 **Beta** — [PRESERVED]
 - Send feedback (link to GitHub Issues + form).
@@ -823,22 +831,23 @@ Defaults:
 
 - Feature on (in `-beta.N`). **[PRESERVED]**
 - Pet visible (can be hidden). **[PRESERVED — "mascot" -> "Pet"]**
-- Background analysis on. **[CHANGED from v1 "no background analysis"]**
-- Nudge mode on. **[NEW]**
+- Background preloading on (performance optimization). **[CHANGED from v1 "no background analysis"]**
+- 主动提示 (proactive hints) off. **[NEW — opt-in, respects "quiet reviewer" positioning]**
 - WebSearch off until clicked. **[PRESERVED]**
 - Conservative exclusions on. **[PRESERVED]**
 
 ---
 
-## Privacy and Trust — [CHANGED — updated for background AI]
+## Privacy and Trust — [CHANGED — updated for preload engine]
 
 Trust requirements:
 
-- ~~No background analysis.~~ **[REMOVED — background analysis is now a core feature]**
-- Background analysis reads only changed notes, subject to the same exclusion rules as foreground. **[NEW]**
-- Background analysis results are cached in memory only, not persisted to disk. **[NEW]**
-- Background analysis can be disabled entirely in settings. **[NEW]**
-- No hidden note reads before user action — **revised**: background reads are transparent via the Pet state (`reading` state visible when background analysis runs). **[CHANGED]**
+- ~~No background analysis.~~ **[REMOVED — background preloading is now a performance feature]**
+- Background preloading reads only changed notes, subject to the same exclusion rules as foreground. **[NEW]**
+- Background preloading results are cached in memory only, not persisted to disk. **[NEW]**
+- Background preloading can be disabled entirely in settings. **[NEW]**
+- Background preloading uses `runKind="background"` with `allowWrite=false` — it can NEVER trigger write operations. **[NEW]**
+- No hidden note reads before user action — **revised**: preloading is transparent via the Pet state (`working` state visible when preloading runs). **[CHANGED]**
 - No sending skipped note bodies to the model. **[PRESERVED]**
 - Clear included/skipped details (visible in Panel). **[PRESERVED]**
 - Source-backed suggestions. **[PRESERVED]**
@@ -855,11 +864,11 @@ Per-run scope indicator (for foreground analysis):
 - Whether related old notes may be searched.
 - Whether WebSearch has not yet been triggered.
 
-Background analysis transparency:
+Preload transparency:
 
-- Pet shows `reading` state when background analysis is running.
-- Settings shows last background analysis time and notes analyzed count.
-- User can trigger `Pagelet: Show background analysis status` command to see details.
+- Pet shows `working` state when preloading is running.
+- Settings shows last preload time and notes analyzed count.
+- User can trigger `Pagelet: Show preload status` command to see details.
 
 ---
 
@@ -867,19 +876,19 @@ Background analysis transparency:
 
 | Entry | v1 | v2 |
 | --- | --- | --- |
-| Pet click | Mascot click opens side panel | Pet click opens Bubble |
+| Pet click | Mascot click opens side panel | Pet click opens Bubble (single gesture only) |
 | Hotkey | User-configurable, opens panel | User-configurable, opens Bubble |
 | Command palette | `Pagelet: Review current note`, `Pagelet: Open Pagelet`, `Pagelet: View all reviews`, `Pagelet: Toggle mascot visibility` | All v1 commands preserved + new commands (see below) |
-| Pet context menu | N/A | Right-click Pet for quick actions |
-| Nudge | N/A | Pet enters `nudge` state; click to see Bubble |
+| Proactive hints | N/A | Pet enters `nudge` state when opt-in hints are enabled; click to see Bubble |
 
 New v2 commands (command palette, registered with `Pagelet:` prefix per D029):
 
 - `Pagelet: Quick review` — opens Bubble with cached findings.
 - `Pagelet: Discover connections` — opens Panel with knowledge discovery results.
 - `Pagelet: Generate periodic summary` — triggers Scenario 4.
-- `Pagelet: Toggle nudge mode` — toggles nudge on/off.
-- `Pagelet: Show background analysis status` — shows background analysis diagnostics.
+- `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
+- `Pagelet: Show preload status` — shows preload engine diagnostics.
+- `Pagelet: Move Pet to corner` — switches Pet corner position.
 - `Pagelet: Toggle Pet visibility` — replaces `Toggle mascot visibility`.
 
 Preserved v1 commands:
@@ -911,19 +920,19 @@ Primary success signal:
 
 - Users engage with Pagelet findings (view in Bubble, explore in Panel, or create review notes).
 
-v2 metrics extend v1 with background AI events:
+v2 metrics extend v1 with preload and proactive hint events:
 
 Allowed metrics (v1 preserved + new):
 
 - All v1 metrics preserved (review triggered, time range type, candidate/included/skipped counts, findings count, draft interactions, note creation, WebSearch usage, runtime duration, failure category, cost metrics).
-- **[NEW]** Background analysis cycle count.
-- **[NEW]** Background analysis findings count.
-- **[NEW]** Nudge shown count.
-- **[NEW]** Nudge clicked count (user opened Bubble from nudge).
-- **[NEW]** Nudge dismissed count (user ignored nudge).
+- **[NEW]** Preload cycle count.
+- **[NEW]** Preload findings count.
+- **[NEW]** Proactive hint shown count.
+- **[NEW]** Proactive hint clicked count (user opened Bubble from hint).
+- **[NEW]** Proactive hint dismissed count (user ignored hint).
 - **[NEW]** Bubble open count.
 - **[NEW]** Bubble-to-Panel escalation count.
-- **[NEW]** Pet position preference (edge/corner, not coordinates).
+- **[NEW]** Pet corner preference (which corner, not coordinates).
 
 Disallowed metrics (unchanged from v1):
 
@@ -955,10 +964,10 @@ Avoid (preserved):
 
 New v2 copy for Pet states:
 
-- `sleeping`: (no text)
-- `watching`: (no text, visual state only)
-- `reading`: "正在阅读..." / "Reading..."
-- `nudge`: (no text; gentle visual cue only)
+- `resting`: (no text)
+- `idle`: (no text, visual state only)
+- `working`: "正在准备..." / "Preparing..."
+- `nudge`: (no text; gentle visual cue only — green notification dot)
 
 ---
 
@@ -998,18 +1007,20 @@ Pagelet ships as a feature inside PA `2.(x+1).0-beta.N`:
 v2 considered successful if:
 
 **Pet and Bubble (new)**:
-- Pet correctly reflects all 6 states.
-- Pet is draggable, pinnable, and remembers position across sessions.
+- Pet correctly reflects all 4 states (resting, idle, working, nudge).
+- Pet is fixed to a configurable corner and persists corner choice across sessions.
 - Bubble opens in under 200ms when cached results exist.
-- Nudge mode correctly toggles and respects cooldown.
-- Bubble shows 2-3 relevant findings from background analysis.
+- Bubble degrades (semi-transparent) on click-outside; X/Escape fully closes.
+- Proactive hints correctly toggle and respect cooldown.
+- Bubble shows 2-3 relevant findings from preloaded analysis.
 
-**Background AI (new)**:
-- Background analysis runs at the configured interval.
-- Background analysis respects all exclusion rules.
-- Background analysis stays within configured cost limits.
-- Background analysis can be fully disabled.
-- Pet shows `reading` state during background analysis.
+**Preload Engine (new)**:
+- Preloading runs at the configured interval.
+- Preloading respects all exclusion rules.
+- Preloading stays within configured cost limits.
+- Preloading uses `runKind="background"` with `allowWrite=false`.
+- Preloading can be fully disabled.
+- Pet shows `working` state during preloading.
 
 **Foreground Analysis (preserved from v1)**:
 - A review can be run for the current note, yesterday, last 3 days, and last 7 days.
@@ -1034,7 +1045,7 @@ v2 considered successful if:
 - In at least one real weekly test window, the user:
   - Uses Quick Review (Bubble) at least 3 times.
   - Uses Periodic Summary at least once and keeps the generated note.
-  - Receives at least one useful nudge from background analysis.
+  - (If proactive hints enabled) Receives at least one useful hint from preloaded analysis.
 
 ---
 
@@ -1044,26 +1055,27 @@ v2 considered successful if:
 
 | v1 Feature | v2 Equivalent | Migration Notes |
 | --- | --- | --- |
-| Mascot (4 states) | Pet (6 states) | States expanded; visual style preserved |
+| Mascot (4 states) | Pet (4 states, refined) | States refined (resting/idle/working/nudge); visual style preserved |
 | Mascot click -> Panel | Pet click -> Bubble -> Panel | Progressive disclosure replaces direct panel open |
 | Manual scope selection | Auto-scope (current note default) | Panel still allows manual scope adjustment |
 | Four fixed suggestion categories | AI-organized dynamic layout | Structured output schema may evolve |
 | Draft collection flow | Removed for periodic summary; optional for Panel | Periodic summary generates complete note directly |
 | Included/skipped note adjustment | Preserved in Panel | Simplified; auto-scope removes most manual adjustment |
-| Reminders (local activity threshold) | Nudge mode (AI-driven) | Replaces rule-based reminders with AI-driven signals |
-| No background analysis | Background AI polling | Configurable; can be disabled |
+| Reminders (local activity threshold) | Proactive hints (AI-driven, opt-in) | Replaces rule-based reminders with AI-driven signals; OFF by default |
+| No background analysis | Preload engine | Performance optimization; configurable; can be disabled |
 
 ### Breaking Changes
 
-- **Bubble is new**: v1 users who click the mascot expect the Panel to open. v2 opens the Bubble instead. The Panel is one click deeper ("展开").
+- **Bubble is new**: v1 users who click the mascot expect the Panel to open. v2 opens the Bubble instead. The Panel is one click deeper ("展开"). Pet click still opens the review surface (Bubble, not Panel), and v1 users can adjust.
 - **Draft collection removed**: v1 users who relied on selecting individual findings into a draft need to adapt to the periodic summary's direct-generation flow.
-- **Pet states**: v1's `done` and `error` states are replaced. Users familiar with the green "done" state will see the Pet return to `idle` instead.
+- **Pet states**: v1's `done` and `error` states are replaced. Users familiar with the green "done" state will see the Pet return to `idle` instead. The 4 states are resting/idle/working/nudge.
+- **No right-click or long-press menu**: v1 had no context menu, and v2 also has none. Pet has a single gesture only (click).
 
 ### Migration Path
 
 - v2 ships as a feature update within PA's beta channel. No manual migration required.
 - v1 review notes in `.pagelet/` are fully compatible with v2 — the output format is unchanged.
-- v1 settings are preserved where applicable; new settings (Pet, Nudge, Background AI) use defaults.
+- v1 settings are preserved where applicable; new settings (Pet corner position, Proactive hints, Preload) use defaults.
 - A one-time inline tip introduces the new Pet interaction model on first v2 launch.
 
 ---
@@ -1101,18 +1113,18 @@ v2 considered successful if:
 
 | Decision | Topic | v2 Adjustment |
 | --- | --- | --- |
-| D018 | Per-call token budget | Preserved for foreground; new smaller budget for background (D036) |
-| D019 | LLM calls per review | Preserved for foreground; background uses single-call only |
-| D020 | Daily/hourly caps | Preserved for foreground; separate background caps (D036) |
-| D021 | Ceiling-hit behavior | Preserved for foreground; background silently skips |
-| D022 | Cost display | Preserved; extended to show background cost in settings |
-| D023 | Exception circuit breakers | Still deferred (OQ003); background adds new failure modes |
+| D018 | Per-call token budget | Preserved for foreground; new smaller budget for preload (D036) |
+| D019 | LLM calls per review | Preserved for foreground; preload uses single-call only |
+| D020 | Daily/hourly caps | Preserved for foreground; separate preload caps (D036) |
+| D021 | Ceiling-hit behavior | Preserved for foreground; preload silently skips |
+| D022 | Cost display | Preserved; extended to show preload cost in settings |
+| D023 | Exception circuit breakers | Still deferred (OQ003); preload adds new failure modes |
 
 ### Decisions Needing Revision
 
 | Decision | Topic | v2 Change | New Decision |
 | --- | --- | --- | --- |
-| D024 | Runtime (RunKindAdapter) | Needs to support background/async AI analysis scheduling, not just on-demand | D032 |
+| D024 | Runtime (RunKindAdapter) | Needs to support `runKind="background"` preloading with `allowWrite=false`, not just on-demand | D032 |
 | D025 | Write path strategy | Periodic summary bypasses draft-collection, goes direct to preview+write | D035 |
 | D030 | Write path infrastructure | Periodic summary's direct-generation flow is a new caller pattern for the framework | D035 |
 
@@ -1120,14 +1132,14 @@ v2 considered successful if:
 
 | ID | Topic | Summary |
 | --- | --- | --- |
-| **D032** | Background AI model | Introduce timed polling + change detection + AI analysis + result caching. Supersedes v1 Principle #2 ("no background analysis"). |
-| **D033** | Pet state expansion | Expand from 4 states (idle, thinking, done, error) to 6 states (sleeping, watching, reading, thinking, nudge, idle). |
-| **D034** | Pet drag/pin/position memory | Pet is draggable to any edge/corner, pinnable, position persisted per vault. |
+| **D032** | Preload engine | Introduce timed polling + change detection + AI preloading + result caching. Uses `runKind="background"` with `allowWrite=false`. Supersedes v1 Principle #2 ("no background analysis"). Preloading is a performance optimization, not proactive analysis. |
+| **D033** | Pet states (4 states) | 4 states: resting (#d0d0d0 gray), idle (#e8e8e8 gray), working (#7c9eff blue), nudge (#5dd39e green). Replaces earlier 6-state proposal. |
+| **D034** | Pet fixed corner position | Pet is fixed to a configurable corner (default bottom-right). Switchable via Settings or Command Palette. No drag, no pin, no double-click. |
 | **D035** | Periodic summary simplified flow | One-click generate replaces collect-then-write pipeline for periodic summary. Supersedes v1 Principle #4 for this scenario. |
-| **D036** | Background AI cost control | Separate rate limits and token budgets for background vs foreground AI calls. Background defaults: 4K+1K tokens, 2/hour, 20/day. |
-| **D037** | Progressive disclosure layers | Four-layer interaction model: Pet -> Bubble -> Panel -> Tab. Each layer is self-contained. |
-| **D038** | Nudge mode design | User-controlled nudge toggle. When ON, Pet proactively shows insights. When OFF, Pet stays quiet. Cooldown, no sound, no modal, no focus steal. |
-| **D039** | Nudge control placement | Multi-point: Settings (full config) + Pet context menu (quick toggle) + keyboard shortcut (toggle). Right-click on desktop, long-press on mobile. Context menu also includes "隐藏拾页" and "设置...". |
+| **D036** | Preload engine cost control | Separate rate limits and token budgets for preload vs foreground AI calls. Preload defaults: 4K+1K tokens, 2/hour, 20/day. |
+| **D037** | Progressive disclosure layers | Four-layer interaction model: Pet -> Bubble -> Panel -> Tab. Each layer is self-contained. Bubble degrades on click-outside (does not close). |
+| **D038** | Proactive hints (主动提示) design | Opt-in feature, OFF by default. When ON, Pet enters `nudge` state when preloaded insights are ready. Cooldown, no sound, no modal, no focus steal. Respects "quiet reviewer" positioning. |
+| **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. No right-click menu, no long-press context menu. |
 
 These decisions should be formally recorded in `review-assistant-decisions.md` when implementation begins.
 
@@ -1137,28 +1149,28 @@ These decisions should be formally recorded in `review-assistant-decisions.md` w
 
 ### Phase 2 candidates (v2 scope — this document):
 
-- Pet drag and pin. (D034)
-- 6-state Pet with transitions and animations.
-- Bubble design and implementation.
-- Background AI polling engine. (D032)
-- Nudge mode. (D038)
+- Pet fixed corner position. (D034)
+- 4-state Pet with transitions and animations.
+- Bubble design and implementation (including degrade-on-click-outside behavior).
+- Preload engine. (D032)
+- Proactive hints (主动提示, opt-in). (D038)
 - Quick Review scenario (Scenario 1).
+- Periodic Summary scenario (Scenario 4, D035).
 - Writing Assistance scenario (Scenario 2).
-- One-click periodic summary (Scenario 4, D035).
-- Separate background/foreground cost controls (D036).
+- Knowledge Discovery scenario (Scenario 3).
+- Separate preload/foreground cost controls (D036).
 - Panel redesign (direction established, design TBD).
 
 ### Phase 3 candidates:
 
-- Knowledge Discovery scenario (Scenario 3) with full vault analysis.
 - Panel v2 detailed design and implementation.
 - Tab workspace.
 - Custom follow-up free-text input on findings (cut from v1).
 - Streaming structured output rendering (D026e).
 - Refined circuit breakers (D023 / OQ003).
-- Advanced exception handling for background analysis.
+- Advanced exception handling for preload engine.
 - Cross-note theme detection.
-- Smarter background analysis scheduling (adaptive interval based on user activity patterns).
+- Smarter preload scheduling (adaptive interval based on user activity patterns).
 
 ### Phase 4 / Operations Agent mode candidates (sit on top of Write Action Framework v1):
 
@@ -1177,16 +1189,19 @@ Do NOT promote any future write or automation behavior into v2 without updating 
 
 | Dimension | v1 | v2 |
 | --- | --- | --- |
-| Primary entry | Side panel (manually opened) | Floating Pet (always-present + hotkey summon) |
-| Trigger model | Pure user-triggered, zero background | AI background timed polling + on-demand deep analysis |
+| Primary entry | Side panel (manually opened) | Fixed-corner Pet (always-present + hotkey summon) |
+| Trigger model | Pure user-triggered, zero background | Preload engine (performance optimization) + on-demand deep analysis |
 | Context awareness | Manual scope selection | Pet auto-senses current note context |
 | Output form | Single: independent review note | Multi-level (Bubble -> Panel -> optional note) |
 | Interaction depth | Linear pipeline | Progressive: Pet -> Bubble -> Panel -> Tab |
-| Mascot/Pet states | 4 (idle, thinking, done, error) | 6 (sleeping, watching, reading, thinking, nudge, idle) |
-| Nudge/proactive hints | Rule-based reminders (badge only) | AI-driven nudge mode (configurable) |
+| Pet gesture | Click opens panel | Click only — opens Bubble. No right-click, no long-press |
+| Mascot/Pet states | 4 (idle, thinking, done, error) | 4 (resting, idle, working, nudge) |
+| Pet position | N/A | Fixed corner (configurable), no drag |
+| Proactive hints | Rule-based reminders (badge only) | AI-driven proactive hints (opt-in, OFF by default) |
+| Bubble dismiss | N/A | Click-outside degrades; X/Escape closes |
 | Periodic summary | Select range -> adjust -> run -> collect -> edit -> preview -> confirm | One-click -> preview -> confirm |
-| Background analysis | Explicitly prohibited | Core feature (configurable, rate-limited) |
-| Cost control | Unified pool | Separate background and foreground pools |
+| Background preloading | Explicitly prohibited | Performance optimization (configurable, rate-limited, `allowWrite=false`) |
+| Cost control | Unified pool | Separate preload and foreground pools |
 
 ---
 
