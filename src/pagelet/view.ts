@@ -57,6 +57,7 @@ export interface PageletDraftReviewSaveRequest {
     targetPath?: string;
     detectedLanguage: PageletLanguageCode;
     mode: "basic" | "deeper";
+    signal?: AbortSignal;
 }
 
 interface AcceptedDraftItem {
@@ -151,6 +152,7 @@ export class PageletView extends ItemView {
         onAbort?: () => void;
     } | null = null;
     private draftSaveInFlight = false;
+    private draftSaveAbortController: AbortController | null = null;
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -235,7 +237,7 @@ export class PageletView extends ItemView {
         this.settleWritePreview({ outcome: "cancelled" });
         this.clearWritePreview();
         this.currentReview = data;
-        this.draftSaveInFlight = false;
+        this.abortDraftSave();
         this.sourceReferences = new Map(
             (data.sourceReferences ?? []).map((reference) => [reference.sourceId, reference]),
         );
@@ -524,7 +526,7 @@ export class PageletView extends ItemView {
         this.settleWritePreview({ outcome: "cancelled" });
         this.clearReviewRunningState();
         this.currentReview = null;
-        this.draftSaveInFlight = false;
+        this.abortDraftSave();
         this.sourceReferences.clear();
         this.dismissedKeys.clear();
         this.acceptedDraft = [];
@@ -568,18 +570,31 @@ export class PageletView extends ItemView {
         return this.draftSaveInFlight || this.pendingWritePreview !== null;
     }
 
+    private abortDraftSave(): void {
+        this.draftSaveAbortController?.abort("view_reset");
+        this.draftSaveAbortController = null;
+        this.draftSaveInFlight = false;
+    }
+
     private reviewDraftIdentity(review: PageletPanelReviewData | null = this.currentReview): string | undefined {
         return review?.primarySourcePath ?? review?.sourcePath;
     }
 
     private refreshInteractionLocks(): void {
         const locked = this.isSaveInteractionLocked();
+        const lockTitle = locked
+            ? this.t("pagelet.panel.status.saving", "Saving review note...")
+            : "";
         if (this.dom.reviewButton) {
             const count = this.getScopeSelection().paths.length;
             this.dom.reviewButton.disabled = this.reviewRunning || count === 0 || locked;
+            if (locked) this.dom.reviewButton.setAttribute("title", lockTitle);
+            else this.dom.reviewButton.removeAttribute("title");
         }
         for (const button of this.scopeRangeButtons) {
             button.disabled = locked;
+            if (locked) button.setAttribute("title", lockTitle);
+            else button.removeAttribute("title");
         }
     }
 
@@ -783,14 +798,20 @@ export class PageletView extends ItemView {
             this.flashStatus(this.t("pagelet.panel.draft.empty", "Add suggestions to collect a draft."));
             return;
         }
+        this.draftSaveAbortController = new AbortController();
+        request.signal = this.draftSaveAbortController.signal;
         this.draftSaveInFlight = true;
+        this.setStatus("thinking", this.t("pagelet.panel.status.saving", "Saving review note..."));
         this.refreshInteractionLocks();
         this.renderDraft();
         void this.callbacks.saveDraftReview(request)
-            .catch(() => {
+            .catch((error) => {
+                console.warn("Pagelet draft save callback failed", error);
                 this.flashStatus(this.t("pagelet.panel.status.actionFailed", "Action failed"));
             })
             .finally(() => {
+                this.draftSaveAbortController = null;
+                if (!this.draftSaveInFlight) return;
                 this.draftSaveInFlight = false;
                 this.refreshInteractionLocks();
                 this.renderDraft();

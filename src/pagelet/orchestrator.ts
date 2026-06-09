@@ -292,6 +292,7 @@ export class PageletReviewOrchestrator {
 
         try {
             const date = new Date();
+            const writeStartedAt = Date.now();
             const writeResult = await runtime.actionExecutor.execute(
                 runtime.toolProvider.capability,
                 {
@@ -318,8 +319,15 @@ export class PageletReviewOrchestrator {
                     plugin: this.host.capabilityPlugin,
                     turnId: `pagelet-save-${date.getTime()}`,
                     platform: Platform.isMobile ? "mobile" : "desktop",
+                    ...(request.signal ? { signal: request.signal } : {}),
                 },
             );
+            const writeElapsedMs = Date.now() - writeStartedAt;
+            this.host.log("Pagelet draft save timing", {
+                phase: "write_action",
+                elapsedMs: writeElapsedMs,
+                status: writeResult.status,
+            });
             if (writeResult.status === "ok") {
                 const observation = writeResult.observation;
                 const createdPath = hasStringProperty(observation, "createdPath")
