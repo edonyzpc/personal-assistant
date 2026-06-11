@@ -7,15 +7,15 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | v2 Product Design (supersedes v1 `review-assistant-product-design.md`) |
-| Status | Design — pending implementation |
-| Last revised | 2026-06-09 |
+| Status | Implementation complete (Phase 2-4) — pending release |
+| Last revised | 2026-06-11 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` preloading (D032) |
 | Write boundary | Review note creation under **Write Action Framework v1** (D025, D030); periodic summary bypasses draft-collection step (D035) |
 | Preload engine | Timed polling with rate-limited background preloading (D032); makes review responses instant. Replaces v1 "no background analysis" principle |
 | v1 reference | [review-assistant-product-design.md](./review-assistant-product-design.md) (historical, unchanged) |
 | Decisions record | See [review-assistant-decisions.md](./review-assistant-decisions.md) (D001-D031 active; D032+ proposed in this document) |
-| Technical design | See [review-assistant-sdd.md](./review-assistant-sdd.md) (v2 SDD update pending) |
+| Technical design | See [review-assistant-sdd.md](./review-assistant-sdd.md) + [pagelet-v2-sdd-guide.md](./pagelet-v2-sdd-guide.md) |
 
 This document defines the second product version of **Pagelet**. It is a complete, standalone product and UX contract. v1 (`review-assistant-product-design.md`) is preserved as historical reference. Where v2 preserves v1 design, the section is marked **[PRESERVED]**. Where v2 changes v1 design, the section is marked **[CHANGED]** with rationale. New sections introduced in v2 are marked **[NEW]**.
 
