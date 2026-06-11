@@ -19,7 +19,7 @@
 import { Notice } from "obsidian";
 import type { App, EventRef, MarkdownView, WorkspaceLeaf } from "obsidian";
 
-import { getPageletUiLanguage } from "../locales/pagelet";
+import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
 import type { BubbleContent, BubbleFinding } from "./bubble/types";
 import { BubbleView } from "./bubble/BubbleView";
@@ -668,9 +668,8 @@ export class PageletV2Orchestrator {
         this.clearActivityDebounce();
         this.activityDebounceTimer = setTimeout(() => {
             this.activityDebounceTimer = null;
-            // Wake Pet from resting if it was asleep
             this.petView?.stateMachine.transition("note-activity");
-            // Reset the idle countdown
+            this.preloadEngine?.noteActivity();
             this.resetIdleTimer();
         }, PageletV2Orchestrator.ACTIVITY_DEBOUNCE_MS);
     }
@@ -825,7 +824,8 @@ export class PageletV2Orchestrator {
     /** Expand current Panel content into a full Tab. */
     private expandPanelToTab(): void {
         this.panelView?.close();
-        const title = "拾页 — 详细视图";
+        const locale = getPageletUiLanguage();
+        const title = pageletT("pagelet.tab.title", locale);
         const findings = this.lastAnalysisFindings.length > 0
             ? this.lastAnalysisFindings
             : this.preloadCache.getFindings().map((f) => ({

@@ -162,27 +162,18 @@ export class PageletActionExecutor {
 
             // Atomic read-modify-write
             let matchCount = 0;
-            await this.app.vault.process(action.sourceFile, (content) => {
-                // Count occurrences to verify uniqueness
-                let idx = -1;
-                let count = 0;
-                while ((idx = content.indexOf(action.originalText, idx + 1)) !== -1) {
-                    count++;
-                }
-                matchCount = count;
+            // Pre-check match count to avoid unnecessary vault.process writes
+            const currentContent = await this.app.vault.read(action.sourceFile);
+            let idx = -1;
+            while ((idx = currentContent.indexOf(action.originalText, idx + 1)) !== -1) {
+                matchCount++;
+            }
 
-                if (count === 0) {
-                    // Return unchanged content — we'll report failure below
-                    return content;
-                }
-                if (count > 1) {
-                    // Ambiguous — return unchanged content
-                    return content;
-                }
-
-                // Exactly one match — safe to replace
-                return content.replace(action.originalText, action.suggestedText);
-            });
+            if (matchCount === 1) {
+                await this.app.vault.process(action.sourceFile, (content) =>
+                    content.replace(action.originalText, action.suggestedText),
+                );
+            }
 
             if (matchCount === 0) {
                 return { success: false, error: `Original text not found in ${filePath}` };
@@ -290,12 +281,14 @@ export class PageletActionExecutor {
         const folder = dailyNotesConfig?.folder ?? "";
         const template = dailyNotesConfig?.format ?? "YYYY-MM-DD";
 
-        // Simple template substitution (handles the common YYYY-MM-DD case)
-        const [year, month, day] = dateStr.split("-");
+        const parts = dateStr.split("-");
+        const year = parts[0] ?? "2026";
+        const month = parts[1] ?? "01";
+        const day = parts[2] ?? "01";
         const filename = template
-            .replace("YYYY", year)
-            .replace("MM", month)
-            .replace("DD", day);
+            .replaceAll("YYYY", year)
+            .replaceAll("MM", month)
+            .replaceAll("DD", day);
 
         if (folder) {
             return `${folder}/${filename}.md`;

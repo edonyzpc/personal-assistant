@@ -654,7 +654,8 @@ export class PluginManager extends Plugin {
                                 })),
                             );
                             const prompt = buildPreloadPrompt(noteContents, config.tokenBudget);
-                            const result = await model.invoke(prompt.userPrompt);
+                            const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
+                            const result = await model.invoke(fullPrompt);
                             const text = typeof result === "string"
                                 ? result
                                 : (result as { content?: unknown }).content != null

@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { describe, expect, it, beforeEach } from "@jest/globals";
+import { describe, expect, it } from "@jest/globals";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
 import type { PetEvent } from "../src/pagelet/pet/PetStateMachine";
