@@ -1,0 +1,82 @@
+/* Copyright 2023 edonyzpc */
+
+/**
+ * Pagelet v2 — output module types.
+ *
+ * Defines the data shapes for the Periodic Summary (Scenario 4) pipeline:
+ *   PeriodicSummaryInput  -> ReviewNoteGenerator -> GeneratedReviewNote
+ *   GeneratedReviewNote   -> ReviewNoteWriter    -> WriteResult
+ *
+ * Design references:
+ *  - `docs/pagelet-v2-product-design.md` §Review Note Output (D035)
+ *  - `docs/pagelet-v2-sdd-guide.md` §8 (Review Note Output)
+ *  - `docs/pagelet-v2-product-design.md` §Periodic Summary Output
+ */
+
+import type { TFile } from "obsidian";
+
+// ---------------------------------------------------------------------------
+// Generator input
+// ---------------------------------------------------------------------------
+
+/** Input for generating a periodic summary review note (Scenario 4). */
+export interface PeriodicSummaryInput {
+    /** Files included in the summary scope. */
+    files: TFile[];
+    /** Human-readable time range (e.g., "2026-06-03 to 2026-06-10"). */
+    rangeDescription: string;
+    /** Scope in days (3, 7, or 14). */
+    scopeDays: number;
+}
+
+// ---------------------------------------------------------------------------
+// Generator output
+// ---------------------------------------------------------------------------
+
+/** Generated review note content (before write). */
+export interface GeneratedReviewNote {
+    /** Complete markdown content (frontmatter + body). */
+    markdown: string;
+    /** Suggested file name (e.g., "pagelet-weekly-review-2026-06-10.md"). */
+    fileName: string;
+    /** Target folder path (e.g., ".pagelet"). */
+    targetFolder: string;
+    /** Full target path (folder/fileName). */
+    targetPath: string;
+    /** Wikilink-style source references (e.g., ["[[note-1]]", "[[note-2]]"]). */
+    sources: string[];
+    /** Token cost of generation. */
+    tokenCost: { input: number; output: number };
+}
+
+// ---------------------------------------------------------------------------
+// AI callback
+// ---------------------------------------------------------------------------
+
+/**
+ * Callback for AI generation — injected by the caller so the output module
+ * stays decoupled from the LLM provider / LangChain dependency tree.
+ *
+ * The caller (e.g., orchestrator or runtime) is responsible for constructing
+ * the underlying chat model and wiring cost / rate-limit gates before
+ * invoking the generator.
+ */
+export type GenerateCallback = (
+    prompt: string,
+    noteContents: Array<{ path: string; content: string }>,
+    tokenBudget: { input: number; output: number },
+) => Promise<{ text: string; tokenCost: { input: number; output: number } }>;
+
+// ---------------------------------------------------------------------------
+// Writer result
+// ---------------------------------------------------------------------------
+
+/** Result of writing a review note to the vault. */
+export interface WriteResult {
+    /** Whether the write succeeded. */
+    success: boolean;
+    /** Final vault-relative path the note was written to (on success). */
+    filePath?: string;
+    /** Error message (on failure). */
+    error?: string;
+}

@@ -212,3 +212,51 @@ export {
     type RegisterPageletRibbonOptions,
     type RegisterPageletRibbonResult,
 } from "./compat";
+
+// ── Pagelet v2 modules ────────────────────────────────────────────────────
+
+export { PetView, PetStateMachine, buildPetSvg, updatePetSvgState } from "./pet";
+export type { PetState, PetCorner, PetEvent, PetCallbacks, PetRenderer, PetRendererOptions, PetStateListener } from "./pet";
+
+export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent } from "./bubble";
+export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCallbacks, BubbleViewOptions } from "./bubble";
+
+export { PreloadEngine, PreloadCache, PreloadBudget } from "./preload";
+export type { PreloadFinding, PreloadResult, PreloadCacheEntry, PreloadConfig, PreloadErrorCategory, PreloadEvent, AnalyzeCallback } from "./preload";
+
+export { ScopeResolver, ChangeDetector } from "./scope/index";
+export type { ScopeCandidate, ExclusionReason, ScopeResult, ScopeConfig } from "./scope/index";
+
+export { ProactiveHints } from "./hints";
+export type { ProactiveHintsConfig } from "./hints";
+
+export { ReviewNoteGenerator, ReviewNoteWriter } from "./output";
+export type { PeriodicSummaryInput, GeneratedReviewNote, GenerateCallback, WriteResult } from "./output";
+
+export { registerPageletV2Commands, PAGELET_QUICK_REVIEW_COMMAND_ID, PAGELET_DISCOVER_COMMAND_ID, PAGELET_PERIODIC_SUMMARY_COMMAND_ID, PAGELET_TOGGLE_HINTS_COMMAND_ID, PAGELET_PRELOAD_STATUS_COMMAND_ID, PAGELET_MOVE_PET_COMMAND_ID, PAGELET_TOGGLE_PET_COMMAND_ID } from "./commands";
+export type { PageletV2CommandCallbacks } from "./commands";
+
+export { PageletV2Orchestrator } from "./v2-orchestrator";
+export type { PageletV2Host } from "./v2-orchestrator";
+
+export { PageletActionExecutor } from "./actions";
+export type { ActionLogger, ActionResult, AppendToDailyAction, ApplySuggestionAction, CreateTaskAction, PageletAction, PageletActionType } from "./actions";
+
+export {
+    buildPreloadPrompt,
+    buildQuickReviewPrompt,
+    buildWritingAssistPrompt,
+    buildDiscoveryPrompt,
+    buildPeriodicSummaryPrompt,
+    parseStructuredResponse,
+} from "./llm";
+export type { PromptScenario, StructuredFinding, StructuredLLMResponse, PromptBuildResult } from "./llm";
+
+export { ResearchManager } from "./research";
+export type { ResearchCallbacks, ResearchFinding, ResearchRequest, ResearchResult } from "./research";
+
+export { PanelView } from "./panel";
+export type { PanelLayoutType, PanelFinding, PanelAction, PanelCallbacks, PanelViewOptions, NoteConnection, DiscoveryResult } from "./panel";
+
+export { TabView } from "./tab";
+export type { TabSection, TabCard } from "./tab";
