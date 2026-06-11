@@ -1,0 +1,261 @@
+/* Copyright 2023 edonyzpc */
+
+/* ============================================================
+ * Pet v2 — Keyframes & state-driven animations.
+ *
+ * Values are copied from `docs/pagelet-v2-prototype.html`.
+ * Class prefix: pa-pagelet-pet (avoids plugin collisions).
+ * ============================================================ */
+
+/* ---------- Keyframes ---------- */
+
+@keyframes pa-pagelet-pet-float {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-4px); }
+}
+
+@keyframes pa-pagelet-pet-breathe {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.02); }
+}
+
+@keyframes pa-pagelet-pet-pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.04); }
+}
+
+@keyframes pa-pagelet-pet-bounce {
+    0%, 100% { transform: translateY(0); }
+    25% { transform: translateY(-8px); }
+    45% { transform: translateY(-2px); }
+    65% { transform: translateY(-6px); }
+    85% { transform: translateY(-1px); }
+}
+
+@keyframes pa-pagelet-pet-blink {
+    0%, 92%, 100% { transform: scaleY(1); }
+    95% { transform: scaleY(0.1); }
+}
+
+@keyframes pa-pagelet-pet-dot-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+@keyframes pa-pagelet-pet-nudge-dot-glow {
+    0%, 100% {
+        box-shadow: 0 0 4px var(--pagelet-done, #5dd39e);
+        transform: scale(1);
+    }
+    50% {
+        box-shadow: 0 0 12px var(--pagelet-done, #5dd39e), 0 0 24px rgba(93, 211, 158, 0.35);
+        transform: scale(1.15);
+    }
+}
+
+@keyframes pa-pagelet-pet-zzz-float-1 {
+    0% { transform: translate(0, 0) scale(1); opacity: 0.5; }
+    100% { transform: translate(4px, -14px) scale(0.8); opacity: 0; }
+}
+
+@keyframes pa-pagelet-pet-zzz-float-2 {
+    0% { transform: translate(0, 0) scale(1); opacity: 0.35; }
+    100% { transform: translate(6px, -18px) scale(0.7); opacity: 0; }
+}
+
+/* ---------- Container ---------- */
+
+.pa-pagelet-pet {
+    position: absolute;
+    z-index: 1000;
+    cursor: pointer;
+    user-select: none;
+    -webkit-user-select: none;
+    transition: filter 0.4s ease, opacity 0.4s ease;
+}
+
+/* ---------- Corner positioning ---------- */
+
+.pa-pagelet-pet[data-corner="bottom-right"] { bottom: 16px; right: 16px; }
+.pa-pagelet-pet[data-corner="bottom-left"]  { bottom: 16px; left: 16px; }
+.pa-pagelet-pet[data-corner="top-right"]    { top: 16px; right: 16px; }
+.pa-pagelet-pet[data-corner="top-left"]     { top: 16px; left: 16px; }
+
+/* ---------- Wrapper ---------- */
+
+.pa-pagelet-pet-wrapper {
+    width: 56px;
+    height: 56px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+}
+
+/* ---------- Notification dot ---------- */
+
+.pa-pagelet-pet-notification {
+    position: absolute;
+    top: -2px;
+    right: -4px;
+    width: 12px;
+    height: 12px;
+    background: var(--pagelet-done, #5dd39e);
+    border-radius: 50%;
+    border: 2px solid var(--background-primary, #1e1e1e);
+    opacity: 0;
+    transform: scale(0);
+    transition: all 0.3s ease;
+    pointer-events: none;
+}
+
+.pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-notification {
+    opacity: 1;
+    transform: scale(1);
+    animation: pa-pagelet-pet-nudge-dot-glow 1.8s ease-in-out infinite;
+}
+
+/* ---------- State animations ---------- */
+
+.pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-float 2.8s ease-in-out infinite;
+}
+
+.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-breathe 5s ease-in-out infinite;
+}
+
+.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-pulse 1.4s ease-in-out infinite;
+}
+
+.pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-bounce 1.6s ease-in-out infinite;
+}
+
+/* ---------- Sub-element animations ---------- */
+
+.pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-blink-group {
+    animation: pa-pagelet-pet-blink 5s infinite;
+    transform-origin: center;
+}
+
+.pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-blink-group {
+    animation: pa-pagelet-pet-blink 5s infinite;
+    transform-origin: center;
+}
+
+/* Working dots — staggered pulse */
+.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-dot-1 {
+    animation: pa-pagelet-pet-dot-pulse 1.4s infinite 0s;
+}
+.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-dot-2 {
+    animation: pa-pagelet-pet-dot-pulse 1.4s infinite 0.2s;
+}
+.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-dot-3 {
+    animation: pa-pagelet-pet-dot-pulse 1.4s infinite 0.4s;
+}
+
+/* Resting zzz float */
+.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz1 {
+    animation: pa-pagelet-pet-zzz-float-1 3s ease-out infinite;
+}
+.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz2 {
+    animation: pa-pagelet-pet-zzz-float-2 3s ease-out infinite 0.8s;
+}
+
+/* ---------- Resting opacity ---------- */
+
+.pa-pagelet-pet[data-state="resting"] {
+    opacity: 0.55;
+}
+
+.pa-pagelet-pet[data-state="working"],
+.pa-pagelet-pet[data-state="nudge"],
+.pa-pagelet-pet[data-state="idle"] {
+    opacity: 1;
+}
+
+/* ---------- Error flash ---------- */
+
+.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg path,
+.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg circle {
+    stroke: #ff6b6b !important;
+    fill: none;
+}
+
+/* ---------- Light theme ---------- */
+
+[data-theme="light"] .pa-pagelet-pet-wrapper,
+.theme-light .pa-pagelet-pet-wrapper {
+    background: rgba(255, 255, 255, 0.75);
+    border-radius: 10px;
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.10), 0 1px 4px rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="resting"],
+.theme-light .pa-pagelet-pet[data-state="resting"] {
+    opacity: 0.4;
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap,
+.theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap {
+    filter: saturate(0) brightness(0.85);
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper,
+.theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper {
+    background: rgba(200, 200, 200, 0.3);
+    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-sleep-zzz text,
+.theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-sleep-zzz text {
+    fill: #999;
+    opacity: 0.6;
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-wrapper,
+.theme-light .pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-wrapper {
+    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper,
+.theme-light .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper {
+    box-shadow: 0 2px 16px rgba(124, 158, 255, 0.3), 0 0 0 1.5px rgba(124, 158, 255, 0.4);
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper,
+.theme-light .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper {
+    box-shadow: 0 2px 20px rgba(93, 211, 158, 0.35), 0 0 0 2px rgba(93, 211, 158, 0.2);
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-notification,
+.theme-light .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-notification {
+    width: 12px;
+    height: 12px;
+    box-shadow: 0 0 8px rgba(93, 211, 158, 0.6), 0 0 20px rgba(93, 211, 158, 0.3);
+}
+
+/* ---------- Mobile scaling ---------- */
+
+body.is-mobile .pa-pagelet-pet-wrapper {
+    transform: scale(0.8);
+    min-width: 44px;
+    min-height: 44px;
+}
+
+/* ---------- Reduced motion ---------- */
+
+@media (prefers-reduced-motion: reduce) {
+    .pa-pagelet-pet[data-state] .pa-pagelet-pet-svg-wrap,
+    .pa-pagelet-pet[data-state] .pa-pagelet-pet-blink-group,
+    .pa-pagelet-pet[data-state] .pa-pagelet-pet-zzz1,
+    .pa-pagelet-pet[data-state] .pa-pagelet-pet-zzz2,
+    .pa-pagelet-pet-notification,
+    .pa-pagelet-pet-dot-1,
+    .pa-pagelet-pet-dot-2,
+    .pa-pagelet-pet-dot-3 {
+        animation: none !important;
+    }
+}
