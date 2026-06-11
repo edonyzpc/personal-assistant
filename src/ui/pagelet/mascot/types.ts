@@ -28,6 +28,8 @@ import type { PageletLocale } from "../../../locales/pagelet";
 /**
  * Mascot state machine values (SDD §10.1). The 4 states map 1:1 to the
  * 4 SVG renderings in the visual spec (`pagelet-visual-spec.html` §①).
+ *
+ * @deprecated Use PetState from src/pagelet/pet/types instead. Will be removed before 2.3.0 stable.
  */
 export type MascotState = "idle" | "thinking" | "done" | "error";
 

@@ -128,6 +128,7 @@ export interface PageletViewCallbacks {
     prepareResearchPrompt(suggestion: PageletSuggestion): Promise<boolean>;
 }
 
+/** @deprecated Use PanelView from ./panel/PanelView instead. Will be removed before 2.3.0 stable. */
 export class PageletView extends ItemView {
     private dom = emptyDomRefs();
     private mascot: MascotRenderer | null = null;

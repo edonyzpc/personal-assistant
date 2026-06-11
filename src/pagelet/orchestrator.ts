@@ -132,6 +132,7 @@ export interface PageletOrchestratorHost {
 
 // ── Orchestrator ─────────────────────────────────────────────────────────────
 
+/** @deprecated Use PageletV2Orchestrator from ./v2-orchestrator instead. Will be removed before 2.3.0 stable. */
 export class PageletReviewOrchestrator {
     private pageletReviewInFlight = false;
 
