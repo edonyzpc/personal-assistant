@@ -35,6 +35,7 @@
 
 import type { App } from "obsidian";
 
+import type { PetCorner } from "../../pagelet/pet/types";
 import {
     makePageletTranslator,
     type PageletLocale,
@@ -65,9 +66,14 @@ export type PageletRibbonPosition = "default" | "hidden";
  *  3. add the i18n keys to en.json + zh.json
  *  4. render it in `renderPageletSection`
  */
+/** Periodic summary scope preset */
+export type PageletPeriodicSummaryScope = "3d" | "7d" | "14d";
+
 export interface PageletSettings {
     /** Master toggle. Default ON during beta (D013). */
     enabled: boolean;
+    /** Pet visibility. */
+    petVisible: boolean;
     /** Vault path for review notes (D010). */
     reviewsFolder: string;
     /** Output language preference (D015). */
@@ -80,6 +86,50 @@ export interface PageletSettings {
     maxInputTokens: number;
     /** Per-review output cap; default 2000, hard max 4000 (D018). */
     maxOutputTokens: number;
+
+    // ── v2: Pet ────────────────────────────────────────────────────
+    /** Pet corner position (D034). */
+    petCorner: PetCorner;
+    /** Proactive hints toggle (D038, OFF by default). */
+    proactiveHints: boolean;
+    /** Proactive hints cooldown in minutes (D038). */
+    proactiveHintsCooldown: number;
+
+    // ── v2: Preload ────────────────────────────────────────────────
+    /** Enable background preloading (D032). */
+    preloadEnabled: boolean;
+    /** Preload polling interval in minutes (D032). */
+    preloadInterval: number;
+    /** Preload per-hour cap (D036). */
+    preloadPerHourCap: number;
+    /** Preload per-day cap (D036). */
+    preloadPerDayCap: number;
+    /** Preload per-call token budget (D036). */
+    preloadTokenBudget: { input: number; output: number };
+
+    // ── v2: Reviews ────────────────────────────────────────────────
+    /** Default scope for periodic summary. */
+    periodicSummaryScope: PageletPeriodicSummaryScope;
+    /** Excluded folders for scope resolution. */
+    excludedFolders: string[];
+    /** Excluded tags for scope resolution. */
+    excludedTags: string[];
+    /** Excluded filename/path patterns. */
+    excludedPatterns: string[];
+
+    // ── v2: Quiet hours ─────────────────────────────────────────────
+    /** Proactive hints quiet hours (SDD §quiet-hours). */
+    proactiveHintsQuietHours: {
+        enabled: boolean;
+        start: string;
+        end: string;
+    };
+
+    // ── v2: Foreground cost (extends D018-D020) ────────────────────
+    /** Foreground per-hour cap (D020). */
+    foregroundPerHourCap: number;
+    /** Foreground per-day cap (D020). */
+    foregroundPerDayCap: number;
 }
 
 // ---------------------------------------------------------------------------
@@ -88,12 +138,33 @@ export interface PageletSettings {
 
 export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     enabled: true,
+    petVisible: true,
     reviewsFolder: ".pagelet",
     outputLanguage: "auto",
     ribbonPosition: "default",
     temperature: 0.2,
     maxInputTokens: 8000,
     maxOutputTokens: 2000,
+    // v2: Pet
+    petCorner: "bottom-right",
+    proactiveHints: false,
+    proactiveHintsCooldown: 30,
+    // v2: Preload
+    preloadEnabled: true,
+    preloadInterval: 30,
+    preloadPerHourCap: 2,
+    preloadPerDayCap: 20,
+    preloadTokenBudget: Object.freeze({ input: 4000, output: 1000 }),
+    // v2: Reviews
+    periodicSummaryScope: "7d",
+    excludedFolders: Object.freeze([]) as readonly string[] as string[],
+    excludedTags: Object.freeze([]) as readonly string[] as string[],
+    excludedPatterns: Object.freeze([]) as readonly string[] as string[],
+    // v2: Quiet hours
+    proactiveHintsQuietHours: Object.freeze({ enabled: false, start: "22:00", end: "08:00" }),
+    // v2: Foreground cost
+    foregroundPerHourCap: 10,
+    foregroundPerDayCap: 100,
 });
 
 /**
@@ -108,6 +179,13 @@ export const PAGELET_BOUNDS = Object.freeze({
     temperature: { min: 0, max: 0.5 },
     maxInputTokens: { min: 1, max: 32000 },
     maxOutputTokens: { min: 1, max: 4000 },
+    // v2
+    proactiveHintsCooldown: { min: 1, max: 120 },
+    preloadInterval: { min: 5, max: 240 },
+    preloadPerHourCap: { min: 1, max: 20 },
+    preloadPerDayCap: { min: 1, max: 200 },
+    foregroundPerHourCap: { min: 1, max: 60 },
+    foregroundPerDayCap: { min: 1, max: 500 },
 });
 
 /**
@@ -188,6 +266,7 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
     const raw = isRecord(loaded) ? loaded : {};
     return {
         enabled: typeof raw.enabled === "boolean" ? raw.enabled : PAGELET_DEFAULTS.enabled,
+        petVisible: typeof raw.petVisible === "boolean" ? raw.petVisible : PAGELET_DEFAULTS.petVisible,
         reviewsFolder: normalizeReviewsFolder(raw.reviewsFolder).value,
         outputLanguage: normalizeOutputLanguage(raw.outputLanguage),
         ribbonPosition: normalizeRibbonPosition(raw.ribbonPosition),
@@ -209,6 +288,26 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
             PAGELET_BOUNDS.maxOutputTokens.min,
             PAGELET_BOUNDS.maxOutputTokens.max,
         ),
+        // v2: Pet
+        petCorner: normalizePetCorner(raw.petCorner),
+        proactiveHints: typeof raw.proactiveHints === "boolean" ? raw.proactiveHints : PAGELET_DEFAULTS.proactiveHints,
+        proactiveHintsCooldown: normalizeBoundedInt(raw.proactiveHintsCooldown, PAGELET_DEFAULTS.proactiveHintsCooldown, PAGELET_BOUNDS.proactiveHintsCooldown.min, PAGELET_BOUNDS.proactiveHintsCooldown.max),
+        // v2: Preload
+        preloadEnabled: typeof raw.preloadEnabled === "boolean" ? raw.preloadEnabled : PAGELET_DEFAULTS.preloadEnabled,
+        preloadInterval: normalizeBoundedInt(raw.preloadInterval, PAGELET_DEFAULTS.preloadInterval, PAGELET_BOUNDS.preloadInterval.min, PAGELET_BOUNDS.preloadInterval.max),
+        preloadPerHourCap: normalizeBoundedInt(raw.preloadPerHourCap, PAGELET_DEFAULTS.preloadPerHourCap, PAGELET_BOUNDS.preloadPerHourCap.min, PAGELET_BOUNDS.preloadPerHourCap.max),
+        preloadPerDayCap: normalizeBoundedInt(raw.preloadPerDayCap, PAGELET_DEFAULTS.preloadPerDayCap, PAGELET_BOUNDS.preloadPerDayCap.min, PAGELET_BOUNDS.preloadPerDayCap.max),
+        preloadTokenBudget: normalizeTokenBudget(raw.preloadTokenBudget, PAGELET_DEFAULTS.preloadTokenBudget),
+        // v2: Reviews
+        periodicSummaryScope: normalizePeriodicSummaryScope(raw.periodicSummaryScope),
+        excludedFolders: normalizeStringArray(raw.excludedFolders),
+        excludedTags: normalizeStringArray(raw.excludedTags),
+        excludedPatterns: normalizeStringArray(raw.excludedPatterns),
+        // v2: Quiet hours
+        proactiveHintsQuietHours: normalizeQuietHours(raw.proactiveHintsQuietHours),
+        // v2: Foreground cost
+        foregroundPerHourCap: normalizeBoundedInt(raw.foregroundPerHourCap, PAGELET_DEFAULTS.foregroundPerHourCap, PAGELET_BOUNDS.foregroundPerHourCap.min, PAGELET_BOUNDS.foregroundPerHourCap.max),
+        foregroundPerDayCap: normalizeBoundedInt(raw.foregroundPerDayCap, PAGELET_DEFAULTS.foregroundPerDayCap, PAGELET_BOUNDS.foregroundPerDayCap.min, PAGELET_BOUNDS.foregroundPerDayCap.max),
     };
 }
 
@@ -378,6 +477,43 @@ function normalizeBoundedInt(value: unknown, fallback: number, min: number, max:
     if (clamped < min) return min;
     if (clamped > max) return max;
     return clamped;
+}
+
+function normalizePetCorner(value: unknown): PetCorner {
+    const valid: PetCorner[] = ["bottom-right", "bottom-left", "top-right", "top-left"];
+    if (typeof value === "string" && valid.includes(value as PetCorner)) return value as PetCorner;
+    return PAGELET_DEFAULTS.petCorner;
+}
+
+function normalizePeriodicSummaryScope(value: unknown): PageletPeriodicSummaryScope {
+    if (value === "3d" || value === "7d" || value === "14d") return value;
+    return PAGELET_DEFAULTS.periodicSummaryScope;
+}
+
+function normalizeTokenBudget(
+    value: unknown,
+    fallback: { input: number; output: number },
+): { input: number; output: number } {
+    if (!isRecord(value)) return { ...fallback };
+    return {
+        input: normalizeBoundedInt(value.input, fallback.input, 1000, 32000),
+        output: normalizeBoundedInt(value.output, fallback.output, 500, 4000),
+    };
+}
+
+function normalizeQuietHours(value: unknown): { enabled: boolean; start: string; end: string } {
+    const fallback = { enabled: false, start: "22:00", end: "08:00" };
+    if (!isRecord(value)) return fallback;
+    return {
+        enabled: typeof value.enabled === "boolean" ? value.enabled : fallback.enabled,
+        start: typeof value.start === "string" && /^\d{2}:\d{2}$/.test(value.start) ? value.start : fallback.start,
+        end: typeof value.end === "string" && /^\d{2}:\d{2}$/.test(value.end) ? value.end : fallback.end,
+    };
+}
+
+function normalizeStringArray(value: unknown): string[] {
+    if (!Array.isArray(value)) return [];
+    return value.filter((v): v is string => typeof v === "string" && v.trim().length > 0);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -639,6 +775,278 @@ export function renderPageletSection(
                         PAGELET_DEFAULTS.maxOutputTokens,
                         PAGELET_BOUNDS.maxOutputTokens.min,
                         PAGELET_BOUNDS.maxOutputTokens.max,
+                    );
+                })));
+
+    // ── Pet ────────────────────────────────────────────────────────────
+    parentEl.createEl("h3", { text: t("pagelet.settings.pet.heading") });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.petVisible.name"))
+        .setDesc(t("pagelet.settings.petVisible.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.petVisible)
+                .onChange((value) => saveOnChange(() => { settings.petVisible = value; })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.petCorner.name"))
+        .setDesc(t("pagelet.settings.petCorner.desc"))
+        .addDropdown((dropdown) => {
+            dropdown
+                .addOption("bottom-right", t("pagelet.settings.petCorner.option.bottom-right"))
+                .addOption("bottom-left", t("pagelet.settings.petCorner.option.bottom-left"))
+                .addOption("top-right", t("pagelet.settings.petCorner.option.top-right"))
+                .addOption("top-left", t("pagelet.settings.petCorner.option.top-left"))
+                .setValue(settings.petCorner)
+                .onChange((value) => saveOnChange(() => {
+                    settings.petCorner = normalizePetCorner(value);
+                }));
+        });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.proactiveHints.name"))
+        .setDesc(t("pagelet.settings.proactiveHints.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.proactiveHints)
+                .onChange((value) => saveOnChange(() => { settings.proactiveHints = value; })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.proactiveHintsCooldown.name"))
+        .setDesc(t("pagelet.settings.proactiveHintsCooldown.desc"))
+        .addDropdown((dropdown) => {
+            dropdown
+                .addOption("15", "15 min")
+                .addOption("30", "30 min")
+                .addOption("60", "1 hour")
+                .addOption("120", "2 hours")
+                .setValue(settings.proactiveHintsCooldown.toString())
+                .onChange((value) => saveOnChange(() => {
+                    settings.proactiveHintsCooldown = normalizeBoundedInt(
+                        value,
+                        PAGELET_DEFAULTS.proactiveHintsCooldown,
+                        PAGELET_BOUNDS.proactiveHintsCooldown.min,
+                        PAGELET_BOUNDS.proactiveHintsCooldown.max,
+                    );
+                }));
+        });
+
+    // ── Preload ────────────────────────────────────────────────────────
+    parentEl.createEl("h3", { text: t("pagelet.settings.preload.heading") });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.preloadEnabled.name"))
+        .setDesc(t("pagelet.settings.preloadEnabled.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.preloadEnabled)
+                .onChange((value) => saveOnChange(() => { settings.preloadEnabled = value; })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.preloadInterval.name"))
+        .setDesc(t("pagelet.settings.preloadInterval.desc"))
+        .addDropdown((dropdown) => {
+            dropdown
+                .addOption("5", "5 min")
+                .addOption("15", "15 min")
+                .addOption("30", "30 min")
+                .addOption("60", "1 hour")
+                .addOption("120", "2 hours")
+                .addOption("240", "4 hours")
+                .setValue(settings.preloadInterval.toString())
+                .onChange((value) => saveOnChange(() => {
+                    settings.preloadInterval = normalizeBoundedInt(
+                        value,
+                        PAGELET_DEFAULTS.preloadInterval,
+                        PAGELET_BOUNDS.preloadInterval.min,
+                        PAGELET_BOUNDS.preloadInterval.max,
+                    );
+                }));
+        });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.preloadPerHourCap.name"))
+        .setDesc(t("pagelet.settings.preloadPerHourCap.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder(PAGELET_DEFAULTS.preloadPerHourCap.toString())
+                .setValue(settings.preloadPerHourCap.toString())
+                .onChange((value) => saveOnChange(() => {
+                    settings.preloadPerHourCap = normalizeBoundedInt(
+                        value,
+                        PAGELET_DEFAULTS.preloadPerHourCap,
+                        PAGELET_BOUNDS.preloadPerHourCap.min,
+                        PAGELET_BOUNDS.preloadPerHourCap.max,
+                    );
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.preloadPerDayCap.name"))
+        .setDesc(t("pagelet.settings.preloadPerDayCap.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder(PAGELET_DEFAULTS.preloadPerDayCap.toString())
+                .setValue(settings.preloadPerDayCap.toString())
+                .onChange((value) => saveOnChange(() => {
+                    settings.preloadPerDayCap = normalizeBoundedInt(
+                        value,
+                        PAGELET_DEFAULTS.preloadPerDayCap,
+                        PAGELET_BOUNDS.preloadPerDayCap.min,
+                        PAGELET_BOUNDS.preloadPerDayCap.max,
+                    );
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.preloadTokenBudgetInput.name"))
+        .setDesc(t("pagelet.settings.preloadTokenBudgetInput.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("4000")
+                .setValue(settings.preloadTokenBudget.input.toString())
+                .onChange((value) => saveOnChange(() => {
+                    const parsed = parseInt(value, 10);
+                    if (Number.isFinite(parsed) && parsed >= 1000 && parsed <= 32000) {
+                        settings.preloadTokenBudget = { ...settings.preloadTokenBudget, input: parsed };
+                    }
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.preloadTokenBudgetOutput.name"))
+        .setDesc(t("pagelet.settings.preloadTokenBudgetOutput.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("1000")
+                .setValue(settings.preloadTokenBudget.output.toString())
+                .onChange((value) => saveOnChange(() => {
+                    const parsed = parseInt(value, 10);
+                    if (Number.isFinite(parsed) && parsed >= 500 && parsed <= 4000) {
+                        settings.preloadTokenBudget = { ...settings.preloadTokenBudget, output: parsed };
+                    }
+                })));
+
+    // ── Reviews ────────────────────────────────────────────────────────
+    parentEl.createEl("h3", { text: t("pagelet.settings.reviews.heading") });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.periodicSummaryScope.name"))
+        .setDesc(t("pagelet.settings.periodicSummaryScope.desc"))
+        .addDropdown((dropdown) => {
+            dropdown
+                .addOption("3d", t("pagelet.settings.periodicSummaryScope.option.3d"))
+                .addOption("7d", t("pagelet.settings.periodicSummaryScope.option.7d"))
+                .addOption("14d", t("pagelet.settings.periodicSummaryScope.option.14d"))
+                .setValue(settings.periodicSummaryScope)
+                .onChange((value) => saveOnChange(() => {
+                    settings.periodicSummaryScope = normalizePeriodicSummaryScope(value);
+                }));
+        });
+
+    // Exclusion rules (comma-separated text inputs)
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.excludedFolders.name"))
+        .setDesc(t("pagelet.settings.excludedFolders.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("private, drafts")
+                .setValue(settings.excludedFolders.join(", "))
+                .onChange((value) => saveOnChange(() => {
+                    settings.excludedFolders = value.split(",").map((s) => s.trim()).filter(Boolean);
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.excludedTags.name"))
+        .setDesc(t("pagelet.settings.excludedTags.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("#private, #no-ai, #no-review")
+                .setValue(settings.excludedTags.join(", "))
+                .onChange((value) => saveOnChange(() => {
+                    settings.excludedTags = value.split(",").map((s) => s.trim()).filter(Boolean);
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.excludedPatterns.name"))
+        .setDesc(t("pagelet.settings.excludedPatterns.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("draft, wip")
+                .setValue(settings.excludedPatterns.join(", "))
+                .onChange((value) => saveOnChange(() => {
+                    settings.excludedPatterns = value.split(",").map((s) => s.trim()).filter(Boolean);
+                })));
+
+    // ── Quiet Hours ───────────────────────────────────────────────────
+    parentEl.createEl("h3", { text: t("pagelet.settings.quietHours.heading") });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.quietHoursEnabled.name"))
+        .setDesc(t("pagelet.settings.quietHoursEnabled.desc"))
+        .addToggle((toggle) =>
+            toggle
+                .setValue(settings.proactiveHintsQuietHours.enabled)
+                .onChange((value) => saveOnChange(() => {
+                    settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, enabled: value };
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.quietHoursStart.name"))
+        .setDesc(t("pagelet.settings.quietHoursStart.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("22:00")
+                .setValue(settings.proactiveHintsQuietHours.start)
+                .onChange((value) => saveOnChange(() => {
+                    if (/^\d{2}:\d{2}$/.test(value)) {
+                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, start: value };
+                    }
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.quietHoursEnd.name"))
+        .setDesc(t("pagelet.settings.quietHoursEnd.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder("08:00")
+                .setValue(settings.proactiveHintsQuietHours.end)
+                .onChange((value) => saveOnChange(() => {
+                    if (/^\d{2}:\d{2}$/.test(value)) {
+                        settings.proactiveHintsQuietHours = { ...settings.proactiveHintsQuietHours, end: value };
+                    }
+                })));
+
+    // ── Foreground Cost ────────────────────────────────────────────────
+    parentEl.createEl("h3", { text: t("pagelet.settings.foreground.heading") });
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.foregroundPerHourCap.name"))
+        .setDesc(t("pagelet.settings.foregroundPerHourCap.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder(PAGELET_DEFAULTS.foregroundPerHourCap.toString())
+                .setValue(settings.foregroundPerHourCap.toString())
+                .onChange((value) => saveOnChange(() => {
+                    settings.foregroundPerHourCap = normalizeBoundedInt(
+                        value,
+                        PAGELET_DEFAULTS.foregroundPerHourCap,
+                        PAGELET_BOUNDS.foregroundPerHourCap.min,
+                        PAGELET_BOUNDS.foregroundPerHourCap.max,
+                    );
+                })));
+
+    factory.create(parentEl)
+        .setName(t("pagelet.settings.foregroundPerDayCap.name"))
+        .setDesc(t("pagelet.settings.foregroundPerDayCap.desc"))
+        .addText((text) =>
+            text
+                .setPlaceholder(PAGELET_DEFAULTS.foregroundPerDayCap.toString())
+                .setValue(settings.foregroundPerDayCap.toString())
+                .onChange((value) => saveOnChange(() => {
+                    settings.foregroundPerDayCap = normalizeBoundedInt(
+                        value,
+                        PAGELET_DEFAULTS.foregroundPerDayCap,
+                        PAGELET_BOUNDS.foregroundPerDayCap.min,
+                        PAGELET_BOUNDS.foregroundPerDayCap.max,
                     );
                 })));
 }
