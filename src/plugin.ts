@@ -50,6 +50,10 @@ import {
 import { getPageletUiLanguage, pageletT } from './locales/pagelet';
 import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
 import { PageletReviewOrchestrator, type PageletOrchestratorHost } from './pagelet/orchestrator';
+import { PageletV2Orchestrator, type PageletV2Host } from './pagelet/v2-orchestrator';
+import { registerPageletV2Commands } from './pagelet/commands';
+import type { AnalyzeCallback } from './pagelet/preload/types';
+import { buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -170,6 +174,7 @@ export class PluginManager extends Plugin {
     readonly pageletCostTracker = new PageletCostTracker();
     readonly pageletRateLimiter = new PageletRateLimiter();
     private pageletOrchestrator: PageletReviewOrchestrator | null = null;
+    private pageletV2Orchestrator: PageletV2Orchestrator | null = null;
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
      * was coerced to the default by the now-stricter validator. Consumed once
@@ -627,6 +632,75 @@ export class PluginManager extends Plugin {
             void PAGELET_OPEN_PANEL_COMMAND_ID;
             void PAGELET_REVIEW_CURRENT_COMMAND_ID;
             void PAGELET_FOCUS_LATEST_COMMAND_ID;
+
+            // ── Pagelet v2 wiring ────────────────────────────────
+            try {
+                const v2Host: PageletV2Host = {
+                    app: this.app,
+                    settings: this.settings,
+                    log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+                    registerEvent: (ref) => this.registerEvent(ref),
+                    saveSettings: () => this.saveSettings(),
+                    createPreloadAnalyzeCallback: (): AnalyzeCallback => {
+                        return async (files, config) => {
+                            const model = await this.createChatModel(0.3);
+                            if (!model) {
+                                throw new Error("No AI model configured");
+                            }
+                            const noteContents = await Promise.all(
+                                files.map(async (f) => ({
+                                    path: f.path,
+                                    content: await this.app.vault.cachedRead(f),
+                                })),
+                            );
+                            const prompt = buildPreloadPrompt(noteContents, config.tokenBudget);
+                            const result = await model.invoke(prompt.userPrompt);
+                            const text = typeof result === "string"
+                                ? result
+                                : (result as { content?: unknown }).content != null
+                                    ? String((result as { content: unknown }).content)
+                                    : String(result);
+                            const parsed = parseStructuredResponse(text);
+                            return {
+                                findings: parsed.findings.map((f) => ({
+                                    text: f.text,
+                                    sourceFile: f.sourceFile || files[0]?.path || "",
+                                    sourceTitle: f.sourceTitle || files[0]?.basename || "",
+                                })),
+                                analyzedFiles: files.map((f) => f.path),
+                                analyzedAt: Date.now(),
+                                tokenCost: { input: 0, output: 0 },
+                            };
+                        };
+                    },
+                    createGenerateCallback: () => {
+                        return async (prompt, noteContents, tokenBudget) => {
+                            const model = await this.createChatModel(0.3);
+                            if (!model) {
+                                throw new Error("No AI model configured");
+                            }
+                            const result = await model.invoke(prompt);
+                            const text = typeof result === "string"
+                                ? result
+                                : (result as { content?: unknown }).content != null
+                                    ? String((result as { content: unknown }).content)
+                                    : String(result);
+                            return { text, tokenCost: { input: 0, output: 0 } };
+                        };
+                    },
+                };
+
+                this.pageletV2Orchestrator = new PageletV2Orchestrator(v2Host);
+                this.pageletV2Orchestrator.initialize();
+
+                registerPageletV2Commands(
+                    this as unknown as Parameters<typeof registerPageletV2Commands>[0],
+                    this.pageletV2Orchestrator.getCommandCallbacks(),
+                    this.getPageletLocale(),
+                );
+            } catch (error) {
+                this.log("Failed to initialize Pagelet v2", error);
+            }
         }
     }
 
@@ -723,6 +797,14 @@ export class PluginManager extends Plugin {
         }
         this.chatHistoryStore = undefined;
         this.chatHistoryManager = undefined;
+        if (this.pageletV2Orchestrator) {
+            try {
+                this.pageletV2Orchestrator.destroy();
+            } catch (error) {
+                this.log("Failed to destroy Pagelet v2 orchestrator", error);
+            }
+            this.pageletV2Orchestrator = null;
+        }
         if (this.pageletRuntime) {
             try {
                 this.pageletRuntime.dispose();

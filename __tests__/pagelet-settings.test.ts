@@ -224,12 +224,28 @@ describe("mergePageletSettings", () => {
     it("preserves well-formed values", () => {
         const persisted: PageletSettings = {
             enabled: false,
+            petVisible: true,
             reviewsFolder: "reviews/pagelet",
             outputLanguage: "zh",
             ribbonPosition: "hidden",
             temperature: 0.4,
             maxInputTokens: 12000,
             maxOutputTokens: 3000,
+            petCorner: "bottom-right",
+            proactiveHints: false,
+            proactiveHintsCooldown: 30,
+            preloadEnabled: true,
+            preloadInterval: 30,
+            preloadPerHourCap: 2,
+            preloadPerDayCap: 20,
+            preloadTokenBudget: { input: 4000, output: 1000 },
+            periodicSummaryScope: "7d",
+            excludedFolders: [],
+            excludedTags: [],
+            excludedPatterns: [],
+            proactiveHintsQuietHours: { enabled: false, start: "22:00", end: "08:00" },
+            foregroundPerHourCap: 10,
+            foregroundPerDayCap: 100,
         };
         expect(mergePageletSettings(persisted)).toEqual(persisted);
     });
@@ -654,15 +670,15 @@ describe("normalizeReviewsFolder (settings-layer validator)", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderPageletSection", () => {
-    it("renders all 7 settings exactly once, in SDD §10.3 order", () => {
+    it("renders all settings (v1 + v2) exactly once", () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost();
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        // 1 master toggle + 3 General + 1 Model + 2 Limits = 7 rows total.
-        expect(rows).toHaveLength(7);
+        // 7 v1 + 11 v2 = 18 rows total.
+        expect(rows).toHaveLength(26);
         expect(rows.map((r) => r.name)).toEqual([
             "Enable Pagelet",
             "Reviews folder",
@@ -671,10 +687,35 @@ describe("renderPageletSection", () => {
             "Temperature",
             "Max input tokens",
             "Max output tokens",
+            // v2: Pet
+            "Show Pet",
+            "Pet corner",
+            "Proactive hints",
+            "Hint cooldown (minutes)",
+            // v2: Preload
+            "Enable preload",
+            "Preload interval (minutes)",
+            "Per-hour preload cap",
+            "Per-day preload cap",
+            "Preload input token budget",
+            "Preload output token budget",
+            // v2: Reviews
+            "Periodic summary scope",
+            // v2: Exclusions
+            "Excluded folders",
+            "Excluded tags",
+            "Excluded patterns",
+            // v2: Quiet Hours
+            "Enable quiet hours",
+            "Start time",
+            "End time",
+            // v2: Foreground Cost
+            "Per-hour foreground cap",
+            "Per-day foreground cap",
         ]);
     });
 
-    it("emits the section heading, subtitle, beta callout, 3 group headings, and the reviewsFolder error sibling", () => {
+    it("emits the section heading, subtitle, beta callout, group headings (v1+v2), and the reviewsFolder error sibling", () => {
         const parent = makeStubNode("div");
         const { factory } = makeStubFactory();
         const { host } = makeHost();
@@ -687,6 +728,7 @@ describe("renderPageletSection", () => {
         const headings = parent.children.filter((c) => c.tagName.startsWith("h") || c.tagName === "p" || c.tagName === "div");
         expect(headings.map((h) => h.tagName)).toEqual([
             "h2", "p", "div", "h3", "div", "h3", "h3",
+            "h3", "h3", "h3", "h3", "h3",
         ]);
         expect(headings[0].text).toBe("Pagelet");
         // The beta callout must be visible from the moment Pagelet ships
