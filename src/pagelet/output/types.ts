@@ -1,16 +1,16 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — output module types.
+ * Pagelet — output module types.
  *
  * Defines the data shapes for the Periodic Summary (Scenario 4) pipeline:
  *   PeriodicSummaryInput  -> ReviewNoteGenerator -> GeneratedReviewNote
- *   GeneratedReviewNote   -> ReviewNoteWriter    -> WriteResult
+ *   GeneratedReviewNote   -> framework writer    -> WriteResult
  *
  * Design references:
- *  - `docs/pagelet-v2-product-design.md` §Review Note Output (D035)
- *  - `docs/pagelet-v2-sdd-guide.md` §8 (Review Note Output)
- *  - `docs/pagelet-v2-product-design.md` §Periodic Summary Output
+ *  - `docs/pagelet-product-design.md` §Review Note Output
+ *  - `docs/pagelet-sdd-guide.md` §Review Note Output
+ *  - `docs/pagelet-product-design.md` §Periodic Summary Output
  */
 
 import type { TFile } from "obsidian";

@@ -1,19 +1,18 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- research module types.
+ * Pagelet -- research module types.
  *
  * Defines the data shapes for the "Research this finding" action that
  * prepares a web-research prompt and routes it to the Chat view.
  *
  * The research flow is a prompt-preparation feature, not a full search
- * engine. It mirrors the v1 research prompt pattern from
- * `orchestrator.preparePageletResearchPrompt` but operates on v2
- * Panel findings instead of v1 PageletSuggestion objects.
+ * engine. It mirrors the research prompt pattern but operates on
+ * Panel findings instead of PageletSuggestion objects.
  *
  * Design references:
- *  - `docs/pagelet-v2-product-design.md` -- WebSearch off until clicked
- *  - `src/pagelet/orchestrator.ts` -- v1 research prompt pattern
+ *  - `docs/pagelet-product-design.md` -- WebSearch off until clicked
+ *  - `src/pagelet/orchestrator.ts` -- research prompt pattern
  *  - `src/locales/pagelet/{en,zh}.json` -- `pagelet.research.prompt.*` keys
  */
 

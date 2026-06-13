@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — view-type gating (Track B · B5 / R1).
+ * Pagelet — view-type gating (Track B · B5 / R1).
  *
  * Spec source: `docs/review-assistant-sdd.md` §6.1 R1.
  *
@@ -41,7 +41,7 @@ export const PAGELET_ELIGIBLE_VIEW_TYPE = "markdown" as const;
  * We narrow the parameter so callers don't have to import the heavy
  * `MarkdownView` type just to ask "should Pagelet fire here?".
  */
-export interface PageletViewTypeProbe {
+export interface PageletObsidianViewProbe {
     getViewType(): string;
 }
 
@@ -54,13 +54,13 @@ export interface PageletViewTypeProbe {
  *  - missing `getViewType` accessor → false (covers stripped mocks).
  *  - non-string return → false (covers third-party views that misbehave).
  */
-export function isPageletEligibleView(view: PageletViewTypeProbe | null | undefined): boolean {
+export function isPageletEligibleView(view: PageletObsidianViewProbe | null | undefined): boolean {
     if (view == null) return false;
     const probe = view as { getViewType?: unknown };
     if (typeof probe.getViewType !== "function") return false;
     let viewType: unknown;
     try {
-        viewType = (view as PageletViewTypeProbe).getViewType();
+        viewType = (view as PageletObsidianViewProbe).getViewType();
     } catch {
         // A third-party view extension's getViewType() should never throw,
         // but our gating decision must stay safe even when it does.
@@ -99,6 +99,6 @@ export function getActiveMarkdownView(
     markdownViewCtor: new (...args: unknown[]) => MarkdownView,
 ): MarkdownView | null {
     const view = workspace.getActiveViewOfType(markdownViewCtor) ?? null;
-    if (!isPageletEligibleView(view as unknown as PageletViewTypeProbe | null)) return null;
+    if (!isPageletEligibleView(view as unknown as PageletObsidianViewProbe | null)) return null;
     return view;
 }

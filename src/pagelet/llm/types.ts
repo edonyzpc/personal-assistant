@@ -1,10 +1,10 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — LLM structured output types.
+ * Pagelet — LLM structured output types.
  *
  * Defines the cross-scenario contract between prompt builders, the LLM
- * response parser, and the callbacks wired into the v2 orchestrator.
+ * response parser, and the callbacks wired into the Pagelet orchestrator.
  */
 
 // ---------------------------------------------------------------------------

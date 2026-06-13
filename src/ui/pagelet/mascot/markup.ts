@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — Mascot markup builder (pure).
+ * Pagelet — Mascot markup builder (pure).
  *
  * Spec source: `docs/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html` §①.
  *
@@ -35,7 +35,7 @@ import type { MascotState, MascotTranslator } from "./types";
 
 // ---------------------------------------------------------------------------
 // Static design tokens (no defaults dynamic at module load — D012 says the
-// theme stays consistent across light/dark for v1).
+// theme stays consistent across light/dark modes).
 // ---------------------------------------------------------------------------
 
 /**

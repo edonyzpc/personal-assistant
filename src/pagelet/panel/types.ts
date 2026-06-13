@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- Panel component types.
+ * Pagelet -- Panel component types.
  *
  * The Panel is a side panel (~380px wide) for deeper exploration.
  * It supports scenario-adaptive layouts that change based on which
@@ -33,7 +33,8 @@ export interface PanelCallbacks {
     onExpandToTab: () => void;
     onClose: () => void;
     onSourceClick: (sourceLink: string) => void;
-    onSaveAsReviewNote: (findings: PanelFinding[]) => void;
+    onSaveAsReviewNote: (findings: PanelFinding[]) => void | Promise<void>;
+    onRunReview?: () => void | Promise<void>;
     onToggleHints?: () => void;
 }
 

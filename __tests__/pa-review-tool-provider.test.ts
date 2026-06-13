@@ -199,8 +199,8 @@ describe("PaReviewToolProvider — capability surface", () => {
         expect(cap.requiresConfirmation).toBe(true);
         expect(cap.executionMode).toBe("sequential");
         expect(cap.failureBehavior).toBe("recoverable");
-        // local-filesystem-write is the new permission tier introduced for
-        // Write Action Framework v1; chat-mode runtimes reject it.
+        // local-filesystem-write is the permission tier for confirmed local
+        // create-file writes; chat-mode runtimes reject it.
         expect(cap.permission).toBe("local-filesystem-write");
         expect(cap.actionFamily).toBe("create-file");
         expect(cap.targetCategory).toBe("pagelet-review-note");

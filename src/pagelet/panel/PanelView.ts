@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- Panel DOM lifecycle manager.
+ * Pagelet -- Panel DOM lifecycle manager.
  *
  * The Panel is a side panel (~380px wide) that slides in from the right.
  * It provides scenario-adaptive layouts for deeper exploration:
@@ -162,6 +162,16 @@ const PANEL_CSS = /* css */ `
 
 .pa-pagelet-panel-save-btn:hover {
     filter: brightness(1.1);
+}
+
+.pa-pagelet-panel-save-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.65;
+    filter: none;
+}
+
+.pa-pagelet-panel-save-btn[aria-busy="true"] {
+    cursor: wait;
 }
 
 /* ---- Timeline layout ---- */
@@ -382,18 +392,16 @@ body.is-mobile .pa-pagelet-panel {
     border-left: none;
     border-radius: 0;
     transform: translateY(100%);
+    transition: none;
 }
 
 body.is-mobile .pa-pagelet-panel[data-state="visible"] {
     transform: translateY(0);
 }
 
-body.is-mobile .pa-pagelet-panel-footer {
-    display: none;
-}
-
-/* Hide expand-to-tab in header on mobile (Tab not available) */
-body.is-mobile .pa-pagelet-panel-header-actions .pa-pagelet-panel-icon-btn:first-child {
+/* Hide expand-to-tab on mobile (Tab not available) while keeping Save reachable. */
+body.is-mobile .pa-pagelet-panel-header-expand-btn,
+body.is-mobile .pa-pagelet-panel-expand-btn {
     display: none;
 }
 
@@ -402,6 +410,17 @@ body.is-mobile .pa-pagelet-panel-icon-btn {
     width: 44px;
     height: 44px;
     font-size: 18px;
+}
+
+body.is-mobile .pa-pagelet-panel-save-btn {
+    min-height: 44px;
+    padding: 10px 16px;
+    font-size: 14px;
+    margin-bottom: 0;
+}
+
+body.is-mobile .pa-pagelet-panel-footer {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
 }
 
 body.is-mobile .pa-pagelet-panel-timeline-action-btn {
@@ -423,7 +442,13 @@ body.is-mobile .pa-pagelet-panel-timeline-action-btn {
 
 /** Inject Panel CSS into `<head>` (idempotent). */
 function injectStyles(): void {
-    if (document.getElementById(PANEL_CSS_ID)) return;
+    const existing = document.getElementById(PANEL_CSS_ID);
+    if (existing) {
+        if (existing.textContent !== PANEL_CSS) {
+            existing.textContent = PANEL_CSS;
+        }
+        return;
+    }
     const style = document.createElement("style");
     style.id = PANEL_CSS_ID;
     style.textContent = PANEL_CSS;
@@ -463,9 +488,11 @@ export class PanelView {
     private rootEl: HTMLDivElement | null = null;
     private bodyEl: HTMLDivElement | null = null;
     private titleEl: HTMLHeadingElement | null = null;
+    private saveBtnEl: HTMLButtonElement | null = null;
     private containerEl: HTMLElement | null = null;
     private _isOpen = false;
     private currentLayout: PanelLayoutType | null = null;
+    private primaryButtonMode: "save" | "run" = "save";
 
     get currentLayoutType(): PanelLayoutType | null {
         return this.currentLayout;
@@ -493,10 +520,16 @@ export class PanelView {
         this.handleKeydown = this.onKeydown.bind(this);
         this.handleTouchStart = (e: TouchEvent) => {
             if (!isMobile()) return;
+            const target = e.target instanceof Element ? e.target : null;
+            if (!target?.closest(".pa-pagelet-panel-header")) return;
             this.touchStartY = e.touches[0].clientY;
         };
         this.handleTouchMove = (e: TouchEvent) => {
             if (this.touchStartY === null) return;
+            if ((this.bodyEl?.scrollTop ?? 0) > 0) {
+                this.touchStartY = null;
+                return;
+            }
             const dy = e.touches[0].clientY - this.touchStartY;
             if (dy > 80) {
                 this.close();
@@ -554,8 +587,14 @@ export class PanelView {
 
         this.currentLayout = layoutType;
         this.currentFindings = content;
+        this.updatePrimaryButtonState(layoutType, layoutType === "summary" || content.length > 0);
         this.titleEl.textContent =
             pageletT(LAYOUT_TITLE_KEYS[layoutType], this.locale) || layoutType;
+
+        if (layoutType !== "summary") {
+            this.renderComponent?.unload();
+            this.renderComponent = null;
+        }
 
         // Render layout
         switch (layoutType) {
@@ -594,10 +633,14 @@ export class PanelView {
         void this.rootEl.offsetWidth;
         // Defer to next frame so the slide-in transition runs.
         const root = this.rootEl;
-        requestAnimationFrame(() => {
-            if (root.isConnected) root.setAttribute("data-state", "visible");
-        });
         this._isOpen = true;
+        const show = () => {
+            if (this._isOpen && this.rootEl === root && root.isConnected) {
+                root.setAttribute("data-state", "visible");
+            }
+        };
+        requestAnimationFrame(show);
+        setTimeout(show, 0);
         this.attachGlobalListeners();
     }
 
@@ -608,6 +651,8 @@ export class PanelView {
         root.setAttribute("data-state", "hidden");
         this._isOpen = false;
         this.detachGlobalListeners();
+        this.renderComponent?.unload();
+        this.renderComponent = null;
         this.scheduleUnmount(root);
         this.options.callbacks.onClose();
     }
@@ -630,6 +675,7 @@ export class PanelView {
         document.getElementById(PANEL_CSS_ID)?.remove();
         this.bodyEl = null;
         this.titleEl = null;
+        this.saveBtnEl = null;
         this.containerEl = null;
         this._isOpen = false;
         this.currentLayout = null;
@@ -705,16 +751,28 @@ export class PanelView {
         hintsBtn.className = "pa-pagelet-panel-icon-btn";
         hintsBtn.setAttribute("title",
             pageletT("pagelet.panel.hintsToggle.off", this.locale));
+        hintsBtn.setAttribute("aria-label",
+            pageletT("pagelet.panel.hintsToggle.off", this.locale));
+        hintsBtn.setAttribute("aria-pressed", "false");
         hintsBtn.textContent = "\u{1F515}"; // bell with slash
         hintsBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.options.callbacks.onToggleHints?.();
+            const pressed = hintsBtn.getAttribute("aria-pressed") === "true";
+            const nextPressed = !pressed;
+            hintsBtn.setAttribute("aria-pressed", String(nextPressed));
+            const label = pageletT(
+                nextPressed ? "pagelet.panel.hintsToggle.on" : "pagelet.panel.hintsToggle.off",
+                this.locale,
+            );
+            hintsBtn.setAttribute("title", label);
+            hintsBtn.setAttribute("aria-label", label);
         });
         actions.appendChild(hintsBtn);
 
         // Expand to tab button
         const expandBtn = document.createElement("button");
-        expandBtn.className = "pa-pagelet-panel-icon-btn";
+        expandBtn.className = "pa-pagelet-panel-icon-btn pa-pagelet-panel-header-expand-btn";
         expandBtn.setAttribute("title",
             pageletT("pagelet.panel.expand", this.locale));
         expandBtn.setAttribute("aria-label",
@@ -757,10 +815,41 @@ export class PanelView {
         const saveBtn = document.createElement("button");
         saveBtn.className = "pa-pagelet-panel-save-btn";
         saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
-        saveBtn.addEventListener("click", (e) => {
+        saveBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
-            this.options.callbacks.onSaveAsReviewNote(this.currentFindings);
+            if (this.primaryButtonMode === "run") {
+                if (!this.options.callbacks.onRunReview) return;
+                saveBtn.disabled = true;
+                saveBtn.setAttribute("aria-busy", "true");
+                const previousLabel = saveBtn.textContent ?? "";
+                saveBtn.textContent = pageletT("pagelet.panel.status.thinking", this.locale);
+                try {
+                    await this.options.callbacks.onRunReview();
+                } finally {
+                    if (this.saveBtnEl === saveBtn && this.primaryButtonMode === "run") {
+                        saveBtn.disabled = false;
+                        saveBtn.removeAttribute("aria-busy");
+                        saveBtn.textContent = previousLabel;
+                    }
+                }
+                return;
+            }
+            if (saveBtn.disabled) return;
+            saveBtn.disabled = true;
+            saveBtn.setAttribute("aria-busy", "true");
+            const previousLabel = saveBtn.textContent ?? "";
+            saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.locale);
+            try {
+                await this.options.callbacks.onSaveAsReviewNote(this.currentFindings);
+            } finally {
+                if (this.saveBtnEl === saveBtn && this.primaryButtonMode === "save") {
+                    saveBtn.disabled = false;
+                    saveBtn.removeAttribute("aria-busy");
+                    saveBtn.textContent = previousLabel;
+                }
+            }
         });
+        this.saveBtnEl = saveBtn;
         footer.appendChild(saveBtn);
 
         const expandTabBtn = document.createElement("button");
@@ -797,6 +886,25 @@ export class PanelView {
             this.rootEl.removeEventListener("touchmove", this.handleTouchMove);
             this.rootEl.removeEventListener("touchend", this.handleTouchEnd);
         }
+    }
+
+    private updatePrimaryButtonState(layoutType: PanelLayoutType, saveEnabled: boolean): void {
+        if (!this.saveBtnEl) return;
+        const canRunReview = !saveEnabled && layoutType === "review" && Boolean(this.options.callbacks.onRunReview);
+        this.primaryButtonMode = canRunReview ? "run" : "save";
+
+        if (canRunReview) {
+            this.saveBtnEl.disabled = false;
+            this.saveBtnEl.removeAttribute("aria-busy");
+            this.saveBtnEl.setAttribute("aria-disabled", "false");
+            this.saveBtnEl.textContent = pageletT("pagelet.panel.action.reviewCurrent", this.locale);
+            return;
+        }
+
+        this.saveBtnEl.disabled = !saveEnabled;
+        this.saveBtnEl.removeAttribute("aria-busy");
+        this.saveBtnEl.setAttribute("aria-disabled", String(!saveEnabled));
+        this.saveBtnEl.textContent = pageletT("pagelet.panel.save", this.locale);
     }
 
     private onKeydown(e: KeyboardEvent): void {

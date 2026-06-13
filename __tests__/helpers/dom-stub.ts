@@ -3,8 +3,7 @@
 /**
  * Shared DOM stub for unit tests that need a lightweight fake DOM tree.
  *
- * Unifies the FakeElement class (pagelet-view.test.ts) and StubNode
- * interface (pagelet-suggestion-card.test.ts) into a single superset
+ * Unifies the lightweight DOM shapes used by Pagelet UI unit tests into a single superset
  * class that satisfies both HTMLElement-like assertions and the
  * SuggestionCardDomNode contract.
  */

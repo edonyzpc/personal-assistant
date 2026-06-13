@@ -1,15 +1,15 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — scenario-specific prompt builders.
+ * Pagelet — scenario-specific prompt builders.
  *
  * Each builder returns a {@link PromptBuildResult} with system prompt, user
  * prompt, and max output tokens. Note content is truncated to fit the
  * provided token budget using a chars/4 approximation.
  *
  * Design references:
- *  - `docs/pagelet-v2-product-design.md` §Scenario descriptions
- *  - Reuses language-matching and JSON-output patterns from v1
+ *  - `docs/pagelet-product-design.md` §Scenario descriptions
+ *  - Reuses language-matching and JSON-output patterns from structured review
  *    `pa-review-schemas.ts`
  */
 
@@ -42,7 +42,7 @@ function distributeNotesBudget(
 ): Array<{ path: string; content: string }> {
     if (noteContents.length === 0) return [];
     const available = Math.max(0, totalInputBudget - systemPromptOverhead);
-    const perNote = Math.max(100, Math.floor(available / noteContents.length));
+    const perNote = Math.max(1, Math.floor(available / noteContents.length));
     return noteContents.map((n) => ({
         path: n.path,
         content: truncateToTokenBudget(n.content, perNote),
@@ -98,8 +98,8 @@ const SYSTEM_PROMPT_BASE = [
 // ---------------------------------------------------------------------------
 
 /**
- * **Preload** (fast/cheap): produce 2-3 one-sentence insights from recently
- * modified notes. Designed for background analysis with minimal token usage.
+ * **Background preparation** (fast/cheap): produce 2-3 one-sentence insights
+ * from recently modified notes with minimal token usage.
  */
 export function buildPreloadPrompt(
     noteContents: Array<{ path: string; content: string }>,
@@ -111,7 +111,7 @@ export function buildPreloadPrompt(
     const systemPrompt = [
         SYSTEM_PROMPT_BASE,
         "",
-        "SCENARIO: Background preload analysis.",
+        "SCENARIO: Background review preparation.",
         "- Produce exactly 2-3 one-sentence insights. Be concise.",
         "- Focus on the most interesting or actionable observations.",
         "- Do NOT produce more than 3 findings.",
@@ -132,7 +132,7 @@ export function buildPreloadPrompt(
 
 /**
  * **Quick Review**: review notes and produce categorized findings.
- * More thorough than preload but still bounded.
+ * More thorough than background preparation but still bounded.
  */
 export function buildQuickReviewPrompt(
     noteContents: Array<{ path: string; content: string }>,
@@ -250,7 +250,7 @@ export function buildDiscoveryPrompt(
 
 /**
  * **Periodic Summary**: generate a structured summary of notes from a
- * given time range. Similar to the v1 ReviewNoteGenerator prompt but
+ * given time range. Similar to the structured review generator prompt but
  * produces structured JSON output.
  */
 export function buildPeriodicSummaryPrompt(

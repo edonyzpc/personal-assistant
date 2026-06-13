@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — SuggestionCard DOM renderer.
+ * Pagelet — SuggestionCard DOM renderer.
  *
  * Same architecture as `mascot/dom-renderer.ts`:
  *  - Pure markup builder upstream (`markup.ts`).

@@ -1,9 +1,9 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- shared overlay mount root.
+ * Pagelet -- shared overlay mount root.
  *
- * Pagelet v2 surfaces (Bubble, Panel, Tab) are progressive-disclosure
+ * Pagelet surfaces (Bubble, Panel, Tab) are progressive-disclosure
  * layers within the workspace (D037), not chrome-level overlays. They
  * MUST mount under Obsidian's workspace container rather than directly
  * on `document.body`, so they never cover the OS title bar / window

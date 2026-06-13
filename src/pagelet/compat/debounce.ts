@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — debounce + idempotency (Track B · B5 / R2).
+ * Pagelet — debounce + idempotency (Track B · B5 / R2).
  *
  * Spec source: `docs/review-assistant-sdd.md` §6.1 R2.
  *

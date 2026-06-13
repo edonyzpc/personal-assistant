@@ -4,6 +4,7 @@ import { describe, expect, it } from "@jest/globals";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
 import type { PetEvent } from "../src/pagelet/pet/PetStateMachine";
+import { getPetAriaLabel } from "../src/pagelet/pet/PetView";
 
 describe("PetStateMachine", () => {
     describe("initial state", () => {
@@ -180,5 +181,15 @@ describe("PetStateMachine", () => {
             sm.transition("note-activity"); // idle + note-activity -> idle (no change)
             expect(transitions).toEqual([]);
         });
+    });
+});
+
+describe("PetView locale labels", () => {
+    it("resolves English aria-label when the Pagelet UI locale is en", () => {
+        expect(getPetAriaLabel("en")).toBe("Pagelet assistant");
+    });
+
+    it("resolves Chinese aria-label when the Pagelet UI locale is zh", () => {
+        expect(getPetAriaLabel("zh")).toBe("拾页助手");
     });
 });

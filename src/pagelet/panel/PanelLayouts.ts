@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- Panel layout renderers.
+ * Pagelet -- Panel layout renderers.
  *
  * Each function populates a container element with layout-specific
  * DOM content. Layout types:
@@ -55,6 +55,12 @@ export function renderReviewTimeline(
     container.innerHTML = "";
 
     const timeline = el("div", "pa-pagelet-panel-timeline");
+    if (findings.length === 0) {
+        timeline.appendChild(el("div", "pa-pagelet-panel-timeline-section-label",
+            pageletT("pagelet.panel.empty", locale)));
+        container.appendChild(timeline);
+        return;
+    }
 
     // Group findings by date label (uses timestamp or falls back to index)
     const groups = groupByDate(findings);

@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — Bubble content builders.
+ * Pagelet — Bubble content builders.
  *
  * Each function builds a `BubbleContent` descriptor for a specific
  * scenario. The content is pure data — no DOM — so it is trivially
@@ -68,7 +68,7 @@ export function buildWritingAssistContent(
         {
             label: pageletT("pagelet.bubble.viewDetails", locale),
             primary: true,
-            callback: () => callbacks.onExpandPanel("writing"),
+            callback: () => callbacks.onExpandPanel("current"),
         },
         {
             label: pageletT("pagelet.bubble.ignore", locale),

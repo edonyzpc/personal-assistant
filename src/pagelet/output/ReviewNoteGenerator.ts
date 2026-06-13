@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — ReviewNoteGenerator (Scenario 4: Periodic Summary).
+ * Pagelet — ReviewNoteGenerator (Scenario 4: Periodic Summary).
  *
  * Generates a complete review note from scope-resolved files. The generation
  * pipeline is:
@@ -11,16 +11,17 @@
  *   4. Parse the AI response and assemble frontmatter + body
  *
  * Design references:
- *  - `docs/pagelet-v2-product-design.md` §Periodic Summary Output (D035)
- *  - `docs/pagelet-v2-sdd-guide.md` §8 (Review Note Output)
- *  - `docs/pagelet-v2-product-design.md` §File Naming and Location
- *  - `src/pagelet/pa-review-file-io.ts` — v1 patterns (path resolution,
+ *  - `docs/pagelet-product-design.md` §Periodic Summary Output
+ *  - `docs/pagelet-sdd-guide.md` §Review Note Output
+ *  - `docs/pagelet-product-design.md` §File Naming and Location
+ *  - `src/pagelet/pa-review-file-io.ts` — structured review patterns (path resolution,
  *    frontmatter serialization, date formatting)
  *
  * What this file does NOT do:
  *  - Construct or manage the LLM model — the caller injects a
  *    `GenerateCallback` so the output module stays decoupled.
- *  - Write to the vault — that is `ReviewNoteWriter`'s responsibility.
+ *  - Write to the vault — the Pagelet host routes generated notes through
+ *    the Write Action Framework.
  *  - Enforce cost / rate limits — those gates run upstream before the
  *    caller invokes `generate()`.
  */
@@ -46,7 +47,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 /**
- * Filename infix for periodic summary notes. Distinct from v1's per-note
+ * Filename infix for periodic summary notes. Distinct from structured review's per-note
  * `pagelet-review` infix (SDD §8).
  */
 const PERIODIC_SUMMARY_FILENAME_INFIXES: Record<string, string> = {
@@ -96,10 +97,11 @@ export class ReviewNoteGenerator {
         }
 
         const date = dateOverride ?? new Date();
-        const filesToRead = input.files.slice(0, MAX_FILES_FOR_SUMMARY);
+        const maxFilesByBudget = Math.max(1, Math.floor(Math.max(1, tokenBudget.input) / 100));
+        const filesToRead = input.files.slice(0, Math.min(MAX_FILES_FOR_SUMMARY, maxFilesByBudget));
 
         // 1. Read file contents (capped to avoid unbounded memory usage)
-        const noteContents = await this.readFileContents(filesToRead);
+        const noteContents = await this.readFileContents(filesToRead, tokenBudget.input);
 
         // 2. Build prompt
         const sources = noteContents.map((n) => `[[${stripExtension(n.path)}]]`);
@@ -148,12 +150,20 @@ export class ReviewNoteGenerator {
      */
     private async readFileContents(
         files: TFile[],
+        inputTokenBudget: number,
     ): Promise<Array<{ path: string; content: string }>> {
         const results: Array<{ path: string; content: string }> = [];
+        const totalCharBudget = Math.max(1_000, Math.max(1, inputTokenBudget) * 4);
+        const perFileCharBudget = Math.max(1_000, Math.floor(totalCharBudget / Math.max(1, files.length)));
         for (const file of files) {
             try {
                 const content = await this.app.vault.cachedRead(file);
-                results.push({ path: file.path, content });
+                results.push({
+                    path: file.path,
+                    content: content.length > perFileCharBudget
+                        ? `${content.slice(0, perFileCharBudget)}\n[...truncated]`
+                        : content,
+                });
             } catch {
                 // File may have been deleted or renamed between scope
                 // resolution and generation — skip silently. The AI prompt
@@ -242,8 +252,8 @@ interface PeriodicSummaryFrontmatterInput {
 /**
  * Hand-rolled YAML frontmatter for periodic summary notes.
  *
- * The shape is intentionally different from v1's `PageletReviewMetadata` —
- * periodic summaries have `range` and `sources` array fields that the v1
+ * The shape is intentionally different from structured review's `PageletReviewMetadata` —
+ * periodic summaries have `range` and `sources` array fields that the per-note
  * schema does not support. A shared schema may emerge in a future version;
  * for now, keeping them separate avoids coupling the two pipelines.
  *

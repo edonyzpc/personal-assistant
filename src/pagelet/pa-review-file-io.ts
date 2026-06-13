@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — file IO + frontmatter (Track B · B6).
+ * Pagelet — file IO + frontmatter (Track B · B6).
  *
  * Spec source:
  *  - `docs/review-assistant-sdd.md` §5.1 (directory layout)
@@ -221,7 +221,7 @@ export interface WriteReviewNoteInput {
 export interface WriteReviewNoteResult {
     /** Final vault-relative path the note was written to. */
     path: string;
-    /** True for the new-file path (always true in v1; reserved for future overwrites). */
+    /** True for the new-file path (always true for new-file writes; reserved for future overwrites). */
     created: boolean;
     /** The frontmatter envelope that was serialized (returned for telemetry / tests). */
     metadata: PageletReviewMetadata;

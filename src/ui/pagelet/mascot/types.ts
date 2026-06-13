@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — Mascot UI types.
+ * Pagelet — Mascot UI types.
  *
  * Spec source: `docs/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html`.
  *
@@ -44,7 +44,7 @@ export const MASCOT_STATES: readonly MascotState[] = [
  * Options the public `setMascotState(state, options?)` API accepts.
  * Per the B2 task brief: support an abort signal and an optional
  * message override. Anything more elaborate (icon swap, custom
- * animation) belongs in a future iteration, not v1.
+ * animation) belongs in a future iteration, not part of the current baseline.
  */
 export interface MascotSetStateOptions {
     /**

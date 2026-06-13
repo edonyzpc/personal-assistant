@@ -1,12 +1,11 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- ResearchManager.
+ * Pagelet -- ResearchManager.
  *
  * Manages "Research this finding" requests by building a research prompt
- * and routing it to the existing Chat (LLM) view. This mirrors the v1
- * pattern in `orchestrator.preparePageletResearchPrompt` but adapted for
- * the v2 Panel finding model.
+ * and routing it to the existing Chat (LLM) view. This mirrors the structured
+ * review prompt pattern but is adapted for the Panel finding model.
  *
  * The research flow:
  *  1. Build a research prompt from the finding text and optional context.
@@ -20,14 +19,15 @@
  * design rule: "WebSearch off until clicked."
  *
  * Design references:
- *  - `src/pagelet/orchestrator.ts` -- v1 `preparePageletResearchPrompt`
+ *  - `src/pagelet/orchestrator.ts` -- research prompt pattern
  *  - `src/locales/pagelet/{en,zh}.json` -- `pagelet.research.prompt.*`
- *  - `docs/pagelet-v2-product-design.md` -- Privacy and Trust, WebSearch
+ *  - `docs/pagelet-product-design.md` -- Privacy and Trust, WebSearch
  */
 
 import { Notice } from "obsidian";
 import type { App } from "obsidian";
 
+import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
 import type { ResearchCallbacks, ResearchRequest } from "./types";
 
 /** The Obsidian view type registered by PA's Chat view. */
@@ -38,6 +38,10 @@ export class ResearchManager {
         private readonly app: App,
         private readonly callbacks: ResearchCallbacks,
     ) {}
+
+    private t(key: string, params?: Readonly<Record<string, string | number>>): string {
+        return pageletT(key, getPageletUiLanguage(), params);
+    }
 
     // ======================================================================
     // Public API
@@ -51,7 +55,7 @@ export class ResearchManager {
      * This method never throws -- errors are routed to the callback.
      */
     async research(request: ResearchRequest): Promise<void> {
-        new Notice("Researching...", 3000);
+        new Notice(this.t("pagelet.research.status.researching"), 3000);
 
         const prompt = this.buildResearchPrompt(request);
 
@@ -60,9 +64,9 @@ export class ResearchManager {
             if (chatLeaf) {
                 const populated = this.populateChatWithPrompt(chatLeaf, prompt);
                 if (populated) {
-                    new Notice("Research prompt prepared in Chat", 4000);
+                    new Notice(this.t("pagelet.panel.status.researchReady"), 4000);
                 } else {
-                    new Notice("Chat already has text; prompt not replaced", 4000);
+                    new Notice(this.t("pagelet.panel.status.researchBlocked"), 4000);
                 }
 
                 // Report success -- the actual research happens when the
@@ -73,7 +77,7 @@ export class ResearchManager {
                     timestamp: Date.now(),
                 });
             } else {
-                new Notice("Open the Chat panel to research this finding", 4000);
+                new Notice(this.t("pagelet.research.status.openChat"), 4000);
             }
         } catch (error) {
             this.callbacks.onResearchError(
@@ -87,7 +91,7 @@ export class ResearchManager {
     // ======================================================================
 
     /**
-     * Build a research prompt following the v1 pattern from
+     * Build a research prompt following the structured review pattern from
      * `pagelet.research.prompt.*` locale keys.
      *
      * The prompt instructs the Chat model to:
@@ -97,23 +101,23 @@ export class ResearchManager {
      */
     buildResearchPrompt(request: ResearchRequest): string {
         const lines = [
-            "Use web search if available before answering.",
+            this.t("pagelet.research.prompt.search"),
             "",
-            "Research this Pagelet finding. Do not modify any notes.",
+            this.t("pagelet.research.prompt.task"),
             "",
-            `Finding: ${sanitizePromptText(request.findingText)}`,
+            `${this.t("pagelet.research.prompt.finding")}: ${sanitizePromptText(request.findingText)}`,
         ];
 
         if (request.sourceTitle) {
-            lines.push(`Source: ${sanitizePromptText(request.sourceTitle)}`);
+            lines.push(`${this.t("pagelet.research.prompt.source")}: ${sanitizePromptText(request.sourceTitle)}`);
         }
         if (request.sourceFile) {
-            lines.push(`File: ${request.sourceFile}`);
+            lines.push(`${this.t("pagelet.research.prompt.file")}: ${request.sourceFile}`);
         }
 
         lines.push(
             "",
-            "Return concise external evidence, useful links, and any uncertainty.",
+            this.t("pagelet.research.prompt.output"),
         );
 
         return lines.join("\n");
@@ -125,7 +129,7 @@ export class ResearchManager {
 
     /**
      * Find an existing Chat view leaf. Returns `null` if none is open.
-     * Uses the same view-type lookup pattern as the v1 orchestrator.
+     * Uses the same chat view lookup pattern as the review orchestrator.
      */
     private findChatLeaf(): ReturnType<App["workspace"]["getLeavesOfType"]>[number] | null {
         const leaves = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
@@ -136,7 +140,7 @@ export class ResearchManager {
      * Attempt to populate the Chat composer with the research prompt.
      *
      * Returns `true` if the prompt was set, `false` if the composer
-     * already had text (mirrors v1 `chatView.prefillComposer` semantics).
+     * already had text (mirrors `chatView.prefillComposer` semantics).
      */
     private populateChatWithPrompt(
         leaf: ReturnType<App["workspace"]["getLeavesOfType"]>[number],
@@ -146,7 +150,7 @@ export class ResearchManager {
         const view = leaf.view as any;
         if (!view) return false;
 
-        // v1 uses `prefillComposer`; v2 Chat views may also expose
+        // Chat views may expose
         // `setInputText`. Try both, preferring `prefillComposer`.
         if (typeof view?.prefillComposer === "function") {
             return view.prefillComposer(prompt) as boolean;
@@ -166,7 +170,7 @@ export class ResearchManager {
 
 /**
  * Sanitize text for inclusion in a prompt -- collapse newlines and
- * truncate to a reasonable length. Mirrors v1's sanitize pattern.
+ * truncate to a reasonable length. Mirrors the structured review sanitize pattern.
  */
 function sanitizePromptText(text: string, maxLength = 500): string {
     return text.replace(/[\n\r]+/g, " ").slice(0, maxLength);

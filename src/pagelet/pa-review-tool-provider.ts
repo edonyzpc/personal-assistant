@@ -1,9 +1,9 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet — Write Action Framework v1 capability provider (Track C · C1).
+ * Pagelet — Write Action Framework capability provider.
  *
- * Wires Pagelet's review-note writer into the Write Action Framework v1
+ * Wires Pagelet's review-note writer into the Write Action Framework
  * 4-gate orchestrator (`src/ai-services/write-action-framework/**`). The
  * framework guarantees that any write through this capability flows through:
  *
@@ -81,6 +81,7 @@ import {
     type PageletReviewMetadata,
     type PageletReviewResult,
 } from "./pa-review-schemas";
+import type { GeneratedReviewNote } from "./output/types";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -120,7 +121,7 @@ const PAGELET_MAX_PATH_LENGTH = 200;
  * The runtime caller (`PaReviewRuntime`) builds this struct from the
  * `PageletReviewOutcome` + per-trigger context (source note path, settings).
  */
-export interface PageletWriteReviewOutputInput {
+export interface PageletStructuredReviewOutputInput {
     /** Source note vault-relative path. */
     sourcePath: string;
     /** Validated LLM review result (B1 schema). */
@@ -149,6 +150,17 @@ export interface PageletWriteReviewOutputInput {
      */
     nowIso?: () => string;
 }
+
+export interface PageletGeneratedReviewOutputInput {
+    /** Generated markdown review note, already previewed by the Pagelet Panel. */
+    generatedNote: GeneratedReviewNote;
+    /** Exact vault-relative path accepted by the user in the Panel save flow. */
+    targetPath?: string;
+}
+
+export type PageletWriteReviewOutputInput =
+    | PageletStructuredReviewOutputInput
+    | PageletGeneratedReviewOutputInput;
 
 /**
  * Settings slice the provider reads. Independent from the full
@@ -226,11 +238,62 @@ function resolveContext(opts: CreatePaReviewToolProviderOptions): ResolvedCapabi
  * `PageletReviewInputSchema` describes the LLM input shape, not the writer
  * input shape; the writer fields are simpler so we do explicit guards.
  */
-function parseWriteInput(input: unknown): PageletWriteReviewOutputInput {
+type ParsedWriteInput =
+    | ({ kind: "structured" } & PageletStructuredReviewOutputInput)
+    | ({ kind: "generated" } & PageletGeneratedReviewOutputInput);
+
+function parseGeneratedNote(candidate: Record<string, unknown>): PageletGeneratedReviewOutputInput | null {
+    const generatedNote = candidate.generatedNote;
+    if (!generatedNote || typeof generatedNote !== "object") {
+        return null;
+    }
+    const note = generatedNote as Record<string, unknown>;
+    if (
+        typeof note.markdown !== "string"
+        || typeof note.fileName !== "string"
+        || typeof note.targetFolder !== "string"
+        || typeof note.targetPath !== "string"
+    ) {
+        throw new TypeError("pagelet.write_review_output input.generatedNote is malformed");
+    }
+    return {
+        generatedNote: {
+            markdown: note.markdown,
+            fileName: note.fileName,
+            targetFolder: note.targetFolder,
+            targetPath: note.targetPath,
+            sources: Array.isArray(note.sources)
+                ? note.sources.filter((source): source is string => typeof source === "string")
+                : [],
+            tokenCost: isTokenCost(note.tokenCost)
+                ? note.tokenCost
+                : { input: 0, output: 0 },
+        },
+        ...(typeof candidate.targetPath === "string" && candidate.targetPath.length > 0
+            ? { targetPath: candidate.targetPath }
+            : {}),
+    };
+}
+
+function isTokenCost(value: unknown): value is { input: number; output: number } {
+    return Boolean(
+        value
+        && typeof value === "object"
+        && typeof (value as { input?: unknown }).input === "number"
+        && typeof (value as { output?: unknown }).output === "number",
+    );
+}
+
+function parseWriteInput(input: unknown): ParsedWriteInput {
     if (!input || typeof input !== "object") {
         throw new TypeError("pagelet.write_review_output input must be an object");
     }
     const candidate = input as Record<string, unknown>;
+    const generated = parseGeneratedNote(candidate);
+    if (generated) {
+        return { kind: "generated", ...generated };
+    }
+
     const sourcePath = candidate.sourcePath;
     if (typeof sourcePath !== "string" || sourcePath.length === 0) {
         throw new TypeError("pagelet.write_review_output input.sourcePath must be a non-empty string");
@@ -248,6 +311,7 @@ function parseWriteInput(input: unknown): PageletWriteReviewOutputInput {
         throw new TypeError("pagelet.write_review_output input.detectedLanguage must be \"zh\" or \"en\"");
     }
     return {
+        kind: "structured",
         sourcePath,
         reviewResult: reviewResult as PageletReviewResult,
         mode,
@@ -271,9 +335,12 @@ function parseWriteInput(input: unknown): PageletWriteReviewOutputInput {
  * FS. This is the synchronous contract Gate 1 requires.
  */
 function computeTargetPath(
-    input: PageletWriteReviewOutputInput,
+    input: ParsedWriteInput,
     settings: PageletReviewToolSettings,
 ): string {
+    if (input.kind === "generated") {
+        return normalizePath(input.targetPath ?? input.generatedNote.targetPath);
+    }
     if (input.targetPath) return normalizePath(input.targetPath);
     return resolveReviewNotePath({
         sourcePath: input.sourcePath,
@@ -325,7 +392,7 @@ function buildConfinement(settings: PageletReviewToolSettings): {
  * body string so the modal's "writes N bytes" indicator never lies.
  */
 function buildPreviewSpec(
-    input: PageletWriteReviewOutputInput,
+    input: ParsedWriteInput,
     settings: PageletReviewToolSettings,
     translate: ResolvedCapabilityContext["translate"],
     locale: PageletLocale,
@@ -335,19 +402,22 @@ function buildPreviewSpec(
     const folder = lastSlash >= 0 ? targetPath.substring(0, lastSlash + 1) : "";
     const filename = lastSlash >= 0 ? targetPath.substring(lastSlash + 1) : targetPath;
 
-    const isoTimestamp = input.nowIso
-        ? input.nowIso()
-        : formatPageletIsoTimestamp(input.dateOverride ?? new Date());
-    const metadata = buildReviewMetadata({
-        sourcePath: input.sourcePath,
-        mode: input.mode,
-        detectedLanguage: input.detectedLanguage,
-        createdAtIso: isoTimestamp,
-        ...(typeof input.costUsd === "number" ? { costUsd: input.costUsd } : {}),
-        ...(input.provider ? { provider: input.provider } : {}),
-        ...(input.model ? { model: input.model } : {}),
-    });
-    const body = assembleReviewNote(metadata, input.reviewResult);
+    const body = input.kind === "generated"
+        ? input.generatedNote.markdown
+        : assembleReviewNote(
+            buildReviewMetadata({
+                sourcePath: input.sourcePath,
+                mode: input.mode,
+                detectedLanguage: input.detectedLanguage,
+                createdAtIso: input.nowIso
+                    ? input.nowIso()
+                    : formatPageletIsoTimestamp(input.dateOverride ?? new Date()),
+                ...(typeof input.costUsd === "number" ? { costUsd: input.costUsd } : {}),
+                ...(input.provider ? { provider: input.provider } : {}),
+                ...(input.model ? { model: input.model } : {}),
+            }),
+            input.reviewResult,
+        );
     const byteSize = new TextEncoder().encode(body).length;
 
     return {
@@ -382,6 +452,54 @@ function buildPreviewSpec(
     };
 }
 
+async function writeGeneratedReviewNote(args: {
+    note: GeneratedReviewNote;
+    targetPath: string;
+    vault: PageletReviewToolVaultLike;
+    markSelfWrite: (path: string) => void;
+}): Promise<{
+    path: string;
+    created: boolean;
+    metadata: Record<string, unknown>;
+}> {
+    const finalPath = normalizePath(args.targetPath);
+    const folder = finalPath.includes("/")
+        ? finalPath.slice(0, finalPath.lastIndexOf("/"))
+        : "";
+    await ensureFolder(args.vault.adapter, folder);
+    if (await args.vault.adapter.exists(finalPath)) {
+        throw Object.assign(
+            new Error(`Pagelet review target already exists: ${finalPath}`),
+            { skipWriteRollback: true },
+        );
+    }
+    args.markSelfWrite(finalPath);
+    await args.vault.adapter.write(finalPath, args.note.markdown);
+    return {
+        path: finalPath,
+        created: true,
+        metadata: {
+            pagelet_generated: true,
+            sources: args.note.sources,
+            tokenCost: args.note.tokenCost,
+        },
+    };
+}
+
+async function ensureFolder(
+    adapter: PageletReviewIOAdapter,
+    folder: string,
+): Promise<void> {
+    const parts = normalizePath(folder).split("/").filter(Boolean);
+    let current = "";
+    for (const segment of parts) {
+        current = current ? `${current}/${segment}` : segment;
+        if (!(await adapter.exists(current))) {
+            await adapter.mkdir(current);
+        }
+    }
+}
+
 /**
  * Build the singleton `WriteActionCapability` instance. Capability is
  * stateless apart from the captured `ctxRef` getter; safe to register once
@@ -393,7 +511,7 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
     const capability: WriteActionCapability = {
         // ── AgentCapability surface ─────────────────────────────────────
         name: PAGELET_WRITE_REVIEW_OUTPUT_NAME as ChatToolName,
-        description: "Persist a Pagelet review note via the Write Action Framework v1.",
+        description: "Persist a Pagelet review note via the Write Action Framework.",
         inputSchema: {
             type: "object",
             properties: {},
@@ -429,7 +547,7 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
             type: "function",
             function: {
                 name: PAGELET_WRITE_REVIEW_OUTPUT_NAME,
-                description: "Persist a Pagelet review note via the Write Action Framework v1.",
+                description: "Persist a Pagelet review note via the Write Action Framework.",
                 parameters: {
                     type: "object",
                     properties: {},
@@ -440,7 +558,7 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
         }),
         toRegistryDefinition: () => ({
             name: PAGELET_WRITE_REVIEW_OUTPUT_NAME as ChatToolName,
-            description: "Persist a Pagelet review note via the Write Action Framework v1.",
+            description: "Persist a Pagelet review note via the Write Action Framework.",
             inputSchema: {
                 type: "object",
                 properties: {},
@@ -495,21 +613,28 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
                     ctx.externalMarkSelfWrite?.(path);
                 }
                 : hooks.markSelfWrite;
-            const writeResult = await writeReviewNote({
-                sourcePath: parsed.sourcePath,
-                reviewResult: parsed.reviewResult,
-                settings: ctx.settings,
-                vault: ctx.vault,
-                mode: parsed.mode,
-                detectedLanguage: parsed.detectedLanguage,
-                ...(parsed.dateOverride ? { dateOverride: parsed.dateOverride } : {}),
-                ...(typeof parsed.costUsd === "number" ? { costUsd: parsed.costUsd } : {}),
-                ...(parsed.provider ? { provider: parsed.provider } : {}),
-                ...(parsed.model ? { model: parsed.model } : {}),
-                ...(parsed.targetPath ? { targetPath: parsed.targetPath } : {}),
-                ...(parsed.nowIso ? { nowIso: parsed.nowIso } : {}),
-                markSelfWrite: composedMarkSelfWrite,
-            });
+            const writeResult = parsed.kind === "generated"
+                ? await writeGeneratedReviewNote({
+                    note: parsed.generatedNote,
+                    targetPath: computeTargetPath(parsed, ctx.settings),
+                    vault: ctx.vault,
+                    markSelfWrite: composedMarkSelfWrite,
+                })
+                : await writeReviewNote({
+                    sourcePath: parsed.sourcePath,
+                    reviewResult: parsed.reviewResult,
+                    settings: ctx.settings,
+                    vault: ctx.vault,
+                    mode: parsed.mode,
+                    detectedLanguage: parsed.detectedLanguage,
+                    ...(parsed.dateOverride ? { dateOverride: parsed.dateOverride } : {}),
+                    ...(typeof parsed.costUsd === "number" ? { costUsd: parsed.costUsd } : {}),
+                    ...(parsed.provider ? { provider: parsed.provider } : {}),
+                    ...(parsed.model ? { model: parsed.model } : {}),
+                    ...(parsed.targetPath ? { targetPath: parsed.targetPath } : {}),
+                    ...(parsed.nowIso ? { nowIso: parsed.nowIso } : {}),
+                    markSelfWrite: composedMarkSelfWrite,
+                });
 
             return {
                 status: "ok",
@@ -531,7 +656,9 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
                         statusOnly: true,
                     },
                 ],
-                inputSummary: `pagelet review for ${parsed.sourcePath}`,
+                inputSummary: parsed.kind === "generated"
+                    ? `pagelet review note for ${writeResult.path}`
+                    : `pagelet review for ${parsed.sourcePath}`,
                 sources: [],
             };
         },

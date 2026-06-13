@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — structured output schemas.
+ * Pagelet — structured output schemas.
  *
  * Spec source: `docs/review-assistant-sdd.md` §4 + D026 in
  * `docs/review-assistant-decisions.md`.
@@ -145,7 +145,7 @@ export const PageletStructuredSuggestionSchema = z
 
 /**
  * Full review result envelope. Schema version is a discriminant for future
- * forward-compat work; v1 only accepts literal `1`.
+ * forward-compat work; literal schema version accepts literal `1`.
  */
 export const PageletReviewResultSchema = z
     .object({

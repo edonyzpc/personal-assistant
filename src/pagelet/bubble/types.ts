@@ -1,7 +1,9 @@
 /* Copyright 2023 edonyzpc */
 
+import type { PageletLocale } from "../../locales/pagelet";
+
 /**
- * Pagelet v2 — Bubble component types.
+ * Pagelet — Bubble component types.
  *
  * The Bubble is a lightweight speech bubble that appears near the Pet
  * character, showing quick review findings and action buttons.
@@ -44,4 +46,5 @@ export interface BubbleCallbacks {
 /** Options for creating a BubbleView */
 export interface BubbleViewOptions {
     callbacks: BubbleCallbacks;
+    getLocale?: () => PageletLocale;
 }

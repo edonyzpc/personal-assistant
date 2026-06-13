@@ -12,6 +12,10 @@ export class ScopeResolver {
         private config: ScopeConfig,
     ) {}
 
+    updateConfig(config: Partial<ScopeConfig>): void {
+        this.config = { ...this.config, ...config };
+    }
+
     resolveCurrentNote(activeFile: TFile | null): ScopeResult {
         if (!activeFile) return { included: [], excluded: [] };
         const reason = this.shouldExclude(activeFile);

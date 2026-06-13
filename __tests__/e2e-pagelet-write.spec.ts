@@ -67,7 +67,7 @@ import {
 } from "../src/pagelet/pa-review-runtime";
 import {
     PAGELET_WRITE_REVIEW_OUTPUT_NAME,
-    type PageletWriteReviewOutputInput,
+    type PageletStructuredReviewOutputInput,
 } from "../src/pagelet/pa-review-tool-provider";
 import {
     PAGELET_SCHEMA_VERSION,
@@ -103,7 +103,7 @@ function makeReviewResult(): PageletReviewResult {
     };
 }
 
-function makeInput(overrides: Partial<PageletWriteReviewOutputInput> = {}): PageletWriteReviewOutputInput {
+function makeInput(overrides: Partial<PageletStructuredReviewOutputInput> = {}): PageletStructuredReviewOutputInput {
     return {
         sourcePath: "notes/draft.md",
         reviewResult: makeReviewResult(),
@@ -361,6 +361,93 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
         // Sanity: settings were not mutated by the write path (the runtime
         // reads via getter; D010 contract).
         expect(settings.reviewsFolder).toBe(PAGELET_DEFAULTS.reviewsFolder);
+
+        runtime.dispose();
+    });
+
+    it("drives generated review notes through the same framework capability", async () => {
+        const { runtime, adapter, renderer, observer } = buildRuntimeBundle();
+        const targetPath = ".pagelet/pagelet-weekly-review-2026-06-03.md";
+        const input = {
+            generatedNote: {
+                markdown: [
+                    "---",
+                    "pagelet: true",
+                    "range: \"2026-05-28 to 2026-06-03\"",
+                    "---",
+                    "",
+                    "## Summary",
+                    "A concise periodic summary.",
+                    "",
+                ].join("\n"),
+                fileName: "pagelet-weekly-review-2026-06-03.md",
+                targetFolder: ".pagelet",
+                targetPath,
+                sources: ["[[notes/draft]]"],
+                tokenCost: { input: 120, output: 40 },
+            },
+            targetPath,
+        };
+
+        expect(runtime.toolProvider.capability.getTargetPath(input)).toBe(targetPath);
+
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            input,
+            makeContext(),
+        );
+
+        expect(result.status).toBe("ok");
+        expect(renderer.shown).toEqual([{
+            displayPath: targetPath,
+            capabilityId: PAGELET_WRITE_REVIEW_OUTPUT_NAME,
+        }]);
+        expect(adapter.files.get(targetPath)).toContain("A concise periodic summary.");
+        expect(runtime.isRecentSelfWrite(targetPath)).toBe(true);
+
+        const types = observer.events.map((e) => e.type);
+        expect(types).toContain("gate.target-confinement.ok");
+        expect(types).toContain("gate.preview.shown");
+        expect(types).toContain("gate.confirmation.received");
+        expect(types).toContain("gate.stale-reread.ok");
+        expect(types).toContain("execute.ok");
+
+        runtime.dispose();
+    });
+
+    it("fails generated review writes when the target appears after framework gates", async () => {
+        const { runtime, adapter, observer } = buildRuntimeBundle();
+        const targetPath = ".pagelet/pagelet-weekly-review-2026-06-03.md";
+        const originalExecuteWrite = runtime.toolProvider.capability.executeWrite.bind(
+            runtime.toolProvider.capability,
+        );
+        runtime.toolProvider.capability.executeWrite = async (...args) => {
+            adapter.files.set(targetPath, "external writer won the race");
+            return originalExecuteWrite(...args);
+        };
+
+        const input = {
+            generatedNote: {
+                markdown: "# Should not overwrite\n",
+                fileName: "pagelet-weekly-review-2026-06-03.md",
+                targetFolder: ".pagelet",
+                targetPath,
+                sources: ["[[notes/draft]]"],
+                tokenCost: { input: 120, output: 40 },
+            },
+            targetPath,
+        };
+
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            input,
+            makeContext(),
+        );
+
+        expect(result.status).not.toBe("ok");
+        expect(adapter.files.get(targetPath)).toBe("external writer won the race");
+        expect(adapter.calls.filter((c) => c.method === "write" && c.path === targetPath)).toHaveLength(0);
+        expect(observer.events.map((e) => e.type)).toContain("execute.fail");
 
         runtime.dispose();
     });

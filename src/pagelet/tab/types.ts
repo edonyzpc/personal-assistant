@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- Tab component types.
+ * Pagelet -- Tab component types.
  *
  * The Tab is a full editor tab for complex exploration.
  * It shows overview, theme clustering, and action suggestions.

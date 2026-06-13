@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — call-rate gating.
+ * Pagelet — call-rate gating.
  *
  * Spec source:
  *  - `docs/review-assistant-sdd.md` §7.2 (Call counting)
@@ -186,7 +186,7 @@ export class PageletRateLimiter {
     /**
      * Non-committing check. Returns whether the next call WOULD be allowed.
      * Use this when you need to surface "is the gate open?" without
-     * incrementing the counter (e.g. ribbon icon disabled state in B5).
+     * incrementing the counter (e.g. command or UI disabled state in B5).
      */
     async peek(): Promise<RateLimitDecision> {
         const state = await this.loadAndPrune();

@@ -1,10 +1,10 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — LLM response parser.
+ * Pagelet — LLM response parser.
  *
  * Parses raw LLM text into {@link StructuredLLMResponse}. Strategy:
- *   1. Extract JSON payload from the response (reuses v1 patterns)
+ *   1. Extract JSON payload from the response (reuses structured review patterns)
  *   2. Validate against the expected shape
  *   3. Fall back to line-by-line text parsing if JSON extraction fails
  *   4. Never throws — always returns a best-effort result

@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- research module barrel exports.
+ * Pagelet -- research module barrel exports.
  *
  * Re-exports the "Research this finding" action components:
  *  - Types: ResearchRequest, ResearchResult, ResearchFinding, ResearchCallbacks

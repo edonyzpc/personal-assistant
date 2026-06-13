@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet — Write Action Framework v1 runtime composer (Track C · C1).
+ * Pagelet — Write Action Framework runtime composer.
  *
  * Sits between {@link createPaReviewToolProvider} (the capability declaration)
  * and the plugin shell (`src/plugin.ts`). The plugin treats this as the single
@@ -42,8 +42,8 @@
  *  - Manage rate limits / cost. {@link PageletCostTracker} +
  *    {@link PageletRateLimiter} (B4) do.
  *  - Render suggestion cards. {@link buildSuggestionCardMarkup} (B5) does.
- *  - Decide WHEN to invoke a review. The plugin's ribbon / focus command
- *    callbacks own that.
+ *  - Decide WHEN to invoke a review. The plugin's command and UI callbacks
+ *    own that.
  */
 
 import type { App } from "obsidian";

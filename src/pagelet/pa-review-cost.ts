@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — cost ceiling + accounting.
+ * Pagelet — cost ceiling + accounting.
  *
  * Spec source:
  *  - `docs/review-assistant-sdd.md` §7 (Cost Ceiling)
@@ -348,7 +348,7 @@ export interface PageletCostEntry {
     outputTokens: number;
     totalTokens: number;
     estimatedCost: number;
-    /** USD always — we don't render localized currencies in v1 (D022). */
+    /** USD always — we don't render localized currencies in the current UI. */
     currency: "USD";
     pricingKnown: boolean;
     provider?: string;
@@ -391,7 +391,7 @@ export interface PageletCostTrackerOptions {
  * Track C adapter constructs it during runtime setup); the orchestrator
  * passes it into `reviewNote()` via options.
  *
- * Persistence across plugin restarts is intentionally NOT a v1 feature —
+ * Persistence across plugin restarts is intentionally NOT a current baseline feature —
  * D022 says "事后展示" but does not promise lifetime totals. If that becomes
  * a follow-up requirement, the persistence layer should sit in front of this
  * (record-to-storage), not inside it.

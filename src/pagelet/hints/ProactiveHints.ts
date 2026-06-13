@@ -47,7 +47,7 @@ export class ProactiveHints {
         if (config.quietHours !== undefined) this._config.quietHours = config.quietHours;
     }
 
-    /** Called when preload engine produces new insights */
+    /** Called when background preparation engine produces new insights */
     onInsightsReady(): boolean {
         if (!this._config.enabled) return false;
         if (!this._isCooldownElapsed()) return false;

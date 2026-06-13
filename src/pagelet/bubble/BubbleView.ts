@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — Bubble DOM lifecycle manager.
+ * Pagelet — Bubble DOM lifecycle manager.
  *
  * The Bubble is a speech bubble that appears near the Pet character.
  * It supports three visibility states:
@@ -32,6 +32,7 @@ import type {
     BubbleState,
     BubbleViewOptions,
 } from "./types";
+import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
 
 // ---------------------------------------------------------------------------
 // CSS — injected once via <style> on first mount
@@ -113,6 +114,8 @@ const BUBBLE_CSS = /* css */ `
     cursor: pointer;
     font-size: 18px;
     line-height: 1;
+    min-width: 28px;
+    min-height: 28px;
     padding: 0 2px;
     opacity: 0.7;
     transition: opacity 0.15s ease;
@@ -202,9 +205,11 @@ const BUBBLE_CSS = /* css */ `
 .pa-pagelet-bubble.pa-pagelet-bubble--mobile {
     left: 8px !important;
     right: 8px !important;
-    bottom: 80px !important;
+    bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
     top: auto !important;
     width: auto;
+    max-height: min(70vh, calc(100vh - 120px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)));
+    overflow-y: auto;
     border-radius: 16px 16px 12px 12px;
     transform-origin: bottom center;
 }
@@ -240,8 +245,13 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-items li {
     font-size: 14px;
 }
 body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-btn {
+    min-height: 44px;
     padding: 10px 18px;
     font-size: 13px;
+}
+body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
+    min-width: 44px;
+    min-height: 44px;
 }
 `;
 
@@ -251,7 +261,13 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-btn {
 
 /** Inject Bubble CSS into `<head>` (idempotent). */
 function injectStyles(): void {
-    if (document.getElementById(BUBBLE_CSS_ID)) return;
+    const existing = document.getElementById(BUBBLE_CSS_ID);
+    if (existing) {
+        if (existing.textContent !== BUBBLE_CSS) {
+            existing.textContent = BUBBLE_CSS;
+        }
+        return;
+    }
     const style = document.createElement("style");
     style.id = BUBBLE_CSS_ID;
     style.textContent = BUBBLE_CSS;
@@ -320,11 +336,13 @@ export class BubbleView {
     private unmountTimer: ReturnType<typeof setTimeout> | null = null;
     /** Pending transitionend listener; cleared if the bubble reopens. */
     private unmountTransitionHandler: ((e: TransitionEvent) => void) | null = null;
+    private readonly getLocale: NonNullable<BubbleViewOptions["getLocale"]>;
     /** Fallback timeout (ms) for transitionend in reduced-motion / hidden tabs. */
     private static readonly UNMOUNT_FALLBACK_MS = 350;
 
     constructor(options: BubbleViewOptions) {
         this.options = options;
+        this.getLocale = options.getLocale ?? getPageletUiLanguage;
         this.handleDocumentClick = this.onDocumentClick.bind(this);
         this.handleKeydown = this.onKeydown.bind(this);
         this.handleResize = () => {
@@ -485,7 +503,8 @@ export class BubbleView {
         root.className = "pa-pagelet-bubble";
         root.setAttribute("data-state", "hidden");
         root.setAttribute("role", "dialog");
-        root.setAttribute("aria-label", "拾页");
+        const locale = this.getLocale();
+        root.setAttribute("aria-label", pageletT("pagelet.bubble.ariaLabel", locale));
 
         // Tail
         const tail = document.createElement("div");
@@ -498,8 +517,9 @@ export class BubbleView {
 
         const closeBtn = document.createElement("button");
         closeBtn.className = "pa-pagelet-bubble-close";
-        closeBtn.setAttribute("title", "关闭");
-        closeBtn.setAttribute("aria-label", "关闭");
+        const closeText = pageletT("pagelet.bubble.close", locale);
+        closeBtn.setAttribute("title", closeText);
+        closeBtn.setAttribute("aria-label", closeText);
         closeBtn.textContent = "×";
         closeBtn.addEventListener("click", (e) => {
             e.stopPropagation();

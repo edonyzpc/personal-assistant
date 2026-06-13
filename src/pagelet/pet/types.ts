@@ -1,6 +1,8 @@
 /* Copyright 2023 edonyzpc */
 
-/** v2 Pet states — system-driven, user cannot manually control */
+import type { PageletLocale } from "../../locales/pagelet";
+
+/** Pet states — system-driven, user cannot manually control */
 export type PetState = "resting" | "idle" | "working" | "nudge";
 
 /** Configurable corner position */
@@ -17,6 +19,7 @@ export interface PetRendererOptions {
     corner?: PetCorner;
     callbacks: PetCallbacks;
     prefersReducedMotion?: () => boolean;
+    getLocale?: () => PageletLocale;
 }
 
 /** Public renderer contract */

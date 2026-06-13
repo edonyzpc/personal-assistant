@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — Bubble component barrel.
+ * Pagelet — Bubble component barrel.
  *
  * Re-exports the public surface of the Bubble module:
  *   - `BubbleView`    — DOM lifecycle manager (mount/show/degrade/restore/close).

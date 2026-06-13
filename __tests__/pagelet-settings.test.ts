@@ -177,6 +177,7 @@ describe("PAGELET_DEFAULTS", () => {
         expect(PAGELET_DEFAULTS.temperature).toBe(0.2);          // SDD §2.2
         expect(PAGELET_DEFAULTS.maxInputTokens).toBe(8000);      // D018
         expect(PAGELET_DEFAULTS.maxOutputTokens).toBe(2000);     // D018
+        expect(PAGELET_DEFAULTS.preloadEnabled).toBe(false);     // background prep is explicit opt-in
     });
 
     it("is frozen to prevent at-runtime mutation", () => {
@@ -670,52 +671,50 @@ describe("normalizeReviewsFolder (settings-layer validator)", () => {
 // ---------------------------------------------------------------------------
 
 describe("renderPageletSection", () => {
-    it("renders all settings (v1 + v2) exactly once", () => {
+    it("renders all settings exactly once", () => {
         const parent = makeStubNode("div");
         const { factory, rows } = makeStubFactory();
         const { host } = makeHost();
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        // 7 v1 + 11 v2 = 18 rows total.
-        expect(rows).toHaveLength(26);
+        expect(rows).toHaveLength(25);
         expect(rows.map((r) => r.name)).toEqual([
             "Enable Pagelet",
             "Reviews folder",
             "Output language",
-            "Ribbon icon",
             "Temperature",
             "Max input tokens",
             "Max output tokens",
-            // v2: Pet
+            // Pet
             "Show Pet",
             "Pet corner",
             "Proactive hints",
             "Hint cooldown (minutes)",
-            // v2: Preload
-            "Enable preload",
-            "Preload interval (minutes)",
-            "Per-hour preload cap",
-            "Per-day preload cap",
-            "Preload input token budget",
-            "Preload output token budget",
-            // v2: Reviews
+            // Background review preparation
+            "Prepare reviews in the background",
+            "Preparation interval (minutes)",
+            "Per-hour preparation cap",
+            "Per-day preparation cap",
+            "Preparation input token budget",
+            "Preparation output token budget",
+            // Reviews
             "Periodic summary scope",
-            // v2: Exclusions
+            // Exclusions
             "Excluded folders",
             "Excluded tags",
             "Excluded patterns",
-            // v2: Quiet Hours
+            // Quiet Hours
             "Enable quiet hours",
             "Start time",
             "End time",
-            // v2: Foreground Cost
+            // Foreground Cost
             "Per-hour foreground cap",
             "Per-day foreground cap",
         ]);
     });
 
-    it("emits the section heading, subtitle, beta callout, group headings (v1+v2), and the reviewsFolder error sibling", () => {
+    it("emits the section heading, subtitle, beta callout, group headings, and the reviewsFolder error sibling", () => {
         const parent = makeStubNode("div");
         const { factory } = makeStubFactory();
         const { host } = makeHost();
@@ -776,10 +775,9 @@ describe("renderPageletSection", () => {
         expect(rows[0].toggleValue).toBe(false);
         expect(rows[1].textValue).toBe("custom/path");
         expect(rows[2].dropdownValue).toBe("zh");
-        expect(rows[3].dropdownValue).toBe("hidden");
-        expect(rows[4].textValue).toBe("0.35");
-        expect(rows[5].textValue).toBe("4096");
-        expect(rows[6].textValue).toBe("1024");
+        expect(rows[3].textValue).toBe("0.35");
+        expect(rows[4].textValue).toBe("4096");
+        expect(rows[5].textValue).toBe("1024");
     });
 
     it("populates dropdown option lists with both value and label", () => {
@@ -790,10 +788,6 @@ describe("renderPageletSection", () => {
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
         expect(rows[2].dropdownOptions.map((o) => o.value)).toEqual(["auto", "zh", "en"]);
-        expect(rows[3].dropdownOptions.map((o) => o.value)).toEqual([
-            "default",
-            "hidden",
-        ]);
         // Spot-check that labels are i18n-resolved English strings, not key
         // names — a regression here means the translator wasn't wired.
         expect(rows[2].dropdownOptions[0].text).toBe("Auto (follow note language)");
@@ -916,13 +910,13 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        await rows[4].textOnChange!("99"); // temperature
+        await rows[3].textOnChange!("99"); // temperature
         expect(host.settings.pagelet.temperature).toBe(PAGELET_BOUNDS.temperature.max);
 
-        await rows[5].textOnChange!("999999"); // maxInputTokens
+        await rows[4].textOnChange!("999999"); // maxInputTokens
         expect(host.settings.pagelet.maxInputTokens).toBe(PAGELET_BOUNDS.maxInputTokens.max);
 
-        await rows[6].textOnChange!("-1"); // maxOutputTokens
+        await rows[5].textOnChange!("-1"); // maxOutputTokens
         expect(host.settings.pagelet.maxOutputTokens).toBe(PAGELET_BOUNDS.maxOutputTokens.min);
     });
 });

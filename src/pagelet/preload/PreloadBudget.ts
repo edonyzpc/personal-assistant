@@ -12,13 +12,22 @@ export class PreloadBudget {
         private now: () => number = Date.now,
     ) {}
 
-    canPreload(): boolean {
+    updateLimits(perHourCap: number, perDayCap: number): void {
+        this.perHourCap = perHourCap;
+        this.perDayCap = perDayCap;
+    }
+
+    canRun(): boolean {
         this.prune();
         const now = this.now();
         const hourlyCount = this.countSince(now - ONE_HOUR_MS);
         if (hourlyCount >= this.perHourCap) return false;
         const dailyCount = this.countSince(now - ONE_DAY_MS);
         return dailyCount < this.perDayCap;
+    }
+
+    canPreload(): boolean {
+        return this.canRun();
     }
 
     recordCall(): void {

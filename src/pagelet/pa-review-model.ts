@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — structured output orchestration.
+ * Pagelet — structured output orchestration.
  *
  * Spec source: `docs/review-assistant-sdd.md` §2.2 + §4 + D026.
  *

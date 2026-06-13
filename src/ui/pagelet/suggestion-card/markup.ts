@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — SuggestionCard markup builder (pure).
+ * Pagelet — SuggestionCard markup builder (pure).
  *
  * Spec source: `docs/review-assistant-sdd.md` §10.2 + `docs/pagelet-visual-spec.html` §③.
  *

@@ -1,9 +1,9 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pet v2 SVG builder and updater.
+ * Pagelet Pet SVG builder and updater.
  *
- * SVG path data is copied verbatim from `docs/pagelet-v2-prototype.html`.
+ * SVG path data is copied verbatim from the Pagelet prototype.
  * Intentional ±0.1~0.3 jitter gives the Tldraw-like hand-drawn feel (D005).
  * Do NOT tidy the decimals.
  */

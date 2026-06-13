@@ -10,6 +10,8 @@ import type { PreloadBudget } from "./PreloadBudget";
 import type { AnalyzeCallback, PreloadConfig, PreloadErrorCategory, PreloadEvent } from "./types";
 
 export class PreloadEngine {
+    private static readonly MAX_FILES_PER_CYCLE = 20;
+    private static readonly MIN_TOKENS_PER_FILE = 100;
     private timer: ReturnType<typeof setTimeout> | null = null;
     private listeners: Set<(event: PreloadEvent) => void> = new Set();
     private lastCycleAt: number | null = null;
@@ -94,14 +96,20 @@ export class PreloadEngine {
             return;
         }
 
-        // Fix 3: Use scopeResolver directly (which calls getMarkdownFiles
-        // internally) instead of a redundant changeDetector pre-check that
-        // also scans the vault.
-        const lastAnalysis = this.changeDetector.getLastAnalysisTime();
-        const scope = lastAnalysis !== null
-            ? this.scopeResolver.resolveChangedSince(lastAnalysis)
-            : this.scopeResolver.resolveTimeRange(7);
-        const filesToAnalyze = scope.included.map((c) => c.file);
+        // Use per-file change tracking instead of a global changed-since
+        // watermark. A global watermark combined with per-cycle caps can
+        // permanently skip older backlog files that were not selected in the
+        // capped batch.
+        const scope = this.scopeResolver.resolveTimeRange(7);
+        const changedFiles = this.changeDetector.getChangedFiles(
+            scope.included.map((candidate) => candidate.file),
+        );
+        const maxFilesByBudget = Math.max(
+            1,
+            Math.floor(Math.max(1, this.config.tokenBudget.input) / PreloadEngine.MIN_TOKENS_PER_FILE),
+        );
+        const filesToAnalyze = changedFiles
+            .slice(0, Math.min(PreloadEngine.MAX_FILES_PER_CYCLE, maxFilesByBudget))
 
         if (filesToAnalyze.length === 0) {
             this.emit({ type: "cycle-skip", reason: "no-changes" });
@@ -154,10 +162,21 @@ export class PreloadEngine {
     }
 
     updateConfig(config: Partial<PreloadConfig>): void {
+        const wasRunning = this.running;
         const intervalChanged = config.intervalMinutes !== undefined
             && config.intervalMinutes !== this.config.intervalMinutes;
 
         Object.assign(this.config, config);
+
+        if (!this.config.enabled) {
+            this.stop();
+            return;
+        }
+
+        if (config.enabled === true && !wasRunning) {
+            this.start();
+            return;
+        }
 
         if (intervalChanged && this.running) {
             this.stop();

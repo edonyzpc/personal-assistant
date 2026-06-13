@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 -- Tab (full workspace) DOM lifecycle manager.
+ * Pagelet -- Tab (full workspace) DOM lifecycle manager.
  *
  * The Tab is a full-screen overlay that serves as a full editor tab
  * for complex exploration. It renders:
@@ -184,7 +184,13 @@ const TAB_CSS = /* css */ `
 
 /** Inject Tab CSS into `<head>` (idempotent). */
 function injectStyles(): void {
-    if (document.getElementById(TAB_CSS_ID)) return;
+    const existing = document.getElementById(TAB_CSS_ID);
+    if (existing) {
+        if (existing.textContent !== TAB_CSS) {
+            existing.textContent = TAB_CSS;
+        }
+        return;
+    }
     const style = document.createElement("style");
     style.id = TAB_CSS_ID;
     style.textContent = TAB_CSS;

@@ -1,11 +1,10 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — public barrel.
+ * Pagelet public barrel.
  *
- * Track B1 surface only. Subsequent B-tasks (B2-B6) will add their own
- * exports here; keep this file thin and re-export only the types/values
- * downstream code (or Track C C1 wiring) is expected to consume.
+ * Keep this file thin and re-export only the types/values downstream code is
+ * expected to consume.
  */
 
 export {
@@ -140,7 +139,7 @@ export {
     type PageletScopeSourceReference,
 } from "./scope";
 
-// Track C · C1 — Write Action Framework v1 capability + runtime composer.
+// Write Action Framework capability + runtime composer.
 export {
     PAGELET_PROVIDER_ID,
     PAGELET_WRITE_REVIEW_OUTPUT_NAME,
@@ -162,26 +161,12 @@ export {
 } from "./pa-review-runtime";
 
 export {
-    PAGELET_VIEW_TYPE,
-    PageletView,
-    type PageletPanelReviewData,
-} from "./view";
-
-// Track B · B5 compatibility / a11y surface — view-type gating,
-// debounce + idempotency, ribbon registration, Cmd+/ focus command.
-export {
-    PAGELET_DATA_PLUGIN_VALUE,
     PAGELET_DEFAULT_DEBOUNCE_MS,
     PAGELET_DEFAULT_IDEMPOTENCY_TTL_MS,
     PAGELET_ELIGIBLE_VIEW_TYPE,
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
     PAGELET_FOCUSABLE_SELECTORS,
-    PAGELET_OPEN_PANEL_COMMAND_ID,
-    PAGELET_RIBBON_CSS_CLASS,
-    PAGELET_RIBBON_DEFAULT_TOOLTIP,
-    PAGELET_RIBBON_ICON_ID,
-    PAGELET_REVIEW_CURRENT_COMMAND_ID,
     PAGELET_SUGGESTION_CARD_CLASS,
     PageletCoalescerClearedError,
     PageletReviewCoalescer,
@@ -191,9 +176,6 @@ export {
     getActiveMarkdownView,
     isPageletEligibleView,
     registerPageletFocusCommand,
-    registerPageletOpenPanelCommand,
-    registerPageletReviewCurrentCommand,
-    registerPageletRibbonIcon,
     type PageletCoalescerEntrySnapshot,
     type PageletCoalescerOptions,
     type PageletCommandDefinition,
@@ -202,18 +184,10 @@ export {
     type PageletHotkey,
     type PageletQueryRoot,
     type PageletReviewKey,
-    type PageletRibbonElement,
-    type PageletRibbonHost,
-    type PageletViewTypeProbe,
+    type PageletObsidianViewProbe,
     type PageletWorkspaceLike,
     type RegisterPageletFocusCommandOptions,
-    type RegisterPageletOpenPanelCommandOptions,
-    type RegisterPageletReviewCurrentCommandOptions,
-    type RegisterPageletRibbonOptions,
-    type RegisterPageletRibbonResult,
 } from "./compat";
-
-// ── Pagelet v2 modules ────────────────────────────────────────────────────
 
 export { PetView, PetStateMachine, buildPetSvg, updatePetSvgState } from "./pet";
 export type { PetState, PetCorner, PetEvent, PetCallbacks, PetRenderer, PetRendererOptions, PetStateListener } from "./pet";
@@ -230,17 +204,14 @@ export type { ScopeCandidate, ExclusionReason, ScopeResult, ScopeConfig } from "
 export { ProactiveHints } from "./hints";
 export type { ProactiveHintsConfig } from "./hints";
 
-export { ReviewNoteGenerator, ReviewNoteWriter } from "./output";
+export { ReviewNoteGenerator } from "./output";
 export type { PeriodicSummaryInput, GeneratedReviewNote, GenerateCallback, WriteResult } from "./output";
 
-export { registerPageletV2Commands, PAGELET_QUICK_REVIEW_COMMAND_ID, PAGELET_DISCOVER_COMMAND_ID, PAGELET_PERIODIC_SUMMARY_COMMAND_ID, PAGELET_TOGGLE_HINTS_COMMAND_ID, PAGELET_PRELOAD_STATUS_COMMAND_ID, PAGELET_MOVE_PET_COMMAND_ID, PAGELET_TOGGLE_PET_COMMAND_ID } from "./commands";
-export type { PageletV2CommandCallbacks } from "./commands";
+export { registerPageletCommands, PAGELET_OPEN_PANEL_COMMAND_ID, PAGELET_REVIEW_CURRENT_COMMAND_ID, PAGELET_QUICK_REVIEW_COMMAND_ID, PAGELET_DISCOVER_COMMAND_ID, PAGELET_PERIODIC_SUMMARY_COMMAND_ID, PAGELET_TOGGLE_HINTS_COMMAND_ID, PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID, PAGELET_MOVE_PET_COMMAND_ID, PAGELET_TOGGLE_PET_COMMAND_ID } from "./commands";
+export type { PageletCommandCallbacks } from "./commands";
 
-export { PageletV2Orchestrator } from "./v2-orchestrator";
-export type { PageletV2Host } from "./v2-orchestrator";
-
-export { PageletActionExecutor } from "./actions";
-export type { ActionLogger, ActionResult, AppendToDailyAction, ApplySuggestionAction, CreateTaskAction, PageletAction, PageletActionType } from "./actions";
+export { PageletOrchestrator } from "./orchestrator";
+export type { PageletHost } from "./orchestrator";
 
 export {
     buildPreloadPrompt,

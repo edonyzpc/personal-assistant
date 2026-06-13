@@ -4,14 +4,17 @@ import type { PageletCommandHost } from "./compat/focus-command";
 import { pageletT, type PageletLocale } from "../locales/pagelet";
 
 // ---------------------------------------------------------------------------
-// Command IDs — v2
+// Command IDs
 // ---------------------------------------------------------------------------
 
+export const PAGELET_OPEN_PANEL_COMMAND_ID = "pa-pagelet:open-panel" as const;
+export const PAGELET_REVIEW_CURRENT_COMMAND_ID = "pa-pagelet:review-current" as const;
 export const PAGELET_QUICK_REVIEW_COMMAND_ID = "pa-pagelet:quick-review" as const;
 export const PAGELET_DISCOVER_COMMAND_ID = "pa-pagelet:discover-connections" as const;
 export const PAGELET_PERIODIC_SUMMARY_COMMAND_ID = "pa-pagelet:periodic-summary" as const;
 export const PAGELET_TOGGLE_HINTS_COMMAND_ID = "pa-pagelet:toggle-proactive-hints" as const;
-export const PAGELET_PRELOAD_STATUS_COMMAND_ID = "pa-pagelet:preload-status" as const;
+export const PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID = "pa-pagelet:preload-status" as const;
+export const PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID = "pa-pagelet:background-preparation-status" as const;
 export const PAGELET_MOVE_PET_COMMAND_ID = "pa-pagelet:move-pet-corner" as const;
 export const PAGELET_TOGGLE_PET_COMMAND_ID = "pa-pagelet:toggle-pet-visibility" as const;
 
@@ -19,12 +22,14 @@ export const PAGELET_TOGGLE_PET_COMMAND_ID = "pa-pagelet:toggle-pet-visibility" 
 // Callbacks
 // ---------------------------------------------------------------------------
 
-export interface PageletV2CommandCallbacks {
+export interface PageletCommandCallbacks {
+    onOpenPanel: () => void | Promise<void>;
+    onReviewCurrent: () => void | Promise<void>;
     onQuickReview: () => void | Promise<void>;
     onDiscoverConnections: () => void | Promise<void>;
     onPeriodicSummary: () => void | Promise<void>;
     onToggleProactiveHints: () => void | Promise<void>;
-    onShowPreloadStatus: () => void | Promise<void>;
+    onShowBackgroundPreparationStatus: () => void | Promise<void>;
     onMovePetCorner: () => void | Promise<void>;
     onTogglePetVisibility: () => void | Promise<void>;
 }
@@ -33,11 +38,23 @@ export interface PageletV2CommandCallbacks {
 // Registration
 // ---------------------------------------------------------------------------
 
-export function registerPageletV2Commands(
+export function registerPageletCommands(
     host: PageletCommandHost,
-    callbacks: PageletV2CommandCallbacks,
+    callbacks: PageletCommandCallbacks,
     locale: PageletLocale = "en",
 ): void {
+    host.addCommand({
+        id: PAGELET_OPEN_PANEL_COMMAND_ID,
+        name: pageletT("pagelet.command.openPanel", locale),
+        callback: () => { void callbacks.onOpenPanel(); },
+    });
+
+    host.addCommand({
+        id: PAGELET_REVIEW_CURRENT_COMMAND_ID,
+        name: pageletT("pagelet.command.reviewCurrent", locale),
+        callback: () => { void callbacks.onReviewCurrent(); },
+    });
+
     host.addCommand({
         id: PAGELET_QUICK_REVIEW_COMMAND_ID,
         name: pageletT("pagelet.command.quickReview", locale),
@@ -63,9 +80,15 @@ export function registerPageletV2Commands(
     });
 
     host.addCommand({
-        id: PAGELET_PRELOAD_STATUS_COMMAND_ID,
+        id: PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
         name: pageletT("pagelet.command.preloadStatus", locale),
-        callback: () => { void callbacks.onShowPreloadStatus(); },
+        callback: () => { void callbacks.onShowBackgroundPreparationStatus(); },
+    });
+
+    host.addCommand({
+        id: PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
+        name: pageletT("pagelet.command.preloadStatus", locale),
+        callback: () => { void callbacks.onShowBackgroundPreparationStatus(); },
     });
 
     host.addCommand({

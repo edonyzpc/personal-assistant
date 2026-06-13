@@ -26,7 +26,7 @@ export interface PetStateMachineOptions {
 }
 
 /**
- * Deterministic state machine for Pet v2.
+ * Deterministic state machine for Pagelet Pet.
  *
  * Transition table:
  *   resting  + note-activity   → idle

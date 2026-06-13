@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet v2 — LLM module barrel exports.
+ * Pagelet — LLM module barrel exports.
  *
  * Re-exports types, prompt builders, and the response parser so callers
  * can import from `./pagelet/llm` without reaching into submodules.

@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pet v2 DOM lifecycle manager.
+ * Pagelet Pet DOM lifecycle manager.
  *
  * Owns: wrapper div, SVG element, notification dot, event listeners.
  * Does NOT own: the state machine or analysis pipeline. Callers drive
@@ -9,6 +9,7 @@
  */
 
 import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState } from "./types";
+import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { buildPetSvg, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
 
@@ -34,7 +35,7 @@ const PET_CSS = /* css */ `
 .pa-pagelet-pet[data-corner="bottom-left"]  { bottom:36px; left:8px; }
 .pa-pagelet-pet[data-corner="top-right"]    { top:48px; right:20px; }
 .pa-pagelet-pet[data-corner="top-left"]     { top:48px; left:8px; }
-.pa-pagelet-pet-wrapper { width:56px; height:56px; display:flex; align-items:center; justify-content:center; position:relative; }
+.pa-pagelet-pet-wrapper { width:56px; height:56px; display:flex; align-items:center; justify-content:center; position:relative; background:transparent; border:0; border-radius:0; box-shadow:none; }
 .pa-pagelet-pet-notification { position:absolute; top:-2px; right:-4px; width:12px; height:12px; background:var(--pagelet-done,#5dd39e); border-radius:50%; border:2px solid var(--background-primary,#1e1e1e); opacity:0; transform:scale(0); transition:all 0.3s ease; pointer-events:none; }
 .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-notification { opacity:1; transform:scale(1); animation:pa-pagelet-pet-nudge-dot-glow 1.8s ease-in-out infinite; }
 .pa-pagelet-pet[data-state="resting"] { opacity:0.55; }
@@ -50,17 +51,27 @@ const PET_CSS = /* css */ `
 .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-1 { animation:pa-pagelet-pet-zzz-float-1 3s ease-out infinite; }
 .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-2 { animation:pa-pagelet-pet-zzz-float-2 3s ease-out infinite 0.8s; }
 .pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg path,.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg circle { stroke:#ff6b6b !important; fill:none; }
-.theme-light .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet-wrapper { background:rgba(255,255,255,0.75); border-radius:10px; box-shadow:0 2px 12px rgba(0,0,0,0.10),0 1px 4px rgba(0,0,0,0.06); }
+.theme-light .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet-wrapper { background:transparent; border:0; border-radius:0; box-shadow:none; }
 .theme-light .pa-pagelet-pet[data-state="resting"],[data-theme="light"] .pa-pagelet-pet[data-state="resting"] { opacity:0.4; }
 .theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap,[data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap { filter:saturate(0) brightness(0.85); }
-.theme-light .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper { box-shadow:0 2px 16px rgba(124,158,255,0.3),0 0 0 1.5px rgba(124,158,255,0.4); }
-.theme-light .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper { box-shadow:0 2px 20px rgba(93,211,158,0.35),0 0 0 2px rgba(93,211,158,0.2); }
+.theme-light .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper { background:transparent; border:0; border-radius:0; box-shadow:none; }
+.theme-light .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper { background:transparent; border:0; border-radius:0; box-shadow:none; }
 body.is-mobile .pa-pagelet-pet-wrapper { transform:scale(0.8); min-width:44px; min-height:44px; }
 @media(prefers-reduced-motion:reduce) { .pa-pagelet-pet[data-state] .pa-pagelet-pet-svg-wrap,.pa-pagelet-pet[data-state] .pa-pagelet-pet-blink-group,.pa-pagelet-pet-notification,.pa-pagelet-pet-dot-1,.pa-pagelet-pet-dot-2,.pa-pagelet-pet-dot-3,.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-1,.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-2 { animation:none !important; } }
 `;
 
+export function getPetAriaLabel(locale: PageletLocale): string {
+    return pageletT("pagelet.pet.ariaLabel", locale);
+}
+
 function injectPetStyles(): void {
-    if (document.getElementById(PET_CSS_ID)) return;
+    const existing = document.getElementById(PET_CSS_ID);
+    if (existing) {
+        if (existing.textContent !== PET_CSS) {
+            existing.textContent = PET_CSS;
+        }
+        return;
+    }
     const style = document.createElement("style");
     style.id = PET_CSS_ID;
     style.textContent = PET_CSS;
@@ -80,6 +91,7 @@ export class PetView implements PetRenderer {
     private _destroyed = false;
     private _errorTimer: ReturnType<typeof setTimeout> | null = null;
     private _themeObserver: MutationObserver | null = null;
+    private readonly _getLocale: () => PageletLocale;
 
     // Bound handlers for clean removal
     private readonly _handleClick: (e: MouseEvent) => void;
@@ -90,6 +102,7 @@ export class PetView implements PetRenderer {
         this._state = options.initialState ?? "idle";
         this._corner = options.corner ?? "bottom-right";
         this._callbacks = options.callbacks;
+        this._getLocale = options.getLocale ?? (() => "en");
 
         this._stateMachine = new PetStateMachine({
             initialState: this._state,
@@ -129,7 +142,7 @@ export class PetView implements PetRenderer {
         root.setAttribute("data-corner", this._corner);
         root.setAttribute("tabindex", "0");
         root.setAttribute("role", "button");
-        root.setAttribute("aria-label", "拾页助手");
+        root.setAttribute("aria-label", getPetAriaLabel(this._getLocale()));
 
         const wrapper = document.createElement("div");
         wrapper.className = "pa-pagelet-pet-wrapper";

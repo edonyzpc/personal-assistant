@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) v1 — Cmd+/ focus jump-in (Track B · B5).
+ * Pagelet — Cmd+/ focus jump-in (Track B · B5).
  *
  * Spec source:
  *  - `docs/review-assistant-sdd.md` §6.2 + §9.1 (focus management)
@@ -38,9 +38,8 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Obsidian command ID. Use the `pa-pagelet:` prefix per SDD §6.3
- * ("Command ID: pa-pagelet:* / View type: pa-pagelet-view"). All
- * Pagelet commands MUST share this prefix to avoid collisions with
+ * Obsidian command ID. All Pagelet commands use the `pa-pagelet:`
+ * prefix to avoid collisions with
  * other PA commands / third-party plugins.
  */
 export const PAGELET_FOCUS_LATEST_COMMAND_ID = "pa-pagelet:focus-latest-suggestion" as const;

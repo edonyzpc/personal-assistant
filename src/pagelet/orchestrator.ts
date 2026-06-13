@@ -1,121 +1,100 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet (Review Assistant) — review orchestration logic.
+ * Pagelet Orchestrator -- central integration layer.
  *
- * Extracted from `src/plugin.ts` (PluginManager) to honour the Single
- * Responsibility Principle. The orchestrator owns the full review
- * lifecycle — scope resolution, LLM review, Write-Action execution —
- * while the plugin retains runtime lifecycle, workspace management
- * and cross-cutting concerns (settings persistence, VSS, etc.).
+ * Connects Pet, Bubble, Preload, Hints, and Commands into a working
+ * feature lifecycle. The orchestrator does NOT make LLM calls directly;
+ * it delegates analysis to the PreloadEngine via an injected
+ * AnalyzeCallback from the host.
  *
- * Communication with the plugin is mediated through the
- * {@link PageletOrchestratorHost} interface, keeping the dependency
- * inverted (orchestrator → host abstraction, not → concrete plugin).
+ * Communication with the plugin is mediated through the narrow
+ * {@link PageletHost} interface, keeping the dependency inverted
+ * (orchestrator -> host abstraction, not -> concrete plugin).
+ *
+ * Coordinates Pet, Bubble, Panel, Tab, background preparation,
+ * foreground review, and periodic summary.
  */
 
-import { MarkdownView, Notice, Platform, TFile, normalizePath } from "obsidian";
-import type { App, EventRef } from "obsidian";
+import { Notice } from "obsidian";
+import type { App, EventRef, MarkdownView, WorkspaceLeaf } from "obsidian";
 
-import type { AgentCapabilityContext } from "../ai-services/capability-types";
-import type { PreviewRenderer } from "../ai-services/write-action-framework";
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
-import type { PageletOutputLanguageSetting } from "../settings/pagelet";
 
+import type { BubbleContent, BubbleFinding } from "./bubble/types";
+import { BubbleView } from "./bubble/BubbleView";
+import { buildEmptyContent, buildNudgeContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
+import { PanelView } from "./panel/PanelView";
+import type { PanelFinding, PanelLayoutType } from "./panel/types";
+import { TabView } from "./tab/TabView";
+import type { PageletCommandCallbacks } from "./commands";
+import { ProactiveHints } from "./hints/ProactiveHints";
+import type { PetCorner } from "./pet/types";
+import { PetView } from "./pet/PetView";
+import { PreloadBudget } from "./preload/PreloadBudget";
+import { PreloadCache } from "./preload/PreloadCache";
+import { PreloadEngine } from "./preload/PreloadEngine";
+import type { AnalyzeCallback, PreloadEvent } from "./preload/types";
+import { ReviewNoteGenerator } from "./output/ReviewNoteGenerator";
+import type { GenerateCallback, GeneratedReviewNote } from "./output/types";
+import type { WriteResult } from "./output/types";
 import {
-    PAGELET_APPROX_CHARS_PER_TOKEN,
-    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
-    PageletCostTracker,
-    PageletRateLimiter,
-    PageletReviewModel,
-    buildPageletScopePlan,
-    type PageletChatModelFactory,
-    buildPageletScopeReviewBundle,
-    isPageletEligibleView,
-    mintNonCollidingReviewNotePath,
-    type PageletReviewRange,
-    type PageletReviewProgressEvent,
-    type PageletReviewTimingEntry,
-    type PageletScopeMetadataLike,
-    type PageletScopePlan,
-    type PageletScopeSelection,
-    type PageletScopeSourceReference,
-    type PageletSuggestion,
-    type PaReviewRuntime,
-} from "./index";
-import { PageletView, type PageletDraftReviewSaveRequest } from "./view";
+    assembleReviewNote,
+    buildReviewMetadata,
+    formatPageletDate,
+    formatPageletIsoTimestamp,
+} from "./pa-review-file-io";
+import { PAGELET_SCHEMA_VERSION, type PageletReviewResult } from "./pa-review-schemas";
+import { ChangeDetector } from "./scope/ChangeDetector";
+import { ScopeResolver } from "./scope/ScopeResolver";
+import { getPageletOverlayRoot } from "./overlay-root";
 
-// ── Constants ────────────────────────────────────────────────────────────────
-
-const PAGELET_REVIEW_TIMEOUT_MS = 90_000;
-const PAGELET_PRODUCTION_MAX_RETRIES = 0;
-
-function hasStringProperty<Key extends string>(
-    value: unknown,
-    key: Key,
-): value is Record<Key, string> {
-    return Boolean(value)
-        && typeof value === "object"
-        && typeof (value as Record<Key, unknown>)[key] === "string";
-}
-
-// ── Host interface ───────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Host interface
+// ---------------------------------------------------------------------------
 
 /**
- * The narrow surface the orchestrator requires from its host (the plugin).
+ * Narrow host interface -- what the Pagelet orchestrator needs from the plugin.
  *
- * Keeping this as a structural interface rather than referencing
- * `PluginManager` directly prevents a circular-import at the value level
- * and lets tests provide a lightweight stub.
+ * Deliberately thin: only the settings and methods the orchestrator
+ * actually reads. Everything else stays behind the plugin boundary.
  */
-export interface PageletOrchestratorHost {
-    /** Obsidian application reference (vault, workspace, metadataCache …). */
+export interface PageletHost {
     readonly app: App;
 
-    /** Typed access to the settings the orchestrator reads. */
     readonly settings: {
-        readonly debug: boolean;
-        readonly pagelet: {
-            readonly enabled: boolean;
-            readonly reviewsFolder: string;
-            readonly outputLanguage: PageletOutputLanguageSetting;
-            readonly temperature: number;
-            readonly maxInputTokens: number;
-            readonly maxOutputTokens: number;
+        pagelet: {
+            enabled: boolean;
+            petVisible: boolean;
+            petCorner: PetCorner;
+            proactiveHints: boolean;
+            proactiveHintsCooldown: number;
+            proactiveHintsQuietHours: {
+                enabled: boolean;
+                start: string;
+                end: string;
+            };
+            preloadEnabled: boolean;
+            preloadInterval: number;
+            preloadPerHourCap: number;
+            preloadPerDayCap: number;
+            preloadTokenBudget: { input: number; output: number };
+            outputLanguage: "auto" | "zh" | "en";
+            temperature: number;
+            foregroundPerHourCap: number;
+            foregroundPerDayCap: number;
+            maxInputTokens: number;
+            maxOutputTokens: number;
+            reviewsFolder: string;
+            periodicSummaryScope: "3d" | "7d" | "14d";
+            excludedFolders: string[];
+            excludedTags: string[];
+            excludedPatterns: string[];
         };
-        readonly chatModelName: string;
-        readonly aiProvider: string;
-        readonly previewLimits: number;
     };
 
-    /**
-     * Opaque plugin reference for the Write-Action executor's
-     * {@link AgentCapabilityContext}. Typed through the capability
-     * interface so the orchestrator never depends on the concrete
-     * PluginManager class.
-     */
-    readonly capabilityPlugin: AgentCapabilityContext['plugin'];
-
-    /**
-     * Factory for creating a LangChain chat model (delegates to AIUtils
-     * internally). Used by the Pagelet review pipeline.
-     */
-    createChatModel: PageletChatModelFactory;
-
-    /** Structured debug log (no-op when `settings.debug` is false). */
+    /** Structured debug log (no-op when debug is false). */
     log(message: string, ...args: unknown[]): void;
-
-    /** Lazy accessor for the Pagelet review runtime. */
-    getOrCreatePageletRuntime(): PaReviewRuntime | null;
-
-    /** Open (or reveal) the Pagelet side-panel and return the view. */
-    activePageletView(): Promise<PageletView | null>;
-
-    /** Return the already-open Pagelet view without revealing it, or null. */
-    getOpenPageletView(): PageletView | null;
-
-    /** Open (or reveal) the Chat side-panel and return its view. */
-    activeChatView(): Promise<{ prefillComposer(text: string): boolean } | null>;
 
     /**
      * Register an Obsidian EventRef so the plugin can detach it on unload.
@@ -123,820 +102,1040 @@ export interface PageletOrchestratorHost {
      */
     registerEvent(ref: EventRef): void;
 
-    /** Cost tracker shared across all reviews in this plugin session. */
-    readonly pageletCostTracker: PageletCostTracker;
+    /**
+     * Factory for the LLM callback used by PreloadEngine.
+     * The host MUST enforce `allowWrite=false` on the returned callback.
+     */
+    createPreloadAnalyzeCallback(): AnalyzeCallback;
 
-    /** Rate limiter shared across all reviews in this plugin session. */
-    readonly pageletRateLimiter: PageletRateLimiter;
+    /** Factory for the LLM callback used by foreground review commands. */
+    createForegroundAnalyzeCallback(): AnalyzeCallback;
+
+    /** Factory for the LLM callback used by ReviewNoteGenerator. */
+    createGenerateCallback(): GenerateCallback;
+
+    /** Write a review note through the Pagelet write framework. */
+    writeReviewNote(note: GeneratedReviewNote): Promise<WriteResult>;
+
+    /** Persist current settings to disk. */
+    saveSettings(): Promise<void> | void;
 }
 
-// ── Orchestrator ─────────────────────────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Orchestrator
+// ---------------------------------------------------------------------------
 
-/** @deprecated Use PageletV2Orchestrator from ./v2-orchestrator instead. Will be removed before 2.3.0 stable. */
-export class PageletReviewOrchestrator {
-    private pageletReviewInFlight = false;
+export class PageletOrchestrator {
+    // ---- Components -------------------------------------------------------
+    private petView: PetView | null = null;
+    private bubbleView: BubbleView | null = null;
+    private panelView: PanelView | null = null;
+    private tabView: TabView | null = null;
+    private preloadEngine: PreloadEngine | null = null;
+    private preloadUnsubscribe: (() => void) | null = null;
+    private lastAnalysisFindings: PanelFinding[] = [];
+    private lastAnalysisSourcePath: string | null = null;
+    private pendingReviewNote: GeneratedReviewNote | null = null;
+    private currentPanelLayout: PanelLayoutType | null = null;
+    private readonly handleEscape: (e: KeyboardEvent) => void;
+    private readonly preloadCache: PreloadCache;
+    private readonly preloadBudget: PreloadBudget;
+    private readonly foregroundBudget: PreloadBudget;
+    private foregroundRunInProgress = false;
+    private readonly changeDetector: ChangeDetector;
+    private readonly scopeResolver: ScopeResolver;
+    private readonly proactiveHints: ProactiveHints;
+    private saveInProgress = false;
 
-    constructor(private readonly host: PageletOrchestratorHost) {}
+    // ---- State ------------------------------------------------------------
+    private idleTimer: ReturnType<typeof setTimeout> | null = null;
+    private activityDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private destroyed = false;
 
-    // ── PreviewRenderer factory (used by runtime init) ───────────────────
+    // ---- Constants --------------------------------------------------------
+    /** 10 minutes of no activity -> Pet enters resting state. */
+    private static readonly IDLE_TIMEOUT_MS = 10 * 60 * 1000;
+    /** 5 s debounce for note-activity detection (vault modify events). */
+    private static readonly ACTIVITY_DEBOUNCE_MS = 5_000;
 
-    createPageletPanelPreviewRenderer(): PreviewRenderer {
-        return {
-            show: async (spec, options) => {
-                const pageletView =
-                    this.host.getOpenPageletView() ?? (await this.host.activePageletView());
-                if (!pageletView) {
-                    return { outcome: "cancelled" };
+    constructor(private readonly host: PageletHost) {
+        const s = host.settings.pagelet;
+
+        // Scope infrastructure
+        this.preloadCache = new PreloadCache();
+        this.preloadBudget = new PreloadBudget(
+            s.preloadPerHourCap,
+            s.preloadPerDayCap,
+        );
+        this.foregroundBudget = new PreloadBudget(
+            s.foregroundPerHourCap,
+            s.foregroundPerDayCap,
+        );
+        this.changeDetector = new ChangeDetector();
+        this.scopeResolver = new ScopeResolver(host.app, {
+            excludedFolders: [...s.excludedFolders],
+            excludedTags: [...s.excludedTags],
+            excludedPatterns: [...s.excludedPatterns],
+            maxFileSizeBytes: 100 * 1024,
+            reviewsFolder: s.reviewsFolder,
+        });
+
+        // Proactive hints
+        this.proactiveHints = new ProactiveHints({
+            enabled: s.proactiveHints,
+            cooldownMinutes: s.proactiveHintsCooldown,
+            quietHours: s.proactiveHintsQuietHours,
+        });
+
+        // Bound Escape handler for cleanup
+        this.handleEscape = (e: KeyboardEvent) => {
+            if (e.key !== "Escape") return;
+            if (this.tabView?.isOpen) { this.tabView.close(); e.stopImmediatePropagation(); return; }
+            if (this.panelView?.isOpen) { this.panelView.close(); e.stopImmediatePropagation(); return; }
+        };
+    }
+
+    private t(key: string, params?: Readonly<Record<string, string | number>>): string {
+        return pageletT(key, getPageletUiLanguage(), params);
+    }
+
+    // ======================================================================
+    // Public lifecycle
+    // ======================================================================
+
+    /**
+     * Initialize all components and start the feature lifecycle.
+     * Call from `plugin.onload()` after the workspace is ready.
+     */
+    initialize(): void {
+        if (this.destroyed) return;
+        const s = this.host.settings.pagelet;
+
+        // 1. Resolve a single overlay mount root for Bubble/Panel/Tab.
+        //    Mounting under workspace.containerEl (instead of
+        //    document.body) ensures these fixed overlays never overlap
+        //    Obsidian's titlebar drag region. Combined with each view's
+        //    lazy mount/unmount, the workspace stays free of long-lived
+        //    fixed overlays while idle (D037 progressive disclosure).
+        const overlayRoot = getPageletOverlayRoot(this.host.app);
+
+        // 1a. Create BubbleView (lazy-mounted on first show)
+        this.bubbleView = new BubbleView({
+            getLocale: getPageletUiLanguage,
+            callbacks: {
+                onExpandPanel: (type) => this.handleExpandPanel(type),
+                onSourceClick: (link) => this.handleSourceClick(link),
+                onDismiss: () => this.handleBubbleDismiss(),
+            },
+        });
+        this.bubbleView.mount(overlayRoot);
+
+        // 1b. Create PanelView (lazy-mounted on first open)
+        this.panelView = new PanelView({
+            app: this.host.app,
+            locale: getPageletUiLanguage(),
+            callbacks: {
+                onExpandToTab: () => this.expandPanelToTab(),
+                onClose: () => {
+                    this.clearPanelSession();
+                    this.host.log("Panel closed");
+                },
+                onSourceClick: (link) => this.handleSourceClick(link),
+                onSaveAsReviewNote: (findings) => { void this.saveFindingsAsReviewNote(findings); },
+                onRunReview: () => this.reviewCurrentNote({ preferPanel: true }),
+                onToggleHints: () => this.toggleProactiveHints(),
+            },
+        });
+        this.panelView.mount(overlayRoot);
+
+        // 1c. Create TabView (lazy-mounted on first open)
+        this.tabView = new TabView(() => { this.host.log("Tab closed"); }, getPageletUiLanguage());
+        this.tabView.mount(overlayRoot);
+
+        // 1d. Centralized Escape handler (Tab > Panel > Bubble priority)
+        document.addEventListener("keydown", this.handleEscape, true);
+
+        // 2. Workspace event: re-mount Pet when the active leaf changes
+        this.host.registerEvent(
+            this.host.app.workspace.on("active-leaf-change", (leaf) => {
+                this.handleLeafChange(leaf);
+            }),
+        );
+
+        // 3. Vault event: detect note modifications for idle/activity tracking
+        //    Filter to markdown files only (Perf: vault.on("modify") fires for ALL file types)
+        this.host.registerEvent(
+            this.host.app.vault.on("modify", (file) => {
+                if (file.path.endsWith(".md")) {
+                    this.handleNoteActivity();
                 }
-                return pageletView.showWritePreview(spec, options);
+            }),
+        );
+
+        // 4. Start background preparation engine (if enabled)
+        if (s.preloadEnabled) {
+            this.startPreloadEngine();
+        }
+
+        // 5. Mount Pet on whatever leaf is currently active
+        const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
+        if (activeLeaf) {
+            this.handleLeafChange(activeLeaf);
+        }
+
+        // 6. Begin idle tracking
+        this.resetIdleTimer();
+    }
+
+    /**
+     * Tear down all components. Call from `plugin.onunload()`.
+     * Safe to call multiple times.
+     */
+    destroy(): void {
+        if (this.destroyed) return;
+        this.destroyed = true;
+
+        this.clearIdleTimer();
+        this.clearActivityDebounce();
+        document.removeEventListener("keydown", this.handleEscape, true);
+        this.preloadUnsubscribe?.();
+        this.preloadUnsubscribe = null;
+        this.preloadEngine?.destroy();
+        this.petView?.destroy();
+        this.bubbleView?.destroy();
+        this.panelView?.destroy();
+        this.tabView?.destroy();
+        this.preloadCache.clear();
+        this.changeDetector.clear();
+
+        this.preloadEngine = null;
+        this.petView = null;
+        this.bubbleView = null;
+        this.panelView = null;
+        this.tabView = null;
+    }
+
+    /**
+     * Apply the latest Pagelet settings to long-lived runtime collaborators.
+     * Called after settings saves so background preparation and exclusion rules
+     * take effect without requiring a plugin reload.
+     */
+    syncSettings(): void {
+        if (this.destroyed) return;
+        const s = this.host.settings.pagelet;
+
+        this.preloadBudget.updateLimits(s.preloadPerHourCap, s.preloadPerDayCap);
+        this.foregroundBudget.updateLimits(s.foregroundPerHourCap, s.foregroundPerDayCap);
+        this.scopeResolver.updateConfig({
+            excludedFolders: [...s.excludedFolders],
+            excludedTags: [...s.excludedTags],
+            excludedPatterns: [...s.excludedPatterns],
+            maxFileSizeBytes: 100 * 1024,
+            reviewsFolder: s.reviewsFolder,
+        });
+        this.proactiveHints.updateConfig({
+            enabled: s.proactiveHints,
+            cooldownMinutes: s.proactiveHintsCooldown,
+            quietHours: s.proactiveHintsQuietHours,
+        });
+        if (this.petView) {
+            this.petView.stateMachine.proactiveHintsEnabled = s.proactiveHints;
+            this.petView.setCorner(s.petCorner);
+        }
+        this.syncPetVisibility();
+
+        if (!s.preloadEnabled) {
+            this.preloadEngine?.updateConfig(this.buildPreloadConfig());
+            return;
+        }
+        if (!this.preloadEngine) {
+            this.startPreloadEngine();
+            return;
+        }
+        this.preloadEngine.updateConfig(this.buildPreloadConfig());
+    }
+
+    // ======================================================================
+    // Command callbacks -- returned to the command registrar
+    // ======================================================================
+
+    /**
+     * Build the callback object expected by
+     * `registerPageletCommands(host, callbacks, locale)`.
+     */
+    getCommandCallbacks(): PageletCommandCallbacks {
+        return {
+            onOpenPanel: () => this.openPanel(),
+            onReviewCurrent: () => this.reviewCurrentNote(),
+            onQuickReview: () => this.openPanel(),
+            onDiscoverConnections: async () => {
+                await this.analyzeCurrentNote();
+                this.handleExpandPanel("discover");
+            },
+            onPeriodicSummary: () => {
+                void this.runPeriodicSummary();
+            },
+            onToggleProactiveHints: () => this.toggleProactiveHints(),
+            onShowBackgroundPreparationStatus: () => {
+                this.showBackgroundPreparationStatusNotice();
+            },
+            onMovePetCorner: () => {
+                this.cyclePetCorner();
+            },
+            onTogglePetVisibility: () => {
+                this.togglePetVisibility();
             },
         };
     }
 
-    // ── Public entry-points (delegated from plugin) ──────────────────────
-
-    async refreshPageletScope(
-        range: PageletReviewRange,
-        preferredActivePath?: string,
-    ): Promise<void> {
-        const anchor =
-            this.resolvePageletAnchorMarkdownFile(preferredActivePath) ??
-            this.getPageletAnchorMarkdownFile();
-        const pageletView = await this.host.activePageletView();
-        if (!pageletView || !anchor) return;
-        pageletView.showScopePlan(await this.createPageletScopePlan(range, anchor));
+    openPanel(): void {
+        this.handleExpandPanel("review");
     }
 
-    async runPageletReviewForActiveNote(): Promise<void> {
-        const locale = this.getPageletLocale();
-        if (!this.reservePageletReview(locale)) return;
-        const activeMarkdownView = this.getStrictActivePageletMarkdownView();
-        if (!activeMarkdownView) {
-            this.pageletReviewInFlight = false;
-            return;
-        }
-        const file = activeMarkdownView.file;
-        if (!file || file.extension.toLowerCase() !== "md") {
-            this.pageletReviewInFlight = false;
-            return;
-        }
-        await this.runPageletReviewForFiles({
-            primaryFile: file,
-            files: [file],
-            range: "current",
-            abortOnActiveViewChange: { view: activeMarkdownView, path: file.path },
-        });
+    async reviewCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
+        await this.analyzeCurrentNote(options);
     }
 
-    async runPageletReviewForPageletScope(): Promise<void> {
-        const locale = this.getPageletLocale();
-        if (!this.reservePageletReview(locale)) return;
-        let pageletView = this.host.getOpenPageletView();
-        let selection = pageletView?.getScopeSelection();
-        const anchor =
-            this.resolvePageletAnchorMarkdownFile(selection?.activePath) ??
-            this.getPageletAnchorMarkdownFile();
-        if (!anchor) {
-            this.pageletReviewInFlight = false;
-            new Notice(pageletT("pagelet.trigger.noActiveNote", locale), 3000);
+    // ======================================================================
+    // Pet lifecycle
+    // ======================================================================
+
+    /**
+     * Handle an active-leaf-change event: unmount Pet from the previous
+     * leaf, and re-mount on the new one if it is a markdown view.
+     */
+    private handleLeafChange(leaf: WorkspaceLeaf | null): void {
+        // Always unmount from previous location
+        this.petView?.unmount();
+        this.bubbleView?.close();
+
+        // Only mount on markdown views (D029/R1)
+        if (!leaf || leaf.view?.getViewType() !== "markdown") {
+            const discarded = this.discardAnalysisSessionIfStale(null);
+            if (discarded && this.panelView?.isOpen) {
+                this.panelView.close();
+            }
             return;
         }
-        pageletView = pageletView ?? (await this.host.activePageletView());
-        if (!pageletView) {
-            this.pageletReviewInFlight = false;
+        if (!this.host.settings.pagelet.petVisible) return;
+
+        const markdownView = leaf.view as MarkdownView;
+        const discarded = this.discardAnalysisSessionIfStale(markdownView.file?.path ?? null);
+        if (discarded && this.panelView?.isOpen) {
+            this.panelView.close();
+        }
+        const containerEl = markdownView.contentEl;
+        if (!containerEl) return;
+
+        // Lazy-create Pet on first eligible leaf
+        if (!this.petView) {
+            this.petView = new PetView({
+                corner: this.host.settings.pagelet.petCorner,
+                getLocale: getPageletUiLanguage,
+                callbacks: {
+                    onToggleBubble: () => this.handlePetClick(),
+                },
+            });
+            // Sync proactive-hints flag into state machine
+            this.petView.stateMachine.proactiveHintsEnabled =
+                this.host.settings.pagelet.proactiveHints;
+        }
+
+        this.petView.mount(containerEl);
+    }
+
+    /** Handle a click/tap on the Pet element. */
+    private handlePetClick(): void {
+        if (!this.bubbleView) return;
+
+        const bubbleState = this.bubbleView.bubbleState;
+
+        // If bubble is degraded (semi-transparent), restore it
+        if (bubbleState === "degraded") {
+            this.bubbleView.restore();
             return;
         }
-        selection = selection ?? pageletView.getScopeSelection();
-        if (selection.paths.length === 0) {
-            const plan = await this.createPageletScopePlan(selection.range, anchor);
-            pageletView.showScopePlan(plan);
-            selection = pageletView.getScopeSelection();
-        }
-        const primaryFile = this.resolvePageletAnchorMarkdownFile(selection.activePath) ?? anchor;
-        const files = this.resolvePageletScopeFiles(selection);
-        if (files.length === 0) {
-            this.pageletReviewInFlight = false;
-            new Notice(pageletT("pagelet.trigger.emptyNote", locale), 3000);
+
+        // If bubble is already visible, close it (toggle)
+        if (bubbleState === "visible") {
+            this.bubbleView.close();
             return;
         }
-        await this.runPageletReviewForFiles({
-            primaryFile,
-            files,
-            range: selection.range,
-        });
-    }
 
-    async openPageletSourceReference(
-        reference: PageletScopeSourceReference,
-    ): Promise<boolean> {
-        const abstractFile = this.host.app.vault.getAbstractFileByPath(
-            normalizePath(reference.path),
-        );
-        if (!(abstractFile instanceof TFile)) return false;
-        await this.host.app.workspace.getLeaf("tab").openFile(abstractFile);
-        return true;
-    }
-
-    async openPageletRelatedNote(
-        noteName: string,
-        sourcePath: string,
-    ): Promise<boolean> {
-        const linkpath = noteName
-            .replace(/^\[\[/, "")
-            .replace(/\]\]$/, "")
-            .split("|")[0]
-            .trim();
-        if (!linkpath) return false;
-        const destination = this.host.app.metadataCache.getFirstLinkpathDest(
-            linkpath,
-            sourcePath,
-        );
-        if (!destination) return false;
-        await this.host.app.workspace.getLeaf("tab").openFile(destination);
-        return true;
-    }
-
-    async preparePageletResearchPrompt(
-        suggestion: PageletSuggestion,
-    ): Promise<boolean> {
-        const locale = this.getPageletLocale();
-        const sanitize = (text: string) => text.replace(/[\n\r]+/g, " ").slice(0, 500);
-        const prompt = [
-            pageletT("pagelet.research.prompt.search", locale),
-            "",
-            pageletT("pagelet.research.prompt.task", locale),
-            `${pageletT("pagelet.research.prompt.kind", locale)}: ${sanitize(suggestion.kind)}`,
-            `${pageletT("pagelet.research.prompt.action", locale)}: ${sanitize(suggestion.proposed_action)}`,
-            "",
-            pageletT("pagelet.research.prompt.output", locale),
-        ].join("\n");
-        const chatView = await this.host.activeChatView();
-        if (!chatView) return false;
-        return chatView.prefillComposer(prompt);
-    }
-
-    async savePageletDraftReview(
-        request: PageletDraftReviewSaveRequest,
-    ): Promise<void> {
-        const locale = this.getPageletLocale();
-        const pageletView =
-            this.host.getOpenPageletView() ?? (await this.host.activePageletView());
-        const runtime = this.host.getOrCreatePageletRuntime();
-        if (!runtime) {
-            pageletView?.showReviewSaveError(
-                pageletT("pagelet.mascot.error", locale),
-                request.sourcePath,
-            );
-            new Notice(pageletT("pagelet.mascot.error", locale), 3000);
+        // If Pet is in nudge state, show nudge-specific content
+        if (this.petView?.stateMachine.state === "nudge") {
+            this.showNudgeBubble();
+            this.petView.stateMachine.transition("user-interact");
+            this.proactiveHints.onHintViewed();
             return;
         }
+
+        // Otherwise, show regular bubble
+        this.showBubble();
+    }
+
+    /**
+     * Show the Bubble with cached background preparation findings, or an empty state
+     * that offers to trigger an immediate analysis cycle.
+     */
+    private showBubble(): void {
+        const anchorEl = this.petView?.rootEl;
+        if (!this.bubbleView || !anchorEl) return;
+
+        const locale = getPageletUiLanguage();
+        const cachedFindings = this.preloadCache.getFindings();
+
+        let content: BubbleContent;
+        if (cachedFindings.length > 0) {
+            const findings: BubbleFinding[] = cachedFindings.map((f) => ({
+                text: f.text,
+                sourceLink: f.sourceFile,
+                sourceTitle: f.sourceTitle,
+            }));
+            content = buildQuickReviewContent(findings, {
+                onExpandPanel: (type) => this.handleExpandPanel(type),
+                onSourceClick: (link) => this.handleSourceClick(link),
+                onDismiss: () => this.handleBubbleDismiss(),
+            }, locale);
+        } else {
+            content = buildEmptyContent(() => { void this.reviewCurrentNote(); }, locale);
+        }
+
+        this.bubbleView.show(content, anchorEl);
+    }
+
+    /** Show nudge-specific content when Pet is in nudge state. */
+    private showNudgeBubble(): void {
+        const anchorEl = this.petView?.rootEl;
+        if (!this.bubbleView || !anchorEl) return;
+
+        const locale = getPageletUiLanguage();
+        const cachedFindings = this.preloadCache.getFindings();
+        const findings: BubbleFinding[] = cachedFindings.map((f) => ({
+            text: f.text,
+            sourceLink: f.sourceFile,
+            sourceTitle: f.sourceTitle,
+        }));
+
+        const content = buildNudgeContent(findings, {
+            onExpandPanel: (type) => this.handleExpandPanel(type),
+            onSourceClick: (link) => this.handleSourceClick(link),
+            onDismiss: () => this.handleBubbleDismiss(),
+        }, locale);
+
+        this.bubbleView.show(content, anchorEl);
+    }
+
+    /**
+     * Scenario 2: Writing Assistance — analyze the current note and
+     * show context-relevant suggestions in the Bubble.
+     */
+    private async analyzeCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
+        const activeFile = this.host.app.workspace.getActiveFile?.();
+        if (!activeFile || !activeFile.path.endsWith(".md")) return;
+
+        if (!this.beginForegroundReviewRun()) return;
+
+        this.petView?.stateMachine.transition("analysis-start");
 
         try {
-            const date = new Date();
-            const writeStartedAt = Date.now();
-            const writeResult = await runtime.actionExecutor.execute(
-                runtime.toolProvider.capability,
+            const analyzeCallback = this.host.createForegroundAnalyzeCallback();
+            const result = await analyzeCallback(
+                [activeFile],
                 {
-                    sourcePath: request.sourcePath,
-                    reviewResult: request.result,
-                    mode: request.mode,
-                    detectedLanguage: request.detectedLanguage,
-                    ...(request.targetPath ? { targetPath: request.targetPath } : {}),
-                    dateOverride: date,
-                    ...(request.diagnostics.costEntry
-                        ? {
-                              costUsd:
-                                  request.diagnostics.costEntry.estimatedCost,
-                          }
-                        : {}),
-                    ...(this.host.settings.aiProvider
-                        ? { provider: this.host.settings.aiProvider }
-                        : {}),
-                    ...(this.host.settings.chatModelName
-                        ? { model: this.host.settings.chatModelName }
-                        : {}),
-                },
-                {
-                    plugin: this.host.capabilityPlugin,
-                    turnId: `pagelet-save-${date.getTime()}`,
-                    platform: Platform.isMobile ? "mobile" : "desktop",
-                    ...(request.signal ? { signal: request.signal } : {}),
+                    enabled: true,
+                    intervalMinutes: 0,
+                    perHourCap: this.host.settings.pagelet.foregroundPerHourCap,
+                    perDayCap: this.host.settings.pagelet.foregroundPerDayCap,
+                    tokenBudget: this.foregroundTokenBudget(),
                 },
             );
-            const writeElapsedMs = Date.now() - writeStartedAt;
-            this.host.log("Pagelet draft save timing", {
-                phase: "write_action",
-                elapsedMs: writeElapsedMs,
-                status: writeResult.status,
-            });
-            if (writeResult.status === "ok") {
-                const observation = writeResult.observation;
-                const createdPath = hasStringProperty(observation, "createdPath")
-                    ? observation.createdPath
-                    : request.targetPath ?? request.sourcePath;
-                pageletView?.showReviewSaved(
-                    createdPath,
-                    this.host.pageletCostTracker.getSummary(),
-                );
-                new Notice(
-                    pageletT("pagelet.mascot.done", locale),
-                    4000,
-                );
+
+            this.petView?.stateMachine.transition("analysis-done");
+
+            // Cache results for Panel data flow. The source path guards
+            // against showing or saving stale findings after the user changes
+            // the active note.
+            this.lastAnalysisSourcePath = activeFile.path;
+            this.lastAnalysisFindings = result.findings.map((f) => ({
+                title: f.sourceTitle || f.sourceFile || "Untitled",
+                description: f.text,
+                sourceFile: f.sourceFile,
+                sourceTitle: f.sourceTitle,
+            }));
+
+            if (options.preferPanel) {
+                this.currentPanelLayout = "current";
+                this.panelView?.open("current", this.lastAnalysisFindings);
                 return;
             }
-            if (writeResult.error?.includes("user did not confirm")) {
-                pageletView?.showReviewNotSaved();
+
+            const anchorEl = this.petView?.rootEl;
+            if (!this.bubbleView || !anchorEl) {
+                this.handleExpandPanel("current");
                 return;
             }
-            pageletView?.showReviewSaveError(
-                writeResult.userSafeMessage ??
-                    pageletT("pagelet.trigger.writeFailed", locale),
-                request.sourcePath,
-            );
-            new Notice(
-                writeResult.userSafeMessage ??
-                    pageletT("pagelet.trigger.writeFailed", locale),
-                6000,
-            );
+            const locale = getPageletUiLanguage();
+
+            if (result.findings.length > 0) {
+                const findings: BubbleFinding[] = result.findings.map((f) => ({
+                    text: f.text,
+                    sourceLink: f.sourceFile,
+                    sourceTitle: f.sourceTitle,
+                }));
+
+                const content = buildWritingAssistContent(findings, {
+                    onExpandPanel: (type) => this.handleExpandPanel(type),
+                    onSourceClick: (link) => this.handleSourceClick(link),
+                    onDismiss: () => this.handleBubbleDismiss(),
+                }, locale);
+
+                this.bubbleView.show(content, anchorEl);
+            } else {
+                const content = buildEmptyContent(() => { void this.reviewCurrentNote(); }, locale);
+                this.bubbleView.show(content, anchorEl);
+            }
         } catch (error) {
-            if (request.signal?.aborted) return;
-            this.host.log("Pagelet draft save failed", error);
-            pageletView?.showReviewSaveError(
-                pageletT("pagelet.mascot.error", locale),
-                request.sourcePath,
-            );
-            new Notice(pageletT("pagelet.mascot.error", locale), 6000);
+            this.petView?.stateMachine.transition("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Current note analysis failed", error);
+        } finally {
+            this.finishForegroundReviewRun();
         }
     }
 
-    // ── Private helpers ──────────────────────────────────────────────────
+    // ======================================================================
+    // Background preparation engine
+    // ======================================================================
 
-    private getPageletLocale(): "zh" | "en" {
-        return getPageletUiLanguage();
+    /** Create and start the background preparation engine. */
+    private startPreloadEngine(): void {
+        if (this.preloadEngine) {
+            this.preloadEngine.updateConfig(this.buildPreloadConfig());
+            return;
+        }
+
+        this.preloadEngine = new PreloadEngine(
+            this.host.app,
+            this.buildPreloadConfig(),
+            this.preloadCache,
+            this.preloadBudget,
+            this.changeDetector,
+            this.scopeResolver,
+            this.host.createPreloadAnalyzeCallback(),
+        );
+
+        // Background preparation events drive the Pet state machine
+        this.preloadUnsubscribe = this.preloadEngine.on((event: PreloadEvent) => {
+            this.handlePreloadEvent(event);
+        });
+
+        this.preloadEngine.start();
     }
 
-    private reservePageletReview(locale: "zh" | "en"): boolean {
-        if (this.pageletReviewInFlight) {
-            new Notice(pageletT("pagelet.trigger.alreadyRunning", locale), 2500);
+    private buildPreloadConfig() {
+        const s = this.host.settings.pagelet;
+        return {
+            enabled: s.preloadEnabled,
+            intervalMinutes: s.preloadInterval,
+            perHourCap: s.preloadPerHourCap,
+            perDayCap: s.preloadPerDayCap,
+            tokenBudget: { ...s.preloadTokenBudget },
+        };
+    }
+
+    /** Map preload lifecycle events to Pet state transitions. */
+    private handlePreloadEvent(event: PreloadEvent): void {
+        switch (event.type) {
+            case "cycle-start":
+                this.petView?.stateMachine.transition("analysis-start");
+                break;
+
+            case "cycle-complete":
+                if (this.proactiveHints.onInsightsReady()) {
+                    // Hints are enabled and cooldown has elapsed -> nudge
+                    this.petView?.stateMachine.transition("insights-ready");
+                } else {
+                    // No nudge: return to idle quietly
+                    this.petView?.stateMachine.transition("analysis-done");
+                }
+                break;
+
+            case "cycle-error":
+                this.petView?.stateMachine.transition("analysis-done");
+                this.petView?.flashError();
+                this.host.log("Preload cycle error", event.error);
+                break;
+
+            case "cycle-skip":
+                // Skips are silent -- no state change, no user notification
+                break;
+        }
+    }
+
+    /** Run the Scenario 4 periodic summary flow: scope → generate → write */
+    private async runPeriodicSummary(): Promise<void> {
+        const s = this.host.settings.pagelet;
+        const scopeDays = s.periodicSummaryScope === "3d" ? 3
+            : s.periodicSummaryScope === "14d" ? 14
+                : 7;
+
+        // 1. Resolve scope
+        const scope = this.scopeResolver.resolveTimeRange(scopeDays);
+        if (scope.included.length === 0) {
+            new Notice(this.t("pagelet.notice.noNotesInRange"), 4000);
+            return;
+        }
+
+        if (!this.beginForegroundReviewRun()) return;
+
+        // 2. Show working state
+        this.petView?.stateMachine.transition("analysis-start");
+        new Notice(this.t("pagelet.periodicSummary.generatingForNotes", { count: scope.included.length }), 3000);
+
+        try {
+            // 3. Generate review note
+            const generator = new ReviewNoteGenerator(this.host.app);
+            const now = new Date();
+            const rangeStart = new Date(now.getTime() - scopeDays * 86400000);
+            const rangeDesc = `${formatPageletDate(rangeStart)} to ${formatPageletDate(now)}`;
+
+            const note = await generator.generate(
+                {
+                    files: scope.included.map(c => c.file),
+                    rangeDescription: rangeDesc,
+                    scopeDays,
+                },
+                { reviewsFolder: s.reviewsFolder },
+                this.host.createGenerateCallback(), // reuse the LLM callback
+                this.foregroundTokenBudget(),
+            );
+
+            // 4. Show preview in Panel instead of writing immediately
+            this.pendingReviewNote = note;
+            this.currentPanelLayout = "summary";
+            this.petView?.stateMachine.transition("analysis-done");
+            this.panelView?.open("summary", [{
+                title: note.fileName,
+                description: note.markdown,
+            }], { markdown: note.markdown });
+
+            // The actual write happens when user clicks "Save" in the Panel
+            // (via onSaveAsReviewNote callback -> saveFindingsAsReviewNote)
+        } catch (error) {
+            this.petView?.stateMachine.transition("analysis-done");
+            this.petView?.flashError();
+            const msg = error instanceof Error ? error.message : String(error);
+            new Notice(this.t("pagelet.periodicSummary.failedWithError", { error: msg }), 5000);
+            this.host.log("Periodic summary error", error);
+        } finally {
+            this.finishForegroundReviewRun();
+        }
+    }
+
+    private beginForegroundReviewRun(): boolean {
+        if (this.foregroundRunInProgress) {
+            new Notice(this.t("pagelet.notice.alreadyReviewing"), 4000);
             return false;
         }
-        this.pageletReviewInFlight = true;
+        if (!this.reserveForegroundReviewCall()) return false;
+        this.foregroundRunInProgress = true;
         return true;
     }
 
-    private async createPageletScopePlan(
-        range: PageletReviewRange,
-        anchor: TFile,
-    ): Promise<PageletScopePlan> {
-        return buildPageletScopePlan({
-            files: this.host.app.vault.getMarkdownFiles(),
-            activePath: anchor.path,
-            range,
-            reviewsFolder: this.host.settings.pagelet.reviewsFolder,
-            reviewOutputCount:
-                range === "current" ? 0 : await this.countPageletReviewOutputNotes(),
-            getMetadata: (path) => this.getPageletScopeMetadata(path),
-        });
+    private finishForegroundReviewRun(): void {
+        this.foregroundRunInProgress = false;
     }
 
-    private async countPageletReviewOutputNotes(): Promise<number> {
-        const reviewsFolder = normalizePath(
-            this.host.settings.pagelet.reviewsFolder,
-        );
-        try {
-            const listing = await this.host.app.vault.adapter.list(reviewsFolder);
-            return listing.files
-                .filter((path) =>
-                    normalizePath(path).toLowerCase().endsWith(".md"),
-                )
-                .length;
-        } catch {
-            return 0;
+    private reserveForegroundReviewCall(): boolean {
+        const s = this.host.settings.pagelet;
+        this.foregroundBudget.updateLimits(s.foregroundPerHourCap, s.foregroundPerDayCap);
+        if (!this.foregroundBudget.canRun()) {
+            new Notice(this.t("pagelet.notice.foregroundLimit"), 5000);
+            return false;
         }
+        this.foregroundBudget.recordCall();
+        return true;
     }
 
-    private resolvePageletAnchorMarkdownFile(path?: string): TFile | null {
-        if (!path) return null;
-        const abstractFile = this.host.app.vault.getAbstractFileByPath(
-            normalizePath(path),
-        );
-        if (
-            abstractFile instanceof TFile &&
-            abstractFile.extension.toLowerCase() === "md"
-        ) {
-            return abstractFile;
-        }
-        return null;
-    }
-
-    private getPageletScopeMetadata(
-        path: string,
-    ): PageletScopeMetadataLike | undefined {
-        const file = this.resolvePageletAnchorMarkdownFile(path);
-        if (!file) return undefined;
-        const cache = this.host.app.metadataCache.getFileCache(file);
+    private foregroundTokenBudget(): { input: number; output: number } {
+        const s = this.host.settings.pagelet;
         return {
-            frontmatter: cache?.frontmatter,
-            tags: cache?.tags,
+            input: s.maxInputTokens,
+            output: s.maxOutputTokens,
         };
     }
 
-    private async readPageletScopeEntries(
-        files: readonly TFile[],
-    ): Promise<Array<{ path: string; content: string }>> {
-        const entries: Array<{ path: string; content: string }> = [];
-        const maxChars = Math.max(
-            1,
-            Math.floor(this.host.settings.pagelet.maxInputTokens || 1) *
-                PAGELET_APPROX_CHARS_PER_TOKEN,
-        );
-        let remaining = maxChars;
-        const multiNote = files.length > 1;
-        for (const file of files) {
-            const prefixLength = multiNote
-                ? `Source note: ${file.path}\n`.length
-                : 0;
-            if (remaining <= prefixLength) break;
-            const content = await this.host.app.vault.cachedRead(file);
-            const trimmedLength = content.trim().length;
-            entries.push({ path: file.path, content });
-            if (trimmedLength > 0) {
-                remaining -= Math.min(remaining, trimmedLength + prefixLength);
-            }
-            if (remaining <= 0) break;
-        }
-        return entries;
-    }
-
-    private resolvePageletScopeFiles(
-        selection: PageletScopeSelection,
-    ): TFile[] {
-        const files: TFile[] = [];
-        for (const path of selection.paths) {
-            const abstractFile = this.host.app.vault.getAbstractFileByPath(
-                normalizePath(path),
-            );
-            if (
-                abstractFile instanceof TFile &&
-                abstractFile.extension.toLowerCase() === "md"
-            ) {
-                files.push(abstractFile);
-            }
-        }
-        return files;
-    }
-
-    private getStrictActivePageletMarkdownView(): MarkdownView | null {
-        const activeMarkdownView =
-            this.host.app.workspace.getActiveViewOfType(MarkdownView);
-        if (!activeMarkdownView || !isPageletEligibleView(activeMarkdownView))
-            return null;
-        return activeMarkdownView;
-    }
-
-    private getPageletAnchorMarkdownFile(): TFile | null {
-        const strictView = this.getStrictActivePageletMarkdownView();
-        if (strictView?.file instanceof TFile) return strictView.file;
-
-        const mostRecentLeaf =
-            this.host.app.workspace.getMostRecentLeaf?.();
-        const mostRecentView = mostRecentLeaf?.view;
-        if (
-            mostRecentView instanceof MarkdownView &&
-            isPageletEligibleView(mostRecentView) &&
-            mostRecentView.file instanceof TFile
-        ) {
-            return mostRecentView.file;
-        }
-
-        for (const leaf of this.host.app.workspace.getLeavesOfType(
-            "markdown",
-        )) {
-            const view = leaf.view as
-                | (MarkdownView & { file?: TFile | null })
-                | undefined;
-            if (view?.file instanceof TFile) return view.file;
-        }
-        return null;
-    }
-
-    private formatPageletReviewProgress(
-        event: PageletReviewProgressEvent,
-        locale: "zh" | "en",
-    ): string {
-        const PHASE_STEP: Record<string, number> = {
-            cost_precheck: 1,
-            rate_limit: 2,
-            model_setup: 3,
-            structured_attempt: 4,
-            json_mode_attempt: 5,
-            json_mode_fallback: 6,
-        };
-        const step = PHASE_STEP[event.phase] ?? 4;
-        const prefix = `[${step}/6] `;
-        switch (event.phase) {
-            case "cost_precheck":
-                return (
-                    prefix +
-                    pageletT("pagelet.panel.status.checkingLimits", locale)
-                );
-            case "rate_limit":
-                return (
-                    prefix +
-                    pageletT(
-                        "pagelet.panel.status.checkingRateLimit",
-                        locale,
-                    )
-                );
-            case "model_setup":
-                return (
-                    prefix +
-                    pageletT(
-                        "pagelet.panel.status.settingUpModel",
-                        locale,
-                    )
-                );
-            case "structured_attempt":
-                return (
-                    prefix +
-                    pageletT(
-                        "pagelet.panel.status.generatingAttempt",
-                        locale,
-                        {
-                            attempt: event.attempt ?? 1,
-                            max: event.maxAttempts ?? 1,
-                        },
-                    )
-                );
-            case "json_mode_attempt":
-                return (
-                    prefix +
-                    pageletT(
-                        "pagelet.panel.status.generatingFallbackAttempt",
-                        locale,
-                        {
-                            attempt: event.attempt ?? 1,
-                            max: event.maxAttempts ?? 1,
-                        },
-                    )
-                );
-            case "json_mode_fallback":
-                return (
-                    prefix +
-                    pageletT(
-                        "pagelet.panel.status.generatingFallback",
-                        locale,
-                    )
-                );
-            default:
-                return prefix + event.phase;
-        }
-    }
-
-    private logPageletReviewTiming(
-        sourceLabel: string,
-        options: {
-            files: readonly TFile[];
-            range: PageletReviewRange;
-        },
-        timings: readonly PageletReviewTimingEntry[],
-        diagnostics:
-            | {
-                  timings?: readonly PageletReviewTimingEntry[];
-                  elapsedMs?: number;
-                  totalElapsedMs?: number;
-                  attempts?: number;
-                  path?: string;
-              }
-            | undefined,
-        startedAt: number,
-        stage = "final",
-    ): void {
-        this.host.log("Pagelet review timing", {
-            stage,
-            sourceLabel,
-            range: options.range,
-            fileCount: options.files.length,
-            totalElapsedMs: Math.max(0, Date.now() - startedAt),
-            llmElapsedMs: diagnostics?.elapsedMs,
-            modelTotalElapsedMs: diagnostics?.totalElapsedMs,
-            attempts: diagnostics?.attempts,
-            path: diagnostics?.path,
-            timings: diagnostics?.timings ?? timings,
-        });
-    }
-
-    // ── Core review pipeline ─────────────────────────────────────────────
-
-    private async runPageletReviewForFiles(options: {
-        primaryFile: TFile;
-        files: readonly TFile[];
-        range: PageletReviewRange;
-        abortOnActiveViewChange?: { view: MarkdownView; path: string };
-    }): Promise<void> {
-        const locale = this.getPageletLocale();
-        const file = options.primaryFile;
-        const pageletView = await this.host.activePageletView();
-        const firstName =
-            options.files[0]?.basename ?? options.files[0]?.path ?? "note";
-        const sourceLabel =
-            options.files.length === 1
-                ? options.files[0].path
-                : `${firstName} (+${options.files.length - 1})`;
-        const runStartedAt = Date.now();
-        const timings: PageletReviewTimingEntry[] = [];
-        const abortController = new AbortController();
-        const abortReview = (reason: "user" | "source_changed") => {
-            abortController.abort(reason);
-        };
-        const recordTiming = (
-            phase: string,
-            startedAt: number,
-            metadata?: Record<string, unknown>,
-        ) => {
-            timings.push({
-                phase,
-                elapsedMs: Math.max(0, Date.now() - startedAt),
-                metadata: {
-                    source: "plugin",
-                    ...(metadata ?? {}),
-                },
-            });
-        };
-        const mergeOutcomeTimings = (diagnostics: {
-            timings?: PageletReviewTimingEntry[];
-        }) => {
-            diagnostics.timings = [
-                ...timings,
-                ...(diagnostics.timings ?? []).filter(
-                    (entry) =>
-                        (entry.metadata as { source?: unknown } | undefined)
-                            ?.source !== "plugin",
-                ),
-            ];
-        };
-        pageletView?.showReviewStarted(sourceLabel, {
-            onCancel: () => abortReview("user"),
-        });
-        const abortIfSourceViewChanged = () => {
-            if (!options.abortOnActiveViewChange) return;
-            const currentView =
-                this.host.app.workspace.getActiveViewOfType(MarkdownView);
-            if (
-                currentView !== options.abortOnActiveViewChange.view ||
-                currentView.file?.path !==
-                    options.abortOnActiveViewChange.path
-            ) {
-                abortReview("source_changed");
-            }
-        };
-        // registerEvent: safety net — auto-cleanup on plugin unload.
-        // offref in finally: eager cleanup when the review completes normally.
-        const activeLeafRef = this.host.app.workspace.on(
-            "active-leaf-change",
-            abortIfSourceViewChanged,
-        );
-        this.host.registerEvent(activeLeafRef);
-        const fileOpenRef = this.host.app.workspace.on(
-            "file-open",
-            abortIfSourceViewChanged,
-        );
-        this.host.registerEvent(fileOpenRef);
-        const runtime = this.host.getOrCreatePageletRuntime();
-        if (!runtime) {
-            this.host.app.workspace.offref(activeLeafRef);
-            this.host.app.workspace.offref(fileOpenRef);
-            pageletView?.showReviewError(
-                pageletT("pagelet.mascot.error", locale),
-                file.path,
-            );
-            new Notice(pageletT("pagelet.mascot.error", locale), 3000);
-            this.pageletReviewInFlight = false;
+    private syncPetVisibility(): void {
+        if (!this.host.settings.pagelet.petVisible) {
+            this.petView?.destroy();
+            this.petView = null;
+            this.bubbleView?.close();
             return;
         }
 
-        new Notice(pageletT("pagelet.mascot.thinking", locale), 2000);
+        const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
+        if (activeLeaf) {
+            this.handleLeafChange(activeLeaf);
+        }
+    }
 
-        try {
-            pageletView?.showReviewProgress(
-                pageletT("pagelet.panel.status.reading", locale),
-            );
-            const readStartedAt = Date.now();
-            const entries = await this.readPageletScopeEntries(options.files);
-            recordTiming("read_scope_entries", readStartedAt, {
-                requestedFileCount: options.files.length,
-                loadedEntryCount: entries.length,
-            });
-            if (abortController.signal.aborted) {
-                recordTiming("aborted", runStartedAt, {
-                    reason: abortController.signal.reason ?? "user",
-                });
-                this.logPageletReviewTiming(
-                    sourceLabel,
-                    options,
-                    timings,
-                    undefined,
-                    runStartedAt,
-                );
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            pageletView?.showReviewProgress(
-                pageletT("pagelet.panel.status.preparing", locale),
-            );
-            const bundleStartedAt = Date.now();
-            const bundle = buildPageletScopeReviewBundle({
-                entries,
-                primarySourcePath: file.path,
-                range: options.range,
-                settings: this.host.settings.pagelet,
-                uiLanguage: locale,
-                targetSuggestionCount: Math.min(
-                    PAGELET_DEFAULT_TARGET_SUGGESTIONS,
-                    this.host.settings.previewLimits,
-                ),
-            });
-            recordTiming("build_scope_bundle", bundleStartedAt, {
-                hasBundle: Boolean(bundle),
-                range: options.range,
-            });
-            if (abortController.signal.aborted) {
-                recordTiming("aborted", runStartedAt, {
-                    reason: abortController.signal.reason ?? "user",
-                });
-                this.logPageletReviewTiming(
-                    sourceLabel,
-                    options,
-                    timings,
-                    undefined,
-                    runStartedAt,
-                );
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            if (!bundle) {
-                pageletView?.showReviewEmpty(file.path);
-                new Notice(
-                    pageletT("pagelet.trigger.emptyNote", locale),
-                    3000,
-                );
-                return;
-            }
+    // ======================================================================
+    // Idle timer + note activity detection
+    // ======================================================================
 
-            const pageletSettings = this.host.settings.pagelet;
-            const reviewModel = new PageletReviewModel(
-                (temperature, options) =>
-                    this.host.createChatModel(temperature, {
-                        modelName: options?.modelName,
-                    }),
-                {
-                    temperature: pageletSettings.temperature,
-                    modelName: this.host.settings.chatModelName,
-                    costBudget: {
-                        maxInputTokens: pageletSettings.maxInputTokens,
-                        maxOutputTokens: pageletSettings.maxOutputTokens,
-                    },
-                    costTracker: this.host.pageletCostTracker,
-                    rateLimiter: this.host.pageletRateLimiter,
-                    providerForPricing: this.host.settings.aiProvider,
-                    modelForPricing: this.host.settings.chatModelName,
-                    userMessageLocale: locale,
-                    reviewTimeoutMs: PAGELET_REVIEW_TIMEOUT_MS,
-                    maxRetries: PAGELET_PRODUCTION_MAX_RETRIES,
-                    onProgress: (event) => {
-                        pageletView?.showReviewProgress(
-                            this.formatPageletReviewProgress(event, locale),
-                        );
-                    },
-                },
-            );
-            const llmStartedAt = Date.now();
-            const outcome = await reviewModel.reviewNote(
-                bundle.input,
-                abortController.signal,
-            );
-            recordTiming("llm_review", llmStartedAt, {
-                status: outcome.status,
-                path: outcome.diagnostics.path,
-                attempts: outcome.diagnostics.attempts,
-                modelElapsedMs: outcome.diagnostics.elapsedMs,
-                timeoutMs: PAGELET_REVIEW_TIMEOUT_MS,
-                maxRetries: PAGELET_PRODUCTION_MAX_RETRIES,
-            });
-            mergeOutcomeTimings(outcome.diagnostics);
-            if (abortController.signal.aborted) {
-                this.logPageletReviewTiming(
-                    sourceLabel,
-                    options,
-                    timings,
-                    outcome.diagnostics,
-                    runStartedAt,
-                );
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            if (outcome.status === "error") {
-                this.logPageletReviewTiming(
-                    sourceLabel,
-                    options,
-                    timings,
-                    outcome.diagnostics,
-                    runStartedAt,
-                );
-                pageletView?.showReviewError(
-                    outcome.userMessage,
-                    file.path,
-                );
-                new Notice(outcome.userMessage, 6000);
-                return;
-            }
-            if (outcome.status === "empty") {
-                this.logPageletReviewTiming(
-                    sourceLabel,
-                    options,
-                    timings,
-                    outcome.diagnostics,
-                    runStartedAt,
-                );
-                pageletView?.showReviewEmpty(file.path);
-                new Notice(
-                    pageletT("pagelet.trigger.noSuggestions", locale),
-                    4000,
-                );
-                return;
-            }
-            if (abortController.signal.aborted) {
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
+    /**
+     * Called on every vault `modify` event. Debounced so rapid saves
+     * during typing do not flood the state machine.
+     */
+    private handleNoteActivity(): void {
+        this.clearActivityDebounce();
+        this.activityDebounceTimer = setTimeout(() => {
+            this.activityDebounceTimer = null;
+            this.petView?.stateMachine.transition("note-activity");
+            this.preloadEngine?.noteActivity();
+            this.resetIdleTimer();
+        }, PageletOrchestrator.ACTIVITY_DEBOUNCE_MS);
+    }
 
-            const date = new Date();
-            const targetPathStartedAt = Date.now();
-            const targetPath = await mintNonCollidingReviewNotePath({
-                adapter: this.host.app.vault.adapter,
-                sourcePath: file.path,
-                settings: pageletSettings,
-                date,
-            });
-            recordTiming("mint_target_path", targetPathStartedAt, {
-                targetPath,
-            });
-            mergeOutcomeTimings(outcome.diagnostics);
-            this.logPageletReviewTiming(
-                sourceLabel,
-                options,
-                timings,
-                outcome.diagnostics,
-                runStartedAt,
-                "suggestions_ready",
-            );
-            pageletView?.showReviewResult({
-                sourcePath: bundle.sourceLabel,
-                primarySourcePath: file.path,
-                targetPath,
-                result: outcome.result,
-                diagnostics: outcome.diagnostics,
-                costSummary: this.host.pageletCostTracker.getSummary(),
-                detectedLanguage: bundle.detectedLanguage,
-                mode: bundle.input.mode,
-                sourceReferences: bundle.sourceReferences,
-                sourcePaths: bundle.sourcePaths,
-            });
-        } catch (error) {
-            if (abortController.signal.aborted) {
-                recordTiming("aborted", runStartedAt, {
-                    reason: abortController.signal.reason,
-                });
-                this.logPageletReviewTiming(
-                    sourceLabel,
-                    options,
-                    timings,
-                    undefined,
-                    runStartedAt,
-                );
-                pageletView?.showReviewAborted(file.path);
-                return;
-            }
-            this.host.log("Pagelet review failed", error);
-            this.logPageletReviewTiming(
-                sourceLabel,
-                options,
-                timings,
-                undefined,
-                runStartedAt,
-            );
-            pageletView?.showReviewError(
-                pageletT("pagelet.mascot.error", locale),
-                file.path,
-            );
-            new Notice(pageletT("pagelet.mascot.error", locale), 6000);
-        } finally {
-            this.host.app.workspace.offref(activeLeafRef);
-            this.host.app.workspace.offref(fileOpenRef);
-            this.pageletReviewInFlight = false;
-            if (abortController.signal.aborted) {
-                void this.refreshPageletScope(options.range);
+    /** (Re)start the idle timer. When it fires, Pet enters resting. */
+    private resetIdleTimer(): void {
+        this.clearIdleTimer();
+        this.idleTimer = setTimeout(() => {
+            this.idleTimer = null;
+            this.petView?.stateMachine.transition("long-idle");
+        }, PageletOrchestrator.IDLE_TIMEOUT_MS);
+    }
+
+    private clearIdleTimer(): void {
+        if (this.idleTimer !== null) {
+            clearTimeout(this.idleTimer);
+            this.idleTimer = null;
+        }
+    }
+
+    private clearActivityDebounce(): void {
+        if (this.activityDebounceTimer !== null) {
+            clearTimeout(this.activityDebounceTimer);
+            this.activityDebounceTimer = null;
+        }
+    }
+
+    // ======================================================================
+    // Command callback implementations
+    // ======================================================================
+
+    /** Cycle Pet through the 4 corners: BR -> BL -> TR -> TL -> BR */
+    private cyclePetCorner(): void {
+        const corners: PetCorner[] = [
+            "bottom-right",
+            "bottom-left",
+            "top-right",
+            "top-left",
+        ];
+        const currentIdx = corners.indexOf(
+            this.petView?.corner ?? "bottom-right",
+        );
+        const nextCorner = corners[(currentIdx + 1) % corners.length];
+        this.petView?.setCorner(nextCorner);
+        this.bubbleView?.close();
+        this.host.settings.pagelet.petCorner = nextCorner;
+        void this.host.saveSettings();
+    }
+
+    private toggleProactiveHints(): void {
+        const newState = this.proactiveHints.toggle();
+        if (this.petView) {
+            this.petView.stateMachine.proactiveHintsEnabled = newState;
+        }
+        this.host.settings.pagelet.proactiveHints = newState;
+        void this.host.saveSettings();
+    }
+
+    /** Toggle Pet visibility. Persist the setting so it survives leaf changes and restarts. */
+    private togglePetVisibility(): void {
+        if (this.host.settings.pagelet.petVisible) {
+            this.petView?.destroy();
+            this.petView = null;
+            this.bubbleView?.close();
+            this.host.settings.pagelet.petVisible = false;
+        } else {
+            this.host.settings.pagelet.petVisible = true;
+            const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
+            if (activeLeaf) {
+                this.handleLeafChange(activeLeaf);
             }
         }
+        void this.host.saveSettings();
+    }
+
+    /** Show a Notice with background preparation diagnostics. */
+    private showBackgroundPreparationStatusNotice(): void {
+        const status = this.preloadEngine?.status?.();
+        if (!status) {
+            new Notice(this.t("pagelet.preload.status.notRunning"), 4000);
+            return;
+        }
+        const lastTime = status.lastCycleAt
+            ? new Date(status.lastCycleAt).toLocaleTimeString()
+            : this.t("pagelet.preload.status.never");
+        new Notice(this.t("pagelet.preload.status.notice", {
+            state: this.t(status.running ? "pagelet.preload.status.running" : "pagelet.preload.status.stopped"),
+            last: lastTime,
+            hourly: status.budgetRemaining.hourly,
+            daily: status.budgetRemaining.daily,
+            cache: this.t(status.cacheHasResults ? "pagelet.preload.status.cacheYes" : "pagelet.preload.status.cacheNo"),
+        }), 8000);
+    }
+
+    // ======================================================================
+    // Bubble callback implementations
+    // ======================================================================
+
+    /** Handle "expand" action from Bubble -> open Panel. */
+    private handleExpandPanel(type?: string): void {
+        this.bubbleView?.close();
+        const requestedType = type === "writing" ? "current" : type;
+        const layoutType = (requestedType === "review" || requestedType === "current" || requestedType === "discover" || requestedType === "summary")
+            ? requestedType : "review";
+        this.currentPanelLayout = layoutType;
+        if (layoutType !== "summary") {
+            this.pendingReviewNote = null;
+        }
+        // Use current-note analysis findings only while they still match the
+        // active note; otherwise fall back to background preparation cache.
+        let panelFindings = this.currentAnalysisFindings();
+        if (panelFindings.length === 0) {
+            panelFindings = this.preloadCache.getFindings().map((f) => ({
+                title: f.sourceTitle || f.sourceFile || "Untitled",
+                description: f.text,
+                sourceFile: f.sourceFile,
+                sourceTitle: f.sourceTitle,
+            }));
+        }
+
+        this.panelView?.open(layoutType, panelFindings);
+    }
+
+    /** Expand current Panel content into a full Tab. */
+    private expandPanelToTab(): void {
+        this.panelView?.close();
+        const locale = getPageletUiLanguage();
+        const title = pageletT("pagelet.tab.title", locale);
+        const currentFindings = this.currentAnalysisFindings();
+        const findings = currentFindings.length > 0
+            ? currentFindings
+            : this.preloadCache.getFindings().map((f) => ({
+                title: f.sourceTitle || f.sourceFile || "Untitled",
+                description: f.text,
+                sourceFile: f.sourceFile,
+                sourceTitle: f.sourceTitle,
+            }));
+        this.tabView?.open(title, findings);
+    }
+
+    /** Save Panel findings as a review note via the output module. */
+    private async saveFindingsAsReviewNote(findings: PanelFinding[]): Promise<void> {
+        if (this.saveInProgress) {
+            new Notice(this.t("pagelet.panel.status.saving"), 3000);
+            return;
+        }
+        this.saveInProgress = true;
+        // If we have a pre-generated note from periodic summary, write it directly
+        if (this.currentPanelLayout === "summary" && this.pendingReviewNote) {
+            this.petView?.stateMachine.transition("analysis-start");
+            try {
+                const result = await this.host.writeReviewNote(this.pendingReviewNote);
+                this.petView?.stateMachine.transition("analysis-done");
+                if (result.success) {
+                    this.pendingReviewNote = null;
+                    this.panelView?.close();
+                    new Notice(this.t("pagelet.reviewNote.created", { path: result.filePath ?? "" }), 5000);
+                } else {
+                    new Notice(this.t("pagelet.reviewNote.createFailed", { error: result.error ?? "" }), 5000);
+                    this.petView?.flashError();
+                }
+            } catch (error) {
+                this.petView?.stateMachine.transition("analysis-done");
+                this.petView?.flashError();
+                this.host.log("Save pending review note failed", error);
+            } finally {
+                this.saveInProgress = false;
+            }
+            return;
+        }
+
+        // Fallback: build layout-specific review note from findings
+        if (findings.length === 0) {
+            new Notice(this.t("pagelet.notice.noFindingsToSave"), 3000);
+            this.saveInProgress = false;
+            return;
+        }
+
+        this.petView?.stateMachine.transition("analysis-start");
+
+        try {
+            const s = this.host.settings.pagelet;
+            const now = new Date();
+            const activeFile = this.host.app.workspace.getActiveFile?.();
+            const layout = this.currentPanelLayout ?? "review";
+
+            let markdown: string;
+            let fileName: string;
+            const reviewResult = this.buildReviewResultFromFindings(findings);
+            const sourcePath = this.resolveReviewSourcePath(findings, activeFile?.path);
+
+            switch (layout) {
+                case "discover": {
+                    const noteName = activeFile?.basename ?? "Unknown";
+                    markdown = this.buildCanonicalReviewMarkdown(sourcePath, reviewResult, now);
+                    fileName = `pagelet-discovery-${noteName}-${formatPageletDate(now)}.md`;
+                    break;
+                }
+                case "current": {
+                    const noteName = activeFile?.basename ?? "Unknown";
+                    markdown = this.buildCanonicalReviewMarkdown(sourcePath, reviewResult, now);
+                    fileName = `pagelet-analysis-${noteName}-${formatPageletDate(now)}.md`;
+                    break;
+                }
+                case "review":
+                default: {
+                    markdown = this.buildCanonicalReviewMarkdown(sourcePath, reviewResult, now);
+                    fileName = `pagelet-review-${formatPageletDate(now)}.md`;
+                    break;
+                }
+            }
+
+            // Write the note
+            const targetFolder = s.reviewsFolder;
+            const targetPath = `${targetFolder}/${fileName}`;
+            const result = await this.host.writeReviewNote({
+                markdown,
+                fileName,
+                targetFolder,
+                targetPath,
+                sources: findings.filter(f => f.sourceFile).map(f => `[[${f.sourceTitle || f.sourceFile}]]`),
+                tokenCost: { input: 0, output: 0 },
+            });
+
+            this.petView?.stateMachine.transition("analysis-done");
+            if (result.success) {
+                this.panelView?.close();
+                new Notice(this.t("pagelet.reviewNote.created", { path: result.filePath ?? "" }), 5000);
+            } else {
+                new Notice(this.t("pagelet.reviewNote.failed", { error: result.error ?? "" }), 5000);
+                this.petView?.flashError();
+            }
+        } catch (error) {
+            this.petView?.stateMachine.transition("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Save findings failed", error);
+        } finally {
+            this.saveInProgress = false;
+        }
+    }
+
+    private clearPanelSession(): void {
+        this.currentPanelLayout = null;
+        this.pendingReviewNote = null;
+    }
+
+    private clearAnalysisSession(): void {
+        this.lastAnalysisFindings = [];
+        this.lastAnalysisSourcePath = null;
+    }
+
+    private discardAnalysisSessionIfStale(activePath: string | null): boolean {
+        if (!this.lastAnalysisSourcePath) return false;
+        if (activePath === this.lastAnalysisSourcePath) return false;
+        this.clearAnalysisSession();
+        return true;
+    }
+
+    private currentAnalysisFindings(): PanelFinding[] {
+        const activePath = this.host.app.workspace.getActiveFile?.()?.path ?? null;
+        if (!this.lastAnalysisSourcePath) return this.lastAnalysisFindings;
+        return activePath === this.lastAnalysisSourcePath ? this.lastAnalysisFindings : [];
+    }
+
+    private resolveReviewSourcePath(findings: PanelFinding[], activePath?: string): string {
+        const active = activePath ?? null;
+        if (this.lastAnalysisSourcePath && active === this.lastAnalysisSourcePath) {
+            return this.lastAnalysisSourcePath;
+        }
+        return findings.find((finding) => finding.sourceFile)?.sourceFile
+            ?? activePath
+            ?? "pagelet";
+    }
+
+    // ------------------------------------------------------------------
+    // Layout-specific markdown builders
+    // ------------------------------------------------------------------
+
+    private buildCanonicalReviewMarkdown(
+        sourcePath: string,
+        reviewResult: PageletReviewResult,
+        date: Date,
+    ): string {
+        const metadata = buildReviewMetadata({
+            sourcePath,
+            mode: "basic",
+            detectedLanguage: reviewResult.detected_language,
+            createdAtIso: formatPageletIsoTimestamp(date),
+        });
+        return assembleReviewNote(metadata, reviewResult);
+    }
+
+    private buildReviewResultFromFindings(findings: PanelFinding[]): PageletReviewResult {
+        const detectedLanguage = getPageletUiLanguage();
+        return {
+            schema_version: PAGELET_SCHEMA_VERSION,
+            detected_language: detectedLanguage,
+            suggestions: findings.slice(0, 8).map((finding, index) => ({
+                source_id: `finding-${index + 1}`,
+                kind: "expand",
+                rationale: this.normalizeReviewField(
+                    finding.title || finding.sourceTitle || finding.sourceFile,
+                    detectedLanguage === "zh" ? "拾页发现了一个可改进点。" : "Pagelet found a review point.",
+                    280,
+                ),
+                proposed_action: this.normalizeReviewField(
+                    finding.description || finding.insightText || finding.title,
+                    detectedLanguage === "zh" ? "请根据这条发现继续完善笔记。" : "Use this finding to improve the note.",
+                    500,
+                ),
+                related_notes: finding.sourceTitle ? [finding.sourceTitle] : [],
+            })),
+        };
+    }
+
+    private normalizeReviewField(
+        value: string | undefined,
+        fallback: string,
+        maxLength: number,
+    ): string {
+        const normalized = (value ?? "").trim() || fallback;
+        const minLength = 8;
+        const padded = normalized.length >= minLength ? normalized : fallback;
+        return padded.length > maxLength ? padded.slice(0, maxLength) : padded;
+    }
+
+    /** Handle a source-link click inside the Bubble. */
+    private handleSourceClick(link: string): void {
+        const file = this.host.app.vault.getAbstractFileByPath(link);
+        if (file) {
+            // TFile is the concrete subclass but we avoid importing it
+            // to keep the orchestrator free of heavy imports.
+            const leaf = this.host.app.workspace.getMostRecentLeaf();
+            if (leaf) {
+                void leaf.openFile(file as Parameters<WorkspaceLeaf["openFile"]>[0]);
+            }
+        }
+    }
+
+    /** Handle Bubble dismiss (close button / Escape). */
+    private handleBubbleDismiss(): void {
+        // No additional action required -- BubbleView handles its own
+        // DOM cleanup. Hook exists for future telemetry.
     }
 }

@@ -1,9 +1,9 @@
 /* Copyright 2023 edonyzpc */
 
 /* ============================================================
- * Pet v2 — Keyframes & state-driven animations.
+ * Pagelet Pet — Keyframes & state-driven animations.
  *
- * Values are copied from `docs/pagelet-v2-prototype.html`.
+ * Values are copied from the Pagelet prototype.
  * Class prefix: pa-pagelet-pet (avoids plugin collisions).
  * ============================================================ */
 
@@ -90,6 +90,10 @@
     align-items: center;
     justify-content: center;
     position: relative;
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 /* ---------- Notification dot ---------- */
@@ -188,9 +192,10 @@
 
 [data-theme="light"] .pa-pagelet-pet-wrapper,
 .theme-light .pa-pagelet-pet-wrapper {
-    background: rgba(255, 255, 255, 0.75);
-    border-radius: 10px;
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.10), 0 1px 4px rgba(0, 0, 0, 0.06);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="resting"],
@@ -205,8 +210,10 @@
 
 [data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper,
 .theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper {
-    background: rgba(200, 200, 200, 0.3);
-    box-shadow: 0 1px 6px rgba(0, 0, 0, 0.04);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-sleep-zzz text,
@@ -217,17 +224,26 @@
 
 [data-theme="light"] .pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-wrapper,
 .theme-light .pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-wrapper {
-    box-shadow: 0 2px 12px rgba(0, 0, 0, 0.08), 0 0 0 1px rgba(0, 0, 0, 0.05);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper,
 .theme-light .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper {
-    box-shadow: 0 2px 16px rgba(124, 158, 255, 0.3), 0 0 0 1.5px rgba(124, 158, 255, 0.4);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper,
 .theme-light .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper {
-    box-shadow: 0 2px 20px rgba(93, 211, 158, 0.35), 0 0 0 2px rgba(93, 211, 158, 0.2);
+    background: transparent;
+    border: 0;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-notification,
