@@ -381,7 +381,9 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const handleViewChange = (view: StatisticsView) => {
 		setActiveView(view);
 		plugin.settings.statisticsType = view;
-		void plugin.saveSettings();
+		void plugin.saveSettings().catch((error) => {
+			plugin.log("Failed to save statistics view setting", error);
+		});
 	};
 
 	const handleRangeChange = (range: StatsRange) => {

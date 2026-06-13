@@ -975,7 +975,7 @@ export class SettingTab extends PluginSettingTab {
         const link = document.createElement("a");
         link.setText(this.t("plugin.settings.header.repo"));
         link.href = "https://github.com/edonyzpc/personal-assistant";
-        link.setAttr("style", "font-style: italic;");
+        link.setAttr("class", "pa-settings-header-link");
         parentEl.createEl("p", { text: this.t("plugin.settings.header.byline") }).appendChild(link);
     }
 
@@ -983,7 +983,7 @@ export class SettingTab extends PluginSettingTab {
         const plugin = this.plugin;
         // settiong options for recording
         parentEl.createEl('h2', { text: this.t("plugin.settings.record.title") });
-        parentEl.createEl("p", { text: this.t("plugin.settings.record.desc") }).setAttr("style", "font-size:14px");
+        parentEl.createEl("p", { text: this.t("plugin.settings.record.desc"), cls: "pa-settings-section-desc-sm" });
         new Setting(parentEl).setName(this.t("plugin.settings.record.targetPath.name"))
             .setDesc(this.t("plugin.settings.record.targetPath.desc"))
             .addText(text => text
@@ -1026,7 +1026,7 @@ export class SettingTab extends PluginSettingTab {
     private renderGraphSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
         parentEl.createEl('h2', { text: this.t("plugin.settings.graph.title") });
-        parentEl.createEl("p", { text: this.t("plugin.settings.graph.desc") }).setAttr("style", "font-size:14px");
+        parentEl.createEl("p", { text: this.t("plugin.settings.graph.desc"), cls: "pa-settings-section-desc-sm" });
         new Setting(parentEl).setName(this.t("plugin.settings.graph.type.name"))
             .setDesc(this.t("plugin.settings.graph.type.desc"))
             .addText(text => {
@@ -1091,16 +1091,16 @@ export class SettingTab extends PluginSettingTab {
                     await plugin.saveSettings();
                 })
             });
-        parentEl.createEl("p", { text: this.t("plugin.settings.graph.resize") }).setAttr("style", "font-size:15px");
+        parentEl.createEl("p", { text: this.t("plugin.settings.graph.resize"), cls: "pa-settings-section-desc-md" });
         const h = document.createDocumentFragment();
         h.createEl('span', undefined, (p) => {
             p.innerText = this.t("plugin.settings.graph.height");
-            p.setAttr('style', 'margin:18px');
+            p.setAttr("class", "pa-settings-resize-label");
         });
         const w = document.createDocumentFragment();
         w.createEl('span', undefined, (p) => {
             p.innerText = this.t("plugin.settings.graph.width");
-            p.setAttr('style', 'margin:18px');
+            p.setAttr("class", "pa-settings-resize-label");
         });
         new Setting(parentEl).setName(h)
             .addText(text => {
@@ -1424,7 +1424,9 @@ export class SettingTab extends PluginSettingTab {
             cb.setValue(plugin.settings.animation)
                 .onChange((value) => {
                     plugin.settings.animation = value;
-                    plugin.saveSettings();
+                    void plugin.saveSettings().catch((error) => {
+                        plugin.log("Failed to save animation setting", error);
+                    });
                 })
         );
 
@@ -1660,8 +1662,7 @@ export class SettingTab extends PluginSettingTab {
         const container = this.qwenOptionsContainer;
         const qwenOptionToggles: QwenResponseOptionToggle[] = [];
         container.createEl('h3', { text: this.t("plugin.settings.qwen.title") });
-        const qwenOptionsDescriptionEl = container.createEl("p");
-        qwenOptionsDescriptionEl.setAttr("style", "font-size:14px");
+        const qwenOptionsDescriptionEl = container.createEl("p", { cls: "pa-settings-section-desc-sm" });
         this.refreshQwenResponseOptionAvailability = () => {
             updateQwenResponseOptionAvailability(
                 plugin.settings.baseURL,
@@ -1717,7 +1718,9 @@ export class SettingTab extends PluginSettingTab {
                 cb.setValue(plugin.settings.debug)
                     .onChange((value) => {
                         plugin.settings.debug = value;
-                        plugin.saveSettings();
+                        void plugin.saveSettings().catch((error) => {
+                            plugin.log("Failed to save debug setting", error);
+                        });
                     }));
 
         new Setting(parentEl)
@@ -1755,7 +1758,8 @@ export class SettingTab extends PluginSettingTab {
         parentEl.createEl('h3', { text: this.t("plugin.settings.skills.title") });
         parentEl.createEl("p", {
             text: this.t("plugin.settings.skills.desc"),
-        }).setAttr("style", "font-size:14px");
+            cls: "pa-settings-section-desc-sm",
+        });
 
         new Setting(parentEl)
             .setName(this.t("plugin.settings.skills.enabled.name"))
@@ -1807,7 +1811,8 @@ export class SettingTab extends PluginSettingTab {
         parentEl.createEl('h2', { text: this.t("plugin.settings.memory.title") });
         parentEl.createEl("p", {
             text: this.t("plugin.settings.memory.desc"),
-        }).setAttr("style", "font-size:15px");
+            cls: "pa-settings-section-desc-md",
+        });
 
         new Setting(parentEl)
             .setName(this.t("plugin.settings.memory.enabled.name"))
