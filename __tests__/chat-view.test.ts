@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { Component, MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
-import { CHAT_MENU_IDLE_CLOSE_MS, LLMView } from '../src/chat/chat-view';
+import { CHAT_MENU_IDLE_CLOSE_MS, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
 import { getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
@@ -728,6 +728,12 @@ describe('LLMView turn lifecycle', () => {
             configurable: true,
             value: undefined,
         });
+    });
+
+    it('uses the custom subagent icon for the chat view', () => {
+        const { view } = createView();
+
+        expect(view.getIcon()).toBe(PA_CHAT_SUBAGENT_ICON);
     });
 
     afterEach(() => {

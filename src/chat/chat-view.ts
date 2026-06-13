@@ -21,6 +21,7 @@ import {
 import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
+export const PA_CHAT_SUBAGENT_ICON = "PA_CHAT_SUBAGENT";
 export type { ChatMessage };
 
 const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
@@ -202,7 +203,7 @@ export class LLMView extends ItemView {
     }
 
     getIcon(): string {
-        return "bot-message-square";
+        return PA_CHAT_SUBAGENT_ICON;
     }
 
     async onOpen() {
