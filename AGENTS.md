@@ -107,6 +107,18 @@ Use this file as the project README for coding agents. Keep changes aligned with
 - Clear observers, timers, listeners, and debouncers on unmount/unload.
 - Preserve user settings such as `statisticsType`, `previewLimits`, and `targetPath` when re-rendering views.
 
+## Obsidian Community Review Rules
+
+- Treat Obsidian community review `Error` findings as release blockers. Fix them before publishing or preparing a publish-ready release.
+- Do not create, update, or attach runtime `<style>` elements. Put plugin CSS in the Tailwind source `src/custom.pcss`, run `npm run tailwind:build` or `npm run build`, and let Obsidian load the generated `styles.css`.
+- Do not assign to `innerHTML` or `outerHTML` in plugin code. Build DOM with `createElement`, `createElementNS`, `textContent`, attributes, `appendChild`, and explicit child-clearing helpers instead.
+- When rendering SVG, prefer DOM construction with `document.createElementNS` and node replacement over parsing SVG markup through `innerHTML` or `<template>`.
+- It is acceptable to keep CSS custom properties that contain SVG strings for Obsidian callout icons in `styles.css` or `src/custom.pcss`; the community source-code blocker is runtime DOM HTML/style injection.
+- For Pagelet or other UI changes that touch DOM/CSS, include a source scan before finalizing:
+  - `rg -n "createElement\\([\"']style[\"']\\)|\\.innerHTML\\s*=|\\.outerHTML\\s*=" src`
+  - Manually inspect any remaining matches and either remove them or justify why they are not plugin DOM injection.
+- Community review warnings such as `window.setTimeout` versus `setTimeout`, `activeDocument` versus `document`, direct style assignment, and `Vault#configDir` should be addressed opportunistically, but release-blocking `Error` findings take priority.
+
 ## Documentation Instructions
 
 - For architecture or plan work, prefer durable docs in `docs/` over chat-only analysis when the user asks for a plan or design.

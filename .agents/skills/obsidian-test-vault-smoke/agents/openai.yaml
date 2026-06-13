@@ -1,0 +1,4 @@
+interface:
+  display_name: "Obsidian Test Vault Smoke"
+  short_description: "Run CLI and UI/UX Obsidian smoke checks"
+  default_prompt: "Use $obsidian-test-vault-smoke to validate CLI runtime behavior and UI/UX interactions in the Obsidian test vault."
