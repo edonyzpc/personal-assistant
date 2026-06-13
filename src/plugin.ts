@@ -3,7 +3,7 @@
 import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Platform, Plugin, TFile, addIcon, debounce, moment as obsidianMoment, normalizePath, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
-import { VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
+import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { AIUtils } from "./ai-services/ai-utils";
 import { VSS } from './vss'
@@ -46,6 +46,12 @@ import { getPluginUiLanguage, pluginT, type PluginMessageKey } from './locales/p
 import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
+import {
+    PAGELET_DETAIL_VIEW_TYPE,
+    PageletDetailView,
+    registerPageletDetailIcon,
+    type PageletDetailPayload,
+} from './pagelet/tab';
 import type { AnalyzeCallback } from './pagelet/preload/types';
 import { buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
 
@@ -257,8 +263,9 @@ export class PluginManager extends Plugin {
         });
 
         // This creates an icon in the left ribbon.
+        addIcon(PA_CHAT_SUBAGENT_ICON, icons[PA_CHAT_SUBAGENT_ICON]);
         addIcon('PluginAST', icons['PluginAST']);
-        const ribbonIconEl = this.addRibbonIcon('PluginAST', this.t("plugin.ribbon.openChatControls"), () => {
+        const ribbonIconEl = this.addRibbonIcon(PA_CHAT_SUBAGENT_ICON, this.t("plugin.ribbon.openChatControls"), () => {
             void this.activeChatView();
         });
         ribbonIconEl.addClass('plugin-manager-ribbon-class');
@@ -302,6 +309,13 @@ export class PluginManager extends Plugin {
             VIEW_TYPE_LLM,
             (leaf) => {
                 return new LLMView(leaf, this, this.vss);
+            }
+        );
+        registerPageletDetailIcon();
+        this.registerView(
+            PAGELET_DETAIL_VIEW_TYPE,
+            (leaf) => {
+                return new PageletDetailView(leaf, () => this.getPageletLocale());
             }
         );
         this.memoryManager = new MemoryManager(this);
@@ -819,6 +833,7 @@ export class PluginManager extends Plugin {
                 };
             },
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
+            openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
         };
     }
 
@@ -1257,6 +1272,37 @@ export class PluginManager extends Plugin {
         });
 
         await this.app.workspace.revealLeaf(viewLeaf);
+    }
+
+    async openPageletDetailView(payload: PageletDetailPayload): Promise<void> {
+        const { workspace } = this.app;
+        let leaf = workspace.getLeavesOfType(PAGELET_DETAIL_VIEW_TYPE)[0];
+
+        if (!leaf) {
+            leaf = workspace.getLeaf('tab');
+            await leaf.setViewState({
+                type: PAGELET_DETAIL_VIEW_TYPE,
+                active: true,
+            });
+        }
+
+        await leaf.loadIfDeferred?.();
+        if (!(leaf.view instanceof PageletDetailView)) {
+            await leaf.setViewState({
+                type: PAGELET_DETAIL_VIEW_TYPE,
+                active: true,
+            });
+            await leaf.loadIfDeferred?.();
+        }
+
+        await workspace.revealLeaf(leaf);
+
+        if (leaf.view instanceof PageletDetailView) {
+            leaf.view.setPayload(payload);
+            return;
+        }
+
+        throw new Error("Failed to initialize Pagelet detail view");
     }
 
     async activeChatView(): Promise<LLMView | null> {

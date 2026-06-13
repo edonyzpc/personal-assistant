@@ -229,5 +229,11 @@ export type { ResearchCallbacks, ResearchFinding, ResearchRequest, ResearchResul
 export { PanelView } from "./panel";
 export type { PanelLayoutType, PanelFinding, PanelAction, PanelCallbacks, PanelViewOptions, NoteConnection, DiscoveryResult } from "./panel";
 
-export { TabView } from "./tab";
-export type { TabSection, TabCard } from "./tab";
+export {
+    PAGELET_DETAIL_ICON,
+    PAGELET_DETAIL_VIEW_TYPE,
+    PageletDetailView,
+    TabView,
+    registerPageletDetailIcon,
+} from "./tab";
+export type { PageletDetailContent, PageletDetailPayload, TabSection, TabCard } from "./tab";

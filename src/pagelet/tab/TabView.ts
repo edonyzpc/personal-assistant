@@ -1,24 +1,19 @@
 /* Copyright 2023 edonyzpc */
 
 /**
- * Pagelet -- Tab (full workspace) DOM lifecycle manager.
+ * Pagelet -- detail view content DOM lifecycle manager.
  *
- * The Tab is a full-screen overlay that serves as a full editor tab
- * for complex exploration. It renders:
+ * The detail view content is hosted by Obsidian's native WorkspaceLeaf
+ * via PageletDetailView. This renderer owns only the view content:
  *
  *   - Overview section (summary card with tag chips)
  *   - Theme clustering (cards grouped by AI-detected themes)
  *   - Action suggestions (insight cards with numbered recommendations)
  *
- * Mobile: Tab does not apply on mobile -- Panel already takes full
- * screen. The `open()` method shows a Notice and returns early.
- *
  * Why raw DOM instead of a framework:
  *   Same rationale as BubbleView.ts and PanelView.ts -- bounded
  *   component, consistent with the project's existing raw DOM pattern.
  */
-
-import { Notice } from "obsidian";
 
 import type { PanelFinding } from "../panel/types";
 import type { TabSection } from "./types";
@@ -29,78 +24,19 @@ import { pageletT, type PageletLocale } from "../../locales/pagelet";
 // ---------------------------------------------------------------------------
 
 const TAB_CSS_ID = "pa-pagelet-tab-styles";
+let tabStyleRefCount = 0;
 
 const TAB_CSS = /* css */ `
 /* ---- Tab container ---- */
 .pa-pagelet-tab {
-    position: fixed;
-    inset: 0;
     background: var(--background-primary, #1e1e1e);
-    z-index: 950;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.3s ease;
+    min-height: 100%;
+    height: 100%;
     display: flex;
     flex-direction: column;
     font-family: var(--font-interface, inherit);
     color: var(--text-normal, #dcddde);
     box-sizing: border-box;
-}
-
-.pa-pagelet-tab[data-state="visible"] {
-    opacity: 1;
-    pointer-events: auto;
-}
-
-/* ---- Header ---- */
-.pa-pagelet-tab-header {
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--background-modifier-border, #3a3a3a);
-    display: flex;
-    align-items: center;
-    gap: 16px;
-    flex-shrink: 0;
-    background: var(--background-secondary, #252525);
-}
-
-.pa-pagelet-tab-pill {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    padding: 6px 14px;
-    border-radius: 6px;
-    background: var(--background-modifier-hover, #2d2d2d);
-    font-size: 13px;
-    color: var(--text-normal, #dcddde);
-    font-weight: 500;
-}
-
-.pa-pagelet-tab-pill svg {
-    flex-shrink: 0;
-}
-
-.pa-pagelet-tab-close {
-    margin-left: auto;
-    width: 28px;
-    height: 28px;
-    border-radius: 6px;
-    border: none;
-    background: transparent;
-    color: var(--text-faint, #666);
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 16px;
-    transition: all 0.15s;
-    font-family: inherit;
-    padding: 0;
-    line-height: 1;
-}
-
-.pa-pagelet-tab-close:hover {
-    background: var(--background-modifier-hover, #2d2d2d);
-    color: var(--text-normal, #dcddde);
 }
 
 /* ---- Body ---- */
@@ -109,7 +45,9 @@ const TAB_CSS = /* css */ `
     overflow-y: auto;
     padding: 32px 48px;
     max-width: 800px;
+    width: 100%;
     margin: 0 auto;
+    box-sizing: border-box;
 }
 
 /* ---- Sections ---- */
@@ -147,6 +85,26 @@ const TAB_CSS = /* css */ `
     margin: 0;
 }
 
+.pa-pagelet-tab-empty-card {
+    background: var(--background-secondary-alt, #232323);
+    border: 1px solid var(--background-modifier-border, #3a3a3a);
+    border-radius: 8px;
+    padding: 20px;
+}
+
+.pa-pagelet-tab-empty-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-normal, #dcddde);
+    margin-bottom: 8px;
+}
+
+.pa-pagelet-tab-empty-body {
+    font-size: 13px;
+    line-height: 1.7;
+    color: var(--text-muted, #999);
+}
+
 /* ---- Tag row ---- */
 .pa-pagelet-tab-tag-row {
     display: flex;
@@ -162,6 +120,8 @@ const TAB_CSS = /* css */ `
     background: var(--background-secondary, #252525);
     color: var(--text-faint, #666);
     border: 1px solid var(--background-modifier-border, #3a3a3a);
+    max-width: 100%;
+    overflow-wrap: anywhere;
 }
 
 /* ---- Light theme ---- */
@@ -173,8 +133,20 @@ const TAB_CSS = /* css */ `
 /* ---- Reduced motion ---- */
 @media (prefers-reduced-motion: reduce) {
     .pa-pagelet-tab {
-        transition-duration: 0.01s !important;
+        scroll-behavior: auto !important;
     }
+}
+
+@media (max-width: 720px) {
+    .pa-pagelet-tab-body {
+        padding: 16px;
+        max-width: none;
+    }
+}
+
+body.is-mobile .pa-pagelet-tab-body {
+    padding: 16px;
+    max-width: none;
 }
 `;
 
@@ -197,9 +169,16 @@ function injectStyles(): void {
     document.head.appendChild(style);
 }
 
-/** Detect mobile context. */
-function isMobile(): boolean {
-    return document.body.classList.contains("is-mobile");
+function retainStyles(): void {
+    tabStyleRefCount += 1;
+    injectStyles();
+}
+
+function releaseStyles(): void {
+    tabStyleRefCount = Math.max(0, tabStyleRefCount - 1);
+    if (tabStyleRefCount === 0) {
+        document.getElementById(TAB_CSS_ID)?.remove();
+    }
 }
 
 /** Create a DOM element with optional class and text. */
@@ -214,72 +193,30 @@ function el<K extends keyof HTMLElementTagNameMap>(
     return node;
 }
 
-/** Build the Pet mini SVG icon for the tab pill. */
-function buildPillSvg(): SVGElement {
-    const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS, "svg");
-    svg.setAttribute("width", "16");
-    svg.setAttribute("height", "16");
-    svg.setAttribute("viewBox", "0 0 44 44");
-    svg.setAttribute("aria-hidden", "true");
-
-    const body = document.createElementNS(svgNS, "path");
-    body.setAttribute("d", "M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z");
-    body.setAttribute("fill", "none");
-    body.setAttribute("stroke", "currentColor");
-    body.setAttribute("stroke-width", "1.6");
-    body.setAttribute("stroke-linejoin", "round");
-    body.setAttribute("stroke-linecap", "round");
-    svg.appendChild(body);
-
-    const fold = document.createElementNS(svgNS, "path");
-    fold.setAttribute("d", "M30 8.1 L29.9 14.2 L36 14");
-    fold.setAttribute("fill", "none");
-    fold.setAttribute("stroke", "currentColor");
-    fold.setAttribute("stroke-width", "1.6");
-    fold.setAttribute("stroke-linejoin", "round");
-    fold.setAttribute("stroke-linecap", "round");
-    svg.appendChild(fold);
-
-    return svg;
-}
-
 // ---------------------------------------------------------------------------
 // TabView
 // ---------------------------------------------------------------------------
 
 /**
- * Tab (full workspace) DOM lifecycle manager.
+ * Pagelet detail content DOM lifecycle manager.
  *
  * Usage:
- *   const tab = new TabView(() => { ... on close ... });
- *   tab.mount(document.body);
+ *   const tab = new TabView("en");
+ *   tab.mount(itemView.contentEl);
  *   tab.open("Title", findings);
  *   // ... later
  *   tab.destroy();
  */
 export class TabView {
-    private readonly onCloseCallback: () => void;
-    private readonly locale: PageletLocale;
+    private locale: PageletLocale;
     private rootEl: HTMLDivElement | null = null;
     private bodyEl: HTMLDivElement | null = null;
-    private titleEl: HTMLSpanElement | null = null;
     private containerEl: HTMLElement | null = null;
+    private hasStyleRef = false;
     private _isOpen = false;
 
-    // Bound event handler for cleanup.
-    private readonly handleKeydown: (e: KeyboardEvent) => void;
-    /** Pending unmount-after-transition timer; cleared if the tab reopens. */
-    private unmountTimer: ReturnType<typeof setTimeout> | null = null;
-    /** Pending transitionend listener; cleared if the tab reopens. */
-    private unmountTransitionHandler: ((e: TransitionEvent) => void) | null = null;
-    /** Fallback timeout (ms) for transitionend in reduced-motion / hidden tabs. */
-    private static readonly UNMOUNT_FALLBACK_MS = 400;
-
-    constructor(onClose: () => void, locale: PageletLocale = "en") {
-        this.onCloseCallback = onClose;
+    constructor(locale: PageletLocale = "en") {
         this.locale = locale;
-        this.handleKeydown = this.onKeydown.bind(this);
     }
 
     // -----------------------------------------------------------------------
@@ -287,21 +224,20 @@ export class TabView {
     // -----------------------------------------------------------------------
 
     /**
-     * Register the mount root. The Tab uses lazy DOM attachment: the
-     * full-viewport overlay (`position: fixed; inset: 0`) is built and
-     * appended only on `open()`, then removed after the close fade so
-     * it never intercepts Obsidian's titlebar drag region while idle
-     * (D037 progressive disclosure).
+     * Register the mount root. The native WorkspaceLeaf owns the tab chrome;
+     * this renderer appends only content under the leaf's `view-content`.
      */
     mount(containerEl: HTMLElement): void {
-        injectStyles();
+        if (!this.hasStyleRef) {
+            retainStyles();
+            this.hasStyleRef = true;
+        }
         this.containerEl = containerEl;
     }
 
     /** Build (if needed) and attach the tab root to the container. */
     private ensureMounted(): void {
         if (!this.containerEl) return;
-        this.cancelPendingUnmount();
         if (!this.rootEl) {
             this.rootEl = this.buildDOM();
             this.containerEl.appendChild(this.rootEl);
@@ -313,48 +249,24 @@ export class TabView {
     /**
      * Open the tab with a title and content.
      *
-     * On mobile, shows a Notice instead (Panel already covers full screen).
-     *
-     * @param title   - displayed in the header pill
+     * @param title   - used as the content region aria-label
      * @param content - findings to display, or TabSection[] for structured content
      */
     open(
         title: string,
         content: PanelFinding[] | TabSection[],
     ): void {
-        if (isMobile()) {
-            new Notice(
-                pageletT("pagelet.tab.mobileNotice", this.locale), 3000,
-            );
-            return;
-        }
-
         this.ensureMounted();
-        if (!this.rootEl || !this.bodyEl || !this.titleEl) return;
+        if (!this.rootEl || !this.bodyEl) return;
 
-        this.titleEl.textContent =
-            pageletT("pagelet.tab.titlePrefix", this.locale, { title });
+        this.rootEl.setAttribute("aria-label", title);
         this.renderContent(content);
-        // Force layout flush so the hidden-state styles apply before
-        // the visibility transition runs.
-        void this.rootEl.offsetWidth;
-        const root = this.rootEl;
-        requestAnimationFrame(() => {
-            if (root.isConnected) root.setAttribute("data-state", "visible");
-        });
         this._isOpen = true;
-        this.attachGlobalListeners();
     }
 
-    /** Close the tab. */
-    close(): void {
-        if (!this.rootEl) return;
-        const root = this.rootEl;
-        root.setAttribute("data-state", "hidden");
-        this._isOpen = false;
-        this.detachGlobalListeners();
-        this.scheduleUnmount(root);
-        this.onCloseCallback();
+    /** Update locale before the next render. */
+    setLocale(locale: PageletLocale): void {
+        this.locale = locale;
     }
 
     /** Whether the tab is currently open. */
@@ -364,55 +276,17 @@ export class TabView {
 
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
-        this.detachGlobalListeners();
-        this.cancelPendingUnmount();
         if (this.rootEl) {
             this.rootEl.remove();
             this.rootEl = null;
         }
-        document.getElementById(TAB_CSS_ID)?.remove();
+        if (this.hasStyleRef) {
+            releaseStyles();
+            this.hasStyleRef = false;
+        }
         this.bodyEl = null;
-        this.titleEl = null;
         this.containerEl = null;
         this._isOpen = false;
-    }
-
-    // -----------------------------------------------------------------------
-    // Lazy unmount helpers
-    // -----------------------------------------------------------------------
-
-    /**
-     * Detach the tab root after the close transition completes so the
-     * full-viewport overlay no longer occupies the screen (and therefore
-     * cannot block Obsidian's window drag region).
-     */
-    private scheduleUnmount(root: HTMLDivElement): void {
-        this.cancelPendingUnmount();
-        const finalize = () => {
-            this.cancelPendingUnmount();
-            if (this.rootEl === root && root.getAttribute("data-state") === "hidden") {
-                root.remove();
-            }
-        };
-        const handler = (e: TransitionEvent) => {
-            if (e.target !== root) return;
-            if (e.propertyName !== "opacity") return;
-            finalize();
-        };
-        this.unmountTransitionHandler = handler;
-        root.addEventListener("transitionend", handler);
-        this.unmountTimer = setTimeout(finalize, TabView.UNMOUNT_FALLBACK_MS);
-    }
-
-    private cancelPendingUnmount(): void {
-        if (this.unmountTimer !== null) {
-            clearTimeout(this.unmountTimer);
-            this.unmountTimer = null;
-        }
-        if (this.unmountTransitionHandler && this.rootEl) {
-            this.rootEl.removeEventListener("transitionend", this.unmountTransitionHandler);
-        }
-        this.unmountTransitionHandler = null;
     }
 
     // -----------------------------------------------------------------------
@@ -422,31 +296,9 @@ export class TabView {
     private buildDOM(): HTMLDivElement {
         const root = document.createElement("div");
         root.className = "pa-pagelet-tab";
-        root.setAttribute("data-state", "hidden");
-        root.setAttribute("role", "dialog");
+        root.setAttribute("role", "region");
         root.setAttribute("aria-label",
             pageletT("pagelet.tab.ariaLabel", this.locale));
-
-        // Header
-        const header = el("div", "pa-pagelet-tab-header");
-
-        const pill = el("div", "pa-pagelet-tab-pill");
-        pill.appendChild(buildPillSvg());
-        const titleSpan = el("span", undefined,
-            pageletT("pagelet.tab.title", this.locale));
-        this.titleEl = titleSpan;
-        pill.appendChild(titleSpan);
-        header.appendChild(pill);
-
-        const closeBtn = el("button", "pa-pagelet-tab-close", "×");
-        closeBtn.setAttribute("aria-label",
-            pageletT("pagelet.panel.close", this.locale));
-        closeBtn.addEventListener("click", (e) => {
-            e.stopPropagation();
-            this.close();
-        });
-        header.appendChild(closeBtn);
-        root.appendChild(header);
 
         // Body
         const body = el("div", "pa-pagelet-tab-body");
@@ -464,7 +316,10 @@ export class TabView {
         if (!this.bodyEl) return;
         this.bodyEl.innerHTML = "";
 
-        if (content.length === 0) return;
+        if (content.length === 0) {
+            this.renderEmptyState();
+            return;
+        }
 
         // Detect whether content is TabSection[] or PanelFinding[]
         if (isTabSections(content)) {
@@ -472,6 +327,24 @@ export class TabView {
         } else {
             this.renderFromFindings(content as PanelFinding[]);
         }
+    }
+
+    /** Render an explicit no-content state instead of a blank detail view. */
+    private renderEmptyState(): void {
+        if (!this.bodyEl) return;
+
+        const section = el("div", "pa-pagelet-tab-section");
+        section.appendChild(el("h2", undefined,
+            pageletT("pagelet.tab.overview", this.locale)));
+
+        const card = el("div", "pa-pagelet-tab-empty-card");
+        card.appendChild(el("div", "pa-pagelet-tab-empty-title",
+            pageletT("pagelet.tab.empty.title", this.locale)));
+        card.appendChild(el("div", "pa-pagelet-tab-empty-body",
+            pageletT("pagelet.tab.empty.body", this.locale)));
+        section.appendChild(card);
+
+        this.bodyEl.appendChild(section);
     }
 
     /** Render structured TabSection content. */
@@ -588,26 +461,6 @@ export class TabView {
             }
 
             this.bodyEl.appendChild(findingsSection);
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Global event handlers
-    // -----------------------------------------------------------------------
-
-    private attachGlobalListeners(): void {
-        document.addEventListener("keydown", this.handleKeydown, true);
-    }
-
-    private detachGlobalListeners(): void {
-        document.removeEventListener("keydown", this.handleKeydown, true);
-    }
-
-    private onKeydown(e: KeyboardEvent): void {
-        if (e.key === "Escape" && this._isOpen) {
-            e.preventDefault();
-            e.stopPropagation();
-            this.close();
         }
     }
 }

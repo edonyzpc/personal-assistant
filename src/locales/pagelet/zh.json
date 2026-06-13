@@ -174,6 +174,7 @@
     "pagelet.panel.cost.none": "暂无审阅费用",
     "pagelet.panel.status.idle": "就绪",
     "pagelet.panel.status.thinking": "正在审阅已选笔记…",
+    "pagelet.panel.status.reviewingCurrent": "正在审阅当前笔记…",
     "pagelet.panel.status.reading": "正在读取已选笔记…",
     "pagelet.panel.status.preparing": "正在准备审阅…",
     "pagelet.panel.status.checkingLimits": "正在检查审阅上限…",
@@ -323,10 +324,11 @@
     "pagelet.tab.ariaLabel": "拾页详细视图",
     "pagelet.tab.overview": "概览",
     "pagelet.tab.overview.summary": "共 {count} 条发现，以下是自动整理的要点：",
+    "pagelet.tab.empty.title": "还没有发现",
+    "pagelet.tab.empty.body": "详细结果是临时内容。请先在拾页面板中运行审阅，再展开到这里查看结果。",
     "pagelet.tab.tag.findings": "{count} 条发现",
     "pagelet.tab.tag.insights": "{count} 条洞察",
     "pagelet.tab.tag.sources": "{count} 个来源",
     "pagelet.tab.findings": "详细发现",
-    "pagelet.tab.mobileNotice": "移动端暂不支持标签页展开",
     "pagelet.tab.titlePrefix": "拾页 — {title}"
 }

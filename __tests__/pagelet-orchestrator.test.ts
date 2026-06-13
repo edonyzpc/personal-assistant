@@ -72,6 +72,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         }),
         writeReviewNote: async () => ({ success: true, filePath: ".pagelet/test.md" }),
         saveSettings: () => undefined,
+        openPageletDetailView: () => undefined,
         ...overrides,
     };
     return host;

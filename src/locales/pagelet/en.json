@@ -178,6 +178,7 @@
     "pagelet.panel.cost.none": "No review cost yet",
     "pagelet.panel.status.idle": "Ready",
     "pagelet.panel.status.thinking": "Reviewing selected notes...",
+    "pagelet.panel.status.reviewingCurrent": "Reviewing current note...",
     "pagelet.panel.status.reading": "Reading selected notes...",
     "pagelet.panel.status.preparing": "Preparing review...",
     "pagelet.panel.status.checkingLimits": "Checking review limits...",
@@ -323,10 +324,11 @@
     "pagelet.tab.ariaLabel": "Pagelet detail view",
     "pagelet.tab.overview": "Overview",
     "pagelet.tab.overview.summary": "{count} findings found. Here are the key takeaways:",
+    "pagelet.tab.empty.title": "No findings yet",
+    "pagelet.tab.empty.body": "Detail results are temporary. Run Pagelet from the panel, then expand the results here.",
     "pagelet.tab.tag.findings": "{count} findings",
     "pagelet.tab.tag.insights": "{count} insights",
     "pagelet.tab.tag.sources": "{count} sources",
     "pagelet.tab.findings": "Findings",
-    "pagelet.tab.mobileNotice": "Tab view is not available on mobile",
     "pagelet.tab.titlePrefix": "Pagelet — {title}"
 }

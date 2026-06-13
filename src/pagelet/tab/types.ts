@@ -1,5 +1,8 @@
 /* Copyright 2023 edonyzpc */
 
+import type { PageletLocale } from "../../locales/pagelet";
+import type { PanelFinding } from "../panel/types";
+
 /**
  * Pagelet -- Tab component types.
  *
@@ -18,4 +21,12 @@ export interface TabCard {
     title?: string;
     body: string;
     tags?: string[];
+}
+
+export type PageletDetailContent = PanelFinding[] | TabSection[];
+
+export interface PageletDetailPayload {
+    title: string;
+    content: PageletDetailContent;
+    locale: PageletLocale;
 }

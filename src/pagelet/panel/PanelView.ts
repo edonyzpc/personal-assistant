@@ -280,6 +280,39 @@ const PANEL_CSS = /* css */ `
     margin: 16px 0 16px 24px;
 }
 
+.pa-pagelet-panel-progress-card {
+    background: var(--background-secondary, #252525);
+    border: 1px solid var(--background-modifier-border, #3a3a3a);
+    border-radius: 8px;
+    padding: 14px 16px;
+    margin: 20px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    color: var(--text-muted, #999);
+    font-size: 13px;
+}
+
+.pa-pagelet-panel-progress-dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: var(--interactive-accent, #7c9eff);
+    animation: pa-pagelet-panel-progress-pulse 1s ease-in-out infinite;
+    flex-shrink: 0;
+}
+
+@keyframes pa-pagelet-panel-progress-pulse {
+    0%, 100% {
+        opacity: 0.45;
+        transform: scale(0.9);
+    }
+    50% {
+        opacity: 1;
+        transform: scale(1.15);
+    }
+}
+
 /* ---- Summary card ---- */
 .pa-pagelet-panel-card-wrap {
     padding: 0 4px;
@@ -399,12 +432,6 @@ body.is-mobile .pa-pagelet-panel[data-state="visible"] {
     transform: translateY(0);
 }
 
-/* Hide expand-to-tab on mobile (Tab not available) while keeping Save reachable. */
-body.is-mobile .pa-pagelet-panel-header-expand-btn,
-body.is-mobile .pa-pagelet-panel-expand-btn {
-    display: none;
-}
-
 /* Enlarge touch targets on mobile */
 body.is-mobile .pa-pagelet-panel-icon-btn {
     width: 44px;
@@ -432,6 +459,10 @@ body.is-mobile .pa-pagelet-panel-timeline-action-btn {
 @media (prefers-reduced-motion: reduce) {
     .pa-pagelet-panel {
         transition-duration: 0.01s !important;
+    }
+
+    .pa-pagelet-panel-progress-dot {
+        animation: none;
     }
 }
 `;
@@ -822,7 +853,8 @@ export class PanelView {
                 saveBtn.disabled = true;
                 saveBtn.setAttribute("aria-busy", "true");
                 const previousLabel = saveBtn.textContent ?? "";
-                saveBtn.textContent = pageletT("pagelet.panel.status.thinking", this.locale);
+                saveBtn.textContent = pageletT("pagelet.panel.status.reviewingCurrent", this.locale);
+                this.renderReviewProgress();
                 try {
                     await this.options.callbacks.onRunReview();
                 } finally {
@@ -830,6 +862,9 @@ export class PanelView {
                         saveBtn.disabled = false;
                         saveBtn.removeAttribute("aria-busy");
                         saveBtn.textContent = previousLabel;
+                        if (this.currentLayout === "review" && this.currentFindings.length === 0 && this.bodyEl) {
+                            renderReviewTimeline(this.bodyEl, this.currentFindings, this.locale);
+                        }
                     }
                 }
                 return;
@@ -864,6 +899,26 @@ export class PanelView {
         root.appendChild(footer);
 
         return root;
+    }
+
+    private renderReviewProgress(): void {
+        if (!this.bodyEl) return;
+        this.bodyEl.innerHTML = "";
+
+        const card = document.createElement("div");
+        card.className = "pa-pagelet-panel-progress-card";
+        card.setAttribute("role", "status");
+        card.setAttribute("aria-live", "polite");
+
+        const dot = document.createElement("div");
+        dot.className = "pa-pagelet-panel-progress-dot";
+        card.appendChild(dot);
+
+        const text = document.createElement("div");
+        text.textContent = pageletT("pagelet.panel.status.reviewingCurrent", this.locale);
+        card.appendChild(text);
+
+        this.bodyEl.appendChild(card);
     }
 
     // -----------------------------------------------------------------------

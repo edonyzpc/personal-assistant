@@ -26,7 +26,6 @@ import { BubbleView } from "./bubble/BubbleView";
 import { buildEmptyContent, buildNudgeContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
 import type { PanelFinding, PanelLayoutType } from "./panel/types";
-import { TabView } from "./tab/TabView";
 import type { PageletCommandCallbacks } from "./commands";
 import { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetCorner } from "./pet/types";
@@ -48,6 +47,7 @@ import { PAGELET_SCHEMA_VERSION, type PageletReviewResult } from "./pa-review-sc
 import { ChangeDetector } from "./scope/ChangeDetector";
 import { ScopeResolver } from "./scope/ScopeResolver";
 import { getPageletOverlayRoot } from "./overlay-root";
+import type { PageletDetailPayload } from "./tab/types";
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -119,6 +119,9 @@ export interface PageletHost {
 
     /** Persist current settings to disk. */
     saveSettings(): Promise<void> | void;
+
+    /** Open Pagelet detail results in a native Obsidian workspace leaf. */
+    openPageletDetailView(payload: PageletDetailPayload): Promise<void> | void;
 }
 
 // ---------------------------------------------------------------------------
@@ -130,7 +133,6 @@ export class PageletOrchestrator {
     private petView: PetView | null = null;
     private bubbleView: BubbleView | null = null;
     private panelView: PanelView | null = null;
-    private tabView: TabView | null = null;
     private preloadEngine: PreloadEngine | null = null;
     private preloadUnsubscribe: (() => void) | null = null;
     private lastAnalysisFindings: PanelFinding[] = [];
@@ -190,7 +192,6 @@ export class PageletOrchestrator {
         // Bound Escape handler for cleanup
         this.handleEscape = (e: KeyboardEvent) => {
             if (e.key !== "Escape") return;
-            if (this.tabView?.isOpen) { this.tabView.close(); e.stopImmediatePropagation(); return; }
             if (this.panelView?.isOpen) { this.panelView.close(); e.stopImmediatePropagation(); return; }
         };
     }
@@ -248,11 +249,8 @@ export class PageletOrchestrator {
         });
         this.panelView.mount(overlayRoot);
 
-        // 1c. Create TabView (lazy-mounted on first open)
-        this.tabView = new TabView(() => { this.host.log("Tab closed"); }, getPageletUiLanguage());
-        this.tabView.mount(overlayRoot);
-
-        // 1d. Centralized Escape handler (Tab > Panel > Bubble priority)
+        // 1c. Centralized Escape handler (Panel > Bubble priority).
+        // Native Pagelet detail leaves are closed by Obsidian's tab chrome.
         document.addEventListener("keydown", this.handleEscape, true);
 
         // 2. Workspace event: re-mount Pet when the active leaf changes
@@ -304,7 +302,6 @@ export class PageletOrchestrator {
         this.petView?.destroy();
         this.bubbleView?.destroy();
         this.panelView?.destroy();
-        this.tabView?.destroy();
         this.preloadCache.clear();
         this.changeDetector.clear();
 
@@ -312,7 +309,6 @@ export class PageletOrchestrator {
         this.petView = null;
         this.bubbleView = null;
         this.panelView = null;
-        this.tabView = null;
     }
 
     /**
@@ -931,7 +927,14 @@ export class PageletOrchestrator {
                 sourceFile: f.sourceFile,
                 sourceTitle: f.sourceTitle,
             }));
-        this.tabView?.open(title, findings);
+        void Promise.resolve(this.host.openPageletDetailView({
+            title,
+            content: findings,
+            locale,
+        })).catch((error: unknown) => {
+            this.host.log("Failed to open Pagelet detail view", error);
+            new Notice(this.t("pagelet.panel.status.error"), 4000);
+        });
     }
 
     /** Save Panel findings as a review note via the output module. */

@@ -106,6 +106,7 @@ jest.mock('../src/stats/editor-plugin', () => ({
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 
 import { PluginManager } from '../src/plugin';
+import { PageletDetailView } from '../src/pagelet/tab';
 
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
@@ -265,7 +266,8 @@ describe('plugin startup view registration', () => {
             expect(registerView).toHaveBeenCalledWith('record-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('stat-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
-            expect(registerView).toHaveBeenCalledTimes(3);
+            expect(registerView).toHaveBeenCalledWith('pa-pagelet-detail-view', expect.any(Function));
+            expect(registerView).toHaveBeenCalledTimes(4);
             expect(registerView.mock.invocationCallOrder[0]).toBeLessThan(
                 onLayoutReady.mock.invocationCallOrder[0],
             );
@@ -273,11 +275,73 @@ describe('plugin startup view registration', () => {
             layoutCallbacks.forEach((callback) => callback());
 
             expect(plugin.initializeCalloutManager).toHaveBeenCalledTimes(1);
-            expect(registerView).toHaveBeenCalledTimes(3);
+            expect(registerView).toHaveBeenCalledTimes(4);
         } finally {
             globalThis.document = originalDocument;
             globalThis.MutationObserver = originalMutationObserver;
         }
+    });
+});
+
+describe('Pagelet detail workspace leaf', () => {
+    it('loads a deferred detail leaf before sending the payload', async () => {
+        const detailView = Object.create(PageletDetailView.prototype) as PageletDetailView;
+        detailView.setPayload = jest.fn();
+        const loadIfDeferred = jest.fn(async () => undefined);
+        const setViewState = jest.fn<(_state: unknown) => Promise<void>>(async () => undefined);
+        const revealLeaf = jest.fn<(_leaf: unknown) => Promise<void>>(async () => undefined);
+        const leaf = {
+            view: detailView,
+            loadIfDeferred,
+            setViewState,
+        };
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => [leaf]),
+                getLeaf: jest.fn(),
+                revealLeaf,
+            },
+        };
+
+        const payload = {
+            title: 'Pagelet — Detail View',
+            content: [],
+            locale: 'en' as const,
+        };
+        await plugin.openPageletDetailView(payload);
+
+        expect(loadIfDeferred).toHaveBeenCalledTimes(1);
+        expect(setViewState).not.toHaveBeenCalled();
+        expect(revealLeaf).toHaveBeenCalledWith(leaf);
+        expect(detailView.setPayload).toHaveBeenCalledWith(payload);
+    });
+
+    it('rejects instead of silently showing an empty detail leaf when the view cannot initialize', async () => {
+        const leaf = {
+            view: {},
+            loadIfDeferred: jest.fn(async () => undefined),
+            setViewState: jest.fn<(_state: unknown) => Promise<void>>(async () => undefined),
+        };
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            workspace: {
+                getLeavesOfType: jest.fn(() => [leaf]),
+                getLeaf: jest.fn(),
+                revealLeaf: jest.fn(async () => undefined),
+            },
+        };
+
+        await expect(plugin.openPageletDetailView({
+            title: 'Pagelet — Detail View',
+            content: [],
+            locale: 'en',
+        })).rejects.toThrow('Failed to initialize Pagelet detail view');
+
+        expect(leaf.setViewState).toHaveBeenCalledWith({
+            type: 'pa-pagelet-detail-view',
+            active: true,
+        });
     });
 });
 
