@@ -1,5 +1,6 @@
 import { type Vault } from "obsidian";
 import type { DirtyTimestamps } from "../vss-helpers";
+import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import type { VSSIndexMarker } from "./types";
 
 const VSS_LOCAL_STATE_DB_VERSION = 1;
@@ -250,14 +251,10 @@ export function getVSSLocalStateDbName(vault: Vault, vaultId: string, pluginId: 
     const scopeSource = [
         pluginId || "personal-assistant",
         vaultId || "default-vault",
-        getVaultConfigDir(vault),
+        getVaultConfigDirStorageScope(vault),
         getVaultLocalPath(vault) ?? "",
     ].join("\n");
     return `${PLUGIN_STORAGE_SCOPE}-${hashScope(scopeSource)}`;
-}
-
-function getVaultConfigDir(vault: Vault): string {
-    return (vault as { configDir?: string }).configDir?.trim() || ".obsidian";
 }
 
 function getVaultLocalPath(vault: Vault): string | undefined {

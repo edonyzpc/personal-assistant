@@ -215,6 +215,14 @@ describe("getChatHistoryDbName", () => {
         expect(getChatHistoryDbName(createVault("/vaults/other"), "vault-id", "personal-assistant")).not.toBe(base);
         expect(getChatHistoryDbName(createVault("/vaults/work"), "vault-id", "other-plugin")).not.toBe(base);
     });
+
+    it("preserves trim-only configDir semantics for existing IndexedDB scopes", () => {
+        const normalized = getChatHistoryDbName(createVault("/vaults/work", ".obsidian"), "vault-id", "personal-assistant");
+
+        expect(getChatHistoryDbName(createVault("/vaults/work", " .obsidian "), "vault-id", "personal-assistant")).toBe(normalized);
+        expect(getChatHistoryDbName(createVault("/vaults/work", ".obsidian/"), "vault-id", "personal-assistant")).not.toBe(normalized);
+        expect(getChatHistoryDbName(createVault("/vaults/work", ".\\.obsidian"), "vault-id", "personal-assistant")).not.toBe(normalized);
+    });
 });
 
 describe("createChatHistoryStore", () => {

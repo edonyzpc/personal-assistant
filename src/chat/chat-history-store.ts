@@ -1,4 +1,5 @@
 import type { Vault } from "obsidian";
+import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import type {
     ChatContextUsedItem,
     ChatRuntimeWarning,
@@ -491,14 +492,10 @@ export function getChatHistoryDbName(vault: Vault, vaultId: string, pluginId: st
     const scopeSource = [
         pluginId || "personal-assistant",
         vaultId || "default-vault",
-        getVaultConfigDir(vault),
+        getVaultConfigDirStorageScope(vault),
         getVaultLocalPath(vault) ?? "",
     ].join("\n");
     return `${PLUGIN_STORAGE_SCOPE}-${hashScope(scopeSource)}`;
-}
-
-function getVaultConfigDir(vault: Vault): string {
-    return (vault as { configDir?: string }).configDir?.trim() || ".obsidian";
 }
 
 function getVaultLocalPath(vault: Vault): string | undefined {

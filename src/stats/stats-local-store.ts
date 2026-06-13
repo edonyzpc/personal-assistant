@@ -1,4 +1,5 @@
 import type { Vault } from "obsidian";
+import { getVaultConfigDirStorageScope } from "../obsidian-paths";
 import type { ActivityCounts, SnapshotCounts } from "./stats-types";
 
 const STATS_LOCAL_DB_VERSION = 3;
@@ -408,13 +409,9 @@ export function getStatsRecordKey(date: string, deviceId: string): string {
 
 const REQUIRED_STORES = [DAILY_RECORDS_STORE, METADATA_STORE];
 
-function getStatsLocalDbName(vault: Vault, vaultId: string): string {
-    const scopeSource = `${vaultId}\n${getVaultConfigDir(vault)}\n${getVaultLocalPath(vault) ?? ""}`;
+export function getStatsLocalDbName(vault: Vault, vaultId: string): string {
+    const scopeSource = `${vaultId}\n${getVaultConfigDirStorageScope(vault)}\n${getVaultLocalPath(vault) ?? ""}`;
     return `${PLUGIN_STORAGE_SCOPE}-${hashScope(scopeSource)}`;
-}
-
-function getVaultConfigDir(vault: Vault): string {
-    return (vault as { configDir?: string }).configDir?.trim() || ".obsidian";
 }
 
 function getVaultLocalPath(vault: Vault): string | undefined {

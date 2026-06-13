@@ -6,6 +6,10 @@ export function getVaultConfigDir(vault: Pick<Vault, "configDir"> | undefined): 
     return normalizePath(vault?.configDir?.trim() || LEGACY_CONFIG_DIR);
 }
 
+export function getVaultConfigDirStorageScope(vault: Pick<Vault, "configDir"> | undefined): string {
+    return vault?.configDir?.trim() || LEGACY_CONFIG_DIR;
+}
+
 export function joinVaultConfigPath(configDir: string, childPath: string): string {
     return normalizePath(`${configDir}/${childPath}`);
 }

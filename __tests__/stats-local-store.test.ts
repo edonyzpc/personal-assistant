@@ -1,12 +1,23 @@
 import { describe, expect, it } from "@jest/globals";
 import {
     createStatsLocalStore,
+    getStatsLocalDbName,
     IndexedDbStatsLocalStore,
     MemoryStatsLocalStore,
     getStatsRecordKey,
     type FileCountCacheEntry,
     type StatsDailyDeviceRecord,
 } from "../src/stats/stats-local-store";
+import type { Vault } from "obsidian";
+
+function createVault(basePath: string, configDir = ".obsidian"): Vault {
+    return {
+        configDir,
+        adapter: {
+            getBasePath: () => basePath,
+        },
+    } as unknown as Vault;
+}
 
 function createRecord(overrides: Partial<StatsDailyDeviceRecord> = {}): StatsDailyDeviceRecord {
     const date = overrides.date ?? "2026-05-19";
@@ -171,6 +182,14 @@ describe("StatsLocalStore", () => {
                 value: originalIndexedDb,
             });
         }
+    });
+
+    it("preserves trim-only configDir semantics for existing IndexedDB scopes", () => {
+        const normalized = getStatsLocalDbName(createVault("/vaults/work", ".obsidian"), "vault-id");
+
+        expect(getStatsLocalDbName(createVault("/vaults/work", " .obsidian "), "vault-id")).toBe(normalized);
+        expect(getStatsLocalDbName(createVault("/vaults/work", ".obsidian/"), "vault-id")).not.toBe(normalized);
+        expect(getStatsLocalDbName(createVault("/vaults/work", ".\\.obsidian"), "vault-id")).not.toBe(normalized);
     });
 
     it("rejects when IndexedDB open fails", async () => {

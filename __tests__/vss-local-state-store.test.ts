@@ -96,6 +96,14 @@ describe("VSS local state store", () => {
         expect(getVSSLocalStateDbName(createVault("/vaults/work"), "vault-id", "other-plugin")).not.toBe(base);
     });
 
+    it("preserves trim-only configDir semantics for existing IndexedDB scopes", () => {
+        const normalized = getVSSLocalStateDbName(createVault("/vaults/work", ".obsidian"), "vault-id", "personal-assistant");
+
+        expect(getVSSLocalStateDbName(createVault("/vaults/work", " .obsidian "), "vault-id", "personal-assistant")).toBe(normalized);
+        expect(getVSSLocalStateDbName(createVault("/vaults/work", ".obsidian/"), "vault-id", "personal-assistant")).not.toBe(normalized);
+        expect(getVSSLocalStateDbName(createVault("/vaults/work", ".\\.obsidian"), "vault-id", "personal-assistant")).not.toBe(normalized);
+    });
+
     it("reports unavailable instead of using volatile memory when IndexedDB is missing", async () => {
         const originalIndexedDb = globalThis.indexedDB;
         Object.defineProperty(globalThis, "indexedDB", {
