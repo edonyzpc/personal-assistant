@@ -3,11 +3,11 @@
 ## Active Release Gates
 
 - [x] Close Pagelet beta workbench completion before release planning.
-  - Context: Pagelet's current beta path is intentionally continuing toward the original workbench interaction model before any release work. The provider structured-output matrix was initially deferred by product decision, then resumed and passed after the core desktop workbench smoke.
-  - Result: Pagelet panel opens without provider calls; local scope selection and manual include/skip toggles work; current-note review reaches the configured provider; preview confirmation writes `.pagelet/*.md`; Accept/Draft edit/restore/Remove work; source and related-note chips work; Research pre-fills Chat without auto-submit; non-Markdown view triggers are safe no-ops; Reduce motion suppresses or visibly reduces mascot animation; provider structured-output matrix passed; mobile smoke passed; real screen-reader smoke passed; AI-plugin coexistence smoke passed.
-  - Evidence: `docs/pagelet-smoke-checklist.md`; `docs/archive/pagelet-next-work-plan.md`; focused Pagelet tests including `__tests__/pagelet-view.test.ts`; desktop test-vault Smoke 1-5 passed; provider matrix follow-up passed; mobile smoke passed; VoiceOver smoke passed; AI-plugin coexistence smoke passed.
-  - Follow-ups: no remaining Pagelet smoke follow-up in this gate. This closeout does not start release/publish flow.
-  - Exit criteria: Workstream A in `docs/archive/pagelet-next-work-plan.md` is implemented and smoke-verified, docs match actual behavior, and no release/publish flow starts until Pagelet beta functionality is complete.
+  - Context: Pagelet is now defined as the note's quiet reviewer with Pet/Bubble/Panel/Tab progressive disclosure. The old workbench draft-collection path is historical and no longer a release target.
+  - Result: Pagelet opens through the final command registrar; review-note and periodic-summary saves create independent `.pagelet/*.md` notes through the Write Action Framework; source notes, daily notes, tasks, and frontmatter are not modified by the default Pagelet flow.
+  - Evidence: `docs/pagelet-smoke-checklist.md`; focused Pagelet tests including `__tests__/pagelet-commands.test.ts`, `__tests__/e2e-pagelet-write.spec.ts`, and `__tests__/pagelet-settings.test.ts`; desktop test-vault Smoke 1-5 passed; provider matrix follow-up passed; mobile smoke passed; VoiceOver smoke passed; AI-plugin coexistence smoke passed.
+  - Follow-ups: run a dedicated mobile smoke pass for the final panel Save / expand-to-tab path. This closeout does not start release/publish flow.
+  - Exit criteria: Pagelet docs match actual behavior, and no release/publish flow starts until Pagelet beta functionality is complete.
 
 - [ ] Close v2 review follow-up stabilization before release.
   - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.

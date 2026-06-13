@@ -8,10 +8,10 @@ This directory is split into current product/runtime contracts and archived hist
 | --- | --- |
 | User workflows | [Pagelet user guide](./pagelet-user-guide.md), [Pagelet smoke checklist](./pagelet-smoke-checklist.md) |
 | Project gates | [Project TODO](./todo.md), [Release process](./release-process.md), [Reusable refactor workflow](./refactor-workflow.md) |
-| PA Agent | [Architecture plan](./pa-agent-architecture-plan.md), [Runtime lifecycle plan](./pa-agent-runtime-lifecycle-plan.md), [Control policy SDD](./pa-agent-control-policy-sdd.md), [Control policy tracker](./pa-agent-control-policy-development-tracker.md) |
+| PA Agent | [Architecture plan](./pa-agent-architecture-plan.md), [Runtime lifecycle plan](./pa-agent-runtime-lifecycle-plan.md), [Context management research](./agent-context-management-research.md), [Control policy SDD](./pa-agent-control-policy-sdd.md), [Control policy tracker](./pa-agent-control-policy-development-tracker.md) |
 | v2 follow-up | [v2 post-release tracker](./v2-post-release-spec-driven-development.md), [v2.1.2 decisions](./v2.1.2-decisions.md), [v2.1.2 review snapshot](./v2.1.2-comprehensive-review.md), [v2 fix plan](./v2-fix-plan.md) |
 | Memory / VSS | [SQLite/WASM architecture](./vss-sqlite-wasm-architecture.md), [Embedding refresh](./vss-embedding-refresh.md), [Local state plan](./vss-local-state-plan.md), [Local state tracker](./vss-local-state-development-tracker.md) |
-| Pagelet / Review Assistant | [Product design](./review-assistant-product-design.md), [SDD](./review-assistant-sdd.md), [Decisions](./review-assistant-decisions.md), [Visual spec](./pagelet-visual-spec.html), [Write action framework](./write-action-framework-sdd.md) |
+| Pagelet / Review Assistant | [Pagelet product design](./pagelet-product-design.md), [Pagelet SDD guide](./pagelet-sdd-guide.md), [Historical decisions](./review-assistant-decisions.md), [Visual spec](./pagelet-visual-spec.html), [Write action framework](./write-action-framework-sdd.md) |
 | Future work | [Operations Agent boundary](./operations-agent-plan.md), [Obsidian Operations plan](./obsidian-operations-agent-plan.md), [Obsidian Operations tracker](./obsidian-operations-spec-driven-development.md), [Write action handoff](./write-action-design-handoff.md) |
 
 ## Active SDDs

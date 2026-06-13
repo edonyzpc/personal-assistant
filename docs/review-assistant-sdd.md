@@ -13,17 +13,17 @@
 | 项 | 值 |
 |----|----|
 | Spec version | 0.1 |
-| 实现状态 | **v1 beta workbench implemented** — panel scope → review → preview → confirmed write |
-| 对应版本 | PA `v2.2.0-beta.1`（沿用 D013 通道） |
+| 实现状态 | **Current Pagelet implemented** — quiet review surfaces → preview → confirmed review-note write |
+| 对应版本 | PA `2.2.0-beta.1`（沿用 D013 通道） |
 | 决策依据 | `docs/review-assistant-decisions.md` D001-D031 |
 | 产品意图 | `docs/review-assistant-product-design.md` |
-| 阻塞项 | ~~OQ001 (Write Action Framework v1)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Resolved（2026-06-05 spike + live 测试制度化到 smoke checklist）；自动 related-note read / 自动 WebSearch 为后续范围 |
+| 阻塞项 | ~~OQ001 (Write Action Framework create-file path)~~ ✅ Resolved（详见 [[D031]] + §14.1）；~~OQ002 (F5 provider spike)~~ ✅ Resolved（2026-06-05 spike + live 测试制度化到 smoke checklist）；自动 related-note read / 自动 WebSearch 为后续范围 |
 | 主作者 | PA core |
 | 上次更新 | 2026-06-06 |
 
-> **解阻塞标记（2026-06-03）**：D025 + D030 决定写路径走 **Write Action Framework v1**（基础设施层）。`docs/write-action-framework-sdd.md` 已落地、`src/ai-services/write-action-framework/**` 4 子模块 + PolicyEngine 参数化已实现、`pagelet.write_review_output` 作为首个真实 caller 跑通端到端测试。本 SDD §2.4 / §3 / §14 的契约面占位已去 stub 化，Pagelet beta 随 `v2.2.0-beta.1` 发布（详见 [[D031]]）。
+> **解阻塞标记（2026-06-03）**：D025 + D030 决定写路径走 **Write Action Framework create-file path**（基础设施层）。`docs/write-action-framework-sdd.md` 已落地、`src/ai-services/write-action-framework/**` 4 子模块 + PolicyEngine 参数化已实现、`pagelet.write_review_output` 作为首个真实 caller 跑通端到端测试。本 SDD §2.4 / §3 / §14 的契约面占位已去 stub 化，Pagelet beta 随 PA `2.2.0-beta.1` 发布（详见 [[D031]]）。
 >
-> **历史背景（保留可追溯）**：v1 立项时 OQ001 被升级为 Pagelet beta Hard Blocker（Pagelet 唯一的 v1 写动作"创建 review note"是框架的首个真实 caller，没有框架就没有 Pagelet beta）。
+> **历史背景（保留可追溯）**：Pagelet 立项时 OQ001 被升级为 Pagelet beta Hard Blocker（Pagelet 唯一写动作"创建 review note"是框架的首个真实 caller，没有框架就没有 Pagelet beta）。
 
 ---
 
@@ -70,7 +70,7 @@
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-> 决策依据：D024（单 Runtime + 多 adapter）、D025（写路径走 Write Action Framework v1）、D030（框架先行 + 二层命名对齐）。
+> 决策依据：D024（单 Runtime + 多 adapter）、D025（写路径走 Write Action Framework）、D030（框架先行 + 二层命名对齐）。
 
 ### 1.2 单 Runtime 原则
 
@@ -86,9 +86,9 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 > 决策依据：D024。
 > 代码位置：`src/ai-services/pa-agent-loop.ts:43,72,111`（3 个 DI 接口）。
 
-### 1.3 新增/改造文件清单（v1 实测落地）
+### 1.3 新增/改造文件清单（当前实测落地）
 
-> **路径修订（2026-06-04）**：v1 立项时 §1.3 设想所有 Pagelet 模块挂在 `src/ai-services/` 与 `src/components/pagelet/` 下。实际实现为了与 PA 既有目录边界对齐（`ai-services` 留给 chat/runtime/policy 共享层），把 Pagelet 拆到了独立的 `src/pagelet/` + `src/ui/pagelet/` + `src/settings/pagelet/` + `src/locales/pagelet/`。本表已替换为实测路径，原计划 1:1 对应关系记录在每行末尾以备追溯。
+> **路径修订（2026-06-04）**：§1.3 原设想所有 Pagelet 模块挂在 `src/ai-services/` 与 `src/components/pagelet/` 下。实际实现为了与 PA 既有目录边界对齐（`ai-services` 留给 chat/runtime/policy 共享层），把 Pagelet 拆到了独立的 `src/pagelet/` + `src/ui/pagelet/` + `src/settings/pagelet/` + `src/locales/pagelet/`。本表已替换为实测路径，原计划 1:1 对应关系记录在每行末尾以备追溯。
 
 #### Pagelet runtime（`src/pagelet/`）
 
@@ -102,11 +102,11 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 | `src/pagelet/pa-review-rate-limit.ts` | NEW | 滑窗 cost gate（10/h、100/d）+ 强制跳过 | (未在计划单列；§7.2) |
 | `src/pagelet/pa-review-file-io.ts` | NEW | `.pagelet/` 目录与 `vault.adapter.write` 持久化 + frontmatter | (未在计划单列；§5) |
 | `src/pagelet/scope.ts` | NEW | Panel scope selection：current/yesterday/last3/last7、included/skipped rows、multi-note segment/source-id map | (当前 workbench follow-up) |
-| `src/pagelet/compat/{view-type,debounce,ribbon,focus-command,review-command}.ts` | NEW | R1/R2/R4 兼容隔离 + D007 focus 命令 + command-palette review/panel entry | ↔ 原 plugin.ts/main.ts diff 拆分 |
-| `src/pagelet/view.ts` | NEW | `pa-pagelet-view` 生产 panel：mascot 状态、scope controls、SuggestionCard 列表、source/related actions、session cost、editable draft collect/restore |
+| `src/pagelet/compat/{view-type,debounce,focus-command}.ts` | NEW | R1/R2 兼容隔离 + D007 focus 命令；Pagelet ribbon compat 已移除，`ribbonPosition` 仅作旧 data.json 兼容字段 | ↔ 原 plugin.ts/main.ts diff 拆分 |
+| `src/pagelet/view.ts` | REMOVED | 历史 workbench ItemView；当前 Pagelet 使用 Pet / Bubble / Panel / Tab progressive disclosure surface |
 | `src/pagelet/index.ts` | NEW | barrel | — |
 
-> v1 没有单独的 `pa-review-host-policy.ts`：basic/deeper 单 turn 流程目前在 `pa-review-runtime.ts` 内联完成，未拆出独立 HostPolicy 类。Deeper 多 turn 真正需要时再抽。
+> 当前没有单独的 `pa-review-host-policy.ts`：basic/deeper 单 turn 流程目前在 `pa-review-runtime.ts` 内联完成，未拆出独立 HostPolicy 类。Deeper 多 turn 真正需要时再抽。
 
 #### UI / 设置 / i18n / 样式
 
@@ -125,7 +125,7 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
 |------|------|------|
 | `src/ai-services/policy-engine.ts` | MODIFIED | 参数化 `runKind` + `allowWrite`（§3） |
 | `src/ai-services/write-action-framework/**` | NEW | 4 gate（target-confinement / preview-confirmation / stale-reread / runtime-integration）+ debug-observer + types。Pagelet 的 `pagelet.write_review_output` 是首个真实 caller |
-| `src/plugin.ts` | MODIFIED | 注册 commands / ribbon / Pagelet runtime wiring；ribbon 触发当前 Markdown note review |
+| `src/plugin.ts` | MODIFIED | 注册 commands / Pagelet runtime wiring；Pagelet 不再注册 ribbon |
 
 > 测试文件清单见 §12.1（实际名称已与本节对齐）。
 
@@ -150,7 +150,7 @@ PA 始终只有 **一个** `PaAgentRuntime`（详见 `src/ai-services/pa-agent-r
   → 8. Write Action Framework preview/confirm
   → 9. 持久化到 .pagelet/{原笔记名}-pagelet-review-{YYYY-MM-DD}.md（D008-D009）
 
-[user 触发 "Pagelet: Review current note" 或 ribbon]
+[user 触发 "Pagelet: Review current note"]
   → 使用严格 active MarkdownView 作为 Current scope，进入同一 review/write 流程
 ```
 
@@ -173,7 +173,7 @@ class PageletAgentModel implements PaAgentModel {
     const structured = llm.withStructuredOutput?.(this.schema, { method: "json_schema" });
     if (structured) {
       const result = await structured.invoke(this.buildMessages(input));
-      // 将 structured result 转成 PaAgentModelStreamChunk 流（v1 一次性，v2 流式）
+      // 将 structured result 转成 PaAgentModelStreamChunk 流
       yield { type: "text_delta", text: JSON.stringify(result) };
       return;
     }
@@ -218,9 +218,9 @@ class PageletHostPolicy implements PaAgentHostPolicy {
 |-----------|------|------------|------|
 | `pagelet.read_source_note` | tool | read-only | **Planned**：给 LLM 提供切分后的笔记片段（带 source_id）；当前 MVP 在 plugin 触发器内直接构造 segments |
 | `pagelet.search_related_notes` | tool | read-only | **Planned**：复用 PA 的 VSS（D006-D = vault-aware）；当前 MVP 不读 related notes |
-| `pagelet.write_review_output` | action | write | 走 **Write Action Framework v1**；preview 后写入冻结的 `.pagelet/...md` 目标 |
+| `pagelet.write_review_output` | action | write | 走 **Write Action Framework create-file path**；preview 后写入冻结的 `.pagelet/...md` 目标 |
 
-> Pagelet 的 `pagelet.write_review_output` 是 Write Action Framework v1 的**首个真实 caller**——意味着 framework 的 API 设计必须以本 capability 为最小验收用例，但 capability 本身不允许 Pagelet-specific 假设漏到 framework 内部。
+> Pagelet 的 `pagelet.write_review_output` 是 Write Action Framework 的**首个真实 caller**——意味着 framework 的 API 设计必须以本 capability 为最小验收用例，但 capability 本身不允许 Pagelet-specific 假设漏到 framework 内部。
 
 ---
 
@@ -234,7 +234,7 @@ class PageletHostPolicy implements PaAgentHostPolicy {
  export interface PolicyEngineOptions {
      platform?: AgentRuntimePlatform;
 +    runKind?: "chat" | "review";  // 默认 "chat"
-+    allowWrite?: boolean;          // review 时为 true；写动作仍需 Write Action Framework v1 包装
++    allowWrite?: boolean;          // review 时为 true；写动作仍需 Write Action Framework 包装
  }
 ```
 
@@ -247,7 +247,7 @@ class PageletHostPolicy implements PaAgentHostPolicy {
 +        return { allowed: false, reason: "action capabilities require allowWrite=true" };
 +    }
 +    if (capability.kind === "action" && this.allowWrite) {
-+        // 必须经 Write Action Framework v1 包装（[[OQ001]]），此处仅放行 capability 注册
++        // 必须经 Write Action Framework 包装（[[OQ001]]），此处仅放行 capability 注册
 +        return { allowed: true };
 +    }
      ...
@@ -381,7 +381,7 @@ pagelet_cost_usd: 0.003
 
 ## 6 · 插件兼容性实现（D029）
 
-### 6.1 4 红旗（R1-R4，必须 v1 落地）
+### 6.1 4 红旗（R1-R4，当前必须落地）
 
 #### R1 · Mascot view-type gating
 
@@ -424,14 +424,11 @@ this.registerEvent(
 
 见 §5.2。**不要** 用 `app.vault.modify` 或 `app.vault.create`，避免触发 `vault.on("modify")` 让 Templater/Linter/Tag Wrangler 误处理产物文件。
 
-#### R4 · Ribbon 可隐藏
+#### R4 · Ribbon 已移除
 
-不强制把 Pagelet ribbon icon 加到最上方。当前 beta 仅提供 settings 选项 `pagelet.ribbonPosition: "default" | "hidden"`：
-
-```ts
-const icon = this.addRibbonIcon("scroll-text", "Pagelet (Beta)", () => this.openPageletPanel());
-if (settings.ribbonPosition === "hidden") icon.style.display = "none";
-```
+Pagelet 当前不注册 Obsidian ribbon icon。历史 `pagelet.ribbonPosition`
+字段仅为旧 `data.json` 兼容保留；设置页不再展示该选项，运行时也不再创建
+Pagelet ribbon。
 
 ### 6.2 8 中等风险缓解
 
@@ -441,9 +438,9 @@ if (settings.ribbonPosition === "hidden") icon.style.display = "none";
 | M2 | 命令名撞名 | 所有 commands 固定 `Pagelet:` 前缀 |
 | M3 | Frontmatter key 撞名 | 自有 key 全用 `pagelet_*` 命名空间（见 §5.3） |
 | M4 | Status bar 拥挤 | 默认 **不** 占用 status bar；只在 deeper review 进行中显示，结束后移除 |
-| M5 | 上下文菜单冲突 | 不注册右键菜单 v1；通过 commands + ribbon 触发 |
-| M6 | Editor extension 冲突 | 不注入 CodeMirror extension v1（Pagelet 是 side-panel，不动编辑器） |
-| M7 | Workspace 布局污染 | view-type 唯一 ID `pa-pagelet-view`，不复用 `markdown` |
+| M5 | 上下文菜单冲突 | 当前不注册右键菜单；通过 commands + ribbon 触发 |
+| M6 | Editor extension 冲突 | 当前不注入 CodeMirror extension（Pagelet 是 side-panel，不动编辑器） |
+| M7 | Workspace 布局污染 | 当前 Pagelet 使用 overlay surface，不注册独立 ItemView；不复用 `markdown` |
 | M8 | 设置序列化撞名 | settings JSON 段名 `pagelet`，所有子项嵌套在内 |
 
 ### 6.3 命名规范汇总
@@ -453,11 +450,11 @@ if (settings.ribbonPosition === "hidden") icon.style.display = "none";
 | Command ID | Current beta: `pa-pagelet:review-current`; future panel: `pa-pagelet:open-panel` ... |
 | Command display name | 中文 `拾页：...` / 英文 `Pagelet: ...` |
 | CSS class | `.pa-pagelet-mascot` / `.pa-pagelet-card` / `.pa-pagelet-callout` |
-| HTML data attr | `data-plugin="pa-pagelet"` 加在 view 根节点 |
+| HTML data attr | `data-plugin="pa-pagelet"` 加在 Pagelet surface 根节点 |
 | Settings key | `pagelet.*` 嵌套 |
 | Frontmatter | `pagelet: true` + `pagelet_*` 前缀 |
 | Review file | `{原笔记名}-pagelet-review-{YYYY-MM-DD}.md` |
-| View type | `pa-pagelet-view` |
+| View type | 不注册独立 Pagelet ItemView |
 
 ---
 
@@ -541,13 +538,13 @@ suggestionCard.setFooter(`this review used ~$${costUsd.toFixed(3)}`);
 
 定价表硬编码在 `pa-review-pricing.ts`，按 provider/model 分桶，未知 provider 显示 `~$? (unknown pricing)`。
 
-### 7.5 v1 异常熔断（D023）
+### 7.5 异常熔断（D023）
 
-v1 Beta 只做最低限度："任意 LLM 调用失败 → 用户提示 + 提供 feedback 链接 + 不重试"。
+当前 Pagelet 只做最低限度："任意 LLM 调用失败 → 用户提示 + 提供 feedback 链接 + 不重试"。
 
-更精细的熔断（v2，OQ003）：
+更精细的熔断（OQ003）：
 - LLM 返回超 10K tokens → 截断+报警
-- 单次 call > 60s → 中止+提示（v1 暂复用 PaAgentLoop 的 `maxWallClockMs`）
+- 单次 call > 60s → 中止+提示（当前暂复用 PaAgentLoop 的 `maxWallClockMs`）
 - 连续 3 次 call 报错 → 暂停 30 分钟
 - Provider rate limit → 指数退避重试
 
@@ -723,11 +720,11 @@ Pagelet
 
 ### 11.2 DAU/MAU（OQ004）
 
-v1 暂不直接收集遥测数据。代用指标：
+当前暂不直接收集遥测数据。代用指标：
 - GitHub Issues 中 Pagelet label 计数
 - 用户自报（设置内"send feedback"链接）
 
-正式 telemetry → v2（OQ004）。
+正式 telemetry → 后续范围（OQ004）。
 
 ---
 
@@ -749,7 +746,7 @@ v1 暂不直接收集遥测数据。代用指标：
 | `pagelet-compat-{view-type,debounce,ribbon,focus-command}.test.ts` | R1/R2/R4 + Cmd+/ |
 | `policy-engine.test.ts`（扩展） | runKind="review" + allowWrite=true → action capability 放行 |
 
-> v1 没有 `pa-review-host-policy.test.ts`：HostPolicy 未单独抽出（见 §1.3 注），单 turn 行为由 `pa-review-runtime.ts` 与 model 测试间接覆盖。
+> 当前没有 `pa-review-host-policy.test.ts`：HostPolicy 未单独抽出（见 §1.3 注），单 turn 行为由 `pa-review-runtime.ts` 与 model 测试间接覆盖。
 
 ### 12.2 集成测试
 
@@ -773,10 +770,10 @@ v1 暂不直接收集遥测数据。代用指标：
 
 ### 13.1 SemVer
 
-- 当前最新：`v2.x.y`
-- Pagelet 开发分支：`v2.(x+1).0-beta.N`
+- 当前最新：PA release line
+- Pagelet 发布通道：next PA beta channel
 - Graduate 标准（D013）：连续 2 个 `-beta.N` 无 P0/P1 bug + GitHub Issues 反馈无致命问题
-- Graduate 版本：`v2.(x+1).0`
+- Graduate 版本：next PA stable release
 
 ### 13.2 Beta 默认行为
 
@@ -789,7 +786,7 @@ v1 暂不直接收集遥测数据。代用指标：
 沿用 PA 现有 `docs/release-process.md` 规范，Pagelet 特性单独段落标注 `[Beta]`：
 
 ```markdown
-## v2.5.0-beta.1
+## 2.5.0-beta.1
 
 ### Beta Features
 - [Beta] Pagelet (拾页): your note's quiet reviewer
@@ -814,21 +811,21 @@ v1 暂不直接收集遥测数据。代用指标：
 
 | ID | 内容 | 严重程度 | 影响 SDD 章节 |
 |----|------|---------|--------------|
-| ~~**OQ001**~~ | ~~**Write Action Framework v1 SDD + 最小实现 + PolicyEngine 参数化**~~ | **✅ Resolved（2026-06-03，[[D031]]）** | §2.4 / §3 / §7 / §14.3 占位已去 stub |
+| ~~**OQ001**~~ | ~~**Write Action Framework create-file path + PolicyEngine 参数化**~~ | **✅ Resolved（2026-06-03，[[D031]]）** | §2.4 / §3 / §7 / §14.3 占位已去 stub |
 | ~~**OQ002**~~ | ~~**F5 Provider 兼容性 spike**~~ | **✅ Resolved（2026-06-05）** — spike 确认双路径架构可用；live 测试制度化到 `docs/pagelet-smoke-checklist.md` P1 section | §4.2（兼容矩阵已更新）、§4.3（失败矩阵实际触发率） |
 
-> **OQ001 解阻塞标记（2026-06-03）**：Write Action Framework v1 SDD 落地（`docs/write-action-framework-sdd.md`），`src/ai-services/write-action-framework/**` 4 个 gate 实现就绪，PolicyEngine 参数化（runKind + allowWrite）完成，`pagelet.write_review_output` 作为首个真实 caller 接入并通过 E2E + prompt-injection 测试。本 SDD §2.4 与 §3 的契约面占位已 1:1 映射到 framework SDD §3 capability contract 与 §4 PolicyEngine diff。命名对齐二层层级（Operations Agent mode, future → Write Action Framework v1 → Pagelet v1）保留；framework v2 的 action family 扩展（append / replace / multi-file / shell）走 mode 路线，参 [[D031]]。
+> **OQ001 解阻塞标记（2026-06-03）**：Write Action Framework SDD 落地（`docs/write-action-framework-sdd.md`），`src/ai-services/write-action-framework/**` 4 个 gate 实现就绪，PolicyEngine 参数化（runKind + allowWrite）完成，`pagelet.write_review_output` 作为首个真实 caller 接入并通过 E2E + prompt-injection 测试。本 SDD §2.4 与 §3 的契约面占位已 1:1 映射到 framework SDD §3 capability contract 与 §4 PolicyEngine diff。Append / replace / multi-file / shell action family 扩展走 Operations Agent mode 路线，参 [[D031]]。
 >
 > **H-B3.2 两层闭环（更新 2026-06-04，issue #358 关闭后）**：`PaReviewToolProvider` 的 `targetConfinement.allowedRoots` 由两层独立防线保护——
 >
-> 1. **Settings 层（第一道，user-facing）**：`normalizeReviewsFolder` 在 data.json 写入边界处先行 fail-closed 把 10 类越界形状（`empty / too_long / absolute_path / drive_letter / parent_traversal / obsidian_config / forbidden_dotfolder / control_chars / invisible_chars / trailing_dot_or_space`）落到默认 `.pagelet`。实现位置：`src/settings/pagelet/index.ts` `normalizeReviewsFolder` + `mergePageletSettings` boot-time merge + `src/plugin.ts` `loadSettings` + 一次性迁移 Notice（localStorage flag `pa-pagelet-reviews-folder-migration-v1`）。
+> 1. **Settings 层（第一道，user-facing）**：`normalizeReviewsFolder` 在 data.json 写入边界处先行 fail-closed 把 10 类越界形状（`empty / too_long / absolute_path / drive_letter / parent_traversal / obsidian_config / forbidden_dotfolder / control_chars / invisible_chars / trailing_dot_or_space`）落到默认 `.pagelet`。实现位置：`src/settings/pagelet/index.ts` `normalizeReviewsFolder` + `mergePageletSettings` boot-time merge + `src/plugin.ts` `loadSettings` + 一次性迁移 Notice（localStorage flag `pa-pagelet-reviews-folder-migration`）。
 > 2. **Framework Gate 1（第二道，defense-in-depth）**：`validateAllowedRoots` 在 `buildConfinement` 内对 `allowedRoots` 做 NFC+lowercase fold 检查，命中 `{.obsidian, .git, .trash, .obsidian.bak}` 直接 throw `ConfinementConfigError`（issue #358 AC #1）；写入期 `validateTargetConfinementSync` 在第 9 步（SDD §2.2 1–13 sync 序列里的 candidate-side denylist 段）对 candidate path 重做同套段检查（issue #358 AC #2-3）。实现位置：`src/ai-services/write-action-framework/target-confinement.ts` `validateAllowedRoots` + `validateTargetConfinementSync` step 9 + `src/pagelet/pa-review-tool-provider.ts:286` `buildConfinement` 的内嵌调用。**触发时机说明**：Pagelet 用 `get targetConfinement()` getter（`pa-review-tool-provider.ts:410`），每次属性读时都会调一次 `buildConfinement` → `validateAllowedRoots`，throw 因此延迟到执行期（runtime 的 `validateTargetConfinement` catch 兜底转成 `rejected_at_confinement` 事件）；如果第三方 `CapabilityProvider` 改用 eager `targetConfinement: {...}` 字面量，调用 `buildConfinement` / `validateAllowedRoots` 的位置就回到字面 register 期，throw 在 provider 构造时立刻冒出。两种模式都满足 "loud, not silent" 的 AC #1 要求，但调用 site 和栈追踪不同。
 >
 > framework SDD §8.3 描述的攻击面在两层任一即被截断；即使未来某个第三方 `CapabilityProvider` 跳过 settings 层直接接入 framework，Gate 1 仍能独立 fail-closed。回归测试见 `__tests__/pagelet-settings.test.ts` 47 个 case（settings 层）+ `src/ai-services/write-action-framework/target-confinement.spec.ts` 30+ case（framework 层，含 `validateAllowedRoots` 10 个变体 + `forbidden_dotfolder` 候选侧 7 个变体）。剩余 framework-layer Cf-invisibles / trailing-dot-or-space mirror 单独跟踪 follow-up issue（issue #358 AC 不要求）。
 >
-> **历史背景（保留可追溯）**：OQ001 在 2026-06-02 由 [[D030]] 升级为 Pagelet beta Hard Blocker，约束 §2.4 / §3 / §14 仅勾勒契约面与命名占位、不进入实现，直到 framework v1 就绪。该阻塞自 2026-06-03 起解除。
+> **历史背景（保留可追溯）**：OQ001 在 2026-06-02 由 [[D030]] 升级为 Pagelet beta Hard Blocker，约束 §2.4 / §3 / §14 仅勾勒契约面与命名占位、不进入实现，直到 framework create-file path 就绪。该阻塞自 2026-06-03 起解除。
 
-### 14.2 延期到 v2
+### 14.2 后续范围
 
 | ID | 内容 |
 |----|------|

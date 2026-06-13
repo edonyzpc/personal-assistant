@@ -1,30 +1,30 @@
-# Pagelet v2 — Software Design & Development Guide
+# Pagelet — Software Design & Development Guide
 
 > Target audience: AI coding agent (Codex / Claude Code)
-> Purpose: Provide all product, UX, and architectural constraints needed to implement Pagelet v2 as an Obsidian plugin feature inside PA.
-> Source of truth: `pagelet-v2-product-design.md` + `pagelet-v2-prototype.html`
+> Purpose: Provide all product, UX, and architectural constraints needed to implement Pagelet as an Obsidian plugin feature inside PA.
+> Source of truth: `pagelet-product-design.md` + `pagelet-prototype.html`
 
 ---
 
 ## 1. System Context
 
-Pagelet v2 is a **note-review feature** inside an existing Obsidian plugin called **Personal Assistant (PA)**. It shares PA's unified Agent Runtime via `RunKindAdapter` and uses the `Write Action Framework v1` for all file-creation operations.
+Pagelet is a **note-review feature** inside an existing Obsidian plugin called **Personal Assistant (PA)**. It shares PA's unified Agent Runtime via `RunKindAdapter` and uses the `Write Action Framework` for all file-creation operations.
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  Obsidian Plugin: Personal Assistant (PA)               │
 │                                                         │
 │  ┌───────────────────────┐   ┌────────────────────────┐ │
-│  │  Pagelet v2           │   │  Other PA Features     │ │
+│  │  Pagelet           │   │  Other PA Features     │ │
 │  │  - Pet (UI layer)     │   │  - Agent / Memory      │ │
 │  │  - Bubble / Panel / Tab│  │  - Chat                │ │
-│  │  - Preload Engine     │   │  - Skills              │ │
+│  │  - Background Preparation Engine     │   │  - Skills              │ │
 │  └──────────┬────────────┘   └────────────────────────┘ │
 │             │                                           │
 │  ┌──────────▼────────────────────────────────────────┐  │
 │  │  Shared Infrastructure                            │  │
 │  │  - RunKindAdapter (runKind: foreground|background)│  │
-│  │  - Write Action Framework v1 (D025, D030)        │  │
+│  │  - Write Action Framework (D025, D030)        │  │
 │  │  - LLM Provider abstraction                      │  │
 │  │  - i18n / Settings / Telemetry                   │  │
 │  └───────────────────────────────────────────────────┘  │
@@ -35,11 +35,11 @@ Pagelet v2 is a **note-review feature** inside an existing Obsidian plugin calle
 
 | ID | Rule |
 | --- | --- |
-| D032 | Preload engine introduction — timed polling + change detection + AI + cache |
+| D032 | Background preparation engine introduction — timed polling + change detection + AI + cache |
 | D033 | Pet states: 4 states (resting, idle, working, nudge) |
 | D034 | Pet fixed corner position (configurable, no drag) |
 | D035 | Periodic summary simplified flow (one-click generate) |
-| D036 | Separate preload/foreground cost control pools |
+| D036 | Separate background preparation/foreground cost control pools |
 | D037 | Progressive disclosure: Pet → Bubble → Panel → Tab |
 | D038 | Proactive hints: opt-in, OFF by default |
 | D039 | Proactive hints control placement: Settings + Panel header + Command Palette + hotkey |
@@ -52,9 +52,9 @@ Implementation milestones (alpha releases):
 
 | Phase | Scope |
 | --- | --- |
-| **v2-alpha.1** | Pet (4 states, corner position), Bubble, Preload engine, Scenario 1 (Quick Review), Scenario 4 (Periodic Summary) |
-| **v2-alpha.2** | Scenario 2 (Writing Assistance), Proactive hints (D038) |
-| **v2-alpha.3** | Scenario 3 (Knowledge Discovery), Panel redesign |
+| **beta milestone 1** | Pet (4 states, corner position), Bubble, Background preparation engine, Scenario 1 (Quick Review), Scenario 4 (Periodic Summary) |
+| **beta milestone 2** | Scenario 2 (Writing Assistance), Proactive hints (D038) |
+| **beta milestone 3** | Scenario 3 (Knowledge Discovery), Panel redesign |
 
 ---
 
@@ -71,7 +71,7 @@ Implementation milestones (alpha releases):
 **Position**:
 - Fixed to one of 4 corners: `bottom-right` (default), `bottom-left`, `top-right`, `top-left`.
 - Persisted per vault in `settings.pagelet.petCorner`.
-- Avoids overlapping scrollbar, status bar, and ribbon.
+- Avoids overlapping scrollbars, the status bar, and Obsidian workspace chrome.
 - NOT draggable. No pin, no double-click reposition.
 
 **DOM structure** (from prototype):
@@ -116,7 +116,7 @@ Implementation milestones (alpha releases):
 | --- | --- | --- | --- | --- |
 | `resting` | `#d0d0d0` gray, opacity 0.55 | Closed eyes (horizontal lines), zzz text | `pet-breathe` 5s, zzz float | No note activity for extended period |
 | `idle` | `#e8e8e8` neutral gray, opacity 1 | Normal arc eyes with blink | `pet-float` 2.8s, blink every 5s | Standby, awake |
-| `working` | `#7c9eff` blue, opacity 1 | 3 pulsing dots in mouth area | `pet-pulse` 1.4s, dots pulse staggered | AI preloading OR user-triggered analysis in progress |
+| `working` | `#7c9eff` blue, opacity 1 | 3 pulsing dots in mouth area | `pet-pulse` 1.4s, dots pulse staggered | AI background preparation OR user-triggered analysis in progress |
 | `nudge` | `#5dd39e` green, opacity 1 | Smile mouth, notification dot | `pet-bounce` 1.6s, dot glow 1.8s | Insights ready + proactive hints ON |
 
 **State transitions**:
@@ -130,7 +130,7 @@ Implementation milestones (alpha releases):
                         ┌──────────┐
                     ┌───┤   idle   │◄──────────────────┐
                     │   └────┬─────┘                   │
-                    │        │ preload/analysis starts  │ analysis done / user finishes
+                    │        │ background preparation/analysis starts  │ analysis done / user finishes
                     │        ▼                          │
                     │   ┌──────────┐                   │
                     │   │ working  ├───────────────────►┘
@@ -141,7 +141,7 @@ Implementation milestones (alpha releases):
                     │   │  nudge   │──── user clicks ──► idle
                     │   └──────────┘
                     │
-                    └──── preload/analysis starts ──► working
+                    └──── background preparation/analysis starts ──► working
 ```
 
 **Error handling**: Errors shown as 1.5s flash on Pet, then return to `idle` with small error badge. Error details appear in Bubble on click.
@@ -206,9 +206,9 @@ Implementation milestones (alpha releases):
 
 **Entry**: "展开" from Bubble, or Command Palette.
 
-**Design direction (v2 direction, detailed design TBD)**:
+**Design direction (Pagelet direction, detailed design TBD)**:
 - Scenario-adaptive layout (changes based on which scenario opened it).
-- NOT the v1 fixed four-category card list.
+- NOT the historical design fixed four-category card list.
 - Dynamic, AI-organized layout.
 - Source transparency preserved (every finding links to source).
 - Timeline-based layout for review (from prototype).
@@ -250,7 +250,7 @@ Implementation milestones (alpha releases):
 User clicks Pet → Bubble shows 2-3 cached findings → User reads → Dismiss
 ```
 
-- AI source: cached preload result.
+- AI source: cached background preparation result.
 - If no cache: show "还没有新发现" + option to trigger immediate analysis.
 - Key property: "看完就走" — zero output, under 10 seconds.
 - No artifacts produced.
@@ -266,7 +266,7 @@ User editing note → clicks Pet → Bubble shows context-relevant suggestions
 
 **Proactive-hint path** (requires 主动提示 ON):
 ```
-User editing → Preload detects signal → Pet → nudge state
+User editing → Background preparation detects signal → Pet → nudge state
 → User clicks Pet → Bubble shows suggestion → dismiss or "展开"
 ```
 
@@ -296,7 +296,7 @@ Command Palette "Pagelet: Generate periodic summary" or Panel header trigger
 
 ---
 
-## 5. Preload Engine
+## 5. Background Preparation Engine
 
 ### Architecture
 
@@ -326,31 +326,31 @@ Pet State Update (if 主动提示 ON → nudge; else remain idle)
 | No local preprocessing | NO regex-based TODO detection, NO rule-based scanning. AI does ALL intelligence. |
 | Security | `runKind="background"` with hardcoded `allowWrite=false`. Background path can NEVER trigger writes. |
 | Token budget | 4K input + 1K output per call (smaller than foreground 8K+2K). |
-| Hard ceiling | 5K total per preload call. |
-| Per-hour cap | 2 preload calls (default). |
-| Per-day cap | 20 preload calls (default). |
+| Hard ceiling | 5K total per background preparation call. |
+| Per-hour cap | 2 background preparation calls (default). |
+| Per-day cap | 20 background preparation calls (default). |
 | On ceiling hit | Silently skip cycle (no user notification). |
 | Scope | Only notes modified since last cycle. Same exclusion rules as foreground. |
-| Cache lifetime | In-memory only. Cleared on: new preload run, vault close, explicit user clear. |
+| Cache lifetime | In-memory only. Cleared on: new background preparation run, vault close, explicit user clear. |
 | NOT persisted to disk | Privacy consideration. |
 
-### Foreground vs Preload — Independent Pools
+### Foreground vs Background preparation — Independent Pools
 
-| Dimension | Preload (background) | Foreground (user-triggered) |
+| Dimension | Background preparation (background) | Foreground (user-triggered) |
 | --- | --- | --- |
 | Token budget | 4K + 1K | 8K + 2K (default) |
 | Per-hour cap | 2 | 10 |
 | Per-day cap | 20 | 100 |
 | On ceiling | Silent skip | Reject + `[Override this once]` button |
 
-Pools are **independent**. Foreground calls are NOT constrained by preload quota.
+Pools are **independent**. Foreground calls are NOT constrained by background preparation quota.
 
 ---
 
 ## 6. Proactive Hints (主动提示)
 
 - **OFF by default**. Opt-in feature.
-- When ON: Pet enters `nudge` state when preloaded insights are ready.
+- When ON: Pet enters `nudge` state when prepared insights are ready.
 - User clicks Pet → normal Bubble flow.
 
 **Behavior constraints**:
@@ -382,9 +382,9 @@ Expandable via Panel:
 - Last 7 days.
 - Custom range (date picker).
 
-### Preload Scope
+### Background preparation Scope
 
-- All notes modified since last preload cycle.
+- All notes modified since last background preparation cycle.
 - Subject to exclusion rules.
 
 ### Periodic Summary Scope
@@ -487,7 +487,7 @@ sources: [...]
 
 ### Write Boundary (D025, D030)
 
-All writes go through **Write Action Framework v1**: preview → confirmation → target confinement → stale re-read → audit.
+All writes go through **Write Action Framework**: preview → confirmation → target confinement → stale re-read → audit.
 
 **Allowed**: Create one independent review note in `.pagelet/` after preview and explicit confirmation.
 
@@ -636,23 +636,22 @@ Natural breakpoint: `@media (max-width: 768px)` OR manual `.mobile-mode` class t
 
 All commands registered with `Pagelet:` prefix (D029).
 
-**New v2 commands**:
+**New Pagelet commands**:
 | Command | Action |
 | --- | --- |
-| `Pagelet: Quick review` | Open Bubble with cached findings |
+| `Pagelet: Quick review` | Open existing prepared findings without triggering a provider call |
 | `Pagelet: Discover connections` | Open Panel with knowledge discovery |
 | `Pagelet: Generate periodic summary` | Trigger Scenario 4 |
 | `Pagelet: Toggle proactive hints` | Toggle 主动提示 on/off |
-| `Pagelet: Show preload status` | Show preload engine diagnostics |
+| `Pagelet: Show background preparation status` | Show background preparation engine diagnostics |
 | `Pagelet: Move Pet to corner` | Switch Pet corner position |
 | `Pagelet: Toggle Pet visibility` | Show/hide Pet |
 
-**Preserved v1 commands**:
+**Preserved historical design commands**:
 | Command | Action |
 | --- | --- |
-| `Pagelet: Review current note` | Open Panel with current note analysis |
-| `Pagelet: Open Pagelet` | Open Panel without triggering analysis |
-| `Pagelet: View all reviews` | List all review notes |
+| `Pagelet: Review current note` | Run current note analysis and open Bubble or Panel with results |
+| `Pagelet: Open Pagelet` | Open Panel without triggering analysis; the empty panel offers `Review current note` as the explicit provider-backed action |
 
 ---
 
@@ -674,14 +673,14 @@ interface PageletSettings {
     end: string;                       // HH:mm
   };
 
-  // Preload
-  preloadEnabled: boolean;             // default: true
+  // Background preparation (stored under preload* keys for migration compatibility)
+  preloadEnabled: boolean;             // default: false
   preloadInterval: 5 | 15 | 30 | 60 | 120 | 240; // minutes, default: 30
   preloadPerHourCap: number;           // default: 2
   preloadPerDayCap: number;            // default: 20
 
   // Storage
-  reviewNotesFolder: string;           // default: '.pagelet/'
+  reviewsFolder: string;               // default: '.pagelet'
 
   // Reviews
   periodicSummaryScope: '3d' | '7d' | '14d'; // default: '7d'
@@ -690,14 +689,15 @@ interface PageletSettings {
   excludedPatterns: string[];
 
   // Language
-  reviewLanguage: 'follow-source' | 'en' | 'zh'; // default: 'follow-source'
+  outputLanguage: 'auto' | 'en' | 'zh'; // default: 'auto'
 
   // Cost — Foreground
-  foregroundTokenBudget: { input: number; output: number }; // default: {8000, 2000}
+  maxInputTokens: number;               // default: 8000
+  maxOutputTokens: number;              // default: 2000
   foregroundPerHourCap: number;        // default: 10
   foregroundPerDayCap: number;         // default: 100
 
-  // Cost — Preload
+  // Cost — Background preparation (stored under preload* keys for migration compatibility)
   preloadTokenBudget: { input: number; output: number }; // default: {4000, 1000}
 }
 ```
@@ -732,11 +732,11 @@ interface PageletSettings {
 
 ## 15. Privacy & Security Invariants
 
-1. Background preloading reads ONLY changed notes, subject to exclusion rules.
-2. Preload results cached in memory only — NEVER persisted to disk.
-3. Preloading can be fully disabled in settings.
+1. Background review preparation reads ONLY changed notes, subject to exclusion rules.
+2. Background preparation results cached in memory only — NEVER persisted to disk.
+3. Background preparation can be fully disabled in settings.
 4. Background path uses `runKind="background"` with `allowWrite=false` — can NEVER trigger writes.
-5. Pet shows `working` state during preloading (transparency).
+5. Pet shows `working` state during background preparation (transparency).
 6. No sending skipped note bodies to model.
 7. Clear included/skipped details visible in Panel.
 8. Source-backed suggestions only.
@@ -749,8 +749,8 @@ interface PageletSettings {
 ## 16. Telemetry Events
 
 **Allowed** (content-free):
-- `pagelet.preload.cycle` — count
-- `pagelet.preload.findings` — count
+- `pagelet.background_preparation.cycle` — count
+- `pagelet.background_preparation.findings` — count
 - `pagelet.hint.shown` — count
 - `pagelet.hint.clicked` — count
 - `pagelet.hint.dismissed` — count
@@ -798,15 +798,15 @@ Voice: warm, specific, careful, research-assistant-like. No exaggeration.
 - [ ] Bubble opens in <200ms when cached results exist.
 - [ ] Click-outside degrades Bubble (semi-transparent). Click Pet restores it.
 - [ ] Escape / × fully closes Bubble.
-- [ ] Bubble shows max 3 relevant findings from preloaded analysis.
+- [ ] Bubble shows max 3 relevant findings from prepared analysis.
 
-### Preload Engine
-- [ ] Preloading runs at configured interval.
-- [ ] Preloading respects all exclusion rules.
-- [ ] Preloading stays within cost limits (2/hour, 20/day default).
-- [ ] Preloading uses `runKind="background"` with `allowWrite=false`.
-- [ ] Preloading can be fully disabled via settings.
-- [ ] Pet shows `working` state during preloading.
+### Background Preparation Engine
+- [ ] Background preparation runs at configured interval.
+- [ ] Background preparation respects all exclusion rules.
+- [ ] Background preparation stays within cost limits (2/hour, 20/day default).
+- [ ] Background preparation uses `runKind="background"` with `allowWrite=false`.
+- [ ] Background preparation can be fully disabled via settings.
+- [ ] Pet shows `working` state during background preparation.
 
 ### Proactive Hints
 - [ ] Toggle works from Settings, Panel header, Command Palette.
@@ -847,16 +847,15 @@ src/
 │   │   └── PanelLayouts.ts     # Scenario-adaptive layouts (timeline, discovery, etc.)
 │   ├── tab/
 │   │   └── TabView.ts          # Full tab workspace
-│   ├── preload/
-│   │   ├── PreloadEngine.ts    # Timer + change detection + AI dispatch
-│   │   ├── PreloadCache.ts     # In-memory cache per vault
-│   │   └── PreloadBudget.ts    # Rate limiting (per-hour, per-day)
+│   ├── preload/              # Internal compatibility name; user-facing copy says background preparation.
+│   │   ├── PreloadEngine.ts  # Timer + change detection + AI dispatch
+│   │   ├── PreloadCache.ts   # In-memory cache per vault
+│   │   └── PreloadBudget.ts  # Rate limiting (per-hour, per-day)
 │   ├── output/
 │   │   ├── ReviewNoteGenerator.ts  # AI → complete note generation
-│   │   └── ReviewNoteWriter.ts     # Write Action Framework v1 integration
 │   ├── scope/
 │   │   ├── ScopeResolver.ts    # Auto-scope + exclusion rules
-│   │   └── ChangeDetector.ts   # mtime comparison for preload
+│   │   └── ChangeDetector.ts   # mtime comparison for background preparation
 │   ├── hints/
 │   │   └── ProactiveHints.ts   # Hint scheduling, cooldown, quiet hours
 │   ├── commands.ts             # Command palette registrations
@@ -888,7 +887,7 @@ src/
 
 ## Appendix: Prototype Reference
 
-The interactive prototype at `docs/pagelet-v2-prototype.html` demonstrates:
+The interactive prototype at `docs/pagelet-prototype.html` demonstrates:
 - All 4 Pet states with live switching.
 - Bubble open/degrade/restore/close lifecycle.
 - Panel with timeline layout (review), current note analysis, and discovery map.
