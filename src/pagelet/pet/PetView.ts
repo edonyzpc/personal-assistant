@@ -10,72 +10,11 @@
 
 import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
-import { buildPetSvg, updatePetSvgState } from "./PetSvg";
+import { createPetSvgElement, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
-
-// ---------------------------------------------------------------------------
-// CSS — injected once via <style> on first mount (same pattern as BubbleView)
-// ---------------------------------------------------------------------------
-
-const PET_CSS_ID = "pa-pagelet-pet-styles";
-
-const PET_CSS = /* css */ `
-@keyframes pa-pagelet-pet-float { 0%,100%{transform:translateY(0)} 50%{transform:translateY(-4px)} }
-@keyframes pa-pagelet-pet-breathe { 0%,100%{transform:scale(1)} 50%{transform:scale(1.02)} }
-@keyframes pa-pagelet-pet-pulse { 0%,100%{transform:scale(1)} 50%{transform:scale(1.04)} }
-@keyframes pa-pagelet-pet-bounce { 0%,100%{transform:translateY(0)} 25%{transform:translateY(-8px)} 45%{transform:translateY(-2px)} 65%{transform:translateY(-6px)} 85%{transform:translateY(-1px)} }
-@keyframes pa-pagelet-pet-blink { 0%,92%,100%{transform:scaleY(1)} 95%{transform:scaleY(0.1)} }
-@keyframes pa-pagelet-pet-dot-pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
-@keyframes pa-pagelet-pet-nudge-dot-glow { 0%,100%{box-shadow:0 0 4px var(--pagelet-done,#5dd39e);transform:scale(1)} 50%{box-shadow:0 0 12px var(--pagelet-done,#5dd39e),0 0 24px rgba(93,211,158,0.35);transform:scale(1.15)} }
-@keyframes pa-pagelet-pet-zzz-float-1 { 0%{transform:translate(0,0) scale(1);opacity:0.5} 100%{transform:translate(4px,-14px) scale(0.8);opacity:0} }
-@keyframes pa-pagelet-pet-zzz-float-2 { 0%{transform:translate(0,0) scale(1);opacity:0.35} 100%{transform:translate(6px,-18px) scale(0.7);opacity:0} }
-
-.pa-pagelet-pet { position:absolute; z-index:1000; cursor:pointer; user-select:none; -webkit-user-select:none; transition:filter 0.4s ease,opacity 0.4s ease; }
-.pa-pagelet-pet[data-corner="bottom-right"] { bottom:36px; right:20px; }
-.pa-pagelet-pet[data-corner="bottom-left"]  { bottom:36px; left:8px; }
-.pa-pagelet-pet[data-corner="top-right"]    { top:48px; right:20px; }
-.pa-pagelet-pet[data-corner="top-left"]     { top:48px; left:8px; }
-.pa-pagelet-pet-wrapper { width:56px; height:56px; display:flex; align-items:center; justify-content:center; position:relative; background:transparent; border:0; border-radius:0; box-shadow:none; }
-.pa-pagelet-pet-notification { position:absolute; top:-2px; right:-4px; width:12px; height:12px; background:var(--pagelet-done,#5dd39e); border-radius:50%; border:2px solid var(--background-primary,#1e1e1e); opacity:0; transform:scale(0); transition:all 0.3s ease; pointer-events:none; }
-.pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-notification { opacity:1; transform:scale(1); animation:pa-pagelet-pet-nudge-dot-glow 1.8s ease-in-out infinite; }
-.pa-pagelet-pet[data-state="resting"] { opacity:0.55; }
-.pa-pagelet-pet[data-state="working"],.pa-pagelet-pet[data-state="nudge"],.pa-pagelet-pet[data-state="idle"] { opacity:1; }
-.pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-svg-wrap { animation:pa-pagelet-pet-float 2.8s ease-in-out infinite; }
-.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap { animation:pa-pagelet-pet-breathe 5s ease-in-out infinite; }
-.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-svg-wrap { animation:pa-pagelet-pet-pulse 1.4s ease-in-out infinite; }
-.pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-svg-wrap { animation:pa-pagelet-pet-bounce 1.6s ease-in-out infinite; }
-.pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-blink-group,.pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-blink-group { animation:pa-pagelet-pet-blink 5s infinite; transform-origin:center; }
-.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-dot-1 { animation:pa-pagelet-pet-dot-pulse 1.4s infinite 0s; }
-.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-dot-2 { animation:pa-pagelet-pet-dot-pulse 1.4s infinite 0.2s; }
-.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-dot-3 { animation:pa-pagelet-pet-dot-pulse 1.4s infinite 0.4s; }
-.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-1 { animation:pa-pagelet-pet-zzz-float-1 3s ease-out infinite; }
-.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-2 { animation:pa-pagelet-pet-zzz-float-2 3s ease-out infinite 0.8s; }
-.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg path,.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg circle { stroke:#ff6b6b !important; fill:none; }
-.theme-light .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet-wrapper { background:transparent; border:0; border-radius:0; box-shadow:none; }
-.theme-light .pa-pagelet-pet[data-state="resting"],[data-theme="light"] .pa-pagelet-pet[data-state="resting"] { opacity:0.4; }
-.theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap,[data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap { filter:saturate(0) brightness(0.85); }
-.theme-light .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper { background:transparent; border:0; border-radius:0; box-shadow:none; }
-.theme-light .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper,[data-theme="light"] .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-wrapper { background:transparent; border:0; border-radius:0; box-shadow:none; }
-body.is-mobile .pa-pagelet-pet-wrapper { transform:scale(0.8); min-width:44px; min-height:44px; }
-@media(prefers-reduced-motion:reduce) { .pa-pagelet-pet[data-state] .pa-pagelet-pet-svg-wrap,.pa-pagelet-pet[data-state] .pa-pagelet-pet-blink-group,.pa-pagelet-pet-notification,.pa-pagelet-pet-dot-1,.pa-pagelet-pet-dot-2,.pa-pagelet-pet-dot-3,.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-1,.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz-2 { animation:none !important; } }
-`;
 
 export function getPetAriaLabel(locale: PageletLocale): string {
     return pageletT("pagelet.pet.ariaLabel", locale);
-}
-
-function injectPetStyles(): void {
-    const existing = document.getElementById(PET_CSS_ID);
-    if (existing) {
-        if (existing.textContent !== PET_CSS) {
-            existing.textContent = PET_CSS;
-        }
-        return;
-    }
-    const style = document.createElement("style");
-    style.id = PET_CSS_ID;
-    style.textContent = PET_CSS;
-    document.head.appendChild(style);
 }
 
 export class PetView implements PetRenderer {
@@ -132,7 +71,6 @@ export class PetView implements PetRenderer {
         if (this._destroyed) return;
         if (this._rootEl) return; // already mounted
 
-        injectPetStyles();
         this._containerEl = containerEl;
 
         // Build DOM structure
@@ -153,11 +91,7 @@ export class PetView implements PetRenderer {
         const svgWrap = document.createElement("div");
         svgWrap.className = "pa-pagelet-pet-svg-wrap";
 
-        // Parse SVG string into a real SVG element
-        const svgMarkup = buildPetSvg(this._state);
-        const template = document.createElement("template");
-        template.innerHTML = svgMarkup;
-        const svgEl = template.content.firstElementChild as SVGElement;
+        const svgEl = createPetSvgElement(this._state);
 
         svgWrap.appendChild(svgEl);
         wrapper.appendChild(notification);
@@ -266,7 +200,6 @@ export class PetView implements PetRenderer {
             this._errorTimer = null;
         }
         this.unmount();
-        document.getElementById(PET_CSS_ID)?.remove();
     }
 
     // -----------------------------------------------------------------------

@@ -2,7 +2,7 @@
 
 export { PetView } from "./PetView";
 export { PetStateMachine } from "./PetStateMachine";
-export { buildPetSvg, updatePetSvgState } from "./PetSvg";
+export { updatePetSvgState } from "./PetSvg";
 export type {
     PetState,
     PetCorner,

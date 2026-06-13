@@ -56,96 +56,137 @@ function strokeColor(state: PetState, isLight: boolean): string {
     return isLight ? LIGHT_STROKE[state] : DARK_STROKE[state];
 }
 
-// ---------------------------------------------------------------------------
-// Pure SVG string builder
-// ---------------------------------------------------------------------------
-
-function pathStr(d: string, sw: number, color: string, extra = ""): string {
-    return `<path d="${d}" fill="none" stroke="${color}" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round"${extra}/>`;
+function createSvgElement<K extends keyof SVGElementTagNameMap>(
+    tag: K,
+): SVGElementTagNameMap[K] {
+    return document.createElementNS(SVG_NS, tag);
 }
 
-function circleStr(cx: number, cy: number, r: number, color: string, cls: string): string {
-    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${color}" class="${cls}"/>`;
+function createPath(d: string, sw: number, color: string): SVGPathElement {
+    const path = createSvgElement("path");
+    path.setAttribute("d", d);
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", color);
+    path.setAttribute("stroke-width", String(sw));
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    return path;
 }
 
-/**
- * Build a complete Pet SVG string for the given state (dark theme assumed).
- * Use `updatePetSvgState` for in-place DOM updates with theme awareness.
- */
-export function buildPetSvg(state: PetState): string {
-    const color = DARK_STROKE[state];
-    const inner = buildInnerMarkup(state, color);
-    return [
-        `<svg xmlns="${SVG_NS}" viewBox="${VIEWBOX}" width="52" height="52" aria-hidden="true" focusable="false">`,
-        inner,
-        "</svg>",
-    ].join("");
+function createCircle(cx: number, cy: number, r: number, color: string, cls: string): SVGCircleElement {
+    const circle = createSvgElement("circle");
+    circle.setAttribute("cx", String(cx));
+    circle.setAttribute("cy", String(cy));
+    circle.setAttribute("r", String(r));
+    circle.setAttribute("fill", color);
+    circle.setAttribute("class", cls);
+    return circle;
 }
 
-function buildInnerMarkup(state: PetState, color: string): string {
-    const parts: string[] = [];
+function createText(
+    x: number,
+    y: number,
+    fontSize: number,
+    color: string,
+    opacity: string,
+    cls: string,
+    text: string,
+): SVGTextElement {
+    const textEl = createSvgElement("text");
+    textEl.setAttribute("x", String(x));
+    textEl.setAttribute("y", String(y));
+    textEl.setAttribute("font-size", String(fontSize));
+    textEl.setAttribute("fill", color);
+    textEl.setAttribute("opacity", opacity);
+    textEl.setAttribute("font-family", "monospace");
+    textEl.setAttribute("class", cls);
+    textEl.textContent = text;
+    return textEl;
+}
 
-    // Body + fold (always present)
-    parts.push(pathStr(BODY_D, 1.6, color));
-    parts.push(pathStr(FOLD_D, 1.6, color));
+function replaceSvgChildren(svgEl: SVGElement, children: SVGElement[]): void {
+    svgEl.textContent = "";
+    while (svgEl.firstChild) {
+        svgEl.removeChild(svgEl.firstChild);
+    }
+    for (const child of children) {
+        svgEl.appendChild(child);
+    }
+}
+
+export function createPetSvgElement(state: PetState): SVGSVGElement {
+    const svg = createSvgElement("svg");
+    svg.setAttribute("xmlns", SVG_NS);
+    svg.setAttribute("viewBox", VIEWBOX);
+    svg.setAttribute("width", "52");
+    svg.setAttribute("height", "52");
+    svg.setAttribute("aria-hidden", "true");
+    svg.setAttribute("focusable", "false");
+    replaceSvgChildren(svg, buildInnerNodes(state, DARK_STROKE[state]));
+    return svg;
+}
+
+function buildInnerNodes(state: PetState, color: string): SVGElement[] {
+    const parts: SVGElement[] = [
+        createPath(BODY_D, 1.6, color),
+        createPath(FOLD_D, 1.6, color),
+    ];
 
     switch (state) {
-        case "resting":
-            // Closed eyes (horizontal lines)
-            parts.push(pathStr(SLEEP_EYE_LEFT_D, 1.4, color));
-            parts.push(pathStr(SLEEP_EYE_RIGHT_D, 1.4, color));
-            // Zzz text
-            parts.push(
-                `<g class="pa-pagelet-pet-sleep-zzz">`,
-                `<text x="34" y="12" font-size="7" fill="${color}" opacity="0.4" font-family="monospace" class="pa-pagelet-pet-zzz1">z</text>`,
-                `<text x="37" y="7" font-size="5" fill="${color}" opacity="0.25" font-family="monospace" class="pa-pagelet-pet-zzz2">z</text>`,
-                `</g>`,
-            );
-            break;
+        case "resting": {
+            parts.push(createPath(SLEEP_EYE_LEFT_D, 1.4, color));
+            parts.push(createPath(SLEEP_EYE_RIGHT_D, 1.4, color));
 
-        case "idle":
-            // Arc eyes with blink animation
-            parts.push(
-                `<g class="pa-pagelet-pet-blink-group">`,
-                pathStr(EYE_LEFT_D, 1.4, color),
-                `</g>`,
-            );
-            parts.push(
-                `<g class="pa-pagelet-pet-blink-group">`,
-                pathStr(EYE_RIGHT_D, 1.4, color),
-                `</g>`,
-            );
+            const zzz = createSvgElement("g");
+            zzz.setAttribute("class", "pa-pagelet-pet-sleep-zzz");
+            zzz.appendChild(createText(34, 12, 7, color, "0.4", "pa-pagelet-pet-zzz1", "z"));
+            zzz.appendChild(createText(37, 7, 5, color, "0.25", "pa-pagelet-pet-zzz2", "z"));
+            parts.push(zzz);
             break;
+        }
 
-        case "working":
-            // Normal eyes (no blink during work)
-            parts.push(pathStr(EYE_LEFT_D, 1.4, color));
-            parts.push(pathStr(EYE_RIGHT_D, 1.4, color));
-            // Three pulsing dots
-            parts.push(`<g class="pa-pagelet-pet-think-dots">`);
+        case "idle": {
+            const left = createSvgElement("g");
+            left.setAttribute("class", "pa-pagelet-pet-blink-group");
+            left.appendChild(createPath(EYE_LEFT_D, 1.4, color));
+            parts.push(left);
+
+            const right = createSvgElement("g");
+            right.setAttribute("class", "pa-pagelet-pet-blink-group");
+            right.appendChild(createPath(EYE_RIGHT_D, 1.4, color));
+            parts.push(right);
+            break;
+        }
+
+        case "working": {
+            parts.push(createPath(EYE_LEFT_D, 1.4, color));
+            parts.push(createPath(EYE_RIGHT_D, 1.4, color));
+
+            const dots = createSvgElement("g");
+            dots.setAttribute("class", "pa-pagelet-pet-think-dots");
             DOTS.forEach((dot, i) => {
-                parts.push(circleStr(dot.cx, dot.cy, dot.r, color, `pa-pagelet-pet-dot pa-pagelet-pet-dot-${i + 1}`));
+                dots.appendChild(createCircle(dot.cx, dot.cy, dot.r, color, `pa-pagelet-pet-dot pa-pagelet-pet-dot-${i + 1}`));
             });
-            parts.push(`</g>`);
+            parts.push(dots);
             break;
+        }
 
-        case "nudge":
-            // Normal eyes + smile mouth
-            parts.push(
-                `<g class="pa-pagelet-pet-blink-group">`,
-                pathStr(EYE_LEFT_D, 1.4, color),
-                `</g>`,
-            );
-            parts.push(
-                `<g class="pa-pagelet-pet-blink-group">`,
-                pathStr(EYE_RIGHT_D, 1.4, color),
-                `</g>`,
-            );
-            parts.push(pathStr(MOUTH_D, 1.4, color));
+        case "nudge": {
+            const left = createSvgElement("g");
+            left.setAttribute("class", "pa-pagelet-pet-blink-group");
+            left.appendChild(createPath(EYE_LEFT_D, 1.4, color));
+            parts.push(left);
+
+            const right = createSvgElement("g");
+            right.setAttribute("class", "pa-pagelet-pet-blink-group");
+            right.appendChild(createPath(EYE_RIGHT_D, 1.4, color));
+            parts.push(right);
+            parts.push(createPath(MOUTH_D, 1.4, color));
             break;
+        }
     }
 
-    return parts.join("\n");
+    return parts;
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +204,5 @@ export function updatePetSvgState(
     isLightTheme: boolean,
 ): void {
     const color = strokeColor(state, isLightTheme);
-    // Replace inner content atomically
-    svgEl.innerHTML = buildInnerMarkup(state, color);
+    replaceSvgChildren(svgEl, buildInnerNodes(state, color));
 }

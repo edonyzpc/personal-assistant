@@ -19,165 +19,10 @@ import type { PanelFinding } from "../panel/types";
 import type { TabSection } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 
-// ---------------------------------------------------------------------------
-// CSS -- injected once via <style> on first mount
-// ---------------------------------------------------------------------------
-
-const TAB_CSS_ID = "pa-pagelet-tab-styles";
-let tabStyleRefCount = 0;
-
-const TAB_CSS = /* css */ `
-/* ---- Tab container ---- */
-.pa-pagelet-tab {
-    background: var(--background-primary, #1e1e1e);
-    min-height: 100%;
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    font-family: var(--font-interface, inherit);
-    color: var(--text-normal, #dcddde);
-    box-sizing: border-box;
-}
-
-/* ---- Body ---- */
-.pa-pagelet-tab-body {
-    flex: 1;
-    overflow-y: auto;
-    padding: 32px 48px;
-    max-width: 800px;
-    width: 100%;
-    margin: 0 auto;
-    box-sizing: border-box;
-}
-
-/* ---- Sections ---- */
-.pa-pagelet-tab-section {
-    margin-bottom: 32px;
-}
-
-.pa-pagelet-tab-section h2 {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 16px;
-    color: var(--text-normal, #dcddde);
-}
-
-.pa-pagelet-tab-section h4 {
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-normal, #dcddde);
-    margin-bottom: 8px;
-}
-
-/* ---- Insight cards ---- */
-.pa-pagelet-tab-insight-card {
-    background: var(--background-secondary-alt, #232323);
-    border: 1px solid var(--background-modifier-border, #3a3a3a);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 12px;
-}
-
-.pa-pagelet-tab-insight-card p {
-    font-size: 13px;
-    color: var(--text-muted, #999);
-    line-height: 1.7;
-    margin: 0;
-}
-
-.pa-pagelet-tab-empty-card {
-    background: var(--background-secondary-alt, #232323);
-    border: 1px solid var(--background-modifier-border, #3a3a3a);
-    border-radius: 8px;
-    padding: 20px;
-}
-
-.pa-pagelet-tab-empty-title {
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--text-normal, #dcddde);
-    margin-bottom: 8px;
-}
-
-.pa-pagelet-tab-empty-body {
-    font-size: 13px;
-    line-height: 1.7;
-    color: var(--text-muted, #999);
-}
-
-/* ---- Tag row ---- */
-.pa-pagelet-tab-tag-row {
-    display: flex;
-    gap: 6px;
-    margin-top: 10px;
-    flex-wrap: wrap;
-}
-
-.pa-pagelet-tab-tag-chip {
-    padding: 2px 8px;
-    border-radius: 4px;
-    font-size: 11px;
-    background: var(--background-secondary, #252525);
-    color: var(--text-faint, #666);
-    border: 1px solid var(--background-modifier-border, #3a3a3a);
-    max-width: 100%;
-    overflow-wrap: anywhere;
-}
-
-/* ---- Light theme ---- */
-.theme-light .pa-pagelet-tab,
-[data-theme="light"] .pa-pagelet-tab {
-    box-shadow: none;
-}
-
-/* ---- Reduced motion ---- */
-@media (prefers-reduced-motion: reduce) {
-    .pa-pagelet-tab {
-        scroll-behavior: auto !important;
-    }
-}
-
-@media (max-width: 720px) {
-    .pa-pagelet-tab-body {
-        padding: 16px;
-        max-width: none;
-    }
-}
-
-body.is-mobile .pa-pagelet-tab-body {
-    padding: 16px;
-    max-width: none;
-}
-`;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Inject Tab CSS into `<head>` (idempotent). */
-function injectStyles(): void {
-    const existing = document.getElementById(TAB_CSS_ID);
-    if (existing) {
-        if (existing.textContent !== TAB_CSS) {
-            existing.textContent = TAB_CSS;
-        }
-        return;
-    }
-    const style = document.createElement("style");
-    style.id = TAB_CSS_ID;
-    style.textContent = TAB_CSS;
-    document.head.appendChild(style);
-}
-
-function retainStyles(): void {
-    tabStyleRefCount += 1;
-    injectStyles();
-}
-
-function releaseStyles(): void {
-    tabStyleRefCount = Math.max(0, tabStyleRefCount - 1);
-    if (tabStyleRefCount === 0) {
-        document.getElementById(TAB_CSS_ID)?.remove();
+function clearChildren(node: Element): void {
+    node.textContent = "";
+    while (node.firstChild) {
+        node.removeChild(node.firstChild);
     }
 }
 
@@ -212,7 +57,6 @@ export class TabView {
     private rootEl: HTMLDivElement | null = null;
     private bodyEl: HTMLDivElement | null = null;
     private containerEl: HTMLElement | null = null;
-    private hasStyleRef = false;
     private _isOpen = false;
 
     constructor(locale: PageletLocale = "en") {
@@ -228,10 +72,6 @@ export class TabView {
      * this renderer appends only content under the leaf's `view-content`.
      */
     mount(containerEl: HTMLElement): void {
-        if (!this.hasStyleRef) {
-            retainStyles();
-            this.hasStyleRef = true;
-        }
         this.containerEl = containerEl;
     }
 
@@ -280,10 +120,6 @@ export class TabView {
             this.rootEl.remove();
             this.rootEl = null;
         }
-        if (this.hasStyleRef) {
-            releaseStyles();
-            this.hasStyleRef = false;
-        }
         this.bodyEl = null;
         this.containerEl = null;
         this._isOpen = false;
@@ -314,7 +150,7 @@ export class TabView {
 
     private renderContent(content: PanelFinding[] | TabSection[]): void {
         if (!this.bodyEl) return;
-        this.bodyEl.innerHTML = "";
+        clearChildren(this.bodyEl);
 
         if (content.length === 0) {
             this.renderEmptyState();

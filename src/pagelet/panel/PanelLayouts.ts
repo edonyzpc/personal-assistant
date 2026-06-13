@@ -36,6 +36,13 @@ function el<K extends keyof HTMLElementTagNameMap>(
     return node;
 }
 
+function clearChildren(node: Element): void {
+    node.textContent = "";
+    while (node.firstChild) {
+        node.removeChild(node.firstChild);
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Review timeline layout
 // ---------------------------------------------------------------------------
@@ -52,7 +59,7 @@ export function renderReviewTimeline(
     findings: PanelFinding[],
     locale: PageletLocale = "en",
 ): void {
-    container.innerHTML = "";
+    clearChildren(container);
 
     const timeline = el("div", "pa-pagelet-panel-timeline");
     if (findings.length === 0) {
@@ -162,7 +169,7 @@ export function renderCurrentNoteAnalysis(
     findings: PanelFinding[],
     locale: PageletLocale = "en",
 ): void {
-    container.innerHTML = "";
+    clearChildren(container);
 
     const wrapper = el("div", "pa-pagelet-panel-timeline");
 
@@ -216,7 +223,7 @@ export function renderDiscoveryLayout(
     connections?: NoteConnection[],
     locale: PageletLocale = "en",
 ): void {
-    container.innerHTML = "";
+    clearChildren(container);
 
     const wrapper = el("div", "pa-pagelet-panel-timeline");
 
@@ -442,7 +449,7 @@ export function renderSummaryPreview(
     sourcePath?: string,
     locale: PageletLocale = "en",
 ): void {
-    container.innerHTML = "";
+    clearChildren(container);
 
     const wrapper = el("div", "pa-pagelet-panel-timeline");
 
@@ -464,7 +471,7 @@ export function renderSummaryPreview(
         );
     } else {
         // Fallback for environments without App/Component (tests)
-        preview.innerHTML = simpleMarkdownRender(markdown);
+        renderSimpleMarkdownPreview(preview, markdown);
     }
 
     const cardWrap = el("div", "pa-pagelet-panel-card-wrap");
@@ -474,37 +481,22 @@ export function renderSummaryPreview(
     container.appendChild(wrapper);
 }
 
-/**
- * Minimal markdown renderer for preview purposes.
- * Handles headings, bullet lists, and paragraphs only.
- */
-function simpleMarkdownRender(md: string): string {
+/** Minimal markdown renderer for preview purposes. */
+function renderSimpleMarkdownPreview(container: HTMLElement, md: string): void {
     const lines = md.split("\n");
-    const parts: string[] = [];
 
     for (const raw of lines) {
         const line = raw.trimEnd();
         if (line.startsWith("## ")) {
-            parts.push(`<h4 class="pa-pagelet-panel-preview-h2">${escapeHtml(line.slice(3))}</h4>`);
+            container.appendChild(el("h4", "pa-pagelet-panel-preview-h2", line.slice(3)));
         } else if (line.startsWith("# ")) {
-            parts.push(`<h3 class="pa-pagelet-panel-preview-h1">${escapeHtml(line.slice(2))}</h3>`);
+            container.appendChild(el("h3", "pa-pagelet-panel-preview-h1", line.slice(2)));
         } else if (line.startsWith("- ")) {
-            parts.push(`<div class="pa-pagelet-panel-preview-li">• ${escapeHtml(line.slice(2))}</div>`);
+            container.appendChild(el("div", "pa-pagelet-panel-preview-li", `• ${line.slice(2)}`));
         } else if (line.trim() === "") {
-            parts.push("<br/>");
+            container.appendChild(document.createElement("br"));
         } else {
-            parts.push(`<p class="pa-pagelet-panel-preview-p">${escapeHtml(line)}</p>`);
+            container.appendChild(el("p", "pa-pagelet-panel-preview-p", line));
         }
     }
-
-    return parts.join("");
-}
-
-/** Escape HTML special characters. */
-function escapeHtml(str: string): string {
-    return str
-        .replace(/&/g, "&amp;")
-        .replace(/</g, "&lt;")
-        .replace(/>/g, "&gt;")
-        .replace(/"/g, "&quot;");
 }

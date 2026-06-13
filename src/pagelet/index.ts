@@ -189,7 +189,7 @@ export {
     type RegisterPageletFocusCommandOptions,
 } from "./compat";
 
-export { PetView, PetStateMachine, buildPetSvg, updatePetSvgState } from "./pet";
+export { PetView, PetStateMachine, updatePetSvgState } from "./pet";
 export type { PetState, PetCorner, PetEvent, PetCallbacks, PetRenderer, PetRendererOptions, PetStateListener } from "./pet";
 
 export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent } from "./bubble";

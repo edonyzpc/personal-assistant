@@ -34,244 +34,11 @@ import type {
 } from "./types";
 import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
 
-// ---------------------------------------------------------------------------
-// CSS — injected once via <style> on first mount
-// ---------------------------------------------------------------------------
-
-const BUBBLE_CSS_ID = "pa-pagelet-bubble-styles";
-
-const BUBBLE_CSS = /* css */ `
-.pa-pagelet-bubble {
-    position: absolute;
-    z-index: 999;
-    background: var(--background-secondary, #2a2a2a);
-    border: 1px solid var(--background-modifier-border, #3a3a3a);
-    border-radius: 12px;
-    padding: 16px 18px;
-    width: 300px;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.4), 0 2px 8px rgba(0,0,0,0.4);
-    opacity: 0;
-    transform: scale(0.9) translateY(8px);
-    transform-origin: bottom right;
-    pointer-events: none;
-    transition: opacity 0.25s ease, transform 0.25s ease;
-    font-family: var(--font-interface, inherit);
-    color: var(--text-normal, #dcddde);
-    box-sizing: border-box;
-}
-
-.pa-pagelet-bubble[data-state="visible"] {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-    pointer-events: auto;
-}
-
-.pa-pagelet-bubble[data-state="degraded"] {
-    opacity: 0.4;
-    transform: scale(1) translateY(0);
-    pointer-events: none;
-}
-
-/* Close button stays clickable even in degraded state */
-.pa-pagelet-bubble[data-state="degraded"] .pa-pagelet-bubble-close {
-    pointer-events: auto;
-}
-
-/* Tail — triangular pointer toward the Pet (positioned dynamically via JS) */
-.pa-pagelet-bubble-tail {
-    position: absolute;
-    width: 14px;
-    height: 14px;
-    background: var(--background-secondary, #2a2a2a);
-    border-right: 1px solid var(--background-modifier-border, #3a3a3a);
-    border-bottom: 1px solid var(--background-modifier-border, #3a3a3a);
-    transform: rotate(45deg);
-    bottom: -8px;
-    left: 50%;
-}
-
-/* When bubble is placed below anchor, tail points up */
-.pa-pagelet-bubble[data-placement="below"] .pa-pagelet-bubble-tail {
-    top: -8px;
-    bottom: auto;
-    border-right: none;
-    border-bottom: none;
-    border-left: 1px solid var(--background-modifier-border, #3a3a3a);
-    border-top: 1px solid var(--background-modifier-border, #3a3a3a);
-}
-
-/* Header */
-.pa-pagelet-bubble-header {
-    display: flex;
-    justify-content: flex-end;
-    margin-bottom: 8px;
-}
-
-.pa-pagelet-bubble-close {
-    background: none;
-    border: none;
-    color: var(--text-muted, #999);
-    cursor: pointer;
-    font-size: 18px;
-    line-height: 1;
-    min-width: 28px;
-    min-height: 28px;
-    padding: 0 2px;
-    opacity: 0.7;
-    transition: opacity 0.15s ease;
-}
-
-.pa-pagelet-bubble-close:hover {
-    opacity: 1;
-    color: var(--text-normal, #dcddde);
-}
-
-/* Findings list */
-.pa-pagelet-bubble-items {
-    list-style: none;
-    margin: 0 0 12px 0;
-    padding: 0;
-}
-
-.pa-pagelet-bubble-items li {
-    display: flex;
-    align-items: flex-start;
-    gap: 8px;
-    margin-bottom: 6px;
-    font-size: 13px;
-    line-height: 1.5;
-    color: var(--text-normal, #dcddde);
-}
-
-.pa-pagelet-bubble-items li:last-child {
-    margin-bottom: 0;
-}
-
-.pa-pagelet-bubble-bullet {
-    flex-shrink: 0;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--text-faint, #666);
-    margin-top: 7px;
-}
-
-.pa-pagelet-bubble-source-link {
-    color: var(--text-accent, #7f6df2);
-    cursor: pointer;
-    text-decoration: none;
-    margin-left: 4px;
-    font-size: 12px;
-}
-
-.pa-pagelet-bubble-source-link:hover {
-    text-decoration: underline;
-}
-
-/* Actions row */
-.pa-pagelet-bubble-actions {
-    display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
-}
-
-.pa-pagelet-bubble-btn {
-    background: var(--background-modifier-hover, #3a3a3a);
-    border: 1px solid var(--background-modifier-border, #4a4a4a);
-    border-radius: 6px;
-    color: var(--text-muted, #999);
-    cursor: pointer;
-    font-size: 12px;
-    padding: 4px 12px;
-    transition: background 0.15s ease, color 0.15s ease;
-}
-
-.pa-pagelet-bubble-btn:hover {
-    background: var(--background-modifier-border, #4a4a4a);
-    color: var(--text-normal, #dcddde);
-}
-
-.pa-pagelet-bubble-btn.primary {
-    background: var(--interactive-accent, #7f6df2);
-    border-color: var(--interactive-accent, #7f6df2);
-    color: var(--text-on-accent, #fff);
-}
-
-.pa-pagelet-bubble-btn.primary:hover {
-    filter: brightness(1.1);
-}
-
-/* ---- Mobile: bottom sheet layout ---- */
-.pa-pagelet-bubble.pa-pagelet-bubble--mobile {
-    left: 8px !important;
-    right: 8px !important;
-    bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important;
-    top: auto !important;
-    width: auto;
-    max-height: min(70vh, calc(100vh - 120px - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)));
-    overflow-y: auto;
-    border-radius: 16px 16px 12px 12px;
-    transform-origin: bottom center;
-}
-
-.pa-pagelet-bubble.pa-pagelet-bubble--mobile .pa-pagelet-bubble-tail {
-    display: none;
-}
-
-.pa-pagelet-bubble.pa-pagelet-bubble--mobile[data-state="visible"] {
-    transform: scale(1) translateY(0);
-}
-
-.pa-pagelet-bubble.pa-pagelet-bubble--mobile[data-state="hidden"] {
-    transform: scale(0.95) translateY(16px);
-}
-
-/* ---- Light theme: softer shadows ---- */
-.theme-light .pa-pagelet-bubble,
-[data-theme="light"] .pa-pagelet-bubble {
-    box-shadow: 0 8px 32px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.08);
-}
-
-/* ---- Reduced motion ---- */
-@media (prefers-reduced-motion: reduce) {
-    .pa-pagelet-bubble {
-        transition-duration: 0.01s !important;
+function clearChildren(node: Element): void {
+    node.textContent = "";
+    while (node.firstChild) {
+        node.removeChild(node.firstChild);
     }
-}
-
-/* ---- Mobile: larger touch targets ---- */
-body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-items li {
-    padding: 10px 12px;
-    font-size: 14px;
-}
-body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-btn {
-    min-height: 44px;
-    padding: 10px 18px;
-    font-size: 13px;
-}
-body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
-    min-width: 44px;
-    min-height: 44px;
-}
-`;
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Inject Bubble CSS into `<head>` (idempotent). */
-function injectStyles(): void {
-    const existing = document.getElementById(BUBBLE_CSS_ID);
-    if (existing) {
-        if (existing.textContent !== BUBBLE_CSS) {
-            existing.textContent = BUBBLE_CSS;
-        }
-        return;
-    }
-    const style = document.createElement("style");
-    style.id = BUBBLE_CSS_ID;
-    style.textContent = BUBBLE_CSS;
-    document.head.appendChild(style);
 }
 
 /** Detect mobile context using the Obsidian convention or viewport width. */
@@ -368,7 +135,6 @@ export class BubbleView {
      * drag region.
      */
     mount(containerEl: HTMLElement): void {
-        injectStyles();
         this.containerEl = containerEl;
     }
 
@@ -446,7 +212,6 @@ export class BubbleView {
             this.rootEl.remove();
             this.rootEl = null;
         }
-        document.getElementById(BUBBLE_CSS_ID)?.remove();
         this.containerEl = null;
         this.anchorEl = null;
         this.currentContent = null;
@@ -552,7 +317,7 @@ export class BubbleView {
         // Rebuild findings list
         const itemsEl = this.rootEl.querySelector(".pa-pagelet-bubble-items");
         if (itemsEl) {
-            itemsEl.innerHTML = "";
+            clearChildren(itemsEl);
             for (const finding of content.findings) {
                 const li = document.createElement("li");
 
@@ -584,7 +349,7 @@ export class BubbleView {
         // Rebuild action buttons
         const actionsEl = this.rootEl.querySelector(".pa-pagelet-bubble-actions");
         if (actionsEl) {
-            actionsEl.innerHTML = "";
+            clearChildren(actionsEl);
             for (const action of content.actions) {
                 const btn = document.createElement("button");
                 btn.className = "pa-pagelet-bubble-btn";
