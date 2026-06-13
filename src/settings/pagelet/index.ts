@@ -7,7 +7,7 @@
  *  - `docs/review-assistant-sdd.md` §10.3 (Settings UI layout)
  *  - D008-D010 (storage path), D013 (beta default on), D015 (output lang),
  *    D018 (token caps), D020 (call limits — read-only display only),
- *    R4 (ribbon icon visibility)
+ *    background preparation opt-in)
  *
  * Shape contract:
  *  - 7 user-editable fields. Two more (`hourlyCallLimit` / `dailyCallLimit`)
@@ -54,7 +54,7 @@ import {
 /** Output language preference, mirrors D015 (Auto = follow detection). */
 export type PageletOutputLanguageSetting = "auto" | "zh" | "en";
 
-/** Whether the Pagelet ribbon icon is visible (R4). */
+/** @deprecated Pagelet no longer registers a ribbon icon; kept for data.json compatibility. */
 export type PageletRibbonPosition = "default" | "hidden";
 
 /**
@@ -78,7 +78,7 @@ export interface PageletSettings {
     reviewsFolder: string;
     /** Output language preference (D015). */
     outputLanguage: PageletOutputLanguageSetting;
-    /** Ribbon icon position (R4). */
+    /** @deprecated Pagelet no longer registers a ribbon icon. */
     ribbonPosition: PageletRibbonPosition;
     /** Model temperature 0.0-0.5; default 0.2 (SDD §2.2). */
     temperature: number;
@@ -87,7 +87,7 @@ export interface PageletSettings {
     /** Per-review output cap; default 2000, hard max 4000 (D018). */
     maxOutputTokens: number;
 
-    // ── v2: Pet ────────────────────────────────────────────────────
+    // ── Pet ────────────────────────────────────────────────────────
     /** Pet corner position (D034). */
     petCorner: PetCorner;
     /** Proactive hints toggle (D038, OFF by default). */
@@ -95,19 +95,19 @@ export interface PageletSettings {
     /** Proactive hints cooldown in minutes (D038). */
     proactiveHintsCooldown: number;
 
-    // ── v2: Preload ────────────────────────────────────────────────
-    /** Enable background preloading (D032). */
+    // ── Background review preparation ──────────────────────────────
+    /** Enable background review preparation (stored under the historical preload key). */
     preloadEnabled: boolean;
-    /** Preload polling interval in minutes (D032). */
+    /** Background preparation polling interval in minutes. */
     preloadInterval: number;
-    /** Preload per-hour cap (D036). */
+    /** Background preparation per-hour cap. */
     preloadPerHourCap: number;
-    /** Preload per-day cap (D036). */
+    /** Background preparation per-day cap. */
     preloadPerDayCap: number;
-    /** Preload per-call token budget (D036). */
+    /** Background preparation per-call token budget. */
     preloadTokenBudget: { input: number; output: number };
 
-    // ── v2: Reviews ────────────────────────────────────────────────
+    // ── Reviews ────────────────────────────────────────────────────
     /** Default scope for periodic summary. */
     periodicSummaryScope: PageletPeriodicSummaryScope;
     /** Excluded folders for scope resolution. */
@@ -117,7 +117,7 @@ export interface PageletSettings {
     /** Excluded filename/path patterns. */
     excludedPatterns: string[];
 
-    // ── v2: Quiet hours ─────────────────────────────────────────────
+    // ── Quiet hours ────────────────────────────────────────────────
     /** Proactive hints quiet hours (SDD §quiet-hours). */
     proactiveHintsQuietHours: {
         enabled: boolean;
@@ -125,7 +125,7 @@ export interface PageletSettings {
         end: string;
     };
 
-    // ── v2: Foreground cost (extends D018-D020) ────────────────────
+    // ── Foreground review cost ─────────────────────────────────────
     /** Foreground per-hour cap (D020). */
     foregroundPerHourCap: number;
     /** Foreground per-day cap (D020). */
@@ -145,24 +145,24 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     temperature: 0.2,
     maxInputTokens: 8000,
     maxOutputTokens: 2000,
-    // v2: Pet
+    // Pet
     petCorner: "bottom-right",
     proactiveHints: false,
     proactiveHintsCooldown: 30,
-    // v2: Preload
-    preloadEnabled: true,
+    // Background review preparation
+    preloadEnabled: false,
     preloadInterval: 30,
     preloadPerHourCap: 2,
     preloadPerDayCap: 20,
     preloadTokenBudget: Object.freeze({ input: 4000, output: 1000 }),
-    // v2: Reviews
+    // Reviews
     periodicSummaryScope: "7d",
     excludedFolders: Object.freeze([]) as readonly string[] as string[],
     excludedTags: Object.freeze([]) as readonly string[] as string[],
     excludedPatterns: Object.freeze([]) as readonly string[] as string[],
-    // v2: Quiet hours
+    // Quiet hours
     proactiveHintsQuietHours: Object.freeze({ enabled: false, start: "22:00", end: "08:00" }),
-    // v2: Foreground cost
+    // Foreground review cost
     foregroundPerHourCap: 10,
     foregroundPerDayCap: 100,
 });
@@ -179,7 +179,7 @@ export const PAGELET_BOUNDS = Object.freeze({
     temperature: { min: 0, max: 0.5 },
     maxInputTokens: { min: 1, max: 32000 },
     maxOutputTokens: { min: 1, max: 4000 },
-    // v2
+    // Pet, background preparation, review, and foreground limits
     proactiveHintsCooldown: { min: 1, max: 120 },
     preloadInterval: { min: 5, max: 240 },
     preloadPerHourCap: { min: 1, max: 20 },
@@ -288,24 +288,24 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
             PAGELET_BOUNDS.maxOutputTokens.min,
             PAGELET_BOUNDS.maxOutputTokens.max,
         ),
-        // v2: Pet
+        // Pet
         petCorner: normalizePetCorner(raw.petCorner),
         proactiveHints: typeof raw.proactiveHints === "boolean" ? raw.proactiveHints : PAGELET_DEFAULTS.proactiveHints,
         proactiveHintsCooldown: normalizeBoundedInt(raw.proactiveHintsCooldown, PAGELET_DEFAULTS.proactiveHintsCooldown, PAGELET_BOUNDS.proactiveHintsCooldown.min, PAGELET_BOUNDS.proactiveHintsCooldown.max),
-        // v2: Preload
+        // Background review preparation
         preloadEnabled: typeof raw.preloadEnabled === "boolean" ? raw.preloadEnabled : PAGELET_DEFAULTS.preloadEnabled,
         preloadInterval: normalizeBoundedInt(raw.preloadInterval, PAGELET_DEFAULTS.preloadInterval, PAGELET_BOUNDS.preloadInterval.min, PAGELET_BOUNDS.preloadInterval.max),
         preloadPerHourCap: normalizeBoundedInt(raw.preloadPerHourCap, PAGELET_DEFAULTS.preloadPerHourCap, PAGELET_BOUNDS.preloadPerHourCap.min, PAGELET_BOUNDS.preloadPerHourCap.max),
         preloadPerDayCap: normalizeBoundedInt(raw.preloadPerDayCap, PAGELET_DEFAULTS.preloadPerDayCap, PAGELET_BOUNDS.preloadPerDayCap.min, PAGELET_BOUNDS.preloadPerDayCap.max),
         preloadTokenBudget: normalizeTokenBudget(raw.preloadTokenBudget, PAGELET_DEFAULTS.preloadTokenBudget),
-        // v2: Reviews
+        // Reviews
         periodicSummaryScope: normalizePeriodicSummaryScope(raw.periodicSummaryScope),
         excludedFolders: normalizeStringArray(raw.excludedFolders),
         excludedTags: normalizeStringArray(raw.excludedTags),
         excludedPatterns: normalizeStringArray(raw.excludedPatterns),
-        // v2: Quiet hours
+        // Quiet hours
         proactiveHintsQuietHours: normalizeQuietHours(raw.proactiveHintsQuietHours),
-        // v2: Foreground cost
+        // Foreground review cost
         foregroundPerHourCap: normalizeBoundedInt(raw.foregroundPerHourCap, PAGELET_DEFAULTS.foregroundPerHourCap, PAGELET_BOUNDS.foregroundPerHourCap.min, PAGELET_BOUNDS.foregroundPerHourCap.max),
         foregroundPerDayCap: normalizeBoundedInt(raw.foregroundPerDayCap, PAGELET_DEFAULTS.foregroundPerDayCap, PAGELET_BOUNDS.foregroundPerDayCap.min, PAGELET_BOUNDS.foregroundPerDayCap.max),
     };
@@ -708,19 +708,6 @@ export function renderPageletSection(
                 .setValue(settings.outputLanguage)
                 .onChange((value) => saveOnChange(() => {
                     settings.outputLanguage = normalizeOutputLanguage(value);
-                }));
-        });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.ribbonPosition.name"))
-        .setDesc(t("pagelet.settings.ribbonPosition.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("default", t("pagelet.settings.ribbonPosition.option.default"))
-                .addOption("hidden", t("pagelet.settings.ribbonPosition.option.hidden"))
-                .setValue(settings.ribbonPosition)
-                .onChange((value) => saveOnChange(() => {
-                    settings.ribbonPosition = normalizeRibbonPosition(value);
                 }));
         });
 

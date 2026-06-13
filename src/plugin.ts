@@ -31,27 +31,21 @@ import { ChatHistoryManager } from './chat/chat-history-manager';
 import {
     PAGELET_FOCUS_LATEST_COMMAND_ID,
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
-    PAGELET_OPEN_PANEL_COMMAND_ID,
-    PAGELET_VIEW_TYPE,
-    PAGELET_REVIEW_CURRENT_COMMAND_ID,
+    PageletReviewModel,
     PageletCostTracker,
-    PageletRateLimiter,
-    PageletView,
+    buildPageletScopeReviewBundle,
     createPaReviewRuntime,
+    estimateTokens,
     registerPageletFocusCommand,
-    registerPageletOpenPanelCommand,
-    registerPageletReviewCurrentCommand,
-    registerPageletRibbonIcon,
-    type PageletReviewRange,
-    type PageletScopeSourceReference,
-    type PageletSuggestion,
+    type GeneratedReviewNote,
     type PaReviewRuntime,
+    type WriteResult,
 } from './pagelet';
 import { getPageletUiLanguage, pageletT } from './locales/pagelet';
+import { getPluginUiLanguage, pluginT, type PluginMessageKey } from './locales/plugin';
 import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
-import { PageletReviewOrchestrator, type PageletOrchestratorHost } from './pagelet/orchestrator';
-import { PageletV2Orchestrator, type PageletV2Host } from './pagelet/v2-orchestrator';
-import { registerPageletV2Commands } from './pagelet/commands';
+import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
+import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
 import type { AnalyzeCallback } from './pagelet/preload/types';
 import { buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
 
@@ -124,7 +118,8 @@ function arraysEqual(left: string[], right: string[]): boolean {
  * isolates localStorage per vault), so a user can opt into the Notice
  * separately for each vault.
  */
-const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration-v1";
+const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
+const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
 
 function readPageletMigrationFlag(): boolean {
     try {
@@ -137,6 +132,22 @@ function readPageletMigrationFlag(): boolean {
 function writePageletMigrationFlag(): void {
     try {
         globalThis.localStorage?.setItem(PAGELET_MIGRATION_NOTICE_KEY, "1");
+    } catch {
+        /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
+    }
+}
+
+function readPageletBackgroundPreparationNoticeFlag(): boolean {
+    try {
+        return globalThis.localStorage?.getItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function writePageletBackgroundPreparationNoticeFlag(): void {
+    try {
+        globalThis.localStorage?.setItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY, "1");
     } catch {
         /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
     }
@@ -172,9 +183,11 @@ export class PluginManager extends Plugin {
      */
     private pageletRuntime: PaReviewRuntime | null = null;
     readonly pageletCostTracker = new PageletCostTracker();
-    readonly pageletRateLimiter = new PageletRateLimiter();
-    private pageletOrchestrator: PageletReviewOrchestrator | null = null;
-    private pageletV2Orchestrator: PageletV2Orchestrator | null = null;
+    private pageletOrchestrator: PageletOrchestrator | null = null;
+    private pageletSettingsUnsubscribe: (() => void) | null = null;
+    private pageletCommandsRegistered = false;
+    private pageletFocusCommandRegistered = false;
+    private pageletBackgroundPreparationNoticeSurfacedThisBoot = false;
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
      * was coerced to the default by the now-stricter validator. Consumed once
@@ -197,6 +210,9 @@ export class PluginManager extends Plugin {
     private hoverPopoverObserver: MutationObserver | null = null;
     private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 
+    private t(key: PluginMessageKey | string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
+        return pluginT(key, getPluginUiLanguage(), params, fallback);
+    }
 
     async onload() {
         await this.loadSettings();
@@ -212,7 +228,7 @@ export class PluginManager extends Plugin {
 
         // showup notification of plugin starting when it is in debug mode
         if (this.settings.debug) {
-            new Notice("starting obsidian assistant");
+            new Notice(this.t("plugin.notice.starting"));
             // register mobile debug log
             monkeyPatchConsole(this);
         }
@@ -242,7 +258,7 @@ export class PluginManager extends Plugin {
 
         // This creates an icon in the left ribbon.
         addIcon('PluginAST', icons['PluginAST']);
-        const ribbonIconEl = this.addRibbonIcon('PluginAST', 'Open AI Chat (right-click for plugin controls)', () => {
+        const ribbonIconEl = this.addRibbonIcon('PluginAST', this.t("plugin.ribbon.openChatControls"), () => {
             void this.activeChatView();
         });
         ribbonIconEl.addClass('plugin-manager-ribbon-class');
@@ -288,20 +304,6 @@ export class PluginManager extends Plugin {
                 return new LLMView(leaf, this, this.vss);
             }
         );
-        this.registerView(
-            PAGELET_VIEW_TYPE,
-            (leaf) => {
-                return new PageletView(leaf, {
-                    refreshScope: (range, activePath) => void this.refreshPageletScope(range, activePath),
-                    runReview: () => void this.runPageletReviewForPageletScope(),
-                    saveDraftReview: (request) => this.savePageletDraftReview(request),
-                    openSourceReference: (ref) => this.openPageletSourceReference(ref),
-                    openRelatedNote: (name, source) => this.openPageletRelatedNote(name, source),
-                    prepareResearchPrompt: (suggestion) => this.preparePageletResearchPrompt(suggestion),
-                });
-            }
-        );
-
         this.memoryManager = new MemoryManager(this);
         this.memoryManager.startAutoMaintenance();
         await this.updateMemoryStatusBar();
@@ -313,7 +315,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'startup-recording',
-            name: 'Create or open record note in configured folder',
+            name: this.t("plugin.command.recordNote"),
             callback: async () => {
                 const fileFormat = moment().format(this.settings.fileFormat);
                 const targetDir = this.settings.targetPath;
@@ -324,7 +326,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'local-graph',
-            name: 'hover local graph',
+            name: this.t("plugin.command.hoverLocalGraph"),
             callback: async () => {
                 await this.localGraph.startup();
             }
@@ -332,7 +334,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'switch-on-or-off-plugin',
-            name: 'Open Personal Assistant Controls',
+            name: this.t("plugin.command.openControls"),
             callback: () => {
                 const modal = new PluginControlModal(this.app);
                 modal.setPlaceholder("Type plugin name to find it");
@@ -342,7 +344,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "batch-switch-on-or-off-plugins",
-            name: "Batch switch on/off plugins according to their status",
+            name: this.t("plugin.command.batchPluginControls"),
             callback: () => {
                 const modal = new BatchPluginControlModal(this.app);
                 modal.open();
@@ -351,7 +353,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'set-local-graph-view-colors',
-            name: 'Set graph view colors',
+            name: this.t("plugin.command.setGraphColors"),
             callback: async () => {
                 await this.localGraph.updateGraphColors();
             }
@@ -359,7 +361,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'update-plugins',
-            name: "Update plugins with one command",
+            name: this.t("plugin.command.updatePlugins"),
             callback: async () => {
                 const pluginUpdater = new PluginsUpdater(this.app, this);
                 await pluginUpdater.update();
@@ -368,7 +370,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'update-themes',
-            name: "Update themes with one command",
+            name: this.t("plugin.command.updateThemes"),
             callback: async () => {
                 const themeUpdater = await ThemeUpdater.init(this.app, this);
                 await themeUpdater.update();
@@ -377,7 +379,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'update-metadata',
-            name: "Update metadata with one command",
+            name: this.t("plugin.command.updateMetadata"),
             callback: async () => {
                 if (this.settings.enableMetadataUpdating) {
                     if (this.isEnabledMetadataUpdating) {
@@ -400,7 +402,7 @@ export class PluginManager extends Plugin {
                         this.isEnabledMetadataUpdating = true;
                     }
                 } else {
-                    new Notice("update metadata command is not enabled in setting tab");
+                    new Notice(this.t("plugin.notice.metadataCommandDisabled"));
                 }
             }
         })
@@ -408,7 +410,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "list-callouts",
-            name: "List callout for quickly insert",
+            name: this.t("plugin.command.listCallouts"),
             callback: () => {
                 new CalloutModal(this.app, this).open();
             },
@@ -416,7 +418,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "preview-records",
-            name: "Preview records from configured folder",
+            name: this.t("plugin.command.previewRecords"),
             callback: async () => {
                 this.activateView();
             }
@@ -424,7 +426,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "show-statistics",
-            name: "Show statistics",
+            name: this.t("plugin.command.showStatistics"),
             callback: async () => {
                 await this.activeStatView();
             }
@@ -432,7 +434,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'ai-assistant-summary',
-            name: 'AI Summary',
+            name: this.t("plugin.command.aiSummary"),
             editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
                 if (!this.ensureAIConfigured()) return;
                 const sel = editor.getSelection();
@@ -449,7 +451,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'ai-assistant-featured-images',
-            name: 'AI Featured Images',
+            name: this.t("plugin.command.aiFeaturedImages"),
             editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
                 if (!this.ensureAIConfigured()) return;
                 const sel = editor.getSelection();
@@ -466,7 +468,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "init-vss",
-            name: "Prepare Memory",
+            name: this.t("plugin.command.prepareMemory"),
             checkCallback: (checking) => this.runMemoryCommand(checking, async () => {
                 await this.memoryManager.prepareFromCommand();
             }),
@@ -476,7 +478,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: 'open-chat',
-            name: 'Open Chat in Sidebar',
+            name: this.t("plugin.command.openChatSidebar"),
             callback: async () => {
                 this.activeChatView();
             }
@@ -573,142 +575,257 @@ export class PluginManager extends Plugin {
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(this.settingTab);
 
-        // ── Pagelet (Review Assistant) wiring ──────────────────────────
-        // Ribbon icon + command-palette review entry + Cmd+/ focus command.
-        // The review entry and ribbon click both lazily mint the framework
-        // runtime via `getOrCreatePageletRuntime` so cold-start cost stays zero
-        // for users who never invoke Pagelet.
-        // The optional-chain guard lets tests that ship a partial settings
-        // object (no `pagelet` key) reach onload() without throwing.
-        if (this.settings.pagelet?.enabled) {
-            this.pageletOrchestrator = new PageletReviewOrchestrator(this as unknown as PageletOrchestratorHost);
-            try {
-                registerPageletOpenPanelCommand(
-                    this as unknown as Parameters<typeof registerPageletOpenPanelCommand>[0],
-                    {
-                        name: pageletT("pagelet.command.openPanel", this.getPageletLocale()),
-                        onOpenPanel: async () => {
-                            await this.refreshPageletScope("current");
-                        },
-                    },
-                );
-            } catch (error) {
-                this.log("Failed to register Pagelet panel command", error);
-            }
-            try {
-                registerPageletReviewCurrentCommand(
-                    this as unknown as Parameters<typeof registerPageletReviewCurrentCommand>[0],
-                    {
-                        name: pageletT("pagelet.command.reviewCurrent", this.getPageletLocale()),
-                        onReviewCurrent: () => this.runPageletReviewForActiveNote(),
-                    },
-                );
-            } catch (error) {
-                this.log("Failed to register Pagelet review command", error);
-            }
-            try {
-                registerPageletRibbonIcon(this, {
-                    position: this.settings.pagelet.ribbonPosition,
-                    onClick: () => {
-                        void this.runPageletReviewForActiveNote();
-                    },
-                });
-            } catch (error) {
-                this.log("Failed to register Pagelet ribbon", error);
-            }
-            try {
-                // Cast to the narrow PageletCommandHost shape; Obsidian's
-                // Plugin.addCommand returns a more specific Command type but
-                // the registrar only needs the structural surface.
-                registerPageletFocusCommand(this as unknown as Parameters<typeof registerPageletFocusCommand>[0], {
-                    name: pageletT("pagelet.a11y.focusLatestCommand", this.getPageletLocale()),
-                    hotkeys: [PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY],
-                });
-            } catch (error) {
-                this.log("Failed to register Pagelet focus command", error);
-            }
-            // Acknowledge stable constant (used only when an external caller
-            // wants to query the registered command id, e.g. for tests).
-            void PAGELET_OPEN_PANEL_COMMAND_ID;
-            void PAGELET_REVIEW_CURRENT_COMMAND_ID;
-            void PAGELET_FOCUS_LATEST_COMMAND_ID;
+        this.pageletSettingsUnsubscribe?.();
+        this.pageletSettingsUnsubscribe = this.onSettingsChanged(() => {
+            this.syncPageletRuntime();
+        });
+        this.syncPageletRuntime();
+    }
 
-            // ── Pagelet v2 wiring ────────────────────────────────
-            try {
-                const v2Host: PageletV2Host = {
-                    app: this.app,
-                    settings: this.settings,
-                    log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
-                    registerEvent: (ref) => this.registerEvent(ref),
-                    saveSettings: () => this.saveSettings(),
-                    createPreloadAnalyzeCallback: (): AnalyzeCallback => {
-                        return async (files, config) => {
-                            const model = await this.createChatModel(0.3);
-                            if (!model) {
-                                throw new Error("No AI model configured");
-                            }
-                            const noteContents = await Promise.all(
-                                files.map(async (f) => ({
-                                    path: f.path,
-                                    content: await this.app.vault.cachedRead(f),
-                                })),
-                            );
-                            const prompt = buildPreloadPrompt(noteContents, config.tokenBudget);
-                            const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
-                            const result = await model.invoke(fullPrompt);
-                            const text = typeof result === "string"
-                                ? result
-                                : (result as { content?: unknown }).content != null
-                                    ? String((result as { content: unknown }).content)
-                                    : String(result);
-                            const parsed = parseStructuredResponse(text);
-                            return {
-                                findings: parsed.findings.map((f) => ({
-                                    text: f.text,
-                                    sourceFile: f.sourceFile || files[0]?.path || "",
-                                    sourceTitle: f.sourceTitle || files[0]?.basename || "",
-                                })),
-                                analyzedFiles: files.map((f) => f.path),
-                                analyzedAt: Date.now(),
-                                tokenCost: { input: 0, output: 0 },
-                            };
-                        };
-                    },
-                    createGenerateCallback: () => {
-                        return async (prompt, noteContents, tokenBudget) => {
-                            const model = await this.createChatModel(0.3);
-                            if (!model) {
-                                throw new Error("No AI model configured");
-                            }
-                            const result = await model.invoke(prompt);
-                            const text = typeof result === "string"
-                                ? result
-                                : (result as { content?: unknown }).content != null
-                                    ? String((result as { content: unknown }).content)
-                                    : String(result);
-                            return { text, tokenCost: { input: 0, output: 0 } };
-                        };
-                    },
-                };
-
-                this.pageletV2Orchestrator = new PageletV2Orchestrator(v2Host);
-                this.pageletV2Orchestrator.initialize();
-
-                registerPageletV2Commands(
-                    this as unknown as Parameters<typeof registerPageletV2Commands>[0],
-                    this.pageletV2Orchestrator.getCommandCallbacks(),
-                    this.getPageletLocale(),
-                );
-            } catch (error) {
-                this.log("Failed to initialize Pagelet v2", error);
-            }
+    private syncPageletRuntime(): void {
+        if (!this.settings.pagelet?.enabled) {
+            this.destroyPageletRuntime();
+            return;
         }
+
+        this.registerPageletCommandsOnce();
+        this.registerPageletFocusCommandOnce();
+
+        if (this.pageletOrchestrator) {
+            this.pageletOrchestrator.syncSettings();
+            this.surfacePageletBackgroundPreparationNotice();
+            return;
+        }
+
+        try {
+            this.surfacePageletBackgroundPreparationNotice();
+            this.pageletOrchestrator = new PageletOrchestrator(this.createPageletHost());
+            this.pageletOrchestrator.initialize();
+        } catch (error) {
+            this.log("Failed to initialize Pagelet", error);
+        }
+    }
+
+    private destroyPageletRuntime(): void {
+        if (this.pageletOrchestrator) {
+            try {
+                this.pageletOrchestrator.destroy();
+            } catch (error) {
+                this.log("Failed to destroy Pagelet orchestrator", error);
+            }
+            this.pageletOrchestrator = null;
+        }
+        if (this.pageletRuntime) {
+            try {
+                this.pageletRuntime.dispose();
+            } catch (error) {
+                this.log("Failed to dispose Pagelet runtime", error);
+            }
+            this.pageletRuntime = null;
+        }
+    }
+
+    private pageletCommandCallbacks(): PageletCommandCallbacks {
+        const dispatch = <T>(run: (callbacks: PageletCommandCallbacks) => T): T | undefined => {
+            if (!this.settings.pagelet?.enabled) {
+                new Notice(pageletT("pagelet.notice.disabled", this.getPageletLocale()), 4000);
+                return undefined;
+            }
+            this.syncPageletRuntime();
+            const callbacks = this.pageletOrchestrator?.getCommandCallbacks();
+            if (!callbacks) return undefined;
+            return run(callbacks);
+        };
+        return {
+            onOpenPanel: () => dispatch((callbacks) => callbacks.onOpenPanel()),
+            onReviewCurrent: () => dispatch((callbacks) => callbacks.onReviewCurrent()),
+            onQuickReview: () => dispatch((callbacks) => callbacks.onQuickReview()),
+            onDiscoverConnections: () => dispatch((callbacks) => callbacks.onDiscoverConnections()),
+            onPeriodicSummary: () => dispatch((callbacks) => callbacks.onPeriodicSummary()),
+            onToggleProactiveHints: () => dispatch((callbacks) => callbacks.onToggleProactiveHints()),
+            onShowBackgroundPreparationStatus: () => dispatch((callbacks) => callbacks.onShowBackgroundPreparationStatus()),
+            onMovePetCorner: () => dispatch((callbacks) => callbacks.onMovePetCorner()),
+            onTogglePetVisibility: () => dispatch((callbacks) => callbacks.onTogglePetVisibility()),
+        };
+    }
+
+    private registerPageletCommandsOnce(): void {
+        if (this.pageletCommandsRegistered) return;
+        registerPageletCommands(
+            this as unknown as Parameters<typeof registerPageletCommands>[0],
+            this.pageletCommandCallbacks(),
+            this.getPageletLocale(),
+        );
+        this.pageletCommandsRegistered = true;
+    }
+
+    private registerPageletFocusCommandOnce(): void {
+        if (this.pageletFocusCommandRegistered) return;
+        try {
+            registerPageletFocusCommand(this as unknown as Parameters<typeof registerPageletFocusCommand>[0], {
+                name: pageletT("pagelet.a11y.focusLatestCommand", this.getPageletLocale()),
+                hotkeys: [PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY],
+            });
+            this.pageletFocusCommandRegistered = true;
+        } catch (error) {
+            this.log("Failed to register Pagelet focus command", error);
+        }
+        void PAGELET_FOCUS_LATEST_COMMAND_ID;
+    }
+
+    private createPageletHost(): PageletHost {
+        return {
+            app: this.app,
+            settings: this.settings,
+            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            registerEvent: (ref) => this.registerEvent(ref),
+            saveSettings: () => this.saveSettings(),
+            createPreloadAnalyzeCallback: (): AnalyzeCallback => {
+                return async (files, config) => {
+                    const noteContents = await this.readPageletNoteContents(
+                        files,
+                        config.tokenBudget.input,
+                    );
+                    const prompt = buildPreloadPrompt(noteContents, config.tokenBudget);
+                    const model = await this.createChatModel(0.3, {
+                        maxTokens: prompt.maxOutputTokens,
+                    });
+                    if (!model) {
+                        throw new Error("No AI model configured");
+                    }
+                    const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
+                    const result = await model.invoke(fullPrompt);
+                    const text = typeof result === "string"
+                        ? result
+                        : (result as { content?: unknown }).content != null
+                            ? String((result as { content: unknown }).content)
+                            : String(result);
+                    const parsed = parseStructuredResponse(text);
+                    const inputTokens = estimateTokens(fullPrompt);
+                    const outputTokens = estimateTokens(text);
+                    this.pageletCostTracker.record({
+                        inputTokens,
+                        outputTokens,
+                        provider: this.settings.aiProvider,
+                        model: this.settings.chatModelName,
+                    });
+                    return {
+                        findings: parsed.findings.map((f) => ({
+                            text: f.text,
+                            sourceFile: f.sourceFile || files[0]?.path || "",
+                            sourceTitle: f.sourceTitle || files[0]?.basename || "",
+                        })),
+                        analyzedFiles: files.map((f) => f.path),
+                        analyzedAt: Date.now(),
+                        tokenCost: { input: inputTokens, output: outputTokens },
+                    };
+                };
+            },
+            createForegroundAnalyzeCallback: (): AnalyzeCallback => {
+                return async (files, config) => {
+                    const noteContents = await this.readPageletNoteContents(
+                        files,
+                        config.tokenBudget.input,
+                    );
+                    const primarySourcePath = files[0]?.path ?? noteContents[0]?.path ?? "";
+                    const bundle = buildPageletScopeReviewBundle({
+                        entries: noteContents,
+                        primarySourcePath,
+                        range: "current",
+                        settings: this.settings.pagelet,
+                        uiLanguage: this.getPageletLocale(),
+                    });
+                    if (!bundle) {
+                        return {
+                            findings: [],
+                            analyzedFiles: files.map((f) => f.path),
+                            analyzedAt: Date.now(),
+                            tokenCost: { input: 0, output: 0 },
+                        };
+                    }
+
+                    const reviewModel = new PageletReviewModel(
+                        (temperature, options) => this.createChatModel(temperature, {
+                            modelName: options?.modelName,
+                            maxTokens: config.tokenBudget.output,
+                        }),
+                        {
+                            temperature: this.settings.pagelet.temperature,
+                            modelName: this.settings.chatModelName,
+                            costBudget: {
+                                maxInputTokens: this.settings.pagelet.maxInputTokens,
+                                maxOutputTokens: this.settings.pagelet.maxOutputTokens,
+                            },
+                            costTracker: this.pageletCostTracker,
+                            providerForPricing: this.settings.aiProvider,
+                            modelForPricing: this.settings.chatModelName,
+                            userMessageLocale: this.getPageletLocale(),
+                            reviewTimeoutMs: 60_000,
+                        },
+                    );
+
+                    const outcome = await reviewModel.reviewNote(bundle.input);
+                    if (outcome.status === "error") {
+                        throw new Error(outcome.userMessage);
+                    }
+
+                    const sourceById = new Map(
+                        bundle.sourceReferences.map((reference) => [reference.sourceId, reference]),
+                    );
+                    const findings = outcome.result.suggestions.map((suggestion) => {
+                        const source = sourceById.get(suggestion.source_id);
+                        const sourceFile = source?.path ?? bundle.primarySourcePath;
+                        return {
+                            text: `${suggestion.rationale}\n${suggestion.proposed_action}`,
+                            sourceFile,
+                            sourceTitle: sourceFile.split("/").pop()?.replace(/\.md$/, "") ?? sourceFile,
+                        };
+                    });
+                    const costEntry = outcome.diagnostics.costEntry;
+                    return {
+                        findings,
+                        analyzedFiles: bundle.sourcePaths,
+                        analyzedAt: Date.now(),
+                        tokenCost: {
+                            input: costEntry?.inputTokens ?? outcome.diagnostics.estimatedInputTokens ?? 0,
+                            output: costEntry?.outputTokens ?? 0,
+                        },
+                    };
+                };
+            },
+            createGenerateCallback: () => {
+                return async (prompt, noteContents, tokenBudget) => {
+                    const model = await this.createChatModel(0.3, {
+                        maxTokens: tokenBudget.output,
+                    });
+                    if (!model) {
+                        throw new Error("No AI model configured");
+                    }
+                    const result = await model.invoke(prompt);
+                    const text = typeof result === "string"
+                        ? result
+                        : (result as { content?: unknown }).content != null
+                            ? String((result as { content: unknown }).content)
+                            : String(result);
+                    const inputTokens = estimateTokens(prompt);
+                    const outputTokens = estimateTokens(text);
+                    this.pageletCostTracker.record({
+                        inputTokens,
+                        outputTokens,
+                        provider: this.settings.aiProvider,
+                        model: this.settings.chatModelName,
+                    });
+                    return { text, tokenCost: { input: inputTokens, output: outputTokens } };
+                };
+            },
+            writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
+        };
     }
 
     /**
      * Lazy accessor for the Pagelet (Review Assistant) runtime.
      *
-     * - Returns `null` when Pagelet is disabled in settings (the ribbon
+     * - Returns `null` when Pagelet is disabled in settings (commands or UI
      *   should never have called this, but be defensive).
      * - Otherwise constructs the runtime on first call, then returns the
      *   cached instance. Disposal happens in `onunload`.
@@ -723,7 +840,6 @@ export class PluginManager extends Plugin {
                 app: this.app,
                 getPageletSettings: () => this.settings.pagelet,
                 getLocale: () => this.getPageletLocale(),
-                previewRenderer: this.pageletOrchestrator.createPageletPanelPreviewRenderer(),
                 debug: this.settings.debug,
             });
             this.log("Pagelet runtime initialized");
@@ -731,41 +847,104 @@ export class PluginManager extends Plugin {
         return this.pageletRuntime;
     }
 
-    async refreshPageletScope(range: PageletReviewRange, preferredActivePath?: string): Promise<void> {
-        if (!this.pageletOrchestrator) return;
-        return this.pageletOrchestrator.refreshPageletScope(range, preferredActivePath);
+    private async readPageletNoteContents(
+        files: TFile[],
+        inputTokenBudget: number,
+    ): Promise<Array<{ path: string; content: string }>> {
+        const maxFiles = Math.max(
+            1,
+            Math.min(files.length, 20, Math.floor(Math.max(1, inputTokenBudget) / 100)),
+        );
+        const selectedFiles = files.slice(0, maxFiles);
+        const totalCharBudget = Math.max(1_000, Math.max(1, inputTokenBudget) * 4);
+        const perFileCharBudget = Math.max(1_000, Math.floor(totalCharBudget / selectedFiles.length));
+        const noteContents: Array<{ path: string; content: string }> = [];
+
+        for (const file of selectedFiles) {
+            try {
+                const content = await this.app.vault.cachedRead(file);
+                noteContents.push({
+                    path: file.path,
+                    content: content.length > perFileCharBudget
+                        ? `${content.slice(0, perFileCharBudget)}\n[...truncated]`
+                        : content,
+                });
+            } catch (error) {
+                this.log("Failed to read Pagelet note content", { path: file.path, error });
+            }
+        }
+
+        return noteContents;
     }
 
-    async runPageletReviewForActiveNote(): Promise<void> {
-        if (!this.pageletOrchestrator) return;
-        return this.pageletOrchestrator.runPageletReviewForActiveNote();
+    private async writePageletReviewNote(note: GeneratedReviewNote): Promise<WriteResult> {
+        const runtime = this.getOrCreatePageletRuntime();
+        if (!runtime) {
+            return { success: false, error: "Pagelet write runtime is unavailable." };
+        }
+
+        const targetPath = await this.mintNonCollidingPageletPath(note.targetPath);
+        const lastSlash = targetPath.lastIndexOf("/");
+        const targetFolder = lastSlash >= 0 ? targetPath.slice(0, lastSlash) : "";
+        const fileName = lastSlash >= 0 ? targetPath.slice(lastSlash + 1) : targetPath;
+        const generatedNote: GeneratedReviewNote = {
+            ...note,
+            targetPath,
+            targetFolder,
+            fileName,
+        };
+
+        const result = await runtime.actionExecutor.execute(
+            runtime.toolProvider.capability,
+            {
+                generatedNote,
+                targetPath,
+            },
+            {
+                plugin: this,
+                turnId: `pagelet-review-note-${Date.now()}`,
+            },
+        );
+
+        if (result.status === "ok") {
+            const observation = result.observation as { createdPath?: unknown } | null;
+            return {
+                success: true,
+                filePath: typeof observation?.createdPath === "string"
+                    ? observation.createdPath
+                    : targetPath,
+            };
+        }
+
+        return {
+            success: false,
+            error: result.userSafeMessage ?? result.error ?? "Pagelet write failed.",
+        };
     }
 
-    async runPageletReviewForPageletScope(): Promise<void> {
-        if (!this.pageletOrchestrator) return;
-        return this.pageletOrchestrator.runPageletReviewForPageletScope();
-    }
+    private async mintNonCollidingPageletPath(basePath: string): Promise<string> {
+        const normalized = normalizePath(basePath);
+        if (!(await this.app.vault.adapter.exists(normalized))) {
+            return normalized;
+        }
 
-    async savePageletDraftReview(
-        request: Parameters<PageletReviewOrchestrator["savePageletDraftReview"]>[0],
-    ): Promise<void> {
-        if (!this.pageletOrchestrator) return;
-        return this.pageletOrchestrator.savePageletDraftReview(request);
-    }
+        const extIndex = normalized.lastIndexOf(".");
+        const slashIndex = normalized.lastIndexOf("/");
+        const hasExtension = extIndex > slashIndex;
+        const ext = hasExtension ? normalized.slice(extIndex) : "";
+        const stem = hasExtension ? normalized.slice(0, extIndex) : normalized;
+        for (let i = 2; i <= 100; i++) {
+            const candidate = normalizePath(`${stem}-${i}${ext}`);
+            if (!(await this.app.vault.adapter.exists(candidate))) {
+                return candidate;
+            }
+        }
 
-    async openPageletSourceReference(reference: PageletScopeSourceReference): Promise<boolean> {
-        if (!this.pageletOrchestrator) return false;
-        return this.pageletOrchestrator.openPageletSourceReference(reference);
-    }
-
-    async openPageletRelatedNote(noteName: string, sourcePath: string): Promise<boolean> {
-        if (!this.pageletOrchestrator) return false;
-        return this.pageletOrchestrator.openPageletRelatedNote(noteName, sourcePath);
-    }
-
-    async preparePageletResearchPrompt(suggestion: PageletSuggestion): Promise<boolean> {
-        if (!this.pageletOrchestrator) return false;
-        return this.pageletOrchestrator.preparePageletResearchPrompt(suggestion);
+        const now = new Date();
+        const hh = String(now.getUTCHours()).padStart(2, "0");
+        const mm = String(now.getUTCMinutes()).padStart(2, "0");
+        const ss = String(now.getUTCSeconds()).padStart(2, "0");
+        return normalizePath(`${stem}-${hh}${mm}${ss}${ext}`);
     }
 
     /**
@@ -798,13 +977,15 @@ export class PluginManager extends Plugin {
         }
         this.chatHistoryStore = undefined;
         this.chatHistoryManager = undefined;
-        if (this.pageletV2Orchestrator) {
+        this.pageletSettingsUnsubscribe?.();
+        this.pageletSettingsUnsubscribe = null;
+        if (this.pageletOrchestrator) {
             try {
-                this.pageletV2Orchestrator.destroy();
+                this.pageletOrchestrator.destroy();
             } catch (error) {
-                this.log("Failed to destroy Pagelet v2 orchestrator", error);
+                this.log("Failed to destroy Pagelet orchestrator", error);
             }
-            this.pageletV2Orchestrator = null;
+            this.pageletOrchestrator = null;
         }
         if (this.pageletRuntime) {
             try {
@@ -1101,39 +1282,6 @@ export class PluginManager extends Plugin {
         return leaf?.view instanceof LLMView ? leaf.view : null;
     }
 
-    async activePageletView(): Promise<PageletView | null> {
-        const { workspace } = this.app;
-
-        let leaf = workspace.getLeavesOfType(PAGELET_VIEW_TYPE)[0];
-
-        if (!leaf) {
-            const newLeaf = workspace.getRightLeaf(false);
-            if (newLeaf) {
-                leaf = newLeaf;
-                await leaf.setViewState({
-                    type: PAGELET_VIEW_TYPE,
-                    active: true,
-                });
-            }
-        }
-
-        if (!leaf) return null;
-        if (!(leaf.view instanceof PageletView)) {
-            await leaf.setViewState({ type: "empty", active: false });
-            await leaf.setViewState({
-                type: PAGELET_VIEW_TYPE,
-                active: true,
-            });
-        }
-        workspace.revealLeaf(leaf);
-        return leaf.view instanceof PageletView ? leaf.view : null;
-    }
-
-    getOpenPageletView(): PageletView | null {
-        const leaf = this.app.workspace.getLeavesOfType(PAGELET_VIEW_TYPE)[0];
-        return leaf?.view instanceof PageletView ? leaf.view : null;
-    }
-
     /**
      * Opaque plugin reference for the orchestrator host contract.
      * Satisfies {@link AgentCapabilityContext['plugin']} at runtime
@@ -1149,13 +1297,28 @@ export class PluginManager extends Plugin {
      */
     async createChatModel(
         temperature: number,
-        options?: { modelName?: string; transport?: string },
+        options?: { modelName?: string; transport?: string; maxTokens?: number },
     ) {
         const aiUtils = new AIUtils(this);
         return aiUtils.createChatModel(temperature, {
             modelName: options?.modelName,
             transport: options?.transport as "obsidian" | "native" | undefined,
+            maxTokens: options?.maxTokens,
         });
+    }
+
+    private surfacePageletBackgroundPreparationNotice(): void {
+        if (this.pageletBackgroundPreparationNoticeSurfacedThisBoot) return;
+        if (!this.settings.pagelet?.enabled || !this.settings.pagelet.preloadEnabled) return;
+        if (readPageletBackgroundPreparationNoticeFlag()) return;
+        this.pageletBackgroundPreparationNoticeSurfacedThisBoot = true;
+        const locale = this.getPageletLocale();
+        try {
+            new Notice(pageletT("pagelet.backgroundPreparation.startupNotice", locale), 10000);
+        } catch (error) {
+            this.log("Failed to fire Pagelet background preparation Notice", error);
+        }
+        writePageletBackgroundPreparationNoticeFlag();
     }
 
     getVSSFiles() {
@@ -1204,12 +1367,13 @@ export class PluginManager extends Plugin {
             } catch (error) {
                 this.isVssCached = false;
                 this.log("Failed to rebuild local VSS index", error);
-                new Notice("Could not prepare memory.", 7000);
+                new Notice(this.t("plugin.notice.memoryPrepareFailed"), 7000);
             }
         }
     }
 
     onMemoryStatusChanged(listener: () => void | Promise<void>): () => void {
+        this.memoryStatusListeners ??= new Set();
         this.memoryStatusListeners.add(listener);
         return () => {
             this.memoryStatusListeners.delete(listener);
@@ -1217,6 +1381,7 @@ export class PluginManager extends Plugin {
     }
 
     onSettingsChanged(listener: () => void | Promise<void>): () => void {
+        this.settingsChangeListeners ??= new Set();
         this.settingsChangeListeners.add(listener);
         return () => {
             this.settingsChangeListeners.delete(listener);
@@ -1224,12 +1389,14 @@ export class PluginManager extends Plugin {
     }
 
     private async notifySettingsChanged() {
+        this.settingsChangeListeners ??= new Set();
         await Promise.allSettled(
             Array.from(this.settingsChangeListeners, (listener) => Promise.resolve().then(listener)),
         );
     }
 
     async updateMemoryStatusBar() {
+        this.memoryStatusListeners ??= new Set();
         await Promise.allSettled(
             Array.from(this.memoryStatusListeners, (listener) => Promise.resolve().then(listener)),
         );
@@ -1238,8 +1405,8 @@ export class PluginManager extends Plugin {
     async showTechnicalMemoryStatus() {
         if (!this.vss) {
             this.showTechnicalMemoryNotice({
-                title: "Memory diagnostics",
-                summary: "Memory service is not initialized.",
+                title: this.t("plugin.memory.diagnostics.title"),
+                summary: this.t("plugin.memory.diagnostics.notInitializedSummary"),
                 summaryTone: "warning",
                 details: [],
                 notes: [],
@@ -1254,10 +1421,10 @@ export class PluginManager extends Plugin {
 
     private getVssPerformanceNotice(chunkCount: number): string {
         if (chunkCount > 100_000) {
-            return " Performance note: exact search may be slow above 100k chunks; consider a future quantized or ANN backend, which is not enabled automatically.";
+            return this.t("plugin.memory.diagnostics.performance100k");
         }
         if (chunkCount > 50_000) {
-            return " Performance note: exact search may be slower above 50k chunks.";
+            return this.t("plugin.memory.diagnostics.performance50k");
         }
         return "";
     }
@@ -1266,38 +1433,46 @@ export class PluginManager extends Plugin {
         const status = this.formatTechnicalMemoryStatus(stats);
         const maintenanceText = this.formatTechnicalMaintenanceState(maintenance);
         const details: TechnicalMemoryDetail[] = [
-            { label: "Indexed", value: `${stats.chunkCount} chunks across ${stats.fileCount} files` },
-            { label: "Backend", value: stats.backend },
             {
-                label: "Storage",
-                value: stats.storagePersisted === false ? "Best-effort storage" : "Persistent storage",
+                label: this.t("plugin.memory.diagnostics.indexed"),
+                value: this.t("plugin.memory.diagnostics.indexedValue", {
+                    chunks: stats.chunkCount,
+                    files: stats.fileCount,
+                }),
+            },
+            { label: this.t("plugin.memory.diagnostics.backend"), value: stats.backend },
+            {
+                label: this.t("plugin.memory.diagnostics.storage"),
+                value: stats.storagePersisted === false
+                    ? this.t("plugin.memory.diagnostics.storageBestEffort")
+                    : this.t("plugin.memory.diagnostics.storagePersistent"),
                 tone: stats.storagePersisted === false ? "warning" : undefined,
             },
             {
-                label: "Maintenance",
+                label: this.t("plugin.memory.diagnostics.maintenance"),
                 value: maintenanceText,
-                tone: maintenanceText === "Up to date" ? undefined : "warning",
+                tone: maintenanceText === this.t("plugin.memory.diagnostics.maintenance.upToDate") ? undefined : "warning",
             },
         ];
 
         if (stats.lastVerifiedAt) {
-            details.push({ label: "Last verified", value: stats.lastVerifiedAt });
+            details.push({ label: this.t("plugin.memory.diagnostics.lastVerified"), value: stats.lastVerifiedAt });
         }
 
         if (stats.lastErrorCode) {
-            details.push({ label: "Last error", value: stats.lastErrorCode, tone: "danger" });
+            details.push({ label: this.t("plugin.memory.diagnostics.lastError"), value: stats.lastErrorCode, tone: "danger" });
         }
         if (stats.lastErrorCode === "opfs-sahpool-locked" && stats.opfsDirectory) {
-            details.push({ label: "OPFS scope", value: stats.opfsDirectory, tone: "warning" });
+            details.push({ label: this.t("plugin.memory.diagnostics.opfsScope"), value: stats.opfsDirectory, tone: "warning" });
         }
         if (stats.lastErrorCode === "opfs-sahpool-locked" && stats.opfsVfsName) {
-            details.push({ label: "OPFS VFS", value: stats.opfsVfsName, tone: "warning" });
+            details.push({ label: this.t("plugin.memory.diagnostics.opfsVfs"), value: stats.opfsVfsName, tone: "warning" });
         }
 
         const performanceText = this.getVssPerformanceNotice(stats.chunkCount).trim();
 
         return {
-            title: "Memory diagnostics",
+            title: this.t("plugin.memory.diagnostics.title"),
             summary: status.text,
             summaryTone: status.tone,
             details,
@@ -1307,31 +1482,31 @@ export class PluginManager extends Plugin {
 
     private formatTechnicalMemoryStatus(stats: TechnicalMemoryStats): { text: string; tone?: TechnicalMemoryDetail["tone"] } {
         if (stats.status === "ready") {
-            return { text: "Ready" };
+            return { text: this.t("plugin.memory.diagnostics.status.ready") };
         }
         if (stats.status === "stale") {
-            return { text: "Index stale", tone: "warning" };
+            return { text: this.t("plugin.memory.diagnostics.status.stale"), tone: "warning" };
         }
         if (stats.status === "missing-local-index") {
-            return { text: "Local index missing", tone: "warning" };
+            return { text: this.t("plugin.memory.diagnostics.status.missing"), tone: "warning" };
         }
         if (stats.status === "disabled" || stats.status === "error") {
-            return { text: "Memory diagnostics unavailable", tone: "danger" };
+            return { text: this.t("plugin.memory.diagnostics.status.unavailable"), tone: "danger" };
         }
-        return { text: "Memory diagnostics not initialized", tone: "warning" };
+        return { text: this.t("plugin.memory.diagnostics.status.notInitialized"), tone: "warning" };
     }
 
     private formatTechnicalMaintenanceState(maintenance: TechnicalMemoryMaintenance): string {
         if (maintenance.dirtyCount <= 0 && maintenance.verificationPending <= 0) {
-            return "Up to date";
+            return this.t("plugin.memory.diagnostics.maintenance.upToDate");
         }
 
         const parts: string[] = [];
         if (maintenance.dirtyCount > 0) {
-            parts.push(`${maintenance.dirtyCount} dirty`);
+            parts.push(this.t("plugin.memory.diagnostics.maintenance.dirty", { count: maintenance.dirtyCount }));
         }
         if (maintenance.verificationPending > 0) {
-            parts.push(`${maintenance.verificationPending} verification pending`);
+            parts.push(this.t("plugin.memory.diagnostics.maintenance.verificationPending", { count: maintenance.verificationPending }));
         }
         return parts.join(", ");
     }
@@ -1388,7 +1563,7 @@ export class PluginManager extends Plugin {
     private registerAdvancedMemoryCommands() {
         this.addCommand({
             id: "flush-vss-cache",
-            name: "Update memory now",
+            name: this.t("plugin.command.updateMemoryNow"),
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
                 await this.memoryManager.updateFromCommand();
                 await this.updateMemoryStatusBar();
@@ -1397,12 +1572,12 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "reset-vss-index",
-            name: "Reset local memory copy",
+            name: this.t("plugin.command.resetMemory"),
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
                 const confirmed = await confirmUserAction(this.app, {
-                    title: "Reset local memory copy?",
-                    message: "Your notes will not be changed or deleted. This device may need to prepare Memory again before using it.",
-                    confirmText: "Reset",
+                    title: this.t("plugin.memory.confirm.reset.title"),
+                    message: this.t("plugin.memory.confirm.reset.message"),
+                    confirmText: this.t("plugin.memory.confirm.reset.confirm"),
                 });
                 if (!confirmed) return;
                 await this.vss.resetLocalIndex();
@@ -1412,7 +1587,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "clean-legacy-vss-json-cache",
-            name: "Delete old Memory cache files",
+            name: this.t("plugin.command.deleteOldMemoryCache"),
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
                 await this.vss.cleanLegacyJsonCache();
                 await this.updateMemoryStatusBar();
@@ -1421,7 +1596,7 @@ export class PluginManager extends Plugin {
 
         this.addCommand({
             id: "show-vss-index-status",
-            name: "Show technical memory status",
+            name: this.t("plugin.command.showTechnicalMemoryStatus"),
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
                 await this.showTechnicalMemoryStatus();
             }),
@@ -1439,7 +1614,7 @@ export class PluginManager extends Plugin {
         if (!checking) {
             void action().catch((error) => {
                 this.log("Memory command failed", error);
-                new Notice("Could not complete memory action.", 5000);
+                new Notice(this.t("plugin.notice.memoryActionFailed"), 5000);
             });
         }
         return true;
@@ -1604,7 +1779,7 @@ export class PluginManager extends Plugin {
                 && !this.settings.embeddingV4MigrationNoticeDismissed
             ) {
                 new Notice(
-                    "Qwen's newer memory model is recommended for new memory copies. Your existing memory model setting was preserved.",
+                    this.t("plugin.notice.qwenMemoryModelRecommended"),
                     10000,
                 );
                 this.settings.embeddingV4MigrationNoticeDismissed = true;
@@ -1626,7 +1801,7 @@ export class PluginManager extends Plugin {
                     // pasted plaintext token. Clear the residual value so the
                     // ciphertext (or plaintext) does not stay on disk forever and
                     // re-trigger this Notice on every launch.
-                    new Notice("API token migration failed. Please re-enter your token in Settings.", 8000);
+                    new Notice(this.t("plugin.notice.apiTokenMigrationFailed"), 8000);
                     delete this.settings.apiToken;
                     changed = true;
                     this.log("API token migration failed; cleared residual value from data.json");
@@ -1669,13 +1844,13 @@ export class PluginManager extends Plugin {
 
     getAISetupIssue(): string | null {
         if (!this.settings.aiProvider) {
-            return "Choose an AI provider in Settings first.";
+            return this.t("plugin.aiSetup.chooseProvider");
         }
         if (!this.settings.baseURL || !this.settings.chatModelName) {
-            return "Complete the AI provider URL and model in Settings first.";
+            return this.t("plugin.aiSetup.completeProvider");
         }
         if (!this.hasConfiguredAPIToken()) {
-            return "Add your API token in Settings first.";
+            return this.t("plugin.aiSetup.addToken");
         }
         return null;
     }
@@ -1691,7 +1866,7 @@ export class PluginManager extends Plugin {
             ? scopedToken
             : this.app.secretStorage.getSecret(legacySecretId);
         if (!hasSecretValue(token)) {
-            new Notice("API token not configured. Please set it in Settings → Personal Assistant.", 5000);
+            new Notice(this.t("plugin.notice.apiTokenNotConfigured"), 5000);
             return "";
         }
         if (scopedToken === null) {
