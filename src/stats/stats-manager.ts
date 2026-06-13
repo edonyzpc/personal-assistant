@@ -1,4 +1,4 @@
-import { Platform, debounce, moment as obsidianMoment, type App, type Debouncer, type TFile, type Vault, type Workspace } from "obsidian";
+import { Platform, TFile, debounce, moment as obsidianMoment, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
 import type PluginManager from "../main";
 import type {
     ActivityCounts,
@@ -46,6 +46,7 @@ const CACHE_SIZE_RATIO_THRESHOLD = 1.5;
 // statistically meaningful — sampling 1 of 1 file just doubles I/O for no
 // drift-detection power.
 const SAMPLE_MIN_CACHE_SIZE = 5;
+type TimeoutHandle = number | ReturnType<typeof setTimeout>;
 
 export function getStatsWriteDelayMs(isMobile: boolean): number {
     return isMobile ? 3000 : 1500;
@@ -82,7 +83,7 @@ export default class StatsManager {
     private writeGeneration = 0;
     private persistedWriteGeneration = 0;
     private stateGeneration = 0;
-    private snapshotRefreshTimer: ReturnType<typeof setTimeout> | null = null;
+    private snapshotRefreshTimer: TimeoutHandle | null = null;
     private isDisposed = false;
     private ready: Promise<void>;
     private dirtyFileCountPaths = new Set<string>();
@@ -119,12 +120,12 @@ export default class StatsManager {
             this.vault.on("rename", (newFile, oldPath) => {
                 this.invalidateDashboardCacheForPath(newFile.path);
                 this.invalidateDashboardCacheForPath(oldPath);
-                if (this.modifiedFiles.hasOwnProperty(oldPath)) {
+                if (Object.prototype.hasOwnProperty.call(this.modifiedFiles, oldPath)) {
                     const content = this.modifiedFiles[oldPath];
                     delete this.modifiedFiles[oldPath];
                     this.modifiedFiles[newFile.path] = content;
                 }
-                if (this.handleRenameForFileCountCache(newFile as TFile, oldPath)) {
+                if (isTFileLike(newFile) && this.handleRenameForFileCountCache(newFile, oldPath)) {
                     this.scheduleSnapshotRefresh(getStatsSnapshotRefreshDelayMs(Platform.isMobile));
                 }
             })
@@ -133,7 +134,7 @@ export default class StatsManager {
         this.plugin.registerEvent(
             this.vault.on("delete", (deletedFile) => {
                 this.invalidateDashboardCacheForPath(deletedFile.path);
-                if (this.modifiedFiles.hasOwnProperty(deletedFile.path)) {
+                if (Object.prototype.hasOwnProperty.call(this.modifiedFiles, deletedFile.path)) {
                     delete this.modifiedFiles[deletedFile.path];
                 }
                 if (this.handleDeleteForFileCountCache(deletedFile.path)) {
@@ -145,7 +146,7 @@ export default class StatsManager {
         this.plugin.registerEvent(
             this.vault.on("create", (createdFile) => {
                 this.invalidateDashboardCacheForPath(createdFile.path);
-                if (this.handleCreateForFileCountCache(createdFile as TFile)) {
+                if (isTFileLike(createdFile) && this.handleCreateForFileCountCache(createdFile)) {
                     this.scheduleSnapshotRefresh(getStatsSnapshotRefreshDelayMs(Platform.isMobile));
                 }
             })
@@ -258,7 +259,7 @@ export default class StatsManager {
         const modFiles = this.modifiedFiles;
         let previousSnapshotCounts = previousCounts;
 
-        if (modFiles.hasOwnProperty(change.filePath)) {
+        if (Object.prototype.hasOwnProperty.call(modFiles, change.filePath)) {
             previousSnapshotCounts = this.getCurrentCounts(modFiles[change.filePath]);
             modFiles[change.filePath].words.current = currentCounts.words;
             modFiles[change.filePath].characters.current = currentCounts.characters;
@@ -322,7 +323,7 @@ export default class StatsManager {
     public dispose(): void {
         this.isDisposed = true;
         if (this.snapshotRefreshTimer) {
-            clearTimeout(this.snapshotRefreshTimer);
+            clearStatsTimeout(this.snapshotRefreshTimer);
             this.snapshotRefreshTimer = null;
         }
         this.debounceChange.cancel();
@@ -538,7 +539,7 @@ export default class StatsManager {
     private scheduleSnapshotRefresh(delayMs = 3000): void {
         if (this.isDisposed) return;
         if (this.snapshotRefreshTimer) return;
-        this.snapshotRefreshTimer = setTimeout(() => {
+        this.snapshotRefreshTimer = setStatsTimeout(() => {
             this.snapshotRefreshTimer = null;
             void this.refreshSnapshotInBackground();
         }, delayMs);
@@ -870,19 +871,45 @@ export default class StatsManager {
 }
 
 function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
+    return new Promise((resolve) => {
+        setStatsTimeout(resolve, ms);
+    });
+}
+
+function setStatsTimeout(callback: () => void, ms: number): TimeoutHandle {
+    return typeof window === "undefined"
+        ? setTimeout(callback, ms)
+        : window.setTimeout(callback, ms);
+}
+
+function clearStatsTimeout(timeoutId: TimeoutHandle): void {
+    if (typeof window === "undefined") {
+        clearTimeout(timeoutId);
+        return;
+    }
+    window.clearTimeout(timeoutId);
 }
 
 function isMarkdownPath(path: string): boolean {
     return path.toLowerCase().endsWith(".md");
 }
 
+function isTFileLike(file: unknown): file is TFile {
+    if (typeof TFile === "function") return file instanceof TFile;
+    return Boolean(
+        file
+        && typeof file === "object"
+        && typeof (file as { path?: unknown }).path === "string"
+        && typeof (file as { extension?: unknown }).extension === "string"
+    );
+}
+
 function getFileMtime(file: TFile): number {
-    return (file as TFile & { stat?: { mtime?: number } }).stat?.mtime ?? 0;
+    return file.stat?.mtime ?? 0;
 }
 
 function getFileSize(file: TFile): number {
-    return (file as TFile & { stat?: { size?: number } }).stat?.size ?? 0;
+    return file.stat?.size ?? 0;
 }
 
 function buildFileCountEntry(file: TFile, counts: ActivityCounts): FileCountCacheEntry {

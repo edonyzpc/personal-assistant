@@ -126,6 +126,8 @@ function arraysEqual(left: string[], right: string[]): boolean {
  */
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
 const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
+type TimeoutHandle = number | ReturnType<typeof setTimeout>;
+type IntervalHandle = number | ReturnType<typeof setInterval>;
 
 function readPageletMigrationFlag(): boolean {
     try {
@@ -214,7 +216,7 @@ export class PluginManager extends Plugin {
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private hoverPopoverObserver: MutationObserver | null = null;
-    private resizeDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private resizeDebounceTimer: TimeoutHandle | null = null;
 
     private t(key: PluginMessageKey | string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
         return pluginT(key, getPluginUiLanguage(), params, fallback);
@@ -247,8 +249,8 @@ export class PluginManager extends Plugin {
                         && (node.matches('.popover.hover-popover.hover-editor')
                             || node.querySelector('.popover.hover-popover.hover-editor'))
                     ) {
-                        if (this.resizeDebounceTimer !== null) clearTimeout(this.resizeDebounceTimer);
-                        this.resizeDebounceTimer = setTimeout(() => {
+                        if (this.resizeDebounceTimer !== null) clearPluginTimeout(this.resizeDebounceTimer);
+                        this.resizeDebounceTimer = setPluginTimeout(() => {
                             this.resizeDebounceTimer = null;
                             if (!this.hoverPopoverObserver) return;
                             this.localGraph.resize();
@@ -433,8 +435,8 @@ export class PluginManager extends Plugin {
         this.addCommand({
             id: "preview-records",
             name: this.t("plugin.command.previewRecords"),
-            callback: async () => {
-                this.activateView();
+            callback: () => {
+                void this.activateView();
             }
         })
 
@@ -493,8 +495,8 @@ export class PluginManager extends Plugin {
         this.addCommand({
             id: 'open-chat',
             name: this.t("plugin.command.openChatSidebar"),
-            callback: async () => {
-                this.activeChatView();
+            callback: () => {
+                void this.activeChatView();
             }
         });
 
@@ -973,7 +975,7 @@ export class PluginManager extends Plugin {
 
     async onunload() {
         const statsManager = this.statsManager;
-        if (this.resizeDebounceTimer !== null) clearTimeout(this.resizeDebounceTimer);
+        if (this.resizeDebounceTimer !== null) clearPluginTimeout(this.resizeDebounceTimer);
         this.resizeDebounceTimer = null;
         this.hoverPopoverObserver?.disconnect();
         this.hoverPopoverObserver = null;
@@ -1114,16 +1116,16 @@ export class PluginManager extends Plugin {
         }
 
         return new Promise((resolve) => {
-            const interval = setInterval(() => {
+            const interval = setPluginInterval(() => {
                 const pluginInstance = pluginRegistry.plugins?.[pluginId];
                 if (pluginInstance !== undefined) {
-                    clearTimeout(timeout);
-                    clearInterval(interval);
+                    clearPluginTimeout(timeout);
+                    clearPluginInterval(interval);
                     resolve(pluginInstance);
                 }
             }, CALLOUT_MANAGER_READY_POLL_MS);
-            const timeout = setTimeout(() => {
-                clearInterval(interval);
+            const timeout = setPluginTimeout(() => {
+                clearPluginInterval(interval);
                 resolve(undefined);
             }, timeoutMs);
         });
@@ -1204,7 +1206,7 @@ export class PluginManager extends Plugin {
 
     private updateMetadata = (file: TFile | null) => {
         if (file instanceof TFile) {
-            if ((file as TFile).extension === 'md') {
+            if (file.extension === 'md') {
                 let filterPath = file.path;
                 // filter with excluding setting paths
                 for (const path of this.settings.metadataExcludePath) {
@@ -1238,7 +1240,7 @@ export class PluginManager extends Plugin {
                                 }
                             }
                         }
-                        setTimeout(() => {
+                        setPluginTimeout(() => {
                             this.updateDebouncer.cancel();
                         }, 100);
                     });
@@ -1926,6 +1928,34 @@ export class PluginManager extends Plugin {
     clearTokenCache(): void {
         this.token = "";
     }
+}
+
+function setPluginTimeout(callback: () => void, ms: number): TimeoutHandle {
+    return typeof window === "undefined"
+        ? setTimeout(callback, ms)
+        : window.setTimeout(callback, ms);
+}
+
+function clearPluginTimeout(timeoutId: TimeoutHandle): void {
+    if (typeof window === "undefined") {
+        clearTimeout(timeoutId);
+        return;
+    }
+    window.clearTimeout(timeoutId);
+}
+
+function setPluginInterval(callback: () => void, ms: number): IntervalHandle {
+    return typeof window === "undefined"
+        ? setInterval(callback, ms)
+        : window.setInterval(callback, ms);
+}
+
+function clearPluginInterval(intervalId: IntervalHandle): void {
+    if (typeof window === "undefined") {
+        clearInterval(intervalId);
+        return;
+    }
+    window.clearInterval(intervalId);
 }
 
 function createStatisticsVaultId(): string {
