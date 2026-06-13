@@ -1,5 +1,7 @@
 import { App, Modal, Setting } from "obsidian";
 
+import { getPluginUiLanguage, pluginT } from "./locales/plugin";
+
 export interface ConfirmUserActionOptions {
     title: string;
     message: string;
@@ -30,13 +32,13 @@ export function confirmUserAction(app: App, options: ConfirmUserActionOptions): 
                 new Setting(this.contentEl)
                     .addButton((button) => {
                         button
-                            .setButtonText(this.modalOptions.cancelText ?? "Cancel")
+                            .setButtonText(this.modalOptions.cancelText ?? pluginT("plugin.confirm.cancel", getPluginUiLanguage()))
                             .onClick(() => this.resolve(false));
                     })
                     .addButton((button) => {
                         button
                             .setCta()
-                            .setButtonText(this.modalOptions.confirmText ?? "Confirm")
+                            .setButtonText(this.modalOptions.confirmText ?? pluginT("plugin.confirm.confirm", getPluginUiLanguage()))
                             .onClick(() => this.resolve(true));
                     });
             }

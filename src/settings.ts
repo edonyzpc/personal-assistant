@@ -18,6 +18,7 @@ import {
     type PageletSettingFactory,
 } from "./settings/pagelet";
 import { getPageletUiLanguage } from "./locales/pagelet";
+import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
 
 export interface ResizeStyle {
     width: number,
@@ -402,16 +403,25 @@ interface QwenResponseOptionsDescription {
     setText(text: string): unknown;
 }
 
+interface QwenResponseOptionsCopy {
+    dashScopeDescription: string;
+    nonDashScopeDescription: string;
+}
+
 export function updateQwenResponseOptionAvailability(
     baseURL: unknown,
     descriptionEl: QwenResponseOptionsDescription,
     toggles: QwenResponseOptionToggle[],
+    copy: QwenResponseOptionsCopy = {
+        dashScopeDescription: QWEN_RESPONSE_OPTIONS_DASHSCOPE_DESC,
+        nonDashScopeDescription: QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC,
+    },
 ): boolean {
     const isDashScopeCompatible = isDashScopeCompatibleBaseURL(baseURL);
     descriptionEl.setText(
         isDashScopeCompatible
-            ? QWEN_RESPONSE_OPTIONS_DASHSCOPE_DESC
-            : QWEN_RESPONSE_OPTIONS_NON_DASHSCOPE_DESC
+            ? copy.dashScopeDescription
+            : copy.nonDashScopeDescription
     );
     toggles.forEach((toggle) => toggle.setDisabled(!isDashScopeCompatible));
     return isDashScopeCompatible;
@@ -457,6 +467,10 @@ export class SettingTab extends PluginSettingTab {
         super(app, plugin);
         this.plugin = plugin;
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+    }
+
+    private t(key: PluginMessageKey | string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
+        return pluginT(key, getPluginUiLanguage(), params, fallback);
     }
 
     display(): void {
@@ -539,7 +553,7 @@ export class SettingTab extends PluginSettingTab {
             event.stopImmediatePropagation();
             const secretId = this.getSecretIdFromPickerRow(row);
             if (!secretId) {
-                new Notice("Could not determine which secret to edit.", 4000);
+                new Notice(this.t("plugin.settings.secret.cannotDetermine"), 4000);
                 return;
             }
             this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
@@ -591,8 +605,8 @@ export class SettingTab extends PluginSettingTab {
             }
 
             editAction.classList.add("pa-secret-edit-action");
-            editAction.setAttribute("aria-label", "Edit secret");
-            editAction.setAttribute("title", "Edit secret");
+            editAction.setAttribute("aria-label", this.t("plugin.settings.secret.edit"));
+            editAction.setAttribute("title", this.t("plugin.settings.secret.edit"));
             if (!editAction.querySelector(".lucide-pencil, [data-icon='pencil']")) {
                 editAction.replaceChildren();
                 setIcon(editAction, "pencil");
@@ -608,7 +622,7 @@ export class SettingTab extends PluginSettingTab {
                 event.stopImmediatePropagation();
                 const secretId = this.getSecretIdFromPickerRow(row);
                 if (!secretId) {
-                    new Notice("Could not determine which secret to edit.", 4000);
+                    new Notice(this.t("plugin.settings.secret.cannotDetermine"), 4000);
                     return;
                 }
                 this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
@@ -674,7 +688,7 @@ export class SettingTab extends PluginSettingTab {
         const modal = pickerModal ?? this.findSecretPickerModal();
         const addSecretButton = modal ? this.findAddSecretButton(modal) : null;
         if (!addSecretButton) {
-            new Notice(`Could not open the secret editor for ${secretId}.`, 4000);
+            new Notice(this.t("plugin.settings.secret.openFailed", { secretId }), 4000);
             return;
         }
 
@@ -717,7 +731,7 @@ export class SettingTab extends PluginSettingTab {
         }
 
         if (attempt >= maxAttempts) {
-            new Notice(`Opened Add secret. Enter ${secretId} and update the secret value.`, 5000);
+            new Notice(this.t("plugin.settings.secret.addOpened", { secretId }), 5000);
             return;
         }
         window.setTimeout(() => this.prefillAddSecretModal(secretId, secretValue, attempt + 1), 100);
@@ -767,17 +781,22 @@ export class SettingTab extends PluginSettingTab {
         const secretId = plugin.getAPITokenSecretId();
         const legacySecretId = plugin.getLegacyAPITokenSecretId();
         const existing = getVaultScopedSecret(app.secretStorage, secretId, legacySecretId) ?? "";
+        const translate = this.t.bind(this);
 
         class ApiTokenSecretModal extends Modal {
             onOpen(): void {
                 const { contentEl } = this;
                 contentEl.empty();
                 contentEl.addClass("pa-api-token-secret-modal");
-                contentEl.createEl("h2", { text: existing ? "Edit API token" : "Add API token" });
+                contentEl.createEl("h2", {
+                    text: existing
+                        ? translate("plugin.settings.apiToken.modal.editTitle")
+                        : translate("plugin.settings.apiToken.modal.addTitle"),
+                });
 
                 new Setting(contentEl)
-                    .setName("ID")
-                    .setDesc("Vault-scoped secret ID used by Personal Assistant.")
+                    .setName(translate("plugin.settings.apiToken.modal.id.name"))
+                    .setDesc(translate("plugin.settings.apiToken.modal.id.desc"))
                     .addText((text) => {
                         text.setValue(secretId);
                         text.inputEl.readOnly = true;
@@ -788,8 +807,8 @@ export class SettingTab extends PluginSettingTab {
                 let secretInput: HTMLInputElement | null = null;
                 let revealed = false;
                 const secretSetting = new Setting(contentEl)
-                    .setName("Secret")
-                    .setDesc("Stored in your OS keychain. Leave empty and save to remove it.")
+                    .setName(translate("plugin.settings.apiToken.modal.secret.name"))
+                    .setDesc(translate("plugin.settings.apiToken.modal.secret.desc"))
                     .addText((text) => {
                         secretInput = text.inputEl;
                         text.inputEl.type = "password";
@@ -802,7 +821,7 @@ export class SettingTab extends PluginSettingTab {
                 secretSetting.addExtraButton((button) => {
                     button
                         .setIcon("eye-off")
-                        .setTooltip("Show secret")
+                        .setTooltip(translate("plugin.settings.apiToken.modal.showSecret"))
                         .onClick(() => {
                             if (!secretInput) {
                                 return;
@@ -810,14 +829,18 @@ export class SettingTab extends PluginSettingTab {
                             revealed = !revealed;
                             secretInput.type = revealed ? "text" : "password";
                             button.setIcon(revealed ? "eye" : "eye-off");
-                            button.setTooltip(revealed ? "Hide secret" : "Show secret");
+                            button.setTooltip(
+                                revealed
+                                    ? translate("plugin.settings.apiToken.modal.hideSecret")
+                                    : translate("plugin.settings.apiToken.modal.showSecret")
+                            );
                         });
                 });
 
                 new Setting(contentEl)
                     .addButton((button) => {
                         button
-                            .setButtonText("Save")
+                            .setButtonText(translate("plugin.settings.apiToken.modal.save"))
                             .setCta()
                             .onClick(async () => {
                                 const value = secretValue.trim();
@@ -827,10 +850,10 @@ export class SettingTab extends PluginSettingTab {
                                         return;
                                     }
                                     const confirmed = await confirmUserAction(app, {
-                                        title: "Remove API token?",
-                                        message: "This will remove the API token stored in your OS keychain for Personal Assistant. Existing notes and settings are not changed.",
-                                        confirmText: "Remove token",
-                                        cancelText: "Keep token",
+                                        title: translate("plugin.settings.ai.apiToken.remove.title"),
+                                        message: translate("plugin.settings.ai.apiToken.remove.message"),
+                                        confirmText: translate("plugin.settings.ai.apiToken.remove.confirm"),
+                                        cancelText: translate("plugin.settings.ai.apiToken.remove.cancel"),
                                     });
                                     if (!confirmed) {
                                         return;
@@ -847,12 +870,12 @@ export class SettingTab extends PluginSettingTab {
                                 }
                                 plugin.clearTokenCache();
                                 this.close();
-                                new Notice("API token saved.", 3000);
+                                new Notice(translate("plugin.settings.apiToken.modal.saved"), 3000);
                             });
                     })
                     .addButton((button) => {
                         button
-                            .setButtonText("Cancel")
+                            .setButtonText(translate("plugin.settings.apiToken.modal.cancel"))
                             .onClick(() => this.close());
                     });
 
@@ -895,6 +918,7 @@ export class SettingTab extends PluginSettingTab {
         };
 
         const rename = () => {
+            const keychainLabel = this.t("plugin.settings.apiToken.openKeychain");
             const candidates = Array.from(maybeRoot.querySelectorAll<HTMLElement>(
                 "button, .clickable-icon, .setting-item-control *",
             ));
@@ -907,20 +931,20 @@ export class SettingTab extends PluginSettingTab {
                 const button = element.closest("button") as HTMLElement | null ?? element;
                 const setText = (button as HTMLElement & { setText?: (value: string) => void }).setText;
                 if (setText) {
-                    setText.call(button, "Keychain");
+                    setText.call(button, keychainLabel);
                 } else {
-                    button.textContent = "Keychain";
+                    button.textContent = keychainLabel;
                 }
                 (button as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-api-token-keychain-button");
-                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("aria-label", "Open Keychain");
-                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("title", "Open Keychain");
+                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("aria-label", keychainLabel);
+                (button as HTMLElement & { setAttr?: (name: string, value: string) => void }).setAttr?.("title", keychainLabel);
                 button.classList.add("pa-api-token-keychain-button");
-                button.setAttribute("aria-label", "Open Keychain");
-                button.setAttribute("title", "Open Keychain");
+                button.setAttribute("aria-label", keychainLabel);
+                button.setAttribute("title", keychainLabel);
                 bindKeychainButton(button);
                 renamed = true;
             });
-            const keychainButtons = candidates.filter((element) => element.textContent?.trim() === "Keychain");
+            const keychainButtons = candidates.filter((element) => element.textContent?.trim() === keychainLabel);
             keychainButtons.forEach((element) => bindKeychainButton(element.closest("button") as HTMLElement | null ?? element));
             return renamed || keychainButtons.length > 0;
         };
@@ -947,21 +971,21 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private renderHeader(parentEl: HTMLElement): void {
-        parentEl.createEl('h1', { text: 'Settings for Obsidian Assistant' });
+        parentEl.createEl('h1', { text: this.t("plugin.settings.header.title") });
         const link = document.createElement("a");
-        link.setText("Open GitHub repository");
+        link.setText(this.t("plugin.settings.header.repo"));
         link.href = "https://github.com/edonyzpc/personal-assistant";
         link.setAttr("style", "font-style: italic;");
-        parentEl.createEl("p", { text: "Obsidian Assistant by Shadow Walker, " }).appendChild(link);
+        parentEl.createEl("p", { text: this.t("plugin.settings.header.byline") }).appendChild(link);
     }
 
     private renderRecordSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
         // settiong options for recording
-        parentEl.createEl('h2', { text: 'Settings for Record' });
-        parentEl.createEl("p", { text: "Obsidian Management for Recording in Specific Path" }).setAttr("style", "font-size:14px");
-        new Setting(parentEl).setName('Target Path')
-            .setDesc('Target directory to do recording')
+        parentEl.createEl('h2', { text: this.t("plugin.settings.record.title") });
+        parentEl.createEl("p", { text: this.t("plugin.settings.record.desc") }).setAttr("style", "font-size:14px");
+        new Setting(parentEl).setName(this.t("plugin.settings.record.targetPath.name"))
+            .setDesc(this.t("plugin.settings.record.targetPath.desc"))
             .addText(text => text
                 .setPlaceholder('.')
                 .setValue(plugin.settings.targetPath)
@@ -972,13 +996,13 @@ export class SettingTab extends PluginSettingTab {
                 }));
         const desc_format = document.createDocumentFragment();
         desc_format.createEl('p', undefined, (p) => {
-            p.innerText = "File format which is like Diary setting.\nFor more syntax details, ";
+            p.innerText = this.t("plugin.settings.record.fileFormat.descPrefix");
             p.createEl('a', undefined, (link) => {
-                link.innerText = 'please check moment format.';
+                link.innerText = this.t("plugin.settings.record.fileFormat.link");
                 link.href = 'https://momentjs.com/docs/#/displaying/format/';
             });
         });
-        new Setting(parentEl).setName('File Format')
+        new Setting(parentEl).setName(this.t("plugin.settings.record.fileFormat.name"))
             .setDesc(desc_format)
             .addText(text => text.setPlaceholder('YYYY-MM-DD')
                 .setValue(plugin.settings.fileFormat)
@@ -987,8 +1011,8 @@ export class SettingTab extends PluginSettingTab {
                     plugin.settings.fileFormat = value;
                     this.debouncedSave();
                 }));
-        new Setting(parentEl).setName("Preview Number")
-            .setDesc("File numbers to preview")
+        new Setting(parentEl).setName(this.t("plugin.settings.record.previewNumber.name"))
+            .setDesc(this.t("plugin.settings.record.previewNumber.desc"))
             .addText(text => {
                 text.setPlaceholder('5')
                     .setValue(plugin.settings.previewLimits.toString())
@@ -1001,10 +1025,10 @@ export class SettingTab extends PluginSettingTab {
 
     private renderGraphSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        parentEl.createEl('h2', { text: 'Settings for Hover Local Graph' });
-        parentEl.createEl("p", { text: "Obsidian Management for Hover Local Graph" }).setAttr("style", "font-size:14px");
-        new Setting(parentEl).setName('Type')
-            .setDesc('Type of hover')
+        parentEl.createEl('h2', { text: this.t("plugin.settings.graph.title") });
+        parentEl.createEl("p", { text: this.t("plugin.settings.graph.desc") }).setAttr("style", "font-size:14px");
+        new Setting(parentEl).setName(this.t("plugin.settings.graph.type.name"))
+            .setDesc(this.t("plugin.settings.graph.type.desc"))
             .addText(text => {
                 text.setPlaceholder('popover')
                     .setValue(plugin.settings.localGraph.type)
@@ -1013,8 +1037,8 @@ export class SettingTab extends PluginSettingTab {
                         this.debouncedSave();
                     })
             });
-        new Setting(parentEl).setName('Depth')
-            .setDesc('Depth of link jumps')
+        new Setting(parentEl).setName(this.t("plugin.settings.graph.depth.name"))
+            .setDesc(this.t("plugin.settings.graph.depth.desc"))
             .addText(text => {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.localGraph.depth.toString())
@@ -1023,8 +1047,8 @@ export class SettingTab extends PluginSettingTab {
                         this.debouncedSave();
                     })
             });
-        new Setting(parentEl).setName('Show Tags')
-            .setDesc('Show tags in local graph view')
+        new Setting(parentEl).setName(this.t("plugin.settings.graph.showTags.name"))
+            .setDesc(this.t("plugin.settings.graph.showTags.desc"))
             .addToggle(toggle => {
                 toggle.setValue(plugin.settings.localGraph.showTags)
                     .onChange(async (value) => {
@@ -1032,8 +1056,8 @@ export class SettingTab extends PluginSettingTab {
                         await plugin.saveSettings();
                     })
             });
-        new Setting(parentEl).setName('Show Attachment')
-            .setDesc('Show attachments in local graph view')
+        new Setting(parentEl).setName(this.t("plugin.settings.graph.showAttachment.name"))
+            .setDesc(this.t("plugin.settings.graph.showAttachment.desc"))
             .addToggle(toggle => {
                 toggle.setValue(plugin.settings.localGraph.showAttach)
                     .onChange(async (value) => {
@@ -1041,8 +1065,8 @@ export class SettingTab extends PluginSettingTab {
                         await plugin.saveSettings();
                     })
             });
-        new Setting(parentEl).setName('Show Neighbor')
-            .setDesc('Show neighbors in local graph view')
+        new Setting(parentEl).setName(this.t("plugin.settings.graph.showNeighbor.name"))
+            .setDesc(this.t("plugin.settings.graph.showNeighbor.desc"))
             .addToggle(toggle => {
                 toggle.setValue(plugin.settings.localGraph.showNeighbor)
                     .onChange(async (value) => {
@@ -1050,8 +1074,8 @@ export class SettingTab extends PluginSettingTab {
                         await plugin.saveSettings();
                     })
             });
-        new Setting(parentEl).setName('Collapse')
-            .setDesc('Collapse local graph view setting')
+        new Setting(parentEl).setName(this.t("plugin.settings.graph.collapse.name"))
+            .setDesc(this.t("plugin.settings.graph.collapse.desc"))
             .addToggle(toggle => {
                 toggle.setValue(plugin.settings.localGraph.collapse)
                     .onChange(async (value) => {
@@ -1059,34 +1083,23 @@ export class SettingTab extends PluginSettingTab {
                         await plugin.saveSettings();
                     })
             });
-        new Setting(parentEl).setName('Auto Local Graph Colors')
-            .setDesc('Automatically set colors of local graph view.')
+        new Setting(parentEl).setName(this.t("plugin.settings.graph.autoColors.name"))
+            .setDesc(this.t("plugin.settings.graph.autoColors.desc"))
             .addToggle(toggle => {
                 toggle.setValue(plugin.settings.localGraph.autoColors).onChange(async value => {
                     plugin.settings.localGraph.autoColors = value;
                     await plugin.saveSettings();
                 })
             });
-        parentEl.createEl("p", { text: "Graph Resize" }).setAttr("style", "font-size:15px");
+        parentEl.createEl("p", { text: this.t("plugin.settings.graph.resize") }).setAttr("style", "font-size:15px");
         const h = document.createDocumentFragment();
         h.createEl('span', undefined, (p) => {
-            p.innerText = "height";
+            p.innerText = this.t("plugin.settings.graph.height");
             p.setAttr('style', 'margin:18px');
         });
         const w = document.createDocumentFragment();
         w.createEl('span', undefined, (p) => {
-            p.innerText = "width";
-            p.setAttr('style', 'margin:18px');
-        });
-        // Phase 5 will remove these now-unused fragments (kept here verbatim from the original to limit Phase 1 to pure restructuring).
-        const t = document.createDocumentFragment();
-        t.createEl('span', undefined, (p) => {
-            p.innerText = "top";
-            p.setAttr('style', 'margin:18px');
-        });
-        const l = document.createDocumentFragment();
-        l.createEl('span', undefined, (p) => {
-            p.innerText = "left";
+            p.innerText = this.t("plugin.settings.graph.width");
             p.setAttr('style', 'margin:18px');
         });
         new Setting(parentEl).setName(h)
@@ -1113,9 +1126,9 @@ export class SettingTab extends PluginSettingTab {
 
     private renderGraphColorsSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        parentEl.createEl('h2', { text: 'Graph Colors' });
-        new Setting(parentEl).setName('Enable Graph Colors')
-            .setDesc('Use personal assistant set colors of graph view.')
+        parentEl.createEl('h2', { text: this.t("plugin.settings.graphColors.title") });
+        new Setting(parentEl).setName(this.t("plugin.settings.graphColors.enabled.name"))
+            .setDesc(this.t("plugin.settings.graphColors.enabled.desc"))
             .addToggle(toggle => {
                 toggle.setValue(plugin.settings.enableGraphColors).onChange(async value => {
                     plugin.settings.enableGraphColors = value;
@@ -1152,10 +1165,10 @@ export class SettingTab extends PluginSettingTab {
             const colorRgb = hexToRGB(color);
             const nameEl = document.createDocumentFragment();
             nameEl.createSpan({ text: "●", attr: { style: `color: ${color}` } });
-            nameEl.appendText(` Color for #${colorGroup.query}`);
+            nameEl.appendText(` ${this.t("plugin.settings.graphColors.colorFor", { query: colorGroup.query })}`);
             new Setting(container)
                 .setName(nameEl)
-                .setDesc('This will be the Color used in the graph view.')
+                .setDesc(this.t("plugin.settings.graphColors.colorDesc"))
                 .addText(text => {
                     text.setValue(plugin.settings.colorGroups[index].query)
                         .onChange((value) => {
@@ -1166,7 +1179,7 @@ export class SettingTab extends PluginSettingTab {
                         })
                 })
                 .addButton(btn => {
-                    btn.setButtonText("Change Color");
+                    btn.setButtonText(this.t("plugin.settings.graphColors.change"));
                     const picker = new Picker({
                         parent: btn.buttonEl,
                         onDone: async (color) => {
@@ -1191,7 +1204,7 @@ export class SettingTab extends PluginSettingTab {
                     this.activePickers.push(picker);
                 })
                 .addExtraButton(btn => {
-                    btn.setIcon("trash").setTooltip("Remove").onClick(async () => {
+                    btn.setIcon("trash").setTooltip(this.t("plugin.settings.graphColors.remove")).onClick(async () => {
                         if (index > -1) {
                             this.log("removing color group", plugin.settings.colorGroups[index]);
                             plugin.settings.colorGroups.splice(index, 1);
@@ -1201,7 +1214,7 @@ export class SettingTab extends PluginSettingTab {
                     });
                 })
                 .addExtraButton(btn => {
-                    btn.setIcon("reset").setTooltip("Reset to default").onClick(async () => {
+                    btn.setIcon("reset").setTooltip(this.t("plugin.settings.graphColors.reset")).onClick(async () => {
                         if (index > -1) {
                             this.log("resetting color group", plugin.settings.colorGroups[index]);
                             plugin.settings.colorGroups[index] = JSON.parse(JSON.stringify(DEFAULT_GRAPH_COLOR));
@@ -1213,7 +1226,7 @@ export class SettingTab extends PluginSettingTab {
         });
         new Setting(container)
             .addButton(btn => {
-                btn.setButtonText("Add Color").onClick(async () => {
+                btn.setButtonText(this.t("plugin.settings.graphColors.add")).onClick(async () => {
                     this.log("adding new color");
                     plugin.settings.colorGroups.push(JSON.parse(JSON.stringify(DEFAULT_GRAPH_COLOR)));
                     await plugin.saveSettings();
@@ -1226,16 +1239,16 @@ export class SettingTab extends PluginSettingTab {
     private renderMetadataSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
         // setting options for updating metadata
-        parentEl.createEl('h2', { text: 'Metadata Management' });
+        parentEl.createEl('h2', { text: this.t("plugin.settings.metadata.title") });
         const descFormat = document.createDocumentFragment();
         descFormat.createEl('p', undefined, (p) => {
-            p.innerText = "Auto updating metadata in frontmatter when file is modified.\nTimestamp format follows `moment.js` and syntax details, ";
+            p.innerText = this.t("plugin.settings.metadata.descPrefix");
             p.createEl('a', undefined, (link) => {
-                link.innerText = 'please check moment format.';
+                link.innerText = this.t("plugin.settings.metadata.descLink");
                 link.href = 'https://momentjs.com/docs/#/displaying/format/';
             });
         });
-        new Setting(parentEl).setName('Enable Updating Metadata')
+        new Setting(parentEl).setName(this.t("plugin.settings.metadata.enabled.name"))
             .setDesc(descFormat)
             .addToggle(toggle => {
                 toggle.setValue(plugin.settings.enableMetadataUpdating).onChange(async value => {
@@ -1276,7 +1289,7 @@ export class SettingTab extends PluginSettingTab {
                         })
                 })
                 .addExtraButton(btn => {
-                    btn.setIcon("trash").setTooltip("Remove").onClick(async () => {
+                    btn.setIcon("trash").setTooltip(this.t("plugin.settings.graphColors.remove")).onClick(async () => {
                         if (index > -1) {
                             this.log("removing metadata rule", plugin.settings.metadatas[index]);
                             plugin.settings.metadatas.splice(index, 1);
@@ -1302,8 +1315,8 @@ export class SettingTab extends PluginSettingTab {
         let keyInput: { setValue: (v: string) => unknown } | null = null;
         let valueInput: { setValue: (v: string) => unknown } | null = null;
         new Setting(container)
-            .setName("Add Key:Value in frontmatter")
-            .setDesc('Value only supports formatted timestamp and regular string.')
+            .setName(this.t("plugin.settings.metadata.add.name"))
+            .setDesc(this.t("plugin.settings.metadata.add.desc"))
             .addText(text => {
                 keyInput = text;
                 text.setPlaceholder('key')
@@ -1321,18 +1334,18 @@ export class SettingTab extends PluginSettingTab {
                     })
             })
             .addDropdown(dropDown => {
-                dropDown.addOption('string', 'Regular string');
-                dropDown.addOption('moment', 'Formatted timestamp');
+                dropDown.addOption('string', this.t("plugin.settings.metadata.dropdown.string"));
+                dropDown.addOption('moment', this.t("plugin.settings.metadata.dropdown.moment"));
                 dropDown.setValue(t);
                 dropDown.onChange(async (value) => {
                     t = value;
                 });
             })
             .addButton(btn => {
-                btn.setButtonText("Add").onClick(async () => {
+                btn.setButtonText(this.t("plugin.settings.metadata.add.button")).onClick(async () => {
                     const trimmedKey = key.trim();
                     if (!trimmedKey) {
-                        new Notice("Frontmatter key is required.", 4000);
+                        new Notice(this.t("plugin.settings.metadata.keyRequired"), 4000);
                         return;
                     }
                     this.log("adding new frontmatter");
@@ -1349,8 +1362,8 @@ export class SettingTab extends PluginSettingTab {
                     this.rebuildMetadataList();
                 })
             });
-        new Setting(container).setName("Meta Updating Exclude Path")
-            .setDesc("Exclude files in the directory to update metadata")
+        new Setting(container).setName(this.t("plugin.settings.metadata.excludePath.name"))
+            .setDesc(this.t("plugin.settings.metadata.excludePath.desc"))
             .addText(text => {
                 text.setPlaceholder('path strings with comma as separator, e.g. `tmp/,notes/templates`')
                     .setValue(plugin.settings.metadataExcludePath.join(','))
@@ -1365,14 +1378,14 @@ export class SettingTab extends PluginSettingTab {
     private renderStatisticsSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
         // setting for show statistics
-        parentEl.createEl('h2', { text: 'Vault Statistics' });
-        new Setting(parentEl).setName("Show Statistics")
-            .setDesc("Choose the default statistics dashboard view")
+        parentEl.createEl('h2', { text: this.t("plugin.settings.statistics.title") });
+        new Setting(parentEl).setName(this.t("plugin.settings.statistics.show.name"))
+            .setDesc(this.t("plugin.settings.statistics.show.desc"))
             .addDropdown(dropDown => {
-                dropDown.addOption('overview', 'Overview');
-                dropDown.addOption('daily', 'Daily Writing');
-                dropDown.addOption('growth', 'Growth');
-                dropDown.addOption('composition', 'Composition');
+                dropDown.addOption('overview', this.t("plugin.settings.statistics.view.overview"));
+                dropDown.addOption('daily', this.t("plugin.settings.statistics.view.daily"));
+                dropDown.addOption('growth', this.t("plugin.settings.statistics.view.growth"));
+                dropDown.addOption('composition', this.t("plugin.settings.statistics.view.composition"));
                 dropDown.setValue(normalizeStatisticsView(plugin.settings.statisticsType));
                 dropDown.onChange(async (value) => {
                     plugin.log("changing statistics type", value);
@@ -1388,8 +1401,8 @@ export class SettingTab extends PluginSettingTab {
                     this.app.workspace.revealLeaf(leaf);
                 });
             });
-        new Setting(parentEl).setName("Sync statistics history across devices")
-            .setDesc(STATISTICS_SYNC_SETTING_DESC)
+        new Setting(parentEl).setName(this.t("plugin.settings.statistics.sync.name"))
+            .setDesc(this.t("plugin.settings.statistics.sync.desc"))
             .addToggle((toggle) => {
                 toggle.setValue(Boolean(plugin.settings.statisticsSyncEnabled))
                     .onChange(async (value) => {
@@ -1403,11 +1416,11 @@ export class SettingTab extends PluginSettingTab {
                             toggle.setValue(previousValue);
                             await plugin.saveSettings();
                             plugin.log("Failed to change Statistics sync setting", error);
-                            new Notice("Could not change Statistics sync setting. Your notes are not affected.", 5000);
+                            new Notice(this.t("plugin.settings.statistics.sync.error"), 5000);
                         }
                     });
             });
-        new Setting(parentEl).setName("Animation").addToggle((cb) =>
+        new Setting(parentEl).setName(this.t("plugin.settings.statistics.animation.name")).addToggle((cb) =>
             cb.setValue(plugin.settings.animation)
                 .onChange((value) => {
                     plugin.settings.animation = value;
@@ -1416,8 +1429,8 @@ export class SettingTab extends PluginSettingTab {
         );
 
         new Setting(parentEl)
-            .setName("Show section word counts")
-            .setDesc("Display word counts under each heading while editing.")
+            .setName(this.t("plugin.settings.statistics.sectionCounts.name"))
+            .setDesc(this.t("plugin.settings.statistics.sectionCounts.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.displaySectionCounts)
@@ -1428,8 +1441,8 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(parentEl)
-            .setName("Count comments in statistics")
-            .setDesc("Include text inside HTML and Obsidian comments in word and character counts.")
+            .setName(this.t("plugin.settings.statistics.countComments.name"))
+            .setDesc(this.t("plugin.settings.statistics.countComments.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.countComments)
@@ -1442,17 +1455,17 @@ export class SettingTab extends PluginSettingTab {
 
     private renderAISection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        parentEl.createEl('h2', { text: 'AI Assistant' });
+        parentEl.createEl('h2', { text: this.t("plugin.settings.ai.title") });
         parentEl.createEl("p", {
-            text: 'AI Helper supports Qwen, OpenAI, and other OpenAI-compatible providers.',
+            text: this.t("plugin.settings.ai.desc"),
             cls: "pa-settings-section-desc",
         });
 
-        new Setting(parentEl).setName("AI Provider")
-            .setDesc("Select the AI service provider. Presets fill recommended defaults; you can edit the URL and models after switching.")
+        new Setting(parentEl).setName(this.t("plugin.settings.ai.provider.name"))
+            .setDesc(this.t("plugin.settings.ai.provider.desc"))
             .addDropdown(dropDown => {
                 if (!plugin.settings.aiProvider) {
-                    dropDown.addOption('', '-- Choose your AI provider --');
+                    dropDown.addOption('', this.t("plugin.settings.ai.provider.choose"));
                 }
                 for (const [key, preset] of Object.entries(PROVIDER_PRESETS)) {
                     dropDown.addOption(key, preset.label);
@@ -1487,11 +1500,11 @@ export class SettingTab extends PluginSettingTab {
                                 ? plugin.settings.embeddingModelName !== ""
                                 : Boolean(prev) && plugin.settings.embeddingModelName !== prev.embeddingModelName;
                             const confirmed = await confirmUserAction(this.app, {
-                                title: "Switch AI provider?",
+                                title: this.t("plugin.settings.ai.provider.switch.title"),
                                 message: value === "custom"
-                                    ? "Switching to Custom keeps your current Base URL, chat model, and Memory model so you can edit them manually. Your API token is kept but may need to be replaced."
-                                    : "Switching providers replaces your Base URL, chat model, and Memory model with that preset's defaults. You can edit them afterward. Your API token is kept but may need to be replaced.",
-                                confirmText: "Switch",
+                                    ? this.t("plugin.settings.ai.provider.switch.customMessage")
+                                    : this.t("plugin.settings.ai.provider.switch.presetMessage"),
+                                confirmText: this.t("plugin.settings.ai.provider.switch.confirm"),
                             });
                             if (!confirmed) {
                                 dropDown.setValue(prevKey);
@@ -1538,15 +1551,15 @@ export class SettingTab extends PluginSettingTab {
             // with empty Token + Base URL + Model fields and no clue which
             // values belong with which provider.
             container.createEl("p", {
-                text: "Choose an AI provider above to configure your API token, base URL, and model.",
+                text: this.t("plugin.settings.ai.provider.prompt"),
                 cls: "pa-settings-provider-prompt",
             });
             return;
         }
 
         new Setting(container)
-            .setName("API Token")
-            .setDesc("Stored securely in your OS keychain (macOS Keychain / iOS Keychain / Windows Credential Manager). Clear the field to remove it.")
+            .setName(this.t("plugin.settings.ai.apiToken.name"))
+            .setDesc(this.t("plugin.settings.ai.apiToken.desc"))
             .addComponent((el) => {
                 const secret = new SecretComponent(this.app, el);
                 const secretId = plugin.getAPITokenSecretId();
@@ -1563,10 +1576,10 @@ export class SettingTab extends PluginSettingTab {
                             return;
                         }
                         const confirmed = await confirmUserAction(this.app, {
-                            title: "Remove API token?",
-                            message: "This will remove the API token stored in your OS keychain for Personal Assistant. Existing notes and settings are not changed.",
-                            confirmText: "Remove token",
-                            cancelText: "Keep token",
+                            title: this.t("plugin.settings.ai.apiToken.remove.title"),
+                            message: this.t("plugin.settings.ai.apiToken.remove.message"),
+                            confirmText: this.t("plugin.settings.ai.apiToken.remove.confirm"),
+                            cancelText: this.t("plugin.settings.ai.apiToken.remove.cancel"),
                         });
                         if (!confirmed) {
                             secret.setValue(stored);
@@ -1589,8 +1602,8 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(container)
-            .setName("Base URL")
-            .setDesc("API base URL for the selected provider")
+            .setName(this.t("plugin.settings.ai.baseUrl.name"))
+            .setDesc(this.t("plugin.settings.ai.baseUrl.desc"))
             .addText((text) => {
                 text.setPlaceholder("https://api.openai.com/v1");
                 text.setValue(plugin.settings.baseURL);
@@ -1608,8 +1621,8 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(container)
-            .setName("Chat Model Name")
-            .setDesc("Name of the AI model to use")
+            .setName(this.t("plugin.settings.ai.chatModel.name"))
+            .setDesc(this.t("plugin.settings.ai.chatModel.desc"))
             .addText((text) => {
                 text.setPlaceholder("gpt-4o-mini");
                 text.setValue(plugin.settings.chatModelName);
@@ -1623,8 +1636,8 @@ export class SettingTab extends PluginSettingTab {
         const policyModelSetting = new Setting(container);
         (policyModelSetting as Setting & { settingEl?: HTMLElement }).settingEl?.addClass("pa-policy-model-setting");
         policyModelSetting
-            .setName("Policy model name")
-            .setDesc("Optional router model for Memory/WebSearch decisions. Sends your request and explicit context to your AI provider; hidden vault content is not sent. Blank uses local fallback rules.")
+            .setName(this.t("plugin.settings.ai.policyModel.name"))
+            .setDesc(this.t("plugin.settings.ai.policyModel.desc"))
             .addText((text) => {
                 text.setPlaceholder(plugin.settings.chatModelName || "optional");
                 text.setValue(plugin.settings.policyModelName);
@@ -1646,7 +1659,7 @@ export class SettingTab extends PluginSettingTab {
 
         const container = this.qwenOptionsContainer;
         const qwenOptionToggles: QwenResponseOptionToggle[] = [];
-        container.createEl('h3', { text: 'Qwen response options' });
+        container.createEl('h3', { text: this.t("plugin.settings.qwen.title") });
         const qwenOptionsDescriptionEl = container.createEl("p");
         qwenOptionsDescriptionEl.setAttr("style", "font-size:14px");
         this.refreshQwenResponseOptionAvailability = () => {
@@ -1654,12 +1667,16 @@ export class SettingTab extends PluginSettingTab {
                 plugin.settings.baseURL,
                 qwenOptionsDescriptionEl,
                 qwenOptionToggles,
+                {
+                    dashScopeDescription: this.t("plugin.qwen.desc.dashScope"),
+                    nonDashScopeDescription: this.t("plugin.qwen.desc.nonDashScope"),
+                },
             );
         };
 
         new Setting(container)
-            .setName("Show Qwen model thinking")
-            .setDesc("Show the model thinking text returned by DashScope in this chat session. It is not added to the final answer, notes, or Memory.")
+            .setName(this.t("plugin.settings.qwen.thinking.name"))
+            .setDesc(this.t("plugin.settings.qwen.thinking.desc"))
             .addToggle((toggle) => {
                 qwenOptionToggles.push(toggle);
                 toggle
@@ -1671,8 +1688,8 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(container)
-            .setName("Enable builtin WebSearch tool")
-            .setDesc("Allow PA Agent to call the read-only builtin WebSearch tool. Search queries may be sent to DashScope WebSearch MCP and can produce web sources.")
+            .setName(this.t("plugin.settings.qwen.webSearch.name"))
+            .setDesc(this.t("plugin.settings.qwen.webSearch.desc"))
             .addToggle((toggle) => {
                 qwenOptionToggles.push(toggle);
                 toggle
@@ -1688,14 +1705,14 @@ export class SettingTab extends PluginSettingTab {
 
     private renderAdvancedSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        parentEl.createEl('h2', { text: 'Advanced' });
+        parentEl.createEl('h2', { text: this.t("plugin.settings.advanced.title") });
         parentEl.createEl("p", {
-            text: "Diagnostics, telemetry, and developer-facing toggles.",
+            text: this.t("plugin.settings.advanced.desc"),
             cls: "pa-settings-section-desc",
         });
 
-        new Setting(parentEl).setName("Debug")
-            .setDesc("Print plugin diagnostics to the developer console.")
+        new Setting(parentEl).setName(this.t("plugin.settings.advanced.debug.name"))
+            .setDesc(this.t("plugin.settings.advanced.debug.desc"))
             .addToggle((cb) =>
                 cb.setValue(plugin.settings.debug)
                     .onChange((value) => {
@@ -1704,8 +1721,8 @@ export class SettingTab extends PluginSettingTab {
                     }));
 
         new Setting(parentEl)
-            .setName("Share anonymous capability usage")
-            .setDesc("Share local PA Agent usage events for capability invoked, failed, skipped, or unavailable states. Events do not include prompts, note text, observations, or vault paths.")
+            .setName(this.t("plugin.settings.advanced.shareUsage.name"))
+            .setDesc(this.t("plugin.settings.advanced.shareUsage.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.shareAnonymousCapabilityUsage)
@@ -1735,14 +1752,14 @@ export class SettingTab extends PluginSettingTab {
 
     private renderSkillsSection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        parentEl.createEl('h3', { text: 'Skill guides' });
+        parentEl.createEl('h3', { text: this.t("plugin.settings.skills.title") });
         parentEl.createEl("p", {
-            text: "Let the assistant use bundled read-only skill guides for Obsidian formats and vault review tasks.",
+            text: this.t("plugin.settings.skills.desc"),
         }).setAttr("style", "font-size:14px");
 
         new Setting(parentEl)
-            .setName("Use skill guides")
-            .setDesc("Skill guides add bounded reference context to chat answers. They do not add tools, write notes, run commands, or change Memory.")
+            .setName(this.t("plugin.settings.skills.enabled.name"))
+            .setDesc(this.t("plugin.settings.skills.enabled.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.skillContextEnabled)
@@ -1787,14 +1804,14 @@ export class SettingTab extends PluginSettingTab {
 
     private renderMemorySection(parentEl: HTMLElement): void {
         const plugin = this.plugin;
-        parentEl.createEl('h2', { text: 'Memory' });
+        parentEl.createEl('h2', { text: this.t("plugin.settings.memory.title") });
         parentEl.createEl("p", {
-            text: "Let the assistant use memory from your notes when answering.",
+            text: this.t("plugin.settings.memory.desc"),
         }).setAttr("style", "font-size:15px");
 
         new Setting(parentEl)
-            .setName("Use memory from my notes")
-            .setDesc("The assistant asks before preparing Memory. After you approve and Memory is ready, changed notes may update in the background while the app is open.")
+            .setName(this.t("plugin.settings.memory.enabled.name"))
+            .setDesc(this.t("plugin.settings.memory.enabled.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.memoryEnabled)
@@ -1824,8 +1841,8 @@ export class SettingTab extends PluginSettingTab {
         const container = this.memorySubContainer;
 
         new Setting(container)
-            .setName("Ask before using AI credits")
-            .setDesc("The assistant will ask for your approval before preparing or updating Memory, which uses API calls.")
+            .setName(this.t("plugin.settings.memory.askCredits.name"))
+            .setDesc(this.t("plugin.settings.memory.askCredits.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.memoryAutoCheckBeforeChat)
@@ -1836,8 +1853,8 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(container)
-            .setName("Advanced memory controls")
-            .setDesc("Show maintenance and diagnostic controls for the local memory copy.")
+            .setName(this.t("plugin.settings.memory.advancedControls.name"))
+            .setDesc(this.t("plugin.settings.memory.advancedControls.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.showAdvancedMemoryControls)
@@ -1861,17 +1878,17 @@ export class SettingTab extends PluginSettingTab {
         const container = this.memoryAdvancedContainer;
 
         new Setting(container)
-            .setName("Keep memory updated in background")
-            .setDesc("After memory has been prepared, update changed notes automatically while the app is open. Changed note text may be sent to your configured AI provider.")
+            .setName(this.t("plugin.settings.memory.background.name"))
+            .setDesc(this.t("plugin.settings.memory.background.desc"))
             .addToggle((toggle) => {
                 toggle
                     .setValue(plugin.settings.memoryApprovalPolicy === "auto-refresh-after-prepare")
                     .onChange(async (value) => {
                         if (value) {
                             const confirmed = await confirmUserAction(this.app, {
-                                title: "Keep memory updated in background?",
-                                message: "Your notes will not be changed or deleted. Changed note text may be sent to your configured AI provider to prepare Memory. AI credits or API calls may be used; unchanged notes are skipped when possible.",
-                                confirmText: "Keep updated",
+                                title: this.t("plugin.settings.memory.background.title"),
+                                message: this.t("plugin.settings.memory.background.message"),
+                                confirmText: this.t("plugin.settings.memory.background.confirm"),
                             });
                             if (!confirmed) {
                                 toggle.setValue(false);
@@ -1888,8 +1905,8 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(container)
-            .setName("Memory model")
-            .setDesc("Advanced: model used to prepare memory from notes.")
+            .setName(this.t("plugin.settings.memory.model.name"))
+            .setDesc(this.t("plugin.settings.memory.model.desc"))
             .addText((text) => {
                 text.setPlaceholder("model name");
                 text.setValue(plugin.settings.embeddingModelName);
@@ -1901,33 +1918,33 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(container)
-            .setName("Update memory now")
-            .setDesc("Update memory for changed notes.")
+            .setName(this.t("plugin.settings.memory.update.name"))
+            .setDesc(this.t("plugin.settings.memory.update.desc"))
             .addButton((button) => {
-                button.setButtonText("Update").onClick(async () => {
+                button.setButtonText(this.t("plugin.settings.memory.update.button")).onClick(async () => {
                     await plugin.memoryManager.updateFromCommand();
                     await plugin.updateMemoryStatusBar();
                 });
             });
 
         new Setting(container)
-            .setName("Rebuild memory on this device")
-            .setDesc("Prepare memory again for this device. Your notes will not be changed or deleted.")
+            .setName(this.t("plugin.settings.memory.rebuild.name"))
+            .setDesc(this.t("plugin.settings.memory.rebuild.desc"))
             .addButton((button) => {
-                button.setButtonText("Rebuild").onClick(async () => {
+                button.setButtonText(this.t("plugin.settings.memory.rebuild.button")).onClick(async () => {
                     await plugin.memoryManager.prepareFromCommand();
                 });
             });
 
         new Setting(container)
-            .setName("Reset local memory copy")
-            .setDesc("Remove this device's local memory copy. Your notes will not be deleted.")
+            .setName(this.t("plugin.settings.memory.reset.name"))
+            .setDesc(this.t("plugin.settings.memory.reset.desc"))
             .addButton((button) => {
-                button.setButtonText("Reset").onClick(async () => {
+                button.setButtonText(this.t("plugin.settings.memory.reset.button")).onClick(async () => {
                     const confirmed = await confirmUserAction(this.app, {
-                        title: "Reset local memory copy?",
-                        message: "Your notes will not be changed or deleted. This device may need to prepare Memory again before using it.",
-                        confirmText: "Reset",
+                        title: this.t("plugin.memory.confirm.reset.title"),
+                        message: this.t("plugin.memory.confirm.reset.message"),
+                        confirmText: this.t("plugin.memory.confirm.reset.confirm"),
                     });
                     if (!confirmed) return;
                     await plugin.vss.resetLocalIndex();
@@ -1936,26 +1953,26 @@ export class SettingTab extends PluginSettingTab {
             });
 
         new Setting(container)
-            .setName("Delete old Memory cache files")
-            .setDesc("Delete old Memory cache files after Memory is ready. Your notes will not be deleted.")
+            .setName(this.t("plugin.settings.memory.deleteCache.name"))
+            .setDesc(this.t("plugin.settings.memory.deleteCache.desc"))
             .addButton((button) => {
-                button.setButtonText("Delete").onClick(async () => {
+                button.setButtonText(this.t("plugin.settings.memory.deleteCache.button")).onClick(async () => {
                     await plugin.vss.cleanLegacyJsonCache();
                     await plugin.updateMemoryStatusBar();
                 });
             });
 
         new Setting(container)
-            .setName("Show technical memory status")
-            .setDesc("Diagnostic details for troubleshooting.")
+            .setName(this.t("plugin.settings.memory.technicalStatus.name"))
+            .setDesc(this.t("plugin.settings.memory.technicalStatus.desc"))
             .addButton((button) => {
-                button.setButtonText("Show").onClick(async () => {
+                button.setButtonText(this.t("plugin.settings.memory.technicalStatus.button")).onClick(async () => {
                     await plugin.showTechnicalMemoryStatus();
                 });
             });
 
-        new Setting(container).setName("Memory Exclude Path")
-            .setDesc("Exclude note folders from memory. Separate paths with commas.")
+        new Setting(container).setName(this.t("plugin.settings.memory.excludePath.name"))
+            .setDesc(this.t("plugin.settings.memory.excludePath.desc"))
             .addText(text => {
                 text.setPlaceholder('tmp/,notes/templates')
                     .setValue(plugin.settings.vssCacheExcludePath.join(','))
@@ -1983,8 +2000,8 @@ export class SettingTab extends PluginSettingTab {
         const container = this.featuredImageContainer;
 
         new Setting(container)
-            .setName("AI Featured Image Path")
-            .setDesc("AI featured image helper will download images and save them to this path.")
+            .setName(this.t("plugin.settings.featuredImage.path.name"))
+            .setDesc(this.t("plugin.settings.featuredImage.path.desc"))
             .addText((text) => {
                 text.setPlaceholder("attachments/ai-images");
                 text.setValue(plugin.settings.featuredImagePath.toString());
@@ -1993,8 +2010,8 @@ export class SettingTab extends PluginSettingTab {
                     this.debouncedSave();
                 });
             });
-        new Setting(container).setName("AI Featured Images Generating Number")
-            .setDesc("The number of images to generate when using AI Featured Image Helper.")
+        new Setting(container).setName(this.t("plugin.settings.featuredImage.count.name"))
+            .setDesc(this.t("plugin.settings.featuredImage.count.desc"))
             .addText(text => {
                 text.setPlaceholder('2')
                     .setValue(plugin.settings.numFeaturedImages.toString())

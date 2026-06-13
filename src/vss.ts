@@ -29,6 +29,7 @@ import type { MemoryMaintenancePlan } from './memory-manager';
 import { confirmUserAction } from './confirm';
 import { buildFtsQuery } from './vss/fts-query-builder';
 import { throwIfAborted } from './ai-services/chat-utils';
+import { getPluginUiLanguage, pluginT } from './locales/plugin';
 
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
@@ -62,6 +63,10 @@ const VSS_INDEX_DISPOSE_TIMEOUT_MS = 4_000;
 const VSS_RECOVERY_COOLDOWN_MS = 5_000;
 const VSS_GLOBAL_SHUTDOWN_KEY = "__personalAssistantVssShutdownBarriers";
 const VSS_LOCAL_STATE_UNAVAILABLE_CODE = "vss-local-state-unavailable";
+
+function vssT(key: string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
+    return pluginT(key, getPluginUiLanguage(), params, fallback);
+}
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'metadata-synced' | 'removed' | 'skipped';
 
@@ -590,7 +595,7 @@ export class VSS {
         await this.ensureIndex({ allowFallback: false, allowMissingIndexRecovery: options.force === true, mode: "manual" });
         if (!this.index || this.status === "disabled" || this.status === "missing-local-index" || this.status === "stale") {
             if (!options.silent) {
-                new Notice("Memory is not ready. Prepare memory first.", 5000);
+                new Notice(vssT("plugin.memory.notice.notReadyPrepareFirst"), 5000);
             }
             summary.aborted = true;
             return summary;
@@ -725,7 +730,7 @@ export class VSS {
         this.assertActive();
         this.storageStatus = await this.requestPersistentStorage();
         if (!this.storageStatus.persisted && !options.silent) {
-            new Notice("This device may need to prepare memory again later.", 7000);
+            new Notice(vssT("plugin.memory.notice.prepareAgainLater"), 7000);
         }
         await this.ensureIndex({ allowFallback: false, mode: "manual" });
         if (!this.index || this.status === "disabled") {
@@ -899,7 +904,7 @@ export class VSS {
         await this.writeLocalIndexState();
         emitProgress("ready", { filesDone: filesFinalized });
         if (!options.silent) {
-            new Notice(summary.failed > 0 ? "Memory is ready, but some notes were skipped." : "Memory is ready. Your notes were not changed.", 5000);
+            new Notice(summary.failed > 0 ? vssT("plugin.memory.notice.readyPartial") : vssT("plugin.memory.notice.readyNotesUnchanged"), 5000);
         }
         return summary;
     }
@@ -913,7 +918,7 @@ export class VSS {
             onProgress: options.onProgress,
         });
         if (!summary.aborted && !options.silent) {
-            new Notice(summary.failed > 0 ? "Memory was updated, but some notes were skipped." : "Memory is ready. Your notes were not changed.", 3000);
+            new Notice(summary.failed > 0 ? vssT("plugin.memory.notice.updatedPartial") : vssT("plugin.memory.notice.readyNotesUnchanged"), 3000);
         }
         return summary;
     }
@@ -943,7 +948,7 @@ export class VSS {
         this.dirty.clear();
         this.verifyQueue.clear();
         await this.clearLocalStateStore(this.stateGeneration);
-        new Notice("Local memory copy reset.", 3000);
+        new Notice(vssT("plugin.memory.notice.localCopyReset"), 3000);
     }
 
     async reconcileLocalFiles(options: VSSReconcileOptions = {}): Promise<VSSReconcileSummary> {
@@ -1307,35 +1312,38 @@ export class VSS {
         if (this.disposed) return;
         await this.initialize();
         if (!this.index || this.status !== "ready") {
-            new Notice("Old memory cache cleanup is available only after diagnostic status is ready.", 5000);
+            new Notice(vssT("plugin.memory.legacy.cleanup.onlyReady"), 5000);
             return;
         }
         const stats = await this.index.getStats();
         if (stats.status !== "ready" || stats.chunkCount <= 0 || stats.lastErrorCode) {
-            new Notice("Old memory cache was not cleaned because diagnostic status is not safely ready.", 5000);
+            new Notice(vssT("plugin.memory.legacy.cleanup.notSafelyReady"), 5000);
             return;
         }
         const marker = this.marker;
         const profileSignature = this.profile ? getEmbeddingProfileSignature(this.profile) : "";
         if (!marker || marker.profileSignature !== profileSignature) {
-            new Notice("Old memory cache was not cleaned because diagnostic state is not safely ready.", 5000);
+            new Notice(vssT("plugin.memory.legacy.cleanup.stateNotSafe"), 5000);
             return;
         }
         const summary = await this.getLegacyJsonCacheSummary();
         if (summary.fileCount === 0) {
-            new Notice("No old memory cache files found.", 3000);
+            new Notice(vssT("plugin.memory.legacy.cleanup.noneFound"), 3000);
             return;
         }
 
         const cleanupGeneration = this.stateGeneration;
         const confirmed = await confirmUserAction(this.plugin.app, {
-            title: "Delete old Memory cache files?",
-            message: `Delete ${summary.fileCount} old memory cache files (${formatBytes(summary.bytes)})? Notes will not be changed or deleted.`,
-            confirmText: "Delete",
+            title: vssT("plugin.memory.legacy.cleanup.title"),
+            message: vssT("plugin.memory.legacy.cleanup.message", {
+                count: summary.fileCount,
+                bytes: formatBytes(summary.bytes),
+            }),
+            confirmText: vssT("plugin.chat.action.delete"),
         });
         if (!confirmed) return;
         if (this.disposed || cleanupGeneration !== this.stateGeneration || !this.index || this.status !== "ready") {
-            new Notice("Old memory cache was not cleaned because diagnostic state changed.", 5000);
+            new Notice(vssT("plugin.memory.legacy.cleanup.stateChanged"), 5000);
             return;
         }
 
@@ -1343,7 +1351,7 @@ export class VSS {
             await this.plugin.app.vault.adapter.remove(path);
         }
         await this.writeLocalIndexState(cleanupGeneration);
-        new Notice(`Deleted ${summary.fileCount} old Memory cache files.`, 5000);
+        new Notice(vssT("plugin.memory.legacy.cleanup.deleted", { count: summary.fileCount }), 5000);
     }
 
     async cacheFileVectorStore(cacheFile: TFile): Promise<boolean> {
@@ -2456,7 +2464,7 @@ export class VSS {
         const now = Date.now();
         if (now - this.lastMissingIndexNoticeAt < 60_000) return;
         this.lastMissingIndexNoticeAt = now;
-        new Notice("Memory needs to be prepared again on this device.", 7000);
+        new Notice(vssT("plugin.memory.notice.needsPrepareAgain"), 7000);
     }
 
     private isEligible(file: TFile) {

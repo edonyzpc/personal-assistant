@@ -2740,6 +2740,25 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls).toHaveLength(0);
     });
 
+    it('localizes chat chrome from the Obsidian UI language hook', async () => {
+        (globalThis.window as typeof globalThis.window & { i18next?: { language?: string } }).i18next = {
+            language: 'zh-CN',
+        };
+        const { view, containerEl } = createView({ withMarkdownLeaf: true });
+        await view.onOpen();
+        await flushPromises();
+
+        expect(getTextArea(containerEl).getAttribute('placeholder')).toBe('询问你的笔记...');
+        expect(getButtonByText(containerEl, '提问').getAttribute('aria-label')).toBe('提问');
+        expect(getButtonByText(containerEl, '总结当前笔记').disabled).toBe(false);
+        expect(getElementByClass(containerEl, 'pa-chat-memory-chip').getAttribute('aria-label')).toBe('Memory 已就绪');
+
+        getButtonByClass(containerEl, 'pa-chat-more-button').click();
+
+        expect(getButtonByText(containerEl, '显示 Memory 状态')).toBeTruthy();
+        expect(allText(containerEl)).toContain('询问你的笔记');
+    });
+
     it('disables empty state chips when no markdown note is available', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();

@@ -5,6 +5,7 @@ import type {  Callout, CalloutID } from 'obsidian-callout-manager';
 
 import type { PluginManager } from './plugin';
 import { type RGB, parseColorRGB } from './color';
+import { getPluginUiLanguage, pluginT } from './locales/plugin';
 
 export const DEFAULT_CALLOUTS: Callout[] = [
     { id: "note", icon: "pencil", color: "8, 109, 221", sources: [{ type: "builtin" }] },
@@ -44,6 +45,10 @@ export class CalloutModal extends SuggestModal<Callout> {
     constructor(app: App, plugin: PluginManager) {
         super(app);
         this.plugin = plugin;
+    }
+
+    private t(key: string): string {
+        return pluginT(key, getPluginUiLanguage());
     }
 
     // Returns all available suggestions.
@@ -92,7 +97,7 @@ export class CalloutModal extends SuggestModal<Callout> {
         if (view) {
             const mode = view.getMode();
             if (mode === "preview") {
-                new Notice("Tips: please switch to edit mode to insert", 5000);
+                new Notice(this.t("plugin.callout.previewSwitch"), 5000);
             } else {
                 const cursor = view.editor.getCursor();
                 view.editor.replaceRange(calloutMarkdownContent, cursor);
@@ -118,7 +123,7 @@ export class CalloutModal extends SuggestModal<Callout> {
     private showFallbackNotice() {
         if (this.fallbackNoticeShown) return;
         this.fallbackNoticeShown = true;
-        new Notice("Callout Manager unavailable; showing default callouts only.", 5000);
+        new Notice(this.t("plugin.callout.fallback"), 5000);
     }
 
     private async copyCalloutToClipboard(content: string, inserted: boolean, activeViewMissing: boolean) {
@@ -128,15 +133,15 @@ export class CalloutModal extends SuggestModal<Callout> {
             }
             await navigator.clipboard.writeText(content);
             if (activeViewMissing) {
-                new Notice("No editable markdown file; callout copied to clipboard", 5000);
+                new Notice(this.t("plugin.callout.copiedNoEditable"), 5000);
             }
         } catch (error) {
             this.plugin.log("Failed to copy callout markdown to clipboard", error);
             if (!inserted) {
                 if (activeViewMissing) {
-                    new Notice("No editable markdown file and clipboard is unavailable", 5000);
+                    new Notice(this.t("plugin.callout.noEditableNoClipboard"), 5000);
                 } else {
-                    new Notice("Unable to copy callout to clipboard", 5000);
+                    new Notice(this.t("plugin.callout.copyFailed"), 5000);
                 }
             }
         }

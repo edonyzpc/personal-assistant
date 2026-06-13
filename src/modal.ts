@@ -4,6 +4,11 @@ import { App, Notice, SuggestModal, addIcon, setIcon } from 'obsidian'
 
 import { icons } from './utils';
 import { getInternalPlugins } from './obsidian-internals';
+import { getPluginUiLanguage, pluginT } from './locales/plugin';
+
+function modalT(key: string, params?: Readonly<Record<string, string | number>>): string {
+    return pluginT(key, getPluginUiLanguage(), params);
+}
 
 export interface Plugin {
     name: string;
@@ -21,7 +26,7 @@ export class PluginControlModal extends SuggestModal<Plugin> {
         super(app);
         this.obsidianPlugins = getInternalPlugins(app);
         if (!this.obsidianPlugins) {
-            new Notice('Plugin list unavailable');
+            new Notice(modalT('plugin.modal.pluginListUnavailable'));
         }
     }
 
@@ -71,7 +76,11 @@ export class PluginControlModal extends SuggestModal<Plugin> {
 
     // Perform action on the selected suggestion.
     async onChooseSuggestion(plugin: Plugin, evt: MouseEvent | KeyboardEvent) {
-        const action = plugin.enbaled ? "disable" : "enable";
+        const action = modalT(
+            plugin.enbaled
+                ? "plugin.modal.pluginAction.disable"
+                : "plugin.modal.pluginAction.enable"
+        );
 
         try {
             const result = plugin.enbaled
@@ -79,14 +88,14 @@ export class PluginControlModal extends SuggestModal<Plugin> {
                 : await this.obsidianPlugins?.enablePluginAndSave(plugin.id);
 
             if (result === false) {
-                new Notice(`${action} plugin[${plugin.name}] failed, try it again`);
+                new Notice(modalT("plugin.modal.pluginAction.failed", { action, name: plugin.name }));
                 return;
             }
 
-            new Notice(`${action} plugin[${plugin.name}] successfully`);
+            new Notice(modalT("plugin.modal.pluginAction.success", { action, name: plugin.name }));
         } catch (error) {
             console.error(`${action} plugin[${plugin.name}] failed`, error);
-            new Notice(`${action} plugin[${plugin.name}] failed, try it again`);
+            new Notice(modalT("plugin.modal.pluginAction.failed", { action, name: plugin.name }));
         }
     }
 }

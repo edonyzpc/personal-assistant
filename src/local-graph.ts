@@ -5,6 +5,7 @@ import { Notice, Platform, normalizePath, type App, type WorkspaceLeaf } from "o
 import type { PluginManager } from "./plugin"
 import { executeCommandById } from './obsidian-internals';
 import { ViewType, ViewResize } from "./view";
+import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 type GraphColorGroup = {
     query: string;
@@ -46,7 +47,7 @@ export class LocalGraph extends ViewResize {
         if (Platform.isDesktop && this.plugin.settings.localGraph.type === "popover") {
             const ret = executeCommandById(this.app, "obsidian-hover-editor:convert-active-pane-to-popover");
             if (!ret) {
-                new Notice("hover local graph failed");
+                new Notice(pluginT("plugin.localGraph.failed", getPluginUiLanguage()));
                 return;
             }
 

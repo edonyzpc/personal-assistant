@@ -2,16 +2,24 @@ import { App, Modal, Notice, Setting, ToggleComponent } from 'obsidian'
 
 import { type Plugin } from './modal'
 import { getInternalPlugins } from './obsidian-internals';
+import { getPluginUiLanguage, pluginT } from './locales/plugin';
+
+function batchModalT(key: string, params?: Readonly<Record<string, string | number>>): string {
+    return pluginT(key, getPluginUiLanguage(), params);
+}
 
 export class BatchPluginControlModal extends Modal {
     private readonly obsidianPlugins;
     constructor(app: App) {
         super(app);
         this.obsidianPlugins = getInternalPlugins(app);
-        this.contentEl.createEl('h3', { text: 'Batch Plugin Management', attr: { 'style': 'text-align:center;' } });
+        this.contentEl.createEl('h3', {
+            text: batchModalT('plugin.modal.batch.title'),
+            attr: { 'style': 'text-align:center;' },
+        });
 
         if (!this.obsidianPlugins) {
-            this.contentEl.createEl('p', { text: 'Plugin list unavailable.' });
+            this.contentEl.createEl('p', { text: batchModalT('plugin.modal.pluginListUnavailableSentence') });
             return;
         }
 
@@ -57,13 +65,13 @@ export class BatchPluginControlModal extends Modal {
 
         new Setting(this.contentEl)
             .addButton((btn) =>
-                btn.setButtonText('OK')
+                btn.setButtonText(batchModalT('plugin.modal.batch.ok'))
                     .setCta()
                     .onClick(async () => {
                         const pluginStates = Array.from(desiredPluginStates.values());
 
                         if (pluginStates.length === 0) {
-                            new Notice("No plugin changes to apply");
+                            new Notice(batchModalT("plugin.modal.batch.noChanges"));
                             this.close();
                             return;
                         }
@@ -94,11 +102,24 @@ export class BatchPluginControlModal extends Modal {
                         if (failedCount > 0) {
                             btn.setDisabled(false);
                             toggles.forEach((toggle) => toggle.setDisabled(false));
-                            new Notice(`Failed to update ${failedCount} plugin${failedCount > 1 ? "s" : ""}, try it again`);
+                            const pluginWord = batchModalT(
+                                failedCount > 1
+                                    ? "plugin.modal.batch.pluginPlural"
+                                    : "plugin.modal.batch.pluginSingular"
+                            );
+                            new Notice(batchModalT("plugin.modal.batch.failed", { count: failedCount, pluginWord }));
                             return;
                         }
 
-                        new Notice(`Updated ${pluginStates.length} plugin${pluginStates.length > 1 ? "s" : ""} successfully`);
+                        const pluginWord = batchModalT(
+                            pluginStates.length > 1
+                                ? "plugin.modal.batch.pluginPlural"
+                                : "plugin.modal.batch.pluginSingular"
+                        );
+                        new Notice(batchModalT("plugin.modal.batch.success", {
+                            count: pluginStates.length,
+                            pluginWord,
+                        }));
                         this.close();
                     }));
     }

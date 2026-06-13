@@ -3,6 +3,7 @@
 import { Modal, Notice, Platform, Setting } from "obsidian";
 import type { PluginManager } from "./plugin";
 import type { VSSOperationSummary, VSSProgressEvent } from "./vss";
+import { getPluginUiLanguage, pluginT, type PluginLocale } from "./locales/plugin";
 
 export type MemoryDecision = "use-memory" | "answer-now" | "cancel";
 export type MemoryMode = "auto" | "use-memory" | "skip-memory";
@@ -93,25 +94,59 @@ export const MEMORY_APPROVAL_SECTIONS = [
     },
 ];
 
+function getLocalizedMemoryApprovalSections(locale: PluginLocale): typeof MEMORY_APPROVAL_SECTIONS {
+    return [
+        {
+            title: pluginT("plugin.memory.approval.section.data.title", locale),
+            body: pluginT("plugin.memory.approval.section.data.body", locale),
+        },
+        {
+            title: pluginT("plugin.memory.approval.section.provider.title", locale),
+            body: pluginT("plugin.memory.approval.section.provider.body", locale),
+        },
+        {
+            title: pluginT("plugin.memory.approval.section.search.title", locale),
+            body: pluginT("plugin.memory.approval.section.search.body", locale),
+        },
+        {
+            title: pluginT("plugin.memory.approval.section.background.title", locale),
+            body: pluginT("plugin.memory.approval.section.background.body", locale),
+        },
+        {
+            title: pluginT("plugin.memory.approval.section.cost.title", locale),
+            body: pluginT("plugin.memory.approval.section.cost.body", locale),
+        },
+    ];
+}
+
 export function getMemoryApprovalCopy(
     plan: MemoryMaintenancePlan,
     context: MemoryApprovalContext = "chat",
+    locale: PluginLocale = getPluginUiLanguage(),
 ): MemoryApprovalCopy {
     const titleByReason: Record<MemoryPlanReason, string> = {
-        "ready": "Memory is ready",
-        "first-use": "Prepare memory from your notes?",
-        "changed-notes": "Update memory before answering?",
-        "local-memory-missing": "Prepare memory again on this device?",
-        "settings-changed": "Prepare memory again for the new AI settings?",
-        "unavailable": "Memory is unavailable",
+        "ready": pluginT("plugin.memory.approval.title.ready", locale),
+        "first-use": pluginT("plugin.memory.approval.title.firstUse", locale),
+        "changed-notes": pluginT("plugin.memory.approval.title.changedNotes", locale),
+        "local-memory-missing": pluginT("plugin.memory.approval.title.localMissing", locale),
+        "settings-changed": pluginT("plugin.memory.approval.title.settingsChanged", locale),
+        "unavailable": pluginT("plugin.memory.approval.title.unavailable", locale),
     };
 
     return {
         title: titleByReason[plan.reason],
-        primaryAction: plan.action === "refresh" ? "Update memory" : "Prepare memory",
-        secondaryAction: context === "chat" ? "Answer now" : "Not now",
-        cancelAction: "Cancel",
+        primaryAction: plan.action === "refresh"
+            ? pluginT("plugin.memory.approval.primary.update", locale)
+            : pluginT("plugin.memory.approval.primary.prepare", locale),
+        secondaryAction: context === "chat"
+            ? pluginT("plugin.memory.approval.secondary.answerNow", locale)
+            : pluginT("plugin.memory.approval.secondary.notNow", locale),
+        cancelAction: pluginT("plugin.memory.approval.cancel", locale),
     };
+}
+
+function memoryT(key: string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
+    return pluginT(key, getPluginUiLanguage(), params, fallback);
 }
 
 export class MemoryManager {
@@ -238,10 +273,10 @@ export class MemoryManager {
             return { decision: "answer-now" };
         }
         if (plan.reason === "unavailable") {
-            new Notice("Memory is unavailable. I will answer normally for now.", 5000);
+            new Notice(memoryT("plugin.memory.notice.unavailableAnswerNow"), 5000);
             return {
                 decision: "answer-now",
-                message: "I could not prepare memory this time, so I answered normally.",
+                message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
             };
         }
         if (this.shouldTryChatFastVerification(plan) && await this.canRunLocalMaintenance()) {
@@ -268,13 +303,13 @@ export class MemoryManager {
                 this.scheduleAutoFlush("chat", 0);
                 return {
                     decision: "use-memory",
-                    message: "Memory is using the last prepared copy while updates continue in the background.",
+                    message: memoryT("plugin.memory.message.usingLastPrepared"),
                 };
             } else {
                 this.plugin.log("Memory changed, but background maintenance is waiting for durable local memory.");
                 return {
                     decision: "use-memory",
-                    message: "Memory is using the last prepared copy. Background updates are unavailable until memory is prepared again on this device.",
+                    message: memoryT("plugin.memory.message.backgroundUnavailable"),
                 };
             }
         }
@@ -282,7 +317,7 @@ export class MemoryManager {
         if (this.isAnswerNowCoolingDown()) {
             return {
                 decision: "answer-now",
-                message: "Memory was not used for this answer.",
+                message: memoryT("plugin.memory.message.notUsed"),
             };
         }
 
@@ -295,7 +330,7 @@ export class MemoryManager {
             this.lastAnswerNowAt = Date.now();
             return {
                 decision: "answer-now",
-                message: "Memory was not used for this answer.",
+                message: memoryT("plugin.memory.message.notUsed"),
             };
         }
 
@@ -304,25 +339,25 @@ export class MemoryManager {
             return { decision: "answer-now" };
         }
         if (!result.ok) {
-            new Notice(result.message ?? "Could not prepare memory. I will answer normally for now.", 7000);
+            new Notice(result.message ?? memoryT("plugin.memory.error.prepareFailedAnswerNow"), 7000);
             return {
                 decision: "answer-now",
-                message: result.message ?? "I could not prepare memory this time, so I answered normally.",
+                message: result.message ?? memoryT("plugin.memory.message.prepareFailedAnswerNow"),
             };
         }
 
         return {
             decision: "use-memory",
-            message: result.partial ? "Memory was updated, but some notes were skipped." : undefined,
+            message: result.partial ? memoryT("plugin.memory.notice.updatedPartial") : undefined,
         };
     }
 
     async prepareMemory(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
         const lifecycleToken = this.lifecycleVersion;
-        const progress = createMemoryProgressNotice("Preparing memory...");
+        const progress = createMemoryProgressNotice(memoryT("plugin.memory.progress.preparing"));
         const updateProgress = createMemoryProgressUpdater(progress.notice, () => !this.isLifecycleCurrent(lifecycleToken));
         try {
-            setMemoryProgressStep(progress.notice, "Checking notes");
+            setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
             const summary = plan.action === "refresh"
                 ? await this.plugin.vss.refreshLocalIndex({ silent: true, onProgress: updateProgress })
                 : await this.plugin.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgress });
@@ -331,7 +366,7 @@ export class MemoryManager {
                     ok: false,
                     partial: false,
                     summary,
-                    message: "I could not prepare memory this time, so I answered normally.",
+                    message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
                 };
             }
             if (summary.aborted) {
@@ -339,18 +374,18 @@ export class MemoryManager {
                     ok: false,
                     partial: false,
                     summary,
-                    message: "I could not prepare memory this time, so I answered normally.",
+                    message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
                 };
             }
 
-            setMemoryProgressStep(progress.notice, "Ready");
+            setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.ready"));
             const partial = summary.failed > 0;
             if (partial) {
-                new Notice("Memory was updated, but some notes were skipped.", 5000);
+                new Notice(memoryT("plugin.memory.notice.updatedPartial"), 5000);
             } else if (summary.storagePersisted === false && Platform.isMobile) {
-                new Notice("This device may need to prepare memory again later.", 5000);
+                new Notice(memoryT("plugin.memory.notice.prepareAgainLater"), 5000);
             } else {
-                new Notice("Memory is ready. Your notes were not changed.", 3000);
+                new Notice(memoryT("plugin.memory.notice.readyNotesUnchanged"), 3000);
             }
 
             await this.enableAutoRefreshAfterPrepare();
@@ -364,7 +399,7 @@ export class MemoryManager {
                 return {
                     ok: false,
                     partial: false,
-                    message: "I could not prepare memory this time, so I answered normally.",
+                    message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
                 };
             }
             this.plugin.log("Could not prepare memory", error);
@@ -399,11 +434,11 @@ export class MemoryManager {
 
     private async runApprovedCommandPlan(plan: MemoryMaintenancePlan): Promise<void> {
         if (plan.reason === "ready") {
-            new Notice("Memory is ready. Your notes were not changed.", 3000);
+            new Notice(memoryT("plugin.memory.notice.readyNotesUnchanged"), 3000);
             return;
         }
         if (plan.reason === "unavailable") {
-            new Notice("Memory is unavailable. You can still ask normally.", 5000);
+            new Notice(memoryT("plugin.memory.notice.unavailableAskNormally"), 5000);
             return;
         }
         const actionPlan: MemoryMaintenancePlan = plan.action === "none"
@@ -413,7 +448,7 @@ export class MemoryManager {
         if (decision !== "use-memory") return;
         const result = await this.prepareMemory(actionPlan);
         if (!result.ok) {
-            new Notice(result.message ?? "Could not prepare memory.", 7000);
+            new Notice(result.message ?? memoryT("plugin.notice.memoryPrepareFailed"), 7000);
         }
     }
 
@@ -593,13 +628,13 @@ export class MemoryManager {
 function getMemoryPrepareFailureMessage(error: unknown): string {
     const code = getErrorCode(error);
     if (code === "opfs-sahpool-locked") {
-        return "Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.";
+        return memoryT("plugin.memory.error.localStorageBusy");
     }
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("Local memory storage is busy")) {
-        return "Could not prepare memory because local storage is busy. Close other Obsidian windows for this vault, then try again.";
+        return memoryT("plugin.memory.error.localStorageBusy");
     }
-    return "I could not prepare memory this time, so I answered normally.";
+    return memoryT("plugin.memory.message.prepareFailedAnswerNow");
 }
 
 function getErrorCode(error: unknown): string | undefined {
@@ -631,25 +666,30 @@ export class MemoryApprovalModal extends Modal {
 
     onOpen(): void {
         const { contentEl } = this;
-        const copy = getMemoryApprovalCopy(this.plan, this.context);
+        const locale = getPluginUiLanguage();
+        const copy = getMemoryApprovalCopy(this.plan, this.context, locale);
         contentEl.empty();
         contentEl.addClass("pa-memory-modal");
         contentEl.createEl("h2", { text: copy.title });
         contentEl.createEl("p", {
             cls: "pa-memory-modal__intro",
-            text: "The assistant can use Memory from your notes when answering.",
+            text: pluginT("plugin.memory.approval.intro", locale),
         });
 
-        for (const section of MEMORY_APPROVAL_SECTIONS) {
+        for (const section of getLocalizedMemoryApprovalSections(locale)) {
             this.addSection(section.title, section.body);
         }
 
         const details = contentEl.createDiv({ cls: "pa-memory-modal__details" });
-        details.createDiv({ text: `Notes to check: ${this.plan.notesToCheck}` });
+        details.createDiv({
+            text: pluginT("plugin.memory.approval.notesToCheck", locale, { count: this.plan.notesToCheck }),
+        });
         if (typeof this.plan.notesLikelyToUpdate === "number") {
-            details.createDiv({ text: `Notes likely to update: ${this.plan.notesLikelyToUpdate}` });
+            details.createDiv({
+                text: pluginT("plugin.memory.approval.notesLikelyToUpdate", locale, { count: this.plan.notesLikelyToUpdate }),
+            });
         }
-        details.createDiv({ text: "Device: this device only" });
+        details.createDiv({ text: pluginT("plugin.memory.approval.device", locale) });
 
         new Setting(contentEl)
             .addButton((button) => {

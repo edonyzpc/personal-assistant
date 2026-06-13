@@ -6,6 +6,7 @@ import type { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from "./types/manifest";
 import { ProgressBar } from "./progress-bar";
 import { downloadZipFile, extractFiles } from "./utils";
+import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 interface ThemeReleaseAsset {
     name?: string;
@@ -46,7 +47,7 @@ export class ThemeUpdater implements ObsidianManifest {
         if (themeJson) {
             themeUpdater.communityThemes = JSON.parse(themeJson);
         } else {
-            new Notice("got some network issue when accessing github.com", 500);
+            new Notice(pluginT("plugin.theme.networkIssue", getPluginUiLanguage()), 500);
         }
         return themeUpdater;
     }
@@ -386,7 +387,7 @@ export class ThemeUpdater implements ObsidianManifest {
             }
 
             this.log(`updated current theme[${currentTheme}] but Obsidian theme reload API is unavailable`);
-            new Notice("Theme files updated. Switch themes or restart Obsidian to apply.", 5000);
+            new Notice(pluginT("plugin.theme.filesUpdated", getPluginUiLanguage()), 5000);
         };
 
         const updatedThemes: string[] = [];

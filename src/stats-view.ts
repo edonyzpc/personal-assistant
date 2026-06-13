@@ -8,6 +8,7 @@ import { icons } from './utils'
 import { PluginAST_STAT_ICON } from './constant'
 import { createEmptyDashboardData } from "./stats/stats-store";
 import type { StatsDashboardData } from "./stats/stats-types";
+import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
 
@@ -32,7 +33,7 @@ export class Stat extends ItemView {
     }
 
     getDisplayText() {
-        return "Vault Statistics Preview";
+        return pluginT("plugin.statistics.previewTitle", getPluginUiLanguage());
     }
 
     getIcon(): string {
