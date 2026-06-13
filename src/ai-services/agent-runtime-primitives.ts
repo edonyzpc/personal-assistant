@@ -15,6 +15,8 @@ import { RUN_SCOPE_TURN_ID } from "./chat-types";
 export const TURN_DEADLINE_ERROR_NAME = "TurnDeadlineExceededError";
 export { RUN_SCOPE_TURN_ID };
 
+import { toError } from "../error-utils";
+
 export function createTurnDeadlineExceededError(reason: string): Error {
     const error = new Error(reason);
     error.name = TURN_DEADLINE_ERROR_NAME;
@@ -104,7 +106,7 @@ export class TurnExecutionDeadline {
                 },
                 (error) => {
                     cleanup();
-                    reject(error);
+                    reject(toError(error));
                 },
             );
         });

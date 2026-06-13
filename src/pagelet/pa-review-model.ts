@@ -74,6 +74,7 @@ import {
     type RateLimitDecision,
 } from "./pa-review-rate-limit";
 import { pageletT, type PageletLocale } from "../locales/pagelet";
+import { toError } from "../error-utils";
 
 // ---------------------------------------------------------------------------
 // Minimal LangChain model surface.
@@ -1109,7 +1110,7 @@ class PageletReviewDeadline {
                 },
                 (error) => {
                     cleanup();
-                    reject(error);
+                    reject(toError(error));
                 },
             );
         });

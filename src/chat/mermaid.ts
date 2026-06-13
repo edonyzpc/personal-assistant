@@ -1,6 +1,7 @@
 import { setIcon, Component, Modal, MarkdownRenderer } from 'obsidian';
 import type PluginManager from '../main';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
+import { toError } from "../error-utils";
 
 export type MermaidFenceTransform = {
     markdown: string;
@@ -23,7 +24,7 @@ export function renderMarkdownWithOwner(
     try {
         return Promise.resolve(MarkdownRenderer.render(plugin.app, markdown, target, '', owner));
     } catch (error) {
-        return Promise.reject(error);
+        return Promise.reject(toError(error));
     }
 }
 

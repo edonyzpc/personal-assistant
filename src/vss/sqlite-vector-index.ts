@@ -9,6 +9,7 @@ import type {
     VSSIndexStats,
 } from "./types";
 import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-protocol";
+import { toError } from "../error-utils";
 
 const SQLITE_DISPOSE_WORKER_READY_TIMEOUT_MS = 2_000;
 const SQLITE_DISPOSE_MESSAGE_TIMEOUT_MS = 2_000;
@@ -367,7 +368,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
             },
             (error) => {
                 clearTimeout(timeout);
-                reject(error);
+                reject(toError(error));
             },
         );
     });

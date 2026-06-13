@@ -39,6 +39,8 @@
  *    review failed, please try again" UX (see SDD §4.3).
  */
 
+import { toError } from "../../error-utils";
+
 // ---------------------------------------------------------------------------
 // Public types
 // ---------------------------------------------------------------------------
@@ -310,7 +312,7 @@ export class PageletReviewCoalescer<T> {
                     // Drop the entry so the next call starts fresh.
                     this.entries.delete(cacheKey);
                 }
-                reject(err);
+                reject(toError(err));
             },
         );
     }

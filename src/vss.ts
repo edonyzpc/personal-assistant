@@ -11,6 +11,7 @@ import { createInlineSqliteWorker, getInlineSqliteWasmUrl } from './vss/sqlite-i
 import { SqliteVectorIndex } from './vss/sqlite-vector-index';
 import { getVSSDeviceId } from './vss/state';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
+import { toError } from './error-utils';
 import {
     getEmbeddingProfileSignature,
     VSS_DEFAULT_DIMENSIONS,
@@ -217,7 +218,7 @@ async function waitForAbortablePromise<T>(promise: Promise<T>, signal?: AbortSig
             try {
                 throwIfAborted(signal);
             } catch (error) {
-                reject(error);
+                reject(toError(error));
             }
         };
         signal.addEventListener("abort", onAbort, { once: true });
@@ -225,7 +226,7 @@ async function waitForAbortablePromise<T>(promise: Promise<T>, signal?: AbortSig
             throwIfAborted(signal);
         } catch (error) {
             cleanup();
-            reject(error);
+            reject(toError(error));
             return;
         }
         promise.then(
@@ -235,7 +236,7 @@ async function waitForAbortablePromise<T>(promise: Promise<T>, signal?: AbortSig
             },
             (error) => {
                 cleanup();
-                reject(error);
+                reject(toError(error));
             },
         );
     });
@@ -2575,7 +2576,7 @@ function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
             },
             (error) => {
                 clearTimeout(timeout);
-                reject(error);
+                reject(toError(error));
             },
         );
     });

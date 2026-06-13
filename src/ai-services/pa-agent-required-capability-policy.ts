@@ -16,6 +16,8 @@ import {
 
 export const REQUIRED_CAPABILITY_CLASSIFIER_TIMEOUT_MS = 800;
 
+type TimeoutHandle = number | ReturnType<typeof setTimeout>;
+
 export type RequiredCapability =
     | "search_memory"
     | "webSearch"
@@ -39,26 +41,6 @@ export interface RequiredCapabilityClassification {
     items: RequiredCapabilityClassificationItem[];
 }
 
-/**
- * @deprecated since 2026-05-29 — inline the parameter object at the call site.
- * Retained for old imports while callers move to the current required-capability API.
- */
-export interface RequiredCapabilityHostPolicyOptions {
-    userInput: string;
-    availableCapabilities: ReadonlySet<RequiredCapability>;
-    classification?: RequiredCapabilityClassification;
-}
-
-/**
- * @deprecated since 2026-05-29 — destructure the return value directly. Will be
- * removed after 2026-06-12.
- */
-export interface RequiredCapabilityHostPolicyResult {
-    hostPolicy: PaAgentHostPolicy;
-    initialRuntimeInstruction?: string;
-    classification: RequiredCapabilityClassification;
-}
-
 type CapabilityRuntimePhase =
     | { kind: "awaiting_initial_tools" }
     | { kind: "corrective_issued" }
@@ -71,16 +53,6 @@ interface RequiredCapabilityRuntimeState {
     usedCapabilities: Set<RequiredCapability>;
     phase: CapabilityRuntimePhase;
     answerCompletionLedger: AnswerCompletionLedger;
-}
-
-/**
- * @deprecated since 2026-05-29 — the shape is inlined into
- * {@link RequiredCapabilityClassifier.classify}. Imports of this type are no longer
- * needed. Will be removed after 2026-06-12.
- */
-export interface RequiredCapabilityClassifierInput {
-    userInput: string;
-    signal?: AbortSignal;
 }
 
 export interface RequiredCapabilityClassifier {
@@ -101,8 +73,16 @@ const CAPABILITY_LABELS: Record<RequiredCapability, string> = {
 };
 
 export function createRequiredCapabilityHostPolicy(
-    options: RequiredCapabilityHostPolicyOptions,
-): RequiredCapabilityHostPolicyResult {
+    options: {
+        userInput: string;
+        availableCapabilities: ReadonlySet<RequiredCapability>;
+        classification?: RequiredCapabilityClassification;
+    },
+): {
+    hostPolicy: PaAgentHostPolicy;
+    initialRuntimeInstruction?: string;
+    classification: RequiredCapabilityClassification;
+} {
     const classification = applyUserExplicitCapabilityConstraints(
         options.classification ?? classifyRequiredCapabilitiesDeterministic(options.userInput),
         options.userInput,
@@ -167,10 +147,10 @@ export async function resolveRequiredCapabilityClassification(
         options.signal?.addEventListener("abort", abortFromParent, { once: true });
     }
 
-    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+    let timeoutId: TimeoutHandle | undefined;
     try {
         const timeout = new Promise<"timeout">((resolve) => {
-            timeoutId = setTimeout(() => {
+            timeoutId = setRequiredCapabilityTimeout(() => {
                 controller.abort();
                 resolve("timeout");
             }, timeoutMs);
@@ -191,9 +171,23 @@ export async function resolveRequiredCapabilityClassification(
     } catch {
         return fallback;
     } finally {
-        if (timeoutId) clearTimeout(timeoutId);
+        if (timeoutId) clearRequiredCapabilityTimeout(timeoutId);
         options.signal?.removeEventListener("abort", abortFromParent);
     }
+}
+
+function setRequiredCapabilityTimeout(callback: () => void, ms: number): TimeoutHandle {
+    return typeof window === "undefined"
+        ? setTimeout(callback, ms)
+        : window.setTimeout(callback, ms);
+}
+
+function clearRequiredCapabilityTimeout(timeoutId: TimeoutHandle): void {
+    if (typeof window === "undefined") {
+        clearTimeout(timeoutId);
+        return;
+    }
+    window.clearTimeout(timeoutId);
 }
 
 export function applyUserExplicitCapabilityConstraints(
