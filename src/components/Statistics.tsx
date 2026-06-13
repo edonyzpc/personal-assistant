@@ -4,6 +4,7 @@ import type { PluginManager } from "plugin";
 import type { ChartData, ChartOptions } from "chart.js";
 import type { StatsDashboardData, StatsDashboardDay } from "../stats/stats-types";
 import { normalizeStatisticsView, type StatisticsView } from "../stats/stats-store";
+import { getPluginUiLanguage, pluginT, type PluginLocale } from "../locales/plugin";
 
 type Props = {
 	app: App;
@@ -53,17 +54,17 @@ const DashboardChart = lazy(async () => {
 	return { default: reactChart.Chart };
 });
 
-const tabs: { id: StatisticsView; label: string }[] = [
-	{ id: "overview", label: "Overview" },
-	{ id: "daily", label: "Daily" },
-	{ id: "growth", label: "Growth" },
-	{ id: "composition", label: "Composition" },
+const tabs: { id: StatisticsView; labelKey: string }[] = [
+	{ id: "overview", labelKey: "plugin.statistics.tab.overview" },
+	{ id: "daily", labelKey: "plugin.statistics.tab.daily" },
+	{ id: "growth", labelKey: "plugin.statistics.tab.growth" },
+	{ id: "composition", labelKey: "plugin.statistics.tab.composition" },
 ];
 
-const rangeOptions: { id: StatsRange; label: string }[] = [
+const rangeOptions: { id: StatsRange; label: string; labelKey?: string }[] = [
 	{ id: "30d", label: "30d" },
 	{ id: "90d", label: "90d" },
-	{ id: "all", label: "All" },
+	{ id: "all", label: "All", labelKey: "plugin.statistics.range.all" },
 ];
 
 const numberFormatter = new Intl.NumberFormat();
@@ -72,8 +73,16 @@ function formatNumber(value: number): string {
 	return numberFormatter.format(Math.round(value));
 }
 
-function formatPages(value: number): string {
-	return `${value.toFixed(1)} pages`;
+function statisticsT(
+	key: string,
+	params?: Readonly<Record<string, string | number>>,
+	locale: PluginLocale = getPluginUiLanguage(),
+): string {
+	return pluginT(key, locale, params);
+}
+
+function formatPages(value: number, pageUnit = statisticsT("plugin.statistics.unit.pages", undefined, "en")): string {
+	return `${value.toFixed(1)} ${pageUnit}`;
 }
 
 function toPoints(days: StatsDashboardDay[], field: keyof StatsDashboardDay): ChartPoint[] {
@@ -104,25 +113,30 @@ export function shouldShowDevicesMetric(syncEnabled: boolean, deviceCount: numbe
 	return syncEnabled && deviceCount > 1;
 }
 
-export function getStatisticsIssueMessage(errorCount: number): string | null {
+export function getStatisticsIssueMessage(errorCount: number, locale: PluginLocale = getPluginUiLanguage()): string | null {
 	if (errorCount <= 0) return null;
-	const issueText = errorCount === 1 ? "issue needs" : "issues need";
-	return `${formatNumber(errorCount)} Statistics history ${issueText} attention. Some writing history could not be loaded, so this view may be incomplete. Your notes are not affected.`;
+	return statisticsT(
+		errorCount === 1 ? "plugin.statistics.issue.one" : "plugin.statistics.issue.other",
+		{ count: formatNumber(errorCount) },
+		locale,
+	);
 }
 
-export function getStatisticsEmptyStateMessage(errorCount: number): string {
+export function getStatisticsEmptyStateMessage(errorCount: number, locale: PluginLocale = getPluginUiLanguage()): string {
 	return errorCount > 0
-		? "Statistics history is unavailable right now. Your notes are not affected."
-		: "No statistics yet.";
+		? statisticsT("plugin.statistics.empty.unavailable", undefined, locale)
+		: statisticsT("plugin.statistics.empty.none", undefined, locale);
 }
 
-function getUpdatedAt(days: StatsDashboardDay[]): string {
+function getUpdatedAt(days: StatsDashboardDay[], locale: PluginLocale): string {
 	const latest = days
 		.map((day) => day.updatedAt)
 		.filter(Boolean)
 		.sort()
 		.pop();
-	return latest ? latest.replace("T", " ").replace(/\.\d{3}Z$/, " UTC") : "No data";
+	return latest
+		? latest.replace("T", " ").replace(/\.\d{3}Z$/, " UTC")
+		: statisticsT("plugin.statistics.noData", undefined, locale);
 }
 
 function metricCard(label: string, value: string, compact: boolean, detail?: string) {
@@ -143,6 +157,9 @@ function metricCard(label: string, value: string, compact: boolean, detail?: str
 
 const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const containerRef = useRef<HTMLDivElement | null>(null);
+	const locale = getPluginUiLanguage();
+	const t = (key: string, params?: Readonly<Record<string, string | number>>) =>
+		statisticsT(key, params, locale);
 	const [containerWidth, setContainerWidth] = useState(0);
 	const [activeView, setActiveView] = useState<StatisticsView>(
 		normalizeStatisticsView(plugin.settings.statisticsType)
@@ -191,8 +208,13 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const writtenPagesAll = days.reduce((sum, day) => sum + day.pages, 0);
 	const deviceCount = uniqueDeviceCount(days);
 	const showDevicesMetric = shouldShowDevicesMetric(Boolean(plugin.settings.statisticsSyncEnabled), deviceCount);
-	const issueMessage = getStatisticsIssueMessage(dashboardData.errors.length);
-	const emptyStateMessage = getStatisticsEmptyStateMessage(dashboardData.errors.length);
+	const issueMessage = getStatisticsIssueMessage(dashboardData.errors.length, locale);
+	const emptyStateMessage = getStatisticsEmptyStateMessage(dashboardData.errors.length, locale);
+	const pageUnit = t("plugin.statistics.unit.pages");
+	const pageDatasetLabels = useMemo(() => new Set([
+		t("plugin.statistics.chart.dailyPages"),
+		t("plugin.statistics.chart.totalPages"),
+	]), [locale]);
 
 	const chartAnimation = compact ? false : plugin.settings.animation ? { duration: medium ? 250 : 500 } : false;
 	const pointRadius = compact ? 0 : medium ? 1 : 3;
@@ -224,8 +246,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 						label: (context) => {
 							const label = context.dataset.label ?? "";
 							const value = context.parsed.y ?? 0;
-							if (label.includes("Pages")) {
-								return `${label}: ${Number(value).toFixed(1)} pages`;
+							if (pageDatasetLabels.has(label)) {
+								return `${label}: ${Number(value).toFixed(1)} ${pageUnit}`;
 							}
 							return `${label}: ${Number(value).toLocaleString()}`;
 						},
@@ -255,7 +277,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				},
 			},
 		}),
-		[chartAnimation, compact, medium]
+		[chartAnimation, compact, medium, pageDatasetLabels, pageUnit]
 	);
 
 	const activeChartData = useMemo<MixedChartData | null>(() => {
@@ -264,7 +286,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				datasets: [
 					{
 						type: "bar" as const,
-						label: "Writing Words",
+						label: t("plugin.statistics.chart.writingWords"),
 						data: toPoints(recentDays, "words"),
 						backgroundColor: "rgba(225, 29, 72, 0.35)",
 						borderColor: "rgb(225, 29, 72)",
@@ -281,7 +303,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				datasets: [
 					{
 						type: "bar" as const,
-						label: "Daily Words",
+						label: t("plugin.statistics.chart.dailyWords"),
 						data: toPoints(chartDays, "words"),
 						backgroundColor: "rgba(225, 29, 72, 0.32)",
 						borderColor: "rgb(225, 29, 72)",
@@ -291,7 +313,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 					},
 					{
 						type: "line" as const,
-						label: "Daily Pages",
+						label: t("plugin.statistics.chart.dailyPages"),
 						data: toPoints(chartDays, "pages"),
 						backgroundColor: "rgba(147, 51, 234, 0.14)",
 						borderColor: "rgb(147, 51, 234)",
@@ -311,7 +333,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				datasets: [
 					{
 						type: "line" as const,
-						label: "Total Pages",
+						label: t("plugin.statistics.chart.totalPages"),
 						data: toPoints(chartDays, "totalPages"),
 						backgroundColor: "rgba(20, 184, 166, 0.16)",
 						borderColor: "rgb(13, 148, 136)",
@@ -324,7 +346,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 					},
 					{
 						type: "line" as const,
-						label: "Total Files",
+						label: t("plugin.statistics.chart.totalFiles"),
 						data: toPoints(chartDays, "files"),
 						backgroundColor: "rgba(234, 179, 8, 0.18)",
 						borderColor: "rgb(202, 138, 4)",
@@ -339,18 +361,18 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 		}
 
 		return null;
-	}, [activeView, chartDays, pointRadius, recentDays]);
+	}, [activeView, chartDays, locale, pointRadius, recentDays]);
 
 	const compositionRows = useMemo(
 		() => activeView === "composition"
 			? [
-				{ label: "Written Characters", value: days.reduce((sum, day) => sum + day.characters, 0), color: "pa-bg-teal-500" },
-				{ label: "Written Sentences", value: days.reduce((sum, day) => sum + day.sentences, 0), color: "pa-bg-rose-500" },
-				{ label: "Footnotes", value: days.reduce((sum, day) => sum + day.footnotes, 0), color: "pa-bg-purple-500" },
-				{ label: "Citations", value: days.reduce((sum, day) => sum + day.citations, 0), color: "pa-bg-amber-500" },
+				{ label: t("plugin.statistics.composition.writtenCharacters"), value: days.reduce((sum, day) => sum + day.characters, 0), color: "pa-bg-teal-500" },
+				{ label: t("plugin.statistics.composition.writtenSentences"), value: days.reduce((sum, day) => sum + day.sentences, 0), color: "pa-bg-rose-500" },
+				{ label: t("plugin.statistics.composition.footnotes"), value: days.reduce((sum, day) => sum + day.footnotes, 0), color: "pa-bg-purple-500" },
+				{ label: t("plugin.statistics.composition.citations"), value: days.reduce((sum, day) => sum + day.citations, 0), color: "pa-bg-amber-500" },
 			]
 			: [],
-		[activeView, days]
+		[activeView, days, locale]
 	);
 	const maxCompositionValue = Math.max(...compositionRows.map((row) => row.value), 1);
 	const getCompositionWidth = (value: number) =>
@@ -376,18 +398,18 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				<div className="pa-flex pa-flex-wrap pa-items-center pa-justify-between pa-gap-3">
 					<div className="pa-min-w-0">
 						<h2 className="pa-m-0 pa-text-lg pa-font-semibold">
-							{app.vault.getName()} Statistics
+							{t("plugin.statistics.title", { vault: app.vault.getName() })}
 						</h2>
 						<div className="pa-mt-1 pa-text-xs pa-text-slate-500">
-							Updated {getUpdatedAt(days)}
+							{t("plugin.statistics.updated", { time: getUpdatedAt(days, locale) })}
 						</div>
 					</div>
 					<div
 						className={compact
 							? "pa-statistics-segment pa-statistics-segment--views pa-grid pa-w-full pa-grid-cols-2 pa-gap-1 pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"
-							: "pa-statistics-segment pa-statistics-segment--views pa-inline-flex pa-max-w-full pa-overflow-x-auto pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"}
+						: "pa-statistics-segment pa-statistics-segment--views pa-inline-flex pa-max-w-full pa-overflow-x-auto pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"}
 						role="tablist"
-						aria-label="Statistics views"
+						aria-label={t("plugin.statistics.aria.views")}
 					>
 						{tabs.map((tab) => (
 							<button
@@ -399,7 +421,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 								className="pa-statistics-tab"
 								onClick={() => handleViewChange(tab.id)}
 							>
-								{tab.label}
+								{t(tab.labelKey)}
 							</button>
 						))}
 					</div>
@@ -419,16 +441,17 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				<div className={`pa-flex pa-flex-1 pa-flex-col pa-gap-4 ${compact ? "pa-p-3" : "pa-p-4"}`}>
 					{showRangePicker ? (
 						<div className="pa-flex pa-justify-end">
-							<div className="pa-statistics-segment pa-statistics-segment--range pa-inline-flex pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-1" aria-label="Chart date range">
+							<div className="pa-statistics-segment pa-statistics-segment--range pa-inline-flex pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-1" role="group" aria-label={t("plugin.statistics.aria.chartRange")}>
 								{rangeOptions.map((option) => (
 									<button
 										key={option.id}
 										type="button"
+										aria-pressed={chartRange === option.id}
 										data-active={chartRange === option.id ? "true" : "false"}
 										className="pa-statistics-tab"
 										onClick={() => handleRangeChange(option.id)}
 									>
-										{option.label}
+										{option.labelKey ? t(option.labelKey) : option.label}
 									</button>
 								))}
 							</div>
@@ -438,17 +461,17 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 					{activeView === "overview" ? (
 						<>
 							<div className={`pa-grid pa-gap-3 ${metricGridClass}`}>
-								{metricCard("Total Words", formatNumber(latest?.totalWords ?? 0), compact)}
-								{metricCard("Total Pages", formatPages(latest?.totalPages ?? 0), compact)}
-								{metricCard("Markdown Files", formatNumber(latest?.files ?? 0), compact)}
-								{metricCard("30d Writing", formatNumber(writtenWords30), compact, `${activeWritingDays30} active days`)}
-								{metricCard("All Writing", formatNumber(writtenWordsAll), compact, formatPages(writtenPagesAll))}
+								{metricCard(t("plugin.statistics.metric.totalWords"), formatNumber(latest?.totalWords ?? 0), compact)}
+								{metricCard(t("plugin.statistics.metric.totalPages"), formatPages(latest?.totalPages ?? 0, pageUnit), compact)}
+								{metricCard(t("plugin.statistics.metric.markdownFiles"), formatNumber(latest?.files ?? 0), compact)}
+								{metricCard(t("plugin.statistics.metric.thirtyDayWriting"), formatNumber(writtenWords30), compact, t("plugin.statistics.metric.activeDays", { count: activeWritingDays30 }))}
+								{metricCard(t("plugin.statistics.metric.allWriting"), formatNumber(writtenWordsAll), compact, formatPages(writtenPagesAll, pageUnit))}
 								{showDevicesMetric
-									? metricCard("Devices", formatNumber(deviceCount), compact)
+									? metricCard(t("plugin.statistics.metric.devices"), formatNumber(deviceCount), compact)
 									: null}
 							</div>
 							<div className={`${overviewChartHeight} pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3`}>
-								<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">Loading chart...</div>}>
+								<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">{t("plugin.statistics.chart.loading")}</div>}>
 									{activeChartData ? <DashboardChart type="bar" data={activeChartData} options={commonOptions} /> : null}
 								</Suspense>
 							</div>
@@ -457,7 +480,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 
 					{activeView === "daily" ? (
 						<div className={`${detailChartHeight} pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3`}>
-							<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">Loading chart...</div>}>
+							<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">{t("plugin.statistics.chart.loading")}</div>}>
 								{activeChartData ? <DashboardChart type="bar" data={activeChartData} options={commonOptions} /> : null}
 							</Suspense>
 						</div>
@@ -465,7 +488,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 
 					{activeView === "growth" ? (
 						<div className={`${detailChartHeight} pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3`}>
-							<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">Loading chart...</div>}>
+							<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">{t("plugin.statistics.chart.loading")}</div>}>
 								{activeChartData ? <DashboardChart type="line" data={activeChartData} options={commonOptions} /> : null}
 							</Suspense>
 						</div>

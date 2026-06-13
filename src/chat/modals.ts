@@ -1,6 +1,7 @@
 import { Modal, Setting } from 'obsidian';
 import type PluginManager from '../main';
 import type { PersistedConversation } from './chat-history-store';
+import { getPluginUiLanguage, makePluginTranslator, type PluginTranslator } from '../locales/plugin';
 
 export interface ChatConfirmationOptions {
     title: string;
@@ -29,7 +30,7 @@ export class ChatConfirmationModal extends Modal {
         new Setting(contentEl)
             .addButton((button) => {
                 button
-                    .setButtonText(this.options.cancelText ?? 'Cancel')
+                    .setButtonText(this.options.cancelText ?? makePluginTranslator(getPluginUiLanguage())("plugin.chat.action.cancel"))
                     .onClick(() => this.resolve(false));
             })
             .addButton((button) => {
@@ -90,20 +91,21 @@ export class ChatHistoryPickerModal extends Modal {
 
     onOpen() {
         const { contentEl } = this;
+        const t = makePluginTranslator(getPluginUiLanguage());
         (this as unknown as { modalEl?: HTMLElement }).modalEl?.addClass('pa-chat-history-modal-shell');
         contentEl.empty();
         contentEl.addClass('pa-chat-history-modal');
-        contentEl.createEl('h2', { text: 'Chat history' });
+        contentEl.createEl('h2', { text: t("plugin.chat.history.title") });
         if (this.options.isStreaming) {
             contentEl.createEl('p', {
-                text: 'Wait for the current response to finish before switching conversations.',
+                text: t("plugin.chat.notice.waitForSwitch"),
                 cls: 'pa-chat-history-warning',
             });
         }
         if (this.options.conversations.length === 0) {
-            contentEl.createEl('p', { text: 'No saved conversations yet.' });
+            contentEl.createEl('p', { text: t("plugin.chat.history.empty") });
             new Setting(contentEl).addButton((button) => {
-                button.setButtonText('Close').onClick(() => this.resolve(null));
+                button.setButtonText(t("plugin.chat.action.close")).onClick(() => this.resolve(null));
             });
             return;
         }
@@ -120,7 +122,7 @@ export class ChatHistoryPickerModal extends Modal {
             button.disabled = this.options.isStreaming;
             const title = button.createEl('div', { cls: 'pa-chat-history-title', text: conversation.title });
             if (conversation.id === this.options.activeConversationId) {
-                title.createSpan({ cls: 'pa-chat-history-active-badge', text: ' (current)' });
+                title.createSpan({ cls: 'pa-chat-history-active-badge', text: t("plugin.chat.history.currentBadge") });
             }
             const preview = getDistinctChatHistoryPreview(conversation.title, conversation.preview);
             if (preview) {
@@ -128,7 +130,7 @@ export class ChatHistoryPickerModal extends Modal {
             }
             button.createEl('div', {
                 cls: 'pa-chat-history-meta',
-                text: `${conversation.turnCount} turn${conversation.turnCount === 1 ? '' : 's'} · ${formatRelativeTime(conversation.updatedAt)}`,
+                text: `${formatTurnCount(conversation.turnCount, t)} · ${formatRelativeTime(conversation.updatedAt, t)}`,
             });
             button.onclick = () => {
                 if (this.options.isStreaming) return;
@@ -136,7 +138,11 @@ export class ChatHistoryPickerModal extends Modal {
             };
             const deleteButton = item.createEl('button', {
                 cls: 'pa-chat-history-delete',
-                attr: { type: 'button', 'aria-label': 'Delete conversation', title: 'Delete conversation' },
+                attr: {
+                    type: 'button',
+                    'aria-label': t("plugin.chat.history.deleteConversation"),
+                    title: t("plugin.chat.history.deleteConversation"),
+                },
                 text: '×',
             });
             deleteButton.disabled = this.options.isStreaming;
@@ -147,7 +153,7 @@ export class ChatHistoryPickerModal extends Modal {
             };
         }
         new Setting(contentEl).addButton((button) => {
-            button.setButtonText('Close').onClick(() => this.resolve(null));
+            button.setButtonText(t("plugin.chat.action.close")).onClick(() => this.resolve(null));
         });
     }
 
@@ -175,17 +181,21 @@ export function pickChatConversation(
     });
 }
 
-function formatRelativeTime(iso: string): string {
+function formatTurnCount(count: number, t: PluginTranslator): string {
+    return t(count === 1 ? "plugin.chat.history.turn" : "plugin.chat.history.turns", { count });
+}
+
+function formatRelativeTime(iso: string, t: PluginTranslator): string {
     const timestamp = Date.parse(iso);
     if (Number.isNaN(timestamp)) return iso;
     const deltaMs = Date.now() - timestamp;
-    if (deltaMs < 60_000) return 'just now';
+    if (deltaMs < 60_000) return t("plugin.chat.history.justNow");
     const minutes = Math.floor(deltaMs / 60_000);
-    if (minutes < 60) return `${minutes} min ago`;
+    if (minutes < 60) return t("plugin.chat.history.minAgo", { count: minutes });
     const hours = Math.floor(minutes / 60);
-    if (hours < 24) return `${hours} hr ago`;
+    if (hours < 24) return t("plugin.chat.history.hrAgo", { count: hours });
     const days = Math.floor(hours / 24);
-    if (days < 7) return `${days} day${days === 1 ? '' : 's'} ago`;
+    if (days < 7) return t(days === 1 ? "plugin.chat.history.dayAgo" : "plugin.chat.history.daysAgo", { count: days });
     return new Date(timestamp).toLocaleDateString();
 }
 

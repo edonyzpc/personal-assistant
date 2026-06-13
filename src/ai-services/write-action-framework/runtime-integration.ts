@@ -211,6 +211,14 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
         return error instanceof Error ? error.message : String(error);
     }
 
+    function shouldSkipWriteRollback(error: unknown): boolean {
+        return Boolean(
+            error
+            && typeof error === "object"
+            && (error as { skipWriteRollback?: unknown }).skipWriteRollback === true,
+        );
+    }
+
     return {
         async execute(capability, input, context): Promise<AgentCapabilityResult> {
             const runId = runIdFactory();
@@ -516,6 +524,7 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
             } catch (error) {
                 const durationMs = now() - execStartedAt;
                 const message = describeError(error);
+                const rollbackAllowed = !shouldSkipWriteRollback(error);
                 emit("execute.fail", capability, runId, turnId, {
                     durationMs,
                     errorCategory: "fs_error",
@@ -533,12 +542,14 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                     runId,
                     turnId,
                     confinement.normalizedPath,
-                    executeAttempted,
+                    executeAttempted && rollbackAllowed,
                 );
                 return failure(
                     capability,
                     `executeWrite threw: ${message}`,
-                    "The write failed and any partial output was rolled back.",
+                    rollbackAllowed
+                        ? "The write failed and any partial output was rolled back."
+                        : "The write failed before any output was written.",
                 );
             }
 

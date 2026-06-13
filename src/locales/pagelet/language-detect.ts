@@ -1,5 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
+import { getObsidianUiLanguage, type UiLocale } from "../language";
+
 /**
  * Pagelet — note language detection.
  *
@@ -18,7 +20,7 @@
  *    later means designing a different API; do not bolt extra branches on.
  */
 
-export type PageletDetectedLanguage = "zh" | "en";
+export type PageletDetectedLanguage = UiLocale;
 
 /**
  * 30% threshold matches D015 ("ratio > 0.3 判中文"). Frozen as a named
@@ -81,43 +83,5 @@ export function detectNoteLanguage(text: unknown): PageletDetectedLanguage {
  * other Obsidian locales fall back to EN per D014 ("中+英双语 day 1").
  */
 export function getPageletUiLanguage(): PageletDetectedLanguage {
-    if (typeof globalThis === "undefined") return "en";
-    const g = globalThis as unknown as {
-        window?: { i18next?: { language?: unknown }; moment?: { locale?: () => unknown } };
-        moment?: { locale?: () => unknown };
-        i18next?: { language?: unknown };
-    };
-    // 1) Obsidian exposes i18next on window in desktop / mobile builds.
-    const i18nLang = readLanguageString(g.window?.i18next?.language ?? g.i18next?.language);
-    if (i18nLang) return i18nLang;
-    // 2) Moment.locale is set by Obsidian when changing app language; treat
-    //    it as a secondary hint.
-    const momentLocale =
-        readLanguageString(safeCallLocale(g.window?.moment))
-        ?? readLanguageString(safeCallLocale(g.moment));
-    if (momentLocale) return momentLocale;
-    return "en";
-}
-
-function readLanguageString(value: unknown): PageletDetectedLanguage | null {
-    if (typeof value !== "string" || value.length === 0) return null;
-    const lower = value.toLowerCase();
-    if (lower === "zh" || lower.startsWith("zh-") || lower.startsWith("zh_")) {
-        return "zh";
-    }
-    if (lower === "en" || lower.startsWith("en-") || lower.startsWith("en_")) {
-        return "en";
-    }
-    return null;
-}
-
-function safeCallLocale(moment: { locale?: () => unknown } | undefined): unknown {
-    if (!moment || typeof moment.locale !== "function") return undefined;
-    try {
-        return moment.locale();
-    } catch {
-        // moment.locale() should never throw, but the global may be a
-        // user-installed stub that does. Don't crash UI bootstrap.
-        return undefined;
-    }
+    return getObsidianUiLanguage();
 }

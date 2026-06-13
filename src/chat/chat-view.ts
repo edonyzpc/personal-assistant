@@ -18,6 +18,7 @@ import {
     type ChatRoleIdenticon,
     type ChatRoleIdenticonModel,
 } from './role-identicons';
+import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
 
 export const VIEW_TYPE_LLM = "sidellm-view";
 export type { ChatMessage };
@@ -197,7 +198,7 @@ export class LLMView extends ItemView {
     }
 
     getDisplayText(): string {
-        return "Personal Assistant Chat";
+        return pluginT("plugin.chat.displayText", getPluginUiLanguage());
     }
 
     getIcon(): string {
@@ -206,6 +207,7 @@ export class LLMView extends ItemView {
 
     async onOpen() {
         const sessionId = this.startViewSession();
+        const t = makePluginTranslator(getPluginUiLanguage());
         ensureChatLoadersRegistered((message, error) => this.plugin.log(message, error));
         const { containerEl } = this;
         containerEl.empty();
@@ -224,13 +226,13 @@ export class LLMView extends ItemView {
         });
         const composerRow = inputDiv.createDiv({ cls: 'pa-chat-composer-row' });
         const textArea = composerRow.createEl('textarea', {
-            attr: { rows: '3', placeholder: 'Ask about your notes...' }
+            attr: { rows: '3', placeholder: t("plugin.chat.placeholder.askAboutNotes") }
         });
         const skillTypeahead = inputDiv.createDiv({
             cls: 'pa-chat-skill-typeahead',
             attr: {
                 role: 'listbox',
-                'aria-label': 'Skill guides',
+                'aria-label': t("plugin.chat.skillGuides"),
             },
         });
         skillTypeahead.hidden = true;
@@ -244,7 +246,7 @@ export class LLMView extends ItemView {
             if (e.key !== 'Enter' || e.shiftKey) return;
             if (isGenerating()) {
                 e.preventDefault();
-                showComposerHint('Wait for this answer to finish or stop it first.');
+                showComposerHint(t("plugin.chat.hint.waitForAnswer"));
                 return;
             }
             if (textArea.value.trim()) {
@@ -272,27 +274,27 @@ export class LLMView extends ItemView {
 
         const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
         const sendButton = buttonDiv.createEl('button', {
-            text: 'Ask',
+            text: t("plugin.chat.action.ask"),
             cls: 'pa-chat-icon-button send-button-visible',
             attr: {
                 type: 'button',
-                'aria-label': 'Ask',
-                title: 'Ask',
+                'aria-label': t("plugin.chat.action.ask"),
+                title: t("plugin.chat.action.ask"),
             },
         });
         setIcon(sendButton, 'send');
-        sendButton.createSpan({ cls: 'pa-sr-only', text: 'Ask' });
+        sendButton.createSpan({ cls: 'pa-sr-only', text: t("plugin.chat.action.ask") });
         const memoryControl = buttonDiv.createSpan({ cls: 'pa-chat-memory-control' });
         const memoryChip = memoryControl.createEl('button', {
             cls: 'pa-chat-icon-button pa-chat-memory-chip personal-assistant-ai-statusbar',
             attr: {
                 type: 'button',
-                'aria-label': 'Show Memory status',
-                title: 'Show Memory status',
+                'aria-label': t("plugin.chat.memory.showStatus"),
+                title: t("plugin.chat.memory.showStatus"),
             },
         });
         setIcon(memoryChip, 'brain');
-        const memoryChipLabel = memoryChip.createSpan({ cls: 'pa-sr-only', text: 'Memory' });
+        const memoryChipLabel = memoryChip.createSpan({ cls: 'pa-sr-only', text: t("plugin.chat.memory") });
         const memoryMenu = memoryControl.createDiv({ cls: 'pa-chat-menu pa-chat-memory-menu' });
         const memoryMenuId = `pa-chat-memory-menu-${sessionId}`;
         memoryMenu.id = memoryMenuId;
@@ -303,51 +305,51 @@ export class LLMView extends ItemView {
             cls: 'pa-chat-icon-button cancel-button',
             attr: {
                 type: 'button',
-                'aria-label': 'Stop generation',
-                title: 'Stop generation',
+                'aria-label': t("plugin.chat.action.stopGeneration"),
+                title: t("plugin.chat.action.stopGeneration"),
             },
         });
         setIcon(cancelButton, 'square');
-        cancelButton.createSpan({ cls: 'pa-sr-only', text: 'Stop generation' });
+        cancelButton.createSpan({ cls: 'pa-sr-only', text: t("plugin.chat.action.stopGeneration") });
         cancelButton.classList.add('cancel-button-hidden');
         const moreControl = buttonDiv.createSpan({ cls: 'pa-chat-more-control' });
         const moreButton = moreControl.createEl('button', {
             cls: 'pa-chat-icon-button pa-chat-more-button',
             attr: {
                 type: 'button',
-                'aria-label': 'More chat actions',
-                title: 'More chat actions',
+                'aria-label': t("plugin.chat.action.moreChatActions"),
+                title: t("plugin.chat.action.moreChatActions"),
                 'aria-expanded': 'false',
             },
         });
         setIcon(moreButton, 'ellipsis');
-        moreButton.createSpan({ cls: 'pa-sr-only', text: 'More chat actions' });
+        moreButton.createSpan({ cls: 'pa-sr-only', text: t("plugin.chat.action.moreChatActions") });
         const composerMenu = moreControl.createDiv({ cls: 'pa-chat-menu pa-chat-composer-menu' });
         composerMenu.hidden = true;
         const newChatButton = createChatMenuItem(composerMenu, {
-            text: 'New Chat',
+            text: t("plugin.chat.action.newChat"),
             icon: 'plus-square',
         });
         const historyButton = createChatMenuItem(composerMenu, {
-            text: 'History',
+            text: t("plugin.chat.action.history"),
             icon: 'history',
         });
         const copyConversationButton = createChatMenuItem(composerMenu, {
-            text: 'Copy conversation',
+            text: t("plugin.chat.action.copyConversation"),
             icon: 'copy',
         });
         createChatMenuDivider(composerMenu);
         const technicalMemoryButton = createChatMenuItem(composerMenu, {
-            text: 'Show Memory Status',
+            text: t("plugin.chat.action.showMemoryStatus"),
             icon: 'activity',
         });
         const settingsButton = createChatMenuItem(composerMenu, {
-            text: 'Open settings',
+            text: t("plugin.chat.action.openSettings"),
             icon: 'settings',
         });
         createChatMenuDivider(composerMenu);
         const clearButton = createChatMenuItem(composerMenu, {
-            text: 'Clear Chat',
+            text: t("plugin.chat.action.clearChat"),
             icon: 'trash-2',
             cls: 'pa-chat-menu-item-danger',
         });
@@ -538,13 +540,17 @@ export class LLMView extends ItemView {
             const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
             sendButton.disabled = generating || !hasDraft || setupIssue !== null;
             if (generating && !isStopping && !isFinalizing) {
-                textArea.setAttribute('placeholder', 'Draft next message');
+                textArea.setAttribute('placeholder', t("plugin.chat.placeholder.draftNextMessage"));
                 sendButton.classList.replace('send-button-visible', 'send-button-hidden');
                 cancelButton.classList.replace('cancel-button-hidden', 'cancel-button-visible');
             } else {
                 textArea.setAttribute(
                     'placeholder',
-                    generating ? 'Draft next message' : setupIssue ? 'Set up AI provider first' : 'Ask about your notes...',
+                    generating
+                        ? t("plugin.chat.placeholder.draftNextMessage")
+                        : setupIssue
+                            ? t("plugin.chat.placeholder.setupProviderFirst")
+                            : t("plugin.chat.placeholder.askAboutNotes"),
                 );
                 sendButton.classList.replace('send-button-hidden', 'send-button-visible');
                 cancelButton.classList.replace('cancel-button-visible', 'cancel-button-hidden');
@@ -743,39 +749,39 @@ export class LLMView extends ItemView {
         };
         const getMemoryChipState = (plan?: MemoryMaintenancePlan | null): MemoryChipState => {
             if (this.plugin.settings?.memoryEnabled === false) {
-                return { label: 'Memory unavailable', visualState: 'unavailable' };
+                return { label: t("plugin.chat.memory.unavailable"), visualState: 'unavailable' };
             }
             if (!plan) {
-                return { label: 'Memory', visualState: 'unavailable' };
+                return { label: t("plugin.chat.memory"), visualState: 'unavailable' };
             }
             if (plan.reason === 'ready') {
-                return { label: 'Memory ready', visualState: 'ready' };
+                return { label: t("plugin.chat.memory.ready"), visualState: 'ready' };
             }
             if (plan.reason === 'changed-notes') {
                 return {
-                    label: 'Memory needs update',
+                    label: t("plugin.chat.memory.needsUpdate"),
                     visualState: 'needs-update',
-                    actionLabel: 'Update memory',
+                    actionLabel: t("plugin.chat.memory.update"),
                     actionKind: 'update',
                 };
             }
             if (plan.reason === 'settings-changed') {
                 return {
-                    label: 'Memory needs update',
+                    label: t("plugin.chat.memory.needsUpdate"),
                     visualState: 'needs-update',
-                    actionLabel: 'Prepare memory',
+                    actionLabel: t("plugin.chat.memory.prepare"),
                     actionKind: 'prepare',
                 };
             }
             if (plan.reason === 'first-use' || plan.reason === 'local-memory-missing') {
                 return {
-                    label: 'Memory needs setup',
+                    label: t("plugin.chat.memory.needsSetup"),
                     visualState: 'needs-setup',
-                    actionLabel: 'Prepare memory',
+                    actionLabel: t("plugin.chat.memory.prepare"),
                     actionKind: 'prepare',
                 };
             }
-            return { label: 'Memory unavailable', visualState: 'unavailable' };
+            return { label: t("plugin.chat.memory.unavailable"), visualState: 'unavailable' };
         };
         const setMemoryChipState = (state: MemoryChipState) => {
             memoryChipLabel.setText(state.label);
@@ -823,7 +829,7 @@ export class LLMView extends ItemView {
             }
             createChatMenuDivider(memoryMenu);
             const openSettingsButton = createChatMenuItem(memoryMenu, {
-                text: 'Open settings',
+                text: t("plugin.chat.action.openSettings"),
                 icon: 'settings',
             });
             openSettingsButton.onclick = () => {
@@ -838,7 +844,7 @@ export class LLMView extends ItemView {
                 appWithSettings.setting?.openTabById('personal-assistant');
             };
             const technicalButton = createChatMenuItem(memoryMenu, {
-                text: 'Show Memory Status',
+                text: t("plugin.chat.action.showMemoryStatus"),
                 icon: 'activity',
             });
             technicalButton.onclick = () => {
@@ -854,11 +860,11 @@ export class LLMView extends ItemView {
             const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
             if (setupIssue) {
                 emptyStateEl = this.responseDiv.createDiv({ cls: 'pa-chat-empty-state pa-chat-config-banner' });
-                emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: 'Welcome to AI Chat' });
+                emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: t("plugin.chat.empty.setupTitle") });
                 emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: setupIssue });
                 const actions = emptyStateEl.createDiv({ cls: 'pa-chat-empty-chips' });
                 const settingsButton = actions.createEl('button', {
-                    text: 'Open Settings',
+                    text: t("plugin.chat.action.openSettingsTitle"),
                     cls: 'pa-chat-empty-chip mod-cta',
                     attr: { type: 'button' },
                 });
@@ -877,12 +883,12 @@ export class LLMView extends ItemView {
 
             const hasNote = isMarkdownNoteAvailable();
             emptyStateEl = this.responseDiv.createDiv({ cls: 'pa-chat-empty-state' });
-            emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: 'Ask about your notes' });
+            emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: t("plugin.chat.empty.askTitle") });
             const chips = emptyStateEl.createDiv({ cls: 'pa-chat-empty-chips' });
             const chipSpecs = [
-                { label: 'Summarize current note', prompt: 'Summarize the current note.' },
-                { label: 'Find related notes', prompt: 'Find notes related to the current note.' },
-                { label: 'Draft from current note', prompt: 'Draft a concise response based on the current note.' },
+                { label: t("plugin.chat.empty.summarizeCurrentNote"), prompt: t("plugin.chat.prompt.summarizeCurrentNote") },
+                { label: t("plugin.chat.empty.findRelatedNotes"), prompt: t("plugin.chat.prompt.findRelatedNotes") },
+                { label: t("plugin.chat.empty.draftFromCurrentNote"), prompt: t("plugin.chat.prompt.draftFromCurrentNote") },
             ];
             chipSpecs.forEach((spec) => {
                 const chip = chips.createEl('button', {
@@ -893,14 +899,14 @@ export class LLMView extends ItemView {
                 chip.disabled = !hasNote;
                 chip.onclick = () => {
                     if (chip.disabled) {
-                        showComposerHint('Open a note to use this.');
+                        showComposerHint(t("plugin.chat.hint.openNoteToUse"));
                         return;
                     }
                     fillComposer(spec.prompt);
                 };
             });
             if (!hasNote) {
-                emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: 'Open a note to use this.' });
+                emptyStateEl.createDiv({ cls: 'pa-chat-empty-hint', text: t("plugin.chat.hint.openNoteToUse") });
             }
         };
         const refreshEmptyStateForWorkspace = () => {
@@ -1182,7 +1188,7 @@ export class LLMView extends ItemView {
                 const addMessageButton = createMessageActionButton(rendered.actionDiv, {
                     icon: 'file-plus',
                     cls: 'add-to-editor-message-button',
-                    label: 'Add to editor',
+                    label: t("plugin.chat.action.addToEditor"),
                 });
                 rendered.actionDiv.insertBefore(addMessageButton, rendered.actionMenuButton);
                 addMessageButton.onclick = () => {
@@ -1193,7 +1199,7 @@ export class LLMView extends ItemView {
 
             if (options.onDelete && !rendered.deleteButton) {
                 const deleteButton = createChatMenuItem(rendered.actionMenu, {
-                    text: 'Delete',
+                    text: t("plugin.chat.action.delete"),
                     icon: 'trash-2',
                     cls: 'pa-chat-menu-item-danger delete-message-button',
                 });
@@ -1254,7 +1260,7 @@ export class LLMView extends ItemView {
             if (options.showAssistantLoader) {
                 messageDiv.setAttribute('aria-busy', 'true');
             }
-            const { roleEl, loaderEl } = createRoleLabel(messageDiv, message.role === 'user' ? 'You' : 'Assistant', {
+            const { roleEl, loaderEl } = createRoleLabel(messageDiv, message.role === 'user' ? t("plugin.chat.role.you") : t("plugin.chat.role.assistant"), {
                 identicon: message.role,
                 activeIdenticon: options.showAssistantLoader,
             });
@@ -1263,18 +1269,18 @@ export class LLMView extends ItemView {
                 cls: 'message-actions message-action-toolbar',
                 attr: {
                     role: 'group',
-                    'aria-label': 'Message actions',
+                    'aria-label': t("plugin.chat.message.actions"),
                 },
             });
             const copyButton = createMessageActionButton(actionDiv, {
                 cls: 'copy-message-button',
                 icon: 'copy',
-                label: 'Copy message',
+                label: t("plugin.chat.action.copyMessage"),
             });
             const menuButton = createMessageActionButton(actionDiv, {
                 cls: 'message-more-button',
                 icon: 'ellipsis',
-                label: 'More message actions',
+                label: t("plugin.chat.action.moreMessageActions"),
             });
             menuButton.setAttribute('aria-expanded', 'false');
             menuButton.hidden = true;
@@ -1312,7 +1318,7 @@ export class LLMView extends ItemView {
             copyButton.onclick = () => {
                 if (copyButton.disabled) return;
                 navigator.clipboard.writeText(rendered.copyContent).then(() => {
-                    new Notice('Copied to clipboard');
+                    new Notice(t("plugin.chat.notice.copied"));
                 }).catch(err => {
                     console.error('Could not copy text: ', err);
                 });
@@ -1333,9 +1339,9 @@ export class LLMView extends ItemView {
             const pairStart = this.chatHistory.indexOf(expectedUser);
             if (pairStart < 0 || this.chatHistory[pairStart + 1] !== expectedAssistant) return;
             const confirmed = await confirmChatAction(this.plugin, {
-                title: 'Delete message?',
-                message: 'This deletes the full user and assistant turn from this chat.',
-                confirmText: 'Delete',
+                title: t("plugin.chat.confirm.deleteMessage.title"),
+                message: t("plugin.chat.confirm.deleteMessage.fullTurn"),
+                confirmText: t("plugin.chat.action.delete"),
                 danger: true,
             });
             if (!confirmed) return;
@@ -1354,7 +1360,7 @@ export class LLMView extends ItemView {
             for (const entry of removedEntries) {
                 void this.deletePersistedTurnForEntry(entry);
             }
-            new Notice('Message deleted');
+            new Notice(t("plugin.chat.notice.messageDeleted"));
         };
 
         const deleteHistoryPair = async (messageIndex: number) => {
@@ -1435,14 +1441,14 @@ export class LLMView extends ItemView {
             entry: TerminalTurnEntry,
         ) => {
             const row = this.responseDiv.createDiv({ cls: `llm-message system turn-${entry.terminalKind}` });
-            createRoleLabel(row, entry.terminalKind === 'error' ? 'Error' : 'Cancelled');
+            createRoleLabel(row, entry.terminalKind === 'error' ? t("plugin.chat.role.error") : t("plugin.chat.role.cancelled"));
             row.createDiv({ cls: 'message-content', text: entry.content });
             const actions = row.createDiv({ cls: 'message-actions turn-terminal-actions' });
             const retryButton = actions.createEl('button', {
                 cls: 'message-action-button retry-message-button',
                 attr: {
-                    'aria-label': 'Retry message',
-                    title: 'Retry message',
+                    'aria-label': t("plugin.chat.action.retryMessage"),
+                    title: t("plugin.chat.action.retryMessage"),
                 },
             });
             setIcon(retryButton, 'rotate-cw');
@@ -1454,15 +1460,15 @@ export class LLMView extends ItemView {
 
             const deleteButton = actions.createEl('button', {
                 cls: 'message-action-button delete-message-button',
-                attr: { 'aria-label': 'Delete message' },
+                attr: { 'aria-label': t("plugin.chat.action.deleteMessage") },
             });
             setIcon(deleteButton, 'trash');
             deleteButton.onclick = () => {
                 if (deleteButton.disabled || isGenerating()) return;
                 void confirmChatAction(this.plugin, {
-                    title: 'Delete message?',
-                    message: 'This deletes this unfinished turn from the chat.',
-                    confirmText: 'Delete',
+                    title: t("plugin.chat.confirm.deleteMessage.title"),
+                    message: t("plugin.chat.confirm.deleteMessage.unfinishedTurn"),
+                    confirmText: t("plugin.chat.action.delete"),
                     danger: true,
                 }).then((confirmed) => {
                     if (!confirmed) return;
@@ -1480,14 +1486,14 @@ export class LLMView extends ItemView {
                     cls: 'message-action-button copy-error-button',
                     attr: {
                         type: 'button',
-                        'aria-label': 'Copy error',
-                        title: 'Copy error',
+                        'aria-label': t("plugin.chat.action.copyError"),
+                        title: t("plugin.chat.action.copyError"),
                     },
                 });
                 setIcon(copyErrorButton, 'copy');
                 copyErrorButton.onclick = () => {
                     navigator.clipboard.writeText(entry.errorDetail ?? entry.content).then(() => {
-                        new Notice('Copied to clipboard');
+                        new Notice(t("plugin.chat.notice.copied"));
                     }).catch(err => {
                         console.error('Could not copy error: ', err);
                     });
@@ -1534,13 +1540,13 @@ export class LLMView extends ItemView {
                 cls: 'thinking-status-toggle',
                 attr: {
                     type: 'button',
-                    'aria-label': 'Show thinking details',
+                    'aria-label': t("plugin.chat.thinking.showDetails"),
                     'aria-expanded': 'false',
                     'aria-controls': detailsId,
                 },
             });
             setIcon(toggleButton, 'chevron-right');
-            const { loaderEl } = createRoleLabel(headerDiv, 'Thinking', {
+            const { loaderEl } = createRoleLabel(headerDiv, t("plugin.chat.role.thinking"), {
                 extraClass: 'thinking-status-role',
                 loader: 'thinking',
             });
@@ -1550,7 +1556,7 @@ export class LLMView extends ItemView {
             detailsEl.id = detailsId;
             detailsEl.hidden = true;
             const activitySectionEl = detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-activity' });
-            activitySectionEl.createDiv({ cls: 'thinking-status-section-title', text: 'Assistant activity' });
+            activitySectionEl.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.assistantActivity") });
             const activityListEl = activitySectionEl.createDiv({ cls: 'thinking-status-activity-list' });
 
             const statusView: ThinkingStatusView = {
@@ -1571,7 +1577,7 @@ export class LLMView extends ItemView {
                 toggleButton.setAttribute('aria-expanded', String(statusView.expanded));
                 toggleButton.setAttribute(
                     'aria-label',
-                    statusView.expanded ? 'Hide thinking details' : 'Show thinking details'
+                    statusView.expanded ? t("plugin.chat.thinking.hideDetails") : t("plugin.chat.thinking.showDetails")
                 );
                 setIcon(toggleButton, statusView.expanded ? 'chevron-down' : 'chevron-right');
             };
@@ -1612,7 +1618,7 @@ export class LLMView extends ItemView {
         const ensureProviderReasoningNotice = (statusView: ThinkingStatusView) => {
             if (statusView.reasoningContentEl) return statusView.reasoningContentEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-reasoning' });
-            section.createDiv({ cls: 'thinking-status-section-title', text: 'Provider thinking' });
+            section.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.providerThinking") });
             const contentEl = section.createDiv({ cls: 'thinking-status-reasoning-content' });
             statusView.reasoningSectionEl = section;
             statusView.reasoningContentEl = contentEl;
@@ -1621,14 +1627,14 @@ export class LLMView extends ItemView {
 
         const renderProviderReasoningNotice = (statusView: ThinkingStatusView) => {
             const contentEl = ensureProviderReasoningNotice(statusView);
-            contentEl.setText('Provider reasoning was received but is hidden. It is not a source or a Memory reference.');
+            contentEl.setText(t("plugin.chat.thinking.providerReasoningHidden"));
         };
 
         const appendProviderReasoning = (turn: UiTurn, delta: string) => {
             if (!delta) return;
             turn.providerReasoningObserved = true;
             turn.statusView ??= createThinkingStatusView(turn);
-            turn.statusView.summaryEl.setText('Qwen model is thinking...');
+            turn.statusView.summaryEl.setText(t("plugin.chat.thinking.qwenThinking"));
             renderProviderReasoningNotice(turn.statusView);
             scrollToBottom();
         };
@@ -1636,7 +1642,7 @@ export class LLMView extends ItemView {
         const ensureWarningList = (statusView: ThinkingStatusView) => {
             if (statusView.warningListEl) return statusView.warningListEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-warnings' });
-            section.createDiv({ cls: 'thinking-status-section-title', text: 'Warnings' });
+            section.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.warnings") });
             const listEl = section.createDiv({ cls: 'thinking-status-warning-list' });
             statusView.warningSectionEl = section;
             statusView.warningListEl = listEl;
@@ -1668,7 +1674,7 @@ export class LLMView extends ItemView {
             });
         };
 
-        const completeThinkingStatus = (statusView: ThinkingStatusView, summary = 'Thinking complete') => {
+        const completeThinkingStatus = (statusView: ThinkingStatusView, summary = t("plugin.chat.thinking.complete")) => {
             stopThinkingLoader(statusView);
             statusView.summaryEl.setText(summary);
         };
@@ -1676,7 +1682,7 @@ export class LLMView extends ItemView {
         const ensureContextUsedList = (statusView: ThinkingStatusView) => {
             if (statusView.contextUsedListEl) return statusView.contextUsedListEl;
             const section = statusView.detailsEl.createDiv({ cls: 'thinking-status-section thinking-status-context-used' });
-            section.createDiv({ cls: 'thinking-status-section-title', text: 'Context Used' });
+            section.createDiv({ cls: 'thinking-status-section-title', text: t("plugin.chat.thinking.contextUsed") });
             const listEl = section.createDiv({ cls: 'thinking-status-context-list' });
             statusView.contextUsedSectionEl = section;
             statusView.contextUsedListEl = listEl;
@@ -1706,11 +1712,11 @@ export class LLMView extends ItemView {
                     row.createDiv({ cls: 'thinking-status-context-sources', text: sourceSummary });
                 }
                 if (item.citationEligible) {
-                    row.createDiv({ cls: 'thinking-status-context-note', text: 'Eligible for Memory references' });
+                    row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.memoryEligible") });
                 } else if (item.statusOnly) {
-                    row.createDiv({ cls: 'thinking-status-context-note', text: 'Status only' });
+                    row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.statusOnly") });
                 } else {
-                    row.createDiv({ cls: 'thinking-status-context-note', text: 'Not a Memory reference' });
+                    row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.notMemoryReference") });
                 }
             });
         };
@@ -2196,7 +2202,7 @@ export class LLMView extends ItemView {
                             if (event.kind === 'partial-output-error') {
                                 if (!isLiveTurn()) return;
                                 turn.statusView ??= createThinkingStatusView(turn);
-                                const content = 'Answer stopped early.';
+                                const content = t("plugin.chat.terminal.answerStoppedEarly");
                                 if (turn.activityDetails[turn.activityDetails.length - 1] !== content) {
                                     turn.activityDetails.push(content);
                                     while (turn.activityDetails.length > 6) {
@@ -2217,10 +2223,10 @@ export class LLMView extends ItemView {
             } catch (error) {
                 if (!isSameTurn()) return;
                 if (error instanceof DOMException && error.name === 'AbortError') {
-                    createTerminalEntry(turn, 'Generation cancelled', 'cancelled');
+                    createTerminalEntry(turn, t("plugin.chat.notice.generationCancelled"), 'cancelled');
                     this.result = previousResult;
                 } else {
-                    createTerminalEntry(turn, 'The answer did not finish.', 'error', String(error));
+                    createTerminalEntry(turn, t("plugin.chat.terminal.answerDidNotFinish"), 'error', String(error));
                     this.result = previousResult;
                 }
             } finally {
@@ -2241,7 +2247,7 @@ export class LLMView extends ItemView {
                 isStopping = true;
                 this.abortController.abort();
                 syncComposerControls();
-                new Notice('Generation cancelled');
+                new Notice(t("plugin.chat.notice.generationCancelled"));
             }
         };
 
@@ -2251,9 +2257,9 @@ export class LLMView extends ItemView {
 
         clearButton.onclick = async () => {
             const confirmed = await confirmChatAction(this.plugin, {
-                title: 'Clear current chat?',
-                message: 'This clears the current chat and draft. Other saved conversations remain in History.',
-                confirmText: 'Clear current chat',
+                title: t("plugin.chat.confirm.clearChat.title"),
+                message: t("plugin.chat.confirm.clearChat.message"),
+                confirmText: t("plugin.chat.confirm.clearChat.action"),
                 danger: true,
             });
             if (!confirmed) return;
@@ -2290,7 +2296,7 @@ export class LLMView extends ItemView {
                     this.plugin.log?.("Failed to clear active conversation pointer", error);
                 }
             }
-            new Notice('Current chat cleared');
+            new Notice(t("plugin.chat.notice.currentChatCleared"));
         };
 
         const addContentToEditor = async (content: string) => {
@@ -2300,7 +2306,7 @@ export class LLMView extends ItemView {
                 if (markdownLeaves.length > 0) {
                     targetLeaf = markdownLeaves[0];
                 } else {
-                    new Notice('Please open a markdown file first');
+                    new Notice(t("plugin.chat.notice.openMarkdownFirst"));
                     return;
                 }
             }
@@ -2310,20 +2316,20 @@ export class LLMView extends ItemView {
                 const editor = targetLeaf.view.editor;
                 const cursor = editor.getCursor();
                 editor.replaceRange(content, cursor);
-                new Notice('Added response to editor');
+                new Notice(t("plugin.chat.notice.addedResponseToEditor"));
             }
         };
 
         copyConversationButton.onclick = () => {
             const conversationText = timelineEntries.map((entry) => {
                 if (entry.kind === 'history') {
-                    return `You:\n${entry.user.content}\n\nAssistant:\n${entry.assistant.content}`;
+                    return `${t("plugin.chat.role.you")}:\n${entry.user.content}\n\n${t("plugin.chat.role.assistant")}:\n${entry.assistant.content}`;
                 }
-                const label = entry.terminalKind === 'error' ? 'Error' : 'Cancelled';
-                return `You:\n${entry.prompt}\n\n${label}:\n${entry.content}`;
+                const label = entry.terminalKind === 'error' ? t("plugin.chat.role.error") : t("plugin.chat.role.cancelled");
+                return `${t("plugin.chat.role.you")}:\n${entry.prompt}\n\n${label}:\n${entry.content}`;
             }).join('\n\n');
             navigator.clipboard.writeText(conversationText).then(() => {
-                new Notice('Conversation copied');
+                new Notice(t("plugin.chat.notice.conversationCopied"));
             }).catch(err => {
                 console.error('Could not copy conversation: ', err);
             });
@@ -2366,12 +2372,12 @@ export class LLMView extends ItemView {
         const getReadyHistoryManager = async (showNotice = false): Promise<ChatHistoryManager | null> => {
             const manager = this.getChatHistoryManager();
             if (!manager) {
-                if (showNotice) new Notice('Chat history is unavailable.');
+                if (showNotice) new Notice(t("plugin.chat.notice.historyUnavailable"));
                 return null;
             }
             await manager.initialize();
             if (!manager.isAvailable()) {
-                if (showNotice) new Notice('Chat history is unavailable.');
+                if (showNotice) new Notice(t("plugin.chat.notice.historyUnavailable"));
                 return null;
             }
             return manager;
@@ -2403,7 +2409,7 @@ export class LLMView extends ItemView {
 
         const switchActiveConversation = async (conversationId: string) => {
             if (isGenerating()) {
-                new Notice('Wait for the current response to finish before switching conversations.');
+                new Notice(t("plugin.chat.notice.waitForSwitch"));
                 return;
             }
             await this.persistChain.catch(() => undefined);
@@ -2412,12 +2418,12 @@ export class LLMView extends ItemView {
             try {
                 const conversation = await manager.findConversation(conversationId);
                 if (!conversation) {
-                    new Notice('Conversation no longer exists.');
+                    new Notice(t("plugin.chat.notice.conversationMissing"));
                     return;
                 }
                 if (!isCurrentSession()) return;
                 if (isGenerating()) {
-                    new Notice('Wait for the current response to finish before switching conversations.');
+                    new Notice(t("plugin.chat.notice.waitForSwitch"));
                     return;
                 }
                 await manager.setActiveConversationId(conversationId);
@@ -2426,13 +2432,13 @@ export class LLMView extends ItemView {
                 applyRestoredConversation(conversation, turns);
             } catch (error) {
                 this.plugin.log?.("Failed to switch chat conversation", error);
-                new Notice('Could not load that conversation.');
+                new Notice(t("plugin.chat.notice.loadConversationFailed"));
             }
         };
 
         const startNewConversation = async () => {
             if (isGenerating()) {
-                new Notice('Wait for the current response to finish before starting a new chat.');
+                new Notice(t("plugin.chat.notice.waitForNewChat"));
                 return;
             }
             await this.persistChain.catch(() => undefined);
@@ -2460,7 +2466,7 @@ export class LLMView extends ItemView {
                     this.plugin.log?.("Failed to clear active conversation pointer", error);
                 }
             }
-            new Notice('Started a new chat');
+            new Notice(t("plugin.chat.notice.startedNewChat"));
         };
 
         const openHistoryPicker = async () => {
@@ -2483,9 +2489,9 @@ export class LLMView extends ItemView {
                 }
                 if (selection.action === 'delete') {
                     const confirmed = await confirmChatAction(this.plugin, {
-                        title: 'Delete conversation?',
-                        message: 'This deletes the conversation and all its turns. This cannot be undone.',
-                        confirmText: 'Delete',
+                        title: t("plugin.chat.confirm.deleteConversation.title"),
+                        message: t("plugin.chat.confirm.deleteConversation.message"),
+                        confirmText: t("plugin.chat.action.delete"),
                         danger: true,
                     });
                     if (!confirmed) return;
@@ -2495,12 +2501,12 @@ export class LLMView extends ItemView {
                     if (selection.conversationId === this.activeConversationId) {
                         await startNewConversation();
                     } else {
-                        new Notice('Conversation deleted');
+                        new Notice(t("plugin.chat.notice.conversationDeleted"));
                     }
                 }
             } catch (error) {
                 this.plugin.log?.("Failed to open chat history picker", error);
-                new Notice('Could not open chat history.');
+                new Notice(t("plugin.chat.notice.openHistoryFailed"));
             }
         };
 
@@ -2610,6 +2616,7 @@ export class LLMView extends ItemView {
     private setupMobileTabBarAutoHide(containerEl: HTMLElement) {
         this.teardownMobileTabBarAutoHide();
         if (!Platform.isMobile) return;
+        const t = makePluginTranslator(getPluginUiLanguage());
         const tabContainer = containerEl.closest('.workspace-drawer-tab-container');
         if (!tabContainer) return;
         const tabOptions = tabContainer.querySelector<HTMLElement>('.workspace-drawer-tab-options');
@@ -2618,7 +2625,7 @@ export class LLMView extends ItemView {
 
         const handle = document.createElement('div');
         handle.className = 'pa-tab-bar-handle';
-        handle.setAttribute('aria-label', 'Show tab bar');
+        handle.setAttribute('aria-label', t("plugin.chat.mobile.showTabBar"));
         handle.setAttribute('aria-expanded', 'false');
         setIcon(handle, 'chevron-up');
         containerEl.appendChild(handle);
@@ -2627,7 +2634,7 @@ export class LLMView extends ItemView {
         const dismiss = () => {
             tabOptions.classList.remove('pa-tab-bar-visible');
             setIcon(handle, 'chevron-up');
-            handle.setAttribute('aria-label', 'Show tab bar');
+            handle.setAttribute('aria-label', t("plugin.chat.mobile.showTabBar"));
             handle.setAttribute('aria-expanded', 'false');
         };
         const scheduleDismiss = () => {
@@ -2643,7 +2650,7 @@ export class LLMView extends ItemView {
             } else {
                 tabOptions.classList.add('pa-tab-bar-visible');
                 setIcon(handle, 'chevron-down');
-                handle.setAttribute('aria-label', 'Hide tab bar');
+                handle.setAttribute('aria-label', t("plugin.chat.mobile.hideTabBar"));
                 handle.setAttribute('aria-expanded', 'true');
                 scheduleDismiss();
             }
@@ -3261,7 +3268,7 @@ export class LLMView extends ItemView {
                 const openInNewLeaf = this.isMemoryReferenceLink(link) || evt.metaKey || evt.ctrlKey;
                 void this.openChatInternalLink(noteHref, openInNewLeaf).catch((error) => {
                     this.plugin.log?.("Could not open chat internal link", error);
-                    new Notice(`Could not open note: ${noteHref}`, 4000);
+                    new Notice(pluginT("plugin.chat.notice.openNoteFailed", getPluginUiLanguage(), { note: noteHref }), 4000);
                 });
             });
         });

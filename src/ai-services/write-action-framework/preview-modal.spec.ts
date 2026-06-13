@@ -185,10 +185,16 @@ describe("WriteActionPreviewModal (PreviewSpec section rendering)", () => {
         expect(titles).toEqual(
             expect.arrayContaining(["Target", "Preview", "Impact", "Risk"]),
         );
-        // Header h2 includes the actionFamily · capabilityId banner.
+        // Header is user-facing copy; framework ids stay in debug events.
         const header = flattenSubtree(contentEl).find((c: MockEl) => c.tag === "h2");
-        expect(header?.text).toContain("pagelet-review-note");
-        expect(header?.text).toContain("pagelet.write_review_output");
+        expect(header?.text).toBe("Review this local write");
+        const renderedText = flattenSubtree(contentEl)
+            .map((c: MockEl) => c.text)
+            .filter(Boolean)
+            .join("\n");
+        expect(renderedText).not.toContain("pagelet.write_review_output");
+        expect(renderedText).not.toContain("usesAiProvider");
+        expect(renderedText).toContain("Source notes are not modified.");
     });
 
     it("uses MarkdownRenderer.render when contentPreview.format=markdown", () => {

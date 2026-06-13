@@ -112,15 +112,16 @@ export class WriteActionPreviewModal extends Modal {
         contentEl.addClass("pa-write-action-modal");
         const renderWarnings: string[] = [];
 
-        // Header banner: actionFamily · capabilityId (SDD §2.1 section 1).
+        // Header banner. Keep framework identifiers in debug events, not in
+        // ordinary user-facing copy.
         contentEl.createEl("h2", {
-            text: `${this.spec.actionFamily} · ${this.spec.capabilityId}`,
+            text: "Review this local write",
         });
 
         // Section 1: Target — operationType → displayPath.
         this.addSection(
             "Target",
-            `${this.spec.operationType} → ${this.spec.target.displayPath}`,
+            this.spec.target.displayPath,
             "pa-write-action-modal__target",
         );
 
@@ -163,10 +164,16 @@ export class WriteActionPreviewModal extends Modal {
 
         // Section 3: Impact — 3 booleans + byteSize.
         const impactLines = [
-            `usesAiProvider: ${this.spec.impact.usesAiProvider}`,
-            `usesAiCredits: ${this.spec.impact.usesAiCredits}`,
-            `affectsExternalState: ${this.spec.impact.affectsExternalState}`,
-            `previewByteSize: ${this.spec.contentPreview.byteSize}`,
+            this.spec.impact.usesAiProvider
+                ? "This action may contact your configured AI provider."
+                : "This save does not call your AI provider.",
+            this.spec.impact.usesAiCredits
+                ? "This action may use AI credits."
+                : "This save does not use AI credits.",
+            this.spec.impact.affectsExternalState
+                ? "This action may affect external services."
+                : "This save only writes to this vault.",
+            `Preview size: ${this.spec.contentPreview.byteSize} bytes`,
         ];
         this.addSection("Impact", impactLines.join("\n"), "pa-write-action-modal__impact");
 
@@ -174,8 +181,8 @@ export class WriteActionPreviewModal extends Modal {
         // the user sees an explicit "none" rather than wondering if the
         // section was hidden.
         const riskBody = this.spec.riskNotes.length > 0
-            ? this.spec.riskNotes.map((line) => `⚠️ ${line}`).join("\n")
-            : "none";
+            ? this.spec.riskNotes.join("\n")
+            : "Source notes are not modified.";
         this.addSection("Risk", riskBody, "pa-write-action-modal__risk");
 
         // Section 5: Action buttons (CTA + secondary). Labels come from the
@@ -234,7 +241,12 @@ export class WriteActionPreviewModal extends Modal {
                 : "pa-write-action-modal__section",
         });
         section.createDiv({ cls: "pa-write-action-modal__section-title", text: title });
-        section.createDiv({ cls: "pa-write-action-modal__section-body", text: body });
+        section.createDiv({
+            cls: body.includes("\n")
+                ? "pa-write-action-modal__section-body pa-write-action-modal__section-body--multiline"
+                : "pa-write-action-modal__section-body",
+            text: body,
+        });
     }
 }
 

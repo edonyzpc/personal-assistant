@@ -9,6 +9,7 @@ import { AIUtils, getDashScopeImageSynthesisUrl, getDashScopeTasksUrl } from './
 import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from './featured-image-path';
 import type { PluginManager } from '../plugin'
 import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
+import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 
 const isOkStatus = (status: number): boolean => status >= 200 && status < 300;
 const failedImageTaskStatuses = new Set(['FAILED', 'CANCELED']);
@@ -192,6 +193,10 @@ export class AIService {
         this.aiUtils = new AIUtils(plugin);
     }
 
+    private t(key: string, params?: Readonly<Record<string, string | number>>): string {
+        return pluginT(key, getPluginUiLanguage(), params);
+    }
+
     private createProgressStep(
         container: HTMLElement | null,
         fallbackContainer: HTMLElement,
@@ -220,7 +225,7 @@ export class AIService {
         if (typeof error === 'string') {
             return error;
         }
-        return 'Unknown error';
+        return this.t('plugin.ai.error.unknown');
     }
 
     /**
@@ -235,13 +240,13 @@ export class AIService {
 
             const result = await this.callLLM(content, this.getSummaryPrompt());
             if (result.length <= 0) {
-                new Notice("AI is not available.");
+                new Notice(this.t("plugin.ai.notice.unavailable"));
                 return;
             }
 
             const summaryResponse = parseSummaryResponse(result);
             if (!summaryResponse) {
-                new Notice("AI returned an invalid summary response.", 5000);
+                new Notice(this.t("plugin.ai.notice.invalidSummary"), 5000);
                 return;
             }
 
@@ -256,7 +261,7 @@ export class AIService {
             }
         } catch (error) {
             this.plugin.log("AI Summary failed", error);
-            new Notice(`AI Summary failed: ${this.formatErrorMessage(error)}`, 5000);
+            new Notice(this.t("plugin.ai.notice.summaryFailed", { error: this.formatErrorMessage(error) }), 5000);
         } finally {
             notice.hide();
         }
@@ -280,7 +285,7 @@ export class AIService {
      */
     async generateFeaturedImage(editor: Editor, view: MarkdownView): Promise<void> {
         if (this.plugin.settings.aiProvider !== 'qwen' || !getDashScopeImageSynthesisUrl(this.plugin.settings.baseURL)) {
-            new Notice("Featured image generation requires a supported DashScope Qwen endpoint.", 3000);
+            new Notice(this.t("plugin.ai.notice.featuredUnsupported"), 3000);
             return;
         }
 
@@ -298,36 +303,36 @@ export class AIService {
                 body,
                 notice.noticeEl,
                 "ai-featured-image-progress-1",
-                "Agent Generating Prompt...",
+                this.t("plugin.ai.progress.prompt"),
             );
             const imageDesc = await this.callLLM(content, this.getImageDescriptionPrompt());
             if (imageDesc.length <= 0) {
                 notice.hide();
-                new Notice("AI is not available.");
+                new Notice(this.t("plugin.ai.notice.unavailable"));
                 return;
             }
-            this.completeProgressStep(progress1Div, "Generating Prompt Success!");
+            this.completeProgressStep(progress1Div, this.t("plugin.ai.progress.promptDone"));
 
             // 生成图片
             const progress2Div = this.createProgressStep(
                 body,
                 notice.noticeEl,
                 "ai-featured-image-progress-2",
-                "Agent Generating Images...",
+                this.t("plugin.ai.progress.images"),
             );
             const imagesGen = await this.generateImage(imageDesc);
             if (!imagesGen) {
-                new Notice("AI featured image generation failed.");
+                new Notice(this.t("plugin.ai.notice.featuredFailed"));
                 return;
             }
-            this.completeProgressStep(progress2Div, "Generating Images Success!");
+            this.completeProgressStep(progress2Div, this.t("plugin.ai.progress.imagesDone"));
 
             // 下载图片
             const progress3Div = this.createProgressStep(
                 body,
                 notice.noticeEl,
                 "ai-featured-image-progress-3",
-                "Agent Downloading Images...",
+                this.t("plugin.ai.progress.downloading"),
             );
             const imageUrls = await this.getImage(imagesGen);
             if (!imageUrls || imageUrls.length === 0) {
@@ -366,7 +371,7 @@ export class AIService {
                     imagesCallout += `![[${response}${calloutImageSuffix}]]\n> `;
                 }
             }
-            this.completeProgressStep(progress3Div, "Downloading Images Success!");
+            this.completeProgressStep(progress3Div, this.t("plugin.ai.progress.downloadDone"));
             // append line breaks
             imagesCallout += "\n\n";
             editorView.dispatch({
@@ -374,7 +379,7 @@ export class AIService {
                     {
                         from: line.from,
                         // insert a callout block
-                        insert: `\n>[!personal-assistant]+ Featured Images\n> ${imagesCallout}`,
+                        insert: `\n>[!personal-assistant]+ ${this.t("plugin.ai.callout.featuredImages")}\n> ${imagesCallout}`,
                     },
                 ],
                 effects: [addAI.of({ from: line.to, to: line.to, id })],
@@ -383,13 +388,13 @@ export class AIService {
                 body,
                 notice.noticeEl,
                 "ai-featured-image-progress-4",
-                "Generating Featured Images Success!",
+                this.t("plugin.ai.progress.done"),
                 "done",
             );
 
         } catch (error) {
             this.plugin.log("AI Featured Images failed", error);
-            new Notice(`AI Featured Images failed: ${this.formatErrorMessage(error)}`, 5000);
+            new Notice(this.t("plugin.ai.notice.featuredImageFailed", { error: this.formatErrorMessage(error) }), 5000);
         } finally {
             notice.hide();
         }
@@ -536,7 +541,7 @@ export class AIService {
         const token = await this.plugin.getAPIToken();
         const imageUrl = getDashScopeImageSynthesisUrl(this.plugin.settings.baseURL);
         if (!imageUrl) {
-            new Notice("Featured image generation requires a supported DashScope Qwen endpoint.", 3000);
+            new Notice(this.t("plugin.ai.notice.featuredUnsupported"), 3000);
             return null;
         }
         const resp = await requestUrl({
@@ -639,7 +644,7 @@ export class AIService {
             });
             return imagesTaskData.output.results; // 假设返回的结果在 output.result 中
         } else {
-            new Notice("Failed to get image: Task did not succeed or timed out.", 3000);
+            new Notice(this.t("plugin.ai.notice.imageTaskFailed"), 3000);
             return null;
         }
     }
@@ -680,13 +685,13 @@ export class AIService {
             await app.vault.createBinary(savePath, buffer);
 
             // 显示成功通知
-            new Notice(`Image downloaded successfully to ${savePath}`);
+            new Notice(this.t("plugin.ai.notice.imageDownloaded", { path: savePath }));
 
             // 返回创建的文件路径
             return savePath;
 
         } catch (error) {
-            new Notice(`Failed to download image: ${error}`);
+            new Notice(this.t("plugin.ai.notice.imageDownloadFailed", { error: this.formatErrorMessage(error) }));
             throw error;
         }
     }

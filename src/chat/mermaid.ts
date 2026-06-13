@@ -1,5 +1,6 @@
 import { setIcon, Component, Modal, MarkdownRenderer } from 'obsidian';
 import type PluginManager from '../main';
+import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 
 export type MermaidFenceTransform = {
     markdown: string;
@@ -8,6 +9,10 @@ export type MermaidFenceTransform = {
 };
 
 let mermaidPreviewModalId = 0;
+
+function mermaidT(key: string, params?: Readonly<Record<string, string | number>>): string {
+    return pluginT(key, getPluginUiLanguage(), params);
+}
 
 export function renderMarkdownWithOwner(
     plugin: PluginManager,
@@ -45,7 +50,7 @@ export class MermaidPreviewModal extends Modal {
         contentEl.empty();
         contentEl.classList.add('pa-chat-mermaid-modal');
         contentEl.createEl('h2', {
-            text: 'Mermaid diagram',
+            text: mermaidT('plugin.mermaid.title'),
             attr: { id: titleId },
         });
         this.modalEl.setAttribute('aria-labelledby', titleId);
@@ -64,7 +69,7 @@ export class MermaidPreviewModal extends Modal {
                 diagram.classList.add('pa-chat-mermaid-modal-diagram');
             }
         }).catch((error) => {
-            viewport.setText(`Could not render Mermaid diagram: ${String(error)}`);
+            viewport.setText(mermaidT('plugin.mermaid.renderFailed', { error: String(error) }));
         });
     }
 
@@ -241,7 +246,7 @@ export function createElement<K extends keyof HTMLElementTagNameMap>(tagName: K)
 export function renderMermaidSourceWarning(buffer: HTMLElement) {
     buffer.createDiv({
         cls: 'pa-chat-render-warning',
-        text: 'Mermaid diagram could not be rendered; showing source.',
+        text: mermaidT('plugin.mermaid.sourceWarning'),
     });
 }
 
@@ -275,11 +280,11 @@ export function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager,
         viewport.classList.add('pa-chat-mermaid-viewport');
         button.classList.add('pa-chat-mermaid-open-button');
         button.type = 'button';
-        button.setAttribute('aria-label', 'Open Mermaid diagram');
-        button.setAttribute('title', 'Open Mermaid diagram');
+        button.setAttribute('aria-label', mermaidT('plugin.mermaid.open'));
+        button.setAttribute('title', mermaidT('plugin.mermaid.open'));
         setIcon(button, 'zoom-in');
         label.classList.add('pa-sr-only');
-        label.textContent = 'Open Mermaid diagram';
+        label.textContent = mermaidT('plugin.mermaid.open');
         button.appendChild(label);
         button.onclick = () => {
             new MermaidPreviewModal(plugin, mermaidSource).open();

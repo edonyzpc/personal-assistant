@@ -6,6 +6,7 @@ import { OpenAIEmbeddings } from '@langchain/openai';
 import type { PluginManager } from '../plugin'
 import { computeContentHash } from '../vss-helpers';
 import { obsidianFetch } from './obsidian-fetch';
+import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 
 type ChatTransport = 'obsidian' | 'native';
 
@@ -122,6 +123,7 @@ interface CreateChatModelOptions {
     transport?: ChatTransport;
     qwenRequestOptions?: QwenRequestOptions;
     modelName?: string;
+    maxTokens?: number;
 }
 
 export interface CreateEmbeddingsOptions {
@@ -148,6 +150,10 @@ export class AIUtils {
         this.plugin = plugin;
     }
 
+    private t(key: string): string {
+        return pluginT(key, getPluginUiLanguage());
+    }
+
     /**
      * 获取API token
      */
@@ -170,7 +176,7 @@ export class AIUtils {
      * 创建AI思考中的通知
      */
     createAIThinkingNotice(): { notice: Notice } {
-        const noticeEl = this.buildNoticeContent("AI is Thinking...");
+        const noticeEl = this.buildNoticeContent(this.t("plugin.ai.notice.thinking"));
         const notice = new Notice(noticeEl, 0);
         this.tuneNoticeShell(notice);
         return { notice };
@@ -180,7 +186,7 @@ export class AIUtils {
      * 创建AI生成图片的通知
      */
     createAIFeaturedImageNotice(): { notice: Notice } {
-        const noticeEl = this.buildNoticeContent("AI is Generating Featured Images...");
+        const noticeEl = this.buildNoticeContent(this.t("plugin.ai.notice.generatingFeaturedImages"));
         const notice = new Notice(noticeEl, 0);
         this.tuneNoticeShell(notice);
         notice.noticeEl.createEl("hr", { attr: { id: "ai-featured-image-progress-hr", style: "margin:unset;" } });
@@ -232,6 +238,7 @@ export class AIUtils {
                     apiKey: token,
                     configuration: this.createOpenAIClientOptions(baseURL, transport),
                     temperature: temperature,
+                    ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
                     ...(modelKwargs ? { modelKwargs } : {}),
                 });
             }
@@ -243,6 +250,7 @@ export class AIUtils {
                     apiKey: openaiToken,
                     configuration: this.createOpenAIClientOptions(baseURL, transport),
                     temperature: temperature,
+                    ...(typeof options.maxTokens === "number" ? { maxTokens: options.maxTokens } : {}),
                 });
             }
 
