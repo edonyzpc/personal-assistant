@@ -1,7 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
-export type PlatformTimeoutHandle = number | NodeJS.Timeout;
-export type PlatformIntervalHandle = number | NodeJS.Timeout;
+export type PlatformTimeoutHandle = number;
+export type PlatformIntervalHandle = number;
 export type PlatformAnimationFrameHandle =
     | {
         kind: "animation-frame";
@@ -27,10 +27,12 @@ type AnimationFrameScope = {
 
 type WindowTimerScope = Window & TimerScope;
 type WindowAnimationFrameScope = Window & AnimationFrameScope;
-type PlatformGlobalScope = typeof globalThis & {
+type PlatformGlobalScope = Partial<TimerScope> & {
+    document?: Document;
     localStorage?: Storage;
     crypto?: Crypto;
     indexedDB?: IDBFactory;
+    IDBKeyRange?: typeof IDBKeyRange;
     navigator?: Navigator;
     performance?: Performance;
     customElements?: CustomElementRegistry;
@@ -38,8 +40,11 @@ type PlatformGlobalScope = typeof globalThis & {
     atob?: (payload: string) => string;
 };
 
-function getPlatformGlobalScope(): PlatformGlobalScope {
-    return globalThis as PlatformGlobalScope;
+function getOptionalPlatformGlobalScope(): PlatformGlobalScope | undefined {
+    if (typeof self !== "undefined") return self as unknown as PlatformGlobalScope;
+    const win = getOptionalPlatformWindow();
+    if (win) return win as unknown as PlatformGlobalScope;
+    return undefined;
 }
 
 let cachedTimerScope: TimerScope | null = null;
@@ -47,8 +52,10 @@ let cachedTimerScope: TimerScope | null = null;
 function getRuntimeTimerScope(): TimerScope {
     if (cachedTimerScope) return cachedTimerScope;
     const candidates: Partial<TimerScope>[] = [];
-    if (typeof window !== "undefined") candidates.push(window as WindowTimerScope);
-    candidates.push(getPlatformGlobalScope() as Partial<TimerScope>);
+    const win = getOptionalPlatformWindow();
+    if (win) candidates.push(win as WindowTimerScope);
+    const globalScope = getOptionalPlatformGlobalScope();
+    if (globalScope) candidates.push(globalScope);
 
     const scope = candidates.find((candidate) =>
         typeof candidate.setTimeout === "function"
@@ -91,54 +98,79 @@ export function getPlatformDocument(): Document {
 
 export function getOptionalPlatformDocument(): Document | undefined {
     if (typeof activeDocument !== "undefined") return activeDocument;
-    if (typeof document !== "undefined") return document;
-    return undefined;
+    return getOptionalPlatformGlobalScope()?.document;
 }
 
 export function getPlatformLocalStorage(): Storage | undefined {
     try {
-        return getOptionalPlatformWindow()?.localStorage ?? getPlatformGlobalScope().localStorage;
+        return getOptionalPlatformWindow()?.localStorage ?? getOptionalPlatformGlobalScope()?.localStorage;
     } catch {
         return undefined;
     }
 }
 
 export function getPlatformCrypto(): Crypto | undefined {
-    return getOptionalPlatformWindow()?.crypto ?? getPlatformGlobalScope().crypto;
+    return getOptionalPlatformWindow()?.crypto ?? getOptionalPlatformGlobalScope()?.crypto;
 }
 
 export function getPlatformIndexedDB(): IDBFactory | undefined {
-    return getOptionalPlatformWindow()?.indexedDB ?? getPlatformGlobalScope().indexedDB;
+    return getOptionalPlatformWindow()?.indexedDB ?? getOptionalPlatformGlobalScope()?.indexedDB;
+}
+
+export function getPlatformIDBKeyRange(): typeof IDBKeyRange | undefined {
+    return getOptionalPlatformGlobalScope()?.IDBKeyRange;
 }
 
 export function getPlatformNavigatorStorage(): StorageManager | undefined {
-    return getOptionalPlatformWindow()?.navigator?.storage ?? getPlatformGlobalScope().navigator?.storage;
+    return getOptionalPlatformWindow()?.navigator?.storage ?? getOptionalPlatformGlobalScope()?.navigator?.storage;
 }
 
 export function getPlatformPerformance(): Performance | undefined {
     const win = getOptionalPlatformWindow();
     if (win?.performance) return win.performance;
-    return getPlatformGlobalScope().performance;
+    return getOptionalPlatformGlobalScope()?.performance;
 }
 
 export function getPlatformCustomElements(): CustomElementRegistry | undefined {
-    return getOptionalPlatformWindow()?.customElements ?? getPlatformGlobalScope().customElements;
+    return getOptionalPlatformWindow()?.customElements ?? getOptionalPlatformGlobalScope()?.customElements;
 }
 
 export function getPlatformLocation(): Location | undefined {
-    return getOptionalPlatformWindow()?.location ?? getPlatformGlobalScope().location;
+    return getOptionalPlatformWindow()?.location ?? getOptionalPlatformGlobalScope()?.location;
+}
+
+type SelectorTargetLike = {
+    matches?: (selector: string) => boolean;
+    closest?: (selector: string) => Element | null;
+};
+
+export function eventPathContainsSelector(event: Event, selector: string): boolean {
+    const targets = typeof event.composedPath === "function" ? event.composedPath() : [];
+    const fallbackTarget = (event as { target?: EventTarget | null }).target;
+    if (fallbackTarget && !targets.includes(fallbackTarget)) {
+        targets.unshift(fallbackTarget);
+    }
+
+    return targets.some((target) => {
+        const element = target as SelectorTargetLike;
+        try {
+            if (typeof element.matches === "function" && element.matches(selector)) return true;
+            return typeof element.closest === "function" && Boolean(element.closest(selector));
+        } catch {
+            return false;
+        }
+    });
 }
 
 export function decodePlatformBase64(payload: string): string {
     const win = getOptionalPlatformWindow();
-    const decoder = win?.atob ?? getPlatformGlobalScope().atob;
-    if (typeof decoder !== "function") {
-        if (typeof Buffer !== "undefined") {
-            return Buffer.from(payload, "base64").toString("binary");
-        }
-        throw new Error("Base64 decoder is unavailable.");
+    if (typeof win?.atob === "function") return win.atob(payload);
+    const globalScope = getOptionalPlatformGlobalScope();
+    if (typeof globalScope?.atob === "function") return globalScope.atob(payload);
+    if (typeof Buffer !== "undefined") {
+        return Buffer.from(payload, "base64").toString("binary");
     }
-    return decoder.call(win ?? getPlatformGlobalScope(), payload);
+    throw new Error("Base64 decoder is unavailable.");
 }
 
 export function setPlatformTimeout(callback: TimerHandler, ms: number): PlatformTimeoutHandle {
