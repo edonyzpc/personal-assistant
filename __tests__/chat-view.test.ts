@@ -3232,7 +3232,9 @@ describe('LLMView turn lifecycle', () => {
         Object.defineProperty(globalThis, 'document', {
             configurable: true,
             value: {
-                querySelector: jest.fn((selector: string) => selector === '.status-bar' ? statusBar : null),
+                body: {
+                    querySelector: jest.fn((selector: string) => selector === '.status-bar' ? statusBar : null),
+                },
             },
         });
 
