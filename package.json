@@ -39,7 +39,7 @@
     "@types/semver": "^7.5.8",
     "@typescript-eslint/eslint-plugin": "8.58.2",
     "@typescript-eslint/parser": "8.58.2",
-    "esbuild": "0.25.5",
+    "esbuild": "0.28.1",
     "esbuild-plugin-copy": "2.1.1",
     "eslint": "10.2.1",
     "jest": "^30.3.0",
