@@ -274,9 +274,9 @@
 
 
     "pagelet.settings.preloadTokenBudgetInput.name": "后台准备输入 token 预算",
-    "pagelet.settings.preloadTokenBudgetInput.desc": "每次后台审阅准备的最大输入 token。范围 1000–32000，默认 4000。",
+    "pagelet.settings.preloadTokenBudgetInput.desc": "每次后台审阅准备的最大输入 token。范围 1000–8000，默认 4000。",
     "pagelet.settings.preloadTokenBudgetOutput.name": "后台准备输出 token 预算",
-    "pagelet.settings.preloadTokenBudgetOutput.desc": "每次后台审阅准备的最大输出 token。范围 500–4000，默认 1000。",
+    "pagelet.settings.preloadTokenBudgetOutput.desc": "每次后台审阅准备的最大输出 token。范围 500–2000，默认 1000。",
 
 
     "pagelet.preload.status.title": "后台审阅准备状态",

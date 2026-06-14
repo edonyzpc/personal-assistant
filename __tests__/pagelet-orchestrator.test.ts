@@ -165,3 +165,71 @@ describe("PageletOrchestrator foreground review concurrency", () => {
         await first;
     });
 });
+
+describe("PageletOrchestrator quick review command", () => {
+    it("opens cached findings in the Bubble without triggering a provider call", () => {
+        const foregroundAnalyze = jest.fn(async () => ({
+            findings: [],
+            analyzedFiles: ["notes/current.md"],
+            analyzedAt: Date.now(),
+            tokenCost: { input: 0, output: 0 },
+        }));
+        const host = makeHost({
+            createForegroundAnalyzeCallback: () => foregroundAnalyze,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const bubbleView = {
+            show: jest.fn(),
+            close: jest.fn(),
+            bubbleState: "hidden",
+        };
+
+        (orchestrator as unknown as {
+            petView: { rootEl: HTMLElement };
+            bubbleView: typeof bubbleView;
+            preloadCache: {
+                set(result: {
+                    findings: Array<{ text: string; sourceFile: string; sourceTitle: string }>;
+                    analyzedFiles: string[];
+                    analyzedAt: number;
+                    tokenCost: { input: number; output: number };
+                }): void;
+            };
+        }).petView = { rootEl: {} as HTMLElement };
+        (orchestrator as unknown as { bubbleView: typeof bubbleView }).bubbleView = bubbleView;
+        (orchestrator as unknown as {
+            preloadCache: {
+                set(result: {
+                    findings: Array<{ text: string; sourceFile: string; sourceTitle: string }>;
+                    analyzedFiles: string[];
+                    analyzedAt: number;
+                    tokenCost: { input: number; output: number };
+                }): void;
+            };
+        }).preloadCache.set({
+            findings: [{
+                text: "Recent note has a possible follow-up.",
+                sourceFile: "notes/current.md",
+                sourceTitle: "current",
+            }],
+            analyzedFiles: ["notes/current.md"],
+            analyzedAt: Date.now(),
+            tokenCost: { input: 10, output: 5 },
+        });
+
+        orchestrator.getCommandCallbacks().onQuickReview();
+
+        expect(bubbleView.show).toHaveBeenCalledTimes(1);
+        const [content] = bubbleView.show.mock.calls[0] as [{
+            type: string;
+            findings: Array<{ text: string; sourceLink?: string; sourceTitle?: string }>;
+        }, HTMLElement];
+        expect(content.type).toBe("quick-review");
+        expect(content.findings).toEqual([{
+            text: "Recent note has a possible follow-up.",
+            sourceLink: "notes/current.md",
+            sourceTitle: "current",
+        }]);
+        expect(foregroundAnalyze).not.toHaveBeenCalled();
+    });
+});

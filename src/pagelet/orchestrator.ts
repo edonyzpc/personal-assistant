@@ -363,7 +363,7 @@ export class PageletOrchestrator {
         return {
             onOpenPanel: () => this.openPanel(),
             onReviewCurrent: () => this.reviewCurrentNote(),
-            onQuickReview: () => this.openPanel(),
+            onQuickReview: () => this.openQuickReview(),
             onDiscoverConnections: async () => {
                 await this.analyzeCurrentNote();
                 this.handleExpandPanel("discover");
@@ -386,6 +386,14 @@ export class PageletOrchestrator {
 
     openPanel(): void {
         this.handleExpandPanel("review");
+    }
+
+    openQuickReview(): void {
+        if (this.petView?.rootEl && this.bubbleView) {
+            this.showBubble();
+            return;
+        }
+        this.openPanel();
     }
 
     async reviewCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {

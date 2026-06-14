@@ -92,9 +92,9 @@
     "pagelet.settings.preloadPerDayCap.name": "Per-day preparation cap",
     "pagelet.settings.preloadPerDayCap.desc": "Maximum background preparation cycles per day. Range 1–200; default 20.",
     "pagelet.settings.preloadTokenBudgetInput.name": "Preparation input token budget",
-    "pagelet.settings.preloadTokenBudgetInput.desc": "Maximum input tokens per background preparation call. Range 1000–32000; default 4000.",
+    "pagelet.settings.preloadTokenBudgetInput.desc": "Maximum input tokens per background preparation call. Range 1000–8000; default 4000.",
     "pagelet.settings.preloadTokenBudgetOutput.name": "Preparation output token budget",
-    "pagelet.settings.preloadTokenBudgetOutput.desc": "Maximum output tokens per background preparation call. Range 500–4000; default 1000.",
+    "pagelet.settings.preloadTokenBudgetOutput.desc": "Maximum output tokens per background preparation call. Range 500–2000; default 1000.",
 
     "pagelet.settings.reviews.heading": "Reviews",
     "pagelet.settings.periodicSummaryScope.name": "Periodic summary scope",

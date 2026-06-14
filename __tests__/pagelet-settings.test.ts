@@ -24,6 +24,7 @@ import {
     PAGELET_BOUNDS,
     PAGELET_DEFAULTS,
     PAGELET_FIXED_CALL_LIMITS,
+    PAGELET_PRELOAD_TOKEN_BOUNDS,
     mergePageletSettings,
     normalizeReviewsFolder,
     renderPageletSection,
@@ -190,6 +191,13 @@ describe("PAGELET_BOUNDS", () => {
         expect(PAGELET_BOUNDS.temperature).toEqual({ min: 0, max: 0.5 });
         expect(PAGELET_BOUNDS.maxInputTokens).toEqual({ min: 1, max: 32000 });
         expect(PAGELET_BOUNDS.maxOutputTokens).toEqual({ min: 1, max: 4000 });
+    });
+
+    it("keeps background preparation token budgets below foreground review caps", () => {
+        expect(PAGELET_PRELOAD_TOKEN_BOUNDS).toEqual({
+            input: { min: 1000, max: 8000 },
+            output: { min: 500, max: 2000 },
+        });
     });
 });
 
@@ -360,6 +368,17 @@ describe("mergePageletSettings", () => {
 
     it("truncates non-integer token counts (no fractional tokens make sense)", () => {
         expect(mergePageletSettings({ maxInputTokens: 1234.78 }).maxInputTokens).toBe(1234);
+    });
+
+    it("clamps background preparation token budgets to the smaller background pool", () => {
+        const merged = mergePageletSettings({
+            preloadTokenBudget: { input: 32000, output: 4000 },
+        });
+
+        expect(merged.preloadTokenBudget).toEqual({
+            input: PAGELET_PRELOAD_TOKEN_BOUNDS.input.max,
+            output: PAGELET_PRELOAD_TOKEN_BOUNDS.output.max,
+        });
     });
 });
 
@@ -918,5 +937,25 @@ describe("renderPageletSection", () => {
 
         await rows[5].textOnChange!("-1"); // maxOutputTokens
         expect(host.settings.pagelet.maxOutputTokens).toBe(PAGELET_BOUNDS.maxOutputTokens.min);
+    });
+
+    it("rejects background preparation token edits above the background pool", async () => {
+        const parent = makeStubNode("div");
+        const { factory, rows } = makeStubFactory();
+        const { host } = makeHost();
+
+        renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
+
+        await rows[14].textOnChange!("32000"); // preloadTokenBudget.input
+        expect(host.settings.pagelet.preloadTokenBudget.input).toBe(PAGELET_DEFAULTS.preloadTokenBudget.input);
+
+        await rows[14].textOnChange!("8000");
+        expect(host.settings.pagelet.preloadTokenBudget.input).toBe(PAGELET_PRELOAD_TOKEN_BOUNDS.input.max);
+
+        await rows[15].textOnChange!("4000"); // preloadTokenBudget.output
+        expect(host.settings.pagelet.preloadTokenBudget.output).toBe(PAGELET_DEFAULTS.preloadTokenBudget.output);
+
+        await rows[15].textOnChange!("2000");
+        expect(host.settings.pagelet.preloadTokenBudget.output).toBe(PAGELET_PRELOAD_TOKEN_BOUNDS.output.max);
     });
 });

@@ -188,6 +188,11 @@ export const PAGELET_BOUNDS = Object.freeze({
     foregroundPerDayCap: { min: 1, max: 500 },
 });
 
+export const PAGELET_PRELOAD_TOKEN_BOUNDS = Object.freeze({
+    input: { min: 1000, max: 8000 },
+    output: { min: 500, max: 2000 },
+});
+
 /**
  * Read-only call limits exposed in the Limits section for transparency,
  * but NOT persisted — D020 froze them. B4 owns the actual rate-limiter
@@ -496,8 +501,18 @@ function normalizeTokenBudget(
 ): { input: number; output: number } {
     if (!isRecord(value)) return { ...fallback };
     return {
-        input: normalizeBoundedInt(value.input, fallback.input, 1000, 32000),
-        output: normalizeBoundedInt(value.output, fallback.output, 500, 4000),
+        input: normalizeBoundedInt(
+            value.input,
+            fallback.input,
+            PAGELET_PRELOAD_TOKEN_BOUNDS.input.min,
+            PAGELET_PRELOAD_TOKEN_BOUNDS.input.max,
+        ),
+        output: normalizeBoundedInt(
+            value.output,
+            fallback.output,
+            PAGELET_PRELOAD_TOKEN_BOUNDS.output.min,
+            PAGELET_PRELOAD_TOKEN_BOUNDS.output.max,
+        ),
     };
 }
 
@@ -893,7 +908,11 @@ export function renderPageletSection(
                 .setValue(settings.preloadTokenBudget.input.toString())
                 .onChange((value) => saveOnChange(() => {
                     const parsed = parseInt(value, 10);
-                    if (Number.isFinite(parsed) && parsed >= 1000 && parsed <= 32000) {
+                    if (
+                        Number.isFinite(parsed)
+                        && parsed >= PAGELET_PRELOAD_TOKEN_BOUNDS.input.min
+                        && parsed <= PAGELET_PRELOAD_TOKEN_BOUNDS.input.max
+                    ) {
                         settings.preloadTokenBudget = { ...settings.preloadTokenBudget, input: parsed };
                     }
                 })));
@@ -907,7 +926,11 @@ export function renderPageletSection(
                 .setValue(settings.preloadTokenBudget.output.toString())
                 .onChange((value) => saveOnChange(() => {
                     const parsed = parseInt(value, 10);
-                    if (Number.isFinite(parsed) && parsed >= 500 && parsed <= 4000) {
+                    if (
+                        Number.isFinite(parsed)
+                        && parsed >= PAGELET_PRELOAD_TOKEN_BOUNDS.output.min
+                        && parsed <= PAGELET_PRELOAD_TOKEN_BOUNDS.output.max
+                    ) {
                         settings.preloadTokenBudget = { ...settings.preloadTokenBudget, output: parsed };
                     }
                 })));
