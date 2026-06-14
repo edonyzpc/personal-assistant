@@ -243,6 +243,24 @@ class MockElement {
         this.attributes.set(name, value);
     }
 
+    setCssProps(props: Record<string, string>) {
+        for (const [name, value] of Object.entries(props)) {
+            if (value === '') {
+                this.style.removeProperty(name);
+            } else {
+                this.style.setProperty(name, value);
+            }
+        }
+    }
+
+    setCssStyles(styles: Partial<CSSStyleDeclaration>) {
+        for (const [name, value] of Object.entries(styles)) {
+            if (typeof value === 'string') {
+                this.style.setProperty(name, value);
+            }
+        }
+    }
+
     getAttribute(name: string) {
         return this.attributes.get(name) ?? null;
     }

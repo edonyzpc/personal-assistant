@@ -340,6 +340,20 @@ class MockDomNode {
         return this;
     }
 
+    setCssStyles(styles: Record<string, string>) {
+        for (const [name, value] of Object.entries(styles)) {
+            this.attrs[`style:${name}`] = value;
+        }
+        return this;
+    }
+
+    setCssProps(props: Record<string, string>) {
+        for (const [name, value] of Object.entries(props)) {
+            this.attrs[`css:${name}`] = value;
+        }
+        return this;
+    }
+
     appendChild(child: MockDomNode) {
         this.children.push(child);
         return child;
