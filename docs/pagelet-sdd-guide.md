@@ -26,7 +26,7 @@ Pagelet is a **note-review feature** inside an existing Obsidian plugin called *
 │  │  - RunKindAdapter (runKind: foreground|background)│  │
 │  │  - Write Action Framework (D025, D030)        │  │
 │  │  - LLM Provider abstraction                      │  │
-│  │  - i18n / Settings / Telemetry                   │  │
+│  │  - i18n / Settings / future metrics policy       │  │
 │  └───────────────────────────────────────────────────┘  │
 └─────────────────────────────────────────────────────────┘
 ```
@@ -325,12 +325,12 @@ Pet State Update (if 主动提示 ON → nudge; else remain idle)
 | --- | --- |
 | No local preprocessing | NO regex-based TODO detection, NO rule-based scanning. AI does ALL intelligence. |
 | Security | `runKind="background"` with hardcoded `allowWrite=false`. Background path can NEVER trigger writes. |
-| Token budget | 4K input + 1K output per call (smaller than foreground 8K+2K). |
-| Hard ceiling | 5K total per background preparation call. |
+| Token budget | 4K input + 1K output default; configurable up to 8K input + 2K output. |
+| Hard ceiling | 8K input + 2K output per background preparation call. |
 | Per-hour cap | 2 background preparation calls (default). |
 | Per-day cap | 20 background preparation calls (default). |
 | On ceiling hit | Silently skip cycle (no user notification). |
-| Scope | Only notes modified since last cycle. Same exclusion rules as foreground. |
+| Scope | Recent notes in the 7-day scope that changed since the last cycle. Same exclusion rules as foreground. |
 | Cache lifetime | In-memory only. Cleared on: new background preparation run, vault close, explicit user clear. |
 | NOT persisted to disk | Privacy consideration. |
 
@@ -341,7 +341,7 @@ Pet State Update (if 主动提示 ON → nudge; else remain idle)
 | Token budget | 4K + 1K | 8K + 2K (default) |
 | Per-hour cap | 2 | 10 |
 | Per-day cap | 20 | 100 |
-| On ceiling | Silent skip | Reject + `[Override this once]` button |
+| On ceiling | Silent skip | Show a foreground limit notice; user can adjust settings and retry |
 
 Pools are **independent**. Foreground calls are NOT constrained by background preparation quota.
 
@@ -380,11 +380,12 @@ Expandable via Panel:
 - Yesterday.
 - Last 3 days.
 - Last 7 days.
-- Custom range (date picker).
+
+Custom range/date-picker scope is future work.
 
 ### Background preparation Scope
 
-- All notes modified since last background preparation cycle.
+- Recent notes in the 7-day scope that changed since last background preparation cycle.
 - Subject to exclusion rules.
 
 ### Periodic Summary Scope
@@ -639,8 +640,8 @@ All commands registered with `Pagelet:` prefix (D029).
 **New Pagelet commands**:
 | Command | Action |
 | --- | --- |
-| `Pagelet: Quick review` | Open existing prepared findings without triggering a provider call |
-| `Pagelet: Discover connections` | Open Panel with knowledge discovery |
+| `Pagelet: Quick review` | Open existing prepared findings in the Bubble without triggering a provider call; falls back to Panel when the Pet/Bubble anchor is unavailable |
+| `Pagelet: Discover connections` | Current beta: run current-note analysis and open the discovery Panel layout; dedicated cross-note discovery is future work |
 | `Pagelet: Generate periodic summary` | Trigger Scenario 4 |
 | `Pagelet: Toggle proactive hints` | Toggle 主动提示 on/off |
 | `Pagelet: Show background preparation status` | Show background preparation engine diagnostics |
@@ -698,7 +699,7 @@ interface PageletSettings {
   foregroundPerDayCap: number;         // default: 100
 
   // Cost — Background preparation (stored under preload* keys for migration compatibility)
-  preloadTokenBudget: { input: number; output: number }; // default: {4000, 1000}
+  preloadTokenBudget: { input: number; output: number }; // default: {4000, 1000}; max {8000, 2000}
 }
 ```
 
@@ -732,7 +733,7 @@ interface PageletSettings {
 
 ## 15. Privacy & Security Invariants
 
-1. Background review preparation reads ONLY changed notes, subject to exclusion rules.
+1. Background review preparation reads only recent changed notes from the current 7-day scope, subject to exclusion rules.
 2. Background preparation results cached in memory only — NEVER persisted to disk.
 3. Background preparation can be fully disabled in settings.
 4. Background path uses `runKind="background"` with `allowWrite=false` — can NEVER trigger writes.
@@ -742,13 +743,13 @@ interface PageletSettings {
 8. Source-backed suggestions only.
 9. Preview before write.
 10. User-confirmed note creation.
-11. Content-free telemetry only.
+11. The plugin does not collect telemetry or analytics today; any future metrics must be content-free.
 
 ---
 
-## 16. Telemetry Events
+## 16. Future Metrics Candidates
 
-**Allowed** (content-free):
+The plugin does not currently collect telemetry or analytics. If Pagelet adds local or opt-in metrics later, the only allowed candidates are content-free:
 - `pagelet.background_preparation.cycle` — count
 - `pagelet.background_preparation.findings` — count
 - `pagelet.hint.shown` — count
@@ -761,7 +762,7 @@ interface PageletSettings {
 - `pagelet.pet.corner` — which corner (not coordinates)
 - `pagelet.cost.*` — token/USD metrics
 
-**Disallowed**:
+Always disallowed:
 - Prompt text, note text, note titles/paths, suggestion body, user follow-up text, WebSearch query text, created review note content.
 
 ---
@@ -822,8 +823,8 @@ Voice: warm, specific, careful, research-assistant-like. No exaggeration.
 ### Core Invariants
 - [ ] Creating a note never modifies source notes.
 - [ ] WebSearch only runs from explicit user action.
-- [ ] Cost ceiling enforced; override button works for foreground.
-- [ ] Content-free metrics only.
+- [ ] Cost ceiling enforced; foreground limit hits show a notice and can be adjusted in settings.
+- [ ] No telemetry or analytics are collected today; any future metrics remain content-free.
 - [ ] Pet only mounts on `markdown` view type.
 - [ ] Pending drafts survive Panel close/reopen.
 

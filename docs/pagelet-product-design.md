@@ -7,7 +7,7 @@
 | Feature name | `Pagelet` (中文：`拾页`) |
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
-| Status | Implementation complete (Phase 2-4) — pending release |
+| Status | Core beta implementation complete — full blueprint gaps tracked as future work |
 | Last revised | 2026-06-11 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
@@ -17,7 +17,7 @@
 | Decisions record | See [review-assistant-decisions.md](./review-assistant-decisions.md) (D001-D031 active; D032+ proposed in this document) |
 | Technical design | See [pagelet-sdd-guide.md](./pagelet-sdd-guide.md); [review-assistant-sdd.md](./review-assistant-sdd.md) is preserved as historical implementation context |
 
-This document defines the current **Pagelet** product and UX contract. Historical Review Assistant/Pagelet drafts are preserved only as reference; this document describes the behavior to ship.
+This document defines the current **Pagelet** product and UX contract. Historical Review Assistant/Pagelet drafts are preserved only as reference. Sections marked as future work describe the intended direction, not current shipped behavior.
 
 ---
 
@@ -365,15 +365,14 @@ Tab (main window tab, full-size workspace)
 
 **Intent**: "I want to explore connections between this note and the rest of my vault."
 
-**Flow**:
-1. User clicks Pet or uses command palette `Pagelet: Discover connections`.
-2. Bubble shows a preview: "Found 5 related notes and 2 potential themes."
-3. User clicks "展开" or "发现关联".
-4. Panel opens with structured discovery results:
-   - Related notes with relevance explanations.
-   - Cross-note themes and patterns.
-   - Potential research gaps.
-5. User can optionally save findings as a review note.
+**Current beta flow**:
+1. User uses command palette `Pagelet: Discover connections`.
+2. Pagelet runs the current-note review path and opens the discovery Panel layout with those findings.
+3. User can optionally save findings as a review note.
+
+**Future direction**:
+- Show a Bubble preview such as "Found 5 related notes and 2 potential themes."
+- Build a dedicated related-note discovery pipeline with relevance explanations, cross-note themes, and potential research gaps.
 
 **Key property**: Results shown in Panel (not just Bubble). This is the deep-analysis path.
 
@@ -383,7 +382,7 @@ Tab (main window tab, full-size workspace)
 
 | Aspect | historical design | Pagelet |
 | --- | --- | --- |
-| Trigger | Open panel -> select range -> adjust notes -> run | One-click from command palette / Panel header, or scheduled |
+| Trigger | Open panel -> select range -> adjust notes -> run | One-click from command palette or Panel header |
 | Scope selection | Manual time range + include/exclude | Auto (configurable default range, e.g., "last 7 days") |
 | Draft collection | User selects findings -> collects into draft -> edits -> previews -> confirms | Removed. AI generates complete draft directly. |
 | Output | Review note in `.pagelet/` after preview + confirm | Review note in `.pagelet/` after preview + confirm (same output, fewer steps) |
@@ -447,10 +446,10 @@ Pagelet introduces separate rate limits for background preparation (background) 
 | Dimension | Background preparation (background) | Foreground (user-triggered) | historical design comparison |
 | --- | --- | --- | --- |
 | Per-call token budget | 4K input + 1K output (smaller) | 8K input + 2K output (default, same as historical design) | historical design: 8K+2K unified |
-| Hard ceiling | 5K total per background preparation call | 36K total (same as historical design) | historical design: 36K unified |
+| Hard ceiling | 8K input + 2K output per background preparation call | 36K total (same as historical design) | historical design: 36K unified |
 | Per-hour cap | 2 background preparation calls | 10 foreground calls | historical design: 10 unified |
 | Per-day cap | 20 background preparation calls | 100 foreground calls | historical design: 100 unified |
-| On ceiling hit | Silently skip cycle | Reject + `[Override this once]` button | historical design: reject + override |
+| On ceiling hit | Silently skip cycle | Show a foreground limit notice; user can adjust settings and retry | historical design: reject + override |
 
 **Key rule**: Foreground user-triggered calls are NOT constrained by background preparation quota. The two pools are independent.
 
@@ -464,7 +463,7 @@ Decisions D018-D023 are **preserved** for the foreground pool. Background prepar
 - Cache is cleared when:
   - A new background preparation run completes (replaces old cache).
   - The user closes and reopens the vault.
-  - The user explicitly clears it from settings.
+  - The plugin is reloaded or the vault is closed and reopened. A manual Settings clear action is future work.
 
 ---
 
@@ -478,7 +477,8 @@ For user-triggered analysis (Scenario 1-3), Pagelet auto-scopes to the **current
 - Yesterday.
 - Last 3 days.
 - Last 7 days.
-- Custom range (new in Pagelet, simple date picker).
+
+Custom range/date-picker scope is future work.
 
 **[CHANGED from historical design]**: historical design required manual scope selection before every run. Pagelet defaults to current note for quick interactions and auto-selects for periodic summary.
 
@@ -486,7 +486,7 @@ For user-triggered analysis (Scenario 1-3), Pagelet auto-scopes to the **current
 
 For background review preparation, scope is determined by change detection:
 
-- All notes modified since the last background preparation cycle.
+- Recent notes in the 7-day scope that changed since the last background preparation cycle.
 - Subject to the same exclusion rules as foreground (`.trash`, hidden folders, excluded tags, `#no-ai`, `#no-review`).
 - Background preparation does NOT read the entire vault — only changed notes.
 
@@ -824,8 +824,9 @@ Top-level Pagelet settings group inside PA settings:
 - Background preparation per-day cap (default 20).
 
 **Beta** — [PRESERVED]
-- Send feedback (link to GitHub Issues + form).
-- Enable usage metrics if not already covered.
+- Settings shows a Beta callout.
+- Feedback is currently routed through GitHub Issues and user-reported dogfood notes.
+- Usage metrics are not collected by the plugin.
 
 Defaults:
 
@@ -853,7 +854,7 @@ Trust requirements:
 - Source-backed suggestions. **[PRESERVED]**
 - Preview before write. **[PRESERVED]**
 - User-confirmed note creation. **[PRESERVED]**
-- Content-free telemetry only. **[PRESERVED]**
+- No telemetry or analytics are collected by the plugin. Any future metrics must remain content-free. **[UPDATED]**
 
 Per-run scope indicator (for foreground analysis):
 
@@ -867,8 +868,8 @@ Per-run scope indicator (for foreground analysis):
 Background preparation transparency:
 
 - Pet shows `working` state when background preparation is running.
-- Settings shows last background preparation time and notes analyzed count.
 - User can trigger `Pagelet: Show background preparation status` command to see details.
+- A Settings status block with last preparation time and analyzed-note count is future work.
 
 ---
 
@@ -883,8 +884,8 @@ Background preparation transparency:
 
 New Pagelet commands (command palette, registered with `Pagelet:` prefix per D029):
 
-- `Pagelet: Quick review` — opens existing prepared findings without triggering a provider call.
-- `Pagelet: Discover connections` — opens Panel with knowledge discovery results.
+- `Pagelet: Quick review` — opens existing prepared findings in the Bubble without triggering a provider call; falls back to Panel when the Pet/Bubble anchor is unavailable.
+- `Pagelet: Discover connections` — current beta runs current-note analysis and opens the discovery Panel layout; dedicated cross-note discovery is future work.
 - `Pagelet: Generate periodic summary` — triggers Scenario 4.
 - `Pagelet: Toggle proactive hints` — toggles 主动提示 on/off.
 - `Pagelet: Show background preparation status` — shows background preparation engine diagnostics.
@@ -902,12 +903,13 @@ Preserved historical design commands:
 
 Pagelet is delivered as a feature inside PA `2.(x+1).0-beta.N` and is **on by default** for beta installs (D013).
 
-Default behavior unchanged from historical design. **No formal onboarding flow.** Beta and product context conveyed through (D011):
+Default behavior unchanged from historical design. **No formal onboarding flow.** Current Beta and product context is conveyed through:
 
 1. Community plugins description.
 2. README header callout.
-3. Settings top callout with feedback link.
-4. First-use inline tip.
+3. Settings top callout.
+
+Feedback buttons and first-use inline tips are future work unless explicitly added before release.
 
 ---
 
@@ -919,9 +921,9 @@ Primary success signal:
 
 - Users engage with Pagelet findings (view in Bubble, explore in Panel, or create review notes).
 
-Pagelet metrics extend historical design with background preparation and proactive hint events:
+The plugin does not currently collect telemetry or analytics. The metrics below are future product-analysis candidates only; they must not be presented as current behavior.
 
-Allowed metrics (historical design preserved + new):
+Future allowed metrics (historical design preserved + new):
 
 - All historical design metrics preserved (review triggered, time range type, candidate/included/skipped counts, findings count, draft interactions, note creation, WebSearch usage, runtime duration, failure category, cost metrics).
 - **[NEW]** Background preparation cycle count.
@@ -1035,8 +1037,8 @@ Pagelet considered successful if:
 **Core Invariants (preserved from historical design)**:
 - Creating a note never modifies source notes.
 - WebSearch only runs from explicit user action.
-- Cost ceiling enforced; user can override individual foreground calls.
-- Content-free metrics only.
+- Cost ceiling enforced; foreground limit hits show a notice and can be adjusted in settings.
+- No plugin telemetry/analytics are collected today; future metrics must be content-free.
 - Coexists with the 10 mainstream plugins in D029 without HIGH-severity conflicts.
 - Pending drafts survive Panel close/reopen until created or discarded.
 
@@ -1075,7 +1077,7 @@ Pagelet considered successful if:
 - Pagelet ships as a feature update within PA's beta channel. No manual migration required.
 - historical design review notes in `.pagelet/` are fully compatible with Pagelet — the output format is unchanged.
 - historical design settings are preserved where applicable; new settings (Pet corner position, Proactive hints, Background preparation) use defaults.
-- A one-time inline tip introduces the new Pet interaction model on first Pagelet launch.
+- A one-time inline tip for the new Pet interaction model is future work.
 
 ---
 

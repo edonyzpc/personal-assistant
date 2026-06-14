@@ -111,7 +111,8 @@
 - **主 slogan**：
   - EN: `Pagelet — your note's quiet reviewer`
   - ZH: `拾页 — 笔记写完后的安静审视者`
-- **落地触点**：manifest description / 首次启动 inline tip / settings 顶部 callout / README 第一段
+- **当前落地触点**：manifest description / settings 顶部 callout / README 第一段
+- **Future**：首次启动 inline tip 可在后续补充，但不属于当前 beta 实现。
 - **不做**：README 中**不直接点名**对比 Smart Connections / Copilot
 
 ---
@@ -187,17 +188,17 @@
 #### D011 · Beta 标识位置
 
 - **日期**：2026-06-01
-- **决策**：3 处（不做正式 onboarding）
-  - **① Ribbon icon**：右下角小 `β` 角标 + tooltip "Pagelet (Beta)"
+- **决策**：当前实现采用轻量 Beta 标识（不做正式 onboarding）
+  - **① Ribbon icon**：未实现；Pagelet 当前没有独立 ribbon icon，使用 Pet / command palette / panel 入口。
   - **② Suggestion card**：**不加** Beta 标识（避免每张卡都自降信心）
-  - **③ Settings 顶部**：callout block "Pagelet is in Beta. Suggestions may be imperfect — your feedback helps us improve." + `[Send feedback →]` 按钮
-  - **④ 首次激活 inline tip**：首次召唤时 suggestion card 上方一行小字提示 Beta + 反馈入口，关闭后永久不再出现
+  - **③ Settings 顶部**：callout block "Pagelet is in Beta. Suggestions may be imperfect — your feedback helps us improve."
+  - **④ 首次激活 inline tip**：未实现，保留为 future。
 - **被推翻方案**：正式 onboarding 流程（违反 Obsidian 插件惯例，过度教育用户）
 - **拍板理由**：
   - Obsidian 主流插件几乎无 onboarding（Dataview / Templater / Smart Connections 全无）
   - Obsidian 用户是自筛选高级用户，被引导页拦住会反感
   - Inline tip 在使用瞬间出现，比 onboarding 轻 10 倍
-- **替代承载**：Community plugins 描述 + README callout + first-use inline tip
+- **替代承载**：Community plugins 描述 + README callout + Settings callout；first-use inline tip 是 future。
 - **文案 token**：
   - EN: `Pagelet (Beta)` / `Pagelet is in Beta. Suggestions may be imperfect — your feedback helps us improve.`
   - ZH: `拾页 (Beta)` / `拾页处于 Beta 阶段，建议可能不完美 —— 你的反馈帮助我们改进。`
@@ -266,10 +267,12 @@
 #### D018 · 单次 token 上限
 
 - **日期**：2026-06-01
-- **决策**：D 组合
-  - 默认：输入 **8K** + 输出 **2K**（覆盖 90% 用户笔记 < 5000 字）
-  - Settings 可调到：输入 **32K** + 输出 **4K**
-  - **硬上限**：永远 ≤ 36K tokens（即使用户改 settings，超出拒绝并提示切分笔记）
+- **决策**：D 组合，前台 review 与后台 preparation 分池控制
+  - 前台 review 默认：输入 **8K** + 输出 **2K**（覆盖 90% 用户笔记 < 5000 字）
+  - 前台 review Settings 可调到：输入 **32K** + 输出 **4K**
+  - 前台 review **硬上限**：永远 ≤ 36K tokens（即使用户改 settings，超出拒绝并提示切分笔记）
+  - 后台 preparation 默认：输入 **4K** + 输出 **1K**
+  - 后台 preparation Settings 最高：输入 **8K** + 输出 **2K**
 - **拍板理由**：防止 prompt injection 攻击让 LLM 跑飞
 
 #### D019 · 每次 review 的 LLM 调用次数
@@ -289,7 +292,8 @@
 #### D021 · 触达上限行为
 
 - **日期**：2026-06-01
-- **决策**：拒绝 + 提供 "强制再来一次（跳过限制）" 按钮
+- **决策**：当前 beta 拒绝本次调用并显示限额提示；用户可在 settings 调整前台上限后重试。
+- **Future**：如真实 dogfood 证明有需要，再增加 "强制再来一次（跳过限制）" 按钮。
 - **拍板理由**：BYOK 用户最终自主权 + 默认防"无意识跑飞"
 
 #### D022 · 费用展示
@@ -499,8 +503,8 @@
 
 - **状态**：Open
 - **日期**：2026-06-01
-- **背景**：D013 提到 graduate 标准是"反馈无致命"，但未来若考虑 DAU/MAU 等量化指标，需要先有遥测机制
-- **待办**：暂用 GitHub Issues 计数 + 用户自报作为代用指标；正式 telemetry v2 再做
+- **背景**：D013 提到 graduate 标准是"反馈无致命"；当前插件不收集 telemetry/analytics
+- **待办**：暂用 GitHub Issues 计数 + 用户自报作为代用指标；未来若引入指标，必须是内容无关、明确 opt-in 的本地或聚合方案
 
 ### OQ005 · Pagelet 跟其他 AI 插件并存的隐性影响
 
