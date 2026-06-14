@@ -1,0 +1,4 @@
+interface:
+  display_name: "Obsidian Community Check"
+  short_description: "Trigger Obsidian community branch scans"
+  default_prompt: "Use $obsidian-community-check to trigger the Obsidian community scan for master."
