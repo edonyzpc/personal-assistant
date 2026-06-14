@@ -1,6 +1,7 @@
 import {
     AgentLifecycleEventEmitter,
 } from "./agent-runtime-primitives";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { errorMessage } from "./agent-utils";
 import {
     deriveContinuedAgentControlSnapshot,
@@ -764,10 +765,10 @@ export class PaAgentLoop {
         cleanup: () => void;
     } {
         let settled = false;
-        let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+        let wallClockTimer: PlatformTimeoutHandle | undefined;
         let settle: (result: PolicyDecisionRaceResult) => void = () => undefined;
         const cleanup = () => {
-            if (wallClockTimer !== undefined) clearTimeout(wallClockTimer);
+            if (wallClockTimer !== undefined) clearPlatformTimeout(wallClockTimer);
             this.options.signal?.removeEventListener("abort", onAbort);
         };
         const finish = (result: PolicyDecisionRaceResult) => {
@@ -783,7 +784,7 @@ export class PaAgentLoop {
             if (this.options.signal?.aborted) { finish({ type: "aborted" }); return; }
             const remaining = this.wallClockRemainingMs();
             if (remaining !== undefined) {
-                wallClockTimer = setTimeout(() => finish({ type: "wall_clock_exceeded" }), remaining);
+                wallClockTimer = setPlatformTimeout(() => finish({ type: "wall_clock_exceeded" }), remaining);
             }
         });
         return { promise, cleanup };

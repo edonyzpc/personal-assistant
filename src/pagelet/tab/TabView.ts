@@ -18,6 +18,7 @@
 import type { PanelFinding } from "../panel/types";
 import type { TabSection } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
+import { getPlatformDocument } from "../../platform-dom";
 
 function clearChildren(node: Element): void {
     node.textContent = "";
@@ -32,7 +33,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
     className?: string,
     text?: string,
 ): HTMLElementTagNameMap[K] {
-    const node = document.createElement(tag);
+    const node = getPlatformDocument().createElement(tag);
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
@@ -130,7 +131,7 @@ export class TabView {
     // -----------------------------------------------------------------------
 
     private buildDOM(): HTMLDivElement {
-        const root = document.createElement("div");
+        const root = el("div");
         root.className = "pa-pagelet-tab";
         root.setAttribute("role", "region");
         root.setAttribute("aria-label",

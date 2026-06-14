@@ -2,6 +2,15 @@ import { setIcon, Component, Modal, MarkdownRenderer } from 'obsidian';
 import type PluginManager from '../main';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { toError } from "../error-utils";
+import {
+    cancelPlatformAnimationFrame,
+    clearPlatformTimeout,
+    getOptionalPlatformDocument,
+    requestPlatformAnimationFrame,
+    setPlatformTimeout,
+    type PlatformAnimationFrameHandle,
+    type PlatformTimeoutHandle,
+} from "../platform-dom";
 
 export type MermaidFenceTransform = {
     markdown: string;
@@ -240,8 +249,9 @@ export function mutationMayAffectMermaidDiagrams(records: MutationRecord[]): boo
 }
 
 export function createElement<K extends keyof HTMLElementTagNameMap>(tagName: K): HTMLElementTagNameMap[K] | null {
-    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return null;
-    return document.createElement(tagName);
+    const doc = getOptionalPlatformDocument();
+    if (typeof doc?.createElement !== 'function') return null;
+    return doc.createElement(tagName);
 }
 
 export function renderMermaidSourceWarning(buffer: HTMLElement) {
@@ -252,7 +262,8 @@ export function renderMermaidSourceWarning(buffer: HTMLElement) {
 }
 
 export function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager, mermaidSources: string[]): boolean {
-    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return true;
+    const doc = getOptionalPlatformDocument();
+    if (typeof doc?.createElement !== 'function') return true;
 
     const diagrams = getTopLevelMermaidDiagramCandidates(root);
     const expectedCount = mermaidSources.filter((source) => source.trim()).length;
@@ -314,36 +325,24 @@ export function scheduleMermaidEnhancement(
     let stopped = false;
     let observer: MutationObserver | null = null;
     let fallbackFrameCount = 0;
-    let fallbackFrameId: number | null = null;
-    let observerFrameId: number | null = null;
-    let timeoutId: number | null = null;
+    let fallbackFrameId: PlatformAnimationFrameHandle | null = null;
+    let observerFrameId: PlatformAnimationFrameHandle | null = null;
+    let timeoutId: PlatformTimeoutHandle | null = null;
 
     const stop = () => {
         stopped = true;
         observer?.disconnect();
         observer = null;
-        if (
-            fallbackFrameId !== null
-            && typeof window !== 'undefined'
-            && typeof window.cancelAnimationFrame === 'function'
-        ) {
-            window.cancelAnimationFrame(fallbackFrameId);
+        if (fallbackFrameId !== null) {
+            cancelPlatformAnimationFrame(fallbackFrameId);
         }
         fallbackFrameId = null;
-        if (
-            observerFrameId !== null
-            && typeof window !== 'undefined'
-            && typeof window.cancelAnimationFrame === 'function'
-        ) {
-            window.cancelAnimationFrame(observerFrameId);
+        if (observerFrameId !== null) {
+            cancelPlatformAnimationFrame(observerFrameId);
         }
         observerFrameId = null;
-        if (
-            timeoutId !== null
-            && typeof window !== 'undefined'
-            && typeof window.clearTimeout === 'function'
-        ) {
-            window.clearTimeout(timeoutId);
+        if (timeoutId !== null) {
+            clearPlatformTimeout(timeoutId);
         }
         timeoutId = null;
     };
@@ -363,14 +362,10 @@ export function scheduleMermaidEnhancement(
 
     const scheduleObservedEnhancement = () => {
         if (stopped || observerFrameId !== null) return;
-        if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-            observerFrameId = window.requestAnimationFrame(() => {
-                observerFrameId = null;
-                enhanceIfCurrent();
-            });
-            return;
-        }
-        enhanceIfCurrent();
+        observerFrameId = requestPlatformAnimationFrame(() => {
+            observerFrameId = null;
+            enhanceIfCurrent();
+        });
     };
 
     if (enhanceIfCurrent()) return;
@@ -386,19 +381,17 @@ export function scheduleMermaidEnhancement(
             childList: true,
             subtree: true,
         });
-    } else if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
+    } else {
         const retryWithAnimationFrame = () => {
             fallbackFrameCount += 1;
             if (enhanceIfCurrent() || fallbackFrameCount >= 60) {
                 stop();
                 return;
             }
-            fallbackFrameId = window.requestAnimationFrame(retryWithAnimationFrame);
+            fallbackFrameId = requestPlatformAnimationFrame(retryWithAnimationFrame);
         };
-        fallbackFrameId = window.requestAnimationFrame(retryWithAnimationFrame);
+        fallbackFrameId = requestPlatformAnimationFrame(retryWithAnimationFrame);
     }
 
-    if (typeof window !== 'undefined' && typeof window.setTimeout === 'function') {
-        timeoutId = window.setTimeout(stop, 15000);
-    }
+    timeoutId = setPlatformTimeout(stop, 15000);
 }

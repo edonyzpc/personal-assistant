@@ -10,6 +10,7 @@ import type {
 } from "./types";
 import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-protocol";
 import { toError } from "../error-utils";
+import { clearPlatformTimeout, decodePlatformBase64, getPlatformLocation, setPlatformTimeout } from "../platform-dom";
 
 const SQLITE_DISPOSE_WORKER_READY_TIMEOUT_MS = 2_000;
 const SQLITE_DISPOSE_MESSAGE_TIMEOUT_MS = 2_000;
@@ -357,17 +358,17 @@ function createDisposedError(): Error {
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-        const timeout = setTimeout(
+        const timeout = setPlatformTimeout(
             () => reject(createVectorIndexError("sqlite-vector-index-timeout", `SQLite vector index timed out after ${timeoutMs}ms.`)),
             timeoutMs,
         );
         promise.then(
             (value) => {
-                clearTimeout(timeout);
+                clearPlatformTimeout(timeout);
                 resolve(value);
             },
             (error) => {
-                clearTimeout(timeout);
+                clearPlatformTimeout(timeout);
                 reject(toError(error));
             },
         );
@@ -379,8 +380,10 @@ function isSecurityError(error: unknown): boolean {
 }
 
 function isSameOriginUrl(url: string): boolean {
+    const location = getPlatformLocation();
+    if (!location) return false;
     try {
-        return new URL(url, globalThis.location.href).origin === globalThis.location.origin;
+        return new URL(url, location.href).origin === location.origin;
     } catch {
         return false;
     }
@@ -406,7 +409,7 @@ function dataUrlToBlob(url: string, fallbackType: string): Blob {
 }
 
 function decodeBase64(payload: string): Uint8Array {
-    const binary = globalThis.atob(payload);
+    const binary = decodePlatformBase64(payload);
     const bytes = new Uint8Array(binary.length);
     for (let index = 0; index < binary.length; index++) {
         bytes[index] = binary.charCodeAt(index);

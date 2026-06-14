@@ -7,6 +7,7 @@ import type { PluginManager } from '../plugin'
 import { computeContentHash } from '../vss-helpers';
 import { obsidianFetch } from './obsidian-fetch';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
+import { getPlatformDocument } from '../platform-dom';
 
 type ChatTransport = 'obsidian' | 'native';
 
@@ -162,7 +163,7 @@ export class AIUtils {
     }
 
     private buildNoticeContent(title: string) {
-        const fragment = document.createDocumentFragment();
+        const fragment = getPlatformDocument().createDocumentFragment();
         const wrapper = fragment.createEl("div", { attr: { class: "pa-notice" } });
         const header = wrapper.createDiv({ cls: "pa-notice__header" });
         const spinner = header.createDiv({ cls: "pa-notice__spinner" });
@@ -189,7 +190,10 @@ export class AIUtils {
         const noticeEl = this.buildNoticeContent(this.t("plugin.ai.notice.generatingFeaturedImages"));
         const notice = new Notice(noticeEl, 0);
         this.tuneNoticeShell(notice);
-        notice.noticeEl.createEl("hr", { attr: { id: "ai-featured-image-progress-hr", style: "margin:unset;" } });
+        notice.noticeEl.createEl("hr", {
+            cls: "pa-ai-featured-image-progress-rule",
+            attr: { id: "ai-featured-image-progress-hr" },
+        });
         return { notice };
     }
 

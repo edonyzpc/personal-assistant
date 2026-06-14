@@ -6,6 +6,7 @@ import type { PluginManager } from "./plugin";
 import type { ObsidianManifest, Manifest, UpdateStatus, PluginReleaseFiles } from "./types/manifest";
 import { ProgressBar } from "./progress-bar";
 import { getPluginManifests, isPluginEnabled, enablePluginAndSave } from "./obsidian-internals";
+import { setPlatformTimeout } from "./platform-dom";
 
 
 export class PluginsUpdater implements ObsidianManifest {
@@ -258,6 +259,6 @@ export class PluginsUpdater implements ObsidianManifest {
         // finally plugin updating has been done, whether there are plugins that need to be updated
         this.progressBar.updateProgress(100);
         // hide notice
-        setTimeout(() => { this.progressBar.hide(); }, 2000);
+        setPlatformTimeout(() => { this.progressBar.hide(); }, 2000);
     }
 }

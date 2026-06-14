@@ -1,6 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 import type { PluginManager } from "./plugin"
+import { getPlatformDocument, getPlatformWindow } from "./platform-dom";
 
 export enum ViewType {
     LocalGraphView,
@@ -26,8 +27,10 @@ export class ViewResize {
         if (this.resized) return;
         const { localGraph } = this.plugin.settings;
         let width: number, height: number, left: number, top: number, dataType: string;
-        const maxWidth = window.innerWidth;
-        const maxHeight = window.innerHeight;
+        const win = getPlatformWindow();
+        const doc = getPlatformDocument();
+        const maxWidth = win.innerWidth;
+        const maxHeight = win.innerHeight;
 
         switch (this.viewType) {
             case ViewType.LocalGraphView:
@@ -41,16 +44,23 @@ export class ViewResize {
                 break;
         }
         // resize the popover
-        const hovers = document.querySelectorAll("body .popover.hover-editor");
+        const hovers = doc.querySelectorAll("body .popover.hover-editor");
         hovers.forEach((hover) => {
             this.log("iterating hovers...");
+            if (!hover.instanceOf(HTMLElement)) return;
             if (hover.querySelector(`[data-type="${dataType}"]`)) {
                 this.log("setting hover editor attribute...");
                 // add some offset to show multiple views
-                hover.setAttribute("style", `height: ${height}px; width: ${width}px; top: ${top}px; left: ${left}px; cursor: move;`);
+                hover.setCssStyles({
+                    height: `${height}px`,
+                    width: `${width}px`,
+                    top: `${top}px`,
+                    left: `${left}px`,
+                    cursor: "move",
+                });
                 // override `--popover-width` which is apply in style of `.popover-content`
                 // and keep it is the same with hover width attribute
-                document.body.style.setProperty('--resize-popover-width', `${width}px`);
+                doc.body.setCssProps({ '--resize-popover-width': `${width}px` });
                 hover.addClass("resize-popover-width");
                 this.resized = true;
             }

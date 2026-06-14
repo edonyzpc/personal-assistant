@@ -1,6 +1,7 @@
 import { type Vault } from "obsidian";
 import type { DirtyTimestamps } from "../vss-helpers";
 import { getVaultConfigDirStorageScope } from "../obsidian-paths";
+import { getPlatformIndexedDB } from "../platform-dom";
 import type { VSSIndexMarker } from "./types";
 
 const VSS_LOCAL_STATE_DB_VERSION = 1;
@@ -240,7 +241,7 @@ export class IndexedDbVSSIndexStateStore implements VSSIndexStateStore {
 }
 
 export function createVSSIndexStateStore(vault: Vault, vaultId: string, pluginId: string): VSSIndexStateStore {
-    const indexedDb = globalThis.indexedDB;
+    const indexedDb = getPlatformIndexedDB();
     if (!indexedDb) {
         return new UnavailableVSSIndexStateStore();
     }

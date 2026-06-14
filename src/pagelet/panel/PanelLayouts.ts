@@ -23,6 +23,7 @@ import {
     createSuggestionCardRenderer,
     type SuggestionCardRenderer,
 } from "../../ui/pagelet";
+import { getPlatformDocument } from "../../platform-dom";
 
 export interface PanelLayoutRenderOptions {
     onSuggestionRenderer?: (renderer: SuggestionCardRenderer) => void;
@@ -43,7 +44,7 @@ function el<K extends keyof HTMLElementTagNameMap>(
     className?: string,
     text?: string,
 ): HTMLElementTagNameMap[K] {
-    const node = document.createElement(tag);
+    const node = getPlatformDocument().createElement(tag);
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
@@ -344,14 +345,10 @@ function renderConnectionMap(
 
     // Create SVG for connection lines
     const svgNS = "http://www.w3.org/2000/svg";
-    const svg = document.createElementNS(svgNS, "svg");
+    const doc = getPlatformDocument();
+    const svg = doc.createElementNS(svgNS, "svg");
     svg.setAttribute("class", "pa-pagelet-panel-connection-svg");
     svg.setAttribute("aria-hidden", "true");
-    svg.style.position = "absolute";
-    svg.style.inset = "0";
-    svg.style.width = "100%";
-    svg.style.height = "100%";
-    svg.style.pointerEvents = "none";
 
     // Draw lines between connected nodes
     if (connections) {
@@ -359,12 +356,12 @@ function renderConnectionMap(
             const fromIdx = nodeNames.indexOf(conn.fromNote);
             const toIdx = nodeNames.indexOf(conn.toNote);
             if (fromIdx >= 0 && toIdx >= 0) {
-                const line = document.createElementNS(svgNS, "line");
+                const line = doc.createElementNS(svgNS, "line");
                 line.setAttribute("x1", positions[fromIdx].x + "%");
                 line.setAttribute("y1", positions[fromIdx].y + "%");
                 line.setAttribute("x2", positions[toIdx].x + "%");
                 line.setAttribute("y2", positions[toIdx].y + "%");
-                line.style.stroke = "var(--background-modifier-border, #3a3a3a)";
+                line.setAttribute("stroke", "var(--background-modifier-border, #3a3a3a)");
                 line.setAttribute("stroke-width", conn.strength === "strong" ? "1.6" : "1.0");
                 line.setAttribute("stroke-dasharray", "4 3");
                 if (conn.strength === "weak") {
@@ -376,12 +373,12 @@ function renderConnectionMap(
     } else if (nodeNames.length > 1) {
         // No connections data -- draw lines from center to all others
         for (let i = 1; i < nodeNames.length && i < positions.length; i++) {
-            const line = document.createElementNS(svgNS, "line");
+            const line = doc.createElementNS(svgNS, "line");
             line.setAttribute("x1", positions[0].x + "%");
             line.setAttribute("y1", positions[0].y + "%");
             line.setAttribute("x2", positions[i].x + "%");
             line.setAttribute("y2", positions[i].y + "%");
-            line.style.stroke = "var(--background-modifier-border, #3a3a3a)";
+            line.setAttribute("stroke", "var(--background-modifier-border, #3a3a3a)");
             line.setAttribute("stroke-width", "1.2");
             line.setAttribute("stroke-dasharray", "4 3");
             svg.appendChild(line);
@@ -398,9 +395,11 @@ function renderConnectionMap(
                 : "pa-pagelet-panel-map-node pa-pagelet-panel-map-node--related",
             nodeNames[i],
         );
-        node.style.left = positions[i].x + "%";
-        node.style.top = positions[i].y + "%";
-        node.style.transform = "translate(-50%, -50%)";
+        node.setCssStyles({
+            left: positions[i].x + "%",
+            top: positions[i].y + "%",
+            transform: "translate(-50%, -50%)",
+        });
         map.appendChild(node);
     }
 
@@ -539,7 +538,7 @@ function renderSimpleMarkdownPreview(container: HTMLElement, md: string): void {
         } else if (line.startsWith("- ")) {
             container.appendChild(el("div", "pa-pagelet-panel-preview-li", `• ${line.slice(2)}`));
         } else if (line.trim() === "") {
-            container.appendChild(document.createElement("br"));
+            container.appendChild(el("br"));
         } else {
             container.appendChild(el("p", "pa-pagelet-panel-preview-p", line));
         }

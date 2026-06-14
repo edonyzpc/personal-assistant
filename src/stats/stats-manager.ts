@@ -26,6 +26,7 @@ import {
 } from "./stats-utils";
 import type { FileCountCacheEntry, StatsLocalStore } from "./stats-local-store";
 import { SchemaIntegrityError } from "./stats-local-store";
+import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 
 const moment = obsidianMoment as unknown as () => { format: (format: string) => string };
 
@@ -877,17 +878,11 @@ function sleep(ms: number): Promise<void> {
 }
 
 function setStatsTimeout(callback: () => void, ms: number): TimeoutHandle {
-    return typeof window === "undefined"
-        ? setTimeout(callback, ms)
-        : window.setTimeout(callback, ms);
+    return setPlatformTimeout(callback, ms);
 }
 
 function clearStatsTimeout(timeoutId: TimeoutHandle): void {
-    if (typeof window === "undefined") {
-        clearTimeout(timeoutId);
-        return;
-    }
-    window.clearTimeout(timeoutId);
+    clearPlatformTimeout(timeoutId);
 }
 
 function isMarkdownPath(path: string): boolean {

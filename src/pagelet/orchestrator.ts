@@ -20,6 +20,7 @@ import { Notice } from "obsidian";
 import type { App, EventRef, MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
+import { clearPlatformTimeout, getPlatformDocument, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 
 import type { BubbleContent, BubbleFinding } from "./bubble/types";
 import { BubbleView } from "./bubble/BubbleView";
@@ -160,10 +161,11 @@ export class PageletOrchestrator {
     private readonly researchManager: ResearchManager;
     private saveInProgress = false;
     private foregroundRunSeq = 0;
+    private escapeListenerDocument: Document | null = null;
 
     // ---- State ------------------------------------------------------------
-    private idleTimer: ReturnType<typeof setTimeout> | null = null;
-    private activityDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+    private idleTimer: PlatformTimeoutHandle | null = null;
+    private activityDebounceTimer: PlatformTimeoutHandle | null = null;
     private destroyed = false;
 
     // ---- Constants --------------------------------------------------------
@@ -237,8 +239,8 @@ export class PageletOrchestrator {
         const s = this.host.settings.pagelet;
 
         // 1. Resolve a single overlay mount root for Bubble/Panel/Tab.
-        //    Mounting under workspace.containerEl (instead of
-        //    document.body) ensures these fixed overlays never overlap
+        //    Mounting under workspace.containerEl (instead of the page body)
+        //    ensures these fixed overlays never overlap
         //    Obsidian's titlebar drag region. Combined with each view's
         //    lazy mount/unmount, the workspace stays free of long-lived
         //    fixed overlays while idle (D037 progressive disclosure).
@@ -280,7 +282,8 @@ export class PageletOrchestrator {
 
         // 1c. Centralized Escape handler (Panel > Bubble priority).
         // Native Pagelet detail leaves are closed by Obsidian's tab chrome.
-        document.addEventListener("keydown", this.handleEscape, true);
+        this.escapeListenerDocument = getPlatformDocument();
+        this.escapeListenerDocument.addEventListener("keydown", this.handleEscape, true);
 
         // 2. Workspace event: re-mount Pet when the active leaf changes
         this.host.registerEvent(
@@ -342,7 +345,8 @@ export class PageletOrchestrator {
 
         this.clearIdleTimer();
         this.clearActivityDebounce();
-        document.removeEventListener("keydown", this.handleEscape, true);
+        this.escapeListenerDocument?.removeEventListener("keydown", this.handleEscape, true);
+        this.escapeListenerDocument = null;
         this.preloadUnsubscribe?.();
         this.preloadUnsubscribe = null;
         this.preloadEngine?.destroy();
@@ -1009,7 +1013,7 @@ export class PageletOrchestrator {
      */
     private handleNoteActivity(): void {
         this.clearActivityDebounce();
-        this.activityDebounceTimer = setTimeout(() => {
+        this.activityDebounceTimer = setPlatformTimeout(() => {
             this.activityDebounceTimer = null;
             this.petView?.stateMachine.transition("note-activity");
             this.preloadEngine?.noteActivity();
@@ -1020,7 +1024,7 @@ export class PageletOrchestrator {
     /** (Re)start the idle timer. When it fires, Pet enters resting. */
     private resetIdleTimer(): void {
         this.clearIdleTimer();
-        this.idleTimer = setTimeout(() => {
+        this.idleTimer = setPlatformTimeout(() => {
             this.idleTimer = null;
             this.petView?.stateMachine.transition("long-idle");
         }, PageletOrchestrator.IDLE_TIMEOUT_MS);
@@ -1028,14 +1032,14 @@ export class PageletOrchestrator {
 
     private clearIdleTimer(): void {
         if (this.idleTimer !== null) {
-            clearTimeout(this.idleTimer);
+            clearPlatformTimeout(this.idleTimer);
             this.idleTimer = null;
         }
     }
 
     private clearActivityDebounce(): void {
         if (this.activityDebounceTimer !== null) {
-            clearTimeout(this.activityDebounceTimer);
+            clearPlatformTimeout(this.activityDebounceTimer);
             this.activityDebounceTimer = null;
         }
     }

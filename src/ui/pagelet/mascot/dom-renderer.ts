@@ -52,12 +52,13 @@ import {
     type MascotState,
     type MascotTranslator,
 } from "./types";
+import { getOptionalPlatformWindow, getPlatformDocument } from "../../../platform-dom";
 
 // ---------------------------------------------------------------------------
 // DOM host abstraction
 //
 // `MascotDomHost` is the minimum surface this file needs from a DOM
-// implementation. The default real implementation uses `document.*`;
+// implementation. The default real implementation uses platform DOM helpers;
 // tests can supply a recording host without depending on jsdom.
 //
 // We deliberately keep this PRIVATE to the mascot module — exporting it
@@ -123,10 +124,11 @@ class RealDomNode implements MascotDomNode {
         this.el.setAttribute("class", classes.join(" "));
     }
     setStyleProperty(name: string, value: string): void {
-        // HTMLElement vs SVGElement both expose `.style.setProperty`
-        // — defensive guard for the rare host that doesn't.
-        const styled = this.el as Element & { style?: { setProperty?: (n: string, v: string) => void } };
-        styled.style?.setProperty?.(name, value);
+        // HTMLElement and SVGElement both expose the CSS property API.
+        const styled = this.el as (HTMLElement | SVGElement) & {
+            setCssProps?: (props: Record<string, string>) => void;
+        };
+        styled.setCssProps?.({ [name]: value });
     }
     remove(): void {
         if (this.el.parentElement) {
@@ -141,10 +143,10 @@ class RealDomNode implements MascotDomNode {
 
 class RealDomHost implements MascotDomHost {
     createHtmlElement(tag: string): MascotDomNode {
-        return new RealDomNode(document.createElement(tag));
+        return new RealDomNode(getPlatformDocument().createElement(tag));
     }
     createSvgElement(tag: string): MascotDomNode {
-        return new RealDomNode(document.createElementNS(SVG_NAMESPACE, tag));
+        return new RealDomNode(getPlatformDocument().createElementNS(SVG_NAMESPACE, tag));
     }
 }
 
@@ -442,7 +444,7 @@ function defaultTranslator(locale: PageletLocale): MascotTranslator {
 /**
  * Default `prefers-reduced-motion` probe.
  *
- * Lazy `window.matchMedia` lookup — invoked on every `setState` call,
+ * Lazy platform-window `matchMedia` lookup — invoked on every `setState` call,
  * NOT cached at module-load — so a user who toggles their OS reduce-
  * motion preference mid-session takes effect on the next mascot
  * transition (no listener overhead required).
@@ -452,11 +454,11 @@ function defaultTranslator(locale: PageletLocale): MascotTranslator {
  * not-yet-recognized media query string.
  */
 function defaultPrefersReducedMotion(): boolean {
-    if (typeof window === "undefined") return false;
-    const mm = (window as Window & { matchMedia?: typeof window.matchMedia }).matchMedia;
+    const win = getOptionalPlatformWindow();
+    const mm = win?.matchMedia;
     if (typeof mm !== "function") return false;
     try {
-        return mm.call(window, "(prefers-reduced-motion: reduce)").matches === true;
+        return mm.call(win, "(prefers-reduced-motion: reduce)").matches === true;
     } catch {
         return false;
     }

@@ -12,6 +12,7 @@ import { SqliteVectorIndex } from './vss/sqlite-vector-index';
 import { getVSSDeviceId } from './vss/state';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 import { toError } from './error-utils';
+import { clearPlatformTimeout, getPlatformCrypto, getPlatformNavigatorStorage, setPlatformTimeout } from './platform-dom';
 import {
     getEmbeddingProfileSignature,
     VSS_DEFAULT_DIMENSIONS,
@@ -2402,7 +2403,7 @@ export class VSS {
     }
 
     private async getStoragePersistenceStatus(options: { requestPersistence?: boolean } = {}): Promise<StoragePersistenceStatus> {
-        const storage = globalThis.navigator?.storage;
+        const storage = getPlatformNavigatorStorage();
         if (!storage) return { persisted: false };
 
         let persisted = false;
@@ -2525,7 +2526,7 @@ function createEmptyOperationSummary(): VSSOperationSummary {
 }
 
 function createIndexId(): string {
-    const cryptoApi = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
+    const cryptoApi = getPlatformCrypto() as (Crypto & { randomUUID?: () => string }) | undefined;
     if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
         return cryptoApi.randomUUID();
     }
@@ -2560,22 +2561,22 @@ function estimateEmbeddingTokensForText(text: string): number {
 }
 
 function sleep(ms: number): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, ms));
+    return new Promise(resolve => setPlatformTimeout(resolve, ms));
 }
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-        const timeout = setTimeout(
+        const timeout = setPlatformTimeout(
             () => reject(Object.assign(new Error(`VSS operation timed out after ${timeoutMs}ms.`), { code: "vss-timeout" })),
             timeoutMs,
         );
         promise.then(
             (value) => {
-                clearTimeout(timeout);
+                clearPlatformTimeout(timeout);
                 resolve(value);
             },
             (error) => {
-                clearTimeout(timeout);
+                clearPlatformTimeout(timeout);
                 reject(toError(error));
             },
         );

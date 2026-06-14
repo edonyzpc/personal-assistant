@@ -2,16 +2,17 @@
 
 import { App, ItemView, TFile, WorkspaceLeaf, addIcon, debounce, type Debouncer, type EventRef, type TAbstractFile } from "obsidian";
 import { createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 
 import { PluginManager } from './plugin';
 import RecordList from './components/RecordList'
 import { icons } from './utils';
 
 export const RECORD_PREVIEW_TYPE = "record-preview";
+type ReactRoot = ReturnType<typeof createRoot>;
 
 export class RecordPreview extends ItemView {
-    componentRoot: Root | null = null;
+    componentRoot: ReactRoot | null = null;
     app: App;
     plugin: PluginManager;
     files: string[];

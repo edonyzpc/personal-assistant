@@ -33,6 +33,8 @@
  *    root keeps focus stable when multiple Obsidian windows are open.
  */
 
+import { getOptionalPlatformDocument } from "../../platform-dom";
+
 // ---------------------------------------------------------------------------
 // Constants — stable IDs / hotkeys
 // ---------------------------------------------------------------------------
@@ -169,7 +171,7 @@ export interface RegisterPageletFocusCommandOptions {
     hotkeys?: readonly PageletHotkey[] | null;
     /**
      * Locate the search root for the suggestion-card scan. Defaults to
-     * `document.body` when running in a real browser. Tests pass a stub.
+     * the browser body element in production. Tests pass a stub.
      */
     getSearchRoot?: () => PageletQueryRoot | null;
     /**
@@ -210,8 +212,7 @@ export function registerPageletFocusCommand(
 }
 
 function defaultGetSearchRoot(): PageletQueryRoot | null {
-    if (typeof document === "undefined") return null;
-    return document.body as unknown as PageletQueryRoot;
+    return getOptionalPlatformDocument()?.body as unknown as PageletQueryRoot | null;
 }
 
 function defaultFocus(el: PageletFocusableElement): void {

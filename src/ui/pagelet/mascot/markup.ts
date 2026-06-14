@@ -6,7 +6,7 @@
  * Spec source: `docs/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html` §①.
  *
  * Why a pure builder (separate from the DOM renderer):
- *  - Without jsdom in the test setup, exercising real `document.*` calls
+ *  - Without jsdom in the test setup, exercising real DOM calls
  *    requires either a heavy mock or pulling in a new dev dependency.
  *  - The bulk of mascot logic (state → color, state → SVG geometry,
  *    state → animation classes, state → i18n message) is data shaping.

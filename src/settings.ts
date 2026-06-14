@@ -19,6 +19,7 @@ import {
 } from "./settings/pagelet";
 import { getPageletUiLanguage } from "./locales/pagelet";
 import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
+import { getPlatformDocument, setPlatformTimeout } from "./platform-dom";
 
 export interface ResizeStyle {
     width: number,
@@ -444,6 +445,7 @@ export class SettingTab extends PluginSettingTab {
     private secretPickerObserver: MutationObserver | null = null;
     private patchedSecretPickerEditButtons = new WeakSet<HTMLElement>();
     private secretPickerEditClickHandler: ((event: MouseEvent) => void) | null = null;
+    private secretPickerDocument: Document | null = null;
 
     // vanilla-picker instances; destroyed before rebuilding graphColorsContainer.
     private activePickers: Picker[] = [];
@@ -475,12 +477,13 @@ export class SettingTab extends PluginSettingTab {
 
     display(): void {
         const { containerEl } = this;
+        const doc = getPlatformDocument();
 
         this.destroyPickers();
         containerEl.empty();
         (containerEl as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-settings-tab");
         (containerEl as HTMLElement & { classList?: DOMTokenList }).classList?.add("pa-settings-tab");
-        document.body?.classList.add("pa-settings-tab-open");
+        doc.body?.classList.add("pa-settings-tab-open");
 
         // Sub-container refs were children of containerEl; empty() detached them.
         this.providerConfigContainer = null;
@@ -518,7 +521,7 @@ export class SettingTab extends PluginSettingTab {
         // orphaned when the tab DOM is detached.
         this.destroyPickers();
         this.stopSecretPickerObserver();
-        document.body?.classList.remove("pa-settings-tab-open");
+        getPlatformDocument().body?.classList.remove("pa-settings-tab-open");
         // Flush any pending text-input save: the onChange handlers have
         // already mutated plugin.settings.* synchronously, so persisting
         // the current settings object captures the user's latest input.
@@ -535,6 +538,7 @@ export class SettingTab extends PluginSettingTab {
 
     private startSecretPickerObserver(): void {
         this.stopSecretPickerObserver();
+        const doc = getPlatformDocument();
         this.secretPickerEditClickHandler = (event: MouseEvent) => {
             const target = event.target as HTMLElement | null;
             const action = target?.closest<HTMLElement>(".modal .suggestion-item .clickable-icon");
@@ -558,16 +562,17 @@ export class SettingTab extends PluginSettingTab {
             }
             this.openSecretEditorViaAddSecret(secretId, row.closest<HTMLElement>(".modal"));
         };
-        if (typeof document.addEventListener === "function") {
-            document.addEventListener("click", this.secretPickerEditClickHandler, true);
+        if (typeof doc.addEventListener === "function") {
+            this.secretPickerDocument = doc;
+            doc.addEventListener("click", this.secretPickerEditClickHandler, true);
         }
-        if (!document.body || typeof MutationObserver === "undefined") {
+        if (!doc.body || typeof MutationObserver === "undefined") {
             return;
         }
         this.secretPickerObserver = new MutationObserver(() => {
             this.patchSecretPickerActions();
         });
-        this.secretPickerObserver.observe(document.body, {
+        this.secretPickerObserver.observe(doc.body, {
             childList: true,
             subtree: true,
         });
@@ -578,16 +583,17 @@ export class SettingTab extends PluginSettingTab {
         this.secretPickerObserver?.disconnect();
         this.secretPickerObserver = null;
         if (this.secretPickerEditClickHandler) {
-            if (typeof document.removeEventListener === "function") {
-                document.removeEventListener("click", this.secretPickerEditClickHandler, true);
+            if (typeof this.secretPickerDocument?.removeEventListener === "function") {
+                this.secretPickerDocument.removeEventListener("click", this.secretPickerEditClickHandler, true);
             }
             this.secretPickerEditClickHandler = null;
         }
+        this.secretPickerDocument = null;
         this.patchedSecretPickerEditButtons = new WeakSet<HTMLElement>();
     }
 
     private patchSecretPickerActions(): void {
-        const rows = document.querySelectorAll<HTMLElement>(
+        const rows = getPlatformDocument().querySelectorAll<HTMLElement>(
             ".modal .suggestion-item",
         );
         rows.forEach((row) => {
@@ -665,7 +671,7 @@ export class SettingTab extends PluginSettingTab {
 
     private scheduleSecretPickerPatch(): void {
         [0, 25, 75, 150, 300, 600, 1000].forEach((delay) => {
-            window.setTimeout(() => this.patchSecretPickerActions(), delay);
+            setPlatformTimeout(() => this.patchSecretPickerActions(), delay);
         });
     }
 
@@ -705,7 +711,7 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private findSecretPickerModal(): HTMLElement | null {
-        const modal = Array.from(document.querySelectorAll<HTMLElement>("body.pa-settings-tab-open .modal"))
+        const modal = Array.from(getPlatformDocument().querySelectorAll<HTMLElement>("body.pa-settings-tab-open .modal"))
             .reverse()
             .find((modal) => Array.from(modal.querySelectorAll<HTMLElement>(".suggestion-item")).some((row) => this.isSecretPickerRow(row))) ?? null;
         modal?.classList.add("pa-secret-picker-modal");
@@ -734,11 +740,11 @@ export class SettingTab extends PluginSettingTab {
             new Notice(this.t("plugin.settings.secret.addOpened", { secretId }), 5000);
             return;
         }
-        window.setTimeout(() => this.prefillAddSecretModal(secretId, secretValue, attempt + 1), 100);
+        setPlatformTimeout(() => this.prefillAddSecretModal(secretId, secretValue, attempt + 1), 100);
     }
 
     private findAddSecretModal(): HTMLElement | null {
-        return Array.from(document.querySelectorAll<HTMLElement>("body .modal"))
+        return Array.from(getPlatformDocument().querySelectorAll<HTMLElement>("body .modal"))
             .reverse()
             .find((modal) => {
                 const title = modal.querySelector("h1, h2, h3, .modal-title")?.textContent?.trim();
@@ -788,11 +794,11 @@ export class SettingTab extends PluginSettingTab {
                 const { contentEl } = this;
                 contentEl.empty();
                 contentEl.addClass("pa-api-token-secret-modal");
-                contentEl.createEl("h2", {
-                    text: existing
+                new Setting(contentEl)
+                    .setName(existing
                         ? translate("plugin.settings.apiToken.modal.editTitle")
-                        : translate("plugin.settings.apiToken.modal.addTitle"),
-                });
+                        : translate("plugin.settings.apiToken.modal.addTitle"))
+                    .setHeading();
 
                 new Setting(contentEl)
                     .setName(translate("plugin.settings.apiToken.modal.id.name"))
@@ -879,7 +885,7 @@ export class SettingTab extends PluginSettingTab {
                             .onClick(() => this.close());
                     });
 
-                window.setTimeout(() => {
+                setPlatformTimeout(() => {
                     secretInput?.focus();
                     secretInput?.select();
                 }, 0);
@@ -951,7 +957,7 @@ export class SettingTab extends PluginSettingTab {
 
         rename();
         [0, 50, 150, 300, 600].forEach((delay) => {
-            window.setTimeout(rename, delay);
+            setPlatformTimeout(rename, delay);
         });
 
         if (typeof MutationObserver === "undefined") {
@@ -967,12 +973,12 @@ export class SettingTab extends PluginSettingTab {
             subtree: true,
             characterData: true,
         });
-        window.setTimeout(() => observer.disconnect(), 1500);
+        setPlatformTimeout(() => observer.disconnect(), 1500);
     }
 
     private renderHeader(parentEl: HTMLElement): void {
         parentEl.createEl('h1', { text: this.t("plugin.settings.header.title") });
-        const link = document.createElement("a");
+        const link = getPlatformDocument().createElement("a");
         link.setText(this.t("plugin.settings.header.repo"));
         link.href = "https://github.com/edonyzpc/personal-assistant";
         link.setAttr("class", "pa-settings-header-link");
@@ -994,7 +1000,7 @@ export class SettingTab extends PluginSettingTab {
                     plugin.settings.targetPath = value;
                     this.debouncedSave();
                 }));
-        const desc_format = document.createDocumentFragment();
+        const desc_format = getPlatformDocument().createDocumentFragment();
         desc_format.createEl('p', undefined, (p) => {
             p.innerText = this.t("plugin.settings.record.fileFormat.descPrefix");
             p.createEl('a', undefined, (link) => {
@@ -1092,12 +1098,13 @@ export class SettingTab extends PluginSettingTab {
                 })
             });
         parentEl.createEl("p", { text: this.t("plugin.settings.graph.resize"), cls: "pa-settings-section-desc-md" });
-        const h = document.createDocumentFragment();
+        const doc = getPlatformDocument();
+        const h = doc.createDocumentFragment();
         h.createEl('span', undefined, (p) => {
             p.innerText = this.t("plugin.settings.graph.height");
             p.setAttr("class", "pa-settings-resize-label");
         });
-        const w = document.createDocumentFragment();
+        const w = doc.createDocumentFragment();
         w.createEl('span', undefined, (p) => {
             p.innerText = this.t("plugin.settings.graph.width");
             p.setAttr("class", "pa-settings-resize-label");
@@ -1163,8 +1170,8 @@ export class SettingTab extends PluginSettingTab {
                 return "rgb(" + r + ", " + g + ", " + b + ")";
             };
             const colorRgb = hexToRGB(color);
-            const nameEl = document.createDocumentFragment();
-            nameEl.createSpan({ text: "●", attr: { style: `color: ${color}` } });
+            const nameEl = getPlatformDocument().createDocumentFragment();
+            nameEl.createSpan({ text: "●" }).setCssStyles({ color });
             nameEl.appendText(` ${this.t("plugin.settings.graphColors.colorFor", { query: colorGroup.query })}`);
             new Setting(container)
                 .setName(nameEl)
@@ -1240,7 +1247,7 @@ export class SettingTab extends PluginSettingTab {
         const plugin = this.plugin;
         // setting options for updating metadata
         parentEl.createEl('h2', { text: this.t("plugin.settings.metadata.title") });
-        const descFormat = document.createDocumentFragment();
+        const descFormat = getPlatformDocument().createDocumentFragment();
         descFormat.createEl('p', undefined, (p) => {
             p.innerText = this.t("plugin.settings.metadata.descPrefix");
             p.createEl('a', undefined, (link) => {
@@ -1270,12 +1277,13 @@ export class SettingTab extends PluginSettingTab {
         const container = this.metadataContainer;
         // deep copy metadata for rendering
         const metas: { key: string, value: any }[] = JSON.parse(JSON.stringify(plugin.settings.metadatas)); // eslint-disable-line @typescript-eslint/no-explicit-any
-        const nameEl1 = document.createDocumentFragment();
+        const doc = getPlatformDocument();
+        const nameEl1 = doc.createDocumentFragment();
         nameEl1.createSpan({ text: "---" });
         new Setting(container).setName(nameEl1);
         for (let i = 0; i < metas.length; i++) {
             const index = this.findMetadata(metas[i].key);
-            const nameEl = document.createDocumentFragment();
+            const nameEl = doc.createDocumentFragment();
             nameEl.appendText(`${metas[i].key}: `);
             new Setting(container)
                 .setName(nameEl)
@@ -1299,7 +1307,7 @@ export class SettingTab extends PluginSettingTab {
                     });
                 })
         }
-        const nameEl2 = document.createDocumentFragment();
+        const nameEl2 = doc.createDocumentFragment();
         nameEl2.createSpan({ text: "---" });
         new Setting(container).setName(nameEl2);
 

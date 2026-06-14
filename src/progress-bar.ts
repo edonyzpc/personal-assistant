@@ -3,6 +3,7 @@
 import { Notice, addIcon, setIcon } from "obsidian";
 
 import { PluginManager } from "./plugin";
+import { getPlatformDocument } from "./platform-dom";
 import { generateRandomString, icons } from './utils';
 
 export class ProgressBar {
@@ -26,7 +27,8 @@ export class ProgressBar {
         this.gridTextID = `div-${ID}-progress-bar-text-${this.idNumber}`;
         this.totalSteps = total;
         this.steps = 0;
-        this.noticeEl = document.createDocumentFragment();
+        const doc = getPlatformDocument();
+        this.noticeEl = doc.createDocumentFragment();
         // add progress bar:
         // ```
         // <div class='progress-bar-grid' >
@@ -40,7 +42,7 @@ export class ProgressBar {
         divPluginUpdateProgressBarGrid.addClass('progress-bar-grid');
         const divProgressBarMeter = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridDivID } });
         divProgressBarMeter.addClass('meter');
-        divProgressBarMeter.createEl('span', { attr: { style: `width: 0%`, id: this.gridDivSpanID } });
+        divProgressBarMeter.createEl('span', { attr: { id: this.gridDivSpanID } }).setCssStyles({ width: "0%" });
         const divProgressBarText = divPluginUpdateProgressBarGrid.createEl("div", { attr: { id: this.gridTextID } });
         divProgressBarText.addClass('progress-bar-number');
         divProgressBarText.setText(`0%`);
@@ -51,11 +53,12 @@ export class ProgressBar {
     }
 
     addDiv(itemID: string, divText: string) {
-        const noticeEl = document.getElementById(this.gridID);
+        const noticeEl = getPlatformDocument().getElementById(this.gridID);
         if (noticeEl) {
-            const div = noticeEl.parentElement?.createEl("div", { attr: { style: `color: red`, id: `div-${itemID}-${this.idNumber}` } });
+            const div = noticeEl.parentElement?.createEl("div", { attr: { id: `div-${itemID}-${this.idNumber}` } });
             if (div) {
                 div.addClass('progress-bar-items-grid');
+                div.addClass('progress-bar-items-error');
                 setIcon(div, 'SWITCH_OFF_STATUS');
                 div.createSpan({ text: divText, attr: { class: "progress-bar-items-text" } });
                 div.querySelector('svg')?.addClass("plugin-update-svg");
@@ -73,7 +76,7 @@ export class ProgressBar {
             return;
         }
         this.notice = new Notice(this.noticeEl, 0);
-        const progressBarGrid = document.getElementById(this.gridID);
+        const progressBarGrid = getPlatformDocument().getElementById(this.gridID);
         progressBarGrid?.parentElement?.setAttribute("id", `progress-bar-${this.idNumber}`);
         progressBarGrid?.parentElement?.addClass('progress-bar-notice');
     }
@@ -89,11 +92,12 @@ export class ProgressBar {
         }
         this.steps++;
         const progress = this.steps >= totalSteps ? totalSteps : this.steps;
-        const spanProgressBar = document.getElementById(this.gridDivSpanID);
-        spanProgressBar?.setAttr("style", `width:${(100 * (progress / totalSteps)).toFixed(1)}%`);
-        const divProgressBarText = document.getElementById(this.gridTextID);
+        const doc = getPlatformDocument();
+        const spanProgressBar = doc.getElementById(this.gridDivSpanID);
+        spanProgressBar?.setCssStyles({ width: `${(100 * (progress / totalSteps)).toFixed(1)}%` });
+        const divProgressBarText = doc.getElementById(this.gridTextID);
         divProgressBarText?.setText(`${(100 * (progress / totalSteps)).toFixed(1)}%`);
-        const div2Display = document.getElementById(`div-${itemID}-${this.idNumber}`);
+        const div2Display = doc.getElementById(`div-${itemID}-${this.idNumber}`);
         if (div2Display) {
             const spanItem = div2Display.getElementsByTagName('span').item(0);
             if (spanItem) {
@@ -110,9 +114,10 @@ export class ProgressBar {
     }
 
     updateProgress(percentage: number) {
-        const spanProgressBar = document.getElementById(this.gridDivSpanID);
-        spanProgressBar?.setAttr("style", `width:${percentage}%`);
-        const divProgressBarText = document.getElementById(this.gridTextID);
+        const doc = getPlatformDocument();
+        const spanProgressBar = doc.getElementById(this.gridDivSpanID);
+        spanProgressBar?.setCssStyles({ width: `${percentage}%` });
+        const divProgressBarText = doc.getElementById(this.gridTextID);
         divProgressBarText?.setText(`${percentage}%`);
     }
 }

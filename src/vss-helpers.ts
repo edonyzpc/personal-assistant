@@ -1,3 +1,5 @@
+import { getPlatformCrypto } from "./platform-dom";
+
 export type DirtyTimestamps = {
     first: number; // first time the file was marked dirty after last flush
     last: number;  // most recent time the file was marked dirty
@@ -7,7 +9,7 @@ export type DirtyTimestamps = {
 export type DirtyRecord = Record<string, DirtyTimestamps>;
 
 export const computeContentHash = async (input: string): Promise<string> => {
-    const subtle = globalThis.crypto?.subtle;
+    const subtle = getPlatformCrypto()?.subtle;
     if (!subtle) {
         throw new Error('Web Crypto is required to compute VSS content hashes.');
     }

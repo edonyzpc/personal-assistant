@@ -9,6 +9,7 @@ import type {
     VaultStatistics,
 } from "./stats-types";
 import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from "../obsidian-paths";
+import { getPlatformCrypto, getPlatformLocalStorage } from "../platform-dom";
 
 export const STATS_STORE_VERSION = 2;
 const STATS_STORE_CHILD_PATH = "personal-assistant-stats/v2";
@@ -179,7 +180,7 @@ function isPathInsideRoot(path: string, root: string): boolean {
 
 export function getDeviceId(): string {
     try {
-        const storage = globalThis.localStorage;
+        const storage = getPlatformLocalStorage();
         const existing = storage?.getItem(DEVICE_STORAGE_KEY);
         if (existing) return existing;
         const id = createDeviceId();
@@ -191,7 +192,7 @@ export function getDeviceId(): string {
 }
 
 export function createDeviceId(): string {
-    const cryptoApi = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
+    const cryptoApi = getPlatformCrypto() as (Crypto & { randomUUID?: () => string }) | undefined;
     if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
         return cryptoApi.randomUUID();
     }

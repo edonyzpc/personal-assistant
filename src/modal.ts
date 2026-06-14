@@ -63,14 +63,15 @@ export class PluginControlModal extends SuggestModal<Plugin> {
 
         addIcon('SWITCH_ON_STATUS', icons['SWITCH_ON_STATUS']);
         addIcon('SWITCH_OFF_STATUS', icons['SWITCH_OFF_STATUS']);
-        const div = el.createEl("div", { attr: { style: `color: ${color}` } });
+        const div = el.createEl("div");
+        div.setCssStyles({ color });
         if (plugin.enbaled) {
             setIcon(div, 'SWITCH_ON_STATUS');
         } else {
             setIcon(div, 'SWITCH_OFF_STATUS');
         }
         div.querySelector('svg')?.addClass("plugin-switch-on-off-svg");
-        div.createSpan({ text: plugin.name, attr: { style: "color: var(--text-normal)" } });
+        div.createSpan({ text: plugin.name, cls: "pa-plugin-suggestion-name" });
         el.createEl("small", { text: plugin.desc });
     }
 

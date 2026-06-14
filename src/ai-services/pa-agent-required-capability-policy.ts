@@ -2,6 +2,7 @@ import type {
     PaAgentHostPolicy,
     PaAgentTurnSummary,
 } from "./pa-agent-loop";
+import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 import {
     createAnswerCompletionLedger,
     decideAnswerCompletion,
@@ -177,17 +178,11 @@ export async function resolveRequiredCapabilityClassification(
 }
 
 function setRequiredCapabilityTimeout(callback: () => void, ms: number): TimeoutHandle {
-    return typeof window === "undefined"
-        ? setTimeout(callback, ms)
-        : window.setTimeout(callback, ms);
+    return setPlatformTimeout(callback, ms);
 }
 
 function clearRequiredCapabilityTimeout(timeoutId: TimeoutHandle): void {
-    if (typeof window === "undefined") {
-        clearTimeout(timeoutId);
-        return;
-    }
-    window.clearTimeout(timeoutId);
+    clearPlatformTimeout(timeoutId);
 }
 
 export function applyUserExplicitCapabilityConstraints(

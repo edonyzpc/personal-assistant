@@ -19,6 +19,19 @@ import {
     type ChatRoleIdenticonModel,
 } from './role-identicons';
 import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
+import {
+    cancelPlatformAnimationFrame,
+    clearPlatformTimeout,
+    getPlatformCustomElements,
+    getOptionalPlatformDocument,
+    getOptionalPlatformWindow,
+    getPlatformDocument,
+    getPlatformPerformance,
+    requestPlatformAnimationFrame,
+    setPlatformTimeout,
+    type PlatformAnimationFrameHandle,
+    type PlatformTimeoutHandle,
+} from '../platform-dom';
 import { VIEW_TYPE_LLM } from './view-type';
 
 export { VIEW_TYPE_LLM };
@@ -29,9 +42,16 @@ const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
 const LIVE_MARKDOWN_RENDER_COOLDOWN_MS = 32;
 const KEYBOARD_LAYOUT_RESIZE_THRESHOLD_PX = 80;
 const CHAT_DRAWER_HOST_CLASS = 'pa-chat-drawer-host';
+const ROLE_IDENTICON_FILL_CLASSES: Record<string, string> = {
+    'var(--pa-chat-role-identicon-yellow)': 'pa-chat-role-identicon-fill-yellow',
+    'var(--pa-chat-role-identicon-orange)': 'pa-chat-role-identicon-fill-orange',
+    'var(--pa-chat-role-identicon-red)': 'pa-chat-role-identicon-fill-red',
+    'var(--pa-chat-role-identicon-purple)': 'pa-chat-role-identicon-fill-purple',
+    'var(--pa-chat-role-identicon-blue)': 'pa-chat-role-identicon-fill-blue',
+};
 
 const getMonotonicTimeMs = () => {
-    const performanceApi = globalThis.performance;
+    const performanceApi = getPlatformPerformance();
     return typeof performanceApi?.now === 'function' ? performanceApi.now() : Date.now();
 };
 
@@ -98,7 +118,7 @@ interface KeyboardPluginFacade {
 
 function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) => void): void {
     if (ldrsLoadersRequested) return;
-    if (typeof document === 'undefined' || typeof globalThis.customElements === 'undefined') return;
+    if (!getPlatformCustomElements()) return;
 
     ldrsLoadersRequested = true;
     void Promise.all([
@@ -122,14 +142,15 @@ export class LLMView extends ItemView {
     private viewSessionId = 0;
     private activeTurnId = 0;
     private activeTurnCancelled = false;
-    private scheduledScrollFrame: number | null = null;
+    private scheduledScrollFrame: PlatformAnimationFrameHandle | null = null;
     private panelResizeObserver: ResizeObserver | null = null;
     private statusBarResizeObserver: ResizeObserver | null = null;
     private statusBarResizeHandler: (() => void) | null = null;
+    private statusBarResizeWindow: Window | null = null;
     private keyboardVisualViewport: VisualViewport | null = null;
     private keyboardUpdateHandler: (() => void) | null = null;
-    private keyboardUpdateFrame: number | null = null;
-    private keyboardWindowListeners: Array<{ type: KeyboardWindowEventName; listener: EventListener }> = [];
+    private keyboardUpdateFrame: PlatformAnimationFrameHandle | null = null;
+    private keyboardWindowListeners: Array<{ type: KeyboardWindowEventName; listener: EventListener; target: Window }> = [];
     private keyboardPluginListenerHandles: KeyboardPluginListenerHandle[] = [];
     private keyboardLayoutBaselineHeight = 0;
     private nativeKeyboardHeight = 0;
@@ -140,7 +161,7 @@ export class LLMView extends ItemView {
     private mobileTabBarHandle: HTMLElement | null = null;
     private mobileTabBarOptions: HTMLElement | null = null;
     private mobileTabBarOptionsHandler: (() => void) | null = null;
-    private mobileTabBarDismissTimer: ReturnType<typeof setTimeout> | null = null;
+    private mobileTabBarDismissTimer: PlatformTimeoutHandle | null = null;
     private chatDrawerHost: HTMLElement | null = null;
     private activeConversationId: string | null = null;
     private activeConversation: PersistedConversation | null = null;
@@ -384,10 +405,12 @@ export class LLMView extends ItemView {
             }
 
             if (this.scheduledScrollFrame !== null) {
-                window.cancelAnimationFrame(this.scheduledScrollFrame);
+                cancelPlatformAnimationFrame(this.scheduledScrollFrame);
             }
 
-            const frameId = window.requestAnimationFrame(() => {
+            let frameId: PlatformAnimationFrameHandle | null = null;
+            frameId = requestPlatformAnimationFrame(() => {
+                if (frameId === null) return;
                 if (this.scheduledScrollFrame !== frameId) return;
                 this.scheduledScrollFrame = null;
                 this.responseDiv.scrollTo({
@@ -505,16 +528,16 @@ export class LLMView extends ItemView {
             toggleButton: HTMLElement,
             closeMenu: () => void,
         ) => {
-            let idleTimer: ReturnType<typeof setTimeout> | null = null;
+            let idleTimer: PlatformTimeoutHandle | null = null;
             const clear = () => {
                 if (idleTimer === null) return;
-                clearTimeout(idleTimer);
+                clearPlatformTimeout(idleTimer);
                 idleTimer = null;
             };
             const schedule = () => {
                 clear();
                 if (menu.hidden) return;
-                idleTimer = setTimeout(() => {
+                idleTimer = setPlatformTimeout(() => {
                     idleTimer = null;
                     if (!isCurrentSession()) return;
                     closeMenu();
@@ -591,14 +614,18 @@ export class LLMView extends ItemView {
             return wrapper;
         };
         const createSvgChild = (parent: Element, tagName: string): Element => {
-            if (typeof document !== 'undefined' && typeof document.createElementNS === 'function') {
-                return document.createElementNS('http://www.w3.org/2000/svg', tagName);
+            const doc = getOptionalPlatformDocument();
+            if (typeof doc?.createElementNS === 'function') {
+                return doc.createElementNS('http://www.w3.org/2000/svg', tagName);
             }
             const fallbackParent = parent as Element & { createEl?: (tagName: string) => HTMLElement };
             if (typeof fallbackParent.createEl === 'function') {
                 return fallbackParent.createEl(tagName) as unknown as Element;
             }
-            return document.createElement(tagName);
+            if (!doc) {
+                throw new Error("Document is unavailable.");
+            }
+            return doc.createElement(tagName);
         };
         const createRoleIdenticon = (
             parent: HTMLElement,
@@ -610,11 +637,12 @@ export class LLMView extends ItemView {
                 cls: [
                     'pa-chat-role-identicon',
                     `pa-chat-role-identicon-${role}`,
+                    ROLE_IDENTICON_FILL_CLASSES[model.fill] ?? 'pa-chat-role-identicon-fill-blue',
                     active ? 'pa-chat-role-identicon-active' : '',
                 ].filter(Boolean).join(' '),
                 attr: { 'aria-hidden': 'true' },
             });
-            identiconEl.style.setProperty('--pa-chat-role-identicon-fill', model.fill);
+            identiconEl.setCssProps({ '--pa-chat-role-identicon-fill': model.fill });
 
             const svgEl = createSvgChild(identiconEl, 'svg');
             svgEl.classList.add('pa-chat-role-identicon-svg');
@@ -628,12 +656,9 @@ export class LLMView extends ItemView {
             for (const cell of model.cells) {
                 const rectEl = createSvgChild(svgEl, 'rect');
                 const className = active
-                    ? 'pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell pa-chat-role-identicon-filled-scan'
+                    ? `pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell pa-chat-role-identicon-filled-scan pa-chat-role-identicon-scan-row-${cell.row}`
                     : 'pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell';
                 rectEl.classList.add(...className.split(' '));
-                if (active) {
-                    (rectEl as SVGElement).style.setProperty('animation-delay', `${cell.delayMs}ms`);
-                }
                 rectEl.setAttribute('class', className);
                 rectEl.setAttribute('x', String(cell.col * model.cellSize));
                 rectEl.setAttribute('y', String(cell.row * model.cellSize));
@@ -647,7 +672,7 @@ export class LLMView extends ItemView {
 
             for (const cell of model.emptyCells) {
                 const rectEl = createSvgChild(svgEl, 'rect');
-                const className = 'pa-chat-role-identicon-cell pa-chat-role-identicon-empty-scan';
+                const className = `pa-chat-role-identicon-cell pa-chat-role-identicon-empty-scan pa-chat-role-identicon-scan-row-${cell.row}`;
                 rectEl.classList.add(...className.split(' '));
                 rectEl.setAttribute('class', className);
                 rectEl.setAttribute('x', String(cell.col * model.cellSize));
@@ -655,7 +680,6 @@ export class LLMView extends ItemView {
                 rectEl.setAttribute('width', String(model.cellSize));
                 rectEl.setAttribute('height', String(model.cellSize));
                 rectEl.setAttribute('fill', 'var(--pa-chat-role-identicon-fill)');
-                (rectEl as SVGElement).style.setProperty('animation-delay', `${cell.delayMs}ms`);
                 svgEl.appendChild(rectEl);
             }
         };
@@ -671,7 +695,6 @@ export class LLMView extends ItemView {
                 .querySelectorAll('.pa-chat-role-identicon-filled-scan')
                 .forEach((cell) => {
                     cell.classList.remove('pa-chat-role-identicon-filled-scan');
-                    (cell as SVGElement).style.removeProperty?.('animation-delay');
                     cell.setAttribute('class', 'pa-chat-role-identicon-cell pa-chat-role-identicon-filled-cell');
                 });
         };
@@ -923,13 +946,8 @@ export class LLMView extends ItemView {
             this.registerEvent(workspaceWithEvents.on('file-open', refreshEmptyStateForWorkspace));
         }
         const createRenderBuffer = (): HTMLElement => {
-            if (typeof document !== 'undefined' && typeof document.createElement === 'function') {
-                return document.createElement('div');
-            }
-            return renderedFallbackBuffer();
-        };
-        const renderedFallbackBuffer = (): HTMLElement => {
-            return this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' }) as HTMLElement;
+            return getOptionalPlatformDocument()?.createElement('div')
+                ?? this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' }) as HTMLElement;
         };
         const renderMarkdownInto = (
             rendered: RenderedMessage,
@@ -1040,7 +1058,7 @@ export class LLMView extends ItemView {
             inFlightPromise?: Promise<boolean>;
             pendingContent?: string;
             pendingForceScroll?: boolean;
-            scheduledDrainTimer?: ReturnType<typeof setTimeout>;
+            scheduledDrainTimer?: PlatformTimeoutHandle;
             nextRenderAfterMs?: number;
         };
         const liveMarkdownRenderStates = new WeakMap<RenderedMessage, LiveMarkdownRenderState>();
@@ -1054,7 +1072,7 @@ export class LLMView extends ItemView {
         };
         function clearScheduledLiveMarkdownDrain(state: LiveMarkdownRenderState) {
             if (state.scheduledDrainTimer === undefined) return;
-            clearTimeout(state.scheduledDrainTimer);
+            clearPlatformTimeout(state.scheduledDrainTimer);
             state.scheduledDrainTimer = undefined;
         }
         function scheduleLiveMarkdownDrain(
@@ -1065,7 +1083,7 @@ export class LLMView extends ItemView {
             options: { forceScroll?: boolean } = {},
         ) {
             if (state.scheduledDrainTimer !== undefined) return;
-            state.scheduledDrainTimer = setTimeout(() => {
+            state.scheduledDrainTimer = setPlatformTimeout(() => {
                 state.scheduledDrainTimer = undefined;
                 runLiveMarkdownRender(rendered, state, isLive, options);
             }, delayMs);
@@ -2625,7 +2643,7 @@ export class LLMView extends ItemView {
         if (!tabOptions) return;
         this.mobileTabBarOptions = tabOptions;
 
-        const handle = document.createElement('div');
+        const handle = getPlatformDocument().createElement('div');
         handle.className = 'pa-tab-bar-handle';
         handle.setAttribute('aria-label', t("plugin.chat.mobile.showTabBar"));
         handle.setAttribute('aria-expanded', 'false');
@@ -2641,7 +2659,7 @@ export class LLMView extends ItemView {
         };
         const scheduleDismiss = () => {
             this.clearMobileTabBarDismissTimer();
-            this.mobileTabBarDismissTimer = setTimeout(dismiss, 5000);
+            this.mobileTabBarDismissTimer = setPlatformTimeout(dismiss, 5000);
         };
 
         handle.addEventListener('click', (e) => {
@@ -2693,7 +2711,7 @@ export class LLMView extends ItemView {
 
     private clearMobileTabBarDismissTimer() {
         if (this.mobileTabBarDismissTimer !== null) {
-            clearTimeout(this.mobileTabBarDismissTimer);
+            clearPlatformTimeout(this.mobileTabBarDismissTimer);
             this.mobileTabBarDismissTimer = null;
         }
     }
@@ -2738,7 +2756,7 @@ export class LLMView extends ItemView {
 
         const updateClearance = () => {
             const clearance = this.calculateStatusBarClearance(containerEl);
-            containerEl.style?.setProperty('--pa-chat-status-bar-clearance', `${clearance}px`);
+            containerEl.setCssProps({ '--pa-chat-status-bar-clearance': `${clearance}px` });
         };
 
         updateClearance();
@@ -2752,9 +2770,11 @@ export class LLMView extends ItemView {
             }
         }
 
-        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        const win = getOptionalPlatformWindow();
+        if (typeof win?.addEventListener === 'function') {
             this.statusBarResizeHandler = updateClearance;
-            window.addEventListener('resize', updateClearance);
+            this.statusBarResizeWindow = win;
+            win.addEventListener('resize', updateClearance);
         }
     }
 
@@ -2762,14 +2782,11 @@ export class LLMView extends ItemView {
         this.statusBarResizeObserver?.disconnect();
         this.statusBarResizeObserver = null;
 
-        if (
-            this.statusBarResizeHandler
-            && typeof window !== 'undefined'
-            && typeof window.removeEventListener === 'function'
-        ) {
-            window.removeEventListener('resize', this.statusBarResizeHandler);
+        if (this.statusBarResizeHandler && this.statusBarResizeWindow) {
+            this.statusBarResizeWindow.removeEventListener('resize', this.statusBarResizeHandler);
         }
         this.statusBarResizeHandler = null;
+        this.statusBarResizeWindow = null;
     }
 
     private observeKeyboardClearance(containerEl: HTMLElement, inputEl: HTMLElement, onClearanceChange?: () => void) {
@@ -2810,11 +2827,7 @@ export class LLMView extends ItemView {
         };
         const scheduleUpdate = () => {
             if (this.keyboardUpdateFrame !== null) return;
-            if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
-                this.keyboardUpdateFrame = window.requestAnimationFrame(updateClearance);
-                return;
-            }
-            updateClearance();
+            this.keyboardUpdateFrame = requestPlatformAnimationFrame(updateClearance);
         };
 
         this.keyboardUpdateHandler = scheduleUpdate;
@@ -2824,20 +2837,14 @@ export class LLMView extends ItemView {
         this.keyboardVisualViewport?.addEventListener('resize', scheduleUpdate);
         this.keyboardVisualViewport?.addEventListener('scroll', scheduleUpdate);
 
-        if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-            this.addWindowKeyboardListener('resize', scheduleUpdate);
-            this.addWindowKeyboardListener('orientationchange', scheduleUpdate);
-        }
+        this.addWindowKeyboardListener('resize', scheduleUpdate);
+        this.addWindowKeyboardListener('orientationchange', scheduleUpdate);
         this.observeNativeKeyboardEvents(scheduleUpdate);
     }
 
     private disconnectKeyboardClearance() {
-        if (
-            this.keyboardUpdateFrame !== null
-            && typeof window !== 'undefined'
-            && typeof window.cancelAnimationFrame === 'function'
-        ) {
-            window.cancelAnimationFrame(this.keyboardUpdateFrame);
+        if (this.keyboardUpdateFrame !== null) {
+            cancelPlatformAnimationFrame(this.keyboardUpdateFrame);
         }
         this.keyboardUpdateFrame = null;
 
@@ -2845,10 +2852,8 @@ export class LLMView extends ItemView {
             this.keyboardVisualViewport?.removeEventListener('resize', this.keyboardUpdateHandler);
             this.keyboardVisualViewport?.removeEventListener('scroll', this.keyboardUpdateHandler);
         }
-        if (typeof window !== 'undefined' && typeof window.removeEventListener === 'function') {
-            for (const { type, listener } of this.keyboardWindowListeners) {
-                window.removeEventListener(type, listener);
-            }
+        for (const { type, listener, target } of this.keyboardWindowListeners) {
+            target.removeEventListener(type, listener);
         }
         this.keyboardWindowListeners = [];
 
@@ -2869,8 +2874,7 @@ export class LLMView extends ItemView {
     }
 
     private getVisualViewport(): VisualViewport | null {
-        if (typeof window === 'undefined') return null;
-        return window.visualViewport ?? null;
+        return getOptionalPlatformWindow()?.visualViewport ?? null;
     }
 
     private measureKeyboardClearance(containerEl: HTMLElement, inputEl: HTMLElement): {
@@ -2989,8 +2993,10 @@ export class LLMView extends ItemView {
             return;
         }
 
-        containerEl.style?.setProperty('--pa-chat-composer-height', `${composerHeight}px`);
-        containerEl.style?.setProperty('--pa-chat-keyboard-accessory-clearance', `${accessoryClearance}px`);
+        containerEl.setCssProps({
+            '--pa-chat-composer-height': `${composerHeight}px`,
+            '--pa-chat-keyboard-accessory-clearance': `${accessoryClearance}px`,
+        });
         containerEl.classList.add('is-keyboard-open');
         if (source === 'native' && clearance > 0) {
             containerEl.classList.add('is-keyboard-native-fallback');
@@ -3002,8 +3008,10 @@ export class LLMView extends ItemView {
     private clearKeyboardComposerOverlay(containerEl: HTMLElement) {
         containerEl.classList.remove('is-keyboard-open');
         containerEl.classList.remove('is-keyboard-native-fallback');
-        containerEl.style?.setProperty('--pa-chat-composer-height', '0px');
-        containerEl.style?.setProperty('--pa-chat-keyboard-accessory-clearance', '0px');
+        containerEl.setCssProps({
+            '--pa-chat-composer-height': '0px',
+            '--pa-chat-keyboard-accessory-clearance': '0px',
+        });
     }
 
     private setKeyboardClearanceStyles(containerEl: HTMLElement, clearance: number, keyboardVisible: boolean) {
@@ -3012,27 +3020,32 @@ export class LLMView extends ItemView {
         // explicit zero so the mobile spacer does not consume env(keyboard-inset-height).
         // Once the keyboard is closed, reset to the CSS env() fallback for the next show.
         if (clearance > 0) {
-            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', `${clearance}px`);
-            containerEl.style?.setProperty('--pa-chat-keyboard-offset', `-${clearance}px`);
+            containerEl.setCssProps({
+                '--pa-chat-keyboard-clearance': `${clearance}px`,
+                '--pa-chat-keyboard-offset': `-${clearance}px`,
+            });
         } else if (keyboardVisible) {
-            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', '0px');
-            containerEl.style?.setProperty('--pa-chat-keyboard-offset', '0px');
+            containerEl.setCssProps({
+                '--pa-chat-keyboard-clearance': '0px',
+                '--pa-chat-keyboard-offset': '0px',
+            });
         } else {
-            containerEl.style?.setProperty('--pa-chat-keyboard-clearance', 'env(keyboard-inset-height, 0px)');
-            containerEl.style?.setProperty('--pa-chat-keyboard-offset', 'calc(0px - env(keyboard-inset-height, 0px))');
+            containerEl.setCssProps({
+                '--pa-chat-keyboard-clearance': 'env(keyboard-inset-height, 0px)',
+                '--pa-chat-keyboard-offset': 'calc(0px - env(keyboard-inset-height, 0px))',
+            });
         }
     }
 
     private getLayoutViewportHeight(): number {
-        if (typeof window !== 'undefined' && Number.isFinite(window.innerHeight) && window.innerHeight > 0) {
-            return window.innerHeight;
+        const win = getOptionalPlatformWindow();
+        if (Number.isFinite(win?.innerHeight) && (win?.innerHeight ?? 0) > 0) {
+            return win?.innerHeight ?? 0;
         }
-        if (typeof document !== 'undefined') {
-            return document.documentElement?.clientHeight
-                ?? document.body?.clientHeight
-                ?? 0;
-        }
-        return 0;
+        const doc = getOptionalPlatformDocument();
+        return doc?.documentElement?.clientHeight
+            ?? doc?.body?.clientHeight
+            ?? 0;
     }
 
     private observeNativeKeyboardEvents(scheduleUpdate: () => void) {
@@ -3070,10 +3083,11 @@ export class LLMView extends ItemView {
     }
 
     private addWindowKeyboardListener(type: KeyboardWindowEventName, listener: (source: unknown) => void) {
-        if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return;
+        const win = getOptionalPlatformWindow();
+        if (typeof win?.addEventListener !== 'function') return;
         const eventListener: EventListener = (event) => listener(event);
-        window.addEventListener(type, eventListener);
-        this.keyboardWindowListeners.push({ type, listener: eventListener });
+        win.addEventListener(type, eventListener);
+        this.keyboardWindowListeners.push({ type, listener: eventListener, target: win });
     }
 
     private addKeyboardPluginListener(
@@ -3198,9 +3212,10 @@ export class LLMView extends ItemView {
     }
 
     private getStatusBarElement(): HTMLElement | null {
-        if (typeof document === 'undefined') return null;
-        if (typeof document.querySelector !== 'function') return null;
-        return document.querySelector('.status-bar') as HTMLElement | null;
+        const doc = getOptionalPlatformDocument();
+        if (!doc) return null;
+        if (typeof doc.querySelector !== 'function') return null;
+        return doc.querySelector('.status-bar') as HTMLElement | null;
     }
 
     private calculateStatusBarClearance(containerEl: HTMLElement): number {
@@ -3251,7 +3266,7 @@ export class LLMView extends ItemView {
 
     private cancelScheduledScroll() {
         if (this.scheduledScrollFrame !== null) {
-            window.cancelAnimationFrame(this.scheduledScrollFrame);
+            cancelPlatformAnimationFrame(this.scheduledScrollFrame);
             this.scheduledScrollFrame = null;
         }
     }

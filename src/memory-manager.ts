@@ -4,6 +4,17 @@ import { Modal, Notice, Platform, Setting } from "obsidian";
 import type { PluginManager } from "./plugin";
 import type { VSSOperationSummary, VSSProgressEvent } from "./vss";
 import { getPluginUiLanguage, pluginT, type PluginLocale } from "./locales/plugin";
+import {
+    clearPlatformInterval,
+    clearPlatformTimeout,
+    getOptionalPlatformDocument,
+    getOptionalPlatformWindow,
+    getPlatformDocument,
+    setPlatformInterval,
+    setPlatformTimeout,
+    type PlatformIntervalHandle,
+    type PlatformTimeoutHandle,
+} from "./platform-dom";
 
 export type MemoryDecision = "use-memory" | "answer-now" | "cancel";
 export type MemoryMode = "auto" | "use-memory" | "skip-memory";
@@ -153,10 +164,10 @@ export class MemoryManager {
     private readonly plugin: PluginManager;
     private lastAnswerNowAt = 0;
     private started = false;
-    private autoFlushTimer: ReturnType<typeof setTimeout> | null = null;
-    private verifyTimer: ReturnType<typeof setTimeout> | null = null;
-    private reconcileTimer: ReturnType<typeof setTimeout> | null = null;
-    private periodicReconcileTimer: ReturnType<typeof setInterval> | null = null;
+    private autoFlushTimer: PlatformTimeoutHandle | null = null;
+    private verifyTimer: PlatformTimeoutHandle | null = null;
+    private reconcileTimer: PlatformTimeoutHandle | null = null;
+    private periodicReconcileTimer: PlatformIntervalHandle | null = null;
     private maintenanceQueue: Promise<void> = Promise.resolve();
     private backgroundFailureCount = 0;
     private readonly cleanupListeners: Array<() => void> = [];
@@ -177,23 +188,25 @@ export class MemoryManager {
         this.shuttingDown = false;
         this.lifecycleVersion++;
         this.scheduleReconcile("startup", STARTUP_RECONCILE_DELAY_MS);
-        this.periodicReconcileTimer = setInterval(() => {
+        this.periodicReconcileTimer = setPlatformInterval(() => {
             this.scheduleReconcile("periodic");
         }, PERIODIC_RECONCILE_INTERVAL_MS);
 
         const scheduleResume = () => this.scheduleReconcile("resume", RESUME_RECONCILE_DELAY_MS);
-        if (typeof window !== "undefined") {
-            window.addEventListener("focus", scheduleResume);
-            this.cleanupListeners.push(() => window.removeEventListener("focus", scheduleResume));
+        const win = getOptionalPlatformWindow();
+        if (win) {
+            win.addEventListener("focus", scheduleResume);
+            this.cleanupListeners.push(() => win.removeEventListener("focus", scheduleResume));
         }
-        if (typeof document !== "undefined") {
+        const doc = getOptionalPlatformDocument();
+        if (doc) {
             const onVisibilityChange = () => {
-                if (document.visibilityState === "visible") {
+                if (doc.visibilityState === "visible") {
                     scheduleResume();
                 }
             };
-            document.addEventListener("visibilitychange", onVisibilityChange);
-            this.cleanupListeners.push(() => document.removeEventListener("visibilitychange", onVisibilityChange));
+            doc.addEventListener("visibilitychange", onVisibilityChange);
+            this.cleanupListeners.push(() => doc.removeEventListener("visibilitychange", onVisibilityChange));
         }
     }
 
@@ -202,19 +215,19 @@ export class MemoryManager {
         this.shuttingDown = true;
         this.lifecycleVersion++;
         if (this.autoFlushTimer) {
-            clearTimeout(this.autoFlushTimer);
+            clearPlatformTimeout(this.autoFlushTimer);
             this.autoFlushTimer = null;
         }
         if (this.verifyTimer) {
-            clearTimeout(this.verifyTimer);
+            clearPlatformTimeout(this.verifyTimer);
             this.verifyTimer = null;
         }
         if (this.reconcileTimer) {
-            clearTimeout(this.reconcileTimer);
+            clearPlatformTimeout(this.reconcileTimer);
             this.reconcileTimer = null;
         }
         if (this.periodicReconcileTimer) {
-            clearInterval(this.periodicReconcileTimer);
+            clearPlatformInterval(this.periodicReconcileTimer);
             this.periodicReconcileTimer = null;
         }
         while (this.cleanupListeners.length > 0) {
@@ -226,9 +239,9 @@ export class MemoryManager {
         if (!this.started) return;
         if (!this.isAutoPolicyEnabled()) return;
         if (this.autoFlushTimer) {
-            clearTimeout(this.autoFlushTimer);
+            clearPlatformTimeout(this.autoFlushTimer);
         }
-        this.autoFlushTimer = setTimeout(() => {
+        this.autoFlushTimer = setPlatformTimeout(() => {
             this.autoFlushTimer = null;
             this.enqueueBackgroundTask("flush", reason);
         }, Math.max(0, delayMs));
@@ -238,9 +251,9 @@ export class MemoryManager {
         if (!this.started) return;
         if (!this.isAutoPolicyEnabled()) return;
         if (this.verifyTimer) {
-            clearTimeout(this.verifyTimer);
+            clearPlatformTimeout(this.verifyTimer);
         }
-        this.verifyTimer = setTimeout(() => {
+        this.verifyTimer = setPlatformTimeout(() => {
             this.verifyTimer = null;
             this.enqueueBackgroundTask("verify", reason);
         }, Math.max(0, delayMs));
@@ -250,9 +263,9 @@ export class MemoryManager {
         if (!this.started) return;
         if (!this.isAutoPolicyEnabled()) return;
         if (this.reconcileTimer) {
-            clearTimeout(this.reconcileTimer);
+            clearPlatformTimeout(this.reconcileTimer);
         }
-        this.reconcileTimer = setTimeout(() => {
+        this.reconcileTimer = setPlatformTimeout(() => {
             this.reconcileTimer = null;
             this.enqueueBackgroundTask("reconcile", reason);
         }, Math.max(0, delayMs));
@@ -740,7 +753,7 @@ export class MemoryApprovalModal extends Modal {
 }
 
 function createMemoryProgressNotice(title: string): { notice: Notice } {
-    const fragment = document.createDocumentFragment();
+    const fragment = getPlatformDocument().createDocumentFragment();
     const wrapper = fragment.createEl("div", { attr: { class: "pa-notice" } });
     const header = wrapper.createDiv({ cls: "pa-notice__header" });
     const spinner = header.createDiv({ cls: "pa-notice__spinner" });

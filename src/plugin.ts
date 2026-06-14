@@ -46,6 +46,17 @@ import {
 } from './pagelet';
 import { getPageletUiLanguage, pageletT } from './locales/pagelet';
 import { getPluginUiLanguage, pluginT, type PluginMessageKey } from './locales/plugin';
+import {
+    clearPlatformInterval,
+    clearPlatformTimeout,
+    getPlatformCrypto,
+    getPlatformDocument,
+    getPlatformLocalStorage,
+    setPlatformInterval,
+    setPlatformTimeout,
+    type PlatformIntervalHandle,
+    type PlatformTimeoutHandle,
+} from './platform-dom';
 import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
@@ -130,12 +141,12 @@ function arraysEqual(left: string[], right: string[]): boolean {
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
 const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
-type TimeoutHandle = number | ReturnType<typeof setTimeout>;
-type IntervalHandle = number | ReturnType<typeof setInterval>;
+type TimeoutHandle = PlatformTimeoutHandle;
+type IntervalHandle = PlatformIntervalHandle;
 
 function readPageletMigrationFlag(): boolean {
     try {
-        return globalThis.localStorage?.getItem(PAGELET_MIGRATION_NOTICE_KEY) === "1";
+        return getPlatformLocalStorage()?.getItem(PAGELET_MIGRATION_NOTICE_KEY) === "1";
     } catch {
         return false;
     }
@@ -143,7 +154,7 @@ function readPageletMigrationFlag(): boolean {
 
 function writePageletMigrationFlag(): void {
     try {
-        globalThis.localStorage?.setItem(PAGELET_MIGRATION_NOTICE_KEY, "1");
+        getPlatformLocalStorage()?.setItem(PAGELET_MIGRATION_NOTICE_KEY, "1");
     } catch {
         /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
     }
@@ -151,7 +162,7 @@ function writePageletMigrationFlag(): void {
 
 function readPageletBackgroundPreparationNoticeFlag(): boolean {
     try {
-        return globalThis.localStorage?.getItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY) === "1";
+        return getPlatformLocalStorage()?.getItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY) === "1";
     } catch {
         return false;
     }
@@ -159,7 +170,7 @@ function readPageletBackgroundPreparationNoticeFlag(): boolean {
 
 function writePageletBackgroundPreparationNoticeFlag(): void {
     try {
-        globalThis.localStorage?.setItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY, "1");
+        getPlatformLocalStorage()?.setItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY, "1");
     } catch {
         /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
     }
@@ -249,7 +260,7 @@ export class PluginManager extends Plugin {
             for (const mutation of mutations) {
                 for (const node of Array.from(mutation.addedNodes)) {
                     if (
-                        node instanceof HTMLElement
+                        node.instanceOf(HTMLElement)
                         && (node.matches('.popover.hover-popover.hover-editor')
                             || node.querySelector('.popover.hover-popover.hover-editor'))
                     ) {
@@ -264,7 +275,7 @@ export class PluginManager extends Plugin {
                 }
             }
         });
-        this.hoverPopoverObserver.observe(document.body, {
+        this.hoverPopoverObserver.observe(getPlatformDocument().body, {
             childList: true,
         });
 
@@ -404,7 +415,7 @@ export class PluginManager extends Plugin {
                 if (this.settings.enableMetadataUpdating) {
                     if (this.isEnabledMetadataUpdating) {
                         // if the command has already triggered, disable it and remove status
-                        const statusBar = document.getElementById("personal-assistant-statusbar");
+                        const statusBar = getPlatformDocument().getElementById("personal-assistant-statusbar");
                         statusBar?.removeClass("personal-assistant-statusbar-breathing");
                         // empty debounce which will stop updating metadata
                         this.updateDebouncer = debounce((file) => { }, 100, true);
@@ -413,7 +424,7 @@ export class PluginManager extends Plugin {
                     } else {
                         this.updateDebouncer = debounce(this.updateMetadata, 100, true);
                         // if updating metadata is enabled, set the status and monitor the events to update metadata
-                        const statusBar = document.getElementById("personal-assistant-statusbar");
+                        const statusBar = getPlatformDocument().getElementById("personal-assistant-statusbar");
                         statusBar?.addClass("personal-assistant-statusbar-breathing");
                         this.registerEvent(this.app.workspace.on('file-open', (file) => {
                             this.updateDebouncer(file);
@@ -867,7 +878,7 @@ export class PluginManager extends Plugin {
         return {
             load: (): PageletRateLimitState | null => {
                 try {
-                    const raw = globalThis.localStorage?.getItem(key);
+                    const raw = getPlatformLocalStorage()?.getItem(key);
                     if (!raw) return null;
                     const parsed = JSON.parse(raw) as PageletRateLimitState;
                     return parsed && typeof parsed === "object" ? parsed : null;
@@ -877,7 +888,7 @@ export class PluginManager extends Plugin {
             },
             save: (state: PageletRateLimitState): void => {
                 try {
-                    globalThis.localStorage?.setItem(key, JSON.stringify(state));
+                    getPlatformLocalStorage()?.setItem(key, JSON.stringify(state));
                 } catch {
                     /* localStorage unavailable — PageletRateLimiter will still gate within this call. */
                 }
@@ -1626,7 +1637,7 @@ export class PluginManager extends Plugin {
     }
 
     private showTechnicalMemoryNotice(model: TechnicalMemoryNoticeModel, timeout: number): void {
-        const fragment = document.createDocumentFragment();
+        const fragment = getPlatformDocument().createDocumentFragment();
         const wrapper = fragment.createEl("div", { attr: { class: "pa-notice pa-notice--diagnostic" } });
         const header = wrapper.createDiv({ cls: "pa-notice__header" });
         const icon = header.createDiv({ cls: "pa-notice__icon" });
@@ -1997,35 +2008,23 @@ export class PluginManager extends Plugin {
 }
 
 function setPluginTimeout(callback: () => void, ms: number): TimeoutHandle {
-    return typeof window === "undefined"
-        ? setTimeout(callback, ms)
-        : window.setTimeout(callback, ms);
+    return setPlatformTimeout(callback, ms);
 }
 
 function clearPluginTimeout(timeoutId: TimeoutHandle): void {
-    if (typeof window === "undefined") {
-        clearTimeout(timeoutId);
-        return;
-    }
-    window.clearTimeout(timeoutId);
+    clearPlatformTimeout(timeoutId);
 }
 
 function setPluginInterval(callback: () => void, ms: number): IntervalHandle {
-    return typeof window === "undefined"
-        ? setInterval(callback, ms)
-        : window.setInterval(callback, ms);
+    return setPlatformInterval(callback, ms);
 }
 
 function clearPluginInterval(intervalId: IntervalHandle): void {
-    if (typeof window === "undefined") {
-        clearInterval(intervalId);
-        return;
-    }
-    window.clearInterval(intervalId);
+    clearPlatformInterval(intervalId);
 }
 
 function createStatisticsVaultId(): string {
-    const cryptoApi = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
+    const cryptoApi = getPlatformCrypto() as (Crypto & { randomUUID?: () => string }) | undefined;
     if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
         return cryptoApi.randomUUID();
     }

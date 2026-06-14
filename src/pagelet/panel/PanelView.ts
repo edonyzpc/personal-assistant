@@ -40,6 +40,13 @@ import {
 } from "./PanelLayouts";
 
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
+import {
+    clearPlatformTimeout,
+    getPlatformDocument,
+    requestPlatformAnimationFrame,
+    setPlatformTimeout,
+    type PlatformTimeoutHandle,
+} from "../../platform-dom";
 import type { SuggestionCardRenderer } from "../../ui/pagelet";
 import type { PageletSuggestion } from "../pa-review-schemas";
 import type { PageletReviewRange } from "../scope";
@@ -60,14 +67,19 @@ function clearChildren(node: Element): void {
     }
 }
 
+function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    return getPlatformDocument().createElement(tag);
+}
+
 /** Detect mobile context using the Obsidian convention. */
 function isMobile(): boolean {
-    return document.body.classList.contains("is-mobile");
+    return getPlatformDocument().body.classList.contains("is-mobile");
 }
 
 function isObsidianModalOpen(): boolean {
-    const query = (document as Document & { querySelector?: Document["querySelector"] }).querySelector;
-    return typeof query === "function" && Boolean(query.call(document, ".modal-container, .modal"));
+    const doc = getPlatformDocument();
+    const query = (doc as Document & { querySelector?: Document["querySelector"] }).querySelector;
+    return typeof query === "function" && Boolean(query.call(doc, ".modal-container, .modal"));
 }
 
 const PANEL_SCOPE_RANGES: readonly PageletReviewRange[] = [
@@ -129,7 +141,7 @@ const LAYOUT_TITLE_KEYS: Record<PanelLayoutType, string> = {
  *
  * Usage:
  *   const panel = new PanelView({ callbacks });
- *   panel.mount(document.body);
+ *   panel.mount(bodyEl);
  *   panel.open("review", findings);
  *   // ... later
  *   panel.destroy();
@@ -164,8 +176,9 @@ export class PanelView {
     private readonly handleTouchMove: (e: TouchEvent) => void;
     private readonly handleTouchEnd: (e: TouchEvent) => void;
     private touchStartY: number | null = null;
+    private globalListenerDocument: Document | null = null;
     /** Pending unmount-after-transition timer; cleared if the panel reopens. */
-    private unmountTimer: ReturnType<typeof setTimeout> | null = null;
+    private unmountTimer: PlatformTimeoutHandle | null = null;
     /** Pending transitionend listener; cleared if the panel reopens. */
     private unmountTransitionHandler: ((e: TransitionEvent) => void) | null = null;
     /** Fallback timeout (ms) for transitionend in reduced-motion / hidden tabs. */
@@ -278,8 +291,8 @@ export class PanelView {
                 root.setAttribute("data-state", "visible");
             }
         };
-        requestAnimationFrame(show);
-        setTimeout(show, 0);
+        requestPlatformAnimationFrame(show);
+        setPlatformTimeout(show, 0);
         this.attachGlobalListeners();
     }
 
@@ -296,7 +309,7 @@ export class PanelView {
             body.appendChild(this.renderScopeControls(this.currentExtra.scope));
         }
 
-        const contentEl = document.createElement("div");
+        const contentEl = createHtmlElement("div");
         contentEl.className = "pa-pagelet-panel-content-region";
         body.appendChild(contentEl);
 
@@ -471,17 +484,17 @@ export class PanelView {
     }
 
     private renderScopeControls(scope: PanelScopeState): HTMLElement {
-        const section = document.createElement("section");
+        const section = createHtmlElement("section");
         section.className = "pa-pagelet-panel-scope";
         section.setAttribute("aria-label", pageletT("pagelet.panel.scope.title", this.locale));
 
-        const header = document.createElement("div");
+        const header = createHtmlElement("div");
         header.className = "pa-pagelet-panel-scope-header";
-        const title = document.createElement("div");
+        const title = createHtmlElement("div");
         title.className = "pa-pagelet-panel-scope-title";
         title.textContent = pageletT("pagelet.panel.scope.title", this.locale);
         header.appendChild(title);
-        const count = document.createElement("div");
+        const count = createHtmlElement("div");
         count.className = "pa-pagelet-panel-scope-count";
         count.textContent = pageletT("pagelet.panel.action.reviewSelected", this.locale, {
             count: scope.includedCount,
@@ -489,10 +502,10 @@ export class PanelView {
         header.appendChild(count);
         section.appendChild(header);
 
-        const ranges = document.createElement("div");
+        const ranges = createHtmlElement("div");
         ranges.className = "pa-pagelet-panel-scope-ranges";
         for (const range of PANEL_SCOPE_RANGES) {
-            const btn = document.createElement("button");
+            const btn = createHtmlElement("button");
             btn.className = "pa-pagelet-panel-scope-range-btn";
             btn.setAttribute("type", "button");
             btn.setAttribute("aria-pressed", String(scope.range === range));
@@ -506,7 +519,7 @@ export class PanelView {
         }
         section.appendChild(ranges);
 
-        const summary = document.createElement("div");
+        const summary = createHtmlElement("div");
         summary.className = "pa-pagelet-panel-scope-summary";
         if (scope.estimatedInputTokens) {
             summary.appendChild(this.renderScopeChip(
@@ -539,7 +552,7 @@ export class PanelView {
             ));
         }
         if (scope.candidates.length === 0) {
-            const empty = document.createElement("div");
+            const empty = createHtmlElement("div");
             empty.className = "pa-pagelet-panel-scope-empty";
             empty.textContent = pageletT("pagelet.panel.scope.empty", this.locale);
             section.appendChild(empty);
@@ -548,21 +561,21 @@ export class PanelView {
     }
 
     private renderScopeChip(text: string): HTMLElement {
-        const chip = document.createElement("span");
+        const chip = createHtmlElement("span");
         chip.className = "pa-pagelet-panel-scope-chip";
         chip.textContent = text;
         return chip;
     }
 
     private renderScopeCandidateGroup(label: string, candidates: PanelScopeCandidate[]): HTMLElement {
-        const group = document.createElement("div");
+        const group = createHtmlElement("div");
         group.className = "pa-pagelet-panel-scope-group";
-        const heading = document.createElement("div");
+        const heading = createHtmlElement("div");
         heading.className = "pa-pagelet-panel-scope-group-label";
         heading.textContent = label;
         group.appendChild(heading);
 
-        const list = document.createElement("div");
+        const list = createHtmlElement("div");
         list.className = "pa-pagelet-panel-scope-list";
         for (const candidate of candidates) {
             list.appendChild(this.renderScopeCandidate(candidate));
@@ -572,12 +585,12 @@ export class PanelView {
     }
 
     private renderScopeCandidate(candidate: PanelScopeCandidate): HTMLElement {
-        const row = document.createElement("label");
+        const row = createHtmlElement("label");
         row.className = "pa-pagelet-panel-scope-row";
         row.setAttribute("data-included", String(candidate.included));
         if (candidate.locked) row.setAttribute("data-locked", "true");
 
-        const checkbox = document.createElement("input");
+        const checkbox = createHtmlElement("input");
         checkbox.className = "pa-pagelet-panel-scope-checkbox";
         checkbox.setAttribute("type", "checkbox");
         checkbox.checked = candidate.included;
@@ -588,13 +601,13 @@ export class PanelView {
         });
         row.appendChild(checkbox);
 
-        const text = document.createElement("span");
+        const text = createHtmlElement("span");
         text.className = "pa-pagelet-panel-scope-row-text";
-        const title = document.createElement("span");
+        const title = createHtmlElement("span");
         title.className = "pa-pagelet-panel-scope-row-title";
         title.textContent = candidate.title;
         text.appendChild(title);
-        const meta = document.createElement("span");
+        const meta = createHtmlElement("span");
         meta.className = "pa-pagelet-panel-scope-row-meta";
         const reasonKey = candidate.included
             ? `pagelet.panel.scope.reason.${candidate.reason}`
@@ -607,17 +620,17 @@ export class PanelView {
     }
 
     private renderDraftSection(): HTMLElement {
-        const section = document.createElement("section");
+        const section = createHtmlElement("section");
         section.className = "pa-pagelet-panel-draft";
         section.setAttribute("aria-label", pageletT("pagelet.panel.draft.title", this.locale));
 
-        const title = document.createElement("div");
+        const title = createHtmlElement("div");
         title.className = "pa-pagelet-panel-draft-title";
         title.textContent = pageletT("pagelet.panel.draft.title", this.locale);
         section.appendChild(title);
 
         if (this.draftItems.length === 0) {
-            const empty = document.createElement("div");
+            const empty = createHtmlElement("div");
             empty.className = "pa-pagelet-panel-draft-empty";
             empty.textContent = pageletT("pagelet.panel.draft.empty", this.locale);
             section.appendChild(empty);
@@ -625,10 +638,10 @@ export class PanelView {
         }
 
         for (const item of this.draftItems) {
-            const block = document.createElement("div");
+            const block = createHtmlElement("div");
             block.className = "pa-pagelet-panel-draft-block";
 
-            const textarea = document.createElement("textarea");
+            const textarea = createHtmlElement("textarea");
             textarea.className = "pa-pagelet-panel-draft-textarea";
             textarea.setAttribute("aria-label", pageletT("pagelet.a11y.draftBlockLabel", this.locale));
             textarea.setAttribute("placeholder", pageletT("pagelet.panel.draft.placeholder", this.locale));
@@ -643,7 +656,7 @@ export class PanelView {
             });
             block.appendChild(textarea);
 
-            const remove = document.createElement("button");
+            const remove = createHtmlElement("button");
             remove.className = "pa-pagelet-panel-draft-remove";
             remove.setAttribute("type", "button");
             remove.textContent = pageletT("pagelet.panel.draft.remove", this.locale);
@@ -690,12 +703,12 @@ export class PanelView {
         };
         this.unmountTransitionHandler = handler;
         root.addEventListener("transitionend", handler);
-        this.unmountTimer = setTimeout(finalize, PanelView.UNMOUNT_FALLBACK_MS);
+        this.unmountTimer = setPlatformTimeout(finalize, PanelView.UNMOUNT_FALLBACK_MS);
     }
 
     private cancelPendingUnmount(): void {
         if (this.unmountTimer !== null) {
-            clearTimeout(this.unmountTimer);
+            clearPlatformTimeout(this.unmountTimer);
             this.unmountTimer = null;
         }
         if (this.unmountTransitionHandler && this.rootEl) {
@@ -709,7 +722,7 @@ export class PanelView {
     // -----------------------------------------------------------------------
 
     private buildDOM(): HTMLDivElement {
-        const root = document.createElement("div");
+        const root = createHtmlElement("div");
         root.className = "pa-pagelet-panel";
         root.setAttribute("data-state", "hidden");
         root.setAttribute("role", "complementary");
@@ -717,20 +730,20 @@ export class PanelView {
             pageletT("pagelet.panel.ariaLabel", this.locale));
 
         // Header
-        const header = document.createElement("div");
+        const header = createHtmlElement("div");
         header.className = "pa-pagelet-panel-header";
 
-        const title = document.createElement("h3");
+        const title = createHtmlElement("h3");
         title.className = "pa-pagelet-panel-title";
         title.textContent = pageletT("pagelet.panel.title", this.locale);
         this.titleEl = title;
         header.appendChild(title);
 
-        const actions = document.createElement("div");
+        const actions = createHtmlElement("div");
         actions.className = "pa-pagelet-panel-header-actions";
 
         // Hints toggle button
-        const hintsBtn = document.createElement("button");
+        const hintsBtn = createHtmlElement("button");
         hintsBtn.className = "pa-pagelet-panel-icon-btn";
         hintsBtn.setAttribute("title",
             pageletT("pagelet.panel.hintsToggle.off", this.locale));
@@ -754,7 +767,7 @@ export class PanelView {
         actions.appendChild(hintsBtn);
 
         // Expand to tab button
-        const expandBtn = document.createElement("button");
+        const expandBtn = createHtmlElement("button");
         expandBtn.className = "pa-pagelet-panel-icon-btn pa-pagelet-panel-header-expand-btn";
         expandBtn.setAttribute("title",
             pageletT("pagelet.panel.expand", this.locale));
@@ -768,7 +781,7 @@ export class PanelView {
         actions.appendChild(expandBtn);
 
         // Close button
-        const closeBtn = document.createElement("button");
+        const closeBtn = createHtmlElement("button");
         closeBtn.className = "pa-pagelet-panel-icon-btn";
         closeBtn.setAttribute("title",
             pageletT("pagelet.panel.close", this.locale));
@@ -785,17 +798,17 @@ export class PanelView {
         root.appendChild(header);
 
         // Body (scrollable content area)
-        const body = document.createElement("div");
+        const body = createHtmlElement("div");
         body.className = "pa-pagelet-panel-body";
         this.bodyEl = body;
         root.appendChild(body);
 
         // Footer
-        const footer = document.createElement("div");
+        const footer = createHtmlElement("div");
         footer.className = "pa-pagelet-panel-footer";
 
         // Save button (accent-colored, before expand)
-        const saveBtn = document.createElement("button");
+        const saveBtn = createHtmlElement("button");
         saveBtn.className = "pa-pagelet-panel-save-btn";
         saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
         saveBtn.addEventListener("click", async (e) => {
@@ -848,7 +861,7 @@ export class PanelView {
         this.saveBtnEl = saveBtn;
         footer.appendChild(saveBtn);
 
-        const expandTabBtn = document.createElement("button");
+        const expandTabBtn = createHtmlElement("button");
         expandTabBtn.className = "pa-pagelet-panel-expand-btn";
         expandTabBtn.textContent =
             pageletT("pagelet.panel.expandToTab", this.locale);
@@ -866,16 +879,16 @@ export class PanelView {
         if (!this.bodyEl) return;
         clearChildren(this.bodyEl);
 
-        const card = document.createElement("div");
+        const card = createHtmlElement("div");
         card.className = "pa-pagelet-panel-progress-card";
         card.setAttribute("role", "status");
         card.setAttribute("aria-live", "polite");
 
-        const dot = document.createElement("div");
+        const dot = createHtmlElement("div");
         dot.className = "pa-pagelet-panel-progress-dot";
         card.appendChild(dot);
 
-        const text = document.createElement("div");
+        const text = createHtmlElement("div");
         text.textContent = label ?? pageletT("pagelet.panel.status.reviewingCurrent", this.locale);
         card.appendChild(text);
 
@@ -887,7 +900,8 @@ export class PanelView {
     // -----------------------------------------------------------------------
 
     private attachGlobalListeners(): void {
-        document.addEventListener("keydown", this.handleKeydown, true);
+        this.globalListenerDocument = getPlatformDocument();
+        this.globalListenerDocument.addEventListener("keydown", this.handleKeydown, true);
         if (this.rootEl) {
             this.rootEl.addEventListener("touchstart", this.handleTouchStart, { passive: true });
             this.rootEl.addEventListener("touchmove", this.handleTouchMove, { passive: true });
@@ -896,7 +910,8 @@ export class PanelView {
     }
 
     private detachGlobalListeners(): void {
-        document.removeEventListener("keydown", this.handleKeydown, true);
+        this.globalListenerDocument?.removeEventListener("keydown", this.handleKeydown, true);
+        this.globalListenerDocument = null;
         if (this.rootEl) {
             this.rootEl.removeEventListener("touchstart", this.handleTouchStart);
             this.rootEl.removeEventListener("touchmove", this.handleTouchMove);

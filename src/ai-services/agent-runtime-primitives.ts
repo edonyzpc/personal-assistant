@@ -15,6 +15,7 @@ import { RUN_SCOPE_TURN_ID } from "./chat-types";
 export const TURN_DEADLINE_ERROR_NAME = "TurnDeadlineExceededError";
 export { RUN_SCOPE_TURN_ID };
 
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { toError } from "../error-utils";
 
 export function createTurnDeadlineExceededError(reason: string): Error {
@@ -32,7 +33,7 @@ export class TurnExecutionDeadline {
     private readonly externalSignal?: AbortSignal;
     private readonly timeoutMs: number;
     private readonly timeoutReason: string;
-    private timeoutId: ReturnType<typeof setTimeout> | null = null;
+    private timeoutId: PlatformTimeoutHandle | null = null;
     private deadlineExceeded = false;
     private readonly externalAbortHandler: () => void;
 
@@ -51,7 +52,7 @@ export class TurnExecutionDeadline {
         }
 
         if (Number.isFinite(timeoutMs) && timeoutMs > 0) {
-            this.timeoutId = setTimeout(() => {
+            this.timeoutId = setPlatformTimeout(() => {
                 this.deadlineExceeded = true;
                 this.controller.abort();
             }, timeoutMs);
@@ -64,7 +65,7 @@ export class TurnExecutionDeadline {
 
     dispose(): void {
         if (this.timeoutId !== null) {
-            clearTimeout(this.timeoutId);
+            clearPlatformTimeout(this.timeoutId);
             this.timeoutId = null;
         }
         this.externalSignal?.removeEventListener("abort", this.externalAbortHandler);

@@ -1,6 +1,7 @@
 import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate } from "@langchain/core/prompts";
 
 import { rewriteQuery, REWRITE_SYSTEM_PROMPT, REWRITE_TIMEOUT_MS } from "./query-rewriter";
+import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 import type {
     AIUtils,
     NativeToolCallingValidation,
@@ -1301,7 +1302,7 @@ export class MemorySearchTool {
     ): Promise<string | null> {
         const controller = new AbortController();
         const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-        const timeoutId = setTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
+        const timeoutId = setPlatformTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
 
         try {
             const llm = await this.aiUtils.createChatModel(0, {
@@ -1321,7 +1322,7 @@ export class MemorySearchTool {
         } catch {
             return null;
         } finally {
-            clearTimeout(timeoutId);
+            clearPlatformTimeout(timeoutId);
         }
     }
 
@@ -1335,7 +1336,7 @@ export class MemorySearchTool {
 
         const controller = new AbortController();
         const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
-        const timeoutId = setTimeout(() => controller.abort(), RERANK_TIMEOUT_MS);
+        const timeoutId = setPlatformTimeout(() => controller.abort(), RERANK_TIMEOUT_MS);
 
         try {
             const llm = await this.aiUtils.createChatModel(0, {
@@ -1359,7 +1360,7 @@ export class MemorySearchTool {
         } catch {
             return candidates;
         } finally {
-            clearTimeout(timeoutId);
+            clearPlatformTimeout(timeoutId);
         }
     }
 }
@@ -1477,18 +1478,18 @@ export function normalizeSearchCandidates(results: RawSearchResult[]): MemoryCan
 
 function createMemoryCandidatesFromDocuments(documents: MemorySearchDocument[]): MemoryCandidate[] {
     const groups = new Map<string, MemorySearchDocument[]>();
-    for (const document of dedupeDocuments(documents)) {
-        const group = groups.get(document.source.path) ?? [];
+    for (const memoryDocument of dedupeDocuments(documents)) {
+        const group = groups.get(memoryDocument.source.path) ?? [];
         if (group.length >= MAX_MEMORY_CANDIDATE_CHUNKS) continue;
-        group.push(document);
-        groups.set(document.source.path, group);
+        group.push(memoryDocument);
+        groups.set(memoryDocument.source.path, group);
     }
 
     return [...groups.entries()]
         .map(([path, group], index) => {
-            const score = Math.max(...group.map((document) => document.score));
+            const score = Math.max(...group.map((memoryDocument) => memoryDocument.score));
             const candidateId = `memory-${index + 1}`;
-            const excerpt = truncate(group.map((document) => document.content).join("\n---\n"), MAX_MEMORY_CANDIDATE_EXCERPT_CHARS);
+            const excerpt = truncate(group.map((memoryDocument) => memoryDocument.content).join("\n---\n"), MAX_MEMORY_CANDIDATE_EXCERPT_CHARS);
             const first = group[0];
             const anchor = first ? createMemoryCandidateAnchor(candidateId, first, excerpt) : undefined;
             return {
@@ -1506,20 +1507,20 @@ function createMemoryCandidatesFromDocuments(documents: MemorySearchDocument[]):
 
 function createMemoryCandidateAnchor(
     candidateId: string,
-    document: MemorySearchDocument,
+    memoryDocument: MemorySearchDocument,
     indexedSnippet: string,
 ): MemoryCandidateAnchor {
     return {
         candidateId,
-        path: document.source.path,
-        chunkIndex: document.source.chunkIndex,
-        score: document.score,
+        path: memoryDocument.source.path,
+        chunkIndex: memoryDocument.source.chunkIndex,
+        score: memoryDocument.score,
         indexedSnippet,
-        indexedContentHash: document.anchorMetadata?.contentHash,
-        startLine: document.anchorMetadata?.startLine,
-        endLine: document.anchorMetadata?.endLine,
-        headingPath: document.anchorMetadata?.headingPath,
-        indexVersion: document.anchorMetadata?.indexVersion,
+        indexedContentHash: memoryDocument.anchorMetadata?.contentHash,
+        startLine: memoryDocument.anchorMetadata?.startLine,
+        endLine: memoryDocument.anchorMetadata?.endLine,
+        headingPath: memoryDocument.anchorMetadata?.headingPath,
+        indexVersion: memoryDocument.anchorMetadata?.indexVersion,
     };
 }
 
@@ -1530,11 +1531,11 @@ function flattenCandidateDocuments(candidates: MemoryCandidate[]): MemorySearchD
 function dedupeDocuments(documents: MemorySearchDocument[]): MemorySearchDocument[] {
     const seen = new Set<string>();
     const deduped: MemorySearchDocument[] = [];
-    for (const document of documents) {
-        const key = `${document.source.path}#${document.source.chunkIndex ?? ""}`;
+    for (const memoryDocument of documents) {
+        const key = `${memoryDocument.source.path}#${memoryDocument.source.chunkIndex ?? ""}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        deduped.push(document);
+        deduped.push(memoryDocument);
     }
     return deduped;
 }

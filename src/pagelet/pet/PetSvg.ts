@@ -9,6 +9,7 @@
  */
 
 import type { PetState } from "./types";
+import { getPlatformDocument } from "../../platform-dom";
 
 // ---------------------------------------------------------------------------
 // SVG geometry constants
@@ -59,7 +60,7 @@ function strokeColor(state: PetState, isLight: boolean): string {
 function createSvgElement<K extends keyof SVGElementTagNameMap>(
     tag: K,
 ): SVGElementTagNameMap[K] {
-    return document.createElementNS(SVG_NS, tag);
+    return getPlatformDocument().createElementNS(SVG_NS, tag);
 }
 
 function createPath(d: string, sw: number, color: string): SVGPathElement {

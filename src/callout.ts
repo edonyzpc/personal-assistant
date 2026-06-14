@@ -6,6 +6,7 @@ import type {  Callout, CalloutID } from 'obsidian-callout-manager';
 import type { PluginManager } from './plugin';
 import { type RGB, parseColorRGB } from './color';
 import { getPluginUiLanguage, pluginT } from './locales/plugin';
+import { getPlatformDocument } from './platform-dom';
 
 export const DEFAULT_CALLOUTS: Callout[] = [
     { id: "note", icon: "pencil", color: "8, 109, 221", sources: [{ type: "builtin" }] },
@@ -192,7 +193,7 @@ export class CalloutPreviewComponent extends Component {
         super();
         const { color, icon, id, title, content } = options;
 
-        const frag = document.createDocumentFragment();
+        const frag = getPlatformDocument().createDocumentFragment();
 
         // Build the callout.
         const calloutEl = (this.calloutEl = frag.createDiv({ cls: ['callout', 'calloutmanager-preview'] }));
@@ -246,7 +247,7 @@ export class CalloutPreviewComponent extends Component {
         const { iconEl, calloutEl } = this;
 
         // Change the icon style variable.
-        calloutEl.style.setProperty('--callout-icon', icon);
+        calloutEl.setCssProps({ '--callout-icon': icon });
 
         // Clear the icon element and append the SVG.
         iconEl.empty();
@@ -267,11 +268,11 @@ export class CalloutPreviewComponent extends Component {
         const { calloutEl } = this;
 
         if (color == null) {
-            calloutEl.style.removeProperty('--callout-color');
+            calloutEl.setCssProps({ '--callout-color': '' });
             return this;
         }
 
-        calloutEl.style.setProperty('--callout-color', `${color.r}, ${color.g}, ${color.b}`);
+        calloutEl.setCssProps({ '--callout-color': `${color.r}, ${color.g}, ${color.b}` });
         return this;
     }
 
@@ -291,8 +292,10 @@ export class CalloutPreviewComponent extends Component {
      */
     public resetStylePropertyOverrides() {
         const { calloutEl } = this;
-        calloutEl.style.removeProperty('--callout-color');
-        calloutEl.style.removeProperty('--callout-icon');
+        calloutEl.setCssProps({
+            '--callout-color': '',
+            '--callout-icon': '',
+        });
     }
 }
 

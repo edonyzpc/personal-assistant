@@ -33,6 +33,13 @@ import type {
     BubbleViewOptions,
 } from "./types";
 import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
+import {
+    clearPlatformTimeout,
+    getOptionalPlatformWindow,
+    getPlatformDocument,
+    setPlatformTimeout,
+    type PlatformTimeoutHandle,
+} from "../../platform-dom";
 
 function clearChildren(node: Element): void {
     node.textContent = "";
@@ -41,11 +48,17 @@ function clearChildren(node: Element): void {
     }
 }
 
+function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    return getPlatformDocument().createElement(tag);
+}
+
 /** Detect mobile context using the Obsidian convention or viewport width. */
 function isMobile(): boolean {
+    const doc = getPlatformDocument();
+    const win = getOptionalPlatformWindow();
     return (
-        document.body.classList.contains("is-mobile") ||
-        window.innerWidth <= 768
+        doc.body.classList.contains("is-mobile") ||
+        (win?.innerWidth ?? Number.POSITIVE_INFINITY) <= 768
     );
 }
 
@@ -71,7 +84,7 @@ const MIN_TOP_SPACE = 16;
  *
  * Usage:
  *   const bubble = new BubbleView({ callbacks });
- *   bubble.mount(document.body);
+ *   bubble.mount(bodyEl);
  *   bubble.show(content, petElement);
  *   // ... later
  *   bubble.destroy();
@@ -92,7 +105,9 @@ export class BubbleView {
     private anchorEl: HTMLElement | null = null;
 
     // Timer ID for deferred global listener attachment (see Fix 1).
-    private attachTimerId: ReturnType<typeof setTimeout> | null = null;
+    private attachTimerId: PlatformTimeoutHandle | null = null;
+    private globalListenerDocument: Document | null = null;
+    private resizeListenerWindow: Window | null = null;
 
     // Touch tracking for mobile swipe-down dismiss.
     private touchStartY: number | null = null;
@@ -100,7 +115,7 @@ export class BubbleView {
     private readonly handleTouchMove: (e: TouchEvent) => void;
     private readonly handleTouchEnd: (e: TouchEvent) => void;
     /** Pending unmount-after-transition timer; cleared if the bubble reopens. */
-    private unmountTimer: ReturnType<typeof setTimeout> | null = null;
+    private unmountTimer: PlatformTimeoutHandle | null = null;
     /** Pending transitionend listener; cleared if the bubble reopens. */
     private unmountTransitionHandler: ((e: TransitionEvent) => void) | null = null;
     private readonly getLocale: NonNullable<BubbleViewOptions["getLocale"]>;
@@ -245,12 +260,12 @@ export class BubbleView {
         };
         this.unmountTransitionHandler = handler;
         root.addEventListener("transitionend", handler);
-        this.unmountTimer = setTimeout(finalize, BubbleView.UNMOUNT_FALLBACK_MS);
+        this.unmountTimer = setPlatformTimeout(finalize, BubbleView.UNMOUNT_FALLBACK_MS);
     }
 
     private cancelPendingUnmount(): void {
         if (this.unmountTimer !== null) {
-            clearTimeout(this.unmountTimer);
+            clearPlatformTimeout(this.unmountTimer);
             this.unmountTimer = null;
         }
         if (this.unmountTransitionHandler && this.rootEl) {
@@ -264,7 +279,7 @@ export class BubbleView {
     // -----------------------------------------------------------------------
 
     private buildDOM(): HTMLDivElement {
-        const root = document.createElement("div");
+        const root = createHtmlElement("div");
         root.className = "pa-pagelet-bubble";
         root.setAttribute("data-state", "hidden");
         root.setAttribute("role", "dialog");
@@ -272,15 +287,15 @@ export class BubbleView {
         root.setAttribute("aria-label", pageletT("pagelet.bubble.ariaLabel", locale));
 
         // Tail
-        const tail = document.createElement("div");
+        const tail = createHtmlElement("div");
         tail.className = "pa-pagelet-bubble-tail";
         root.appendChild(tail);
 
         // Header with close button
-        const header = document.createElement("div");
+        const header = createHtmlElement("div");
         header.className = "pa-pagelet-bubble-header";
 
-        const closeBtn = document.createElement("button");
+        const closeBtn = createHtmlElement("button");
         closeBtn.className = "pa-pagelet-bubble-close";
         const closeText = pageletT("pagelet.bubble.close", locale);
         closeBtn.setAttribute("title", closeText);
@@ -295,12 +310,12 @@ export class BubbleView {
         root.appendChild(header);
 
         // Items list (populated by renderContent)
-        const items = document.createElement("ul");
+        const items = createHtmlElement("ul");
         items.className = "pa-pagelet-bubble-items";
         root.appendChild(items);
 
         // Actions row (populated by renderContent)
-        const actions = document.createElement("div");
+        const actions = createHtmlElement("div");
         actions.className = "pa-pagelet-bubble-actions";
         root.appendChild(actions);
 
@@ -319,18 +334,18 @@ export class BubbleView {
         if (itemsEl) {
             clearChildren(itemsEl);
             for (const finding of content.findings) {
-                const li = document.createElement("li");
+                const li = createHtmlElement("li");
 
-                const bullet = document.createElement("span");
+                const bullet = createHtmlElement("span");
                 bullet.className = "pa-pagelet-bubble-bullet";
                 li.appendChild(bullet);
 
-                const textSpan = document.createElement("span");
+                const textSpan = createHtmlElement("span");
                 textSpan.textContent = finding.text;
                 li.appendChild(textSpan);
 
                 if (finding.sourceLink) {
-                    const link = document.createElement("a");
+                    const link = createHtmlElement("a");
                     link.className = "pa-pagelet-bubble-source-link";
                     link.textContent = finding.sourceTitle ?? finding.sourceLink;
                     link.setAttribute("href", "#");
@@ -351,7 +366,7 @@ export class BubbleView {
         if (actionsEl) {
             clearChildren(actionsEl);
             for (const action of content.actions) {
-                const btn = document.createElement("button");
+                const btn = createHtmlElement("button");
                 btn.className = "pa-pagelet-bubble-btn";
                 if (action.primary) {
                     btn.classList.add("primary");
@@ -386,17 +401,21 @@ export class BubbleView {
         const scrollLeft = this.containerEl?.scrollLeft ?? 0;
 
         // Use a temporary measurement to get the bubble's natural size.
-        this.rootEl.style.visibility = "hidden";
-        this.rootEl.style.display = "block";
+        this.rootEl.setCssStyles({
+            visibility: "hidden",
+            display: "block",
+        });
         this.rootEl.setAttribute("data-state", "visible");
         const bubbleRect = this.rootEl.getBoundingClientRect();
         this.rootEl.setAttribute("data-state", "hidden");
-        this.rootEl.style.visibility = "";
-        this.rootEl.style.display = "";
+        this.rootEl.setCssStyles({
+            visibility: "",
+            display: "",
+        });
 
         const bubbleW = bubbleRect.width || 300;
         const bubbleH = bubbleRect.height || 200;
-        const containerW = containerRect?.width ?? document.documentElement.clientWidth;
+        const containerW = containerRect?.width ?? getPlatformDocument().documentElement.clientWidth;
 
         // Place above anchor by default; flip below if not enough room.
         let placement: "above" | "below" = "above";
@@ -413,17 +432,19 @@ export class BubbleView {
         const maxLeft = containerW - bubbleW - 16;
         if (left > maxLeft) left = maxLeft;
 
-        this.rootEl.style.top = `${top}px`;
-        this.rootEl.style.left = `${left}px`;
-        this.rootEl.style.right = "";
-        this.rootEl.style.bottom = "";
+        this.rootEl.setCssStyles({
+            top: `${top}px`,
+            left: `${left}px`,
+            right: "",
+            bottom: "",
+        });
         this.rootEl.setAttribute("data-placement", placement);
 
         // Position tail to point at anchor center
         const tail = this.rootEl.querySelector<HTMLElement>(".pa-pagelet-bubble-tail");
         if (tail) {
             const tailLeft = Math.max(16, Math.min(anchorCenterX - left - 7, bubbleW - 24));
-            tail.style.left = `${tailLeft}px`;
+            tail.setCssStyles({ left: `${tailLeft}px` });
         }
     }
 
@@ -455,13 +476,15 @@ export class BubbleView {
         const maxLeft = containerW - bubbleW - 16;
         if (left > maxLeft) left = maxLeft;
 
-        this.rootEl.style.top = `${top}px`;
-        this.rootEl.style.left = `${left}px`;
+        this.rootEl.setCssStyles({
+            top: `${top}px`,
+            left: `${left}px`,
+        });
 
         const tail = this.rootEl.querySelector<HTMLElement>(".pa-pagelet-bubble-tail");
         if (tail) {
             const tailLeft = Math.max(16, Math.min(anchorCenterX - left - 7, bubbleW - 24));
-            tail.style.left = `${tailLeft}px`;
+            tail.setCssStyles({ left: `${tailLeft}px` });
         }
     }
 
@@ -471,10 +494,12 @@ export class BubbleView {
         this.rootEl.classList.add("pa-pagelet-bubble--mobile");
         // Mobile: full-width bottom sheet. CSS handles positioning via
         // the --mobile modifier class. Clear any desktop inline styles.
-        this.rootEl.style.top = "";
-        this.rootEl.style.left = "";
-        this.rootEl.style.right = "";
-        this.rootEl.style.bottom = "";
+        this.rootEl.setCssStyles({
+            top: "",
+            left: "",
+            right: "",
+            bottom: "",
+        });
         this.rootEl.removeAttribute("data-placement");
     }
 
@@ -494,23 +519,29 @@ export class BubbleView {
     // -----------------------------------------------------------------------
 
     private attachGlobalListeners(): void {
-        this.attachTimerId = setTimeout(() => {
+        this.attachTimerId = setPlatformTimeout(() => {
             this.attachTimerId = null;
             if (this.state === "hidden") return;
-            document.addEventListener("click", this.handleDocumentClick, true);
-            document.addEventListener("keydown", this.handleKeydown, true);
+            const doc = getPlatformDocument();
+            this.globalListenerDocument = doc;
+            doc.addEventListener("click", this.handleDocumentClick, true);
+            doc.addEventListener("keydown", this.handleKeydown, true);
         }, 0);
-        window.addEventListener("resize", this.handleResize);
+        const win = getOptionalPlatformWindow();
+        this.resizeListenerWindow = win ?? null;
+        win?.addEventListener("resize", this.handleResize);
     }
 
     private detachGlobalListeners(): void {
         if (this.attachTimerId !== null) {
-            clearTimeout(this.attachTimerId);
+            clearPlatformTimeout(this.attachTimerId);
             this.attachTimerId = null;
         }
-        document.removeEventListener("click", this.handleDocumentClick, true);
-        document.removeEventListener("keydown", this.handleKeydown, true);
-        window.removeEventListener("resize", this.handleResize);
+        this.globalListenerDocument?.removeEventListener("click", this.handleDocumentClick, true);
+        this.globalListenerDocument?.removeEventListener("keydown", this.handleKeydown, true);
+        this.globalListenerDocument = null;
+        this.resizeListenerWindow?.removeEventListener("resize", this.handleResize);
+        this.resizeListenerWindow = null;
         this.detachSwipeDismiss();
     }
 

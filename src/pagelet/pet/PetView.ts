@@ -10,12 +10,17 @@
 
 import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
+import { clearPlatformTimeout, getPlatformDocument, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
 import { createPetSvgElement, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
 
 export function getPetAriaLabel(locale: PageletLocale, state?: PetState): string {
     const base = pageletT("pagelet.pet.ariaLabel", locale);
     return state ? `${base}: ${pageletT(`pagelet.pet.${state}`, locale)}` : base;
+}
+
+function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
+    return getPlatformDocument().createElement(tag);
 }
 
 export class PetView implements PetRenderer {
@@ -29,7 +34,7 @@ export class PetView implements PetRenderer {
     private _svgEl: SVGElement | null = null;
     private _containerEl: HTMLElement | null = null;
     private _destroyed = false;
-    private _errorTimer: ReturnType<typeof setTimeout> | null = null;
+    private _errorTimer: PlatformTimeoutHandle | null = null;
     private _themeObserver: MutationObserver | null = null;
     private readonly _getLocale: () => PageletLocale;
 
@@ -75,7 +80,7 @@ export class PetView implements PetRenderer {
         this._containerEl = containerEl;
 
         // Build DOM structure
-        const root = document.createElement("div");
+        const root = createHtmlElement("div");
         root.className = "pa-pagelet-pet";
         root.setAttribute("data-state", this._state);
         root.setAttribute("data-corner", this._corner);
@@ -84,13 +89,13 @@ export class PetView implements PetRenderer {
         root.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state));
         root.setAttribute("aria-live", "polite");
 
-        const wrapper = document.createElement("div");
+        const wrapper = createHtmlElement("div");
         wrapper.className = "pa-pagelet-pet-wrapper";
 
-        const notification = document.createElement("div");
+        const notification = createHtmlElement("div");
         notification.className = "pa-pagelet-pet-notification";
 
-        const svgWrap = document.createElement("div");
+        const svgWrap = createHtmlElement("div");
         svgWrap.className = "pa-pagelet-pet-svg-wrap";
 
         const svgEl = createPetSvgElement(this._state);
@@ -118,7 +123,7 @@ export class PetView implements PetRenderer {
         this._themeObserver = new MutationObserver(() => {
             this.applyThemeColors();
         });
-        this._themeObserver.observe(document.body, {
+        this._themeObserver.observe(getPlatformDocument().body, {
             attributes: true,
             attributeFilter: ["class"],
         });
@@ -177,13 +182,13 @@ export class PetView implements PetRenderer {
     flashError(durationMs = 1500): void {
         if (this._destroyed) return;
         if (this._errorTimer !== null) {
-            clearTimeout(this._errorTimer);
+            clearPlatformTimeout(this._errorTimer);
         }
 
         this._rootEl?.setAttribute("data-state", "error");
         this._rootEl?.classList.add("pa-pagelet-pet--error");
 
-        this._errorTimer = setTimeout(() => {
+        this._errorTimer = setPlatformTimeout(() => {
             this._errorTimer = null;
             if (this._destroyed) return;
             this._rootEl?.classList.remove("pa-pagelet-pet--error");
@@ -198,7 +203,7 @@ export class PetView implements PetRenderer {
         if (this._destroyed) return;
         this._destroyed = true;
         if (this._errorTimer !== null) {
-            clearTimeout(this._errorTimer);
+            clearPlatformTimeout(this._errorTimer);
             this._errorTimer = null;
         }
         this.unmount();
@@ -225,9 +230,10 @@ export class PetView implements PetRenderer {
         if (!this._rootEl) return false;
         // Walk up to find a [data-theme="light"] ancestor or check
         // common Obsidian theme classes.
-        const root = document.documentElement;
+        const doc = getPlatformDocument();
+        const root = doc.documentElement;
         if (root.getAttribute("data-theme") === "light") return true;
-        if (document.body.classList.contains("theme-light")) return true;
+        if (doc.body.classList.contains("theme-light")) return true;
         return false;
     }
 }

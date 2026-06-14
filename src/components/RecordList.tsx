@@ -35,20 +35,21 @@ const embedTypeToAcceptedExtensions: Record<EmbedType, string[]> = {
   [EmbedType.Unknown]: [],
 };
 
-const embedTypeToSrcRegex: Record<string, RegExp> = {};
-Object.keys(embedTypeToAcceptedExtensions).forEach((key) => {
-  embedTypeToSrcRegex[key] = new RegExp(
-    `.+\\.(${(embedTypeToAcceptedExtensions as any)[key].join("|")}).*`,
-    "i"
-  );
-});
+const embedTypeToSrcRegex = Object.fromEntries(
+  Object.entries(embedTypeToAcceptedExtensions)
+    .filter((entry): entry is [EmbedType, string[]] => entry[1].length > 0)
+    .map(([embedType, extensions]) => [
+      embedType,
+      new RegExp(`.+\\.(${extensions.join("|")}).*`, "i"),
+    ])
+) as Partial<Record<EmbedType, RegExp>>;
 
 function determineEmbedType(node: Element): EmbedType {
   const src = node.getAttribute("src");
   if (!src) return EmbedType.Unknown;
-  for (const [embedTypeKey, embedTypeRegex] of Object.entries(embedTypeToSrcRegex)) {
-    if (src.match(embedTypeRegex as RegExp)) {
-      return (EmbedType as any)[embedTypeKey];
+  for (const [embedTypeKey, embedTypeRegex] of Object.entries(embedTypeToSrcRegex) as Array<[EmbedType, RegExp]>) {
+    if (src.match(embedTypeRegex)) {
+      return embedTypeKey;
     }
   }
   return EmbedType.Note;
@@ -232,10 +233,10 @@ const RecordList = ({ app, fileNames }: Props) => {
           if (evt.target instanceof Element && evt.target.closest("a")) return;
           location.href = uri;
         };
-        el.style.cursor = "pointer";
+        el.classList.add("pa-record-wrapper-clickable");
       }
     }
-    run();
+    void run();
     return () => {
       cancelled = true;
       lifecycle.unload();
@@ -245,14 +246,13 @@ const RecordList = ({ app, fileNames }: Props) => {
   const isMobile = Platform.isMobile;
 
   return (
-    <div className="markdown-reading-view" style={{ width: "100%", height: "100%" }}>
+    <div className="markdown-reading-view pa-recordlist-reading-view">
       <div
-        className="markdown-preview-view markdown-rendered node-insert-event is-readable-line-width allow-fold-headings show-indentation-guide allow-fold-lists show-properties"
         tabIndex={-1}
-        style={{ tabSize: 4 }}
+        className="markdown-preview-view markdown-rendered node-insert-event is-readable-line-width allow-fold-headings show-indentation-guide allow-fold-lists show-properties pa-recordlist-preview-view"
       >
         <div className="markdown-preview-sizer markdown-preview-section">
-          <div className="markdown-preview-pusher" style={{ width: 1, height: 0.1, marginBottom: 0 }} />
+          <div className="markdown-preview-pusher pa-recordlist-preview-pusher" />
         </div>
 
         <div className="recordlist-wrapper" id="persoanl-assistant-record-list">

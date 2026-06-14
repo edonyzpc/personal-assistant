@@ -75,6 +75,7 @@ import {
 } from "./pa-review-rate-limit";
 import { pageletT, type PageletLocale } from "../locales/pagelet";
 import { toError } from "../error-utils";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 
 // ---------------------------------------------------------------------------
 // Minimal LangChain model surface.
@@ -1047,7 +1048,7 @@ function createPageletAbortError(): Error {
 
 class PageletReviewDeadline {
     private readonly controller = new AbortController();
-    private timeoutId: ReturnType<typeof setTimeout> | null = null;
+    private timeoutId: PlatformTimeoutHandle | null = null;
     private timedOut = false;
     private readonly onExternalAbort = () => {
         this.controller.abort();
@@ -1064,7 +1065,7 @@ class PageletReviewDeadline {
         }
 
         if (timeoutMs !== undefined && Number.isFinite(timeoutMs) && timeoutMs > 0) {
-            this.timeoutId = setTimeout(() => {
+            this.timeoutId = setPlatformTimeout(() => {
                 this.timedOut = true;
                 this.controller.abort();
             }, timeoutMs);
@@ -1077,7 +1078,7 @@ class PageletReviewDeadline {
 
     dispose(): void {
         if (this.timeoutId !== null) {
-            clearTimeout(this.timeoutId);
+            clearPlatformTimeout(this.timeoutId);
             this.timeoutId = null;
         }
         this.externalSignal?.removeEventListener("abort", this.onExternalAbort);

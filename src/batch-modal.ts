@@ -15,7 +15,7 @@ export class BatchPluginControlModal extends Modal {
         this.obsidianPlugins = getInternalPlugins(app);
         this.contentEl.createEl('h3', {
             text: batchModalT('plugin.modal.batch.title'),
-            attr: { 'style': 'text-align:center;' },
+            cls: "pa-batch-modal-title",
         });
 
         if (!this.obsidianPlugins) {

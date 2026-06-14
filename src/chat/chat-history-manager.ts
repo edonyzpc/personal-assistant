@@ -16,6 +16,7 @@ import {
     type PersistedChatMessage,
     type PersistedTurn,
 } from "./chat-history-store";
+import { getPlatformCrypto } from "../platform-dom";
 
 const TITLE_MAX_LENGTH = 60;
 const PREVIEW_MAX_LENGTH = 200;
@@ -373,7 +374,7 @@ function cloneRuntimeWarning(warning: ChatRuntimeWarning): ChatRuntimeWarning {
 }
 
 function generateUuid(): string {
-    const cryptoApi = globalThis.crypto as (Crypto & { randomUUID?: () => string }) | undefined;
+    const cryptoApi = getPlatformCrypto() as (Crypto & { randomUUID?: () => string }) | undefined;
     if (cryptoApi && typeof cryptoApi.randomUUID === "function") {
         try {
             return cryptoApi.randomUUID();

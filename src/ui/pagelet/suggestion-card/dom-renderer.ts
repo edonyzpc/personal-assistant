@@ -29,6 +29,7 @@ import type {
     SuggestionCardRendererOptions,
     SuggestionCardTranslator,
 } from "./types";
+import { getPlatformDocument } from "../../../platform-dom";
 
 // ---------------------------------------------------------------------------
 // DOM host abstraction (mirrors mascot)
@@ -73,8 +74,10 @@ class RealDomNode implements SuggestionCardDomNode {
         this.el.setAttribute("class", classes.join(" "));
     }
     setStyleProperty(name: string, value: string): void {
-        const styled = this.el as Element & { style?: { setProperty?: (n: string, v: string) => void } };
-        styled.style?.setProperty?.(name, value);
+        const styled = this.el as (HTMLElement | SVGElement) & {
+            setCssProps?: (props: Record<string, string>) => void;
+        };
+        styled.setCssProps?.({ [name]: value });
     }
     addEventListener(event: string, handler: (e: unknown) => void): void {
         const wrapped = handler as EventListener;
@@ -106,7 +109,7 @@ class RealDomNode implements SuggestionCardDomNode {
 
 class RealDomHost implements SuggestionCardDomHost {
     createHtmlElement(tag: string): SuggestionCardDomNode {
-        return new RealDomNode(document.createElement(tag));
+        return new RealDomNode(getPlatformDocument().createElement(tag));
     }
 }
 

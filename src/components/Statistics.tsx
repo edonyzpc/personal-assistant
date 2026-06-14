@@ -1,10 +1,11 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { App } from "obsidian";
 import type { PluginManager } from "plugin";
 import type { ChartData, ChartOptions } from "chart.js";
 import type { StatsDashboardData, StatsDashboardDay } from "../stats/stats-types";
 import { normalizeStatisticsView, type StatisticsView } from "../stats/stats-store";
 import { getPluginUiLanguage, pluginT, type PluginLocale } from "../locales/plugin";
+import { getOptionalPlatformWindow } from "../platform-dom";
 
 type Props = {
 	app: App;
@@ -20,6 +21,42 @@ type ChartPoint = {
 type MixedChartData = ChartData<"bar" | "line", ChartPoint[]>;
 type MixedChartOptions = ChartOptions<"bar" | "line">;
 export type StatsRange = "30d" | "90d" | "all";
+
+type CompositionProgressProps = {
+	label: string;
+	value: number;
+	max: number;
+	colorClass: string;
+};
+
+function getCompositionWidth(value: number, max: number): string {
+	return value === 0 ? "0%" : `${Math.max(4, (value / max) * 100)}%`;
+}
+
+function CompositionProgress({ label, value, max, colorClass }: CompositionProgressProps) {
+	const ref = useRef<HTMLDivElement>(null);
+	const width = getCompositionWidth(value, max);
+
+	useLayoutEffect(() => {
+		ref.current?.setCssProps({
+			"--pa-statistics-composition-progress-width": width,
+		});
+	}, [width]);
+
+	return (
+		<div
+			ref={ref}
+			className={`pa-statistics-composition-progress ${colorClass}`}
+			role="progressbar"
+			aria-label={label}
+			aria-valuemin={0}
+			aria-valuemax={max}
+			aria-valuenow={value}
+		>
+			<span className="pa-statistics-composition-progress-fill" />
+		</div>
+	);
+}
 
 const DashboardChart = lazy(async () => {
 	const chartModule = await import("chart.js");
@@ -175,8 +212,9 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 		updateWidth();
 
 		if (typeof ResizeObserver === "undefined") {
-			window.addEventListener("resize", updateWidth);
-			return () => window.removeEventListener("resize", updateWidth);
+			const win = getOptionalPlatformWindow();
+			win?.addEventListener("resize", updateWidth);
+			return () => win?.removeEventListener("resize", updateWidth);
 		}
 
 		const observer = new ResizeObserver((entries) => {
@@ -230,7 +268,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 		() => ({
 			responsive: true,
 			maintainAspectRatio: false,
-			devicePixelRatio: medium ? Math.min(window.devicePixelRatio || 1, 2) : undefined,
+			devicePixelRatio: medium ? Math.min(getOptionalPlatformWindow()?.devicePixelRatio || 1, 2) : undefined,
 			interaction: { mode: "index" as const, intersect: false },
 			animation: chartAnimation,
 			plugins: {
@@ -375,8 +413,6 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 		[activeView, days, locale]
 	);
 	const maxCompositionValue = Math.max(...compositionRows.map((row) => row.value), 1);
-	const getCompositionWidth = (value: number) =>
-		value === 0 ? "0%" : `${Math.max(4, (value / maxCompositionValue) * 100)}%`;
 
 	const handleViewChange = (view: StatisticsView) => {
 		setActiveView(view);
@@ -510,9 +546,11 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 										</div>
 									</div>
 									<div className="pa-mt-3 pa-h-2 pa-rounded pa-bg-slate-100">
-										<div
-											className={`pa-h-2 pa-rounded ${row.color}`}
-											style={{ width: getCompositionWidth(row.value) }}
+										<CompositionProgress
+											label={row.label}
+											value={row.value}
+											max={maxCompositionValue}
+											colorClass={row.color}
 										/>
 									</div>
 								</div>

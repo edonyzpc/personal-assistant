@@ -1,6 +1,6 @@
 import { App, ItemView, WorkspaceLeaf, addIcon } from "obsidian";
 import { createElement } from "react";
-import { createRoot, type Root } from "react-dom/client";
+import { createRoot } from "react-dom/client";
 
 import { PluginManager } from "./plugin";
 import Statistics from './components/Statistics'
@@ -11,9 +11,10 @@ import type { StatsDashboardData } from "./stats/stats-types";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 export const STAT_PREVIEW_TYPE = "vault-statistics-preview";
+type ReactRoot = ReturnType<typeof createRoot>;
 
 export class Stat extends ItemView {
-    componentRoot: Root | null = null;
+    componentRoot: ReactRoot | null = null;
     app: App;
     plugin: PluginManager;
     dashboardData: StatsDashboardData;

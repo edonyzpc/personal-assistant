@@ -1,4 +1,5 @@
 import { stableStringify } from "./agent-utils";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import {
     toolConstraintsFromAgentControlSnapshot,
     type AgentControlSnapshot,
@@ -481,16 +482,16 @@ export class ToolExecutionDispatcher {
         cleanup: () => void;
     } {
         let settled = false;
-        let toolTimeoutTimer: ReturnType<typeof setTimeout> | undefined;
-        let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+        let toolTimeoutTimer: PlatformTimeoutHandle | undefined;
+        let wallClockTimer: PlatformTimeoutHandle | undefined;
         let settle: (result: ToolExecutionRaceResult) => void = () => undefined;
 
         const cleanup = () => {
             if (toolTimeoutTimer !== undefined) {
-                clearTimeout(toolTimeoutTimer);
+                clearPlatformTimeout(toolTimeoutTimer);
             }
             if (wallClockTimer !== undefined) {
-                clearTimeout(wallClockTimer);
+                clearPlatformTimeout(wallClockTimer);
             }
             this.config.signal?.removeEventListener("abort", onAbort);
         };
@@ -513,11 +514,11 @@ export class ToolExecutionDispatcher {
             }
 
             if (Number.isFinite(this.config.toolTimeoutMs) && this.config.toolTimeoutMs >= 0) {
-                toolTimeoutTimer = setTimeout(() => finish({ type: "tool_timeout" }), this.config.toolTimeoutMs);
+                toolTimeoutTimer = setPlatformTimeout(() => finish({ type: "tool_timeout" }), this.config.toolTimeoutMs);
             }
             const wallClockRemainingMs = this.config.wallClockRemainingMs();
             if (wallClockRemainingMs !== undefined) {
-                wallClockTimer = setTimeout(() => finish({ type: "wall_clock_exceeded" }), wallClockRemainingMs);
+                wallClockTimer = setPlatformTimeout(() => finish({ type: "wall_clock_exceeded" }), wallClockRemainingMs);
             }
         });
 
@@ -680,5 +681,5 @@ function normalizeToolExecutionResult(result: PaAgentToolExecutionResult): PaAge
 }
 
 function delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, Math.max(0, ms)));
+    return new Promise((resolve) => setPlatformTimeout(resolve, Math.max(0, ms)));
 }

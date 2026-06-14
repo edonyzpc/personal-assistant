@@ -19,6 +19,7 @@ import type {
 } from "./chat-tools";
 import type { SourceRecord } from "./chat-types";
 import { obsidianFetch } from "./obsidian-fetch";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import { normalizeSourceRecord } from "./source-store";
 import {
     deepEqualJson,
@@ -324,11 +325,11 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
 
         return new Promise((resolve) => {
             let settled = false;
-            let timeoutId: ReturnType<typeof setTimeout> | null = null;
+            let timeoutId: PlatformTimeoutHandle | null = null;
             const settle = (value: BuiltinWebSearchHttpResponse | "cancelled" | "failed" | "timeout") => {
                 if (settled) return;
                 settled = true;
-                if (timeoutId !== null) clearTimeout(timeoutId);
+                if (timeoutId !== null) clearPlatformTimeout(timeoutId);
                 signal?.removeEventListener("abort", onAbort);
                 resolve(value);
             };
@@ -337,7 +338,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
                 settle("cancelled");
             };
             signal?.addEventListener("abort", onAbort, { once: true });
-            timeoutId = setTimeout(() => {
+            timeoutId = setPlatformTimeout(() => {
                 this.inflightRequests.delete(requestId);
                 settle("timeout");
             }, this.timeoutMs);

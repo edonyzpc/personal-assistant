@@ -1,5 +1,6 @@
 import type { AssistantMessagePart } from "./chat-types";
 import type { PaAgentModelStreamChunk } from "./pa-agent-types";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 
 export type NextModelChunkResult =
     | { type: "chunk"; chunk: PaAgentModelStreamChunk }
@@ -29,15 +30,15 @@ export class ModelChunkConsumer {
 
         return new Promise<NextModelChunkResult>((resolve) => {
             let settled = false;
-            let idleTimer: ReturnType<typeof setTimeout> | undefined;
-            let wallClockTimer: ReturnType<typeof setTimeout> | undefined;
+            let idleTimer: PlatformTimeoutHandle | undefined;
+            let wallClockTimer: PlatformTimeoutHandle | undefined;
 
             const cleanup = () => {
                 if (idleTimer !== undefined) {
-                    clearTimeout(idleTimer);
+                    clearPlatformTimeout(idleTimer);
                 }
                 if (wallClockTimer !== undefined) {
-                    clearTimeout(wallClockTimer);
+                    clearPlatformTimeout(wallClockTimer);
                 }
                 this.config.signal?.removeEventListener("abort", onAbort);
             };
@@ -54,14 +55,14 @@ export class ModelChunkConsumer {
 
             this.config.signal?.addEventListener("abort", onAbort, { once: true });
             if (Number.isFinite(this.config.assistantIdleTimeoutMs) && this.config.assistantIdleTimeoutMs > 0) {
-                idleTimer = setTimeout(() => {
+                idleTimer = setPlatformTimeout(() => {
                     void this.iterator.return?.();
                     settle({ type: "idle" });
                 }, this.config.assistantIdleTimeoutMs);
             }
             const wallClockRemainingMs = this.config.wallClockRemainingMs();
             if (wallClockRemainingMs !== undefined) {
-                wallClockTimer = setTimeout(() => {
+                wallClockTimer = setPlatformTimeout(() => {
                     void this.iterator.return?.();
                     settle({ type: "wall_clock_exceeded" });
                 }, wallClockRemainingMs);

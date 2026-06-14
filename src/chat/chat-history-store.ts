@@ -1,5 +1,6 @@
 import type { Vault } from "obsidian";
 import { getVaultConfigDirStorageScope } from "../obsidian-paths";
+import { getPlatformIndexedDB } from "../platform-dom";
 import type {
     ChatContextUsedItem,
     ChatRuntimeWarning,
@@ -481,7 +482,7 @@ export function createChatHistoryStore(
     vaultId: string,
     pluginId: string,
 ): ChatHistoryStore {
-    const indexedDb = globalThis.indexedDB;
+    const indexedDb = getPlatformIndexedDB();
     if (!indexedDb) {
         return new UnavailableChatHistoryStore();
     }

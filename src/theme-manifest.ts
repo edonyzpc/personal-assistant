@@ -7,6 +7,7 @@ import type { ObsidianManifest, Manifest, UpdateStatus, ThemeReleaseFiles } from
 import { ProgressBar } from "./progress-bar";
 import { downloadZipFile, extractFiles } from "./utils";
 import { getPluginUiLanguage, pluginT } from "./locales/plugin";
+import { setPlatformTimeout } from "./platform-dom";
 
 interface ThemeReleaseAsset {
     name?: string;
@@ -438,6 +439,6 @@ export class ThemeUpdater implements ObsidianManifest {
         // finally plugin updating has been done, whether there are plugins that need to be updated
         this.progressBar.updateProgress(100);
         // hide notice
-        setTimeout(() => { this.progressBar.hide(); }, 2000);
+        setPlatformTimeout(() => { this.progressBar.hide(); }, 2000);
     }
 }

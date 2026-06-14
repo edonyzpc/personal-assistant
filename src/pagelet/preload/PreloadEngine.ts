@@ -2,6 +2,12 @@
 
 import type { App } from "obsidian";
 
+import {
+    clearPlatformTimeout,
+    getOptionalPlatformDocument,
+    setPlatformTimeout,
+    type PlatformTimeoutHandle,
+} from "../../platform-dom";
 import type { ChangeDetector } from "../scope/ChangeDetector";
 import type { ScopeResolver } from "../scope/ScopeResolver";
 
@@ -12,13 +18,14 @@ import type { AnalyzeCallback, PreloadConfig, PreloadErrorCategory, PreloadEvent
 export class PreloadEngine {
     private static readonly MAX_FILES_PER_CYCLE = 20;
     private static readonly MIN_TOKENS_PER_FILE = 100;
-    private timer: ReturnType<typeof setTimeout> | null = null;
+    private timer: PlatformTimeoutHandle | null = null;
     private listeners: Set<(event: PreloadEvent) => void> = new Set();
     private lastCycleAt: number | null = null;
     private running = false;
     private cycleInProgress = false;
     private startedAt: number | null = null;
     private visibilityHandler: (() => void) | null = null;
+    private visibilityDocument: Document | null = null;
 
     // Adaptive interval state
     private lastActivityAt: number = Date.now();
@@ -47,26 +54,31 @@ export class PreloadEngine {
 
         // Fix 4: On mobile, setTimeout is suspended when backgrounded.
         // Trigger a catch-up cycle when the app returns to foreground.
+        const doc = getOptionalPlatformDocument();
         this.visibilityHandler = () => {
-            if (document.visibilityState !== "visible") return;
+            if (!doc || doc.visibilityState !== "visible") return;
             if (!this.running) return;
             const elapsed = Date.now() - (this.lastCycleAt ?? this.startedAt ?? 0);
             if (elapsed >= this.computeBackoffInterval()) {
                 void this.runCycle();
             }
         };
-        document.addEventListener("visibilitychange", this.visibilityHandler);
+        if (doc) {
+            this.visibilityDocument = doc;
+            doc.addEventListener("visibilitychange", this.visibilityHandler);
+        }
     }
 
     stop(): void {
         this.running = false;
         if (this.timer) {
-            clearTimeout(this.timer);
+            clearPlatformTimeout(this.timer);
             this.timer = null;
         }
         if (this.visibilityHandler) {
-            document.removeEventListener("visibilitychange", this.visibilityHandler);
+            this.visibilityDocument?.removeEventListener("visibilitychange", this.visibilityHandler);
             this.visibilityHandler = null;
+            this.visibilityDocument = null;
         }
         this.startedAt = null;
     }
@@ -268,10 +280,10 @@ export class PreloadEngine {
 
     private scheduleNextCycle(): void {
         if (this.timer) {
-            clearTimeout(this.timer);
+            clearPlatformTimeout(this.timer);
         }
         const delay = this.computeBackoffInterval();
-        this.timer = setTimeout(() => {
+        this.timer = setPlatformTimeout(() => {
             this.timer = null;
             void this.runCycle();
         }, delay);

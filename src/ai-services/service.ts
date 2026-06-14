@@ -10,6 +10,7 @@ import { getFeaturedImageSavePath, normalizeFeaturedImageFolderPath } from './fe
 import type { PluginManager } from '../plugin'
 import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
+import { setPlatformTimeout } from '../platform-dom';
 
 const isOkStatus = (status: number): boolean => status >= 200 && status < 300;
 const failedImageTaskStatuses = new Set(['FAILED', 'CANCELED']);
@@ -616,7 +617,7 @@ export class AIService {
                     }
 
                     // 等待10秒
-                    await new Promise(resolve => setTimeout(resolve, 10000));
+                    await new Promise(resolve => setPlatformTimeout(resolve, 10000));
 
                 } catch (error) {
                     console.error('Error polling task:', error);

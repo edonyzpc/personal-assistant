@@ -1,5 +1,6 @@
 import type { Vault } from "obsidian";
 import { getVaultConfigDirStorageScope } from "../obsidian-paths";
+import { getPlatformIndexedDB } from "../platform-dom";
 import type { ActivityCounts, SnapshotCounts } from "./stats-types";
 
 const STATS_LOCAL_DB_VERSION = 3;
@@ -396,7 +397,7 @@ export class UnavailableStatsLocalStore implements StatsLocalStore {
 }
 
 export function createStatsLocalStore(vault: Vault, vaultId: string): StatsLocalStore {
-    const indexedDb = globalThis.indexedDB;
+    const indexedDb = getPlatformIndexedDB();
     if (!indexedDb) {
         return new UnavailableStatsLocalStore();
     }
