@@ -33,11 +33,14 @@ import {
     PAGELET_FOCUS_LATEST_DEFAULT_HOTKEY,
     PageletReviewModel,
     PageletCostTracker,
+    PageletRateLimiter,
     buildPageletScopeReviewBundle,
     createPaReviewRuntime,
     estimateTokens,
     registerPageletFocusCommand,
     type GeneratedReviewNote,
+    type PageletRateLimitStorage,
+    type PageletRateLimitState,
     type PaReviewRuntime,
     type WriteResult,
 } from './pagelet';
@@ -126,6 +129,7 @@ function arraysEqual(left: string[], right: string[]): boolean {
  */
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
 const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
+const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 type TimeoutHandle = number | ReturnType<typeof setTimeout>;
 type IntervalHandle = number | ReturnType<typeof setInterval>;
 
@@ -747,7 +751,7 @@ export class PluginManager extends Plugin {
                     const bundle = buildPageletScopeReviewBundle({
                         entries: noteContents,
                         primarySourcePath,
-                        range: "current",
+                        range: config.range ?? "current",
                         settings: this.settings.pagelet,
                         uiLanguage: this.getPageletLocale(),
                     });
@@ -773,6 +777,7 @@ export class PluginManager extends Plugin {
                                 maxOutputTokens: this.settings.pagelet.maxOutputTokens,
                             },
                             costTracker: this.pageletCostTracker,
+                            rateLimiter: this.createPageletRateLimiter(),
                             providerForPricing: this.settings.aiProvider,
                             modelForPricing: this.settings.chatModelName,
                             userMessageLocale: this.getPageletLocale(),
@@ -792,9 +797,16 @@ export class PluginManager extends Plugin {
                         const source = sourceById.get(suggestion.source_id);
                         const sourceFile = source?.path ?? bundle.primarySourcePath;
                         return {
-                            text: `${suggestion.rationale}\n${suggestion.proposed_action}`,
+                            text: suggestion.proposed_action,
                             sourceFile,
                             sourceTitle: sourceFile.split("/").pop()?.replace(/\.md$/, "") ?? sourceFile,
+                            suggestion,
+                            diagnostics: {
+                                truncated: outcome.diagnostics.truncated,
+                                partial: outcome.diagnostics.partial,
+                                droppedSuggestionsCount: outcome.diagnostics.droppedSuggestionsCount,
+                                costEntry: outcome.diagnostics.costEntry,
+                            },
                         };
                     });
                     const costEntry = outcome.diagnostics.costEntry;
@@ -811,6 +823,7 @@ export class PluginManager extends Plugin {
             },
             createGenerateCallback: () => {
                 return async (prompt, noteContents, tokenBudget) => {
+                    await this.reservePageletRateLimitSlot();
                     const model = await this.createChatModel(0.3, {
                         maxTokens: tokenBudget.output,
                     });
@@ -837,6 +850,59 @@ export class PluginManager extends Plugin {
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
             openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
         };
+    }
+
+    private createPageletRateLimiter(): PageletRateLimiter {
+        return new PageletRateLimiter({
+            storage: this.createPageletRateLimitStorage(),
+            config: {
+                hourlyCap: this.settings.pagelet.foregroundPerHourCap,
+                dailyCap: this.settings.pagelet.foregroundPerDayCap,
+            },
+        });
+    }
+
+    private createPageletRateLimitStorage(): PageletRateLimitStorage {
+        const key = this.pageletRateLimitStorageKey();
+        return {
+            load: (): PageletRateLimitState | null => {
+                try {
+                    const raw = globalThis.localStorage?.getItem(key);
+                    if (!raw) return null;
+                    const parsed = JSON.parse(raw) as PageletRateLimitState;
+                    return parsed && typeof parsed === "object" ? parsed : null;
+                } catch {
+                    return null;
+                }
+            },
+            save: (state: PageletRateLimitState): void => {
+                try {
+                    globalThis.localStorage?.setItem(key, JSON.stringify(state));
+                } catch {
+                    /* localStorage unavailable — PageletRateLimiter will still gate within this call. */
+                }
+            },
+        };
+    }
+
+    private pageletRateLimitStorageKey(): string {
+        const vaultName = typeof this.app.vault.getName === "function"
+            ? this.app.vault.getName()
+            : "vault";
+        return [
+            PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX,
+            encodeURIComponent(vaultName),
+            encodeURIComponent(this.app.vault.configDir || ".obsidian"),
+        ].join(":");
+    }
+
+    private async reservePageletRateLimitSlot(): Promise<void> {
+        const decision = await this.createPageletRateLimiter().reserve();
+        if (decision.ok) return;
+        const key = decision.reason === "hr-cap"
+            ? "pagelet.errors.rate_limit_hourly"
+            : "pagelet.errors.rate_limit_daily";
+        throw new Error(pageletT(key, this.getPageletLocale()));
     }
 
     /**

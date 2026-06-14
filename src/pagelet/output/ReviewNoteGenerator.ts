@@ -35,6 +35,7 @@ import {
     resolveReviewsFolderPath,
 } from "../pa-review-file-io";
 import type { PageletReviewFileIOSettings } from "../pa-review-file-io";
+import { estimateTokens, preCheckCost } from "../pa-review-cost";
 
 import type {
     GenerateCallback,
@@ -110,6 +111,13 @@ export class ReviewNoteGenerator {
             input.scopeDays,
             noteContents,
         );
+        const precheck = preCheckCost(estimateTokens(prompt), {
+            maxInputTokens: tokenBudget.input,
+            maxOutputTokens: tokenBudget.output,
+        });
+        if (!precheck.ok) {
+            throw new Error(`Periodic summary exceeds Pagelet token budget: ${precheck.detail}`);
+        }
 
         // 3. Call AI
         const aiResult = await generateCb(prompt, noteContents, tokenBudget);
