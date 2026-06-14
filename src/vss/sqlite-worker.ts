@@ -25,6 +25,12 @@ type SqliteApiConfig = {
     log?: (...args: unknown[]) => void;
     debug?: (...args: unknown[]) => void;
 };
+type SqliteWorkerGlobalScope = DedicatedWorkerGlobalScope & {
+    sqlite3ApiConfig?: SqliteApiConfig;
+    navigator?: DedicatedWorkerGlobalScope["navigator"] & {
+        storage?: { getDirectory?: () => Promise<OpfsDirectoryHandle> };
+    };
+};
 
 interface OpfsDatabaseOptions {
     directory?: string;
@@ -237,7 +243,7 @@ async function openOpfsDatabase(
 }
 
 function configureSqliteLogging(): void {
-    const globalScope = globalThis as typeof globalThis & { sqlite3ApiConfig?: SqliteApiConfig };
+    const globalScope = ctx as unknown as SqliteWorkerGlobalScope;
     globalScope.sqlite3ApiConfig = {
         ...(globalScope.sqlite3ApiConfig ?? {}),
         warn: (...args: unknown[]) => {
@@ -289,7 +295,7 @@ async function cleanupLegacyOpfsDirectory(legacyDirectory?: string, activeDirect
     const activePath = normalizeOpfsPath(activeDirectory);
     if (!legacyPath || !activePath || legacyPath === activePath || activePath.startsWith(`${legacyPath}/`)) return;
 
-    const storage = globalThis.navigator?.storage as { getDirectory?: () => Promise<OpfsDirectoryHandle> } | undefined;
+    const storage = (ctx as unknown as SqliteWorkerGlobalScope).navigator?.storage;
     if (typeof storage?.getDirectory !== "function") return;
 
     try {

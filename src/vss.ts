@@ -63,7 +63,6 @@ const VSS_FOREGROUND_LOCKED_WAIT_MS = 1_500;
 const VSS_MANUAL_LOCKED_WAIT_MS = 3_000;
 const VSS_INDEX_DISPOSE_TIMEOUT_MS = 4_000;
 const VSS_RECOVERY_COOLDOWN_MS = 5_000;
-const VSS_GLOBAL_SHUTDOWN_KEY = "__personalAssistantVssShutdownBarriers";
 const VSS_LOCAL_STATE_UNAVAILABLE_CODE = "vss-local-state-unavailable";
 
 function vssT(key: string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
@@ -203,9 +202,7 @@ interface VSSShutdownEntry {
     startedAt: number;
 }
 
-type VSSGlobalScope = typeof globalThis & {
-    [VSS_GLOBAL_SHUTDOWN_KEY]?: Map<string, VSSShutdownEntry>;
-};
+const vssShutdownBarriers = new Map<string, VSSShutdownEntry>();
 
 async function waitForAbortablePromise<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
     if (!signal) return promise;
@@ -2602,9 +2599,7 @@ function isOpfsSahpoolLockedError(error: unknown): boolean {
 }
 
 function getVssShutdownBarriers(): Map<string, VSSShutdownEntry> {
-    const scope = globalThis as VSSGlobalScope;
-    scope[VSS_GLOBAL_SHUTDOWN_KEY] ??= new Map<string, VSSShutdownEntry>();
-    return scope[VSS_GLOBAL_SHUTDOWN_KEY];
+    return vssShutdownBarriers;
 }
 
 function isRetryableEmbeddingError(error: unknown): boolean {
