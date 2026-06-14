@@ -97,8 +97,8 @@
     );
     assert("Panel shows a localized Pagelet title or empty state", Boolean(panelWithText), textOf(panelRoot()));
     const primaryButton = panelRoot()?.querySelector(".pa-pagelet-panel-save-btn");
-    assert("Panel empty state exposes an explicit current-note review action",
-      /Review current note|审阅当前笔记/i.test(textOf(primaryButton)),
+    assert("Panel empty state exposes an explicit review action",
+      /Review current note|审阅当前笔记|Review selected \(\d+\)|审阅已选（\d+）/i.test(textOf(primaryButton)),
       textOf(primaryButton));
 
     const pet = petRoot();

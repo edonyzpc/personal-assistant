@@ -159,6 +159,36 @@ describe("buildPageletScopePlan", () => {
             .toMatchObject({ included: false, locked: true, skippedReason: "empty-note" });
     });
 
+    it("applies user-configured exclusions before provider review", () => {
+        const plan = buildPageletScopePlan({
+            files: [
+                file("active.md", "2026-06-06T10:00:00+08:00"),
+                file("private/plan.md", "2026-06-06T10:00:00+08:00"),
+                file("notes/tagged.md", "2026-06-06T10:00:00+08:00"),
+                file("notes/vendor-draft.md", "2026-06-06T10:00:00+08:00"),
+            ],
+            activePath: "active.md",
+            range: "last7",
+            reviewsFolder: ".pagelet",
+            excludedFolders: ["private"],
+            excludedTags: ["secret"],
+            excludedPatterns: ["vendor"],
+            now: new Date("2026-06-06T12:00:00+08:00"),
+            getMetadata: (path) => {
+                if (path === "notes/tagged.md") return { frontmatter: { tags: ["secret"] } };
+                return undefined;
+            },
+        });
+
+        expect(selectPageletScope(plan).paths).toEqual(["active.md"]);
+        expect(plan.candidates.find((candidate) => candidate.path === "private/plan.md"))
+            .toMatchObject({ included: false, locked: true, skippedReason: "excluded-folder" });
+        expect(plan.candidates.find((candidate) => candidate.path === "notes/tagged.md"))
+            .toMatchObject({ included: false, locked: true, skippedReason: "excluded-tag" });
+        expect(plan.candidates.find((candidate) => candidate.path === "notes/vendor-draft.md"))
+            .toMatchObject({ included: false, locked: true, skippedReason: "excluded-pattern" });
+    });
+
     it("includes notes modified yesterday and excludes today and day-before", () => {
         const plan = buildPageletScopePlan({
             files: [

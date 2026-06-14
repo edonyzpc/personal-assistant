@@ -8,8 +8,21 @@
  * scenario opened it (review, current note, discovery, summary).
  */
 
+import type { PageletReviewDiagnostics } from "../pa-review-model";
+import type { PageletSuggestion } from "../pa-review-schemas";
+import type {
+    PageletReviewRange,
+    PageletScopeCandidateReason,
+    PageletScopeSkippedReason,
+} from "../scope";
+
 /** Which scenario opened the Panel -- determines layout */
 export type PanelLayoutType = "review" | "current" | "discover" | "summary";
+
+export type PanelFindingDiagnostics = Pick<
+    PageletReviewDiagnostics,
+    "truncated" | "partial" | "droppedSuggestionsCount" | "costEntry"
+>;
 
 /** A panel finding item */
 export interface PanelFinding {
@@ -20,6 +33,9 @@ export interface PanelFinding {
     insightText?: string;
     timestamp?: string;
     actions?: PanelAction[];
+    suggestion?: PageletSuggestion;
+    diagnostics?: PanelFindingDiagnostics;
+    sourceId?: string;
 }
 
 /** Panel action button */
@@ -35,6 +51,11 @@ export interface PanelCallbacks {
     onSourceClick: (sourceLink: string) => void;
     onSaveAsReviewNote: (findings: PanelFinding[]) => void | Promise<void>;
     onRunReview?: () => void | Promise<void>;
+    onRunSelectedReview?: () => void | Promise<void>;
+    onScopeRangeChange?: (range: PageletReviewRange) => void;
+    onScopeCandidateToggle?: (path: string, included: boolean) => void;
+    onRelatedNoteClick?: (noteName: string) => void;
+    onResearchFinding?: (finding: PanelFinding) => void | Promise<void>;
     onToggleHints?: () => void;
 }
 
@@ -43,6 +64,30 @@ export interface PanelViewOptions {
     app?: import("obsidian").App;
     callbacks: PanelCallbacks;
     locale?: import("../../locales/pagelet").PageletLocale;
+}
+
+export interface PanelScopeCandidate {
+    path: string;
+    title: string;
+    reason: PageletScopeCandidateReason;
+    included: boolean;
+    locked?: boolean;
+    skippedReason?: PageletScopeSkippedReason;
+}
+
+export interface PanelScopeState {
+    range: PageletReviewRange;
+    candidates: PanelScopeCandidate[];
+    includedCount: number;
+    skippedCount: number;
+    excludedReviewOutputCount?: number;
+    estimatedInputTokens?: number;
+}
+
+export interface PanelOpenExtra {
+    connections?: NoteConnection[];
+    markdown?: string;
+    scope?: PanelScopeState;
 }
 
 /** Discovery connection between notes */

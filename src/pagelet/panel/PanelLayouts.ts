@@ -19,6 +19,19 @@ import type { App } from "obsidian";
 
 import type { NoteConnection, PanelFinding } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
+import {
+    createSuggestionCardRenderer,
+    type SuggestionCardRenderer,
+} from "../../ui/pagelet";
+
+export interface PanelLayoutRenderOptions {
+    onSuggestionRenderer?: (renderer: SuggestionCardRenderer) => void;
+    onSuggestionSourceClick?: (finding: PanelFinding, sourceId: string) => void;
+    onSuggestionAccept?: (finding: PanelFinding) => void;
+    onSuggestionDismiss?: (finding: PanelFinding) => void;
+    onRelatedNoteClick?: (noteName: string, finding: PanelFinding) => void;
+    onResearchFinding?: (finding: PanelFinding) => void;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -58,6 +71,7 @@ export function renderReviewTimeline(
     container: HTMLElement,
     findings: PanelFinding[],
     locale: PageletLocale = "en",
+    options: PanelLayoutRenderOptions = {},
 ): void {
     clearChildren(container);
 
@@ -82,7 +96,7 @@ export function renderReviewTimeline(
         );
 
         for (const finding of items) {
-            timeline.appendChild(renderTimelineItem(finding));
+            timeline.appendChild(renderTimelineItem(finding, locale, options));
         }
         groupIdx++;
     }
@@ -108,7 +122,11 @@ function groupByDate(
 }
 
 /** Build a single timeline item. */
-function renderTimelineItem(finding: PanelFinding): HTMLElement {
+function renderTimelineItem(
+    finding: PanelFinding,
+    locale: PageletLocale = "en",
+    options: PanelLayoutRenderOptions = {},
+): HTMLElement {
     const item = el("div", "pa-pagelet-panel-timeline-item");
 
     // Left column: dot + connector
@@ -122,6 +140,27 @@ function renderTimelineItem(finding: PanelFinding): HTMLElement {
 
     // Right column: content
     const content = el("div", "pa-pagelet-panel-timeline-content");
+    if (finding.suggestion) {
+        const mount = el("div", "pa-pagelet-panel-suggestion-card-host");
+        const renderer = createSuggestionCardRenderer(
+            mount,
+            {
+                suggestion: finding.suggestion,
+                diagnostics: finding.diagnostics,
+                onSourceClick: (sourceId) => options.onSuggestionSourceClick?.(finding, sourceId),
+                onAccept: () => options.onSuggestionAccept?.(finding),
+                onDismiss: () => options.onSuggestionDismiss?.(finding),
+                onRelatedNoteClick: (noteName) => options.onRelatedNoteClick?.(noteName, finding),
+                onResearch: () => options.onResearchFinding?.(finding),
+            },
+            { locale },
+        );
+        options.onSuggestionRenderer?.(renderer);
+        content.appendChild(mount);
+        item.appendChild(content);
+        return item;
+    }
+
     content.appendChild(
         el("div", "pa-pagelet-panel-timeline-title", finding.title),
     );
@@ -168,13 +207,15 @@ export function renderCurrentNoteAnalysis(
     container: HTMLElement,
     findings: PanelFinding[],
     locale: PageletLocale = "en",
+    options: PanelLayoutRenderOptions = {},
 ): void {
     clearChildren(container);
 
     const wrapper = el("div", "pa-pagelet-panel-timeline");
+    const hasSuggestions = findings.some((finding) => Boolean(finding.suggestion));
 
     // Summary card (first finding is treated as the summary)
-    if (findings.length > 0) {
+    if (findings.length > 0 && !hasSuggestions) {
         wrapper.appendChild(
             el("div", "pa-pagelet-panel-timeline-section-label", findings[0].title),
         );
@@ -192,15 +233,19 @@ export function renderCurrentNoteAnalysis(
     }
 
     // AI analysis items
-    if (findings.length > 1) {
+    const startIndex = hasSuggestions ? 0 : 1;
+    if (findings.length > startIndex) {
         wrapper.appendChild(
             el("div", "pa-pagelet-panel-timeline-section-label",
                 pageletT("pagelet.panel.current.analysis", locale)),
         );
 
-        for (let i = 1; i < findings.length; i++) {
-            wrapper.appendChild(renderTimelineItem(findings[i]));
+        for (let i = startIndex; i < findings.length; i++) {
+            wrapper.appendChild(renderTimelineItem(findings[i], locale, options));
         }
+    } else {
+        wrapper.appendChild(el("div", "pa-pagelet-panel-timeline-section-label",
+            pageletT("pagelet.panel.cards.empty", locale)));
     }
 
     container.appendChild(wrapper);

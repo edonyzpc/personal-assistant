@@ -100,9 +100,9 @@ export class ScopeResolver {
     }
 
     private hasExcludedTag(metadata: CachedMetadata): boolean {
-        if (this.config.excludedTags.length === 0) return false;
         const fileTags = collectTags(metadata);
         if (fileTags.size === 0) return false;
+        if (fileTags.has("#no-ai") || fileTags.has("#no-review")) return true;
         for (const tag of this.config.excludedTags) {
             if (fileTags.has(normalizeTag(tag))) return true;
         }
@@ -152,18 +152,22 @@ function collectTags(metadata: CachedMetadata): Set<string> {
         }
     }
     const fmTags = metadata.frontmatter?.tags;
-    if (typeof fmTags === "string") {
-        for (const part of fmTags.split(/[,\s]+/)) {
+    collectFrontmatterTags(fmTags, tags);
+    collectFrontmatterTags(metadata.frontmatter?.tag, tags);
+    return tags;
+}
+
+function collectFrontmatterTags(value: unknown, tags: Set<string>): void {
+    if (!value) return;
+    if (typeof value === "string") {
+        for (const part of value.split(/[,\s]+/)) {
             if (part.trim()) tags.add(normalizeTag(part));
         }
-    } else if (Array.isArray(fmTags)) {
-        for (const item of fmTags) {
-            if (typeof item === "string" && item.trim()) {
-                tags.add(normalizeTag(item));
-            }
-        }
+        return;
     }
-    return tags;
+    if (Array.isArray(value)) {
+        for (const item of value) collectFrontmatterTags(item, tags);
+    }
 }
 
 function normalizeTag(tag: string): string {

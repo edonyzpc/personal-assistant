@@ -21,6 +21,9 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             },
             vault: {
                 getMarkdownFiles: jest.fn(() => [activeFile]),
+                getAbstractFileByPath: jest.fn((path: string) => (
+                    path === activeFile.path ? activeFile : null
+                )),
             },
             metadataCache: {
                 getFileCache: jest.fn(() => null),
@@ -231,5 +234,112 @@ describe("PageletOrchestrator quick review command", () => {
             sourceTitle: "current",
         }]);
         expect(foregroundAnalyze).not.toHaveBeenCalled();
+    });
+});
+
+describe("PageletOrchestrator review panel scope flow", () => {
+    it("opens the review panel without treating preload findings as saveable review output", () => {
+        const host = makeHost();
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn() };
+
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+        (orchestrator as unknown as {
+            preloadCache: {
+                set(result: {
+                    findings: Array<{ text: string; sourceFile: string; sourceTitle: string }>;
+                    analyzedFiles: string[];
+                    analyzedAt: number;
+                    tokenCost: { input: number; output: number };
+                }): void;
+            };
+        }).preloadCache.set({
+            findings: [{
+                text: "Cached background finding.",
+                sourceFile: "notes/current.md",
+                sourceTitle: "current",
+            }],
+            analyzedFiles: ["notes/current.md"],
+            analyzedAt: Date.now(),
+            tokenCost: { input: 10, output: 5 },
+        });
+
+        orchestrator.openPanel();
+
+        expect(panelView.open).toHaveBeenCalledWith(
+            "review",
+            [],
+            expect.objectContaining({
+                scope: expect.objectContaining({ includedCount: 1 }),
+            }),
+        );
+    });
+
+    it("keeps explicit multi-note selected review results after active note changes", async () => {
+        const now = Date.now();
+        const activeFile = {
+            path: "notes/current.md",
+            basename: "current",
+            extension: "md",
+            stat: { size: 100, mtime: now },
+        };
+        const recentFile = {
+            path: "notes/recent.md",
+            basename: "recent",
+            extension: "md",
+            stat: { size: 100, mtime: now - 86_400_000 },
+        };
+        const otherFile = {
+            path: "notes/other.md",
+            basename: "other",
+            extension: "md",
+            stat: { size: 100, mtime: now - 10 * 86_400_000 },
+        };
+        let currentActive = activeFile;
+        const panelView = { open: jest.fn() };
+        const foregroundAnalyze = jest.fn(async () => {
+            currentActive = otherFile;
+            return {
+                findings: [{
+                    text: "Review selected output.",
+                    sourceFile: "notes/recent.md",
+                    sourceTitle: "recent",
+                }],
+                analyzedFiles: ["notes/current.md", "notes/recent.md"],
+                analyzedAt: Date.now(),
+                tokenCost: { input: 1, output: 1 },
+            };
+        });
+        const host = makeHost({
+            app: {
+                workspace: {
+                    getActiveFile: jest.fn(() => currentActive),
+                },
+                vault: {
+                    getMarkdownFiles: jest.fn(() => [activeFile, recentFile, otherFile]),
+                    getAbstractFileByPath: jest.fn((path: string) => {
+                        return [activeFile, recentFile, otherFile].find((file) => file.path === path) ?? null;
+                    }),
+                },
+                metadataCache: {
+                    getFileCache: jest.fn(() => null),
+                },
+            } as unknown as PageletHost["app"],
+            createForegroundAnalyzeCallback: () => foregroundAnalyze,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+        (orchestrator as unknown as { currentScopeRange: string }).currentScopeRange = "last3";
+
+        await (orchestrator as unknown as { reviewSelectedScope(): Promise<void> }).reviewSelectedScope();
+
+        expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
+        expect(panelView.open).toHaveBeenCalledWith(
+            "review",
+            [expect.objectContaining({ description: "Review selected output." })],
+            expect.objectContaining({
+                scope: expect.objectContaining({ range: "last3" }),
+            }),
+        );
     });
 });

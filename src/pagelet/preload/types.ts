@@ -1,6 +1,14 @@
 /* Copyright 2023 edonyzpc */
 
 import type { TFile } from "obsidian";
+import type { PageletReviewDiagnostics } from "../pa-review-model";
+import type { PageletSuggestion } from "../pa-review-schemas";
+import type { PageletReviewRange } from "../scope";
+
+type PreloadFindingDiagnostics = Pick<
+    PageletReviewDiagnostics,
+    "truncated" | "partial" | "droppedSuggestionsCount" | "costEntry"
+>;
 
 /** A single preload finding (structured AI output) */
 export interface PreloadFinding {
@@ -8,6 +16,8 @@ export interface PreloadFinding {
     sourceFile: string;
     sourceTitle: string;
     confidence?: number;
+    suggestion?: PageletSuggestion;
+    diagnostics?: PreloadFindingDiagnostics;
 }
 
 /** Result of a single preload cycle */
@@ -31,6 +41,7 @@ export interface PreloadConfig {
     perHourCap: number;
     perDayCap: number;
     tokenBudget: { input: number; output: number };
+    range?: PageletReviewRange;
 }
 
 /** Error category for preload cycle failures */

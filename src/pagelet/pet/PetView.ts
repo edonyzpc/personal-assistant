@@ -13,8 +13,9 @@ import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { createPetSvgElement, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
 
-export function getPetAriaLabel(locale: PageletLocale): string {
-    return pageletT("pagelet.pet.ariaLabel", locale);
+export function getPetAriaLabel(locale: PageletLocale, state?: PetState): string {
+    const base = pageletT("pagelet.pet.ariaLabel", locale);
+    return state ? `${base}: ${pageletT(`pagelet.pet.${state}`, locale)}` : base;
 }
 
 export class PetView implements PetRenderer {
@@ -80,7 +81,8 @@ export class PetView implements PetRenderer {
         root.setAttribute("data-corner", this._corner);
         root.setAttribute("tabindex", "0");
         root.setAttribute("role", "button");
-        root.setAttribute("aria-label", getPetAriaLabel(this._getLocale()));
+        root.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state));
+        root.setAttribute("aria-live", "polite");
 
         const wrapper = document.createElement("div");
         wrapper.className = "pa-pagelet-pet-wrapper";
@@ -209,6 +211,7 @@ export class PetView implements PetRenderer {
     private applyState(): void {
         if (!this._rootEl || !this._svgEl) return;
         this._rootEl.setAttribute("data-state", this._state);
+        this._rootEl.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state));
         this.applyThemeColors();
     }
 

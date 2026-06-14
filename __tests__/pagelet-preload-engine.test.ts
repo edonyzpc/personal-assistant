@@ -68,3 +68,42 @@ describe("PreloadEngine", () => {
         expect(analyzedBatches[1]).toEqual(files.slice(20).map((file) => file.path));
     });
 });
+
+describe("ScopeResolver privacy exclusions", () => {
+    it("hard-excludes no-ai and no-review tags even when excludedTags is empty", () => {
+        const noAi = makeFile("notes/private.md", Date.now());
+        const noReview = makeFile("notes/no-review.md", Date.now());
+        const app = {
+            vault: {
+                getMarkdownFiles: jest.fn(() => [noAi, noReview]),
+            },
+            metadataCache: {
+                getFileCache: jest.fn((file: { path: string }) => {
+                    if (file.path === "notes/private.md") {
+                        return { frontmatter: { tag: "#no-ai" } };
+                    }
+                    if (file.path === "notes/no-review.md") {
+                        return { frontmatter: { tags: ["no-review"] } };
+                    }
+                    return null;
+                }),
+            },
+        };
+        const resolver = new ScopeResolver(app as never, {
+            excludedFolders: [],
+            excludedTags: [],
+            excludedPatterns: [],
+            maxFileSizeBytes: 100 * 1024,
+            reviewsFolder: ".pagelet",
+        });
+
+        expect(resolver.resolveCurrentNote(noAi as never)).toMatchObject({
+            included: [],
+            excluded: [{ reason: "excluded-tag" }],
+        });
+        expect(resolver.resolveCurrentNote(noReview as never)).toMatchObject({
+            included: [],
+            excluded: [{ reason: "excluded-tag" }],
+        });
+    });
+});

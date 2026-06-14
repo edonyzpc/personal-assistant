@@ -25,8 +25,10 @@ export type PageletScopeSkippedReason =
     | "missing-file"
     | "empty-note"
     | "hidden-folder"
+    | "excluded-folder"
     | "excluded-frontmatter"
-    | "excluded-tag";
+    | "excluded-tag"
+    | "excluded-pattern";
 
 export interface PageletScopeFileLike {
     path: string;
@@ -90,6 +92,9 @@ export interface BuildPageletScopePlanOptions {
     activePath: string;
     range: PageletReviewRange;
     reviewsFolder: string;
+    excludedFolders?: readonly string[];
+    excludedTags?: readonly string[];
+    excludedPatterns?: readonly string[];
     now?: Date;
     maxIncluded?: number;
     reviewOutputCount?: number;
@@ -137,6 +142,9 @@ export function buildPageletScopePlan(options: BuildPageletScopePlanOptions): Pa
         const skippedReason = scopeExcludedReason({
             path,
             reviewFolder,
+            excludedFolders: options.excludedFolders ?? [],
+            excludedTags: options.excludedTags ?? [],
+            excludedPatterns: options.excludedPatterns ?? [],
             size: finiteNumber(file.stat?.size),
             metadata: options.getMetadata?.(path),
         });
@@ -361,25 +369,49 @@ export function skippedReasonLabel(reason: PageletScopeSkippedReason): string {
             return "empty note";
         case "hidden-folder":
             return "hidden folder";
+        case "excluded-folder":
+            return "excluded folder";
         case "excluded-frontmatter":
             return "pagelet note";
         case "excluded-tag":
             return "excluded tag";
+        case "excluded-pattern":
+            return "excluded pattern";
     }
 }
 
 function scopeExcludedReason(options: {
     path: string;
     reviewFolder: string;
+    excludedFolders: readonly string[];
+    excludedTags: readonly string[];
+    excludedPatterns: readonly string[];
     size: number | null;
     metadata?: PageletScopeMetadataLike;
 }): PageletScopeSkippedReason | null {
     if (isUnderFolder(options.path, options.reviewFolder)) return "review-output";
     if (options.size === 0) return "empty-note";
     if (hasHiddenOrSystemSegment(options.path)) return "hidden-folder";
+    if (isUnderAnyFolder(options.path, options.excludedFolders)) return "excluded-folder";
     if (isPageletFrontmatter(options.metadata?.frontmatter)) return "excluded-frontmatter";
-    if (hasExcludedTag(options.metadata)) return "excluded-tag";
+    if (hasExcludedTag(options.metadata, options.excludedTags)) return "excluded-tag";
+    if (matchesExcludedPattern(options.path, options.excludedPatterns)) return "excluded-pattern";
     return null;
+}
+
+function isUnderAnyFolder(path: string, folders: readonly string[]): boolean {
+    for (const folder of folders) {
+        const normalized = normalizeFolderPrefix(folder);
+        if (normalized && isUnderFolder(path, normalized)) return true;
+    }
+    return false;
+}
+
+function matchesExcludedPattern(path: string, patterns: readonly string[]): boolean {
+    for (const pattern of patterns) {
+        if (pattern && path.includes(pattern)) return true;
+    }
+    return false;
 }
 
 function chooseCandidateReason(
@@ -450,7 +482,10 @@ function isPageletFrontmatter(frontmatter: Record<string, unknown> | undefined):
     return value === true || value === "true";
 }
 
-function hasExcludedTag(metadata: PageletScopeMetadataLike | undefined): boolean {
+function hasExcludedTag(
+    metadata: PageletScopeMetadataLike | undefined,
+    excludedTags: readonly string[],
+): boolean {
     const tags = new Set<string>();
     for (const tag of metadata?.tags ?? []) {
         const raw = typeof tag === "string" ? tag : tag.tag;
@@ -459,7 +494,8 @@ function hasExcludedTag(metadata: PageletScopeMetadataLike | undefined): boolean
     const frontmatter = metadata?.frontmatter;
     collectFrontmatterTags(frontmatter?.tags, tags);
     collectFrontmatterTags(frontmatter?.tag, tags);
-    return tags.has("#no-ai") || tags.has("#no-review");
+    if (tags.has("#no-ai") || tags.has("#no-review")) return true;
+    return excludedTags.some((tag) => tags.has(normalizeTag(tag)));
 }
 
 function collectFrontmatterTags(value: unknown, tags: Set<string>): void {
