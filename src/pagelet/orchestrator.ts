@@ -20,7 +20,14 @@ import { Notice } from "obsidian";
 import type { App, EventRef, MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
-import { clearPlatformTimeout, getPlatformDocument, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
+import {
+    clearPlatformTimeout,
+    eventPathContainsSelector,
+    getOptionalPlatformDocument,
+    getPlatformDocument,
+    setPlatformTimeout,
+    type PlatformTimeoutHandle,
+} from "../platform-dom";
 
 import type { BubbleContent, BubbleFinding } from "./bubble/types";
 import { BubbleView } from "./bubble/BubbleView";
@@ -213,7 +220,7 @@ export class PageletOrchestrator {
         // Bound Escape handler for cleanup
         this.handleEscape = (e: KeyboardEvent) => {
             if (e.key !== "Escape") return;
-            if (this.saveInProgress || isObsidianModalOpen()) return;
+            if (this.saveInProgress || isObsidianModalOpen(e)) return;
             if (this.panelView?.isOpen) {
                 this.panelView.close();
                 e.stopPropagation();
@@ -1421,7 +1428,11 @@ function normalizeRelatedNoteName(noteName: string): string {
     return value.trim();
 }
 
-function isObsidianModalOpen(): boolean {
-    const query = (document as unknown as { querySelector?: (selector: string) => Element | null }).querySelector;
-    return typeof query === "function" && Boolean(query.call(document, ".modal-container, .modal"));
+const OBSIDIAN_MODAL_SELECTOR = ".modal-container, .modal";
+
+function isObsidianModalOpen(event?: Event): boolean {
+    if (event?.defaultPrevented) return true;
+    if (event && eventPathContainsSelector(event, OBSIDIAN_MODAL_SELECTOR)) return true;
+    const doc = getOptionalPlatformDocument();
+    return Boolean(doc?.body?.querySelector(OBSIDIAN_MODAL_SELECTOR));
 }

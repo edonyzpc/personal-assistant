@@ -3214,8 +3214,7 @@ export class LLMView extends ItemView {
     private getStatusBarElement(): HTMLElement | null {
         const doc = getOptionalPlatformDocument();
         if (!doc) return null;
-        if (typeof doc.querySelector !== 'function') return null;
-        return doc.querySelector('.status-bar') as HTMLElement | null;
+        return doc.body?.querySelector<HTMLElement>('.status-bar') ?? null;
     }
 
     private calculateStatusBarClearance(containerEl: HTMLElement): number {

@@ -2,6 +2,7 @@ import { Modal, Setting } from 'obsidian';
 import type PluginManager from '../main';
 import type { PersistedConversation } from './chat-history-store';
 import { getPluginUiLanguage, makePluginTranslator, type PluginTranslator } from '../locales/plugin';
+import { getOptionalPlatformDocument } from '../platform-dom';
 
 export interface ChatConfirmationOptions {
     title: string;
@@ -58,7 +59,7 @@ export class ChatConfirmationModal extends Modal {
 }
 
 export function confirmChatAction(plugin: PluginManager, options: ChatConfirmationOptions): Promise<boolean> {
-    if (typeof document === 'undefined') {
+    if (!getOptionalPlatformDocument()) {
         return Promise.resolve(true);
     }
 
@@ -173,7 +174,7 @@ export function pickChatConversation(
     plugin: PluginManager,
     options: ChatHistoryPickerOptions,
 ): Promise<ChatHistoryPickerSelection | null> {
-    if (typeof document === 'undefined') {
+    if (!getOptionalPlatformDocument()) {
         return Promise.resolve(null);
     }
     return new Promise((resolve) => {

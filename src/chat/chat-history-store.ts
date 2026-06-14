@@ -1,6 +1,6 @@
 import type { Vault } from "obsidian";
 import { getVaultConfigDirStorageScope } from "../obsidian-paths";
-import { getPlatformIndexedDB } from "../platform-dom";
+import { getPlatformIDBKeyRange, getPlatformIndexedDB } from "../platform-dom";
 import type {
     ChatContextUsedItem,
     ChatRuntimeWarning,
@@ -518,7 +518,7 @@ function getVaultLocalPath(vault: Vault): string | undefined {
 }
 
 function makeIDBKeyRange(): typeof IDBKeyRange {
-    const range = (globalThis as { IDBKeyRange?: typeof IDBKeyRange }).IDBKeyRange;
+    const range = getPlatformIDBKeyRange();
     if (!range) {
         throw new Error("IDBKeyRange is not available in this environment.");
     }

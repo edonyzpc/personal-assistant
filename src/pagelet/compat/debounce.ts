@@ -40,7 +40,7 @@
  */
 
 import { toError } from "../../error-utils";
-import { clearPlatformTimeout, setPlatformTimeout } from "../../platform-dom";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -179,7 +179,7 @@ export class PageletReviewCoalescer<T> {
         this.setTimer = options.setTimer
             ?? ((cb, ms) => setPlatformTimeout(cb, ms) as unknown);
         this.clearTimer = options.clearTimer
-            ?? ((handle) => clearPlatformTimeout(handle as ReturnType<typeof setTimeout>));
+            ?? ((handle) => clearPlatformTimeout(handle as PlatformTimeoutHandle));
     }
 
     /**

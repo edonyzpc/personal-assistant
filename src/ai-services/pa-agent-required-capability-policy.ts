@@ -2,7 +2,7 @@ import type {
     PaAgentHostPolicy,
     PaAgentTurnSummary,
 } from "./pa-agent-loop";
-import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 import {
     createAnswerCompletionLedger,
     decideAnswerCompletion,
@@ -17,7 +17,7 @@ import {
 
 export const REQUIRED_CAPABILITY_CLASSIFIER_TIMEOUT_MS = 800;
 
-type TimeoutHandle = number | ReturnType<typeof setTimeout>;
+type TimeoutHandle = PlatformTimeoutHandle;
 
 export type RequiredCapability =
     | "search_memory"

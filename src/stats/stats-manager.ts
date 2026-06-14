@@ -26,7 +26,7 @@ import {
 } from "./stats-utils";
 import type { FileCountCacheEntry, StatsLocalStore } from "./stats-local-store";
 import { SchemaIntegrityError } from "./stats-local-store";
-import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
 
 const moment = obsidianMoment as unknown as () => { format: (format: string) => string };
 
@@ -47,7 +47,7 @@ const CACHE_SIZE_RATIO_THRESHOLD = 1.5;
 // statistically meaningful — sampling 1 of 1 file just doubles I/O for no
 // drift-detection power.
 const SAMPLE_MIN_CACHE_SIZE = 5;
-type TimeoutHandle = number | ReturnType<typeof setTimeout>;
+type TimeoutHandle = PlatformTimeoutHandle;
 
 export function getStatsWriteDelayMs(isMobile: boolean): number {
     return isMobile ? 3000 : 1500;

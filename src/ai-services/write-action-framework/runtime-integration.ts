@@ -47,7 +47,7 @@ import type {
     WriteActionCapability,
     WriteActionExecuteHooks,
 } from "./types";
-import { clearPlatformTimeout, setPlatformTimeout } from "../../platform-dom";
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Self-Write Set
@@ -79,7 +79,7 @@ export interface SelfWriteRegistryOptions {
 export function createSelfWriteRegistry(options: SelfWriteRegistryOptions = {}): SelfWriteRegistry {
     const windowMs = options.windowMs ?? SELF_WRITE_WINDOW_MS;
     const setTimer = options.setTimer ?? ((cb, ms) => setPlatformTimeout(cb, ms));
-    const clearTimer = options.clearTimer ?? ((h) => clearPlatformTimeout(h as ReturnType<typeof setTimeout>));
+    const clearTimer = options.clearTimer ?? ((h) => clearPlatformTimeout(h as PlatformTimeoutHandle));
     const paths = new Set<string>();
     const timers = new Map<string, unknown>();
 

@@ -42,6 +42,7 @@ import {
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import {
     clearPlatformTimeout,
+    eventPathContainsSelector,
     getPlatformDocument,
     requestPlatformAnimationFrame,
     setPlatformTimeout,
@@ -76,10 +77,13 @@ function isMobile(): boolean {
     return getPlatformDocument().body.classList.contains("is-mobile");
 }
 
-function isObsidianModalOpen(): boolean {
+const OBSIDIAN_MODAL_SELECTOR = ".modal-container, .modal";
+
+function isObsidianModalOpen(event?: Event): boolean {
+    if (event?.defaultPrevented) return true;
+    if (event && eventPathContainsSelector(event, OBSIDIAN_MODAL_SELECTOR)) return true;
     const doc = getPlatformDocument();
-    const query = (doc as Document & { querySelector?: Document["querySelector"] }).querySelector;
-    return typeof query === "function" && Boolean(query.call(doc, ".modal-container, .modal"));
+    return Boolean(doc.body?.querySelector(OBSIDIAN_MODAL_SELECTOR));
 }
 
 const PANEL_SCOPE_RANGES: readonly PageletReviewRange[] = [
@@ -967,7 +971,7 @@ export class PanelView {
 
     private onKeydown(e: KeyboardEvent): void {
         if (e.key === "Escape" && this._isOpen) {
-            if (isObsidianModalOpen()) return;
+            if (isObsidianModalOpen(e)) return;
             e.preventDefault();
             e.stopPropagation();
             this.close();
