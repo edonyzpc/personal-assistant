@@ -19,8 +19,9 @@ import {
     type ChatRoleIdenticonModel,
 } from './role-identicons';
 import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
+import { VIEW_TYPE_LLM } from './view-type';
 
-export const VIEW_TYPE_LLM = "sidellm-view";
+export { VIEW_TYPE_LLM };
 export const PA_CHAT_SUBAGENT_ICON = "PA_CHAT_SUBAGENT";
 export type { ChatMessage };
 

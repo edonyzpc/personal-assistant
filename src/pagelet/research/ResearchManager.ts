@@ -9,7 +9,7 @@
  *
  * The research flow:
  *  1. Build a research prompt from the finding text and optional context.
- *  2. Locate the Chat view leaf (`pa-llm-view`).
+ *  2. Locate the Chat view leaf.
  *  3. Populate the Chat composer with the prompt.
  *  4. Notify via callbacks on success or failure.
  *
@@ -27,11 +27,9 @@
 import { Notice } from "obsidian";
 import type { App } from "obsidian";
 
+import { VIEW_TYPE_LLM } from "../../chat/view-type";
 import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
 import type { ResearchCallbacks, ResearchRequest } from "./types";
-
-/** The Obsidian view type registered by PA's Chat view. */
-const CHAT_VIEW_TYPE = "pa-llm-view";
 
 export class ResearchManager {
     constructor(
@@ -132,7 +130,7 @@ export class ResearchManager {
      * Uses the same chat view lookup pattern as the review orchestrator.
      */
     private findChatLeaf(): ReturnType<App["workspace"]["getLeavesOfType"]>[number] | null {
-        const leaves = this.app.workspace.getLeavesOfType(CHAT_VIEW_TYPE);
+        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_LLM);
         return leaves.length > 0 ? leaves[0] : null;
     }
 
