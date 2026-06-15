@@ -87,6 +87,8 @@ Core expression functions:
 
 Use a `dataviewjs` code block. The `dv` object is the API entry point:
 
+For method-level details, load the companion reference at `references/dataviewjs-api.md`.
+
 - `dv.pages(source?)` — returns pages matching a source string (same syntax as `FROM`). No argument returns all pages.
 - `dv.current()` — the current page object.
 - `dv.table(headers, rows)` — render a table. `headers` is `string[]`, `rows` is `any[][]`.

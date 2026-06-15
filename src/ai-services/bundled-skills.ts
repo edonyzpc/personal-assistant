@@ -45,7 +45,7 @@ export const BUNDLED_SKILL_RESOURCES: readonly BundledSkillResource[] = [
         content: obsidianDataview,
         references: [
             {
-                path: "skills/obsidian-dataview/references/dataviewjs-api.md",
+                path: "references/dataviewjs-api.md",
                 content: obsidianDataviewRef,
             },
         ],

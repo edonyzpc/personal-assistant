@@ -264,7 +264,7 @@ function buildReferenceBlock(
 
 function findReferencedPaths(body: string): string[] {
     const paths = new Set<string>();
-    const pattern = /(?:^|[\s(["'])((?:\.\/)?references\/[A-Za-z0-9._/-]+\.md)\b/g;
+    const pattern = /(?:^|[\s(["'`])((?:\.\/)?references\/[A-Za-z0-9._/-]+\.md)\b/g;
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(body)) !== null) {
         paths.add(match[1].replace(/^\.\//, ""));

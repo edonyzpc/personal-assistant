@@ -193,6 +193,17 @@ describe("SkillContextProvider", () => {
         expect(body?.sourceRecords).toEqual([expect.objectContaining({ kind: "skill-guide" })]);
     });
 
+    it("loadSkillBody includes the DataviewJS reference when requested by the bundled skill", async () => {
+        const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
+        await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
+
+        const body = provider.loadSkillBody("obsidian-dataview");
+
+        expect(body).not.toBeNull();
+        expect(body?.selectedReferences).toEqual(["references/dataviewjs-api.md"]);
+        expect(body?.body).toContain("DataviewJS API Reference");
+    });
+
     it("loadSkillBody returns null for unknown skill name", async () => {
         const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
         await provider.load({ turnId: "turn-1", platform: "desktop", settings: {} });
