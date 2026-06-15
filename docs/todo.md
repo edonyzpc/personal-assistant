@@ -9,6 +9,12 @@
   - Follow-ups: run a dedicated mobile smoke pass for the final panel Save / expand-to-tab path. This closeout does not start release/publish flow.
   - Exit criteria: Pagelet docs match actual behavior, and no release/publish flow starts until Pagelet beta functionality is complete.
 
+- [ ] Close v2.2 Pagelet review fixes and graduate Pagelet to stable.
+  - Context: v2.2.0-beta.1 review (2026-06-15) identified 5 blocking fixes (C-2 PetSvg, H-1 RateLimiter, H-3 PreloadEngine, H-6 platform-dom, iOS Panel dvh) plus Orchestrator split, Bubble close behavior change, and Onboarding. Graduation requires commit + GUI smoke + provider re-test.
+  - Source: [`development-roadmap.md`](./development-roadmap.md) v2.2 section, SPEC-B1/B2 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
+  - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
+  - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, v2.2.0 stable published.
+
 - [ ] Close v2 review follow-up stabilization before release.
   - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.
   - Completed so far: API token migration clears `data.json`; scoped/legacy keychain fallback is in place; API Token editor/clear confirmation works; provider switching confirms preset replacement; Settings data-safety fixes are covered by tests; chat history modal overflow/duplicate preview issues are fixed; chat history persistence exists in IndexedDB-backed store/manager code; chat-tools split, statistics incremental snapshot cache, WASM lazy load, and RequiredCapability refactor are implemented; foreground OPFS marker recovery is removed and manual technical recovery is bounded.
@@ -34,9 +40,9 @@
 ## Future Milestones
 
 - [ ] Review and scope write action / command execution product and security design.
-  - Context: the archived vault-native refactor track closed through Phase 6 with Chat still read-only. The active Ralpha plan also keeps write actions and Obsidian command execution out of scope. Future write actions must not be implemented by weakening the current read-only tool boundary.
-  - Source docs: `docs/operations-agent-plan.md`; `docs/write-action-design-handoff.md`; archived historical docs under `docs/archive/`.
-  - Entry criteria: define the first action family, allowed targets, preview / confirm UX, cancellation behavior, local-only redacted audit policy, permission settings, and rollback / failure handling.
+  - Context: the archived vault-native refactor track closed through Phase 6 with Chat still read-only. Write Action Framework v1 shipped with v2.2.0-beta.1 (Pagelet `create-file` family). Action Mode Phase 1 (`append-to-current-note`) confirmed for v2.4 window per 2026-06-15 assessment.
+  - Source docs: `docs/operations-agent-plan.md`; `docs/write-action-design-handoff.md`; [`development-roadmap.md`](./development-roadmap.md) v2.4 section; SPEC-C1 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
+  - Entry criteria: Framework v1 ≥ 8 weeks validation (no security issue), Orchestrator decomposition complete (SPEC-B5), Operations Agent mode SDD drafted and reviewed.
   - Exit criteria: product/security review explicitly approves an implementation plan, creates a separate development tracker, and keeps direct note writes, arbitrary filesystem edits, shell/bash, and automatic Obsidian command execution out of scope unless separately approved.
 
 - [ ] Collect post-ship PA Agent v1 telemetry baseline before using usage data for Operations Agent prioritization.

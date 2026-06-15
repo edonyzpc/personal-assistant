@@ -88,7 +88,7 @@ Loop rules:
 | --- | --- |
 | Created | 2026-06-01 |
 | Decision contract source | [`v2.1.2-decisions.md`](./v2.1.2-decisions.md) |
-| Current stage | SPEC-A0/A1/A3(non-H-1)/A4/A5 全部 `[x] Done`。v2.2 Step 2 remaining: SPEC-A2 (command palette cleanup) — still `[D]`. SPEC-A3 H-1 sub-item still `[D]` deferred to >= 2026-06-12; SPEC-A6/A7 `[D]` deferred to v2.3/v2.5; SPEC-A8/A9 `[T]` triggered-only. Manual-CN.md mirror + `docs/onboarding-*.png` screenshots remain queued as A1 follow-up docs (non-blocking). |
+| Current stage | A-series: SPEC-A0/A1/A3(non-H-1)/A4/A5 全部 `[x] Done`; SPEC-A2 `[D]`; SPEC-A3 H-1 `[D]` (>= 06/12 可执行); SPEC-A6/A7 `[D]` deferred to v2.3/v2.5; SPEC-A8/A9 `[T]`。B-series (2026-06-15 assessment-derived): SPEC-B1 `[~]` Implementing (HEAD 未提交); SPEC-B2 `[ ]` (毕业 gate); SPEC-B3/B4/B5 `[ ]` (v2.3)。C-series: SPEC-C1/C2 `[ ]` (v2.4)。Execution roadmap: [`development-roadmap.md`](./development-roadmap.md)。 |
 | Runtime code changes in this pass | Review remediation: PA Agent history sandboxing, VSS search abort/rewrite safety, Obsidian Operations v1A capability invariant enforcement, chat setup banner refresh on settings save, and release/changelog/doc consistency fixes. |
 | Open contract decisions | None. All 5 original decisions + Q1-Q8 拍板 are frozen in the decision record. |
 | Blocked implementation areas | SPEC-A3 H-1 (>= 2026-06-12); SPEC-A6 (v2.3 + spike); SPEC-A7 (v2.5); SPEC-A8/A9 (triggered). `git push origin master` deferred per user. |
@@ -108,6 +108,13 @@ Loop rules:
 | SPEC-A7 | apiToken 链清理(决策④ part 2) | `[D]` Drafting | v2.5 | SPEC-A0 | [`sdd-apitoken-cleanup.md`](./sdd-apitoken-cleanup.md) | `./src/settings.ts`、`./src/utils.ts`、`./src/plugin.ts` 迁移段 | ~110 行迁移代码删除;v1.x 跳升用户在 release notes 提示重输 token;production confirmation 触达率达标。 |
 | SPEC-A8 | React → Preact 评估(决策③触发型) | `[T]` Triggered evaluation only | 触发型(无固定 phase) | SPEC-A0 | [`sdd-react-preact-evaluation.md`](./sdd-react-preact-evaluation.md) | (占位) | 触发条件:新组件用 React 独占特性 OR 引入 preact/compat 不兼容库;触发后启动正式 SDD,本占位标 `[x] superseded`。 |
 | SPEC-A9 | WASM 内联策略复议(决策①触发型) | `[T]` Triggered evaluation only | 触发型(无固定 phase) | SPEC-A0 | (无 SDD,仅决策记录) | (占位) | 触发条件:移动端冷启动 ≥ 5s / OOM ≥ 3 例 / P95 ≥ 5s;触发后开 SDD;不主动测 bundle。 |
+| SPEC-B1 | Pagelet review 5 修复(C-2/H-1/H-3/H-6/iOS) + Orchestrator 拆分 + Bubble 行为 + Onboarding | `[~]` Implementing | v2.2 | SPEC-A0 | (无独立 SDD;源自 [`pagelet-v2-review-decisions`](../memory/project_pagelet_v2_review_decisions.md)) | `src/pagelet/orchestrator.ts`、`src/pagelet/pet/PetSvg.ts`、`src/pagelet/preload/PreloadEngine.ts`、`src/pagelet/bubble/BubbleView.ts`、`src/pagelet/dom-utils.ts`(新)、`src/plugin.ts`、`src/custom.pcss`、`src/locales/pagelet/*.json`、`src/settings/pagelet/index.ts` | HEAD 16 文件未提交变更全部 commit + pagelet jest 全过。 |
+| SPEC-B2 | Pagelet beta 毕业 gate(commit + smoke + provider) | `[ ]` Todo | v2.2 | SPEC-B1, SPEC-A3 H-1 | (无 SDD;gate checklist in [`development-roadmap.md`](./development-roadmap.md)) | `manifest.json`、`manifest-beta.json`、`versions.json`、`CHANGELOG.md` | 全量 smoke + OQ002 ≥ 2 providers + v2.2.0 stable 发布。 |
+| SPEC-B3 | 内置 Skills 扩展(obsidian-dataview, obsidian-templater) | `[ ]` Todo | v2.3 | SPEC-A0 | (待起草) | `skills/` 新目录、`src/ai-services/bundled-skill-catalog.ts`、`src/ai-services/bundled-skills.ts` | 新 skill SKILL.md + references 完整;catalog 注册;enabledSkillIds 默认包含;jest 通过。 |
+| SPEC-B4 | v1 Pagelet 死代码移除 | `[ ]` Todo | v2.3 | SPEC-B2 | (无 SDD;机械删除) | `src/ui/pagelet/`(全目录)、barrel exports | `src/ui/pagelet/` 全部文件删除;grep 确认 0 运行时引用;jest 通过。 |
+| SPEC-B5 | Orchestrator 进一步拆分(纯协调层) | `[ ]` Todo | v2.3 | SPEC-B1 | (待起草) | `src/pagelet/orchestrator.ts` | Orchestrator < 800 行;AnalysisSessionManager / ReviewNoteSaveFlow 独立;jest 通过。 |
+| SPEC-C1 | Action Mode Phase 1(append-to-current-note) | `[ ]` Todo | v2.4 | SPEC-B2, Framework v1 ≥ 8 周验证, SPEC-B5 | (待起草:`operations-agent-mode-sdd.md`) | `src/ai-services/write-action-framework/`、`src/ai-services/policy-engine.ts`、`src/ai-services/capability-types.ts` | append action family 实现 + stale-reread mode B + policy tier + prompt injection tests。 |
+| SPEC-C2 | Skill 用户自定义扩展 | `[ ]` Todo | v2.4 | SPEC-B3 | (待起草) | `src/ai-services/skill-router.ts`、`src/ai-services/skill-context-provider.ts`、`src/settings.ts` | allowed-tools enforce + Settings UI + (optional) vault-side discovery。 |
 
 ## Phase Ledger(by release window)
 
@@ -126,7 +133,9 @@ Loop rules:
 | SPEC-A1 | Self-review 2026-06-01 (re-grep validated: ribbon at `plugin.ts:162`, `activeChatView` at `:693`, `getAISetupIssue` at `:1222`, `renderEmptyState` closure at `chat-view.ts:829`; SDD references to `VIEW_TYPE_CHAT`/`activateView(...)` corrected to use existing `activeChatView()` + `VIEW_TYPE_LLM`) | ✓ 2026-06-01 commits `6ed1ea8` (ribbon) → `db0db7b` (empty-state banner + CSS) → `b251962` (README + Manual) | ✓ tsc=0 + jest 4492/4492 on master HEAD `b251962` 2026-06-01;chat-related subset 540/540 | Skipped — incremental commits each scoped to a single concern; residual risk: SDD §4.2 prescribed a CN mirror in Manual-CN.md and onboarding screenshots (`docs/onboarding-*.png`) that are deferred to a follow-up commit | ✓ 2026-06-01 user `make deploy` to test vault | ✓ 2026-06-01 combined Obsidian smoke pass (A3 PR-1 + A5 + A1 tree on HEAD `13dbb2b`) | Done。Manual-CN.md mirror + onboarding screenshots deferred to follow-up (non-blocking, can ride alongside A4/A2 PR)。 |
 | SPEC-A2 | Pending(批 2 独立 PR) | Pending | Pending | Pending | Pending | Pending(命令面板 Memory + Featured Images 显隐) | Drafted; awaits SPEC review pass。 |
 | SPEC-A3(non-H-1) | Self-review 2026-06-01 (1-line scope, dry-run validated) | ✓ 2026-06-01 commit `0ec8b92` (worktree-agent-a076c1ec001c1c741) | ✓ tsc=0 + jest 916 (throwaway) + jest 4492 (master) on 2026-06-01 | Skipped — 1-line scope; residual risk: jest coverage threshold (master commit `046774b`) is inert when collectCoverage off (acceptable per A3 SDD) | ✓ 2026-06-01 user `make deploy` to test vault | ✓ 2026-06-01 combined Obsidian smoke pass (A3 PR-1 + A5 + A1 tree on HEAD `13dbb2b`);record-note callout 不退化 + jest coverage 默认关都符合预期 | Done。P0 #5/#6 closed by decision (no code change)。 |
-| SPEC-A3(H-1) | Pending(PR-2,6/12 之后) | Pending | Pending | Pending | Pending | Pending(PA Agent chat 不退化) | Drafted; 6/12 之前不动。 |
+| SPEC-A3(H-1) | Pending(PR-2,6/12 之后) | Pending | Pending | Pending | Pending | Pending(PA Agent chat 不退化) | Drafted; 6/12 之前不动。时间窗已开放(>= 06/12)。 |
+| SPEC-B1 | Self (assessment-derived, review decisions 已确认) | `[~]` HEAD 16 files uncommitted | Pending(`npx jest --testPathPattern=pagelet`) | Pending | Pending(`make deploy`) | Pending(pagelet-smoke-checklist.md 全过) | Implementing; worktree `feat/pagelet-review-fixes`。 |
+| SPEC-B2 | N/A (gate, not implementation) | N/A | N/A | N/A | Pending(beta.2 + soak + stable) | Pending(全量 smoke + OQ002 provider) | Blocked on SPEC-B1 + A3(H-1) + A2 completion。 |
 | SPEC-A4 | Self-review 2026-06-01 (re-grep validated against master HEAD `e3914f2`: `settings.ts:70`/`:140`、`chat-service.ts:102` 三元、`plugin.ts:1062-1065`/`:1084-1087` 两段 migrate;all matches present, scope unchanged from SDD) | ✓ 2026-06-01 commit `8352261` (refactor) + companion `b8030b9` (A1 styles rebuild) | ✓ tsc=0 + jest 4492/4492 + chat-service 子集 65/65 on master HEAD `8352261` 2026-06-01 | Self-review only (deletion-only diff,无逻辑变更;两个 flag 自 v2.0.0 起已是 no-op) | ✓ 2026-06-01 用户 `make deploy` to test vault | ✓ 2026-06-01 Obsidian smoke pass on master HEAD `fd6f9b5`;native tool planning 主链路 + 旧 settings 残留 keys 兼容均符合预期 | Done。 |
 | SPEC-A5 | Subagent review 2026-06-01: Approve (deviations: factories unmodified, parity layer added at registry edge — defensible per `__tests__/obsidian-operations-tools.test.ts:208` direct registry.execute() callsite;LOC delta accepted) | ✓ 2026-06-01 commits `9129ae6` → `dfa3f91` → `285d8f1` → `d98ceb2` (worktree-agent-a16cf09d50baee0e9) | ✓ tsc=0 + jest 916 (throwaway) + jest 4492 (master) on 2026-06-01 | ✓ Subagent Approve, no blockers (LOC delta −7 net source vs −500 SDD prediction;user accepted) | ✓ 2026-06-01 user `make deploy` to test vault | ✓ 2026-06-01 combined Obsidian smoke pass (A3 PR-1 + A5 + A1 tree on HEAD `13dbb2b`);全 capability 调用链行为不变 + chat / search_memory / WebSearch / record-note 均符合预期 | Done。 |
 
@@ -136,12 +145,16 @@ Loop rules:
 | --- | --- | --- | --- | --- | --- | --- | --- |
 | SPEC-A6(spike) | Pending(`feat/sqlite-org-spike` 分支) | Pending | Pending(vss 全套) | Pending | Pending | Pending(真机 10k chunk + iOS / Android 内存) | Drafted; v2.2 期允许机会 spike,但不作为 v2.2 发版条件。 |
 | SPEC-A6(迁移) | Pending(spike 通过后) | Pending | Pending | Pending | Pending | Pending(vault 升级数据完整性) | Drafted; 失败回 Plan B(另起 SDD)。 |
+| SPEC-B3 | Pending | Pending | Pending | Pending | Pending | Pending(skill load + chat 验证) | 纯内容工作,可与 A6 并行 worktree。 |
+| SPEC-B4 | Pending | Pending(文件删除 + barrel 更新) | Pending(grep 0 引用) | Pending | Pending | Pending | Sequential after A6 merge。 |
+| SPEC-B5 | Pending | Pending | Pending | Pending | Pending | Pending(Orchestrator < 800 行) | Sequential after B1 merge。 |
 
 ### v2.4(解放窗口)
 
 | SPEC | SPEC Review | Dev | Test | Code Review | Deploy | Smoke | Fix / Disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| (无固定 SPEC) | — | — | — | — | — | — | v2.4 解放;可填入 Action mode 早期 / Skill 扩展 / 其他 P1。 |
+| SPEC-C1 | Pending(SDD 在 v2.3 周期起草审查) | Pending | Pending | Pending | Pending | Pending(append action + stale-reread B + policy + injection tests) | 前置: Framework v1 ≥ 8 周验证 + Orchestrator 拆分。 |
+| SPEC-C2 | Pending | Pending | Pending | Pending | Pending | Pending(allowed-tools enforce + Settings UI) | 可与 C1 并行 worktree。 |
 
 ### v2.5(apiToken 链清理,≥ 5 minor + ≥ 2026-11-29)
 

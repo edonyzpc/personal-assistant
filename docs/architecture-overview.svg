@@ -1,0 +1,195 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 920" width="1200" height="920">
+  <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    .title { font-size: 18px; font-weight: 700; fill: #111827; }
+    .subtitle { font-size: 12px; fill: #6b7280; }
+    .layer-label { font-size: 11px; font-weight: 600; fill: #6b7280; letter-spacing: 0.5px; }
+    .node-title { font-size: 12px; font-weight: 600; fill: #111827; }
+    .node-sub { font-size: 10px; fill: #6b7280; }
+    .node-icon { font-size: 14px; }
+    .legend-text { font-size: 11px; fill: #6b7280; }
+  </style>
+  <defs>
+    <marker id="arr-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker>
+    <marker id="arr-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#059669"/></marker>
+    <marker id="arr-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#ea580c"/></marker>
+    <marker id="arr-purple" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#9333ea"/></marker>
+    <marker id="arr-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#6b7280"/></marker>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="112%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.06"/></filter>
+  </defs>
+  <rect width="1200" height="920" fill="#ffffff"/>
+  <text x="600" y="28" text-anchor="middle" class="title">Obsidian Personal Assistant — System Architecture</text>
+  <text x="600" y="44" text-anchor="middle" class="subtitle">v2.2.0-beta.1 | 6-Layer Architecture | TypeScript + React + SQLite/WASM</text>
+  <!-- External: User -->
+  <circle cx="65" cy="72" r="10" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
+  <path d="M 51,106 Q 51,86 65,86 Q 79,86 79,106" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.2"/>
+  <text x="65" y="118" text-anchor="middle" class="node-sub">User</text>
+  <!-- External: Obsidian Host API -->
+  <rect x="130" y="60" width="520" height="52" rx="8" fill="#f9fafb" stroke="#d1d5db" stroke-width="1.5" stroke-dasharray="6,3"/>
+  <text x="390" y="82" text-anchor="middle" class="node-title">Obsidian Host API</text>
+  <text x="390" y="98" text-anchor="middle" class="node-sub">Vault | Workspace | MetadataCache | SecretStorage | MarkdownRenderer</text>
+  <!-- External: LLM Providers -->
+  <rect x="680" y="60" width="480" height="52" rx="10" fill="#faf5ff" stroke="#c084fc" stroke-width="2.5"/>
+  <rect x="683" y="63" width="474" height="46" rx="8" fill="none" stroke="#e9d5ff" stroke-width="0.8" opacity="0.5"/>
+  <text x="920" y="82" text-anchor="middle" class="node-icon">&#x26A1;</text>
+  <text x="920" y="98" text-anchor="middle" class="node-title">LLM Providers: Qwen/DashScope | OpenAI | Custom</text>
+  <!-- Layer 6: Plugin Shell -->
+  <rect x="40" y="130" width="1120" height="55" rx="8" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="55" y="148" class="layer-label">L6 PLUGIN SHELL</text>
+  <rect x="210" y="137" width="740" height="40" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="580" y="157" text-anchor="middle" class="node-title">PluginManager extends Plugin</text>
+  <text x="580" y="170" text-anchor="middle" class="node-sub">Lifecycle | 20+ Commands | Vault Events | View Registration</text>
+  <!-- Layer 5: Feature Modules -->
+  <rect x="40" y="200" width="1120" height="90" rx="8" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="55" y="218" class="layer-label">L5 FEATURE MODULES</text>
+  <rect x="60" y="225" width="200" height="55" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="160" y="248" text-anchor="middle" class="node-title">Chat View</text>
+  <text x="160" y="262" text-anchor="middle" class="node-sub">Dialog UI | IndexedDB History</text>
+  <rect x="280" y="225" width="380" height="55" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5"/>
+  <text x="470" y="245" text-anchor="middle" class="node-title">Pagelet Review Assistant (Beta)</text>
+  <text x="470" y="259" text-anchor="middle" class="node-sub">Pet FSM | Bubble | Panel | Tab | PreloadEngine</text>
+  <text x="470" y="273" text-anchor="middle" class="node-sub">Scope Resolver | Review Model | Research Manager</text>
+  <rect x="680" y="225" width="200" height="55" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="780" y="248" text-anchor="middle" class="node-title">Statistics</text>
+  <text x="780" y="262" text-anchor="middle" class="node-sub">React Dashboard | Chart.js</text>
+  <rect x="900" y="225" width="240" height="55" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="1020" y="248" text-anchor="middle" class="node-title">React Components</text>
+  <text x="1020" y="262" text-anchor="middle" class="node-sub">RecordList | Statistics.tsx</text>
+  <!-- Layer 4: AI Services -->
+  <rect x="40" y="305" width="1120" height="170" rx="8" fill="#faf5ff" stroke="#e9d5ff" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="55" y="323" class="layer-label">L4 AI SERVICES (52 files)</text>
+  <!-- AI Row 1 -->
+  <rect x="60" y="332" width="250" height="50" rx="10" fill="#faf5ff" stroke="#9333ea" stroke-width="2"/>
+  <rect x="63" y="335" width="244" height="44" rx="8" fill="none" stroke="#c084fc" stroke-width="0.8" opacity="0.5"/>
+  <text x="185" y="355" text-anchor="middle" class="node-title">PA Agent Runtime</text>
+  <text x="185" y="369" text-anchor="middle" class="node-sub">Streaming Tool-Call Loop</text>
+  <rect x="330" y="332" width="200" height="50" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="430" y="355" text-anchor="middle" class="node-title">Chat Service</text>
+  <text x="430" y="369" text-anchor="middle" class="node-sub">Dialog Orchestration</text>
+  <rect x="550" y="332" width="310" height="50" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="705" y="355" text-anchor="middle" class="node-title">Capability Registry + Policy Engine</text>
+  <text x="705" y="369" text-anchor="middle" class="node-sub">Tool Registration | Permission Strategy</text>
+  <rect x="880" y="332" width="260" height="50" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="1010" y="355" text-anchor="middle" class="node-title">Query Rewriter</text>
+  <text x="1010" y="369" text-anchor="middle" class="node-sub">LLM-powered Query Rewrite</text>
+  <!-- AI Row 2 -->
+  <rect x="60" y="395" width="350" height="65" rx="6" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="235" y="414" text-anchor="middle" class="node-title">Built-in Tools (10)</text>
+  <text x="235" y="428" text-anchor="middle" class="node-sub">searchMemory | inspectNote | listRecent | searchMetadata</text>
+  <text x="235" y="442" text-anchor="middle" class="node-sub">searchSnippets | listTags | readOutline | readCanvas</text>
+  <text x="235" y="456" text-anchor="middle" class="node-sub">currentNoteContext | loadSkillContext</text>
+  <rect x="430" y="395" width="350" height="65" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+  <text x="605" y="414" text-anchor="middle" class="node-title">Built-in Skills (7)</text>
+  <text x="605" y="428" text-anchor="middle" class="node-sub">obsidian-markdown | obsidian-bases | json-canvas</text>
+  <text x="605" y="442" text-anchor="middle" class="node-sub">frontmatter-audit | callout-cleanup</text>
+  <text x="605" y="456" text-anchor="middle" class="node-sub">vault-link-health | plugin-config-review</text>
+  <rect x="800" y="395" width="340" height="65" rx="6" fill="#fff7ed" stroke="#fed7aa" stroke-width="1.5"/>
+  <text x="970" y="414" text-anchor="middle" class="node-title">Write Action Framework v1</text>
+  <text x="970" y="432" text-anchor="middle" class="node-sub">4-Gate Pipeline:</text>
+  <text x="970" y="446" text-anchor="middle" class="node-sub">Target Confine | Preview | Stale Check | Execute</text>
+  <!-- Layer 3: Core Domain -->
+  <rect x="40" y="490" width="1120" height="80" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="55" y="508" class="layer-label">L3 CORE DOMAIN</text>
+  <rect x="60" y="515" width="420" height="46" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="270" y="536" text-anchor="middle" class="node-title">VSS / Memory (Vector Semantic Search)</text>
+  <text x="270" y="550" text-anchor="middle" class="node-sub">SQLite WASM Worker | FTS5 | RRF Fusion | Hybrid Retrieval</text>
+  <rect x="500" y="515" width="260" height="46" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="630" y="536" text-anchor="middle" class="node-title">Settings</text>
+  <text x="630" y="550" text-anchor="middle" class="node-sub">40+ Fields | PageletSettings nested</text>
+  <rect x="780" y="515" width="360" height="46" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="960" y="536" text-anchor="middle" class="node-title">Memory Manager</text>
+  <text x="960" y="550" text-anchor="middle" class="node-sub">Index Maintenance | Dirty Tracking | Reconciliation</text>
+  <!-- Layer 2: Shared -->
+  <rect x="40" y="585" width="1120" height="55" rx="8" fill="#fce4ec" stroke="#f48fb1" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="55" y="603" class="layer-label">L2 SHARED</text>
+  <rect x="60" y="610" width="340" height="22" rx="4" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="230" y="625" text-anchor="middle" class="node-sub" style="font-weight:600">Locales (EN + ZH)</text>
+  <rect x="420" y="610" width="340" height="22" rx="4" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="590" y="625" text-anchor="middle" class="node-sub" style="font-weight:600">Types (WASM / Manifest / Globals)</text>
+  <rect x="780" y="610" width="360" height="22" rx="4" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="960" y="625" text-anchor="middle" class="node-sub" style="font-weight:600">Shared (Security Constants)</text>
+  <!-- Layer 1: Platform -->
+  <rect x="40" y="655" width="1120" height="55" rx="8" fill="#f5f5f5" stroke="#9e9e9e" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="55" y="673" class="layer-label">L1 PLATFORM</text>
+  <rect x="280" y="665" width="640" height="36" rx="6" fill="#ffffff" stroke="#d1d5db" stroke-width="1"/>
+  <text x="600" y="685" text-anchor="middle" class="node-title">platform-dom.ts</text>
+  <text x="600" y="696" text-anchor="middle" class="node-sub">DOM | Timer | Storage | Crypto | Events (activeWindow > window > self)</text>
+  <!-- External Bottom: Storage -->
+  <ellipse cx="300" cy="740" rx="60" ry="12" fill="#dcfce7" stroke="#86efac" stroke-width="1.5"/>
+  <rect x="240" y="740" width="120" height="35" fill="#dcfce7" stroke="none"/>
+  <line x1="240" y1="740" x2="240" y2="775" stroke="#86efac" stroke-width="1.5"/>
+  <line x1="360" y1="740" x2="360" y2="775" stroke="#86efac" stroke-width="1.5"/>
+  <ellipse cx="300" cy="775" rx="60" ry="12" fill="#bbf7d0" stroke="#86efac" stroke-width="1.5"/>
+  <text x="300" y="757" text-anchor="middle" class="node-title">OPFS</text>
+  <text x="300" y="800" text-anchor="middle" class="node-sub">Vector Persistence</text>
+  <ellipse cx="600" cy="740" rx="60" ry="12" fill="#dbeafe" stroke="#93c5fd" stroke-width="1.5"/>
+  <rect x="540" y="740" width="120" height="35" fill="#dbeafe" stroke="none"/>
+  <line x1="540" y1="740" x2="540" y2="775" stroke="#93c5fd" stroke-width="1.5"/>
+  <line x1="660" y1="740" x2="660" y2="775" stroke="#93c5fd" stroke-width="1.5"/>
+  <ellipse cx="600" cy="775" rx="60" ry="12" fill="#bfdbfe" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="600" y="757" text-anchor="middle" class="node-title">IndexedDB</text>
+  <text x="600" y="800" text-anchor="middle" class="node-sub">Chat History</text>
+  <ellipse cx="900" cy="740" rx="60" ry="12" fill="#ede9fe" stroke="#c084fc" stroke-width="1.5"/>
+  <rect x="840" y="740" width="120" height="35" fill="#ede9fe" stroke="none"/>
+  <line x1="840" y1="740" x2="840" y2="775" stroke="#c084fc" stroke-width="1.5"/>
+  <line x1="960" y1="740" x2="960" y2="775" stroke="#c084fc" stroke-width="1.5"/>
+  <ellipse cx="900" cy="775" rx="60" ry="12" fill="#ddd6fe" stroke="#c084fc" stroke-width="1.5"/>
+  <text x="900" y="757" text-anchor="middle" class="node-title">Vault Files</text>
+  <text x="900" y="800" text-anchor="middle" class="node-sub">Source of Truth</text>
+  <!-- === ARROWS === -->
+  <path d="M 580,130 L 390,112" stroke="#6b7280" stroke-width="1.5" fill="none" marker-end="url(#arr-gray)"/>
+  <path d="M 580,185 L 580,200" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#arr-blue)"/>
+  <path d="M 160,280 L 160,305 L 430,305 L 430,332" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#arr-blue)"/>
+  <rect x="254" y="298" width="80" height="14" rx="2" fill="#ffffff" opacity="0.95"/>
+  <text x="294" y="309" text-anchor="middle" class="node-sub" fill="#2563eb">delegates</text>
+  <path d="M 330,357 L 310,357" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#arr-blue)"/>
+  <path d="M 310,367 L 310,382 L 705,382 L 705,382" stroke="#ea580c" stroke-width="1.5" fill="none" marker-end="url(#arr-orange)"/>
+  <rect x="466" y="374" width="80" height="14" rx="2" fill="#ffffff" opacity="0.95"/>
+  <text x="506" y="386" text-anchor="middle" class="node-sub" fill="#ea580c">dispatch</text>
+  <path d="M 185,382 L 185,395" stroke="#ea580c" stroke-width="1.5" fill="none" marker-end="url(#arr-orange)"/>
+  <path d="M 235,460 L 235,475 L 270,475 L 270,515" stroke="#059669" stroke-width="1.5" fill="none" marker-end="url(#arr-green)"/>
+  <rect x="232" y="487" width="76" height="14" rx="2" fill="#ffffff" opacity="0.95"/>
+  <text x="270" y="498" text-anchor="middle" class="node-sub" fill="#059669">search</text>
+  <path d="M 470,280 L 470,305 L 185,305 L 185,332" stroke="#9333ea" stroke-width="1.5" fill="none" marker-end="url(#arr-purple)"/>
+  <rect x="290" y="298" width="80" height="14" rx="2" fill="#ffffff" opacity="0.95"/>
+  <text x="330" y="309" text-anchor="middle" class="node-sub" fill="#9333ea">analyze</text>
+  <path d="M 580,280 L 580,305 L 970,305 L 970,395" stroke="#ea580c" stroke-width="1.2" fill="none" marker-end="url(#arr-orange)" stroke-dasharray="5,3"/>
+  <rect x="730" y="298" width="55" height="14" rx="2" fill="#ffffff" opacity="0.95"/>
+  <text x="757" y="309" text-anchor="middle" class="node-sub" fill="#ea580c">write</text>
+  <path d="M 960,561 L 480,561 L 480,561" stroke="#059669" stroke-width="1.5" fill="none" marker-end="url(#arr-green)" stroke-dasharray="5,3"/>
+  <rect x="680" y="553" width="80" height="14" rx="2" fill="#ffffff" opacity="0.95"/>
+  <text x="720" y="565" text-anchor="middle" class="node-sub" fill="#059669">maintain</text>
+  <path d="M 1010,332 L 1010,305 L 1100,305 L 1100,112" stroke="#9333ea" stroke-width="1.5" fill="none" marker-end="url(#arr-purple)"/>
+  <rect x="1062" y="198" width="76" height="14" rx="2" fill="#ffffff" opacity="0.95"/>
+  <text x="1100" y="210" text-anchor="middle" class="node-sub" fill="#9333ea">API call</text>
+  <path d="M 270,561 L 270,585 L 270,640 L 300,640 L 300,728" stroke="#059669" stroke-width="1.5" fill="none" marker-end="url(#arr-green)" stroke-dasharray="5,3"/>
+  <path d="M 160,280 L 160,290 L 80,290 L 80,730 L 540,730 L 540,740" stroke="#2563eb" stroke-width="1" fill="none" marker-end="url(#arr-blue)" stroke-dasharray="4,2"/>
+  <!-- Legend -->
+  <rect x="40" y="825" width="1120" height="80" rx="6" fill="#f9fafb" stroke="#e5e7eb" stroke-width="1"/>
+  <text x="60" y="845" class="layer-label">LEGEND</text>
+  <line x1="60" y1="862" x2="90" y2="862" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arr-blue)"/>
+  <text x="96" y="866" class="legend-text">Primary data flow</text>
+  <line x1="250" y1="862" x2="280" y2="862" stroke="#ea580c" stroke-width="1.5" marker-end="url(#arr-orange)"/>
+  <text x="286" y="866" class="legend-text">Control / dispatch</text>
+  <line x1="440" y1="862" x2="470" y2="862" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)"/>
+  <text x="476" y="866" class="legend-text">Memory read</text>
+  <line x1="600" y1="862" x2="630" y2="862" stroke="#059669" stroke-width="1.5" marker-end="url(#arr-green)" stroke-dasharray="5,3"/>
+  <text x="636" y="866" class="legend-text">Memory write</text>
+  <line x1="770" y1="862" x2="800" y2="862" stroke="#9333ea" stroke-width="1.5" marker-end="url(#arr-purple)"/>
+  <text x="806" y="866" class="legend-text">LLM / AI flow</text>
+  <line x1="940" y1="862" x2="970" y2="862" stroke="#6b7280" stroke-width="1.5" marker-end="url(#arr-gray)"/>
+  <text x="976" y="866" class="legend-text">Host API</text>
+  <rect x="60" y="878" width="14" height="14" rx="2" fill="#fff7ed" stroke="#fed7aa" stroke-width="1"/>
+  <text x="80" y="890" class="legend-text">Plugin Shell</text>
+  <rect x="170" y="878" width="14" height="14" rx="2" fill="#eff6ff" stroke="#bfdbfe" stroke-width="1"/>
+  <text x="190" y="890" class="legend-text">Features</text>
+  <rect x="260" y="878" width="14" height="14" rx="2" fill="#faf5ff" stroke="#e9d5ff" stroke-width="1"/>
+  <text x="280" y="890" class="legend-text">AI Services</text>
+  <rect x="370" y="878" width="14" height="14" rx="2" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+  <text x="390" y="890" class="legend-text">Core Domain</text>
+  <rect x="480" y="878" width="14" height="14" rx="2" fill="#fce4ec" stroke="#f48fb1" stroke-width="1"/>
+  <text x="500" y="890" class="legend-text">Shared</text>
+  <rect x="560" y="878" width="14" height="14" rx="2" fill="#f5f5f5" stroke="#9e9e9e" stroke-width="1"/>
+  <text x="580" y="890" class="legend-text">Platform</text>
+  <text x="700" y="890" class="legend-text">Total: ~202 src files | 90+ test files | Coverage: 80%+</text>
+</svg>
