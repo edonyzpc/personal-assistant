@@ -56,7 +56,7 @@ Commit HEAD's 16 uncommitted Pagelet files — all are review decision execution
 
 - Featured Images: `addCommand` 改 `checkCallback`, gate `aiProvider === 'qwen'`
 - Memory advanced: 验证已被 `showAdvancedMemoryControls` toggle 守卫
-- `make deploy` + Obsidian 命令面板 smoke
+- Automated checks completed; Obsidian deploy/smoke is tracked in Post-Merge Gates below.
 
 ### Post-Merge Gates (SPEC-B2)
 
@@ -82,7 +82,7 @@ master ─── feat/sqlite-org-spike (不合入 v2.2)
 - **验证项**: `@sqlite.org` 初始化 + OPFS 兼容 + JS brute-force 性能 + iOS 内存
 - **产出**: 结论写入 `sdd-sqliteai-supplier-migration.md` Phase 1
 
-> **Spike 状态**: ✅ Done (2893b57, merged 54bbc00)。结论: 推荐迁移。报告: `tmp/sqlite-spike-report.md`
+> **Spike 状态**: ✅ Done (2893b57, merged 54bbc00)。结论: 推荐迁移。报告: [`sqlite-wasm-spike-report.md`](./sqlite-wasm-spike-report.md)
 
 ---
 

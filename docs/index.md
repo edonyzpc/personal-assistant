@@ -22,6 +22,7 @@ These documents may still drive runtime work or future release gates:
 - [Command palette cleanup](./sdd-command-palette-cleanup.md)
 - [Dependency pruning](./sdd-dependency-pruning.md)
 - [SQLite WASM supplier migration](./sdd-sqliteai-supplier-migration.md)
+- [SQLite WASM spike report](./sqlite-wasm-spike-report.md)
 - [API token cleanup](./sdd-apitoken-cleanup.md)
 - [React to Preact evaluation placeholder](./sdd-react-preact-evaluation.md)
 - [SDD rollout plan](./sdd-rollout-plan.md)

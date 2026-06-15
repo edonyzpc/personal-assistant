@@ -1,4 +1,4 @@
-# SPEC-A6 Spike: @sqlite.org/sqlite-wasm Compatibility
+# SPEC-A6 Spike: SQLite WASM Compatibility
 
 **Date**: 2026-06-15
 **Scope**: Verify whether `@sqlite.org/sqlite-wasm` can replace `@sqliteai/sqlite-wasm` for the v2.3 migration.
