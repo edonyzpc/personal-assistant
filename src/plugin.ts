@@ -484,7 +484,9 @@ export class PluginManager extends Plugin {
         this.addCommand({
             id: 'ai-assistant-featured-images',
             name: this.t("plugin.command.aiFeaturedImages"),
-            editorCallback: async (editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+            editorCheckCallback: (checking, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
+                if (this.settings.aiProvider !== 'qwen') return false;
+                if (checking) return true;
                 if (!this.ensureAIConfigured()) return;
                 const sel = editor.getSelection();
                 const v = editor.getValue();
@@ -493,7 +495,7 @@ export class PluginManager extends Plugin {
                 if (view instanceof MarkdownView) {
                     this.log("invoking LLM");
                     const helper = new AssistantFeaturedImageHelper(this.app, this, editor, view);
-                    await helper.generate();
+                    void helper.generate();
                 }
             }
         });
