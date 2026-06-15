@@ -53,6 +53,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 excludedFolders: [],
                 excludedTags: [],
                 excludedPatterns: [],
+                onboardingShown: true,
             },
         },
         log: jest.fn(),
@@ -75,6 +76,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         }),
         writeReviewNote: async () => ({ success: true, filePath: ".pagelet/test.md" }),
         saveSettings: () => undefined,
+        updatePageletSetting: jest.fn(),
         openPageletDetailView: () => undefined,
         ...overrides,
     };

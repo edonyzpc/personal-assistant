@@ -211,6 +211,7 @@ export class PluginManager extends Plugin {
     private pageletCommandsRegistered = false;
     private pageletFocusCommandRegistered = false;
     private pageletBackgroundPreparationNoticeSurfacedThisBoot = false;
+    private pageletRateLimiterInstance: PageletRateLimiter | null = null;
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
      * was coerced to the default by the now-stricter validator. Consumed once
@@ -654,6 +655,7 @@ export class PluginManager extends Plugin {
             }
             this.pageletRuntime = null;
         }
+        this.pageletRateLimiterInstance = null;
     }
 
     private pageletCommandCallbacks(): PageletCommandCallbacks {
@@ -788,7 +790,7 @@ export class PluginManager extends Plugin {
                                 maxOutputTokens: this.settings.pagelet.maxOutputTokens,
                             },
                             costTracker: this.pageletCostTracker,
-                            rateLimiter: this.createPageletRateLimiter(),
+                            rateLimiter: this.getPageletRateLimiter(),
                             providerForPricing: this.settings.aiProvider,
                             modelForPricing: this.settings.chatModelName,
                             userMessageLocale: this.getPageletLocale(),
@@ -858,19 +860,26 @@ export class PluginManager extends Plugin {
                     return { text, tokenCost: { input: inputTokens, output: outputTokens } };
                 };
             },
+            updatePageletSetting: (key, value) => {
+                (this.settings.pagelet as unknown as Record<string, unknown>)[key] = value;
+                void this.saveSettings();
+            },
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
             openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
         };
     }
 
-    private createPageletRateLimiter(): PageletRateLimiter {
-        return new PageletRateLimiter({
-            storage: this.createPageletRateLimitStorage(),
-            config: {
-                hourlyCap: this.settings.pagelet.foregroundPerHourCap,
-                dailyCap: this.settings.pagelet.foregroundPerDayCap,
-            },
-        });
+    private getPageletRateLimiter(): PageletRateLimiter {
+        if (!this.pageletRateLimiterInstance) {
+            this.pageletRateLimiterInstance = new PageletRateLimiter({
+                storage: this.createPageletRateLimitStorage(),
+                config: {
+                    hourlyCap: this.settings.pagelet.foregroundPerHourCap,
+                    dailyCap: this.settings.pagelet.foregroundPerDayCap,
+                },
+            });
+        }
+        return this.pageletRateLimiterInstance;
     }
 
     private createPageletRateLimitStorage(): PageletRateLimitStorage {
@@ -908,7 +917,7 @@ export class PluginManager extends Plugin {
     }
 
     private async reservePageletRateLimitSlot(): Promise<void> {
-        const decision = await this.createPageletRateLimiter().reserve();
+        const decision = await this.getPageletRateLimiter().reserve();
         if (decision.ok) return;
         const key = decision.reason === "hr-cap"
             ? "pagelet.errors.rate_limit_hourly"

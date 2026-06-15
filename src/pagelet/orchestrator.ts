@@ -14,6 +14,9 @@
  *
  * Coordinates Pet, Bubble, Panel, Tab, background preparation,
  * foreground review, and periodic summary.
+ *
+ * Analysis-session state is delegated to {@link AnalysisSessionManager}.
+ * Note-saving logic is delegated to {@link ReviewNoteSaveFlow}.
  */
 
 import { Notice } from "obsidian";
@@ -22,16 +25,16 @@ import type { App, EventRef, MarkdownView, TFile, WorkspaceLeaf } from "obsidian
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 import {
     clearPlatformTimeout,
-    eventPathContainsSelector,
     getOptionalPlatformDocument,
     getPlatformDocument,
     setPlatformTimeout,
     type PlatformTimeoutHandle,
 } from "../platform-dom";
+import { isObsidianModalOpen } from "./dom-utils";
 
 import type { BubbleContent, BubbleFinding } from "./bubble/types";
 import { BubbleView } from "./bubble/BubbleView";
-import { buildEmptyContent, buildNudgeContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
+import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
 import type { PanelFinding, PanelLayoutType, PanelOpenExtra, PanelScopeState } from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
@@ -46,24 +49,20 @@ import { ReviewNoteGenerator } from "./output/ReviewNoteGenerator";
 import type { GenerateCallback, GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
 import {
-    assembleReviewNote,
-    buildReviewMetadata,
     formatPageletDate,
-    formatPageletIsoTimestamp,
 } from "./pa-review-file-io";
-import { PAGELET_SCHEMA_VERSION, type PageletReviewResult } from "./pa-review-schemas";
 import { ChangeDetector } from "./scope/ChangeDetector";
 import { ScopeResolver } from "./scope/ScopeResolver";
 import {
-    applyPageletScopeToggle,
-    buildPageletScopePlan,
     selectPageletScope,
     type PageletReviewRange,
-    type PageletScopePlan,
 } from "./scope";
 import { getPageletOverlayRoot } from "./overlay-root";
 import { ResearchManager } from "./research";
 import type { PageletDetailPayload } from "./tab/types";
+
+import { AnalysisSessionManager } from "./AnalysisSessionManager";
+import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 
 // ---------------------------------------------------------------------------
 // Host interface
@@ -106,6 +105,7 @@ export interface PageletHost {
             excludedFolders: string[];
             excludedTags: string[];
             excludedPatterns: string[];
+            onboardingShown: boolean;
         };
     };
 
@@ -133,6 +133,12 @@ export interface PageletHost {
     /** Write a review note through the Pagelet write framework. */
     writeReviewNote(note: GeneratedReviewNote): Promise<WriteResult>;
 
+    /** Update a pagelet setting and persist to disk. */
+    updatePageletSetting<K extends keyof PageletHost["settings"]["pagelet"]>(
+        key: K,
+        value: PageletHost["settings"]["pagelet"][K],
+    ): void;
+
     /** Persist current settings to disk. */
     saveSettings(): Promise<void> | void;
 
@@ -151,24 +157,31 @@ export class PageletOrchestrator {
     private panelView: PanelView | null = null;
     private preloadEngine: PreloadEngine | null = null;
     private preloadUnsubscribe: (() => void) | null = null;
-    private lastAnalysisFindings: PanelFinding[] = [];
-    private lastAnalysisSourcePath: string | null = null;
-    private currentScopeRange: PageletReviewRange = "current";
-    private currentScopePlan: PageletScopePlan | null = null;
-    private pendingReviewNote: GeneratedReviewNote | null = null;
     private currentPanelLayout: PanelLayoutType | null = null;
     private readonly handleEscape: (e: KeyboardEvent) => void;
     private readonly preloadCache: PreloadCache;
     private readonly preloadBudget: PreloadBudget;
-    private readonly foregroundBudget: PreloadBudget;
-    private foregroundRunInProgress = false;
     private readonly changeDetector: ChangeDetector;
     private readonly scopeResolver: ScopeResolver;
     private readonly proactiveHints: ProactiveHints;
     private readonly researchManager: ResearchManager;
-    private saveInProgress = false;
-    private foregroundRunSeq = 0;
     private escapeListenerDocument: Document | null = null;
+
+    // ---- Delegates --------------------------------------------------------
+    private readonly sessionManager: AnalysisSessionManager;
+    private readonly saveFlow: ReviewNoteSaveFlow;
+
+    /**
+     * Proxy for the scope range held in the session manager.
+     * Kept on the orchestrator so existing internal tests that set this
+     * field via type-coercion continue to work unchanged.
+     */
+    private get currentScopeRange(): PageletReviewRange {
+        return this.sessionManager.scopeRange;
+    }
+    private set currentScopeRange(value: PageletReviewRange) {
+        this.sessionManager.scopeRange = value;
+    }
 
     // ---- State ------------------------------------------------------------
     private idleTimer: PlatformTimeoutHandle | null = null;
@@ -190,7 +203,7 @@ export class PageletOrchestrator {
             s.preloadPerHourCap,
             s.preloadPerDayCap,
         );
-        this.foregroundBudget = new PreloadBudget(
+        const foregroundBudget = new PreloadBudget(
             s.foregroundPerHourCap,
             s.foregroundPerDayCap,
         );
@@ -201,6 +214,17 @@ export class PageletOrchestrator {
             excludedPatterns: [...s.excludedPatterns],
             maxFileSizeBytes: 100 * 1024,
             reviewsFolder: s.reviewsFolder,
+        });
+
+        // Delegate: analysis session manager
+        this.sessionManager = new AnalysisSessionManager(host, foregroundBudget);
+
+        // Delegate: review note save flow
+        this.saveFlow = new ReviewNoteSaveFlow(host, {
+            petTransition: (event) => this.petView?.stateMachine.transition(event),
+            petFlashError: () => this.petView?.flashError(),
+            closePanel: () => this.panelView?.close(),
+            getAnalysisSourcePath: () => this.sessionManager.analysisSourcePath,
         });
 
         // Proactive hints
@@ -220,7 +244,7 @@ export class PageletOrchestrator {
         // Bound Escape handler for cleanup
         this.handleEscape = (e: KeyboardEvent) => {
             if (e.key !== "Escape") return;
-            if (this.saveInProgress || isObsidianModalOpen(e)) return;
+            if (this.saveFlow.isSaveInProgress || isObsidianModalOpen(e)) return;
             if (this.panelView?.isOpen) {
                 this.panelView.close();
                 e.stopPropagation();
@@ -267,7 +291,7 @@ export class PageletOrchestrator {
         // 1b. Create PanelView (lazy-mounted on first open)
         this.panelView = new PanelView({
             app: this.host.app,
-            locale: getPageletUiLanguage(),
+            getLocale: () => getPageletUiLanguage(),
             callbacks: {
                 onExpandToTab: () => this.expandPanelToTab(),
                 onClose: () => {
@@ -278,8 +302,14 @@ export class PageletOrchestrator {
                 onSaveAsReviewNote: (findings) => { void this.saveFindingsAsReviewNote(findings); },
                 onRunReview: () => this.reviewCurrentNote({ preferPanel: true }),
                 onRunSelectedReview: () => this.reviewSelectedScope(),
-                onScopeRangeChange: (range) => this.handleScopeRangeChange(range),
-                onScopeCandidateToggle: (path, included) => this.handleScopeCandidateToggle(path, included),
+                onScopeRangeChange: (range) => {
+                    this.sessionManager.handleScopeRangeChange(range);
+                    this.refreshReviewPanel();
+                },
+                onScopeCandidateToggle: (path, included) => {
+                    this.sessionManager.handleScopeCandidateToggle(path, included);
+                    this.refreshReviewPanel();
+                },
                 onRelatedNoteClick: (noteName) => this.handleRelatedNoteClick(noteName),
                 onResearchFinding: (finding) => this.handleResearchFinding(finding),
                 onToggleHints: () => this.toggleProactiveHints(),
@@ -304,25 +334,25 @@ export class PageletOrchestrator {
         this.host.registerEvent(
             this.host.app.vault.on("modify", (file) => {
                 if (file.path.endsWith(".md")) {
-                    this.invalidateScopePlan();
+                    this.sessionManager.invalidateScopePlan();
                     this.handleNoteActivity();
                 }
             }),
         );
         this.host.registerEvent(
             this.host.app.vault.on("create", (file) => {
-                if (file.path.endsWith(".md")) this.invalidateScopePlan();
+                if (file.path.endsWith(".md")) this.sessionManager.invalidateScopePlan();
             }),
         );
         this.host.registerEvent(
             this.host.app.vault.on("delete", (file) => {
-                if (file.path.endsWith(".md")) this.invalidateScopePlan();
+                if (file.path.endsWith(".md")) this.sessionManager.invalidateScopePlan();
             }),
         );
         this.host.registerEvent(
             this.host.app.vault.on("rename", (file, oldPath) => {
                 if (file.path.endsWith(".md") || oldPath.endsWith(".md")) {
-                    this.invalidateScopePlan();
+                    this.sessionManager.invalidateScopePlan();
                 }
             }),
         );
@@ -379,7 +409,7 @@ export class PageletOrchestrator {
         const s = this.host.settings.pagelet;
 
         this.preloadBudget.updateLimits(s.preloadPerHourCap, s.preloadPerDayCap);
-        this.foregroundBudget.updateLimits(s.foregroundPerHourCap, s.foregroundPerDayCap);
+        this.sessionManager.syncBudget();
         this.scopeResolver.updateConfig({
             excludedFolders: [...s.excludedFolders],
             excludedTags: [...s.excludedTags],
@@ -387,7 +417,7 @@ export class PageletOrchestrator {
             maxFileSizeBytes: 100 * 1024,
             reviewsFolder: s.reviewsFolder,
         });
-        this.invalidateScopePlan();
+        this.sessionManager.invalidateScopePlan();
         this.proactiveHints.updateConfig({
             enabled: s.proactiveHints,
             cooldownMinutes: s.proactiveHintsCooldown,
@@ -460,7 +490,7 @@ export class PageletOrchestrator {
     }
 
     private async reviewSelectedScope(): Promise<void> {
-        const plan = this.ensureScopePlan();
+        const plan = this.sessionManager.ensureScopePlan();
         if (!plan) {
             new Notice(this.t("pagelet.notice.noNotesInRange"), 4000);
             return;
@@ -483,25 +513,14 @@ export class PageletOrchestrator {
         });
     }
 
-    private handleScopeRangeChange(range: PageletReviewRange): void {
-        this.currentScopeRange = range;
-        this.currentScopePlan = this.buildScopePlan(range);
-        this.clearAnalysisSession();
-        this.refreshReviewPanel();
-    }
-
-    private handleScopeCandidateToggle(path: string, included: boolean): void {
-        const plan = this.ensureScopePlan();
-        if (!plan) return;
-        this.currentScopePlan = applyPageletScopeToggle(plan, path, included);
-        this.clearAnalysisSession();
-        this.refreshReviewPanel();
-    }
-
     private refreshReviewPanel(): void {
         this.currentPanelLayout = "review";
-        this.pendingReviewNote = null;
-        this.panelView?.open("review", this.defaultReviewPanelFindings(), this.panelExtraForLayout("review"));
+        this.saveFlow.clearPending();
+        this.panelView?.open(
+            "review",
+            this.sessionManager.defaultReviewPanelFindings(this.currentPanelLayout),
+            this.sessionManager.panelExtraForLayout("review"),
+        );
     }
 
     // ======================================================================
@@ -519,7 +538,7 @@ export class PageletOrchestrator {
 
         // Only mount on markdown views (D029/R1)
         if (!leaf || leaf.view?.getViewType() !== "markdown") {
-            const discarded = this.discardAnalysisSessionIfStale(null);
+            const discarded = this.sessionManager.discardAnalysisSessionIfStale(null);
             if (discarded && this.panelView?.isOpen) {
                 this.panelView.close();
             }
@@ -528,7 +547,7 @@ export class PageletOrchestrator {
         if (!this.host.settings.pagelet.petVisible) return;
 
         const markdownView = leaf.view as MarkdownView;
-        const discarded = this.discardAnalysisSessionIfStale(markdownView.file?.path ?? null);
+        const discarded = this.sessionManager.discardAnalysisSessionIfStale(markdownView.file?.path ?? null);
         if (discarded && this.panelView?.isOpen) {
             this.panelView.close();
         }
@@ -556,16 +575,8 @@ export class PageletOrchestrator {
     private handlePetClick(): void {
         if (!this.bubbleView) return;
 
-        const bubbleState = this.bubbleView.bubbleState;
-
-        // If bubble is degraded (semi-transparent), restore it
-        if (bubbleState === "degraded") {
-            this.bubbleView.restore();
-            return;
-        }
-
         // If bubble is already visible, close it (toggle)
-        if (bubbleState === "visible") {
+        if (this.bubbleView.bubbleState === "visible") {
             this.bubbleView.close();
             return;
         }
@@ -591,6 +602,16 @@ export class PageletOrchestrator {
         if (!this.bubbleView || !anchorEl) return;
 
         const locale = getPageletUiLanguage();
+
+        if (!this.host.settings.pagelet.onboardingShown) {
+            const content = buildOnboardingContent(() => {
+                this.host.updatePageletSetting("onboardingShown", true);
+                this.bubbleView?.close();
+            }, locale);
+            this.bubbleView.show(content, anchorEl);
+            return;
+        }
+
         const cachedFindings = this.preloadCache.getFindings();
 
         let content: BubbleContent;
@@ -635,7 +656,7 @@ export class PageletOrchestrator {
     }
 
     /**
-     * Scenario 2: Writing Assistance — analyze the current note and
+     * Scenario 2: Writing Assistance -- analyze the current note and
      * show context-relevant suggestions in the Bubble.
      */
     private async analyzeCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
@@ -660,52 +681,33 @@ export class PageletOrchestrator {
         },
     ): Promise<void> {
         if (files.length === 0) return;
-        if (!this.beginForegroundReviewRun()) return;
+        if (!this.sessionManager.beginForegroundReviewRun()) return;
 
-        const runSeq = ++this.foregroundRunSeq;
         this.petView?.stateMachine.transition("analysis-start");
 
         try {
-            const analyzeCallback = this.host.createForegroundAnalyzeCallback();
-            const result = await analyzeCallback(
+            const result = await this.sessionManager.analyzeFiles(
                 files,
                 {
-                    enabled: true,
-                    intervalMinutes: 0,
-                    perHourCap: this.host.settings.pagelet.foregroundPerHourCap,
-                    perDayCap: this.host.settings.pagelet.foregroundPerDayCap,
-                    tokenBudget: this.foregroundTokenBudget(),
                     range: options.range,
+                    expectedActivePath: options.expectedActivePath,
                 },
+                () => this.destroyed,
             );
 
-            if (this.destroyed || runSeq !== this.foregroundRunSeq) return;
-            if (
-                options.expectedActivePath
-                && this.host.app.workspace.getActiveFile?.()?.path !== options.expectedActivePath
-            ) {
-                this.host.log("Discarded stale Pagelet foreground result", {
-                    expectedActivePath: options.expectedActivePath,
-                    activePath: this.host.app.workspace.getActiveFile?.()?.path ?? null,
-                });
-                this.clearAnalysisSession();
+            if (!result) {
+                // Run was stale/superseded/destroyed
                 return;
             }
 
             this.petView?.stateMachine.transition("analysis-done");
 
-            // Cache results for Panel data flow. The source path guards
-            // against showing or saving stale findings after the user changes
-            // the active note.
-            this.lastAnalysisSourcePath = options.expectedActivePath ?? files[0]?.path ?? null;
-            this.lastAnalysisFindings = this.toPanelFindings(result.findings);
-
             if (options.preferPanel) {
                 this.currentPanelLayout = options.panelLayout;
                 this.panelView?.open(
                     options.panelLayout,
-                    this.lastAnalysisFindings,
-                    this.panelExtraForLayout(options.panelLayout),
+                    result.findings,
+                    this.sessionManager.panelExtraForLayout(options.panelLayout),
                 );
                 return;
             }
@@ -717,8 +719,8 @@ export class PageletOrchestrator {
             }
             const locale = getPageletUiLanguage();
 
-            if (result.findings.length > 0) {
-                const findings: BubbleFinding[] = result.findings.map((f) => ({
+            if (result.rawFindings.length > 0) {
+                const findings: BubbleFinding[] = result.rawFindings.map((f) => ({
                     text: f.text,
                     sourceLink: f.sourceFile,
                     sourceTitle: f.sourceTitle,
@@ -742,7 +744,7 @@ export class PageletOrchestrator {
             const message = error instanceof Error ? error.message : String(error);
             new Notice(message || this.t("pagelet.panel.status.actionFailed"), 5000);
         } finally {
-            this.finishForegroundReviewRun();
+            this.sessionManager.finishForegroundReviewRun();
         }
     }
 
@@ -786,94 +788,6 @@ export class PageletOrchestrator {
         };
     }
 
-    private ensureScopePlan(): PageletScopePlan | null {
-        const activePath = this.host.app.workspace.getActiveFile?.()?.path ?? null;
-        if (
-            this.currentScopePlan
-            && activePath === this.currentScopePlan.activePath
-            && this.currentScopePlan.range === this.currentScopeRange
-        ) {
-            return this.currentScopePlan;
-        }
-        this.currentScopePlan = this.buildScopePlan(this.currentScopeRange);
-        return this.currentScopePlan;
-    }
-
-    private buildScopePlan(range: PageletReviewRange): PageletScopePlan | null {
-        const activeFile = this.host.app.workspace.getActiveFile?.();
-        if (!activeFile || !activeFile.path.endsWith(".md")) return null;
-        const s = this.host.settings.pagelet;
-        return buildPageletScopePlan({
-            files: this.host.app.vault.getMarkdownFiles(),
-            activePath: activeFile.path,
-            range,
-            reviewsFolder: s.reviewsFolder,
-            excludedFolders: s.excludedFolders,
-            excludedTags: s.excludedTags,
-            excludedPatterns: s.excludedPatterns,
-            getMetadata: (path) => {
-                const file = this.host.app.vault.getAbstractFileByPath(path);
-                if (!file || !("extension" in file) || file.extension !== "md") return undefined;
-                return this.host.app.metadataCache.getFileCache(file as TFile) ?? undefined;
-            },
-        });
-    }
-
-    private invalidateScopePlan(): void {
-        this.currentScopePlan = null;
-    }
-
-    private panelExtraForLayout(layoutType: PanelLayoutType): PanelOpenExtra | undefined {
-        if (layoutType !== "review") return undefined;
-        const plan = this.ensureScopePlan();
-        if (!plan) return undefined;
-        return { scope: this.toPanelScope(plan) };
-    }
-
-    private toPanelScope(plan: PageletScopePlan): PanelScopeState {
-        const candidates = plan.candidates.map((candidate) => ({
-            path: candidate.path,
-            title: displayFileName(candidate.path),
-            reason: candidate.reason,
-            included: candidate.included,
-            locked: candidate.locked,
-            skippedReason: candidate.skippedReason,
-        }));
-        return {
-            range: plan.range,
-            candidates,
-            includedCount: candidates.filter((candidate) => candidate.included).length,
-            skippedCount: candidates.filter((candidate) => !candidate.included).length,
-            excludedReviewOutputCount: plan.excludedReviewOutputCount,
-            estimatedInputTokens: plan.estimatedInputTokens,
-        };
-    }
-
-    private toPanelFindings(findings: PreloadFinding[]): PanelFinding[] {
-        return findings.map((f) => {
-            const suggestion = f.suggestion;
-            const title = suggestion
-                ? pageletT(`pagelet.suggestion.kind.${suggestion.kind}`, getPageletUiLanguage())
-                : f.sourceTitle || f.sourceFile || "Untitled";
-            return {
-                title,
-                description: suggestion?.proposed_action ?? f.text,
-                insightText: suggestion?.rationale,
-                sourceFile: f.sourceFile,
-                sourceTitle: f.sourceTitle,
-                sourceId: suggestion?.source_id,
-                suggestion,
-                diagnostics: f.diagnostics,
-            };
-        });
-    }
-
-    private defaultReviewPanelFindings(): PanelFinding[] {
-        const current = this.currentPanelLayout === "review" ? this.currentAnalysisFindings() : [];
-        if (current.length > 0) return current;
-        return [];
-    }
-
     /** Map preload lifecycle events to Pet state transitions. */
     private handlePreloadEvent(event: PreloadEvent): void {
         switch (event.type) {
@@ -903,7 +817,7 @@ export class PageletOrchestrator {
         }
     }
 
-    /** Run the Scenario 4 periodic summary flow: scope → generate → write */
+    /** Run the Scenario 4 periodic summary flow: scope -> generate -> write */
     private async runPeriodicSummary(): Promise<void> {
         const s = this.host.settings.pagelet;
         const scopeDays = s.periodicSummaryScope === "3d" ? 3
@@ -917,7 +831,7 @@ export class PageletOrchestrator {
             return;
         }
 
-        if (!this.beginForegroundReviewRun()) return;
+        if (!this.sessionManager.beginForegroundReviewRun()) return;
 
         // 2. Show working state
         this.petView?.stateMachine.transition("analysis-start");
@@ -942,7 +856,7 @@ export class PageletOrchestrator {
             );
 
             // 4. Show preview in Panel instead of writing immediately
-            this.pendingReviewNote = note;
+            this.saveFlow.setPending(note);
             this.currentPanelLayout = "summary";
             this.petView?.stateMachine.transition("analysis-done");
             this.panelView?.open("summary", [{
@@ -959,33 +873,8 @@ export class PageletOrchestrator {
             new Notice(this.t("pagelet.periodicSummary.failedWithError", { error: msg }), 5000);
             this.host.log("Periodic summary error", error);
         } finally {
-            this.finishForegroundReviewRun();
+            this.sessionManager.finishForegroundReviewRun();
         }
-    }
-
-    private beginForegroundReviewRun(): boolean {
-        if (this.foregroundRunInProgress) {
-            new Notice(this.t("pagelet.notice.alreadyReviewing"), 4000);
-            return false;
-        }
-        if (!this.reserveForegroundReviewCall()) return false;
-        this.foregroundRunInProgress = true;
-        return true;
-    }
-
-    private finishForegroundReviewRun(): void {
-        this.foregroundRunInProgress = false;
-    }
-
-    private reserveForegroundReviewCall(): boolean {
-        const s = this.host.settings.pagelet;
-        this.foregroundBudget.updateLimits(s.foregroundPerHourCap, s.foregroundPerDayCap);
-        if (!this.foregroundBudget.canRun()) {
-            new Notice(this.t("pagelet.notice.foregroundLimit"), 5000);
-            return false;
-        }
-        this.foregroundBudget.recordCall();
-        return true;
     }
 
     private foregroundTokenBudget(): { input: number; output: number } {
@@ -1069,8 +958,7 @@ export class PageletOrchestrator {
         const nextCorner = corners[(currentIdx + 1) % corners.length];
         this.petView?.setCorner(nextCorner);
         this.bubbleView?.close();
-        this.host.settings.pagelet.petCorner = nextCorner;
-        void this.host.saveSettings();
+        this.host.updatePageletSetting("petCorner", nextCorner);
     }
 
     private toggleProactiveHints(): void {
@@ -1078,8 +966,7 @@ export class PageletOrchestrator {
         if (this.petView) {
             this.petView.stateMachine.proactiveHintsEnabled = newState;
         }
-        this.host.settings.pagelet.proactiveHints = newState;
-        void this.host.saveSettings();
+        this.host.updatePageletSetting("proactiveHints", newState);
     }
 
     /** Toggle Pet visibility. Persist the setting so it survives leaf changes and restarts. */
@@ -1088,15 +975,14 @@ export class PageletOrchestrator {
             this.petView?.destroy();
             this.petView = null;
             this.bubbleView?.close();
-            this.host.settings.pagelet.petVisible = false;
+            this.host.updatePageletSetting("petVisible", false);
         } else {
-            this.host.settings.pagelet.petVisible = true;
+            this.host.updatePageletSetting("petVisible", true);
             const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
             if (activeLeaf) {
                 this.handleLeafChange(activeLeaf);
             }
         }
-        void this.host.saveSettings();
     }
 
     /** Show a Notice with background preparation diagnostics. */
@@ -1130,16 +1016,16 @@ export class PageletOrchestrator {
             ? requestedType : "review";
         this.currentPanelLayout = layoutType;
         if (layoutType !== "summary") {
-            this.pendingReviewNote = null;
+            this.saveFlow.clearPending();
         }
         // Use current-note analysis findings only while they still match the
         // active note; otherwise fall back to background preparation cache.
-        let panelFindings = this.currentAnalysisFindings();
+        let panelFindings = this.sessionManager.currentAnalysisFindings();
         if (panelFindings.length === 0 && layoutType !== "review") {
-            panelFindings = this.toPanelFindings(this.preloadCache.getFindings());
+            panelFindings = this.sessionManager.toPanelFindings(this.preloadCache.getFindings());
         }
 
-        this.panelView?.open(layoutType, panelFindings, this.panelExtraForLayout(layoutType));
+        this.panelView?.open(layoutType, panelFindings, this.sessionManager.panelExtraForLayout(layoutType));
     }
 
     /** Expand current Panel content into a full Tab. */
@@ -1147,10 +1033,10 @@ export class PageletOrchestrator {
         this.panelView?.close();
         const locale = getPageletUiLanguage();
         const title = pageletT("pagelet.tab.title", locale);
-        const currentFindings = this.currentAnalysisFindings();
+        const currentFindings = this.sessionManager.currentAnalysisFindings();
         const findings = currentFindings.length > 0
             ? currentFindings
-            : this.toPanelFindings(this.preloadCache.getFindings());
+            : this.sessionManager.toPanelFindings(this.preloadCache.getFindings());
         void Promise.resolve(this.host.openPageletDetailView({
             title,
             content: findings,
@@ -1161,196 +1047,15 @@ export class PageletOrchestrator {
         });
     }
 
-    /** Save Panel findings as a review note via the output module. */
+    /** Save Panel findings as a review note via the save flow. */
     private async saveFindingsAsReviewNote(findings: PanelFinding[]): Promise<void> {
-        if (this.saveInProgress) {
-            new Notice(this.t("pagelet.panel.status.saving"), 3000);
-            return;
-        }
-        this.saveInProgress = true;
-        // If we have a pre-generated note from periodic summary, write it directly
-        if (this.currentPanelLayout === "summary" && this.pendingReviewNote) {
-            this.petView?.stateMachine.transition("analysis-start");
-            try {
-                const result = await this.host.writeReviewNote(this.pendingReviewNote);
-                this.petView?.stateMachine.transition("analysis-done");
-                if (result.success) {
-                    this.pendingReviewNote = null;
-                    this.panelView?.close();
-                    new Notice(this.t("pagelet.reviewNote.created", { path: result.filePath ?? "" }), 5000);
-                } else {
-                    new Notice(this.t("pagelet.reviewNote.createFailed", { error: result.error ?? "" }), 5000);
-                    this.petView?.flashError();
-                }
-            } catch (error) {
-                this.petView?.stateMachine.transition("analysis-done");
-                this.petView?.flashError();
-                this.host.log("Save pending review note failed", error);
-            } finally {
-                this.saveInProgress = false;
-            }
-            return;
-        }
-
-        // Fallback: build layout-specific review note from findings
-        if (findings.length === 0) {
-            new Notice(this.t("pagelet.notice.noFindingsToSave"), 3000);
-            this.saveInProgress = false;
-            return;
-        }
-
-        this.petView?.stateMachine.transition("analysis-start");
-
-        try {
-            const s = this.host.settings.pagelet;
-            const now = new Date();
-            const activeFile = this.host.app.workspace.getActiveFile?.();
-            const layout = this.currentPanelLayout ?? "review";
-
-            let markdown: string;
-            let fileName: string;
-            const reviewResult = this.buildReviewResultFromFindings(findings);
-            const sourcePath = this.resolveReviewSourcePath(findings, activeFile?.path);
-
-            switch (layout) {
-                case "discover": {
-                    const noteName = activeFile?.basename ?? "Unknown";
-                    markdown = this.buildCanonicalReviewMarkdown(sourcePath, reviewResult, now);
-                    fileName = `pagelet-discovery-${noteName}-${formatPageletDate(now)}.md`;
-                    break;
-                }
-                case "current": {
-                    const noteName = activeFile?.basename ?? "Unknown";
-                    markdown = this.buildCanonicalReviewMarkdown(sourcePath, reviewResult, now);
-                    fileName = `pagelet-analysis-${noteName}-${formatPageletDate(now)}.md`;
-                    break;
-                }
-                case "review":
-                default: {
-                    markdown = this.buildCanonicalReviewMarkdown(sourcePath, reviewResult, now);
-                    fileName = `pagelet-review-${formatPageletDate(now)}.md`;
-                    break;
-                }
-            }
-
-            // Write the note
-            const targetFolder = s.reviewsFolder;
-            const targetPath = `${targetFolder}/${fileName}`;
-            const result = await this.host.writeReviewNote({
-                markdown,
-                fileName,
-                targetFolder,
-                targetPath,
-                sources: findings.filter(f => f.sourceFile).map(f => `[[${f.sourceTitle || f.sourceFile}]]`),
-                tokenCost: { input: 0, output: 0 },
-            });
-
-            this.petView?.stateMachine.transition("analysis-done");
-            if (result.success) {
-                this.panelView?.close();
-                new Notice(this.t("pagelet.reviewNote.created", { path: result.filePath ?? "" }), 5000);
-            } else {
-                new Notice(this.t("pagelet.reviewNote.failed", { error: result.error ?? "" }), 5000);
-                this.petView?.flashError();
-            }
-        } catch (error) {
-            this.petView?.stateMachine.transition("analysis-done");
-            this.petView?.flashError();
-            this.host.log("Save findings failed", error);
-        } finally {
-            this.saveInProgress = false;
-        }
+        await this.saveFlow.saveFindingsAsReviewNote(findings, this.currentPanelLayout);
     }
 
     private clearPanelSession(): void {
-        if (this.saveInProgress) return;
+        if (this.saveFlow.isSaveInProgress) return;
         this.currentPanelLayout = null;
-        this.pendingReviewNote = null;
-    }
-
-    private clearAnalysisSession(): void {
-        this.lastAnalysisFindings = [];
-        this.lastAnalysisSourcePath = null;
-    }
-
-    private discardAnalysisSessionIfStale(activePath: string | null): boolean {
-        if (!this.lastAnalysisSourcePath) return false;
-        if (activePath === this.lastAnalysisSourcePath) return false;
-        this.clearAnalysisSession();
-        return true;
-    }
-
-    private currentAnalysisFindings(): PanelFinding[] {
-        const activePath = this.host.app.workspace.getActiveFile?.()?.path ?? null;
-        if (!this.lastAnalysisSourcePath) return this.lastAnalysisFindings;
-        return activePath === this.lastAnalysisSourcePath ? this.lastAnalysisFindings : [];
-    }
-
-    private resolveReviewSourcePath(findings: PanelFinding[], activePath?: string): string {
-        const active = activePath ?? null;
-        if (this.lastAnalysisSourcePath && active === this.lastAnalysisSourcePath) {
-            return this.lastAnalysisSourcePath;
-        }
-        return findings.find((finding) => finding.sourceFile)?.sourceFile
-            ?? activePath
-            ?? "pagelet";
-    }
-
-    // ------------------------------------------------------------------
-    // Layout-specific markdown builders
-    // ------------------------------------------------------------------
-
-    private buildCanonicalReviewMarkdown(
-        sourcePath: string,
-        reviewResult: PageletReviewResult,
-        date: Date,
-    ): string {
-        const metadata = buildReviewMetadata({
-            sourcePath,
-            mode: "basic",
-            detectedLanguage: reviewResult.detected_language,
-            createdAtIso: formatPageletIsoTimestamp(date),
-        });
-        return assembleReviewNote(metadata, reviewResult);
-    }
-
-    private buildReviewResultFromFindings(findings: PanelFinding[]): PageletReviewResult {
-        const detectedLanguage = getPageletUiLanguage();
-        return {
-            schema_version: PAGELET_SCHEMA_VERSION,
-            detected_language: detectedLanguage,
-            suggestions: findings.slice(0, 8).map((finding, index) => {
-                if (finding.suggestion) {
-                    return finding.suggestion;
-                }
-                return {
-                    source_id: finding.sourceId || `finding-${index + 1}`,
-                    kind: "expand",
-                    rationale: this.normalizeReviewField(
-                        finding.title || finding.sourceTitle || finding.sourceFile,
-                        detectedLanguage === "zh" ? "拾页发现了一个可改进点。" : "Pagelet found a review point.",
-                        280,
-                    ),
-                    proposed_action: this.normalizeReviewField(
-                        finding.description || finding.insightText || finding.title,
-                        detectedLanguage === "zh" ? "请根据这条发现继续完善笔记。" : "Use this finding to improve the note.",
-                        500,
-                    ),
-                    related_notes: finding.sourceTitle ? [finding.sourceTitle] : [],
-                };
-            }),
-        };
-    }
-
-    private normalizeReviewField(
-        value: string | undefined,
-        fallback: string,
-        maxLength: number,
-    ): string {
-        const normalized = (value ?? "").trim() || fallback;
-        const minLength = 8;
-        const padded = normalized.length >= minLength ? normalized : fallback;
-        return padded.length > maxLength ? padded.slice(0, maxLength) : padded;
+        this.saveFlow.clearPending();
     }
 
     /** Handle a source-link click inside the Bubble. */
@@ -1385,12 +1090,11 @@ export class PageletOrchestrator {
         const directPath = normalized.endsWith(".md") ? normalized : `${normalized}.md`;
         const direct = this.host.app.vault.getAbstractFileByPath(directPath);
         if (direct && "extension" in direct && direct.extension === "md") return direct as TFile;
-        const basename = directPath.replace(/\.md$/i, "").split("/").pop()?.toLowerCase();
+        const basename = directPath.replace(/\.md$/i, "").split("/").pop() ?? "";
         if (!basename) return null;
-        return this.host.app.vault.getMarkdownFiles().find((file) => {
-            return file.path.toLowerCase() === directPath.toLowerCase()
-                || file.basename.toLowerCase() === basename;
-        }) ?? null;
+        const resolved = this.host.app.metadataCache.getFirstLinkpathDest(basename, "");
+        if (resolved && resolved.extension === "md") return resolved;
+        return null;
     }
 
     private async handleResearchFinding(finding: PanelFinding): Promise<void> {
@@ -1412,10 +1116,6 @@ export class PageletOrchestrator {
     }
 }
 
-function displayFileName(path: string): string {
-    return path.split("/").pop()?.replace(/\.md$/i, "") || path;
-}
-
 function normalizeRelatedNoteName(noteName: string): string {
     let value = noteName.trim();
     if (value.startsWith("[[") && value.endsWith("]]")) {
@@ -1426,13 +1126,4 @@ function normalizeRelatedNoteName(noteName: string): string {
     const heading = value.indexOf("#");
     if (heading >= 0) value = value.slice(0, heading);
     return value.trim();
-}
-
-const OBSIDIAN_MODAL_SELECTOR = ".modal-container, .modal";
-
-function isObsidianModalOpen(event?: Event): boolean {
-    if (event?.defaultPrevented) return true;
-    if (event && eventPathContainsSelector(event, OBSIDIAN_MODAL_SELECTOR)) return true;
-    const doc = getOptionalPlatformDocument();
-    return Boolean(doc?.body?.querySelector(OBSIDIAN_MODAL_SELECTOR));
 }
