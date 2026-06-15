@@ -4,7 +4,7 @@
  * Pagelet — Bubble component barrel.
  *
  * Re-exports the public surface of the Bubble module:
- *   - `BubbleView`    — DOM lifecycle manager (mount/show/degrade/restore/close).
+ *   - `BubbleView`    — DOM lifecycle manager (mount/show/close).
  *   - Content builders — scenario-specific `BubbleContent` factories.
  *   - Types           — data-only interfaces consumed by both.
  */

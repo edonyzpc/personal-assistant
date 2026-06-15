@@ -602,7 +602,9 @@ export class PageletOrchestrator {
 
         const locale = getPageletUiLanguage();
 
-        if (!this.host.settings.pagelet.onboardingShown) {
+        const cachedFindings = this.preloadCache.getFindings();
+
+        if (!this.host.settings.pagelet.onboardingShown && cachedFindings.length === 0) {
             const content = buildOnboardingContent(() => {
                 this.host.updatePageletSetting("onboardingShown", true);
                 this.bubbleView?.close();
@@ -611,7 +613,9 @@ export class PageletOrchestrator {
             return;
         }
 
-        const cachedFindings = this.preloadCache.getFindings();
+        if (!this.host.settings.pagelet.onboardingShown) {
+            this.host.updatePageletSetting("onboardingShown", true);
+        }
 
         let content: BubbleContent;
         if (cachedFindings.length > 0) {

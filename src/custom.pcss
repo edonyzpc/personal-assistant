@@ -3551,7 +3551,8 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
 
 body.is-mobile .pa-pagelet-panel {
 	width: 100%;
-	height: 100%;
+	height: 100vh;
+	height: 100dvh;
 	top: 0;
 	left: 0;
 	right: 0;
@@ -3580,6 +3581,11 @@ body.is-mobile .pa-pagelet-panel-save-btn {
 
 body.is-mobile .pa-pagelet-panel-footer {
 	padding-bottom: calc(12px + env(safe-area-inset-bottom,0px));
+}
+
+body.is-mobile .pa-pagelet-panel-header-expand-btn,
+body.is-mobile .pa-pagelet-panel-expand-btn {
+	display: none;
 }
 
 body.is-mobile .pa-pagelet-panel-timeline-action-btn {

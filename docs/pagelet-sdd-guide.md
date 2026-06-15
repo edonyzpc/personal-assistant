@@ -179,21 +179,20 @@ Implementation milestones (alpha releases):
 **Dismiss behavior** (critical UX contract):
 | Action | Result |
 | --- | --- |
-| Click outside Bubble | Bubble **degrades** (semi-transparent, `opacity: 0.4`, pointer-events none) — NOT closed |
-| Click Pet again (when degraded) | Bubble **restores** to visible |
-| Press Escape | Bubble **fully closes** |
-| Click × button | Bubble **fully closes** |
+| Click outside Bubble | Bubble closes |
+| Click Pet again | Bubble reopens |
+| Press Escape | Bubble closes |
+| Click × button | Bubble closes |
 
 **CSS states**:
 ```css
 .bubble.visible    { opacity: 1; pointer-events: auto; }
-.bubble.degraded   { opacity: 0.4; pointer-events: none; }
 /* hidden: no class, default state */
 ```
 
 **Animation**:
 - Show: scale(0.9) → scale(1), translateY(8px) → 0, opacity 0 → 1 (0.25s ease).
-- Degrade: opacity transition to 0.4.
+- Close: opacity transition to 0.
 
 **Constraints**:
 - Bubble does NOT steal focus from editor.
@@ -797,8 +796,8 @@ Voice: warm, specific, careful, research-assistant-like. No exaggeration.
 - [ ] Pet correctly renders all 4 states with correct colors, animations, and SVG features.
 - [ ] Pet is fixed to configurable corner; persists corner choice across sessions.
 - [ ] Bubble opens in <200ms when cached results exist.
-- [ ] Click-outside degrades Bubble (semi-transparent). Click Pet restores it.
-- [ ] Escape / × fully closes Bubble.
+- [ ] Click-outside closes Bubble; Click Pet reopens it.
+- [ ] Escape / × closes Bubble.
 - [ ] Bubble shows max 3 relevant findings from prepared analysis.
 
 ### Background Preparation Engine
@@ -841,7 +840,7 @@ src/
 │   │   ├── PetSvg.ts           # SVG rendering, state-driven appearance
 │   │   └── PetAnimations.css   # Keyframes, state-driven animations
 │   ├── bubble/
-│   │   ├── BubbleView.ts       # Bubble DOM, positioning, degrade/restore
+│   │   ├── BubbleView.ts       # Bubble DOM, positioning, close/reopen
 │   │   └── BubbleContent.ts    # Content rendering for 4 scenarios
 │   ├── panel/
 │   │   ├── PanelView.ts        # Side panel lifecycle
@@ -888,9 +887,9 @@ src/
 
 ## Appendix: Prototype Reference
 
-The interactive prototype at `docs/pagelet-prototype.html` demonstrates:
+The interactive prototype at `docs/pagelet-prototype.html` is a historical visual reference. Its older Bubble degrade/restore behavior is superseded by the current click-outside close contract above. It still demonstrates:
 - All 4 Pet states with live switching.
-- Bubble open/degrade/restore/close lifecycle.
+- Bubble placement and visual treatment.
 - Panel with timeline layout (review), current note analysis, and discovery map.
 - Tab expansion with theme clustering and action suggestions.
 - Mobile preview mode (full-width bottom sheet Bubble, full-screen Panel).

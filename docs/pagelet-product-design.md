@@ -317,11 +317,11 @@ Tab (main window tab, full-size workspace)
 | Layer | Size | Lifespan | Output | Entry |
 | --- | --- | --- | --- | --- |
 | Pet | ~48x48px | Always present | None | — |
-| Bubble | ~280px wide, 3-5 items | Persistent until dismissed (degrades on click-outside) | None | Click Pet / hotkey |
+| Bubble | ~280px wide, 3-5 items | Persistent until dismissed | None | Click Pet / hotkey |
 | Panel | Side panel (~360px) | Session-persistent | Optional (review note) | "展开" from Bubble / command palette |
 | Tab | Full editor tab | Session-persistent | Optional (review note) | "在新标签页打开" from Panel / command palette |
 
-**Bubble dismiss behavior**: Click outside the Bubble does NOT close it — instead the Bubble degrades to a semi-transparent/minimized state. Click the Pet again to restore it. Press Escape or click the X button to fully close the Bubble. This prevents accidental loss of context.
+**Bubble dismiss behavior**: Click outside the Bubble closes it, matching Escape and the X button. Click the Pet again to reopen it.
 
 **Note on proactive hints**: When proactive hints (主动提示) are enabled and the Pet enters `nudge` state, clicking the Pet opens the Bubble as usual. Proactive hints are opt-in (OFF by default), so the default entry path is always user-initiated click or hotkey.
 
@@ -539,7 +539,7 @@ The Bubble is a lightweight, ephemeral speech bubble that appears near the Pet. 
 - Width: ~280px. Height: dynamic, up to ~320px.
 - Background: follows Obsidian theme (light/dark aware).
 - Border: 1px hand-drawn style stroke (consistent with Pet visual direction, D005).
-- Degrades to semi-transparent/minimized on: click outside. Fully dismisses on: Escape key or explicit X close button. Click Pet again to restore from degraded state.
+- Closes on: click outside, Escape key, or explicit X close button. Click Pet again to reopen.
 
 ### Content Structure
 
@@ -564,8 +564,8 @@ The Bubble is a lightweight, ephemeral speech bubble that appears near the Pet. 
 
 - Click a finding's source link -> opens the source note in the editor.
 - Click "展开" -> opens Panel with full findings.
-- Click outside -> Bubble degrades to semi-transparent/minimized state (not closed). Click Pet again to restore.
-- Press Escape or click X button -> Bubble fully closes.
+- Click outside -> Bubble closes.
+- Press Escape or click X button -> Bubble closes.
 - Bubble does not steal focus from the editor. It is a passive overlay.
 
 ---
@@ -1011,7 +1011,7 @@ Pagelet considered successful if:
 - Pet correctly reflects all 4 states (resting, idle, working, nudge).
 - Pet is fixed to a configurable corner and persists corner choice across sessions.
 - Bubble opens in under 200ms when cached results exist.
-- Bubble degrades (semi-transparent) on click-outside; X/Escape fully closes.
+- Bubble closes on click-outside, X, and Escape.
 - Proactive hints correctly toggle and respect cooldown.
 - Bubble shows 2-3 relevant findings from prepared analysis.
 
@@ -1138,7 +1138,7 @@ Pagelet considered successful if:
 | **D034** | Pet fixed corner position | Pet is fixed to a configurable corner (default bottom-right). Switchable via Settings or Command Palette. No drag, no pin, no double-click. |
 | **D035** | Periodic summary simplified flow | One-click generate replaces collect-then-write pipeline for periodic summary. Supersedes historical design Principle #4 for this scenario. |
 | **D036** | Background preparation engine cost control | Separate rate limits and token budgets for background preparation vs foreground AI calls. When enabled, background preparation defaults to 4K+1K tokens, 2/hour, 20/day. |
-| **D037** | Progressive disclosure layers | Four-layer interaction model: Pet -> Bubble -> Panel -> Tab. Each layer is self-contained. Bubble degrades on click-outside (does not close). |
+| **D037** | Progressive disclosure layers | Four-layer interaction model: Pet -> Bubble -> Panel -> Tab. Each layer is self-contained. Bubble closes on click-outside, X, and Escape. |
 | **D038** | Proactive hints (主动提示) design | Opt-in feature, OFF by default. When ON, Pet enters `nudge` state when prepared insights are ready. Cooldown, no sound, no modal, no focus steal. Respects "quiet reviewer" positioning. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. No right-click menu, no long-press context menu. |
 
@@ -1152,7 +1152,7 @@ These decisions should be formally recorded in `review-assistant-decisions.md` w
 
 - Pet fixed corner position. (D034)
 - 4-state Pet with transitions and animations.
-- Bubble design and implementation (including degrade-on-click-outside behavior).
+- Bubble design and implementation (including click-outside close behavior).
 - Background preparation engine. (D032)
 - Proactive hints (主动提示, opt-in). (D038)
 - Quick Review scenario (Scenario 1).
@@ -1199,7 +1199,7 @@ These are not Pagelet behaviors. Do NOT promote any future write or automation b
 | Mascot/Pet states | 4 (idle, thinking, done, error) | 4 (resting, idle, working, nudge) |
 | Pet position | N/A | Fixed corner (configurable), no drag |
 | Proactive hints | Rule-based reminders (badge only) | AI-driven proactive hints (opt-in, OFF by default) |
-| Bubble dismiss | N/A | Click-outside degrades; X/Escape closes |
+| Bubble dismiss | N/A | Click-outside, X, and Escape close |
 | Periodic summary | Select range -> adjust -> run -> collect -> edit -> preview -> confirm | One-click -> preview -> confirm |
 | Background review preparation | Explicitly prohibited | Performance optimization (configurable, rate-limited, `allowWrite=false`) |
 | Cost control | Unified pool | Separate background preparation and foreground pools |

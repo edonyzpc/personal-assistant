@@ -242,7 +242,7 @@
     "pagelet.pet.resting": "（休息中）",
     "pagelet.pet.nudge": "（有新发现）",
 
-    "pagelet.bubble.onboarding": "点击 Pet 查看发现，展开 Panel 深入分析。",
+    "pagelet.bubble.onboarding": "点击拾页角色查看发现，展开面板进行更深入分析。",
     "pagelet.bubble.onboardingAction": "知道了",
     "pagelet.bubble.empty": "还没有新发现。",
     "pagelet.bubble.ariaLabel": "拾页",

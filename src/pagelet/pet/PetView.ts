@@ -32,6 +32,7 @@ export class PetView implements PetRenderer {
     private _containerEl: HTMLElement | null = null;
     private _destroyed = false;
     private _recentTouch = false;
+    private _touchSuppressTimer: PlatformTimeoutHandle | null = null;
     private _errorTimer: PlatformTimeoutHandle | null = null;
     private _themeObserver: MutationObserver | null = null;
     private readonly _getLocale: () => PageletLocale;
@@ -68,7 +69,12 @@ export class PetView implements PetRenderer {
         this._handleTouchend = (e: TouchEvent) => {
             e.preventDefault();
             this._recentTouch = true;
-            setPlatformTimeout(() => { this._recentTouch = false; }, 400);
+            this.clearTouchSuppression();
+            this._touchSuppressTimer = setPlatformTimeout(() => {
+                this._touchSuppressTimer = null;
+                if (this._destroyed) return;
+                this._recentTouch = false;
+            }, 400);
             this._callbacks.onToggleBubble();
         };
     }
@@ -133,6 +139,9 @@ export class PetView implements PetRenderer {
     /** Unmount from current container. */
     unmount(): void {
         if (!this._rootEl) return;
+
+        this.clearTouchSuppression();
+        this._recentTouch = false;
 
         this._themeObserver?.disconnect();
         this._themeObserver = null;
@@ -207,6 +216,8 @@ export class PetView implements PetRenderer {
             clearPlatformTimeout(this._errorTimer);
             this._errorTimer = null;
         }
+        this.clearTouchSuppression();
+        this._recentTouch = false;
         this.unmount();
     }
 
@@ -219,6 +230,13 @@ export class PetView implements PetRenderer {
         this._rootEl.setAttribute("data-state", this._state);
         this._rootEl.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state));
         this.applyThemeColors();
+    }
+
+    private clearTouchSuppression(): void {
+        if (this._touchSuppressTimer !== null) {
+            clearPlatformTimeout(this._touchSuppressTimer);
+            this._touchSuppressTimer = null;
+        }
     }
 
     private applyThemeColors(): void {

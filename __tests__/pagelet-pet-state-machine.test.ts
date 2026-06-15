@@ -1,10 +1,14 @@
 /* Copyright 2023 edonyzpc */
 
-import { describe, expect, it } from "@jest/globals";
+import { afterEach, describe, expect, it, jest } from "@jest/globals";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
 import type { PetEvent } from "../src/pagelet/pet/PetStateMachine";
-import { getPetAriaLabel } from "../src/pagelet/pet/PetView";
+import { getPetAriaLabel, PetView } from "../src/pagelet/pet/PetView";
+
+afterEach(() => {
+    jest.useRealTimers();
+});
 
 describe("PetStateMachine", () => {
     describe("initial state", () => {
@@ -191,5 +195,51 @@ describe("PetView locale labels", () => {
 
     it("resolves Chinese aria-label when the Pagelet UI locale is zh", () => {
         expect(getPetAriaLabel("zh")).toBe("拾页助手");
+    });
+});
+
+describe("PetView touch suppression", () => {
+    type PetViewInternals = {
+        _handleTouchend: (e: Pick<TouchEvent, "preventDefault">) => void;
+        _handleClick: () => void;
+    };
+
+    function createView(onToggleBubble = jest.fn()): PetView {
+        return new PetView({
+            callbacks: { onToggleBubble },
+        });
+    }
+
+    it("keeps click suppression active for 400ms after the most recent touchend", () => {
+        jest.useFakeTimers();
+        const onToggleBubble = jest.fn();
+        const view = createView(onToggleBubble);
+        const internals = view as unknown as PetViewInternals;
+        const touch = { preventDefault: jest.fn() };
+
+        internals._handleTouchend(touch);
+        jest.advanceTimersByTime(300);
+        internals._handleTouchend(touch);
+        jest.advanceTimersByTime(399);
+
+        internals._handleClick();
+        expect(onToggleBubble).toHaveBeenCalledTimes(2);
+
+        jest.advanceTimersByTime(1);
+        internals._handleClick();
+        expect(onToggleBubble).toHaveBeenCalledTimes(3);
+    });
+
+    it("clears pending touch suppression timers on destroy", () => {
+        jest.useFakeTimers();
+        const view = createView();
+        const internals = view as unknown as PetViewInternals;
+
+        internals._handleTouchend({ preventDefault: jest.fn() });
+        expect(jest.getTimerCount()).toBe(1);
+
+        view.destroy();
+
+        expect(jest.getTimerCount()).toBe(0);
     });
 });
