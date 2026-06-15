@@ -170,6 +170,7 @@ export class LLMView extends ItemView {
     private persistChain: Promise<void> = Promise.resolve();
     private composerTextArea: HTMLTextAreaElement | null = null;
     private syncComposerControlsForExternalPrefill: (() => void) | null = null;
+    private viewTeardownCallbacks = new Set<() => void>();
 
     get isStreaming(): boolean {
         return this.abortController !== null;
@@ -214,6 +215,22 @@ export class LLMView extends ItemView {
             owner.unload();
         }
         this.markdownRenderOwners.clear();
+    }
+
+    private registerViewTeardown(callback: () => void): void {
+        this.viewTeardownCallbacks.add(callback);
+    }
+
+    private runViewTeardownCallbacks(): void {
+        const callbacks = Array.from(this.viewTeardownCallbacks);
+        this.viewTeardownCallbacks.clear();
+        for (const callback of callbacks) {
+            try {
+                callback();
+            } catch (error) {
+                this.plugin.log?.("Could not tear down chat view resource", error);
+            }
+        }
     }
 
     getViewType(): string {
@@ -557,6 +574,14 @@ export class LLMView extends ItemView {
                     element.addEventListener(eventName, refresh);
                 }
             }
+            this.registerViewTeardown(() => {
+                clear();
+                for (const element of [menu, toggleButton]) {
+                    for (const eventName of idleEvents) {
+                        element.removeEventListener(eventName, refresh);
+                    }
+                }
+            });
             return { clear, close, schedule };
         };
         const syncComposerControls = () => {
@@ -1087,6 +1112,7 @@ export class LLMView extends ItemView {
                 state.scheduledDrainTimer = undefined;
                 runLiveMarkdownRender(rendered, state, isLive, options);
             }, delayMs);
+            (state.scheduledDrainTimer as unknown as { unref?: () => void }).unref?.();
         }
         function runLiveMarkdownRender(
             rendered: RenderedMessage,
@@ -2600,6 +2626,7 @@ export class LLMView extends ItemView {
     async onClose() {
         this.viewSessionId += 1;
         this.invalidateActiveTurn();
+        this.runViewTeardownCallbacks();
         this.cancelScheduledScroll();
         this.unloadAllMarkdownRenderOwners();
         this.panelResizeObserver?.disconnect();
@@ -2615,6 +2642,7 @@ export class LLMView extends ItemView {
     }
 
     private startViewSession(): number {
+        this.runViewTeardownCallbacks();
         this.cancelScheduledScroll();
         this.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();

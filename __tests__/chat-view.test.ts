@@ -561,6 +561,16 @@ function mockRenderedMemoryCallout() {
     });
 }
 
+const createdViews = new Set<LLMView>();
+
+afterEach(async () => {
+    const views = Array.from(createdViews);
+    createdViews.clear();
+    await Promise.all(views.map(async (view) => {
+        await view.onClose();
+    }));
+});
+
 function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; chatHistoryManager?: unknown; setupIssue?: string | null } = {}) {
     const containerEl = new MockElement('div');
     containerEl.clientWidth = options.panelWidth ?? 600;
@@ -649,6 +659,7 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
         plugin as unknown as ConstructorParameters<typeof LLMView>[1],
         {} as unknown as ConstructorParameters<typeof LLMView>[2],
     );
+    createdViews.add(view);
     const emitWorkspaceEvent = (eventName: string, ...args: unknown[]) => {
         for (const handler of workspaceHandlers.get(eventName) ?? []) {
             handler(...args);

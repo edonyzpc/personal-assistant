@@ -32,13 +32,21 @@ export class Modal {
 }
 
 export class Component {
+    private registeredCallbacks: Array<() => unknown> = [];
+
     load() { }
     onload() { }
-    unload() { }
+    unload() {
+        for (const callback of this.registeredCallbacks.splice(0)) {
+            callback();
+        }
+    }
     onunload() { }
     addChild<T extends Component>(component: T) { return component; }
     removeChild<T extends Component>(component: T) { return component; }
-    register(_cb: () => unknown) { }
+    register(cb: () => unknown) {
+        this.registeredCallbacks.push(cb);
+    }
     registerEvent(_eventRef: unknown) { }
     registerDomEvent(el: unknown, event: string, handler: unknown, options?: unknown) {
         if (el && typeof (el as HTMLElement).addEventListener === "function") {

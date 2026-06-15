@@ -394,4 +394,5 @@ export function scheduleMermaidEnhancement(
     }
 
     timeoutId = setPlatformTimeout(stop, 15000);
+    (timeoutId as unknown as { unref?: () => void }).unref?.();
 }
