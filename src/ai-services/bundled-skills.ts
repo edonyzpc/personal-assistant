@@ -8,6 +8,8 @@ import paFrontmatterAudit from "../../skills/pa-frontmatter-audit/SKILL.md";
 import paCalloutCleanup from "../../skills/pa-callout-cleanup/SKILL.md";
 import paVaultLinkHealth from "../../skills/pa-vault-link-health/SKILL.md";
 import paPluginConfigReview from "../../skills/pa-plugin-config-review/SKILL.md";
+import obsidianDataview from "../../skills/obsidian-dataview/SKILL.md";
+import obsidianDataviewRef from "../../skills/obsidian-dataview/references/dataviewjs-api.md";
 
 export const BUNDLED_SKILL_RESOURCES: readonly BundledSkillResource[] = [
     {
@@ -37,6 +39,16 @@ export const BUNDLED_SKILL_RESOURCES: readonly BundledSkillResource[] = [
     {
         path: "skills/pa-plugin-config-review/SKILL.md",
         content: paPluginConfigReview,
+    },
+    {
+        path: "skills/obsidian-dataview/SKILL.md",
+        content: obsidianDataview,
+        references: [
+            {
+                path: "skills/obsidian-dataview/references/dataviewjs-api.md",
+                content: obsidianDataviewRef,
+            },
+        ],
     },
 ];
 

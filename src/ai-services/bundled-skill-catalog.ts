@@ -40,6 +40,11 @@ export const BUNDLED_SKILL_CATALOG: readonly BundledSkillCatalogEntry[] = [
         label: "Plugin Config Review",
         description: "Plugin lists, plugin settings, disabled plugins, and config folders.",
     },
+    {
+        id: "obsidian-dataview",
+        label: "Obsidian Dataview",
+        description: "Dataview query syntax, inline expressions, DataviewJS API, and vault analysis patterns.",
+    },
 ];
 
 export const BUNDLED_SKILL_IDS = BUNDLED_SKILL_CATALOG.map((entry) => entry.id);

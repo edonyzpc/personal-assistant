@@ -208,7 +208,7 @@ describe("SkillContextProvider", () => {
     });
 
     it("loads all bundled v1 skills and keeps bodies read-only", () => {
-        expect(BUNDLED_SKILL_RESOURCES).toHaveLength(7);
+        expect(BUNDLED_SKILL_RESOURCES).toHaveLength(8);
         const parsed = BUNDLED_SKILL_RESOURCES.map((resource) =>
             parseAgentSkillMarkdown(resource.content, resource.path));
 
@@ -220,6 +220,7 @@ describe("SkillContextProvider", () => {
             "pa-callout-cleanup",
             "pa-vault-link-health",
             "pa-plugin-config-review",
+            "obsidian-dataview",
         ]);
         for (const skill of parsed) {
             expect(skill.body).not.toMatch(/\b(create|edit|write|modify|append|delete)\b/i);
