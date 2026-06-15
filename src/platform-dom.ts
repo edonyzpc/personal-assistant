@@ -47,10 +47,7 @@ function getOptionalPlatformGlobalScope(): PlatformGlobalScope | undefined {
     return undefined;
 }
 
-let cachedTimerScope: TimerScope | null = null;
-
 function getRuntimeTimerScope(): TimerScope {
-    if (cachedTimerScope) return cachedTimerScope;
     const candidates: Partial<TimerScope>[] = [];
     const win = getOptionalPlatformWindow();
     if (win) candidates.push(win as WindowTimerScope);
@@ -64,8 +61,7 @@ function getRuntimeTimerScope(): TimerScope {
         && typeof candidate.clearInterval === "function"
     );
     if (!scope) throw new Error("Timer methods are unavailable.");
-    cachedTimerScope = scope as TimerScope;
-    return cachedTimerScope;
+    return scope as TimerScope;
 }
 
 export function getOptionalPlatformWindow(): Window | undefined {

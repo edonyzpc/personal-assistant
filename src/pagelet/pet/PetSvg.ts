@@ -106,7 +106,6 @@ function createText(
 }
 
 function replaceSvgChildren(svgEl: SVGElement, children: SVGElement[]): void {
-    svgEl.textContent = "";
     while (svgEl.firstChild) {
         svgEl.removeChild(svgEl.firstChild);
     }

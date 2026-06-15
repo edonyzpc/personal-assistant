@@ -57,7 +57,7 @@ export class PreloadEngine {
         const doc = getOptionalPlatformDocument();
         this.visibilityHandler = () => {
             if (!doc || doc.visibilityState !== "visible") return;
-            if (!this.running) return;
+            if (!this.running || this.cycleInProgress) return;
             const elapsed = Date.now() - (this.lastCycleAt ?? this.startedAt ?? 0);
             if (elapsed >= this.computeBackoffInterval()) {
                 void this.runCycle();
