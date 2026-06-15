@@ -36,7 +36,7 @@
 │   │ • 插件管理/更新  │     │ • 对话式 AI 助手          │  │
 │   │ • 主题管理/更新  │     │ • RAG 本地向量索引        │  │
 │   │ • Callout 管理   │     │ • Agent 工具调用          │  │
-│   │ • Frontmatter   │     │ • 7 个内置 Skills         │  │
+│   │ • Frontmatter   │     │ • 8 个内置 Skills         │  │
 │   │ • 统计仪表盘    │     │ • Web 搜索集成            │  │
 │   │ • 本地图谱      │     │ • 向量混合检索 (FTS+VSS)  │  │
 │   │ • 快捷笔记/预览  │     │ • Pagelet 评审助手 (beta) │  │
@@ -76,7 +76,7 @@ timeline
     section v2 Breaking (v2.0)
         2026-05-25 : 移除 Ollama/旧 Chat
                     : PA Agent 唯一路径
-                    : 7 Skills / SecretStorage
+                    : 8 Skills / SecretStorage
     section v2 稳定化 (v2.1)
         2026-05-31 : FTS5 混合检索 / RRF
                     : LLM Reranker / 历史持久化
@@ -196,7 +196,7 @@ graph TB
         CAP[Capability Registry<br/>工具注册表]
         POL[Policy Engine<br/>权限策略]
         TOOLS[Chat Tools<br/>10 个内置工具]
-        SKILLS[Skill Router<br/>7 个 Skills]
+        SKILLS[Skill Router<br/>8 个 Skills]
         QR[Query Rewriter<br/>查询改写]
         CS[Chat Service<br/>对话编排]
         WAF[Write Action<br/>Framework v1]
@@ -406,7 +406,7 @@ graph LR
         T10[loadSkillContext]
     end
 
-    subgraph Skills["内置 Skills (7)"]
+    subgraph Skills["内置 Skills (8)"]
         S1[obsidian-markdown]
         S2[obsidian-bases]
         S3[json-canvas]
@@ -414,6 +414,7 @@ graph LR
         S5[callout-cleanup]
         S6[vault-link-health]
         S7[plugin-config-review]
+        S8[obsidian-dataview]
     end
 
     Providers --> AU
@@ -505,10 +506,13 @@ graph TB
 | `chat-view.ts` | Chat 视图主类，extends ItemView |
 | `chat-history-manager.ts` | 会话管理、会话列表 |
 | `chat-history-store.ts` | IndexedDB 持久化 |
-| `chat-formatter.ts` | 消息渲染、Markdown → HTML |
-| `mermaid-render.ts` | Mermaid 图表渲染 |
+| `formatters.ts` | 消息渲染、Markdown → HTML |
+| `mermaid.ts` | Mermaid 图表渲染 |
 | `role-identicons.ts` | 角色头像生成 |
-| `chat-modal.ts` | 对话模态框 |
+| `modals.ts` | 对话模态框 |
+| `types.ts` | 类型定义 |
+| `view-type.ts` | View 类型常量 |
+| `menu-helpers.ts` | 菜单辅助函数 |
 
 ### 5.6 Statistics (`src/stats/`)
 
@@ -577,7 +581,7 @@ graph TB
         HINTS[🔔 Proactive Hints<br/>主动提示]
     end
 
-    subgraph Orchestrator["🎯 Orchestrator (1430 行)"]
+    subgraph Orchestrator["🎯 Orchestrator (~1130 行)"]
         ORCH[PageletOrchestrator<br/>+ AnalysisSessionManager<br/>+ ReviewNoteSaveFlow]
     end
 
@@ -934,10 +938,10 @@ make deploy-icloud  # 构建 → iCloud Obsidian vault (移动端测试)
 | `locales/` | 8 | 4.0% | 国际化 |
 | `ui/` | 9 | 4.5% | UI 渲染器 |
 | `components/` | 2 | 1.0% | React 组件 |
-| `tests/` | 12 | 5.9% | 测试基础设施 |
-| 根文件 | 26 | 12.9% | 入口/平台/设置/工具 |
-| 其他 | 7 | 3.5% | types/shared/obsidian-hack |
-| **总计** | **~202** | **100%** | |
+| `tests/` | 11 | 5.6% | 测试基础设施 |
+| 根文件 | 26 | 13.2% | 入口/平台/设置/工具 |
+| 其他 | 6 | 3.0% | types/shared/obsidian-hack |
+| **总计** | **~197** | **100%** | |
 
 ### 9.2 测试覆盖
 
