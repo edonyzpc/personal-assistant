@@ -5,7 +5,7 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
-import { AIUtils } from "./ai-services/ai-utils";
+import { AIUtils, getDashScopeImageSynthesisUrl } from "./ai-services/ai-utils";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
@@ -485,7 +485,7 @@ export class PluginManager extends Plugin {
             id: 'ai-assistant-featured-images',
             name: this.t("plugin.command.aiFeaturedImages"),
             editorCheckCallback: (checking, editor: Editor, view: MarkdownView | MarkdownFileInfo) => {
-                if (this.settings.aiProvider !== 'qwen') return false;
+                if (this.settings.aiProvider !== 'qwen' || !getDashScopeImageSynthesisUrl(this.settings.baseURL)) return false;
                 if (checking) return true;
                 if (!this.ensureAIConfigured()) return;
                 const sel = editor.getSelection();
