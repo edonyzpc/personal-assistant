@@ -24,13 +24,6 @@ export type RequiredCapability =
     | "webSearch"
     | "get_current_note_context";
 
-/**
- * @deprecated since 2026-05-29 — use the literal union `"required" | "suggested"` directly.
- * This is a compatibility alias for old imports only. The former `ignore` level was
- * intentionally removed as a breaking cleanup; ignored signals are dropped from `items`.
- */
-export type RequiredCapabilityLevel = "required" | "suggested";
-
 export interface RequiredCapabilityClassificationItem {
     capability: RequiredCapability;
     confidence: number;
