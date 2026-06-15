@@ -31,6 +31,7 @@ export class PetView implements PetRenderer {
     private _svgEl: SVGElement | null = null;
     private _containerEl: HTMLElement | null = null;
     private _destroyed = false;
+    private _recentTouch = false;
     private _errorTimer: PlatformTimeoutHandle | null = null;
     private _themeObserver: MutationObserver | null = null;
     private readonly _getLocale: () => PageletLocale;
@@ -55,6 +56,7 @@ export class PetView implements PetRenderer {
         });
 
         this._handleClick = () => {
+            if (this._recentTouch) return;
             this._callbacks.onToggleBubble();
         };
         this._handleKeydown = (e: KeyboardEvent) => {
@@ -65,6 +67,8 @@ export class PetView implements PetRenderer {
         };
         this._handleTouchend = (e: TouchEvent) => {
             e.preventDefault();
+            this._recentTouch = true;
+            setPlatformTimeout(() => { this._recentTouch = false; }, 400);
             this._callbacks.onToggleBubble();
         };
     }

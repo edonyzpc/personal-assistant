@@ -316,7 +316,7 @@ export function buildPageletScopeReviewBundle(
     const primarySourcePath = normalizePath(options.primarySourcePath || nonEmptyEntries[0].path);
     const sourceLabel = sourcePaths.length === 1
         ? sourcePaths[0]
-        : `${rangeLabel(options.range)} · ${sourcePaths.length} notes`;
+        : `${rangeLabel(options.range, options.uiLanguage)} · ${sourcePaths.length} notes`;
 
     return {
         input: {

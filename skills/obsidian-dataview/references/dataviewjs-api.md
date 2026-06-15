@@ -43,6 +43,12 @@ dv.taskList(
 );
 ```
 
+## Single-Page and Template Queries
+
+- `dv.page(path)` — return a single page object by vault path (e.g. `dv.page("Notes/todo.md")`)
+- `dv.view(path, input?)` — load and execute an external DataviewJS template from `path`; `input` is an optional object passed to the template as `input` variable
+- `dv.current()` — return the page object for the note containing the query
+
 ## I/O and Utility
 
 - `dv.io.load(path)` — read file content as string

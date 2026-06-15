@@ -658,6 +658,7 @@ describe('PA Agent skill settings', () => {
             'pa-callout-cleanup',
             'pa-vault-link-health',
             'pa-plugin-config-review',
+            'obsidian-dataview',
         ]);
     });
 
@@ -683,7 +684,7 @@ describe('PA Agent skill settings', () => {
             const record = records.find((entry) => entry.name === skill.label);
             return record?.toggles[0];
         });
-        expect(skillToggleStates).toHaveLength(7);
+        expect(skillToggleStates).toHaveLength(BUNDLED_SKILL_CATALOG.length);
         expect(skillToggleStates).toEqual(
             BUNDLED_SKILL_CATALOG.map(() => expect.objectContaining({ value: true, disabled: false })),
         );

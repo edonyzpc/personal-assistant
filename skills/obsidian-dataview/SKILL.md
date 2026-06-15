@@ -1,7 +1,7 @@
 ---
 name: obsidian-dataview
 description: "Dataview plugin query syntax, inline expressions, DataviewJS API, and common vault analysis patterns. Use when the user asks about querying notes, creating tables from metadata, aggregating frontmatter data, or writing Dataview/DataviewJS code blocks."
-allowed-tools: [search_vault_snippets, inspect_obsidian_note, current_note_context]
+allowed-tools: [search_vault_snippets, inspect_obsidian_note, get_current_note_context]
 ---
 Scope: Dataview query guidance for reading vault metadata and drafting DQL/DataviewJS snippets.
 
@@ -51,7 +51,6 @@ Every page exposes `file.*` metadata:
 | `file.lists` | list | All list items in the file |
 | `file.frontmatter` | object | Raw frontmatter object |
 | `file.day` | date | Date from filename if parseable |
-| `file.starred` | boolean | Whether bookmarked |
 
 Custom frontmatter fields are accessed directly by name: `rating`, `status`, `due-date`.
 

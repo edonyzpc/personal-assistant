@@ -33,3 +33,6 @@ test/*
 
 # codex
 .codex/
+
+# spike / scratch files
+tmp/

@@ -2932,6 +2932,8 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	width: auto;
 	max-height: min(70vh,calc(100vh - 120px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px)));
 	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+	overscroll-behavior: contain;
 	border-radius: 16px 16px 12px 12px;
 	transform-origin: bottom center;
 }
@@ -3041,6 +3043,8 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
 .pa-pagelet-panel-body {
 	flex: 1;
 	overflow-y: auto;
+	-webkit-overflow-scrolling: touch;
+	overscroll-behavior: contain;
 	padding: 0;
 }
 

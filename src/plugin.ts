@@ -57,7 +57,7 @@ import {
     type PlatformIntervalHandle,
     type PlatformTimeoutHandle,
 } from './platform-dom';
-import { normalizeReviewsFolder, type PageletReviewsFolderError } from './settings/pagelet';
+import { normalizeReviewsFolder, type PageletReviewsFolderError, type PageletSettings } from './settings/pagelet';
 import { PageletOrchestrator, type PageletHost } from './pagelet/orchestrator';
 import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet/commands';
 import {
@@ -495,7 +495,7 @@ export class PluginManager extends Plugin {
                 if (view instanceof MarkdownView) {
                     this.log("invoking LLM");
                     const helper = new AssistantFeaturedImageHelper(this.app, this, editor, view);
-                    void helper.generate();
+                    helper.generate().catch((e) => this.log("Featured image generation failed", e));
                 }
             }
         });
@@ -626,6 +626,7 @@ export class PluginManager extends Plugin {
         this.registerPageletFocusCommandOnce();
 
         if (this.pageletOrchestrator) {
+            this.pageletRateLimiterInstance = null;
             this.pageletOrchestrator.syncSettings();
             this.surfacePageletBackgroundPreparationNotice();
             return;
@@ -862,8 +863,8 @@ export class PluginManager extends Plugin {
                     return { text, tokenCost: { input: inputTokens, output: outputTokens } };
                 };
             },
-            updatePageletSetting: (key, value) => {
-                (this.settings.pagelet as unknown as Record<string, unknown>)[key] = value;
+            updatePageletSetting: <K extends keyof PageletSettings>(key: K, value: PageletSettings[K]) => {
+                this.settings.pagelet[key] = value;
                 void this.saveSettings();
             },
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
