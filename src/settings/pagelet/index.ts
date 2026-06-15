@@ -130,6 +130,10 @@ export interface PageletSettings {
     foregroundPerHourCap: number;
     /** Foreground per-day cap (D020). */
     foregroundPerDayCap: number;
+
+    // ── Onboarding ────────────────────────────────────────────────
+    /** Whether the Pagelet v2 onboarding guide has been shown. */
+    onboardingShown: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -165,6 +169,8 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     // Foreground review cost
     foregroundPerHourCap: 10,
     foregroundPerDayCap: 100,
+    // Onboarding
+    onboardingShown: false,
 });
 
 /**
@@ -313,6 +319,8 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         // Foreground review cost
         foregroundPerHourCap: normalizeBoundedInt(raw.foregroundPerHourCap, PAGELET_DEFAULTS.foregroundPerHourCap, PAGELET_BOUNDS.foregroundPerHourCap.min, PAGELET_BOUNDS.foregroundPerHourCap.max),
         foregroundPerDayCap: normalizeBoundedInt(raw.foregroundPerDayCap, PAGELET_DEFAULTS.foregroundPerDayCap, PAGELET_BOUNDS.foregroundPerDayCap.min, PAGELET_BOUNDS.foregroundPerDayCap.max),
+        // Onboarding
+        onboardingShown: typeof raw.onboardingShown === "boolean" ? raw.onboardingShown : PAGELET_DEFAULTS.onboardingShown,
     };
 }
 

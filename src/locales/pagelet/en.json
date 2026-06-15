@@ -152,6 +152,7 @@
     "pagelet.panel.scope.empty": "No notes in scope.",
     "pagelet.panel.scope.included": "Included",
     "pagelet.panel.scope.skipped": "Skipped",
+    "pagelet.panel.scope.skipped.outside-range": "outside range",
     "pagelet.panel.scope.reason.active": "current note",
     "pagelet.panel.scope.reason.modified": "recently modified",
     "pagelet.panel.scope.reason.daily-note-date": "daily note date",
@@ -245,6 +246,8 @@
     "pagelet.pet.resting": "(resting)",
     "pagelet.pet.nudge": "(insights ready)",
 
+    "pagelet.bubble.onboarding": "Click the Pet to see findings, expand Panel for deeper analysis.",
+    "pagelet.bubble.onboardingAction": "Got it",
     "pagelet.bubble.empty": "No new findings yet.",
     "pagelet.bubble.ariaLabel": "Pagelet",
     "pagelet.bubble.close": "Close",

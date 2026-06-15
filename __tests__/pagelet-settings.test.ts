@@ -255,6 +255,7 @@ describe("mergePageletSettings", () => {
             proactiveHintsQuietHours: { enabled: false, start: "22:00", end: "08:00" },
             foregroundPerHourCap: 10,
             foregroundPerDayCap: 100,
+            onboardingShown: false,
         };
         expect(mergePageletSettings(persisted)).toEqual(persisted);
     });

@@ -133,6 +133,22 @@ export function buildNudgeContent(
     };
 }
 
+/** Build onboarding content (first-time user guide) */
+export function buildOnboardingContent(
+    onDismiss: () => void,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "empty",
+        findings: [{ text: pageletT("pagelet.bubble.onboarding", locale) }],
+        actions: [{
+            label: pageletT("pagelet.bubble.onboardingAction", locale),
+            primary: true,
+            callback: onDismiss,
+        }],
+    };
+}
+
 /** Build empty state content (no cached results) */
 export function buildEmptyContent(
     onTriggerAnalysis: () => void,

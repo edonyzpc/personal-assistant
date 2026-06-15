@@ -148,6 +148,7 @@
     "pagelet.panel.scope.empty": "范围内没有笔记。",
     "pagelet.panel.scope.included": "已包含",
     "pagelet.panel.scope.skipped": "已跳过",
+    "pagelet.panel.scope.skipped.outside-range": "超出范围",
     "pagelet.panel.scope.reason.active": "当前笔记",
     "pagelet.panel.scope.reason.modified": "最近修改",
     "pagelet.panel.scope.reason.daily-note-date": "日记日期",
@@ -241,6 +242,8 @@
     "pagelet.pet.resting": "（休息中）",
     "pagelet.pet.nudge": "（有新发现）",
 
+    "pagelet.bubble.onboarding": "点击 Pet 查看发现，展开 Panel 深入分析。",
+    "pagelet.bubble.onboardingAction": "知道了",
     "pagelet.bubble.empty": "还没有新发现。",
     "pagelet.bubble.ariaLabel": "拾页",
     "pagelet.bubble.close": "关闭",

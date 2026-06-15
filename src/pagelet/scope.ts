@@ -2,6 +2,7 @@
 
 import { normalizePath } from "obsidian";
 
+import { pageletT, type PageletLocale } from "../locales/pagelet";
 import { detectNoteLanguage } from "../locales/pagelet/language-detect";
 import type { PageletSettings } from "../settings/pagelet";
 
@@ -340,44 +341,12 @@ export function buildPageletScopeReviewBundle(
     };
 }
 
-export function rangeLabel(range: PageletReviewRange): string {
-    switch (range) {
-        case "current":
-            return "Current note";
-        case "yesterday":
-            return "Yesterday";
-        case "last3":
-            return "Last 3 days";
-        case "last7":
-            return "Last 7 days";
-    }
+export function rangeLabel(range: PageletReviewRange, locale: PageletLocale = "en"): string {
+    return pageletT(`pagelet.panel.scope.${range}`, locale);
 }
 
-export function skippedReasonLabel(reason: PageletScopeSkippedReason): string {
-    switch (reason) {
-        case "outside-range":
-            return "outside range";
-        case "review-output":
-            return "review output";
-        case "overflow":
-            return "over note limit";
-        case "unchecked":
-            return "unchecked";
-        case "missing-file":
-            return "missing file";
-        case "empty-note":
-            return "empty note";
-        case "hidden-folder":
-            return "hidden folder";
-        case "excluded-folder":
-            return "excluded folder";
-        case "excluded-frontmatter":
-            return "pagelet note";
-        case "excluded-tag":
-            return "excluded tag";
-        case "excluded-pattern":
-            return "excluded pattern";
-    }
+export function skippedReasonLabel(reason: PageletScopeSkippedReason, locale: PageletLocale = "en"): string {
+    return pageletT(`pagelet.panel.scope.skipped.${reason}`, locale);
 }
 
 function scopeExcludedReason(options: {
