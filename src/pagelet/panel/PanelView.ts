@@ -42,12 +42,12 @@ import {
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import {
     clearPlatformTimeout,
-    eventPathContainsSelector,
     getPlatformDocument,
     requestPlatformAnimationFrame,
     setPlatformTimeout,
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
+import { clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
 import type { SuggestionCardRenderer } from "../../ui/pagelet";
 import type { PageletSuggestion } from "../pa-review-schemas";
 import type { PageletReviewRange } from "../scope";
@@ -61,29 +61,9 @@ interface PanelDraftItem {
     suggestion?: PageletSuggestion;
 }
 
-function clearChildren(node: Element): void {
-    node.textContent = "";
-    while (node.firstChild) {
-        node.removeChild(node.firstChild);
-    }
-}
-
-function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
-    return getPlatformDocument().createElement(tag);
-}
-
 /** Detect mobile context using the Obsidian convention. */
 function isMobile(): boolean {
     return getPlatformDocument().body.classList.contains("is-mobile");
-}
-
-const OBSIDIAN_MODAL_SELECTOR = ".modal-container, .modal";
-
-function isObsidianModalOpen(event?: Event): boolean {
-    if (event?.defaultPrevented) return true;
-    if (event && eventPathContainsSelector(event, OBSIDIAN_MODAL_SELECTOR)) return true;
-    const doc = getPlatformDocument();
-    return Boolean(doc.body?.querySelector(OBSIDIAN_MODAL_SELECTOR));
 }
 
 const PANEL_SCOPE_RANGES: readonly PageletReviewRange[] = [
@@ -152,7 +132,7 @@ const LAYOUT_TITLE_KEYS: Record<PanelLayoutType, string> = {
  */
 export class PanelView {
     private readonly options: PanelViewOptions;
-    private readonly locale: PageletLocale;
+    private readonly getLocale: () => PageletLocale;
     private rootEl: HTMLDivElement | null = null;
     private bodyEl: HTMLDivElement | null = null;
     private titleEl: HTMLHeadingElement | null = null;
@@ -190,7 +170,7 @@ export class PanelView {
 
     constructor(options: PanelViewOptions) {
         this.options = options;
-        this.locale = options.locale ?? "en";
+        this.getLocale = options.getLocale ?? (() => "en");
         this.handleKeydown = this.onKeydown.bind(this);
         this.handleTouchStart = (e: TouchEvent) => {
             if (!isMobile()) return;
@@ -274,7 +254,7 @@ export class PanelView {
             extra?.scope,
         );
         this.titleEl.textContent =
-            pageletT(LAYOUT_TITLE_KEYS[layoutType], this.locale) || layoutType;
+            pageletT(LAYOUT_TITLE_KEYS[layoutType], this.getLocale()) || layoutType;
 
         if (layoutType !== "summary") {
             this.renderComponent?.unload();
@@ -296,7 +276,6 @@ export class PanelView {
             }
         };
         requestPlatformAnimationFrame(show);
-        setPlatformTimeout(show, 0);
         this.attachGlobalListeners();
     }
 
@@ -319,14 +298,14 @@ export class PanelView {
 
         switch (layoutType) {
             case "review":
-                renderReviewTimeline(contentEl, visibleFindings, this.locale, renderOptions);
+                renderReviewTimeline(contentEl, visibleFindings, this.getLocale(), renderOptions);
                 break;
             case "current":
-                renderCurrentNoteAnalysis(contentEl, visibleFindings, this.locale, renderOptions);
+                renderCurrentNoteAnalysis(contentEl, visibleFindings, this.getLocale(), renderOptions);
                 break;
             case "discover":
                 renderDiscoveryLayout(
-                    contentEl, visibleFindings, this.currentExtra?.connections, this.locale,
+                    contentEl, visibleFindings, this.currentExtra?.connections, this.getLocale(),
                 );
                 break;
             case "summary": {
@@ -341,7 +320,7 @@ export class PanelView {
                     this.options.app,
                     this.renderComponent,
                     "",
-                    this.locale,
+                    this.getLocale(),
                 );
                 break;
             }
@@ -468,7 +447,7 @@ export class PanelView {
         return this.draftItems
             .filter((item) => item.text.trim().length > 0)
             .map((item, index) => ({
-            title: item.title || pageletT("pagelet.panel.draft.title", this.locale),
+            title: item.title || pageletT("pagelet.panel.draft.title", this.getLocale()),
             description: item.text.trim(),
             sourceFile: item.sourceFile,
             sourceTitle: item.sourceTitle,
@@ -490,17 +469,17 @@ export class PanelView {
     private renderScopeControls(scope: PanelScopeState): HTMLElement {
         const section = createHtmlElement("section");
         section.className = "pa-pagelet-panel-scope";
-        section.setAttribute("aria-label", pageletT("pagelet.panel.scope.title", this.locale));
+        section.setAttribute("aria-label", pageletT("pagelet.panel.scope.title", this.getLocale()));
 
         const header = createHtmlElement("div");
         header.className = "pa-pagelet-panel-scope-header";
         const title = createHtmlElement("div");
         title.className = "pa-pagelet-panel-scope-title";
-        title.textContent = pageletT("pagelet.panel.scope.title", this.locale);
+        title.textContent = pageletT("pagelet.panel.scope.title", this.getLocale());
         header.appendChild(title);
         const count = createHtmlElement("div");
         count.className = "pa-pagelet-panel-scope-count";
-        count.textContent = pageletT("pagelet.panel.action.reviewSelected", this.locale, {
+        count.textContent = pageletT("pagelet.panel.action.reviewSelected", this.getLocale(), {
             count: scope.includedCount,
         });
         header.appendChild(count);
@@ -514,7 +493,7 @@ export class PanelView {
             btn.setAttribute("type", "button");
             btn.setAttribute("aria-pressed", String(scope.range === range));
             btn.setAttribute("data-active", String(scope.range === range));
-            btn.textContent = pageletT(`pagelet.panel.scope.${range}`, this.locale);
+            btn.textContent = pageletT(`pagelet.panel.scope.${range}`, this.getLocale());
             btn.addEventListener("click", (e) => {
                 e.stopPropagation();
                 this.options.callbacks.onScopeRangeChange?.(range);
@@ -527,14 +506,14 @@ export class PanelView {
         summary.className = "pa-pagelet-panel-scope-summary";
         if (scope.estimatedInputTokens) {
             summary.appendChild(this.renderScopeChip(
-                pageletT("pagelet.panel.scope.tokenEstimateShort", this.locale, {
+                pageletT("pagelet.panel.scope.tokenEstimateShort", this.getLocale(), {
                     tokens: scope.estimatedInputTokens,
                 }),
             ));
         }
         if (scope.excludedReviewOutputCount) {
             summary.appendChild(this.renderScopeChip(
-                pageletT("pagelet.panel.scope.summary.review-output", this.locale, {
+                pageletT("pagelet.panel.scope.summary.review-output", this.getLocale(), {
                     count: scope.excludedReviewOutputCount,
                 }),
             ));
@@ -546,19 +525,19 @@ export class PanelView {
         const included = scope.candidates.filter((candidate) => candidate.included);
         const skipped = scope.candidates.filter((candidate) => !candidate.included);
         section.appendChild(this.renderScopeCandidateGroup(
-            pageletT("pagelet.panel.scope.included", this.locale),
+            pageletT("pagelet.panel.scope.included", this.getLocale()),
             included,
         ));
         if (skipped.length > 0) {
             section.appendChild(this.renderScopeCandidateGroup(
-                pageletT("pagelet.panel.scope.skipped", this.locale),
+                pageletT("pagelet.panel.scope.skipped", this.getLocale()),
                 skipped,
             ));
         }
         if (scope.candidates.length === 0) {
             const empty = createHtmlElement("div");
             empty.className = "pa-pagelet-panel-scope-empty";
-            empty.textContent = pageletT("pagelet.panel.scope.empty", this.locale);
+            empty.textContent = pageletT("pagelet.panel.scope.empty", this.getLocale());
             section.appendChild(empty);
         }
         return section;
@@ -616,7 +595,7 @@ export class PanelView {
         const reasonKey = candidate.included
             ? `pagelet.panel.scope.reason.${candidate.reason}`
             : `pagelet.panel.scope.skipped.${candidate.skippedReason ?? "unchecked"}`;
-        meta.textContent = pageletT(reasonKey, this.locale);
+        meta.textContent = pageletT(reasonKey, this.getLocale());
         text.appendChild(meta);
         row.appendChild(text);
 
@@ -626,17 +605,17 @@ export class PanelView {
     private renderDraftSection(): HTMLElement {
         const section = createHtmlElement("section");
         section.className = "pa-pagelet-panel-draft";
-        section.setAttribute("aria-label", pageletT("pagelet.panel.draft.title", this.locale));
+        section.setAttribute("aria-label", pageletT("pagelet.panel.draft.title", this.getLocale()));
 
         const title = createHtmlElement("div");
         title.className = "pa-pagelet-panel-draft-title";
-        title.textContent = pageletT("pagelet.panel.draft.title", this.locale);
+        title.textContent = pageletT("pagelet.panel.draft.title", this.getLocale());
         section.appendChild(title);
 
         if (this.draftItems.length === 0) {
             const empty = createHtmlElement("div");
             empty.className = "pa-pagelet-panel-draft-empty";
-            empty.textContent = pageletT("pagelet.panel.draft.empty", this.locale);
+            empty.textContent = pageletT("pagelet.panel.draft.empty", this.getLocale());
             section.appendChild(empty);
             return section;
         }
@@ -647,8 +626,8 @@ export class PanelView {
 
             const textarea = createHtmlElement("textarea");
             textarea.className = "pa-pagelet-panel-draft-textarea";
-            textarea.setAttribute("aria-label", pageletT("pagelet.a11y.draftBlockLabel", this.locale));
-            textarea.setAttribute("placeholder", pageletT("pagelet.panel.draft.placeholder", this.locale));
+            textarea.setAttribute("aria-label", pageletT("pagelet.a11y.draftBlockLabel", this.getLocale()));
+            textarea.setAttribute("placeholder", pageletT("pagelet.panel.draft.placeholder", this.getLocale()));
             textarea.value = item.text;
             textarea.addEventListener("input", () => {
                 item.text = textarea.value;
@@ -663,7 +642,7 @@ export class PanelView {
             const remove = createHtmlElement("button");
             remove.className = "pa-pagelet-panel-draft-remove";
             remove.setAttribute("type", "button");
-            remove.textContent = pageletT("pagelet.panel.draft.remove", this.locale);
+            remove.textContent = pageletT("pagelet.panel.draft.remove", this.getLocale());
             remove.addEventListener("click", (e) => {
                 e.stopPropagation();
                 this.draftItems = this.draftItems.filter((candidate) => candidate.id !== item.id);
@@ -731,7 +710,7 @@ export class PanelView {
         root.setAttribute("data-state", "hidden");
         root.setAttribute("role", "complementary");
         root.setAttribute("aria-label",
-            pageletT("pagelet.panel.ariaLabel", this.locale));
+            pageletT("pagelet.panel.ariaLabel", this.getLocale()));
 
         // Header
         const header = createHtmlElement("div");
@@ -739,7 +718,7 @@ export class PanelView {
 
         const title = createHtmlElement("h3");
         title.className = "pa-pagelet-panel-title";
-        title.textContent = pageletT("pagelet.panel.title", this.locale);
+        title.textContent = pageletT("pagelet.panel.title", this.getLocale());
         this.titleEl = title;
         header.appendChild(title);
 
@@ -750,9 +729,9 @@ export class PanelView {
         const hintsBtn = createHtmlElement("button");
         hintsBtn.className = "pa-pagelet-panel-icon-btn";
         hintsBtn.setAttribute("title",
-            pageletT("pagelet.panel.hintsToggle.off", this.locale));
+            pageletT("pagelet.panel.hintsToggle.off", this.getLocale()));
         hintsBtn.setAttribute("aria-label",
-            pageletT("pagelet.panel.hintsToggle.off", this.locale));
+            pageletT("pagelet.panel.hintsToggle.off", this.getLocale()));
         hintsBtn.setAttribute("aria-pressed", "false");
         hintsBtn.textContent = "\u{1F515}"; // bell with slash
         hintsBtn.addEventListener("click", (e) => {
@@ -763,7 +742,7 @@ export class PanelView {
             hintsBtn.setAttribute("aria-pressed", String(nextPressed));
             const label = pageletT(
                 nextPressed ? "pagelet.panel.hintsToggle.on" : "pagelet.panel.hintsToggle.off",
-                this.locale,
+                this.getLocale(),
             );
             hintsBtn.setAttribute("title", label);
             hintsBtn.setAttribute("aria-label", label);
@@ -774,9 +753,9 @@ export class PanelView {
         const expandBtn = createHtmlElement("button");
         expandBtn.className = "pa-pagelet-panel-icon-btn pa-pagelet-panel-header-expand-btn";
         expandBtn.setAttribute("title",
-            pageletT("pagelet.panel.expand", this.locale));
+            pageletT("pagelet.panel.expand", this.getLocale()));
         expandBtn.setAttribute("aria-label",
-            pageletT("pagelet.panel.expand", this.locale));
+            pageletT("pagelet.panel.expand", this.getLocale()));
         expandBtn.textContent = "↗"; // ↗
         expandBtn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -788,9 +767,9 @@ export class PanelView {
         const closeBtn = createHtmlElement("button");
         closeBtn.className = "pa-pagelet-panel-icon-btn";
         closeBtn.setAttribute("title",
-            pageletT("pagelet.panel.close", this.locale));
+            pageletT("pagelet.panel.close", this.getLocale()));
         closeBtn.setAttribute("aria-label",
-            pageletT("pagelet.panel.close", this.locale));
+            pageletT("pagelet.panel.close", this.getLocale()));
         closeBtn.textContent = "×"; // ×
         closeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
@@ -814,7 +793,7 @@ export class PanelView {
         // Save button (accent-colored, before expand)
         const saveBtn = createHtmlElement("button");
         saveBtn.className = "pa-pagelet-panel-save-btn";
-        saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
+        saveBtn.textContent = pageletT("pagelet.panel.save", this.getLocale());
         saveBtn.addEventListener("click", async (e) => {
             e.stopPropagation();
             if (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected") {
@@ -826,8 +805,8 @@ export class PanelView {
                 saveBtn.setAttribute("aria-busy", "true");
                 const previousLabel = saveBtn.textContent ?? "";
                 const progressLabel = this.primaryButtonMode === "run-selected"
-                    ? pageletT("pagelet.panel.status.thinking", this.locale)
-                    : pageletT("pagelet.panel.status.reviewingCurrent", this.locale);
+                    ? pageletT("pagelet.panel.status.thinking", this.getLocale())
+                    : pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
                 saveBtn.textContent = progressLabel;
                 this.renderReviewProgress(progressLabel);
                 try {
@@ -851,7 +830,7 @@ export class PanelView {
             saveBtn.disabled = true;
             saveBtn.setAttribute("aria-busy", "true");
             const previousLabel = saveBtn.textContent ?? "";
-            saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.locale);
+            saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.getLocale());
             try {
                 await this.options.callbacks.onSaveAsReviewNote(this.saveFindings());
             } finally {
@@ -868,7 +847,7 @@ export class PanelView {
         const expandTabBtn = createHtmlElement("button");
         expandTabBtn.className = "pa-pagelet-panel-expand-btn";
         expandTabBtn.textContent =
-            pageletT("pagelet.panel.expandToTab", this.locale);
+            pageletT("pagelet.panel.expandToTab", this.getLocale());
         expandTabBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.options.callbacks.onExpandToTab();
@@ -893,7 +872,7 @@ export class PanelView {
         card.appendChild(dot);
 
         const text = createHtmlElement("div");
-        text.textContent = label ?? pageletT("pagelet.panel.status.reviewingCurrent", this.locale);
+        text.textContent = label ?? pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
         card.appendChild(text);
 
         this.bodyEl.appendChild(card);
@@ -944,10 +923,10 @@ export class PanelView {
             this.saveBtnEl.disabled = count === 0;
             this.saveBtnEl.removeAttribute("aria-busy");
             this.saveBtnEl.setAttribute("aria-disabled", String(count === 0));
-            this.saveBtnEl.textContent = pageletT("pagelet.panel.action.reviewSelected", this.locale, {
+            this.saveBtnEl.textContent = pageletT("pagelet.panel.action.reviewSelected", this.getLocale(), {
                 count,
             });
-            this.saveBtnEl.setAttribute("title", pageletT("pagelet.panel.action.reviewSelectedDescription", this.locale, {
+            this.saveBtnEl.setAttribute("title", pageletT("pagelet.panel.action.reviewSelectedDescription", this.getLocale(), {
                 count,
             }));
             return;
@@ -957,7 +936,7 @@ export class PanelView {
             this.saveBtnEl.disabled = false;
             this.saveBtnEl.removeAttribute("aria-busy");
             this.saveBtnEl.setAttribute("aria-disabled", "false");
-            this.saveBtnEl.textContent = pageletT("pagelet.panel.action.reviewCurrent", this.locale);
+            this.saveBtnEl.textContent = pageletT("pagelet.panel.action.reviewCurrent", this.getLocale());
             this.saveBtnEl.removeAttribute("title");
             return;
         }
@@ -965,7 +944,7 @@ export class PanelView {
         this.saveBtnEl.disabled = !saveEnabled;
         this.saveBtnEl.removeAttribute("aria-busy");
         this.saveBtnEl.setAttribute("aria-disabled", String(!saveEnabled));
-        this.saveBtnEl.textContent = pageletT("pagelet.panel.save", this.locale);
+        this.saveBtnEl.textContent = pageletT("pagelet.panel.save", this.getLocale());
         this.saveBtnEl.removeAttribute("title");
     }
 

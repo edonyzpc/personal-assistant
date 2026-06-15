@@ -63,7 +63,7 @@ export interface PanelCallbacks {
 export interface PanelViewOptions {
     app?: import("obsidian").App;
     callbacks: PanelCallbacks;
-    locale?: import("../../locales/pagelet").PageletLocale;
+    getLocale?: () => import("../../locales/pagelet").PageletLocale;
 }
 
 export interface PanelScopeCandidate {

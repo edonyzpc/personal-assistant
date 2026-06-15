@@ -74,6 +74,10 @@ class FakeElement {
         };
     }
 
+    get firstChild(): FakeElement | null {
+        return this.children[0] ?? null;
+    }
+
     get parentElement(): FakeElement | null {
         return this.parent;
     }
@@ -294,7 +298,7 @@ describe("Pagelet panel and tab view regressions", () => {
                 onSourceClick: () => undefined,
                 onRunReview: async () => reviewPromise,
             },
-            locale: "en",
+            getLocale: () => "en",
         });
 
         panel.mount(container as unknown as HTMLElement);
@@ -334,7 +338,7 @@ describe("Pagelet panel and tab view regressions", () => {
                 onScopeRangeChange: rangeChange,
                 onScopeCandidateToggle: toggleCandidate,
             },
-            locale: "en",
+            getLocale: () => "en",
         });
 
         panel.mount(container as unknown as HTMLElement);
@@ -384,7 +388,7 @@ describe("Pagelet panel and tab view regressions", () => {
                 onSaveAsReviewNote: async (findings) => { saved.push(findings); },
                 onSourceClick: () => undefined,
             },
-            locale: "en",
+            getLocale: () => "en",
         });
 
         panel.mount(container as unknown as HTMLElement);
@@ -434,7 +438,7 @@ describe("Pagelet panel and tab view regressions", () => {
                 onSaveAsReviewNote: async () => undefined,
                 onSourceClick: () => undefined,
             },
-            locale: "en",
+            getLocale: () => "en",
         });
 
         panel.mount(container as unknown as HTMLElement);

@@ -19,25 +19,7 @@ import type { PanelFinding } from "../panel/types";
 import type { TabSection } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { getPlatformDocument } from "../../platform-dom";
-
-function clearChildren(node: Element): void {
-    node.textContent = "";
-    while (node.firstChild) {
-        node.removeChild(node.firstChild);
-    }
-}
-
-/** Create a DOM element with optional class and text. */
-function el<K extends keyof HTMLElementTagNameMap>(
-    tag: K,
-    className?: string,
-    text?: string,
-): HTMLElementTagNameMap[K] {
-    const node = getPlatformDocument().createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-}
+import { clearChildren, el } from "../dom-utils";
 
 // ---------------------------------------------------------------------------
 // TabView

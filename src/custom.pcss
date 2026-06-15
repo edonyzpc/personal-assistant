@@ -2793,16 +2793,6 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	pointer-events: auto;
 }
 
-.pa-pagelet-bubble[data-state=degraded] {
-	opacity: .4;
-	transform: scale(1) translateY(0);
-	pointer-events: none;
-}
-
-.pa-pagelet-bubble[data-state=degraded] .pa-pagelet-bubble-close {
-	pointer-events: auto;
-}
-
 .pa-pagelet-bubble-tail {
 	position: absolute;
 	width: 14px;
@@ -2984,6 +2974,9 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
 	right: 0;
 	width: 380px;
 	height: 100vh;
+	height: 100dvh;
+	padding-top: env(safe-area-inset-top,0px);
+	padding-bottom: env(safe-area-inset-bottom,0px);
 	background: var(--background-primary,#222);
 	border-left: 1px solid var(--background-modifier-border,#3a3a3a);
 	z-index: 900;

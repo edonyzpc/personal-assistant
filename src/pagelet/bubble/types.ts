@@ -10,7 +10,7 @@ import type { PageletLocale } from "../../locales/pagelet";
  */
 
 /** Bubble visibility state */
-export type BubbleState = "hidden" | "visible" | "degraded";
+export type BubbleState = "hidden" | "visible";
 
 /** Content type determines which scenario's content to render */
 export type BubbleContentType = "quick-review" | "writing-assist" | "discovery" | "nudge" | "empty";

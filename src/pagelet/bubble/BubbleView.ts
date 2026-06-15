@@ -4,19 +4,15 @@
  * Pagelet — Bubble DOM lifecycle manager.
  *
  * The Bubble is a speech bubble that appears near the Pet character.
- * It supports three visibility states:
+ * It supports two visibility states:
  *
  *   - `hidden`   — DOM mounted but invisible (opacity 0, no events).
  *   - `visible`  — fully shown with content and interactions.
- *   - `degraded` — semi-transparent (opacity 0.4, pointer-events off)
- *                  after clicking outside. The close button remains
- *                  clickable so the user can still dismiss it.
  *
  * Dismiss contract:
- *   - Click outside → degrade (NOT close)
- *   - Click Pet when degraded → restore
- *   - Press Escape → fully close
- *   - Click × button → fully close
+ *   - Click outside → close
+ *   - Press Escape → close
+ *   - Click × button → close
  *
  * Mobile mode (`.is-mobile` on body or viewport ≤ 768px):
  *   Full-width bottom sheet, no tail, slides up from bottom.
@@ -40,17 +36,7 @@ import {
     setPlatformTimeout,
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
-
-function clearChildren(node: Element): void {
-    node.textContent = "";
-    while (node.firstChild) {
-        node.removeChild(node.firstChild);
-    }
-}
-
-function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
-    return getPlatformDocument().createElement(tag);
-}
+import { clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
 
 /** Detect mobile context using the Obsidian convention or viewport width. */
 function isMobile(): boolean {
@@ -186,18 +172,6 @@ export class BubbleView {
         this.attachGlobalListeners();
     }
 
-    /** Degrade the bubble (semi-transparent, click-outside behavior). */
-    degrade(): void {
-        if (this.state !== "visible") return;
-        this.setState("degraded");
-    }
-
-    /** Restore from degraded state. */
-    restore(): void {
-        if (this.state !== "degraded") return;
-        this.setState("visible");
-    }
-
     /** Fully close/hide the bubble. */
     close(): void {
         const wasVisible = this.state !== "hidden" && !!this.rootEl?.isConnected;
@@ -214,9 +188,9 @@ export class BubbleView {
         return this.state;
     }
 
-    /** Check if bubble has content (visible or degraded). */
+    /** Check if bubble has content (visible). */
     get hasContent(): boolean {
-        return this.state === "visible" || this.state === "degraded";
+        return this.state === "visible";
     }
 
     /** Clean up — remove DOM, detach listeners. */
@@ -558,14 +532,16 @@ export class BubbleView {
             return;
         }
 
-        // Click outside — degrade, don't close.
+        // Click outside — close the bubble.
         if (this.state === "visible") {
-            this.degrade();
+            this.close();
+            this.options.callbacks.onDismiss();
         }
     }
 
     private onKeydown(e: KeyboardEvent): void {
         if (e.key === "Escape") {
+            if (isObsidianModalOpen(e)) return;
             e.preventDefault();
             e.stopPropagation();
             this.close();

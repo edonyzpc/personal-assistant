@@ -11,16 +11,13 @@
 import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { clearPlatformTimeout, getPlatformDocument, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
+import { createHtmlElement } from "../dom-utils";
 import { createPetSvgElement, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
 
 export function getPetAriaLabel(locale: PageletLocale, state?: PetState): string {
     const base = pageletT("pagelet.pet.ariaLabel", locale);
     return state ? `${base}: ${pageletT(`pagelet.pet.${state}`, locale)}` : base;
-}
-
-function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K): HTMLElementTagNameMap[K] {
-    return getPlatformDocument().createElement(tag);
 }
 
 export class PetView implements PetRenderer {

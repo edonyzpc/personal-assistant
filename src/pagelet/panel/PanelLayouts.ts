@@ -24,6 +24,7 @@ import {
     type SuggestionCardRenderer,
 } from "../../ui/pagelet";
 import { getPlatformDocument } from "../../platform-dom";
+import { clearChildren, el } from "../dom-utils";
 
 export interface PanelLayoutRenderOptions {
     onSuggestionRenderer?: (renderer: SuggestionCardRenderer) => void;
@@ -32,29 +33,6 @@ export interface PanelLayoutRenderOptions {
     onSuggestionDismiss?: (finding: PanelFinding) => void;
     onRelatedNoteClick?: (noteName: string, finding: PanelFinding) => void;
     onResearchFinding?: (finding: PanelFinding) => void;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Create a DOM element with optional class name and text content. */
-function el<K extends keyof HTMLElementTagNameMap>(
-    tag: K,
-    className?: string,
-    text?: string,
-): HTMLElementTagNameMap[K] {
-    const node = getPlatformDocument().createElement(tag);
-    if (className) node.className = className;
-    if (text !== undefined) node.textContent = text;
-    return node;
-}
-
-function clearChildren(node: Element): void {
-    node.textContent = "";
-    while (node.firstChild) {
-        node.removeChild(node.firstChild);
-    }
 }
 
 // ---------------------------------------------------------------------------
