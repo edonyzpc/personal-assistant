@@ -25,7 +25,6 @@ import type { App, EventRef, MarkdownView, TFile, WorkspaceLeaf } from "obsidian
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 import {
     clearPlatformTimeout,
-    getOptionalPlatformDocument,
     getPlatformDocument,
     setPlatformTimeout,
     type PlatformTimeoutHandle,
@@ -36,7 +35,7 @@ import type { BubbleContent, BubbleFinding } from "./bubble/types";
 import { BubbleView } from "./bubble/BubbleView";
 import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
-import type { PanelFinding, PanelLayoutType, PanelOpenExtra, PanelScopeState } from "./panel/types";
+import type { PanelFinding, PanelLayoutType } from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
 import { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetCorner } from "./pet/types";
@@ -44,7 +43,7 @@ import { PetView } from "./pet/PetView";
 import { PreloadBudget } from "./preload/PreloadBudget";
 import { PreloadCache } from "./preload/PreloadCache";
 import { PreloadEngine } from "./preload/PreloadEngine";
-import type { AnalyzeCallback, PreloadEvent, PreloadFinding } from "./preload/types";
+import type { AnalyzeCallback, PreloadEvent } from "./preload/types";
 import { ReviewNoteGenerator } from "./output/ReviewNoteGenerator";
 import type { GenerateCallback, GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";

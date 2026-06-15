@@ -755,7 +755,9 @@ describe('LLMView turn lifecycle', () => {
     });
 
     afterEach(() => {
+        jest.clearAllTimers();
         jest.useRealTimers();
+        jest.restoreAllMocks();
     });
 
     it('aborts and ignores stale stream callbacks when the chat is cleared', async () => {
@@ -4562,6 +4564,11 @@ describe('LLMView turn lifecycle', () => {
 });
 
 describe('mobile tab bar auto-hide', () => {
+    afterEach(() => {
+        jest.clearAllTimers();
+        jest.useRealTimers();
+    });
+
     let originalPlatform: { isDesktop: boolean; isMobile: boolean };
 
     function buildMobileDrawerDOM() {

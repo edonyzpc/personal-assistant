@@ -18,7 +18,6 @@
 import type { PanelFinding } from "../panel/types";
 import type { TabSection } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
-import { getPlatformDocument } from "../../platform-dom";
 import { clearChildren, el } from "../dom-utils";
 
 // ---------------------------------------------------------------------------

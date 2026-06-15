@@ -20,7 +20,6 @@ import { PreloadBudget } from "./preload/PreloadBudget";
 import {
     applyPageletScopeToggle,
     buildPageletScopePlan,
-    selectPageletScope,
     type PageletReviewRange,
     type PageletScopePlan,
 } from "./scope";
