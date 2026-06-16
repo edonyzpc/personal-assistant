@@ -88,11 +88,11 @@ Loop rules:
 | --- | --- |
 | Created | 2026-06-01 |
 | Decision contract source | [`v2.1.2-decisions.md`](./v2.1.2-decisions.md) |
-| Current stage | A-series: SPEC-A0/A1/A2/A3/A4/A5 全部 `[x] Done`; SPEC-A6 `[x]` Done (`7328987`); SPEC-A7 `[D]` v2.5; SPEC-A8/A9 `[T]`。B-series: SPEC-B1 `[x]` Done (`607c16a`→`08a312d`); SPEC-B2 `[ ]` 毕业 gate (等 smoke + release); SPEC-B3 `[x]` Done (`5113112`); SPEC-B4 `[x]` Done (`ae48afa`); SPEC-B5 `[x]` Done (`5f2d139`)。C-series: SPEC-C1/C2 `[ ]` (v2.4)。Execution roadmap: [`development-roadmap.md`](./development-roadmap.md)。 |
+| Current stage | A-series: SPEC-A0/A1/A2/A3/A4/A5 全部 `[x] Done`; SPEC-A6 spike [x] done, 迁移 [D]; SPEC-A7 `[D]` v2.6+; SPEC-A8/A9 `[T]`。B-series: SPEC-B1 `[x]` Done (`607c16a`→`08a312d`); SPEC-B2 `[ ]` 毕业 gate (等 smoke + release); SPEC-B3 `[~]` dataview [x] done, templater [ ] pending; SPEC-B4/B5 `[ ]` (v2.3)。C-series: SPEC-C1/C2 `[ ]` (v2.6)。D-series: SPEC-D1~D4 `[ ]` (v2.4, 地基层); SPEC-D5 `[ ]` (v2.4, Projector+Hygiene); SPEC-D6 `[ ]` (v2.5, Compactor+Budget); SPEC-D7 `[ ]` (v2.5, Type A); SPEC-D8 `[ ]` (v2.5, Type C+Extraction)。Execution roadmap: [`development-roadmap.md`](./development-roadmap.md)。 |
 | Runtime code changes in this pass | Review remediation: PA Agent history sandboxing, VSS search abort/rewrite safety, Obsidian Operations v1A capability invariant enforcement, chat setup banner refresh on settings save, and release/changelog/doc consistency fixes. |
 | Open contract decisions | None. All 5 original decisions + Q1-Q8 拍板 are frozen in the decision record. |
-| Blocked implementation areas | SPEC-A7 (v2.5); SPEC-A8/A9 (triggered). |
-| Next required action | (1) SPEC-B2: `make deploy` + `pagelet-smoke-checklist.md` GUI smoke + OQ002 provider re-test + iOS 真机验证。(2) v2.2.0-beta.2 BRAT 发布 + 灰度。(3) v2.2.0 stable 发布。(4) v2.3 release checklist: deploy + real vault/mobile smoke + bundle audit + changelog + version bump。(5) A1 follow-up: Manual-CN.md mirror + onboarding screenshots (non-blocking)。 |
+| Blocked implementation areas | SPEC-A7 (v2.6+); SPEC-A8/A9 (triggered). |
+| Next required action | (1) SPEC-B2: `make deploy` + `pagelet-smoke-checklist.md` GUI smoke + OQ002 provider re-test + iOS 真机验证。(2) v2.2.0-beta.2 BRAT 发布 + 灰度。(3) v2.2.0 stable 发布。(4) A1 follow-up: Manual-CN.md mirror + onboarding screenshots (non-blocking)。 |
 
 ## SPEC Index
 
@@ -104,17 +104,25 @@ Loop rules:
 | SPEC-A3 | 依赖与构建清理(P0 #5+#6+#7+H-1) | `[x]` Done — PR-1 @`cee367a`(2026-06-01);H-1 @`5c0d6d9`(merged `d3c2d5c` 2026-06-15) | v2.2 批 2 | SPEC-A0 | [`sdd-dependency-pruning.md`](./sdd-dependency-pruning.md) | `./jest.config.js`、`./package.json`、`./src/ai-services/pa-agent-required-capability-policy.ts` | ✅ PR-1 全部闭合;H-1 deprecated `RequiredCapabilityLevel` type alias 已删除(0 外部消费者)。 |
 | SPEC-A4 | 无消费者 flag 删除 | `[x]` Done @`8352261`(smoke pass 2026-06-01 on `fd6f9b5`) | v2.2 | SPEC-A0 | [`sdd-deprecated-flags-removal.md`](./archive/sdd-deprecated-flags-removal.md) | `./src/settings.ts`、`./src/ai-services/chat-service.ts`、`./src/plugin.ts` migrateSettings、`./__tests__/chat-service.test.ts`、`./scripts/changelog.mjs` | ✅ `paAgentAnswerStreamEnabled` / `nativeToolPlanningSmokeEnabled` 字段及全部消费点已删除;generated CHANGELOG breaking section 已记录;native tool planning 主链路 + 旧 settings 兼容均通过真机 smoke。 |
 | SPEC-A5 | 三层 ToolRegistry 塌缩(决策②) | `[x]` Done @`6cd1042`(smoke pass 2026-06-01) | v2.2 | SPEC-A0 | [`sdd-tool-registry-collapse.md`](./archive/sdd-tool-registry-collapse.md) | `./src/ai-services/chat-tool-registry.ts`、`./src/ai-services/core-tool-provider.ts`(已删)、`./src/ai-services/capability-adapter.ts`、`./src/ai-services/pa-agent-runtime.ts`、`./src/ai-services/capability-types.ts` | ✅ `ToolRegistry` + `CoreToolProvider` 已删;wrap 改在 `capability-adapter.ts` parity 层(SDD §4.1 偏离,reviewer 接受);net −7 LOC src;`policy-engine.ts:35` action 防御线未动。 |
-| SPEC-A6 | @sqliteai 供应商脱钩(决策⑤) | `[x]` Done @`7328987` | v2.3(v2.2 允许机会 spike) | SPEC-A0 | [`sdd-sqliteai-supplier-migration.md`](./sdd-sqliteai-supplier-migration.md) | `./package.json`、`./src/vss/sqlite-worker.ts`、`./src/vss/sqlite-inline-assets.ts` | ✅ `@sqlite.org/sqlite-wasm` 替换;3 处 `vector_*` SQL 改 JS brute-force + 热向量 cache;grep @sqliteai/vector_* 0 hit;101 suites / 1780 tests 全过。 |
-| SPEC-A7 | apiToken 链清理(决策④ part 2) | `[D]` Drafting | v2.5 | SPEC-A0 | [`sdd-apitoken-cleanup.md`](./sdd-apitoken-cleanup.md) | `./src/settings.ts`、`./src/utils.ts`、`./src/plugin.ts` 迁移段 | ~110 行迁移代码删除;v1.x 跳升用户在 release notes 提示重输 token;production confirmation 触达率达标。 |
+| SPEC-A6 | @sqliteai 供应商脱钩(决策⑤) | `[D]` Drafting | v2.3(v2.2 允许机会 spike) | SPEC-A0 | [`sdd-sqliteai-supplier-migration.md`](./sdd-sqliteai-supplier-migration.md) | `./package.json`、`./src/vss/sqlite-worker.ts`、`./src/vss/sqlite-inline-assets.ts` | `@sqlite.org/sqlite-wasm` 替换;3 处 `vector_*` SQL 改 JS brute-force + 热向量 cache;真机 10k chunk 性能持平;移动端不爆。 |
+| SPEC-A7 | apiToken 链清理(决策④ part 2) | `[D]` Drafting | v2.6+ | SPEC-A0 | [`sdd-apitoken-cleanup.md`](./sdd-apitoken-cleanup.md) | `./src/settings.ts`、`./src/utils.ts`、`./src/plugin.ts` 迁移段 | ~110 行迁移代码删除;v1.x 跳升用户在 release notes 提示重输 token;production confirmation 触达率达标。 |
 | SPEC-A8 | React → Preact 评估(决策③触发型) | `[T]` Triggered evaluation only | 触发型(无固定 phase) | SPEC-A0 | [`sdd-react-preact-evaluation.md`](./sdd-react-preact-evaluation.md) | (占位) | 触发条件:新组件用 React 独占特性 OR 引入 preact/compat 不兼容库;触发后启动正式 SDD,本占位标 `[x] superseded`。 |
 | SPEC-A9 | WASM 内联策略复议(决策①触发型) | `[T]` Triggered evaluation only | 触发型(无固定 phase) | SPEC-A0 | (无 SDD,仅决策记录) | (占位) | 触发条件:移动端冷启动 ≥ 5s / OOM ≥ 3 例 / P95 ≥ 5s;触发后开 SDD;不主动测 bundle。 |
 | SPEC-B1 | Pagelet review 5 修复(C-2/H-1/H-3/H-6/iOS) + Orchestrator 拆分 + Bubble 行为 + Onboarding | `[x]` Done — 4 commits `607c16a`→`08a312d`(2026-06-15) | v2.2 | SPEC-A0 | (无独立 SDD;源自 [`pagelet-v2-review-decisions`](../memory/project_pagelet_v2_review_decisions.md)) | `src/pagelet/orchestrator.ts`、`src/pagelet/pet/PetSvg.ts`、`src/pagelet/preload/PreloadEngine.ts`、`src/pagelet/bubble/BubbleView.ts`、`src/pagelet/dom-utils.ts`(新)、`src/plugin.ts`、`src/custom.pcss`、`src/locales/pagelet/*.json`、`src/settings/pagelet/index.ts` | ✅ 16 文件 4 commits;1134 pagelet tests 全过;Orchestrator 拆分完成(AnalysisSessionManager + ReviewNoteSaveFlow 提取)。 |
 | SPEC-B2 | Pagelet beta 毕业 gate(commit + smoke + provider) | `[ ]` Todo | v2.2 | SPEC-B1, SPEC-A3 H-1 | (无 SDD;gate checklist in [`development-roadmap.md`](./development-roadmap.md)) | `manifest.json`、`manifest-beta.json`、`versions.json`、`CHANGELOG.md` | 全量 smoke + OQ002 ≥ 2 providers + v2.2.0 stable 发布。 |
-| SPEC-B3 | 内置 Skills 扩展(obsidian-dataview + obsidian-templater) | `[x]` Done @`5113112` | v2.3 | SPEC-A0 | (待起草) | `skills/` 新目录、`src/ai-services/bundled-skill-catalog.ts`、`src/ai-services/bundled-skills.ts` | ✅ obsidian-dataview + obsidian-templater 两个 skill 完成;SKILL.md + references 完整;catalog 注册;enabledSkillIds 默认包含;101 suites / 1780 tests 全过。 |
-| SPEC-B4 | v1 Pagelet UI relocation | `[x]` Done @`ae48afa` | v2.3 | SPEC-B2 | (无 SDD;机械迁移) | `src/ui/pagelet/` → `src/pagelet/ui/`、barrel exports | ✅ `src/ui/pagelet/` 迁移至 `src/pagelet/ui/`;grep `ui/pagelet` src/ __tests__/ 0 hit;101 suites / 1780 tests 全过。 |
-| SPEC-B5 | Orchestrator 进一步拆分(纯协调层) | `[x]` Done @`5f2d139` | v2.3 | SPEC-B1 | (待起草) | `src/pagelet/orchestrator.ts` | ✅ Orchestrator 拆分为 4 模块(1132→792 行);AnalysisSessionManager / ReviewNoteSaveFlow 独立;101 suites / 1780 tests 全过。 |
-| SPEC-C1 | Action Mode Phase 1(append-to-current-note) | `[ ]` Todo | v2.4 | SPEC-B2, Framework v1 ≥ 8 周验证, SPEC-B5 | (待起草:`operations-agent-mode-sdd.md`) | `src/ai-services/write-action-framework/`、`src/ai-services/policy-engine.ts`、`src/ai-services/capability-types.ts` | append action family 实现 + stale-reread mode B + policy tier + prompt injection tests。 |
-| SPEC-C2 | Skill 用户自定义扩展 | `[ ]` Todo | v2.4 | SPEC-B3 | (待起草) | `src/ai-services/skill-router.ts`、`src/ai-services/skill-context-provider.ts`、`src/settings.ts` | allowed-tools enforce + Settings UI + (optional) vault-side discovery。 |
+| SPEC-B3 | 内置 Skills 扩展(obsidian-dataview ✅, obsidian-templater pending) | `[~]` Implementing | v2.3 | SPEC-A0 | (待起草) | `skills/` 新目录、`src/ai-services/bundled-skill-catalog.ts`、`src/ai-services/bundled-skills.ts` | 新 skill SKILL.md + references 完整;catalog 注册;enabledSkillIds 默认包含;jest 通过。 |
+| SPEC-B4 | v1 Pagelet 死代码移除 | `[ ]` Todo | v2.3 | SPEC-B2 | (无 SDD;机械删除) | `src/ui/pagelet/`(全目录)、barrel exports | `src/ui/pagelet/` 全部文件删除;grep 确认 0 运行时引用;jest 通过。 |
+| SPEC-B5 | Orchestrator 进一步拆分(纯协调层) | `[ ]` Todo | v2.3 | SPEC-B1 | (待起草) | `src/pagelet/orchestrator.ts` | Orchestrator < 800 行;AnalysisSessionManager / ReviewNoteSaveFlow 独立;jest 通过。 |
+| SPEC-C1 | Action Mode Phase 1(append-to-current-note) | `[ ]` Todo | v2.6 | SPEC-B2, Framework v1 ≥ 8 周验证, SPEC-B5 | (待起草:`operations-agent-mode-sdd.md`) | `src/ai-services/write-action-framework/`、`src/ai-services/policy-engine.ts`、`src/ai-services/capability-types.ts` | append action family 实现 + stale-reread mode B + policy tier + prompt injection tests。 |
+| SPEC-C2 | Skill 用户自定义扩展 | `[ ]` Todo | v2.6 | SPEC-B3 | (待起草) | `src/ai-services/skill-router.ts`、`src/ai-services/skill-context-provider.ts`、`src/settings.ts` | allowed-tools enforce + Settings UI + (optional) vault-side discovery。 |
+| SPEC-D1 | 改进切片策略(heading-aware + frontmatter 保留) | `[ ]` Todo | v2.4 | SPEC-B2 | (待起草) | `src/vss.ts`、`src/ai-services/ai-utils.ts`、`src/vss/types.ts` | heading-aware 切割 + frontmatter 保留 + chunk metadata heading path/行号填充;VSS rebuild 自动触发。 |
+| SPEC-D2 | Pagelet 接入 VSS + Reranker 升级 | `[ ]` Todo | v2.4 | SPEC-D1 | (待起草) | `src/pagelet/`、`src/ai-services/pa-agent-runtime.ts`、`pa-review-schemas.ts` | 四场景 VSS 搜索 + related_notes 语义化 + reranker excerpt 扩展 + heading path。 |
+| SPEC-D3 | 按需时间感知检索(Query Rewriter temporal 扩展) | `[ ]` Todo | v2.4 | None | (待起草) | `src/ai-services/query-rewriter.ts`、`src/vss/sqlite-worker.ts` | Query Rewriter 输出 temporal 字段 + SQL WHERE 时间过滤。 |
+| SPEC-D4 | 检索窗口扩大(4→8 文档 / 2000→4000 字符) | `[ ]` Todo | v2.4 | None | (待起草) | `src/ai-services/pa-agent-runtime.ts` | MAX_MEMORY_DOCUMENTS 4→8 + MAX_MEMORY_CHARS 2000→4000。 |
+| SPEC-D5 | Context Projector(Phase 1 提取 + Phase 2 Hygiene) | `[ ]` Todo | v2.4 | None | (待起草) | 新增 `src/ai-services/context-projector.ts`、`src/ai-services/pa-agent-loop.ts`、`src/ai-services/pa-agent-runtime.ts` | Phase 1: forPrompt() 边界 + 诊断 metrics;Phase 2: status-only 过滤 + host context diffing。 |
+| SPEC-D6 | Context Compactor + Budget(micro/full compaction + 动态预算) | `[ ]` Todo | v2.5 | SPEC-D5 | (待起草) | `src/ai-services/context-projector.ts`、`src/ai-services/pa-agent-loop.ts`、新增 `src/ai-services/context-budget.ts` | micro-compaction(预算驱动 + 2 轮保护) + full compaction(主模型摘要) + budget 动态分配。 |
+| SPEC-D7 | Type A 用户画像(自动提取 + 注入) | `[ ]` Todo | v2.5 | SPEC-D5 | (待起草) | 新增 `src/ai-services/user-profile-extractor.ts`、`src/ai-services/pa-agent-runtime.ts` | 纯自动提取 + 定时/对话边界触发 + 内部存储 + 置信度分级。 |
+| SPEC-D8 | Type C Vault 元认知 + Extraction pipeline | `[ ]` Todo | v2.5 | SPEC-D5 | (待起草) | 新增 `src/ai-services/vault-metacognition/` 模块 | 6 维度全做 + 独立调度 + vault 笔记存储 + recurrence 质量控制。 |
 
 ## Phase Ledger(by release window)
 
@@ -144,24 +152,37 @@ Loop rules:
 
 | SPEC | SPEC Review | Dev | Test | Code Review | Deploy | Smoke | Fix / Disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| SPEC-A6(spike) | ✓ Done | ✓ spike commit `2893b57` (merged `54bbc00`) | ✓ spike 通过 | ✓ Self-review | ✓ spike 完成 | ✓ 推荐迁移 | Done; spike 结论写入 `sqlite-wasm-spike-report.md`。 |
-| SPEC-A6(迁移) | ✓ Self-review | ✓ commit `7328987` | ✓ 101 suites / 1780 tests | Pending | Pending | Pending(vault 升级数据完整性) | Done(编码); grep @sqliteai 0, vector_* 0。 |
-| SPEC-B3 | ✓ Self-review | ✓ dataview 814e7d3 + templater `5113112` + review fixes a24fe81/9251bce | ✓ 101 suites / 1780 tests | Pending | Pending | Pending(skill load + chat 验证) | Done(编码); obsidian-dataview + obsidian-templater 两个 skill 完成。 |
-| SPEC-B4 | ✓ Self-review | ✓ commit `ae48afa` | ✓ 101 suites / 1780 tests | Pending | Pending | Pending | Done(编码); `src/ui/pagelet/` 迁移至 `src/pagelet/ui/`, grep `ui/pagelet` 0 hit。 |
-| SPEC-B5 | ✓ Self-review | ✓ commit `5f2d139` | ✓ 101 suites / 1780 tests | Pending | Pending | Pending(Orchestrator 792 行) | Done(编码); Orchestrator 1132→792 行,拆分为 4 模块。 |
+| SPEC-A6(spike) | Pending(`feat/sqlite-org-spike` 分支) | Pending | Pending(vss 全套) | Pending | Pending | Pending(真机 10k chunk + iOS / Android 内存) | Drafted; v2.2 期允许机会 spike,但不作为 v2.2 发版条件。 |
+| SPEC-A6(迁移) | Pending(spike 通过后) | Pending | Pending | Pending | Pending | Pending(vault 升级数据完整性) | Drafted; 失败回 Plan B(另起 SDD)。 |
+| SPEC-B3 | Pending | ✓ 2026-06-15 dataview commit 814e7d3 + test fix 9251bce + review fix a24fe81 | Pending | Pending | Pending | Pending(skill load + chat 验证) | 纯内容工作,可与 A6 并行 worktree。 |
+| SPEC-B4 | Pending | Pending(文件删除 + barrel 更新) | Pending(grep 0 引用) | Pending | Pending | Pending | Sequential after A6 merge。 |
+| SPEC-B5 | Pending | Pending | Pending | Pending | Pending | Pending(Orchestrator < 800 行) | Sequential after B1 merge。 |
 
-### v2.4(解放窗口)
+### v2.4(AI 洞察力提升 — 地基 + 投影)
 
 | SPEC | SPEC Review | Dev | Test | Code Review | Deploy | Smoke | Fix / Disposition |
 | --- | --- | --- | --- | --- | --- | --- | --- |
-| SPEC-C1 | Pending(SDD 在 v2.3 周期起草审查) | Pending | Pending | Pending | Pending | Pending(append action + stale-reread B + policy + injection tests) | 前置: Framework v1 ≥ 8 周验证 + Orchestrator 拆分。 |
+| SPEC-D1 | Pending | Pending | Pending | Pending | Pending | Pending(heading-aware 切片 + frontmatter + rebuild) | 检索质量天花板;变更后自动 rebuild VSS 索引。 |
+| SPEC-D2 | Pending | Pending | Pending | Pending | Pending | Pending(Pagelet 四场景 VSS 搜索 + reranker) | 依赖 D1 完成;Pagelet 相关性从猜测→语义搜索。 |
+| SPEC-D3 | Pending | Pending | Pending | Pending | Pending | Pending(temporal query 时间过滤) | Query Rewriter temporal 扩展;零额外 API 成本。 |
+| SPEC-D4 | Pending | Pending | Pending | Pending | Pending | Pending(检索窗口 4→8 / 2000→4000) | 快速改动,与 D1 协同。 |
+| SPEC-D5 | Pending | Pending | Pending | Pending | Pending | Pending(Projector forPrompt + hygiene pass) | Phase 1 提取 + Phase 2 过滤/diffing;Type A/C 的前提。 |
+
+### v2.5(Context Compactor + 理解层)
+
+| SPEC | SPEC Review | Dev | Test | Code Review | Deploy | Smoke | Fix / Disposition |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SPEC-D6 | Pending | Pending | Pending | Pending | Pending | Pending(micro/full compaction + budget 动态分配) | 依赖 D5;预算驱动 + 2 轮保护 + 主模型摘要。 |
+| SPEC-D7 | Pending | Pending | Pending | Pending | Pending | Pending(用户画像自动提取 + 注入) | 依赖 D5;纯自动提取 + 定时/对话边界触发。 |
+| SPEC-D8 | Pending | Pending | Pending | Pending | Pending | Pending(6 维度元认知 + extraction pipeline) | 依赖 D5;独立调度 + vault 笔记存储。 |
+
+### v2.6(Action Mode + Skill 扩展 + 清理, ≥ 2026-11-29)
+
+| SPEC | SPEC Review | Dev | Test | Code Review | Deploy | Smoke | Fix / Disposition |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SPEC-C1 | Pending(SDD 在 v2.5 周期起草审查) | Pending | Pending | Pending | Pending | Pending(append action + stale-reread B + policy + injection tests) | 前置: Framework v1 ≥ 8 周验证 + v2.5 stable。 |
 | SPEC-C2 | Pending | Pending | Pending | Pending | Pending | Pending(allowed-tools enforce + Settings UI) | 可与 C1 并行 worktree。 |
-
-### v2.5(apiToken 链清理,≥ 5 minor + ≥ 2026-11-29)
-
-| SPEC | SPEC Review | Dev | Test | Code Review | Deploy | Smoke | Fix / Disposition |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| SPEC-A7 | Pending(production confirmation 前置) | Pending | Pending | Pending | Pending | Pending(干净启动 + v1.x 跳升 + multi-vault) | Drafted; 触发复议条件见 SDD §8。 |
+| SPEC-A7 | Pending(production confirmation 前置) | Pending | Pending | Pending | Pending | Pending(干净启动 + v1.x 跳升 + multi-vault) | Drafted; ≥ 5 minor + ≥ 2026-11-29;触发复议条件见 SDD §8。 |
 
 ### Triggered evaluation(无固定 phase)
 
@@ -178,7 +199,7 @@ Loop rules:
 | 决策② 三层塌缩(B3) | SPEC-A5 | `./src/ai-services/chat-tool-registry.ts`(整 class)、`./src/ai-services/core-tool-provider.ts`(整文件)、`./src/ai-services/chat-tool-factories.ts`、`./src/ai-services/capability-types.ts:20`(kind 注释)、`./src/ai-services/policy-engine.ts:35`(action 守卫,**不动**) | v2.2 或 v2.3 |
 | 决策③ React 不切(C1) | SPEC-A8 | (无代码改动;触发后定位 `./package.json`、`./esbuild.config.mjs`、`./jest.config.js`、`./src/components/*.tsx`) | 触发型 |
 | 决策④ part 1: flag 清扫 | SPEC-A4 | `./src/settings.ts:70`(类型)、`./src/settings.ts:140`(默认值)、`./src/ai-services/chat-service.ts:102`(消费点)、`./src/plugin.ts:1062-1065`(归一化)、`./src/plugin.ts:1084-1087`(已存在的 delete 块) | v2.2 |
-| 决策④ part 2: apiToken 链 | SPEC-A7 | `./src/settings.ts:59-60`、`./src/utils.ts:189-190`(`personalAssitant` 常量)、`./src/utils.ts:192-`(`CryptoHelper` 类)、`./src/plugin.ts:14`(import)、`./src/plugin.ts:117-118`(字段)、`./src/plugin.ts:1172-1196`(migrateSettings)、`./src/plugin.ts:1219-1221`(`getLegacyAPITokenSecretId`)、`./src/plugin.ts:1224-1227`(legacy fallback) | v2.5 |
+| 决策④ part 2: apiToken 链 | SPEC-A7 | `./src/settings.ts:59-60`、`./src/utils.ts:189-190`(`personalAssitant` 常量)、`./src/utils.ts:192-`(`CryptoHelper` 类)、`./src/plugin.ts:14`(import)、`./src/plugin.ts:117-118`(字段)、`./src/plugin.ts:1172-1196`(migrateSettings)、`./src/plugin.ts:1219-1221`(`getLegacyAPITokenSecretId`)、`./src/plugin.ts:1224-1227`(legacy fallback) | v2.6+ |
 | 决策⑤ @sqliteai 脱钩 | SPEC-A6 | `./package.json`(依赖替换)、`./src/vss/sqlite-worker.ts:339-622`(3 处 `vector_*` SQL)、`./src/vss/sqlite-inline-assets.ts`(WASM 路径)、`./src/vss/schema.ts`(若存在) | v2.3 |
 | P0 #1 ribbon 直达 | SPEC-A1 | `./src/plugin.ts:162-165`(addRibbonIcon,需 grep 验证) | v2.2 批 1 |
 | P0 #2 空状态 banner | SPEC-A1 | `./src/chat/chat-view.ts:829-861`(`renderEmptyState`,需 grep 验证) | v2.2 批 1 |
@@ -203,8 +224,6 @@ Loop rules:
 | 2026-06-01 | Combined Step 1 + A1 Obsidian smoke | Real Obsidian test vault on master HEAD `13dbb2b` (after `make deploy`) | User-driven manual smoke per tracker checklist (ribbon left/right click;empty-state banner show/clear;capability dispatch;jest config) | Passed | Smoke green;A3(non-H-1) + A5 + A1 cleared the deploy gate;v2.2 batch 1 + 批 2 PR-1 portion fully closed。Manual-CN.md + onboarding screenshots remain as A1 follow-up docs (non-blocking)。 |
 | 2026-06-01 | SPEC-A4 dev cycle | tsc + jest on master HEAD `8352261` after flag removal commit | `npx tsc --noEmit --skipLibCheck` + `npx jest __tests__/chat-service.test.ts` + `npm test` | Passed (tsc=0;jest 5 suites / 65 tests targeted;jest 265 suites / 4492 tests full in 5.4s) | Authoritative green post-A4 dev;master ready for `make deploy` + smoke。Companion `b8030b9` 仅为 A1 `.pa-chat-config-banner` CSS 重新生成,无逻辑变更。 |
 | 2026-06-01 | SPEC-A4 Obsidian smoke | Real Obsidian test vault on master HEAD `fd6f9b5` (after `make deploy`) | User-driven manual smoke (chat path / native tool planning / record-note / search_memory + 旧 settings 残留 `paAgentAnswerStreamEnabled` / `nativeToolPlanningSmokeEnabled` keys 加载) | Passed | Smoke green;两个 deprecated flag 移除不影响主链路,旧 settings 加载亦无错误。SPEC-A4 翻 `[x] Done`。 |
-
-| 2026-06-16 | v2.3 SPEC implementation verification | A6(`7328987`), B3(`5113112`), B4(`ae48afa`), B5(`5f2d139`) all committed | `npm test` + `npx tsc --noEmit` + `npm run build` + grep checks | Passed (101 suites / 1780 tests; tsc 0 error; build OK; grep @sqliteai 0, vector_init/as_f32/full_scan 0, ui/pagelet 0; wc -l orchestrator.ts 792) | v2.3 全部 4 个 SPEC 编码完成;剩余: deploy + smoke + changelog + version bump。 |
 
 (后续 SPEC `[R]` → `[A]` → `[~]` → `[T]` → `[V]` → `[S]` → `[x]` 期间产生的 verification 命令在此追加。)
 

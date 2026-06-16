@@ -15,10 +15,11 @@
   - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
   - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, v2.2.0 stable published.
 
-- [ ] Close v2.3 implementation and graduate to stable.
-  - Context: All 4 v2.3 SPECs (A6 SQLite migration, B3 Templater skill, B4 UI relocation, B5 Orchestrator split) are coded and committed. Remaining: automated verification record, bundle audit, real vault + mobile smoke, changelog, version bump.
-  - Source: docs/v2.3-implementation-plan.md section E.6.
-  - Exit criteria: E.6 release checklist fully checked, v2.3.0 stable published.
+- [ ] Close v2.4 AI Insight Foundation release gate.
+  - Context: v2.4 方向从 Action Mode 调整为 AI 洞察力地基层(SPEC-D1~D4)。原 Action Mode(SPEC-C1/C2)推迟到 v2.5。
+  - Source: [`development-roadmap.md`](./development-roadmap.md) v2.4 section, SPEC-D1/D2/D3/D4 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md), [`ai-insight-improvement-analysis.md`](./ai-insight-improvement-analysis.md).
+  - Worktree strategy: 2 parallel worktrees (heading-aware-chunking ∥ pagelet-vss), D3/D4 sequential after D1 merge.
+  - Exit criteria: heading-aware chunking + VSS schema v2 rebuild verified, Pagelet 4 场景 VSS 接入完成, temporal query rewrite 工作, 检索窗口 4→6 + reranker 升级验证, v2.4.0 stable 发布.
 
 - [ ] Close v2 review follow-up stabilization before release.
   - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.
@@ -45,8 +46,8 @@
 ## Future Milestones
 
 - [ ] Review and scope write action / command execution product and security design.
-  - Context: the archived vault-native refactor track closed through Phase 6 with Chat still read-only. Write Action Framework v1 shipped with v2.2.0-beta.1 (Pagelet `create-file` family). Action Mode Phase 1 (`append-to-current-note`) confirmed for v2.4 window per 2026-06-15 assessment.
-  - Source docs: `docs/operations-agent-plan.md`; `docs/write-action-design-handoff.md`; [`development-roadmap.md`](./development-roadmap.md) v2.4 section; SPEC-C1 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
+  - Context: the archived vault-native refactor track closed through Phase 6 with Chat still read-only. Write Action Framework v1 shipped with v2.2.0-beta.1 (Pagelet `create-file` family). Action Mode Phase 1 (`append-to-current-note`) confirmed for v2.5 window (originally v2.4, deferred to prioritize AI Insight Foundation in v2.4).
+  - Source docs: `docs/operations-agent-plan.md`; `docs/write-action-design-handoff.md`; [`development-roadmap.md`](./development-roadmap.md) v2.5 section; SPEC-C1 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
   - Entry criteria: Framework v1 ≥ 8 weeks validation (no security issue), Orchestrator decomposition complete (SPEC-B5), Operations Agent mode SDD drafted and reviewed.
   - Exit criteria: product/security review explicitly approves an implementation plan, creates a separate development tracker, and keeps direct note writes, arbitrary filesystem edits, shell/bash, and automatic Obsidian command execution out of scope unless separately approved.
 

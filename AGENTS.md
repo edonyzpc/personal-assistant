@@ -25,6 +25,41 @@ Use this file as the project README for coding agents. Keep changes aligned with
 - Use `apply_patch` for manual edits.
 - Do not rely on absolute paths from one machine. Resolve paths from the repo root.
 
+### v2.4/v2.5 New Module Mapping
+
+```
+src/ai-services/context/                    (v2.4 new) Context Management layer
+  PaAgentContextManager.ts                  组合调用 4 个 delegate
+  PaAgentContextProjector.ts                投影：origins 标注 + diffing + 注入
+  PaAgentContextHygiene.ts                  清洁：过滤 status-only + 修复 orphan
+  PaAgentContextCompactor.ts                (v2.5) 压缩：micro + full compaction
+  PaAgentContextBudget.ts                   (v2.5) 预算：chars/tokens 追踪
+```
+
+```
+src/ai-services/memory-extraction/          (v2.5 new) Memory extraction pipeline
+  type-a-extractor.ts                       用户画像自动提取
+  type-c-analyzer.ts                        Vault 元认知分析
+  extraction-scheduler.ts                   独立调度 A/C 的触发逻辑
+```
+
+### Context Limit Constants
+
+v2.4 起 context 限制放宽至 128K 基线。以下为 `src/ai-services/pa-agent-runtime.ts` 中的关键常量及当前值：
+
+| Constant | Current Value | Description |
+| --- | --- | --- |
+| `MAX_CHAT_HISTORY_TURNS` | 20 | 聊天历史保留最大轮次 |
+| `MAX_READ_ONLY_TOOL_CONTEXT_CHARS` | 12000 | 只读工具上下文字符上限 |
+| `MAX_MEMORY_DOCUMENTS` | 4 | 单次检索返回的最大 Memory 文档数 |
+| `MAX_MEMORY_CHARS` | 2000 | 单文档内容截断上限 |
+| `MAX_MEMORY_RERANK_CANDIDATES` | 6 | Rerank 候选数 |
+| `MAX_MEMORY_CANDIDATE_CHUNKS` | 2 | 每候选文档最大 chunk 数 |
+| `MAX_MEMORY_CANDIDATE_EXCERPT_CHARS` | 500 | 候选摘要截断上限 |
+| `MAX_TURN_WALL_CLOCK_MS` | 180000 | 单 turn 最大挂钟时间 |
+
+v2.4 Context Projector + Hygiene 上线后，上述常量中与检索管线相关的值（`MAX_MEMORY_DOCUMENTS`、`MAX_MEMORY_CHARS`、`MAX_READ_ONLY_TOOL_CONTEXT_CHARS`）将随 128K 基线同步上调。具体新值由 `PaAgentContextBudget`（v2.5）统一管控。
+
 ## Build And Local Run Commands
 
 - Install dependencies: `npm install`.
@@ -171,6 +206,32 @@ Use this file as the project README for coding agents. Keep changes aligned with
 - Do not invent nits if the diff is sound. Say there are no actionable findings and mention remaining verification gaps.
 - Separate must-fix correctness issues from optional polish.
 - For reported error strings, trace that exact command path before widening scope.
+
+## SDD-Driven Development
+
+This project follows SPEC-Driven Development (SDD). Each feature goes through a formal SDD lifecycle before runtime code is written. See `docs/v2-post-release-spec-driven-development.md` for the full tracker and approval gates.
+
+### v2.4 Scope
+
+v2.4 原计划为"5 项基础改进"（SPEC-C1 Action Mode + SPEC-C2 Skill 扩展），现已扩展为：
+
+- **5 项基础改进**：SPEC-C1（Action Mode Phase 1）+ SPEC-C2（Skill 用户自定义扩展）+ 前置 SPEC 收尾
+- **Context 限制放宽**：128K 基线，检索管线常量同步上调
+- **Context Projector**：`PaAgentContextProjector` — origins 标注 + diffing + context 注入
+- **Context Hygiene**：`PaAgentContextHygiene` — 过滤 status-only 消息 + 修复 orphan tool-call 对
+
+研究基础：`docs/agent-context-management-research.md`（5 个 agent 项目的 context 管理架构对比）。
+
+### v2.5 Scope
+
+v2.5 在 v2.4 Context 基础上继续深化：
+
+- **Context Compaction**：`PaAgentContextCompactor` — micro trim + full compaction（LLM 摘要替换旧 context）
+- **Context Budget**：`PaAgentContextBudget` — chars/tokens 追踪，统一管控检索管线常量
+- **Memory Extraction Pipeline**：`type-a-extractor`（用户画像自动提取）+ `type-c-analyzer`（Vault 元认知分析）+ `extraction-scheduler`（独立调度）
+- **apiToken 链清理**：SPEC-A7，≥ 5 minor 且 ≥ 2026-11-29
+
+研究基础：`docs/agent-memory-extraction-research.md`（5 个 agent 项目的跨会话 memory 提取与置信度机制对比）。
 
 ## Final Checklist For Agents
 
