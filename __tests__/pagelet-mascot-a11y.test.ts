@@ -22,12 +22,12 @@ import {
     type MascotLiveAnnouncement,
     type MascotState,
     type MascotTranslator,
-} from "../src/ui/pagelet/mascot";
+} from "../src/pagelet/ui/mascot";
 import {
     createMascotRendererWithHost,
     type MascotDomHost,
     type MascotDomNode,
-} from "../src/ui/pagelet/mascot/dom-renderer";
+} from "../src/pagelet/ui/mascot/dom-renderer";
 import { pageletT } from "../src/locales/pagelet";
 
 // ---------------------------------------------------------------------------

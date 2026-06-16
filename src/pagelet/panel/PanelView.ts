@@ -48,7 +48,7 @@ import {
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
 import { clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
-import type { SuggestionCardRenderer } from "../../ui/pagelet";
+import type { SuggestionCardRenderer } from "../ui";
 import type { PageletSuggestion } from "../pa-review-schemas";
 import type { PageletReviewRange } from "../scope";
 

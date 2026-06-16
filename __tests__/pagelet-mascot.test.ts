@@ -26,12 +26,12 @@ import {
     buildMascotMarkup,
     type MascotState,
     type MascotTranslator,
-} from "../src/ui/pagelet/mascot";
+} from "../src/pagelet/ui/mascot";
 import {
     createMascotRendererWithHost,
     type MascotDomHost,
     type MascotDomNode,
-} from "../src/ui/pagelet/mascot/dom-renderer";
+} from "../src/pagelet/ui/mascot/dom-renderer";
 import { pageletT } from "../src/locales/pagelet";
 
 // ---------------------------------------------------------------------------
@@ -477,7 +477,7 @@ describe("module hygiene", () => {
         // (jest doesn't expose its registry) — instead we re-import
         // the builder in isolation and verify it runs without an app.
         jest.isolateModules(() => {
-            const { buildMascotMarkup: builder } = require("../src/ui/pagelet/mascot/markup");
+            const { buildMascotMarkup: builder } = require("../src/pagelet/ui/mascot/markup");
             expect(() =>
                 builder("idle", { translator: (k: string) => k }),
             ).not.toThrow();

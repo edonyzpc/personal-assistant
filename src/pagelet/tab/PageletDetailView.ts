@@ -3,7 +3,7 @@
 import { ItemView, WorkspaceLeaf, addIcon, type ViewStateResult } from "obsidian";
 
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locales/pagelet";
-import { buildMascotMarkup } from "../../ui/pagelet/mascot";
+import { buildMascotMarkup } from "../ui/mascot";
 import { TabView } from "./TabView";
 import type { PageletDetailContent, PageletDetailPayload } from "./types";
 

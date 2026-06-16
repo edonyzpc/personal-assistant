@@ -25,12 +25,12 @@ import {
     buildSuggestionCardMarkup,
     type SuggestionCardProps,
     type SuggestionCardTranslator,
-} from "../src/ui/pagelet/suggestion-card";
+} from "../src/pagelet/ui/suggestion-card";
 import {
     createSuggestionCardRendererWithHost,
     type SuggestionCardDomHost,
     type SuggestionCardDomNode,
-} from "../src/ui/pagelet/suggestion-card/dom-renderer";
+} from "../src/pagelet/ui/suggestion-card/dom-renderer";
 import { pageletT } from "../src/locales/pagelet";
 import { DomStubNode, findByClass, findAllByClass } from "./helpers/dom-stub";
 

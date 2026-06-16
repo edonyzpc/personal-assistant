@@ -22,7 +22,7 @@ import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import {
     createSuggestionCardRenderer,
     type SuggestionCardRenderer,
-} from "../../ui/pagelet";
+} from "../ui";
 import { getPlatformDocument } from "../../platform-dom";
 import { clearChildren, el } from "../dom-utils";
 
