@@ -58,8 +58,9 @@ export class ResearchManager {
         const prompt = this.buildResearchPrompt(request);
 
         try {
-            const chatLeaf = this.findChatLeaf();
+            const chatLeaf = await this.findOrCreateChatLeaf();
             if (chatLeaf) {
+                this.app.workspace.revealLeaf(chatLeaf);
                 const populated = this.populateChatWithPrompt(chatLeaf, prompt);
                 if (populated) {
                     new Notice(this.t("pagelet.panel.status.researchReady"), 4000);
@@ -67,8 +68,6 @@ export class ResearchManager {
                     new Notice(this.t("pagelet.panel.status.researchBlocked"), 4000);
                 }
 
-                // Report success -- the actual research happens when the
-                // user submits the prompt in Chat (possibly with WebSearch).
                 this.callbacks.onResearchComplete({
                     query: prompt,
                     findings: [],
@@ -126,12 +125,22 @@ export class ResearchManager {
     // ======================================================================
 
     /**
-     * Find an existing Chat view leaf. Returns `null` if none is open.
-     * Uses the same chat view lookup pattern as the review orchestrator.
+     * Find an existing Chat view leaf or create one in the right sidebar.
+     * Mirrors the `plugin.ts:activeChatView()` pattern.
      */
-    private findChatLeaf(): ReturnType<App["workspace"]["getLeavesOfType"]>[number] | null {
-        const leaves = this.app.workspace.getLeavesOfType(VIEW_TYPE_LLM);
-        return leaves.length > 0 ? leaves[0] : null;
+    private async findOrCreateChatLeaf(): Promise<ReturnType<App["workspace"]["getLeavesOfType"]>[number] | null> {
+        const { workspace } = this.app;
+        let leaf = workspace.getLeavesOfType(VIEW_TYPE_LLM)[0] ?? null;
+
+        if (!leaf) {
+            const newLeaf = workspace.getRightLeaf(false);
+            if (newLeaf) {
+                await newLeaf.setViewState({ type: VIEW_TYPE_LLM, active: true });
+                leaf = newLeaf;
+            }
+        }
+
+        return leaf;
     }
 
     /**

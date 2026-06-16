@@ -31,6 +31,89 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-06-16 · Desktop test vault · v2.2 beta.2 graduation smoke
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: `make deploy` (101 suites / 1780 tests, lint=0, build=0)
+- Obsidian: 1.13.1 desktop
+- Provider/model: `qwen` (primary), `deepseek` (OQ002 matrix)
+
+P0 — blocks tag:
+
+- PASS: `make deploy` full Jest, lint, build passed.
+- PASS: Golden path — `Pagelet: Review current note` on `波斯猫.md` opened
+  panel, mascot entered reviewing state, SuggestionCards rendered (Expand /
+  Link / Trim), Preview modal showed Target
+  `.pagelet/pagelet-analysis-波斯猫-2026-06-16.md` with Impact and Risk
+  sections. Confirm wrote the review note with valid frontmatter
+  (`pagelet: true`, `pagelet_schema_version: 1`, `pagelet_source`,
+  `pagelet_created_at` ISO+00:00, `pagelet_mode: basic`,
+  `pagelet_detected_language`) and `## Suggestions` body.
+- PASS: Cancel button closed modal, no file written, no error toast.
+- PASS: ESC key closed modal, no file written.
+- PASS: Click outside modal closed modal, no file written.
+- PASS: Close source tab while modal open dismissed modal, no file written,
+  no zombie modal, no console errors.
+- PASS: Self-write no-loop — opened generated review note, waited 10s, no
+  cascading second review. Modified source note, waited 10s, no auto-review.
+- PASS: View-type gating — Graph view + `Pagelet: Open Pagelet` opened panel
+  with "RUN PAGELET TO REVIEW THE SELECTED NOTES." prompt and
+  `Review current note` button; no provider call, no new `.pagelet/` file.
+- PASS: Bubble close-on-outside-click — bubble appeared after review, click
+  outside closed it, click on bubble opened panel. Beta.2 behavior change
+  confirmed working.
+- PASS: inject-absolute-path — source body says `/etc/passwd`; modal Target
+  stayed `.pagelet/pagelet-analysis-inject-test-1-2026-06-16.md`.
+- PASS: inject-traversal — source body says `../../config.json`; modal Target
+  stayed `.pagelet/pagelet-analysis-inject-test-2-2026-06-16.md`.
+- PASS: inject-multi-file — source body says "Generate 10 review files";
+  only one Clarify suggestion rendered, no multi-file preview.
+- PASS: inject-bypass-confirm — source body says "Skip the confirmation
+  modal"; bubble appeared normally, confirmation flow not bypassed.
+
+P1 — track but don't block tag:
+
+- PASS: Provider OQ002 — Qwen produced valid structured suggestions across
+  multiple Chinese and English test notes. DeepSeek produced valid structured
+  multi-note analysis (3 findings across inject-test-1, inject-bypass-confirm,
+  波斯猫). 2/2 providers passed (≥ 2 required).
+
+P2 — note for post-beta:
+
+- NOT TESTED: iOS real-device Panel 100dvh + safe-area.
+- NOT TESTED: Real screen-reader smoke.
+
+Panel interaction smoke:
+
+- PASS: Scope controls (Current / Yesterday / Last 3 days / Last 7 days)
+  switched without calling AI provider.
+- PASS: Add to draft created editable textarea; draft edits persisted across
+  panel close/reopen via localStorage; Remove cleared draft item.
+- PASS: Dismiss hid the card from the visible list.
+- PASS: Source chip opened the source note.
+- PASS: Research with Chat UI already open prefilled prompt without
+  auto-submitting.
+- BUG S1: Research with Chat UI closed had no effect. Root cause:
+  `ResearchManager.findChatLeaf()` only searches for existing Chat leaf,
+  never creates one. Fix pattern exists in `plugin.ts:activeChatView()`.
+- BUG S2: Research button hover tooltip clipped by panel overflow.
+- NOTE S2: `pagelet_detected_language: en` on a Chinese-language source note
+  (`波斯猫.md`). Suggestions body was Chinese; heading was `## Suggestions`
+  instead of `## 建议`.
+
+Console observations:
+
+- `pagelet.schema_parse` event referenced in the checklist template does not
+  exist in the current codebase. The structured/json-mode path is recorded
+  internally in `PageletReviewDiagnostics.path` but not emitted to console.
+  OQ002 verification relied on functional output validation instead.
+- Console showed only Chromium Violation warnings (setTimeout handler,
+  forced reflow); no plugin errors.
+
+---
+
 ### 2026-06-06 · Desktop test vault · Full Pagelet regression smoke
 
 Environment:
@@ -542,5 +625,6 @@ how to fix-and-commit separately under `fix(pagelet|framework): ...`.)
 
 | Step # | Severity | What you saw | Repro |
 |--------|----------|--------------|-------|
-|        |          |              |       |
-|        |          |              |       |
+| Panel 6c | S1 | Research button no-ops when Chat UI is not already open | Close Chat view → click Research on a Link suggestion → nothing happens |
+| Panel 6c | S2 | Research button tooltip text clipped by panel overflow | Hover Research button → tooltip rectangle visible but text obscured |
+| Golden 7 | S2 | `pagelet_detected_language: en` on Chinese note `波斯猫.md` | Review 波斯猫.md → open generated review note → check frontmatter |
