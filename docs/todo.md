@@ -15,6 +15,11 @@
   - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
   - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, v2.2.0 stable published.
 
+- [ ] Close v2.3 implementation and graduate to stable.
+  - Context: All 4 v2.3 SPECs (A6 SQLite migration, B3 Templater skill, B4 UI relocation, B5 Orchestrator split) are coded and committed. Remaining: automated verification record, bundle audit, real vault + mobile smoke, changelog, version bump.
+  - Source: docs/v2.3-implementation-plan.md section E.6.
+  - Exit criteria: E.6 release checklist fully checked, v2.3.0 stable published.
+
 - [ ] Close v2 review follow-up stabilization before release.
   - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.
   - Completed so far: API token migration clears `data.json`; scoped/legacy keychain fallback is in place; API Token editor/clear confirmation works; provider switching confirms preset replacement; Settings data-safety fixes are covered by tests; chat history modal overflow/duplicate preview issues are fixed; chat history persistence exists in IndexedDB-backed store/manager code; chat-tools split, statistics incremental snapshot cache, WASM lazy load, and RequiredCapability refactor are implemented; foreground OPFS marker recovery is removed and manual technical recovery is bounded.
