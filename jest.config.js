@@ -115,6 +115,7 @@ module.exports = {
     // legacy asset-string mock — do not merge the two.
     "\\.wasm$": "<rootDir>/__mocks__/wasm-binary-fn.js",
     "\\?worker-source$": "<rootDir>/__mocks__/asset-string.js",
+    "^@sqlite\\.org/sqlite-wasm$": "<rootDir>/__mocks__/sqlite-wasm.js",
   },
 
   // An array of regexp pattern strings, matched against all module paths before considered 'visible' to the module loader

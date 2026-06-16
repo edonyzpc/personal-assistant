@@ -11,7 +11,7 @@ describe('sqlite worker OPFS lifecycle', () => {
 
     afterEach(() => {
         jest.resetModules();
-        jest.dontMock('@sqliteai/sqlite-wasm');
+        jest.dontMock('@sqlite.org/sqlite-wasm');
         if (originalSelf) {
             Object.defineProperty(globalThis, 'self', originalSelf);
         } else {
@@ -28,7 +28,7 @@ describe('sqlite worker OPFS lifecycle', () => {
             exec: jest.fn((request: unknown) => {
                 if (isExecRowsRequest(request)) {
                     if (request.rowMode === 'array') {
-                        request.resultRows.push([0]);
+                        request.resultRows.push([isPragmaTableInfoQuery(request) ? 1 : 0]);
                     }
                 }
             }),
@@ -53,7 +53,7 @@ describe('sqlite worker OPFS lifecycle', () => {
             configurable: true,
             value: workerScope,
         });
-        jest.doMock('@sqliteai/sqlite-wasm', () => ({
+        jest.doMock('@sqlite.org/sqlite-wasm', () => ({
             __esModule: true,
             default: sqlite3InitModule,
         }));
@@ -96,7 +96,7 @@ describe('sqlite worker OPFS lifecycle', () => {
             close,
             exec: jest.fn((request: unknown) => {
                 if (isExecRowsRequest(request) && request.rowMode === 'array') {
-                    request.resultRows.push([0]);
+                    request.resultRows.push([isPragmaTableInfoQuery(request) ? 1 : 0]);
                 }
             }),
         };
@@ -120,7 +120,7 @@ describe('sqlite worker OPFS lifecycle', () => {
             configurable: true,
             value: workerScope,
         });
-        jest.doMock('@sqliteai/sqlite-wasm', () => ({
+        jest.doMock('@sqlite.org/sqlite-wasm', () => ({
             __esModule: true,
             default: sqlite3InitModule,
         }));
@@ -191,6 +191,16 @@ async function flushAsyncWork(): Promise<void> {
     await flushMicrotasks();
     await new Promise((resolve) => setTimeout(resolve, 0));
     await flushMicrotasks();
+}
+
+function isPragmaTableInfoQuery(request: unknown): boolean {
+    return Boolean(
+        request
+        && typeof request === 'object'
+        && 'sql' in request
+        && typeof (request as { sql?: unknown }).sql === 'string'
+        && (request as { sql: string }).sql.includes('pragma_table_info'),
+    );
 }
 
 function isExecRowsRequest(request: unknown): request is { rowMode: string; resultRows: unknown[][] } {

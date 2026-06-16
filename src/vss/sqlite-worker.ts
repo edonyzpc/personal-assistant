@@ -1,6 +1,6 @@
 /// <reference lib="webworker" />
 
-import sqlite3InitModule from "@sqliteai/sqlite-wasm";
+import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
 import {
     getEmbeddingProfileSignature,
     scoreFromDistance,
@@ -12,6 +12,7 @@ import {
     type VSSIndexStats,
 } from "./types";
 import { fuseRRF } from "./rrf";
+import { bruteForceTopK } from "./brute-force-search";
 import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-protocol";
 
 type SQLiteDatabase = any; // sqlite-wasm's OO API is runtime-shaped and broad.
@@ -49,6 +50,7 @@ let lastSearchDurationMs: number | undefined;
 let lastErrorCode: string | undefined;
 let requestQueue: Promise<void> = Promise.resolve();
 let disposed = false;
+let vectorCache: Map<number, Float32Array> | null = null;
 
 const ctx = self as unknown as DedicatedWorkerGlobalScope;
 
@@ -151,7 +153,9 @@ async function initialize(
 
     try {
         configureSqliteLogging();
-        sqlite3 ??= await sqlite3InitModule({
+        // The official @sqlite.org/sqlite-wasm types declare init() with no args,
+        // but the Emscripten module loader accepts locateFile/printErr at runtime.
+        sqlite3 ??= await (sqlite3InitModule as (opts: Record<string, unknown>) => Promise<SQLiteModule>)({
             locateFile: (path: string, prefix: string) => {
                 if (path.endsWith(".wasm") && wasmUrl) return wasmUrl;
                 return `${prefix}${path}`;
@@ -409,10 +413,17 @@ function getNumberValueFrom(database: SQLiteDatabase, sql: string): number {
     return typeof value === "number" ? value : Number(value ?? 0);
 }
 
-function initializeVectorColumn(profile: EmbeddingProfile): void {
-    requireDb().exec(
-        `SELECT vector_init('vss_chunks', 'embedding', 'type=FLOAT32,dimension=${profile.dimensions},distance=${profile.distanceMetric}')`,
-    );
+function initializeVectorColumn(_profile: EmbeddingProfile): void {
+    const rows: unknown[][] = [];
+    requireDb().exec({
+        sql: "SELECT COUNT(*) FROM pragma_table_info('vss_chunks') WHERE name = 'embedding'",
+        rowMode: "array",
+        resultRows: rows,
+    });
+    const count = Number(rows[0]?.[0] ?? 0);
+    if (count === 0) {
+        throw createWorkerError("schema-invalid", "vss_chunks table is missing the embedding column.");
+    }
 }
 
 function upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: number[][]): void {
@@ -443,7 +454,7 @@ function upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: num
 
         const chunkStmt = database.prepare(`
             INSERT INTO vss_chunks(path, chunk_index, content, metadata, embedding, content_hash, created, last_modified)
-            VALUES (?, ?, ?, ?, vector_as_f32(?), ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
         try {
             for (let i = 0; i < chunks.length; i++) {
@@ -471,6 +482,22 @@ function upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: num
         });
 
         database.exec("COMMIT");
+
+        if (vectorCache !== null) {
+            const insertedRows: unknown[][] = [];
+            database.exec({
+                sql: "SELECT id, embedding FROM vss_chunks WHERE path = ?",
+                bind: [fileState.path],
+                rowMode: "array",
+                resultRows: insertedRows,
+            });
+            for (const row of insertedRows) {
+                const id = Number(row[0]);
+                const blob = row[1] as Uint8Array;
+                vectorCache.set(id, new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4));
+            }
+        }
+
         status = "ready";
         lastRefreshDurationMs = performance.now() - startedAt;
         lastErrorCode = undefined;
@@ -482,6 +509,20 @@ function upsertFile(fileState: VSSFileState, chunks: VSSChunk[], embeddings: num
 
 function deleteFile(path: string): void {
     const database = requireDb();
+
+    if (vectorCache !== null) {
+        const idsToRemove: unknown[][] = [];
+        database.exec({
+            sql: "SELECT id FROM vss_chunks WHERE path = ?",
+            bind: [path],
+            rowMode: "array",
+            resultRows: idsToRemove,
+        });
+        for (const row of idsToRemove) {
+            vectorCache.delete(Number(row[0]));
+        }
+    }
+
     // FTS delete must precede chunks delete — subquery reads vss_chunks.id
     database.exec({
         sql: "DELETE FROM vss_chunks_fts WHERE rowid IN (SELECT id FROM vss_chunks WHERE path = ?)",
@@ -550,25 +591,34 @@ function search(queryEmbedding: number[], k: number): unknown[] {
     if (!profile) {
         throw createWorkerError("profile-missing", "SQLite vector index has no active embedding profile.");
     }
-    initializeVectorColumn(profile);
+
     const startedAt = performance.now();
+    const cache = getOrLoadVectorCache();
+    const queryVec = new Float32Array(queryEmbedding);
+    const topK = bruteForceTopK(queryVec, cache, k, profile.distanceMetric);
+
+    if (topK.length === 0) {
+        lastSearchDurationMs = performance.now() - startedAt;
+        return [];
+    }
+
+    const ids = topK.map((r) => r.id);
+    const placeholders = ids.map(() => "?").join(",");
+
     const rows: Array<Record<string, unknown>> = [];
     requireDb().exec({
-        sql: `
-            SELECT c.path, c.chunk_index, c.content, c.metadata, v.distance
-            FROM vector_full_scan('vss_chunks', 'embedding', vector_as_f32(?), ?) AS v
-            JOIN vss_chunks AS c ON c.id = v.rowid
-            ORDER BY v.distance ASC, c.path ASC, c.chunk_index ASC
-            LIMIT ?
-        `,
-        bind: [JSON.stringify(queryEmbedding), k, k],
+        sql: `SELECT id, path, chunk_index, content, metadata FROM vss_chunks WHERE id IN (${placeholders})`,
+        bind: ids,
         rowMode: "object",
         resultRows: rows,
     });
+
+    const rowById = new Map(rows.map((row) => [Number(row.id), row]));
+
     lastSearchDurationMs = performance.now() - startedAt;
-    return rows.map((row) => {
+    return topK.map(({ id, distance }) => {
+        const row = rowById.get(id)!;
         const metadata = parseMetadata(row.metadata);
-        const distance = typeof row.distance === "number" ? row.distance : Number(row.distance ?? 0);
         return {
             score: scoreFromDistance(distance, profile.distanceMetric),
             distance,
@@ -594,24 +644,26 @@ function searchHybrid(
     if (!profile) {
         throw createWorkerError("profile-missing", "SQLite vector index has no active embedding profile.");
     }
-    initializeVectorColumn(profile);
+
     const startedAt = performance.now();
     const database = requireDb();
 
-    // Vector leg
+    // Vector leg — brute-force
+    const cache = getOrLoadVectorCache();
+    const queryVec = new Float32Array(queryEmbedding);
+    const topK = bruteForceTopK(queryVec, cache, k, profile.distanceMetric);
+
+    const vectorIds = topK.map((r) => r.id);
+    const vectorPlaceholders = vectorIds.map(() => "?").join(",");
     const vectorRows: Array<Record<string, unknown>> = [];
-    database.exec({
-        sql: `
-            SELECT c.id, c.path, c.chunk_index, c.content, c.metadata
-            FROM vector_full_scan('vss_chunks', 'embedding', vector_as_f32(?), ?) AS v
-            JOIN vss_chunks AS c ON c.id = v.rowid
-            ORDER BY v.distance ASC
-            LIMIT ?
-        `,
-        bind: [JSON.stringify(queryEmbedding), k, k],
-        rowMode: "object",
-        resultRows: vectorRows,
-    });
+    if (vectorIds.length > 0) {
+        database.exec({
+            sql: `SELECT id, path, chunk_index, content, metadata FROM vss_chunks WHERE id IN (${vectorPlaceholders})`,
+            bind: vectorIds,
+            rowMode: "object",
+            resultRows: vectorRows,
+        });
+    }
 
     // FTS leg (skip when no valid query or total deadline exceeded)
     const SEARCH_DEADLINE_MS = 500;
@@ -640,11 +692,9 @@ function searchHybrid(
 
     // RRF fusion
     const rowById = new Map<number, Record<string, unknown>>();
-    const vectorIds = vectorRows.map((row) => {
-        const id = Number(row.id);
-        rowById.set(id, row);
-        return id;
-    });
+    for (const row of vectorRows) {
+        rowById.set(Number(row.id), row);
+    }
     const ftsIds = ftsRows.map((row) => {
         const id = Number(row.id);
         if (!rowById.has(id)) rowById.set(id, row);
@@ -755,6 +805,7 @@ function getStats(): VSSIndexStats {
 }
 
 function reset(): void {
+    vectorCache = null;
     const database = requireDb();
     database.exec(`
         DROP TABLE IF EXISTS vss_chunks_fts;
@@ -775,6 +826,7 @@ function reset(): void {
 }
 
 function dispose(): void {
+    vectorCache = null;
     const database = db;
     const pool = activePool;
     db = null;
@@ -803,6 +855,24 @@ function isPoolPaused(pool: OpfsSahPool): boolean {
     } catch {
         return false;
     }
+}
+
+function getOrLoadVectorCache(): Map<number, Float32Array> {
+    if (vectorCache !== null) return vectorCache;
+    const cache = new Map<number, Float32Array>();
+    const rows: unknown[][] = [];
+    requireDb().exec({
+        sql: "SELECT id, embedding FROM vss_chunks",
+        rowMode: "array",
+        resultRows: rows,
+    });
+    for (const row of rows) {
+        const id = Number(row[0]);
+        const blob = row[1] as Uint8Array;
+        cache.set(id, new Float32Array(blob.buffer, blob.byteOffset, blob.byteLength / 4));
+    }
+    vectorCache = cache;
+    return cache;
 }
 
 function requireDb(): SQLiteDatabase {

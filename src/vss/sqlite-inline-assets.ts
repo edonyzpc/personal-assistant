@@ -1,5 +1,5 @@
 import sqliteWorkerSource from "./sqlite-worker.ts?worker-source";
-import getSqliteWasmBinary from "@sqliteai/sqlite-wasm/sqlite3.wasm";
+import getSqliteWasmBinary from "@sqlite.org/sqlite-wasm/sqlite3.wasm";
 
 export function createInlineSqliteWorker(): Worker {
     const objectUrl = URL.createObjectURL(new Blob([sqliteWorkerSource], { type: "text/javascript" }));
