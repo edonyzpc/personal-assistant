@@ -659,6 +659,7 @@ describe('PA Agent skill settings', () => {
             'pa-vault-link-health',
             'pa-plugin-config-review',
             'obsidian-dataview',
+            'obsidian-templater',
         ]);
     });
 

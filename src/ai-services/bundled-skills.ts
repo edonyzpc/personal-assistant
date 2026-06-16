@@ -10,6 +10,8 @@ import paVaultLinkHealth from "../../skills/pa-vault-link-health/SKILL.md";
 import paPluginConfigReview from "../../skills/pa-plugin-config-review/SKILL.md";
 import obsidianDataview from "../../skills/obsidian-dataview/SKILL.md";
 import obsidianDataviewRef from "../../skills/obsidian-dataview/references/dataviewjs-api.md";
+import obsidianTemplater from "../../skills/obsidian-templater/SKILL.md";
+import obsidianTemplaterRef from "../../skills/obsidian-templater/references/templater-modules-api.md";
 
 export const BUNDLED_SKILL_RESOURCES: readonly BundledSkillResource[] = [
     {
@@ -47,6 +49,16 @@ export const BUNDLED_SKILL_RESOURCES: readonly BundledSkillResource[] = [
             {
                 path: "references/dataviewjs-api.md",
                 content: obsidianDataviewRef,
+            },
+        ],
+    },
+    {
+        path: "skills/obsidian-templater/SKILL.md",
+        content: obsidianTemplater,
+        references: [
+            {
+                path: "references/templater-modules-api.md",
+                content: obsidianTemplaterRef,
             },
         ],
     },

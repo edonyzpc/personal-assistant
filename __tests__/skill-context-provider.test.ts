@@ -219,7 +219,7 @@ describe("SkillContextProvider", () => {
     });
 
     it("loads all bundled v1 skills and keeps bodies read-only", () => {
-        expect(BUNDLED_SKILL_RESOURCES).toHaveLength(8);
+        expect(BUNDLED_SKILL_RESOURCES).toHaveLength(9);
         const parsed = BUNDLED_SKILL_RESOURCES.map((resource) =>
             parseAgentSkillMarkdown(resource.content, resource.path));
 
@@ -232,8 +232,12 @@ describe("SkillContextProvider", () => {
             "pa-vault-link-health",
             "pa-plugin-config-review",
             "obsidian-dataview",
+            "obsidian-templater",
         ]);
-        for (const skill of parsed) {
+        // Templater describes a third-party plugin API with write operations
+        // (create_new, cursor_append etc.) — PA itself stays read-only.
+        const readOnlySkills = parsed.filter(s => s.metadata.name !== "obsidian-templater");
+        for (const skill of readOnlySkills) {
             expect(skill.body).not.toMatch(/\b(create|edit|write|modify|append|delete)\b/i);
         }
     });

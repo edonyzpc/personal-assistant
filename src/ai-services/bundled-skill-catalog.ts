@@ -45,6 +45,11 @@ export const BUNDLED_SKILL_CATALOG: readonly BundledSkillCatalogEntry[] = [
         label: "Obsidian Dataview",
         description: "Dataview query syntax, inline expressions, DataviewJS API, and vault analysis patterns.",
     },
+    {
+        id: "obsidian-templater",
+        label: "Obsidian Templater",
+        description: "Templater commands, dynamic templates, user scripts, and startup templates.",
+    },
 ];
 
 export const BUNDLED_SKILL_IDS = BUNDLED_SKILL_CATALOG.map((entry) => entry.id);
