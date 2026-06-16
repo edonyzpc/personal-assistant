@@ -3,24 +3,16 @@
 /**
  * Pagelet Orchestrator -- central integration layer.
  *
- * Connects Pet, Bubble, Preload, Hints, and Commands into a working
- * feature lifecycle. The orchestrator does NOT make LLM calls directly;
- * it delegates analysis to the PreloadEngine via an injected
- * AnalyzeCallback from the host.
- *
- * Communication with the plugin is mediated through the narrow
- * {@link PageletHost} interface, keeping the dependency inverted
- * (orchestrator -> host abstraction, not -> concrete plugin).
- *
  * Coordinates Pet, Bubble, Panel, Tab, background preparation,
- * foreground review, and periodic summary.
- *
- * Analysis-session state is delegated to {@link AnalysisSessionManager}.
- * Note-saving logic is delegated to {@link ReviewNoteSaveFlow}.
+ * foreground review, and periodic summary. Delegates analysis to
+ * {@link AnalysisSessionManager}, note-saving to {@link ReviewNoteSaveFlow},
+ * bubble display to {@link BubbleCoordinator}, background prep to
+ * {@link BackgroundPreparationCoordinator}, and periodic summary to
+ * {@link PeriodicSummaryFlow}.
  */
 
 import { Notice } from "obsidian";
-import type { App, EventRef, MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
+import type { MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 import {
@@ -31,9 +23,7 @@ import {
 } from "../platform-dom";
 import { isObsidianModalOpen } from "./dom-utils";
 
-import type { BubbleContent, BubbleFinding } from "./bubble/types";
 import { BubbleView } from "./bubble/BubbleView";
-import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
 import type { PanelFinding, PanelLayoutType } from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
@@ -42,14 +32,6 @@ import type { PetCorner } from "./pet/types";
 import { PetView } from "./pet/PetView";
 import { PreloadBudget } from "./preload/PreloadBudget";
 import { PreloadCache } from "./preload/PreloadCache";
-import { PreloadEngine } from "./preload/PreloadEngine";
-import type { AnalyzeCallback, PreloadEvent } from "./preload/types";
-import { ReviewNoteGenerator } from "./output/ReviewNoteGenerator";
-import type { GenerateCallback, GeneratedReviewNote } from "./output/types";
-import type { WriteResult } from "./output/types";
-import {
-    formatPageletDate,
-} from "./pa-review-file-io";
 import { ChangeDetector } from "./scope/ChangeDetector";
 import { ScopeResolver } from "./scope/ScopeResolver";
 import {
@@ -58,104 +40,22 @@ import {
 } from "./scope";
 import { getPageletOverlayRoot } from "./overlay-root";
 import { ResearchManager } from "./research";
-import type { PageletDetailPayload } from "./tab/types";
 
 import { AnalysisSessionManager } from "./AnalysisSessionManager";
+import { BackgroundPreparationCoordinator } from "./BackgroundPreparationCoordinator";
+import { BubbleCoordinator } from "./BubbleCoordinator";
+import { PeriodicSummaryFlow } from "./PeriodicSummaryFlow";
 import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
+import type { PageletHost } from "./PageletHost";
 
-// ---------------------------------------------------------------------------
-// Host interface
-// ---------------------------------------------------------------------------
-
-/**
- * Narrow host interface -- what the Pagelet orchestrator needs from the plugin.
- *
- * Deliberately thin: only the settings and methods the orchestrator
- * actually reads. Everything else stays behind the plugin boundary.
- */
-export interface PageletHost {
-    readonly app: App;
-
-    readonly settings: {
-        pagelet: {
-            enabled: boolean;
-            petVisible: boolean;
-            petCorner: PetCorner;
-            proactiveHints: boolean;
-            proactiveHintsCooldown: number;
-            proactiveHintsQuietHours: {
-                enabled: boolean;
-                start: string;
-                end: string;
-            };
-            preloadEnabled: boolean;
-            preloadInterval: number;
-            preloadPerHourCap: number;
-            preloadPerDayCap: number;
-            preloadTokenBudget: { input: number; output: number };
-            outputLanguage: "auto" | "zh" | "en";
-            temperature: number;
-            foregroundPerHourCap: number;
-            foregroundPerDayCap: number;
-            maxInputTokens: number;
-            maxOutputTokens: number;
-            reviewsFolder: string;
-            periodicSummaryScope: "3d" | "7d" | "14d";
-            excludedFolders: string[];
-            excludedTags: string[];
-            excludedPatterns: string[];
-            onboardingShown: boolean;
-        };
-    };
-
-    /** Structured debug log (no-op when debug is false). */
-    log(message: string, ...args: unknown[]): void;
-
-    /**
-     * Register an Obsidian EventRef so the plugin can detach it on unload.
-     * Delegates to `Plugin.registerEvent`.
-     */
-    registerEvent(ref: EventRef): void;
-
-    /**
-     * Factory for the LLM callback used by PreloadEngine.
-     * The host MUST enforce `allowWrite=false` on the returned callback.
-     */
-    createPreloadAnalyzeCallback(): AnalyzeCallback;
-
-    /** Factory for the LLM callback used by foreground review commands. */
-    createForegroundAnalyzeCallback(): AnalyzeCallback;
-
-    /** Factory for the LLM callback used by ReviewNoteGenerator. */
-    createGenerateCallback(): GenerateCallback;
-
-    /** Write a review note through the Pagelet write framework. */
-    writeReviewNote(note: GeneratedReviewNote): Promise<WriteResult>;
-
-    /** Update a pagelet setting and persist to disk. */
-    updatePageletSetting<K extends keyof PageletHost["settings"]["pagelet"]>(
-        key: K,
-        value: PageletHost["settings"]["pagelet"][K],
-    ): void;
-
-    /** Persist current settings to disk. */
-    saveSettings(): Promise<void> | void;
-
-    /** Open Pagelet detail results in a native Obsidian workspace leaf. */
-    openPageletDetailView(payload: PageletDetailPayload): Promise<void> | void;
-}
-
-// ---------------------------------------------------------------------------
-// Orchestrator
-// ---------------------------------------------------------------------------
+// Re-export so existing `import { PageletHost } from "./orchestrator"` keeps working.
+export type { PageletHost } from "./PageletHost";
 
 export class PageletOrchestrator {
     // ---- Components -------------------------------------------------------
     private petView: PetView | null = null;
     private bubbleView: BubbleView | null = null;
     private panelView: PanelView | null = null;
-    private preloadEngine: PreloadEngine | null = null;
-    private preloadUnsubscribe: (() => void) | null = null;
     private currentPanelLayout: PanelLayoutType | null = null;
     private readonly handleEscape: (e: KeyboardEvent) => void;
     private readonly preloadCache: PreloadCache;
@@ -168,13 +68,12 @@ export class PageletOrchestrator {
 
     // ---- Delegates --------------------------------------------------------
     private readonly sessionManager: AnalysisSessionManager;
+    private readonly backgroundPrep: BackgroundPreparationCoordinator;
+    private readonly bubbleCoordinator: BubbleCoordinator;
+    private readonly periodicSummary: PeriodicSummaryFlow;
     private readonly saveFlow: ReviewNoteSaveFlow;
 
-    /**
-     * Proxy for the scope range held in the session manager.
-     * Kept on the orchestrator so existing internal tests that set this
-     * field via type-coercion continue to work unchanged.
-     */
+    /** Proxy for scope range -- kept for test compat. */
     private get currentScopeRange(): PageletReviewRange {
         return this.sessionManager.scopeRange;
     }
@@ -232,6 +131,39 @@ export class PageletOrchestrator {
             cooldownMinutes: s.proactiveHintsCooldown,
             quietHours: s.proactiveHintsQuietHours,
         });
+
+        // Delegate: background preparation coordinator (after proactiveHints)
+        this.backgroundPrep = new BackgroundPreparationCoordinator(
+            host, this.preloadCache, this.preloadBudget,
+            this.changeDetector, this.scopeResolver,
+            {
+                onPetTransition: (event) => this.petView?.stateMachine.transition(event),
+                onPetFlashError: () => this.petView?.flashError(),
+                onInsightsReady: () => this.proactiveHints.onInsightsReady(),
+            },
+        );
+
+        // Delegate: bubble coordinator (after proactiveHints)
+        this.bubbleCoordinator = new BubbleCoordinator(host, this.preloadCache, this.proactiveHints, {
+            onExpandPanel: (type) => this.handleExpandPanel(type),
+            onSourceClick: (link) => this.handleSourceClick(link),
+            onDismiss: () => this.handleBubbleDismiss(),
+            onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
+        });
+
+        // Delegate: periodic summary flow
+        this.periodicSummary = new PeriodicSummaryFlow(host, this.scopeResolver, {
+            petTransition: (event) => this.petView?.stateMachine.transition(event),
+            petFlashError: () => this.petView?.flashError(),
+            beginForegroundReviewRun: () => this.sessionManager.beginForegroundReviewRun(),
+            finishForegroundReviewRun: () => this.sessionManager.finishForegroundReviewRun(),
+            setPendingNote: (note) => this.saveFlow.setPending(note),
+            openSummaryPanel: (findings, extra) => {
+                this.currentPanelLayout = "summary";
+                this.panelView?.open("summary", findings, extra);
+            },
+        });
+
         this.researchManager = new ResearchManager(host.app, {
             onResearchComplete: () => undefined,
             onResearchError: (error) => {
@@ -268,12 +200,7 @@ export class PageletOrchestrator {
         if (this.destroyed) return;
         const s = this.host.settings.pagelet;
 
-        // 1. Resolve a single overlay mount root for Bubble/Panel/Tab.
-        //    Mounting under workspace.containerEl (instead of the page body)
-        //    ensures these fixed overlays never overlap
-        //    Obsidian's titlebar drag region. Combined with each view's
-        //    lazy mount/unmount, the workspace stays free of long-lived
-        //    fixed overlays while idle (D037 progressive disclosure).
+        // 1. Overlay mount root (under workspace.containerEl to avoid titlebar overlap)
         const overlayRoot = getPageletOverlayRoot(this.host.app);
 
         // 1a. Create BubbleView (lazy-mounted on first show)
@@ -316,8 +243,7 @@ export class PageletOrchestrator {
         });
         this.panelView.mount(overlayRoot);
 
-        // 1c. Centralized Escape handler (Panel > Bubble priority).
-        // Native Pagelet detail leaves are closed by Obsidian's tab chrome.
+        // 1c. Escape handler (Panel > Bubble priority)
         this.escapeListenerDocument = getPlatformDocument();
         this.escapeListenerDocument.addEventListener("keydown", this.handleEscape, true);
 
@@ -328,8 +254,7 @@ export class PageletOrchestrator {
             }),
         );
 
-        // 3. Vault event: detect note modifications for idle/activity tracking
-        //    Filter to markdown files only (Perf: vault.on("modify") fires for ALL file types)
+        // 3. Vault events: markdown-only activity tracking + scope invalidation
         this.host.registerEvent(
             this.host.app.vault.on("modify", (file) => {
                 if (file.path.endsWith(".md")) {
@@ -358,7 +283,7 @@ export class PageletOrchestrator {
 
         // 4. Start background preparation engine (if enabled)
         if (s.preloadEnabled) {
-            this.startPreloadEngine();
+            this.backgroundPrep.start();
         }
 
         // 5. Mount Pet on whatever leaf is currently active
@@ -383,26 +308,19 @@ export class PageletOrchestrator {
         this.clearActivityDebounce();
         this.escapeListenerDocument?.removeEventListener("keydown", this.handleEscape, true);
         this.escapeListenerDocument = null;
-        this.preloadUnsubscribe?.();
-        this.preloadUnsubscribe = null;
-        this.preloadEngine?.destroy();
+        this.backgroundPrep.destroy();
         this.petView?.destroy();
         this.bubbleView?.destroy();
         this.panelView?.destroy();
         this.preloadCache.clear();
         this.changeDetector.clear();
 
-        this.preloadEngine = null;
         this.petView = null;
         this.bubbleView = null;
         this.panelView = null;
     }
 
-    /**
-     * Apply the latest Pagelet settings to long-lived runtime collaborators.
-     * Called after settings saves so background preparation and exclusion rules
-     * take effect without requiring a plugin reload.
-     */
+    /** Apply latest settings to all runtime collaborators. */
     syncSettings(): void {
         if (this.destroyed) return;
         const s = this.host.settings.pagelet;
@@ -428,25 +346,13 @@ export class PageletOrchestrator {
         }
         this.syncPetVisibility();
 
-        if (!s.preloadEnabled) {
-            this.preloadEngine?.updateConfig(this.buildPreloadConfig());
-            return;
-        }
-        if (!this.preloadEngine) {
-            this.startPreloadEngine();
-            return;
-        }
-        this.preloadEngine.updateConfig(this.buildPreloadConfig());
+        this.backgroundPrep.syncConfig();
     }
 
     // ======================================================================
-    // Command callbacks -- returned to the command registrar
+    // Command callbacks
     // ======================================================================
 
-    /**
-     * Build the callback object expected by
-     * `registerPageletCommands(host, callbacks, locale)`.
-     */
     getCommandCallbacks(): PageletCommandCallbacks {
         return {
             onOpenPanel: () => this.openPanel(),
@@ -526,10 +432,7 @@ export class PageletOrchestrator {
     // Pet lifecycle
     // ======================================================================
 
-    /**
-     * Handle an active-leaf-change event: unmount Pet from the previous
-     * leaf, and re-mount on the new one if it is a markdown view.
-     */
+    /** Re-mount Pet on leaf change. */
     private handleLeafChange(leaf: WorkspaceLeaf | null): void {
         // Always unmount from previous location
         this.petView?.unmount();
@@ -572,96 +475,15 @@ export class PageletOrchestrator {
 
     /** Handle a click/tap on the Pet element. */
     private handlePetClick(): void {
-        if (!this.bubbleView) return;
-
-        // If bubble is already visible, close it (toggle)
-        if (this.bubbleView.bubbleState === "visible") {
-            this.bubbleView.close();
-            return;
-        }
-
-        // If Pet is in nudge state, show nudge-specific content
-        if (this.petView?.stateMachine.state === "nudge") {
-            this.showNudgeBubble();
-            this.petView.stateMachine.transition("user-interact");
-            this.proactiveHints.onHintViewed();
-            return;
-        }
-
-        // Otherwise, show regular bubble
-        this.showBubble();
+        this.bubbleCoordinator.handlePetClick(this.bubbleView, this.petView);
     }
 
-    /**
-     * Show the Bubble with cached background preparation findings, or an empty state
-     * that offers to trigger an immediate analysis cycle.
-     */
+    /** Show the Bubble via the BubbleCoordinator. */
     private showBubble(): void {
-        const anchorEl = this.petView?.rootEl;
-        if (!this.bubbleView || !anchorEl) return;
-
-        const locale = getPageletUiLanguage();
-
-        const cachedFindings = this.preloadCache.getFindings();
-
-        if (!this.host.settings.pagelet.onboardingShown && cachedFindings.length === 0) {
-            const content = buildOnboardingContent(() => {
-                this.host.updatePageletSetting("onboardingShown", true);
-                this.bubbleView?.close();
-            }, locale);
-            this.bubbleView.show(content, anchorEl);
-            return;
-        }
-
-        if (!this.host.settings.pagelet.onboardingShown) {
-            this.host.updatePageletSetting("onboardingShown", true);
-        }
-
-        let content: BubbleContent;
-        if (cachedFindings.length > 0) {
-            const findings: BubbleFinding[] = cachedFindings.map((f) => ({
-                text: f.text,
-                sourceLink: f.sourceFile,
-                sourceTitle: f.sourceTitle,
-            }));
-            content = buildQuickReviewContent(findings, {
-                onExpandPanel: (type) => this.handleExpandPanel(type),
-                onSourceClick: (link) => this.handleSourceClick(link),
-                onDismiss: () => this.handleBubbleDismiss(),
-            }, locale);
-        } else {
-            content = buildEmptyContent(() => { void this.reviewCurrentNote(); }, locale);
-        }
-
-        this.bubbleView.show(content, anchorEl);
+        this.bubbleCoordinator.showBubble(this.bubbleView, this.petView);
     }
 
-    /** Show nudge-specific content when Pet is in nudge state. */
-    private showNudgeBubble(): void {
-        const anchorEl = this.petView?.rootEl;
-        if (!this.bubbleView || !anchorEl) return;
-
-        const locale = getPageletUiLanguage();
-        const cachedFindings = this.preloadCache.getFindings();
-        const findings: BubbleFinding[] = cachedFindings.map((f) => ({
-            text: f.text,
-            sourceLink: f.sourceFile,
-            sourceTitle: f.sourceTitle,
-        }));
-
-        const content = buildNudgeContent(findings, {
-            onExpandPanel: (type) => this.handleExpandPanel(type),
-            onSourceClick: (link) => this.handleSourceClick(link),
-            onDismiss: () => this.handleBubbleDismiss(),
-        }, locale);
-
-        this.bubbleView.show(content, anchorEl);
-    }
-
-    /**
-     * Scenario 2: Writing Assistance -- analyze the current note and
-     * show context-relevant suggestions in the Bubble.
-     */
+    /** Analyze the current note (Scenario 2: Writing Assistance). */
     private async analyzeCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
@@ -715,31 +537,13 @@ export class PageletOrchestrator {
                 return;
             }
 
-            const anchorEl = this.petView?.rootEl;
-            if (!this.bubbleView || !anchorEl) {
+            if (!this.bubbleView || !this.petView?.rootEl) {
                 this.handleExpandPanel(options.panelLayout);
                 return;
             }
-            const locale = getPageletUiLanguage();
-
-            if (result.rawFindings.length > 0) {
-                const findings: BubbleFinding[] = result.rawFindings.map((f) => ({
-                    text: f.text,
-                    sourceLink: f.sourceFile,
-                    sourceTitle: f.sourceTitle,
-                }));
-
-                const content = buildWritingAssistContent(findings, {
-                    onExpandPanel: (type) => this.handleExpandPanel(type),
-                    onSourceClick: (link) => this.handleSourceClick(link),
-                    onDismiss: () => this.handleBubbleDismiss(),
-                }, locale);
-
-                this.bubbleView.show(content, anchorEl);
-            } else {
-                const content = buildEmptyContent(() => { void this.reviewCurrentNote(); }, locale);
-                this.bubbleView.show(content, anchorEl);
-            }
+            this.bubbleCoordinator.showAnalysisResults(
+                this.bubbleView, this.petView, result.rawFindings,
+            );
         } catch (error) {
             this.petView?.stateMachine.transition("analysis-done");
             this.petView?.flashError();
@@ -751,141 +555,8 @@ export class PageletOrchestrator {
         }
     }
 
-    // ======================================================================
-    // Background preparation engine
-    // ======================================================================
-
-    /** Create and start the background preparation engine. */
-    private startPreloadEngine(): void {
-        if (this.preloadEngine) {
-            this.preloadEngine.updateConfig(this.buildPreloadConfig());
-            return;
-        }
-
-        this.preloadEngine = new PreloadEngine(
-            this.host.app,
-            this.buildPreloadConfig(),
-            this.preloadCache,
-            this.preloadBudget,
-            this.changeDetector,
-            this.scopeResolver,
-            this.host.createPreloadAnalyzeCallback(),
-        );
-
-        // Background preparation events drive the Pet state machine
-        this.preloadUnsubscribe = this.preloadEngine.on((event: PreloadEvent) => {
-            this.handlePreloadEvent(event);
-        });
-
-        this.preloadEngine.start();
-    }
-
-    private buildPreloadConfig() {
-        const s = this.host.settings.pagelet;
-        return {
-            enabled: s.preloadEnabled,
-            intervalMinutes: s.preloadInterval,
-            perHourCap: s.preloadPerHourCap,
-            perDayCap: s.preloadPerDayCap,
-            tokenBudget: { ...s.preloadTokenBudget },
-        };
-    }
-
-    /** Map preload lifecycle events to Pet state transitions. */
-    private handlePreloadEvent(event: PreloadEvent): void {
-        switch (event.type) {
-            case "cycle-start":
-                this.petView?.stateMachine.transition("analysis-start");
-                break;
-
-            case "cycle-complete":
-                if (this.proactiveHints.onInsightsReady()) {
-                    // Hints are enabled and cooldown has elapsed -> nudge
-                    this.petView?.stateMachine.transition("insights-ready");
-                } else {
-                    // No nudge: return to idle quietly
-                    this.petView?.stateMachine.transition("analysis-done");
-                }
-                break;
-
-            case "cycle-error":
-                this.petView?.stateMachine.transition("analysis-done");
-                this.petView?.flashError();
-                this.host.log("Preload cycle error", event.error);
-                break;
-
-            case "cycle-skip":
-                // Skips are silent -- no state change, no user notification
-                break;
-        }
-    }
-
-    /** Run the Scenario 4 periodic summary flow: scope -> generate -> write */
     private async runPeriodicSummary(): Promise<void> {
-        const s = this.host.settings.pagelet;
-        const scopeDays = s.periodicSummaryScope === "3d" ? 3
-            : s.periodicSummaryScope === "14d" ? 14
-                : 7;
-
-        // 1. Resolve scope
-        const scope = this.scopeResolver.resolveTimeRange(scopeDays);
-        if (scope.included.length === 0) {
-            new Notice(this.t("pagelet.notice.noNotesInRange"), 4000);
-            return;
-        }
-
-        if (!this.sessionManager.beginForegroundReviewRun()) return;
-
-        // 2. Show working state
-        this.petView?.stateMachine.transition("analysis-start");
-        new Notice(this.t("pagelet.periodicSummary.generatingForNotes", { count: scope.included.length }), 3000);
-
-        try {
-            // 3. Generate review note
-            const generator = new ReviewNoteGenerator(this.host.app);
-            const now = new Date();
-            const rangeStart = new Date(now.getTime() - scopeDays * 86400000);
-            const rangeDesc = `${formatPageletDate(rangeStart)} to ${formatPageletDate(now)}`;
-
-            const note = await generator.generate(
-                {
-                    files: scope.included.map(c => c.file),
-                    rangeDescription: rangeDesc,
-                    scopeDays,
-                },
-                { reviewsFolder: s.reviewsFolder },
-                this.host.createGenerateCallback(), // reuse the LLM callback
-                this.foregroundTokenBudget(),
-            );
-
-            // 4. Show preview in Panel instead of writing immediately
-            this.saveFlow.setPending(note);
-            this.currentPanelLayout = "summary";
-            this.petView?.stateMachine.transition("analysis-done");
-            this.panelView?.open("summary", [{
-                title: note.fileName,
-                description: note.markdown,
-            }], { markdown: note.markdown });
-
-            // The actual write happens when user clicks "Save" in the Panel
-            // (via onSaveAsReviewNote callback -> saveFindingsAsReviewNote)
-        } catch (error) {
-            this.petView?.stateMachine.transition("analysis-done");
-            this.petView?.flashError();
-            const msg = error instanceof Error ? error.message : String(error);
-            new Notice(this.t("pagelet.periodicSummary.failedWithError", { error: msg }), 5000);
-            this.host.log("Periodic summary error", error);
-        } finally {
-            this.sessionManager.finishForegroundReviewRun();
-        }
-    }
-
-    private foregroundTokenBudget(): { input: number; output: number } {
-        const s = this.host.settings.pagelet;
-        return {
-            input: s.maxInputTokens,
-            output: s.maxOutputTokens,
-        };
+        await this.periodicSummary.run();
     }
 
     private syncPetVisibility(): void {
@@ -903,19 +574,16 @@ export class PageletOrchestrator {
     }
 
     // ======================================================================
-    // Idle timer + note activity detection
+    // Idle timer + note activity
     // ======================================================================
 
-    /**
-     * Called on every vault `modify` event. Debounced so rapid saves
-     * during typing do not flood the state machine.
-     */
+    /** Debounced note-activity handler. */
     private handleNoteActivity(): void {
         this.clearActivityDebounce();
         this.activityDebounceTimer = setPlatformTimeout(() => {
             this.activityDebounceTimer = null;
             this.petView?.stateMachine.transition("note-activity");
-            this.preloadEngine?.noteActivity();
+            this.backgroundPrep.noteActivity();
             this.resetIdleTimer();
         }, PageletOrchestrator.ACTIVITY_DEBOUNCE_MS);
     }
@@ -944,10 +612,10 @@ export class PageletOrchestrator {
     }
 
     // ======================================================================
-    // Command callback implementations
+    // Command helpers
     // ======================================================================
 
-    /** Cycle Pet through the 4 corners: BR -> BL -> TR -> TL -> BR */
+    /** Cycle Pet corner: BR -> BL -> TR -> TL -> BR. */
     private cyclePetCorner(): void {
         const corners: PetCorner[] = [
             "bottom-right",
@@ -972,7 +640,7 @@ export class PageletOrchestrator {
         this.host.updatePageletSetting("proactiveHints", newState);
     }
 
-    /** Toggle Pet visibility. Persist the setting so it survives leaf changes and restarts. */
+    /** Toggle Pet visibility (persisted). */
     private togglePetVisibility(): void {
         if (this.host.settings.pagelet.petVisible) {
             this.petView?.destroy();
@@ -990,7 +658,7 @@ export class PageletOrchestrator {
 
     /** Show a Notice with background preparation diagnostics. */
     private showBackgroundPreparationStatusNotice(): void {
-        const status = this.preloadEngine?.status?.();
+        const status = this.backgroundPrep.status();
         if (!status) {
             new Notice(this.t("pagelet.preload.status.notRunning"), 4000);
             return;
@@ -1008,10 +676,10 @@ export class PageletOrchestrator {
     }
 
     // ======================================================================
-    // Bubble callback implementations
+    // Bubble / Panel callbacks
     // ======================================================================
 
-    /** Handle "expand" action from Bubble -> open Panel. */
+    /** Expand Bubble -> Panel. */
     private handleExpandPanel(type?: string): void {
         this.bubbleView?.close();
         const requestedType = type === "writing" ? "current" : type;
@@ -1031,7 +699,7 @@ export class PageletOrchestrator {
         this.panelView?.open(layoutType, panelFindings, this.sessionManager.panelExtraForLayout(layoutType));
     }
 
-    /** Expand current Panel content into a full Tab. */
+    /** Expand Panel -> Tab. */
     private expandPanelToTab(): void {
         this.panelView?.close();
         const locale = getPageletUiLanguage();
@@ -1050,7 +718,7 @@ export class PageletOrchestrator {
         });
     }
 
-    /** Save Panel findings as a review note via the save flow. */
+    /** Save Panel findings as review note. */
     private async saveFindingsAsReviewNote(findings: PanelFinding[]): Promise<void> {
         await this.saveFlow.saveFindingsAsReviewNote(findings, this.currentPanelLayout);
     }
@@ -1061,17 +729,12 @@ export class PageletOrchestrator {
         this.saveFlow.clearPending();
     }
 
-    /** Handle a source-link click inside the Bubble. */
+    /** Navigate to a source note by vault path. */
     private handleSourceClick(link: string): void {
         const file = this.host.app.vault.getAbstractFileByPath(link);
-        if (file) {
-            // TFile is the concrete subclass but we avoid importing it
-            // to keep the orchestrator free of heavy imports.
-            const leaf = this.host.app.workspace.getMostRecentLeaf();
-            if (leaf) {
-                void leaf.openFile(file as Parameters<WorkspaceLeaf["openFile"]>[0]);
-            }
-        }
+        if (!file) return;
+        const leaf = this.host.app.workspace.getMostRecentLeaf();
+        if (leaf) void leaf.openFile(file as Parameters<WorkspaceLeaf["openFile"]>[0]);
     }
 
     private handleRelatedNoteClick(noteName: string): void {
@@ -1112,11 +775,8 @@ export class PageletOrchestrator {
         });
     }
 
-    /** Handle Bubble dismiss (close button / Escape). */
-    private handleBubbleDismiss(): void {
-        // No additional action required -- BubbleView handles its own
-        // DOM cleanup. Hook exists for future telemetry.
-    }
+    /** Handle Bubble dismiss. Hook exists for future telemetry. */
+    private handleBubbleDismiss(): void { /* no-op */ }
 }
 
 function normalizeRelatedNoteName(noteName: string): string {

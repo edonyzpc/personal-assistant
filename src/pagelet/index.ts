@@ -211,7 +211,7 @@ export { registerPageletCommands, PAGELET_OPEN_PANEL_COMMAND_ID, PAGELET_REVIEW_
 export type { PageletCommandCallbacks } from "./commands";
 
 export { PageletOrchestrator } from "./orchestrator";
-export type { PageletHost } from "./orchestrator";
+export type { PageletHost } from "./PageletHost";
 
 export {
     buildPreloadPrompt,
