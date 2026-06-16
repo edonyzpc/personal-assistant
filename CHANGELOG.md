@@ -4,20 +4,59 @@ All notable changes to this project will be documented in this file. See [standa
 
 ## [Unreleased]
 
+## [2.3.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.2.0-beta.2...2.3.0-beta.1) (2026-06-16)
+
+### Features
+- vss: migrate from `@sqliteai/sqlite-wasm` to official `@sqlite.org/sqlite-wasm` (SPEC-A6). Remove 3 proprietary SQL functions (`vector_init`, `vector_as_f32`, `vector_full_scan`) and implement JS brute-force cosine/L2 search with hot vector cache using min-heap top-k.
+- skill: add `obsidian-templater` built-in skill with Templater modules API reference (SPEC-B3). 9 bundled skills total.
+
+### Improvements
+- pagelet: relocate v1 UI primitives from `src/ui/pagelet/` to `src/pagelet/ui/` (SPEC-B4). Pure move with no logic changes — mascot and suggestion-card renderers now live inside the v2 Pagelet tree.
+- pagelet: extract 4 modules from Orchestrator — `PageletHost`, `BubbleCoordinator`, `BackgroundPreparationCoordinator`, `PeriodicSummaryFlow` (SPEC-B5). Orchestrator reduced from 1132 to 792 lines.
+
+### Fix
+- pagelet: create Chat leaf when Research button clicked without Chat view open.
+- pagelet: raise tooltip z-index above fixed panel overlay.
+- vss: remove unused `distanceById` variable in search().
+
+### Tests
+- 12 data safety tests for SQLite migration: embedding round-trip, cache consistency, search correctness, profile signature compatibility.
+- 35 unit tests for `AnalysisSessionManager` and `ReviewNoteSaveFlow`.
+- 19 brute-force search tests covering cosine/L2 distance, min-heap correctness, and edge cases.
+
+### Notes
+- **BRAT-only beta**: only `manifest-beta.json` advances to `2.3.0-beta.1`; `manifest.json` stays at `2.1.2`.
+
+## [2.2.0-beta.2](https://github.com/edonyzpc/personal-assistant/compare/2.2.0-beta.1...2.2.0-beta.2) (2026-06-16)
+
 ### Features
 - pagelet: draft review save flow — accepted suggestions can be saved as a review note via the Pagelet panel without going through the full Write Action preview.
+- pagelet: close bubble on outside click and update touch handling for mobile compatibility.
+- pagelet: add onboarding guide and localized scope labels for first-time users.
+- skill: add `obsidian-dataview` built-in skill with DataviewJS reference documentation.
 
 ### Fix
 - pagelet: harden draft save lifecycle — abort in-flight saves on view close, forward `AbortSignal` to the orchestrator, and suppress the error notice when a save is intentionally aborted.
+- pagelet: address review findings in SVG double-cleanup, timer scope, and preload engine visibility (C-2/H-1/H-3).
 - pa-agent: reject malformed write-action capabilities at runtime registration instead of failing silently at invoke time.
+- plugin: gate Featured Images command behind DashScope endpoint check so the command is hidden when Qwen is not the active provider.
+- chat: clear view resources on restart and close to prevent stale state leaks.
+- build: upgrade esbuild, remove unused imports, and suppress Jest worker warning.
 
 ### Improvements
 - pagelet: wire the ribbon into a usable current-note review MVP. Clicking Pagelet on an active Markdown note now reads the note, runs the review model, freezes a non-colliding target path, shows the Write Action Framework preview, and writes the confirmed review note.
 - pagelet: freeze previewed write targets through execute, allow the reviews folder to be created only after confirmation, and let same-day reviews use collision suffixes instead of failing at Gate 1.
 - pagelet: apply `outputLanguage` to the prompt, count rate-limit slots per real model invoke, surface all-invalid `source_id` output as retry/error instead of empty success, and add `zod` as a direct runtime dependency.
+- pagelet: split Orchestrator into focused modules — extract `AnalysisSessionManager` and `ReviewNoteSaveFlow` for better separation of concerns.
+- pagelet: extract `dom-utils` module and simplify PanelView and BubbleView DOM handling.
 - pagelet/ui: add scoped baseline styles for Pagelet settings and suggestion cards, and keep mascot status announcements in the dedicated live region.
 - framework(write-action): Gate 1 now has an intrinsic top-level dotfolder denylist (`.obsidian / .git / .trash / .obsidian.bak`, NFC + case-fold) at both construction time (`validateAllowedRoots` throws `ConfinementConfigError`) and candidate-write time (`forbidden_dotfolder` reject reason). The settings-layer guard introduced in `2.2.0-beta.1` remains the first line; the framework layer is now a true defense-in-depth second line that holds even if a future capability provider bypasses the settings scrub. Closes #358.
 - framework(write-action): Gate 1 also mirrors the settings-layer Cf-category invisible-char check (ZWSP/ZWNJ/ZWJ, WJ, BOM, LRM/RLM, bidi-isolates → `invisible_chars`) and the per-segment trailing dot/space check (NTFS silent-strip bypass → `trailing_dot_or_space`). Both run at construction time via `validateAllowedRoots` and at candidate-write time in the sync validator, in lock-step with the dotfolder denylist. NFKC fullwidth lookalikes remain an accepted residual risk in both layers (see SDD §2.2). Closes #360.
+- refactor: remove deprecated `RequiredCapabilityClassification` type alias (SPEC-A3 H-1).
+- refactor: gate Featured Images commands behind Qwen provider check via `checkCallback` (SPEC-A2).
+
+### Notes
+- **BRAT-only beta**: only `manifest-beta.json` advances to `2.2.0-beta.2`; `manifest.json` stays at `2.1.2`. Community-plugin users on `2.1.2` are unaffected.
 
 ## [2.2.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.1.2...2.2.0-beta.1) (2026-06-03)
 

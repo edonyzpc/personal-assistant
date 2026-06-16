@@ -62,7 +62,7 @@ Commit HEAD's 16 uncommitted Pagelet files — all are review decision execution
 
 Merge order: WT-1 → WT-2 → WT-3 → master
 
-- [ ] 全量 `npm test` 通过
+- [x] 全量 `npm test` 通过 (194 suites / 3428 tests, tsc=0, lint=0, build=0)
 - [ ] `pagelet-smoke-checklist.md` GUI smoke 全过 (特别关注 Bubble close 行为变更)
 - [ ] Provider OQ002 矩阵 ≥ 2 providers 结构化输出通过 (Qwen + DeepSeek)
 - [ ] iOS 真机 Panel 100dvh + safe-area 验证

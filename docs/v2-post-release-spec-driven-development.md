@@ -204,6 +204,8 @@ Loop rules:
 | 2026-06-01 | SPEC-A4 dev cycle | tsc + jest on master HEAD `8352261` after flag removal commit | `npx tsc --noEmit --skipLibCheck` + `npx jest __tests__/chat-service.test.ts` + `npm test` | Passed (tsc=0;jest 5 suites / 65 tests targeted;jest 265 suites / 4492 tests full in 5.4s) | Authoritative green post-A4 dev;master ready for `make deploy` + smoke。Companion `b8030b9` 仅为 A1 `.pa-chat-config-banner` CSS 重新生成,无逻辑变更。 |
 | 2026-06-01 | SPEC-A4 Obsidian smoke | Real Obsidian test vault on master HEAD `fd6f9b5` (after `make deploy`) | User-driven manual smoke (chat path / native tool planning / record-note / search_memory + 旧 settings 残留 `paAgentAnswerStreamEnabled` / `nativeToolPlanningSmokeEnabled` keys 加载) | Passed | Smoke green;两个 deprecated flag 移除不影响主链路,旧 settings 加载亦无错误。SPEC-A4 翻 `[x] Done`。 |
 
+| 2026-06-16 | SPEC-B2 Post-Merge Gate 1 | 全量 npm test + tsc + lint + build | `npm test` + `npx tsc --noEmit --skipLibCheck` + `npm run lint` + `npm run build` | Passed (194 suites / 3428 tests; tsc=0; lint=0; build OK) | Version bump to 2.2.0-beta.2 applied to package.json + manifest-beta.json + versions.json + CHANGELOG.md. manifest.json stays at 2.1.2 (stable channel). |
+
 (后续 SPEC `[R]` → `[A]` → `[~]` → `[T]` → `[V]` → `[S]` → `[x]` 期间产生的 verification 命令在此追加。)
 
 ## Review Log
