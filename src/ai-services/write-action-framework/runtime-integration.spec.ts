@@ -41,6 +41,7 @@ function makeContext(overrides: Partial<AgentCapabilityContext> = {}): AgentCapa
 function makeFsProbe(existsMap: Record<string, boolean> = {}): FsProbe {
     return {
         exists: jest.fn(async (path: string) => existsMap[path] ?? false) as FsProbe["exists"],
+        read: jest.fn(async () => "") as FsProbe["read"],
     };
 }
 
@@ -387,6 +388,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
         const existsMap: Record<string, boolean> = { ".pagelet": true, ".pagelet/foo.md": false };
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => existsMap[path] ?? false) as FsProbe["exists"],
+            read: jest.fn(async () => "") as FsProbe["read"],
         };
         const cap = makeCapability();
         createActionExecutor(defaultExecutorOptions({
@@ -546,6 +548,7 @@ describe("ActionExecutor (execute & rollback)", () => {
         const removeCalls: string[] = [];
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
+            read: jest.fn(async () => "") as FsProbe["read"],
             remove: jest.fn(async (path: string) => {
                 removeCalls.push(path);
             }) as NonNullable<FsProbe["remove"]>,
@@ -574,6 +577,7 @@ describe("ActionExecutor (execute & rollback)", () => {
         const events: DebugEvent[] = [];
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
+            read: jest.fn(async () => "") as FsProbe["read"],
             remove: jest.fn(async () => undefined) as NonNullable<FsProbe["remove"]>,
         };
         const rollback = jest.fn(async () => undefined) as WriteActionCapability["rollback"];
@@ -602,6 +606,7 @@ describe("ActionExecutor (execute & rollback)", () => {
         const events: DebugEvent[] = [];
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => path === ".pagelet") as FsProbe["exists"],
+            read: jest.fn(async () => "") as FsProbe["read"],
             remove: jest.fn(async () => {
                 throw new Error("permission denied");
             }) as NonNullable<FsProbe["remove"]>,

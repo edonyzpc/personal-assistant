@@ -382,7 +382,16 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
             let snapshot: ReturnType<typeof buildEmptySnapshot>;
             if (fsProbe) {
                 try {
-                    snapshot = await takeSnapshot(confinement.normalizedPath, fsProbe, now);
+                    const lastSlashIdx = confinement.normalizedPath.lastIndexOf("/");
+                    const snapshotFolder = lastSlashIdx > 0
+                        ? confinement.normalizedPath.substring(0, lastSlashIdx)
+                        : "";
+                    snapshot = await takeSnapshot(
+                        { targetPath: confinement.normalizedPath, folder: snapshotFolder },
+                        fsProbe,
+                        undefined,
+                        now,
+                    );
                 } catch (error) {
                     emit("gate.target-confinement.reject", capability, runId, turnId, {
                         errorCategory: "fs_error",

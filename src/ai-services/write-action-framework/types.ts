@@ -95,10 +95,14 @@ export interface ConfinementConfig {
 }
 
 /**
- * Stale-reread target snapshot (framework SDD §2.3 mode A).
+ * Stale-reread target snapshot (framework SDD §2.3 mode A + mode B).
  *
  * Captured at Gate 2 (preview shown) and re-validated at Gate 3 (before execute).
  * Drift on folderExists / targetExists → reject + emit `gate.stale-reread.drift`.
+ *
+ * Mode B fields (contentHash, contentLength) are populated when
+ * `takeSnapshot` is called with `{ includeContentHash: true }` — used by
+ * append-to-current-note actions for TOCTOU content-change detection.
  */
 export interface TargetSnapshot {
     targetPath: string;
