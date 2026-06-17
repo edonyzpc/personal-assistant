@@ -1,5 +1,6 @@
 import type { App, TFile } from "obsidian";
 import { normalizePath } from "obsidian";
+import { pluginT, getPluginUiLanguage } from "../../locales/plugin";
 
 export interface VaultMetacognitionSnapshot {
     generatedAt: string;
@@ -20,18 +21,28 @@ export interface VaultMetacognitionSnapshot {
     trends: Array<{ label: string; count: number }>;
 }
 
+async function yieldToEventLoop(): Promise<void> {
+    return new Promise(resolve => setTimeout(resolve, 0));
+}
+
 export class TypeCVaultMetacognitionAnalyzer {
     constructor(private readonly app: App) {}
 
-    analyze(now = new Date()): VaultMetacognitionSnapshot {
+    async analyze(now = new Date()): Promise<VaultMetacognitionSnapshot> {
         const files = this.app.vault.getMarkdownFiles();
         const folderThemes = rankFolders(files);
+        await yieldToEventLoop();
         const tagTaxonomy = rankTags(this.app, files);
+        await yieldToEventLoop();
         const linkTopology = analyzeLinks(this.app, files);
+        await yieldToEventLoop();
         const writingHabits = analyzeWritingHabits(files);
+        await yieldToEventLoop();
         const topicClusters = inferTopicClusters(files);
+        await yieldToEventLoop();
         const knowledgeGaps = inferKnowledgeGaps(linkTopology.unresolvedLinks);
         const trends = inferTrends(files, now.getTime());
+        await yieldToEventLoop();
         return {
             generatedAt: now.toISOString(),
             fileCount: files.length,
@@ -46,37 +57,38 @@ export class TypeCVaultMetacognitionAnalyzer {
     }
 
     renderMarkdown(snapshot: VaultMetacognitionSnapshot): string {
+        const lang = getPluginUiLanguage();
         return [
-            "# Vault Insights",
+            `# ${pluginT("plugin.memoryExtraction.vaultInsights.title", lang)}`,
             "",
-            `Generated: ${snapshot.generatedAt}`,
-            `Files analyzed: ${snapshot.fileCount}`,
+            pluginT("plugin.memoryExtraction.vaultInsights.generated", lang, { timestamp: snapshot.generatedAt }),
+            pluginT("plugin.memoryExtraction.vaultInsights.filesAnalyzed", lang, { count: snapshot.fileCount }),
             "",
-            "## Folder Themes",
-            ...renderCountRows(snapshot.folderThemes, "folder"),
+            `## ${pluginT("plugin.memoryExtraction.vaultInsights.folderThemes", lang)}`,
+            ...renderCountRows(snapshot.folderThemes, "folder", lang),
             "",
-            "## Tag Taxonomy",
-            ...renderCountRows(snapshot.tagTaxonomy, "tag"),
+            `## ${pluginT("plugin.memoryExtraction.vaultInsights.tagTaxonomy", lang)}`,
+            ...renderCountRows(snapshot.tagTaxonomy, "tag", lang),
             "",
-            "## Link Topology",
+            `## ${pluginT("plugin.memoryExtraction.vaultInsights.linkTopology", lang)}`,
             ...snapshot.linkTopology.hubNotes.slice(0, 10).map((note) => {
-                return `- ${note.path}: ${note.inbound} inbound, ${note.outbound} outbound`;
+                return `- ${pluginT("plugin.memoryExtraction.vaultInsights.linkTopologyEntry", lang, { path: note.path, inbound: note.inbound, outbound: note.outbound })}`;
             }),
             "",
-            "## Writing Habits",
-            `- Average note length: ${snapshot.writingHabits.averageWords} words`,
-            ...snapshot.writingHabits.busiestWeekdays.map((entry) => `- ${entry.weekday}: ${entry.count} note(s)`),
+            `## ${pluginT("plugin.memoryExtraction.vaultInsights.writingHabits", lang)}`,
+            `- ${pluginT("plugin.memoryExtraction.vaultInsights.averageNoteLength", lang, { words: snapshot.writingHabits.averageWords })}`,
+            ...snapshot.writingHabits.busiestWeekdays.map((entry) => `- ${pluginT("plugin.memoryExtraction.vaultInsights.weekdayNotes", lang, { weekday: entry.weekday, count: entry.count })}`),
             "",
-            "## Topic Clusters",
+            `## ${pluginT("plugin.memoryExtraction.vaultInsights.topicClusters", lang)}`,
             ...snapshot.topicClusters.map((cluster) => `- ${cluster.label}: ${cluster.paths.slice(0, 5).join(", ")}`),
             "",
-            "## Knowledge Gaps",
+            `## ${pluginT("plugin.memoryExtraction.vaultInsights.knowledgeGaps", lang)}`,
             ...(snapshot.knowledgeGaps.length > 0
                 ? snapshot.knowledgeGaps.map((gap) => `- ${gap.label}: ${gap.evidence}`)
-                : ["- No repeated unresolved-link gaps detected."]),
+                : [`- ${pluginT("plugin.memoryExtraction.vaultInsights.noKnowledgeGaps", lang)}`]),
             "",
-            "## Trends",
-            ...snapshot.trends.map((trend) => `- ${trend.label}: ${trend.count} recent note(s)`),
+            `## ${pluginT("plugin.memoryExtraction.vaultInsights.trends", lang)}`,
+            ...snapshot.trends.map((trend) => `- ${pluginT("plugin.memoryExtraction.vaultInsights.trendEntry", lang, { label: trend.label, count: trend.count })}`),
         ].join("\n").trim() + "\n";
     }
 }
@@ -159,7 +171,9 @@ function inferTopicClusters(files: readonly TFile[]): Array<{ label: string; pat
     const byFolder = new Map<string, string[]>();
     for (const file of files) {
         const folder = file.path.includes("/") ? file.path.slice(0, file.path.lastIndexOf("/")) : "Root";
-        byFolder.set(folder, [...(byFolder.get(folder) ?? []), file.path]);
+        const existing = byFolder.get(folder);
+        if (existing) existing.push(file.path);
+        else byFolder.set(folder, [file.path]);
     }
     return [...byFolder.entries()]
         .sort((left, right) => right[1].length - left[1].length)
@@ -170,12 +184,13 @@ function inferTopicClusters(files: readonly TFile[]): Array<{ label: string; pat
 function inferKnowledgeGaps(
     unresolvedLinks: VaultMetacognitionSnapshot["linkTopology"]["unresolvedLinks"],
 ): Array<{ label: string; evidence: string }> {
+    const lang = getPluginUiLanguage();
     return unresolvedLinks
         .filter((entry) => entry.count >= 2)
         .slice(0, 10)
         .map((entry) => ({
             label: entry.target,
-            evidence: `${entry.count} unresolved link reference(s) point here.`,
+            evidence: pluginT("plugin.memoryExtraction.vaultInsights.unresolvedLinkEvidence", lang, { count: entry.count }),
         }));
 }
 
@@ -205,6 +220,9 @@ function sortCounts(counts: Map<string, number>): Array<[string, number]> {
 function renderCountRows<T extends "folder" | "tag">(
     rows: Array<Record<T, string> & { count: number }>,
     key: T,
+    lang: ReturnType<typeof getPluginUiLanguage>,
 ): string[] {
-    return rows.length > 0 ? rows.map((row) => `- ${row[key]}: ${row.count}`) : ["- None detected."];
+    return rows.length > 0
+        ? rows.map((row) => `- ${row[key]}: ${row.count}`)
+        : [`- ${pluginT("plugin.memoryExtraction.vaultInsights.noneDetected", lang)}`];
 }
