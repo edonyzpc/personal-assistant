@@ -444,5 +444,34 @@
     "plugin.ai.progress.downloading": "Agent 正在下载图片...",
     "plugin.ai.progress.downloadDone": "图片下载成功！",
     "plugin.ai.progress.done": "题图生成成功！",
-    "plugin.ai.callout.featuredImages": "题图"
+    "plugin.ai.callout.featuredImages": "题图",
+
+    "plugin.memoryExtraction.userProfile.title": "用户画像",
+    "plugin.memoryExtraction.userProfile.updated": "更新时间：{timestamp}",
+    "plugin.memoryExtraction.userProfile.confirmed": "已确认",
+    "plugin.memoryExtraction.userProfile.tentative": "待确认",
+    "plugin.memoryExtraction.userProfile.noConfirmed": "暂无已确认的画像记忆。",
+    "plugin.memoryExtraction.userProfile.tentativeProgress": "{text}（{occurrences}/{threshold}）",
+
+    "plugin.memoryExtraction.vaultInsights.title": "知识库洞察",
+    "plugin.memoryExtraction.vaultInsights.generated": "生成时间：{timestamp}",
+    "plugin.memoryExtraction.vaultInsights.filesAnalyzed": "已分析文件：{count}",
+    "plugin.memoryExtraction.vaultInsights.folderThemes": "文件夹主题",
+    "plugin.memoryExtraction.vaultInsights.tagTaxonomy": "标签分类",
+    "plugin.memoryExtraction.vaultInsights.linkTopology": "链接拓扑",
+    "plugin.memoryExtraction.vaultInsights.linkTopologyEntry": "{path}：入链 {inbound}，出链 {outbound}",
+    "plugin.memoryExtraction.vaultInsights.writingHabits": "写作习惯",
+    "plugin.memoryExtraction.vaultInsights.averageNoteLength": "平均笔记长度：{words} 词",
+    "plugin.memoryExtraction.vaultInsights.weekdayNotes": "{weekday}：{count} 篇笔记",
+    "plugin.memoryExtraction.vaultInsights.topicClusters": "主题聚类",
+    "plugin.memoryExtraction.vaultInsights.knowledgeGaps": "知识空白",
+    "plugin.memoryExtraction.vaultInsights.noKnowledgeGaps": "未检测到重复的未解析链接空白。",
+    "plugin.memoryExtraction.vaultInsights.trends": "近期趋势",
+    "plugin.memoryExtraction.vaultInsights.trendEntry": "{label}：{count} 篇近期笔记",
+    "plugin.memoryExtraction.vaultInsights.noneDetected": "未检测到。",
+    "plugin.memoryExtraction.vaultInsights.unresolvedLinkEvidence": "{count} 个未解析链接引用指向此处。",
+
+    "plugin.memoryExtraction.enabledNotice": "AI 记忆提取已启用。你的对话偏好将在本地提取。可在设置中关闭此功能。",
+    "plugin.memoryExtraction.settings.enabled.name": "AI 记忆提取",
+    "plugin.memoryExtraction.settings.enabled.desc": "自动从对话中提取用户偏好和知识库洞察。数据存储在本地。"
 }

@@ -8,6 +8,18 @@ const PROFILE_STORE = "profile";
 const PROFILE_KEY = "latest";
 const PLUGIN_STORAGE_SCOPE = "personal-assistant-user-profile-v1";
 
+const IDB_TIMEOUT_MS = 10_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error(`IndexedDB ${label} timed out after ${ms}ms`)), ms);
+        promise.then(
+            (value) => { clearTimeout(timer); resolve(value); },
+            (error) => { clearTimeout(timer); reject(error); },
+        );
+    });
+}
+
 export interface UserProfileStore {
     initialize(): Promise<void>;
     getProfile(): Promise<UserProfileSnapshot | null>;
@@ -82,29 +94,33 @@ export class IndexedDbUserProfileStore implements UserProfileStore {
     }
 
     private openDatabase(): Promise<IDBDatabase> {
-        return new Promise((resolve, reject) => {
-            const request = this.indexedDb.open(this.dbName, USER_PROFILE_DB_VERSION);
-            request.onupgradeneeded = () => {
-                const db = request.result;
-                if (!db.objectStoreNames.contains(PROFILE_STORE)) {
-                    db.createObjectStore(PROFILE_STORE, { keyPath: "key" });
-                }
-            };
-            request.onsuccess = () => {
-                const db = request.result;
-                db.onversionchange = () => {
-                    db.close();
-                    if (this.db === db) {
-                        this.db = null;
-                        this.initializing = null;
+        return withTimeout(
+            new Promise<IDBDatabase>((resolve, reject) => {
+                const request = this.indexedDb.open(this.dbName, USER_PROFILE_DB_VERSION);
+                request.onupgradeneeded = () => {
+                    const db = request.result;
+                    if (!db.objectStoreNames.contains(PROFILE_STORE)) {
+                        db.createObjectStore(PROFILE_STORE, { keyPath: "key" });
                     }
                 };
-                resolve(db);
-            };
-            request.onerror = () => reject(request.error ?? new Error("User profile store failed to open."));
-            request.onblocked = () =>
-                reject(new Error("User profile store upgrade was blocked by another open connection."));
-        });
+                request.onsuccess = () => {
+                    const db = request.result;
+                    db.onversionchange = () => {
+                        db.close();
+                        if (this.db === db) {
+                            this.db = null;
+                            this.initializing = null;
+                        }
+                    };
+                    resolve(db);
+                };
+                request.onerror = () => reject(request.error ?? new Error("User profile store failed to open."));
+                request.onblocked = () =>
+                    reject(new Error("User profile store upgrade was blocked by another open connection."));
+            }),
+            IDB_TIMEOUT_MS,
+            "open",
+        );
     }
 
     private getStore(mode: IDBTransactionMode): IDBObjectStore {
@@ -175,18 +191,26 @@ function cloneRecord(record: UserProfileRecord): UserProfileRecord {
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {
-    return new Promise((resolve, reject) => {
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed."));
-    });
+    return withTimeout(
+        new Promise<T>((resolve, reject) => {
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error ?? new Error("IndexedDB request failed"));
+        }),
+        IDB_TIMEOUT_MS,
+        "request",
+    );
 }
 
 function transactionDone(transaction: IDBTransaction): Promise<void> {
-    return new Promise((resolve, reject) => {
-        transaction.oncomplete = () => resolve();
-        transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed."));
-        transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted."));
-    });
+    return withTimeout(
+        new Promise<void>((resolve, reject) => {
+            transaction.oncomplete = () => resolve();
+            transaction.onerror = () => reject(transaction.error ?? new Error("IndexedDB transaction failed"));
+            transaction.onabort = () => reject(transaction.error ?? new Error("IndexedDB transaction aborted"));
+        }),
+        IDB_TIMEOUT_MS,
+        "transaction",
+    );
 }
 
 function hashScope(value: string): string {

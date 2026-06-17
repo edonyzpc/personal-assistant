@@ -84,6 +84,8 @@ export interface PluginManagerSettings {
     enabledSkillIds: string[];
     featuredImagePath: string;
     numFeaturedImages: number;
+    memoryExtractionEnabled: boolean;
+    memoryExtractionNoticeDismissed: boolean;
     vssCacheExcludePath: string[];
     /**
      * Pagelet (Review Assistant) namespace. Owned by `src/settings/pagelet/`;
@@ -159,6 +161,8 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     enabledSkillIds: [...BUNDLED_SKILL_IDS],
     featuredImagePath: "",
     numFeaturedImages: 2,
+    memoryExtractionEnabled: true,
+    memoryExtractionNoticeDismissed: false,
     // Generic default — the prior list ("8.template", "9.src", "a.subjects",
     // "b.notion") was the original developer's vault layout and made no sense
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
@@ -1875,6 +1879,18 @@ export class SettingTab extends PluginSettingTab {
                         plugin.settings.showAdvancedMemoryControls = value;
                         await plugin.saveSettings();
                         this.rebuildMemoryAdvanced();
+                    });
+            });
+
+        new Setting(container)
+            .setName(this.t("plugin.memoryExtraction.settings.enabled.name"))
+            .setDesc(this.t("plugin.memoryExtraction.settings.enabled.desc"))
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(plugin.settings.memoryExtractionEnabled)
+                    .onChange(async (value) => {
+                        plugin.settings.memoryExtractionEnabled = value;
+                        await plugin.saveSettings();
                     });
             });
 

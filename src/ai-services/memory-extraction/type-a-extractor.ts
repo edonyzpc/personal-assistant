@@ -1,4 +1,5 @@
 import type { PersistedConversation, PersistedTurn } from "../../chat/chat-history-store";
+import { pluginT, getPluginUiLanguage } from "../../locales/plugin";
 
 export type UserProfileEvidenceKind =
     | "user_explicit"
@@ -140,21 +141,22 @@ export function extractCandidatesFromText(
 }
 
 export function renderUserProfileMarkdown(records: readonly UserProfileRecord[], now = new Date()): string {
+    const lang = getPluginUiLanguage();
     const confirmed = records.filter((record) => record.confirmed);
     const tentative = records.filter((record) => !record.confirmed);
     const lines = [
-        "# User Profile",
+        `# ${pluginT("plugin.memoryExtraction.userProfile.title", lang)}`,
         "",
-        `Updated: ${now.toISOString()}`,
+        pluginT("plugin.memoryExtraction.userProfile.updated", lang, { timestamp: now.toISOString() }),
         "",
-        "## Confirmed",
+        `## ${pluginT("plugin.memoryExtraction.userProfile.confirmed", lang)}`,
         ...(confirmed.length > 0
             ? confirmed.map((record) => `- ${record.text}`)
-            : ["- No confirmed profile memories yet."]),
+            : [`- ${pluginT("plugin.memoryExtraction.userProfile.noConfirmed", lang)}`]),
     ];
     if (tentative.length > 0) {
-        lines.push("", "## Tentative", ...tentative.slice(0, 8).map((record) => {
-            return `- ${record.text} (${record.occurrences}/${RECURRENCE_THRESHOLD})`;
+        lines.push("", `## ${pluginT("plugin.memoryExtraction.userProfile.tentative", lang)}`, ...tentative.slice(0, 8).map((record) => {
+            return `- ${pluginT("plugin.memoryExtraction.userProfile.tentativeProgress", lang, { text: record.text, occurrences: record.occurrences, threshold: RECURRENCE_THRESHOLD })}`;
         }));
     }
     const markdown = lines.join("\n").trim();

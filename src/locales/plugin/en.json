@@ -444,5 +444,34 @@
     "plugin.ai.progress.downloading": "Agent Downloading Images...",
     "plugin.ai.progress.downloadDone": "Downloading Images Success!",
     "plugin.ai.progress.done": "Generating Featured Images Success!",
-    "plugin.ai.callout.featuredImages": "Featured Images"
+    "plugin.ai.callout.featuredImages": "Featured Images",
+
+    "plugin.memoryExtraction.userProfile.title": "User Profile",
+    "plugin.memoryExtraction.userProfile.updated": "Updated: {timestamp}",
+    "plugin.memoryExtraction.userProfile.confirmed": "Confirmed",
+    "plugin.memoryExtraction.userProfile.tentative": "Tentative",
+    "plugin.memoryExtraction.userProfile.noConfirmed": "No confirmed profile memories yet.",
+    "plugin.memoryExtraction.userProfile.tentativeProgress": "{text} ({occurrences}/{threshold})",
+
+    "plugin.memoryExtraction.vaultInsights.title": "Vault Insights",
+    "plugin.memoryExtraction.vaultInsights.generated": "Generated: {timestamp}",
+    "plugin.memoryExtraction.vaultInsights.filesAnalyzed": "Files analyzed: {count}",
+    "plugin.memoryExtraction.vaultInsights.folderThemes": "Folder Themes",
+    "plugin.memoryExtraction.vaultInsights.tagTaxonomy": "Tag Taxonomy",
+    "plugin.memoryExtraction.vaultInsights.linkTopology": "Link Topology",
+    "plugin.memoryExtraction.vaultInsights.linkTopologyEntry": "{path}: {inbound} inbound, {outbound} outbound",
+    "plugin.memoryExtraction.vaultInsights.writingHabits": "Writing Habits",
+    "plugin.memoryExtraction.vaultInsights.averageNoteLength": "Average note length: {words} words",
+    "plugin.memoryExtraction.vaultInsights.weekdayNotes": "{weekday}: {count} note(s)",
+    "plugin.memoryExtraction.vaultInsights.topicClusters": "Topic Clusters",
+    "plugin.memoryExtraction.vaultInsights.knowledgeGaps": "Knowledge Gaps",
+    "plugin.memoryExtraction.vaultInsights.noKnowledgeGaps": "No repeated unresolved-link gaps detected.",
+    "plugin.memoryExtraction.vaultInsights.trends": "Trends",
+    "plugin.memoryExtraction.vaultInsights.trendEntry": "{label}: {count} recent note(s)",
+    "plugin.memoryExtraction.vaultInsights.noneDetected": "None detected.",
+    "plugin.memoryExtraction.vaultInsights.unresolvedLinkEvidence": "{count} unresolved link reference(s) point here.",
+
+    "plugin.memoryExtraction.enabledNotice": "AI Memory Extraction is enabled. Your conversation preferences will be extracted locally. You can disable this in Settings.",
+    "plugin.memoryExtraction.settings.enabled.name": "AI Memory Extraction",
+    "plugin.memoryExtraction.settings.enabled.desc": "Automatically extract user preferences and vault insights from conversations. Data is stored locally."
 }

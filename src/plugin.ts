@@ -323,13 +323,7 @@ export class PluginManager extends Plugin {
             log: (message, error) => this.log(message, error),
         });
         void this.chatHistoryManager.initialize();
-        this.memoryExtractionScheduler = new MemoryExtractionScheduler({
-            app: this.app,
-            chatHistoryManager: this.chatHistoryManager,
-            userProfileStore: this.createUserProfileStore(),
-            log: (message, error) => this.log(message, error),
-        });
-        this.memoryExtractionScheduler.start();
+        this.syncMemoryExtractionRuntime();
         this.registerView(
             RECORD_PREVIEW_TYPE,
             (leaf) => { return new RecordPreview(this.app, this, leaf); }
@@ -631,6 +625,7 @@ export class PluginManager extends Plugin {
         this.pageletSettingsUnsubscribe?.();
         this.pageletSettingsUnsubscribe = this.onSettingsChanged(() => {
             this.syncPageletRuntime();
+            this.syncMemoryExtractionRuntime();
         });
         this.syncPageletRuntime();
     }
@@ -657,6 +652,30 @@ export class PluginManager extends Plugin {
             this.pageletOrchestrator.initialize();
         } catch (error) {
             this.log("Failed to initialize Pagelet", error);
+        }
+    }
+
+    private syncMemoryExtractionRuntime(): void {
+        if (this.settings.memoryExtractionEnabled && this.chatHistoryManager) {
+            if (!this.memoryExtractionScheduler) {
+                this.memoryExtractionScheduler = new MemoryExtractionScheduler({
+                    app: this.app,
+                    chatHistoryManager: this.chatHistoryManager,
+                    userProfileStore: this.createUserProfileStore(),
+                    log: (message, error) => this.log(message, error),
+                });
+                this.memoryExtractionScheduler.start();
+                if (!this.settings.memoryExtractionNoticeDismissed) {
+                    new Notice(this.t("plugin.memoryExtraction.enabledNotice"));
+                    this.settings.memoryExtractionNoticeDismissed = true;
+                    void this.saveSettings();
+                }
+            }
+        } else {
+            if (this.memoryExtractionScheduler) {
+                this.memoryExtractionScheduler.dispose();
+                this.memoryExtractionScheduler = null;
+            }
         }
     }
 
