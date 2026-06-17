@@ -25,9 +25,12 @@
  *   - "timeout":   reserved for Operations Agent mode; v1 never emits
  */
 
-import { Component, MarkdownRenderer, Modal, Setting, type App } from "obsidian";
+import { Component, MarkdownRenderer, Modal, Platform, Setting, type App } from "obsidian";
 
 import type { ConfirmationOutcome, PreviewSpec } from "./types";
+
+/** Content-length threshold for the append size warning (characters). */
+const APPEND_SIZE_WARNING_THRESHOLD = 50_000;
 
 /** Captures the user's verdict plus diagnostics for debug emit. */
 export interface PreviewShowResult {
@@ -125,41 +128,13 @@ export class WriteActionPreviewModal extends Modal {
             "pa-write-action-modal__target",
         );
 
-        // Section 2: Content preview (markdown via MarkdownRenderer or
-        // plain-text via <pre> fallback).
-        const contentBlock = this.contentEl.createDiv({
-            cls: "pa-write-action-modal__section pa-write-action-modal__content",
-        });
-        contentBlock.createDiv({
-            cls: "pa-write-action-modal__section-title",
-            text: "Preview",
-        });
-        const body = contentBlock.createDiv({ cls: "pa-write-action-modal__section-body" });
-        if (this.spec.contentPreview.format === "markdown") {
-            try {
-                const renderResult = MarkdownRenderer.render(
-                    this.app,
-                    this.spec.contentPreview.body,
-                    body,
-                    this.spec.target.displayPath,
-                    this.renderHost,
-                ) as unknown;
-                if (renderResult instanceof Promise) {
-                    renderResult.catch((error: unknown) => {
-                        renderWarnings.push(
-                            `markdown render failed: ${error instanceof Error ? error.message : String(error)}`,
-                        );
-                        this.renderPlainTextFallback(body);
-                    });
-                }
-            } catch (error) {
-                renderWarnings.push(
-                    `markdown render failed: ${error instanceof Error ? error.message : String(error)}`,
-                );
-                this.renderPlainTextFallback(body);
-            }
+        // Section 2: Content preview — append-to-current-note has a richer
+        // layout with context/divider/content; create-file retains the original
+        // single-block markdown/plain-text preview.
+        if (this.spec.operationType === "append-to-current-note" && this.spec.appendContext) {
+            this.renderAppendPreview(renderWarnings);
         } else {
-            this.renderPlainTextFallback(body);
+            this.renderCreateFilePreview(renderWarnings);
         }
 
         // Section 3: Impact — 3 booleans + byteSize.
@@ -227,6 +202,136 @@ export class WriteActionPreviewModal extends Modal {
         this.settled = true;
         this.onOutcome(outcome, warnings);
         this.close();
+    }
+
+    /**
+     * Render the original create-file preview layout: a single "Preview"
+     * section with markdown or plain-text content.
+     */
+    private renderCreateFilePreview(renderWarnings: string[]): void {
+        const contentBlock = this.contentEl.createDiv({
+            cls: "pa-write-action-modal__section pa-write-action-modal__content",
+        });
+        contentBlock.createDiv({
+            cls: "pa-write-action-modal__section-title",
+            text: "Preview",
+        });
+        const body = contentBlock.createDiv({ cls: "pa-write-action-modal__section-body" });
+        this.renderContentBody(body, renderWarnings);
+    }
+
+    /**
+     * Render the append-to-current-note preview layout:
+     *   1. Context section — shows the last N lines of the existing note
+     *   2. Divider — labeled "Content will be appended after this"
+     *   3. Append content — rendered markdown (or plain-text fallback)
+     *   4. Size warning — red callout when content exceeds threshold
+     *
+     * On mobile the context section is collapsed by default with a toggle.
+     */
+    private renderAppendPreview(renderWarnings: string[]): void {
+        const appendContext = this.spec.appendContext!;
+        const isMobile = Platform.isMobile;
+
+        const contentBlock = this.contentEl.createDiv({
+            cls: "pa-write-action-modal__section pa-write-action-modal__content",
+        });
+        if (isMobile) {
+            contentBlock.addClass("pa-preview-modal-mobile");
+        }
+        contentBlock.createDiv({
+            cls: "pa-write-action-modal__section-title",
+            text: "Preview",
+        });
+
+        // Context sub-section: existing tail lines.
+        const contextSection = contentBlock.createDiv({
+            cls: "pa-preview-append-context",
+        });
+        contextSection.createDiv({
+            cls: "pa-write-action-modal__section-title",
+            text: "Context",
+        });
+        const contextBody = contextSection.createDiv({
+            cls: "pa-write-action-modal__section-body pa-write-action-modal__section-body--multiline",
+        });
+        contextBody.setText(
+            appendContext.existingTailLines.length > 0
+                ? appendContext.existingTailLines.join("\n")
+                : "(empty note)",
+        );
+
+        // Mobile toggle button for context visibility.
+        if (isMobile) {
+            const toggleBtn = contentBlock.createEl("button", {
+                cls: "pa-preview-append-context-toggle",
+                text: "Show context",
+            });
+            toggleBtn.addEventListener("click", () => {
+                const isExpanded = contextSection.classList.contains("is-expanded");
+                if (isExpanded) {
+                    contextSection.classList.remove("is-expanded");
+                    toggleBtn.setText("Show context");
+                } else {
+                    contextSection.classList.add("is-expanded");
+                    toggleBtn.setText("Hide context");
+                }
+            });
+        }
+
+        // Divider line.
+        contentBlock.createDiv({
+            cls: "pa-write-action-modal__append-divider",
+            text: "Content will be appended after this",
+        });
+
+        // Append content body.
+        const appendBody = contentBlock.createDiv({
+            cls: "pa-write-action-modal__section-body",
+        });
+        this.renderContentBody(appendBody, renderWarnings);
+
+        // Size warning when content exceeds threshold.
+        if (this.spec.contentPreview.body.length > APPEND_SIZE_WARNING_THRESHOLD) {
+            contentBlock.createDiv({
+                cls: "pa-write-action-modal__append-size-warning",
+                text: `Warning: Content is ${this.spec.contentPreview.body.length.toLocaleString()} characters — large appends may affect editor performance.`,
+            });
+        }
+    }
+
+    /**
+     * Shared content renderer used by both create-file and append layouts.
+     * Delegates to MarkdownRenderer for markdown format; falls back to <pre>
+     * for plain-text or when markdown rendering throws.
+     */
+    private renderContentBody(body: HTMLElement, renderWarnings: string[]): void {
+        if (this.spec.contentPreview.format === "markdown") {
+            try {
+                const renderResult = MarkdownRenderer.render(
+                    this.app,
+                    this.spec.contentPreview.body,
+                    body,
+                    this.spec.target.displayPath,
+                    this.renderHost,
+                ) as unknown;
+                if (renderResult instanceof Promise) {
+                    renderResult.catch((error: unknown) => {
+                        renderWarnings.push(
+                            `markdown render failed: ${error instanceof Error ? error.message : String(error)}`,
+                        );
+                        this.renderPlainTextFallback(body);
+                    });
+                }
+            } catch (error) {
+                renderWarnings.push(
+                    `markdown render failed: ${error instanceof Error ? error.message : String(error)}`,
+                );
+                this.renderPlainTextFallback(body);
+            }
+        } else {
+            this.renderPlainTextFallback(body);
+        }
     }
 
     private renderPlainTextFallback(body: HTMLElement): void {
