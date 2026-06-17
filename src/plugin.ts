@@ -68,6 +68,12 @@ import {
 } from './pagelet/tab';
 import type { AnalyzeCallback } from './pagelet/preload/types';
 import { buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
+import {
+    MemoryExtractionScheduler,
+    createUserProfileStore,
+    type MemoryExtractionPromptContext,
+    type UserProfileStore,
+} from './ai-services/memory-extraction';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -141,6 +147,7 @@ function arraysEqual(left: string[], right: string[]): boolean {
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
 const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
+const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
 type TimeoutHandle = PlatformTimeoutHandle;
 type IntervalHandle = PlatformIntervalHandle;
 
@@ -197,6 +204,7 @@ export class PluginManager extends Plugin {
     memoryManager!: MemoryManager;
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
+    private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
     /**
      * Pagelet (Review Assistant) per-plugin runtime — lazy-constructed on
      * first review trigger so cold-start cost stays zero for users who never
@@ -315,6 +323,13 @@ export class PluginManager extends Plugin {
             log: (message, error) => this.log(message, error),
         });
         void this.chatHistoryManager.initialize();
+        this.memoryExtractionScheduler = new MemoryExtractionScheduler({
+            app: this.app,
+            chatHistoryManager: this.chatHistoryManager,
+            userProfileStore: this.createUserProfileStore(),
+            log: (message, error) => this.log(message, error),
+        });
+        this.memoryExtractionScheduler.start();
         this.registerView(
             RECORD_PREVIEW_TYPE,
             (leaf) => { return new RecordPreview(this.app, this, leaf); }
@@ -530,6 +545,7 @@ export class PluginManager extends Plugin {
                     if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
                         return;
                     }
+                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-create");
                     if (await this.vss.markDirtyIfEligible(file)) {
                         this.memoryManager.scheduleAutoFlush("vault-create");
                         await this.updateMemoryStatusBar();
@@ -548,6 +564,7 @@ export class PluginManager extends Plugin {
                     if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
                         return;
                     }
+                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-modify");
                     if (await this.vss.markDirtyIfEligible(file)) {
                         this.memoryManager.scheduleAutoFlush("vault-modify");
                         await this.updateMemoryStatusBar();
@@ -557,6 +574,7 @@ export class PluginManager extends Plugin {
         );
         this.registerEvent(
             this.app.vault.on("rename", async (file, oldPath) => {
+                this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-rename");
                 if (file instanceof TFile && await this.vss.handleRename(file, oldPath)) {
                     this.memoryManager.scheduleAutoFlush("vault-rename");
                     await this.updateMemoryStatusBar();
@@ -566,6 +584,7 @@ export class PluginManager extends Plugin {
         this.registerEvent(
             this.app.vault.on("delete", async (file) => {
                 if (file instanceof TFile) {
+                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-delete");
                     await this.vss.handleDelete(file);
                     await this.updateMemoryStatusBar();
                 }
@@ -780,6 +799,15 @@ export class PluginManager extends Plugin {
                         };
                     }
 
+                    const relatedNotes = await this.findPageletRelatedNotes(
+                        bundle.primarySourcePath,
+                        noteContents,
+                        bundle.sourcePaths,
+                    );
+                    const reviewInput = relatedNotes.length > 0
+                        ? { ...bundle.input, relatedNotes }
+                        : bundle.input;
+
                     const reviewModel = new PageletReviewModel(
                         (temperature, options) => this.createChatModel(temperature, {
                             modelName: options?.modelName,
@@ -801,7 +829,7 @@ export class PluginManager extends Plugin {
                         },
                     );
 
-                    const outcome = await reviewModel.reviewNote(bundle.input);
+                    const outcome = await reviewModel.reviewNote(reviewInput);
                     if (outcome.status === "error") {
                         throw new Error(outcome.userMessage);
                     }
@@ -983,6 +1011,70 @@ export class PluginManager extends Plugin {
         return noteContents;
     }
 
+    private async findPageletRelatedNotes(
+        primarySourcePath: string,
+        noteContents: Array<{ path: string; content: string }>,
+        sourcePaths: readonly string[],
+    ): Promise<Array<{ path: string; content: string; score?: number; headingPath?: string[] }>> {
+        if (!this.vss || noteContents.length === 0) return [];
+        if (!(await this.isPageletMemorySearchReady())) return [];
+        const excluded = new Set(sourcePaths.map((path) => normalizePath(path)));
+        const primary = noteContents.find((entry) => normalizePath(entry.path) === normalizePath(primarySourcePath))
+            ?? noteContents[0];
+        const query = primary.content.slice(0, 2400);
+        if (!query.trim()) return [];
+        const controller = new AbortController();
+        const timeout = setPlatformTimeout(() => controller.abort(), PAGELET_RELATED_NOTES_TIMEOUT_MS);
+        try {
+            const raw = await this.vss.searchHybrid(query, {
+                ftsQueryOverride: null,
+                signal: controller.signal,
+            }) as Array<{
+                score?: unknown;
+                doc?: { pageContent?: unknown; metadata?: Record<string, unknown> };
+            }>;
+            const seen = new Set<string>();
+            const related: Array<{ path: string; content: string; score?: number; headingPath?: string[] }> = [];
+            for (const result of raw) {
+                const metadata = result.doc?.metadata ?? {};
+                const path = typeof metadata.path === "string" ? normalizePath(metadata.path) : "";
+                if (!path || excluded.has(path) || seen.has(path)) continue;
+                seen.add(path);
+                const content = typeof result.doc?.pageContent === "string"
+                    ? result.doc.pageContent
+                    : String(result.doc?.pageContent ?? "");
+                related.push({
+                    path,
+                    content: content.slice(0, 1200),
+                    score: typeof result.score === "number" ? result.score : undefined,
+                    headingPath: Array.isArray(metadata.headingPath)
+                        ? metadata.headingPath.filter((entry): entry is string => typeof entry === "string")
+                        : undefined,
+                });
+                if (related.length >= 6) break;
+            }
+            return related;
+        } catch (error) {
+            if (!controller.signal.aborted) {
+                this.log("Pagelet related-note Memory search skipped", error);
+            }
+            return [];
+        } finally {
+            clearPlatformTimeout(timeout);
+        }
+    }
+
+    private async isPageletMemorySearchReady(): Promise<boolean> {
+        if (!this.settings.memoryEnabled || !this.vss) return false;
+        try {
+            const stats = await this.vss.getStats({ mode: "foreground" });
+            return stats.status === "ready" && stats.chunkCount > 0;
+        } catch (error) {
+            this.log("Pagelet related-note Memory readiness check skipped", error);
+            return false;
+        }
+    }
+
     private async writePageletReviewNote(note: GeneratedReviewNote): Promise<WriteResult> {
         const runtime = this.getOrCreatePageletRuntime();
         if (!runtime) {
@@ -1083,6 +1175,8 @@ export class PluginManager extends Plugin {
         }
         this.chatHistoryStore = undefined;
         this.chatHistoryManager = undefined;
+        this.memoryExtractionScheduler?.dispose();
+        this.memoryExtractionScheduler = null;
         this.pageletSettingsUnsubscribe?.();
         this.pageletSettingsUnsubscribe = null;
         if (this.pageletOrchestrator) {
@@ -1101,6 +1195,14 @@ export class PluginManager extends Plugin {
             }
             this.pageletRuntime = null;
         }
+    }
+
+    getMemoryExtractionPromptContext(): MemoryExtractionPromptContext {
+        return this.memoryExtractionScheduler?.getPromptContext() ?? {};
+    }
+
+    scheduleMemoryExtractionAfterChatTurn(conversationId: string, turnCount: number): void {
+        this.memoryExtractionScheduler?.scheduleTypeAExtraction(conversationId, turnCount);
     }
 
     async loadSettings() {
@@ -1489,6 +1591,15 @@ export class PluginManager extends Plugin {
     createChatHistoryStore(): ChatHistoryStore {
         const manifest = this.manifest as { id?: string } | undefined;
         return createChatHistoryStore(
+            this.app.vault,
+            this.settings.statisticsVaultId || "default-vault",
+            manifest?.id ?? "personal-assistant",
+        );
+    }
+
+    createUserProfileStore(): UserProfileStore {
+        const manifest = this.manifest as { id?: string } | undefined;
+        return createUserProfileStore(
             this.app.vault,
             this.settings.statisticsVaultId || "default-vault",
             manifest?.id ?? "personal-assistant",

@@ -196,6 +196,16 @@ export const PageletSegmentSchema = z
     .strict();
 export type PageletSegment = z.infer<typeof PageletSegmentSchema>;
 
+export const PageletRelatedNoteSchema = z
+    .object({
+        path: z.string().min(1),
+        content: z.string(),
+        score: z.number().optional(),
+        headingPath: z.array(z.string()).optional(),
+    })
+    .strict();
+export type PageletRelatedNote = z.infer<typeof PageletRelatedNoteSchema>;
+
 /**
  * Input to `PageletReviewModel.reviewNote()`. Note: not strictly required to
  * be parsed at runtime — most callers will be internal — but having the
@@ -213,6 +223,8 @@ export const PageletReviewInputSchema = z
         mode: z.enum(["basic", "deeper"]),
         /** Segments handed to the LLM as `read_source_note` tool output. */
         segments: z.array(PageletSegmentSchema).min(1),
+        /** Semantic Memory matches from the wider vault, used only as related-note evidence. */
+        relatedNotes: z.array(PageletRelatedNoteSchema).max(8).optional(),
         /** UI-language settings hint for tie-breaking in mascot copy. */
         uiLanguage: z.enum(PAGELET_LANGUAGE_CODES).optional(),
         /** Settings override; when set, language detection is bypassed. */
@@ -385,6 +397,12 @@ export function buildUserPrompt(input: PageletReviewInput): string {
     const segmentLines = input.segments
         .map((seg) => `  - id: "${seg.id}": ${JSON.stringify(seg.content)}`)
         .join("\n");
+    const relatedNoteLines = (input.relatedNotes ?? [])
+        .map((note, index) => {
+            const heading = note.headingPath?.length ? ` (${note.headingPath.join(" > ")})` : "";
+            return `  - related-${index + 1}: ${note.path}${heading}: ${JSON.stringify(note.content)}`;
+        })
+        .join("\n");
     const noteIntro = outputLanguage === "zh"
         ? `笔记路径：${input.notePath}，${input.segments.length} 个片段：`
         : `Note (path: ${input.notePath}), ${input.segments.length} segments:`;
@@ -403,6 +421,13 @@ export function buildUserPrompt(input: PageletReviewInput): string {
         "Now produce a fresh review for the following note. Reuse none of the example content.",
         noteIntro,
         segmentLines,
+        relatedNoteLines
+            ? [
+                "",
+                "Semantic Memory matches from the wider vault. Use these only for connection/gap evidence and `related_notes`; do not use them as `source_id` values:",
+                relatedNoteLines,
+            ].join("\n")
+            : "",
         "",
         targetInstruction,
         closer,

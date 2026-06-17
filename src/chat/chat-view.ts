@@ -3399,6 +3399,7 @@ export class LLMView extends ItemView {
             this.activeConversation = updated;
             this.nextTurnIndex = turnIndex + 1;
             this.persistedTurnIndexByEntry.set(entry, turnIndex);
+            this.plugin.scheduleMemoryExtractionAfterChatTurn?.(conversationId, updated.turnCount);
             await manager.maybePrune();
         } catch (error) {
             this.plugin.log?.("Failed to persist chat turn", error);

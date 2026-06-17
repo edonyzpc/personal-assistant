@@ -190,6 +190,23 @@ describe("PageletReviewInputSchema", () => {
         expect(result.success).toBe(true);
     });
 
+    it("accepts semantic related notes for wider-vault evidence", () => {
+        const result = PageletReviewInputSchema.safeParse({
+            notePath: "notes/a.md",
+            noteContent: "body",
+            detectedLanguage: "en",
+            mode: "basic",
+            segments: [{ id: "seg-1", content: "body" }],
+            relatedNotes: [{
+                path: "notes/b.md",
+                content: "Related background",
+                score: 0.42,
+                headingPath: ["Research", "Open questions"],
+            }],
+        });
+        expect(result.success).toBe(true);
+    });
+
     it("rejects targetSuggestionCount above the schema hard cap", () => {
         const result = PageletReviewInputSchema.safeParse({
             notePath: "notes/a.md",
@@ -300,6 +317,25 @@ describe("buildUserPrompt", () => {
         });
         expect(prompt).toContain('"seg-1"');
         expect(prompt).toContain('"seg-2"');
+    });
+
+    it("lists related notes separately and forbids using them as source_id values", () => {
+        const prompt = buildUserPrompt({
+            notePath: "notes/a.md",
+            noteContent: "body",
+            detectedLanguage: "en",
+            mode: "basic",
+            segments: [{ id: "seg-1", content: "source text" }],
+            relatedNotes: [{
+                path: "notes/b.md",
+                content: "Background from another note",
+                headingPath: ["Research", "Gaps"],
+            }],
+        });
+        expect(prompt).toContain("Semantic Memory matches from the wider vault");
+        expect(prompt).toContain("do not use them as `source_id` values");
+        expect(prompt).toContain("related-1: notes/b.md (Research > Gaps)");
+        expect(prompt).toContain('"seg-1"');
     });
 });
 
