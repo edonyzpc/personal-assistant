@@ -12,7 +12,7 @@ import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install } from './settings'
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
-import { CryptoHelper, KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, hasSecretValue, icons, personalAssitant } from './utils';
+import { getVaultApiTokenId, hasSecretValue, icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
@@ -234,8 +234,6 @@ export class PluginManager extends Plugin {
     } | null = null;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
-    /** @deprecated Remove after v2.5.0 — only used for one-time migration decryption */
-    private cryptoHelper: CryptoHelper = new CryptoHelper();
     private token: string = "";
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
@@ -2052,39 +2050,6 @@ export class PluginManager extends Plugin {
                 this.settings.embeddingV4MigrationNoticeDismissed = true;
                 changed = true;
             }
-            const rawApiToken = this.settings.apiToken;
-            const scopedTokenId = this.getAPITokenSecretId();
-            const legacySecretId = this.getLegacyAPITokenSecretId();
-            if (rawApiToken && rawApiToken !== "sk-xxx") {
-                const decrypted = await this.cryptoHelper.decryptFromBase64(rawApiToken, personalAssitant);
-                if (decrypted) {
-                    this.app.secretStorage.setSecret(scopedTokenId, decrypted);
-                    delete this.settings.apiToken;
-                    this.token = decrypted;
-                    changed = true;
-                    this.log("API token migrated to vault-scoped OS keychain");
-                } else {
-                    // Decryption failed — likely a key change, corrupted blob, or a
-                    // pasted plaintext token. Clear the residual value so the
-                    // ciphertext (or plaintext) does not stay on disk forever and
-                    // re-trigger this Notice on every launch.
-                    new Notice(this.t("plugin.notice.apiTokenMigrationFailed"), 8000);
-                    delete this.settings.apiToken;
-                    changed = true;
-                    this.log("API token migration failed; cleared residual value from data.json");
-                }
-            } else if ("apiToken" in this.settings) {
-                delete this.settings.apiToken;
-                changed = true;
-            }
-            if (this.app.secretStorage.getSecret(scopedTokenId) === null) {
-                const legacyToken = this.app.secretStorage.getSecret(legacySecretId);
-                if (hasSecretValue(legacyToken)) {
-                    this.app.secretStorage.setSecret(scopedTokenId, legacyToken);
-                    this.token = legacyToken;
-                    this.log("API token migrated from legacy keychain id to vault-scoped id");
-                }
-            }
             if (changed) {
                 await this.saveSettings();
                 this.log("Settings migration completed");
@@ -2099,14 +2064,8 @@ export class PluginManager extends Plugin {
         return getVaultApiTokenId(this.settings.statisticsVaultId || "default-vault");
     }
 
-    getLegacyAPITokenSecretId(): string {
-        return KEYCHAIN_API_TOKEN_ID;
-    }
-
     hasConfiguredAPIToken(): boolean {
-        const scopedToken = this.app.secretStorage.getSecret(this.getAPITokenSecretId());
-        if (scopedToken !== null) return scopedToken !== "";
-        return hasSecretValue(this.app.secretStorage.getSecret(this.getLegacyAPITokenSecretId()));
+        return hasSecretValue(this.app.secretStorage.getSecret(this.getAPITokenSecretId()));
     }
 
     getAISetupIssue(): string | null {
@@ -2126,19 +2085,10 @@ export class PluginManager extends Plugin {
         if (this.token !== "") {
             return this.token;
         }
-        const scopedTokenId = this.getAPITokenSecretId();
-        const legacySecretId = this.getLegacyAPITokenSecretId();
-        const scopedToken = this.app.secretStorage.getSecret(scopedTokenId);
-        const token = scopedToken !== null
-            ? scopedToken
-            : this.app.secretStorage.getSecret(legacySecretId);
+        const token = this.app.secretStorage.getSecret(this.getAPITokenSecretId());
         if (!hasSecretValue(token)) {
             new Notice(this.t("plugin.notice.apiTokenNotConfigured"), 5000);
             return "";
-        }
-        if (scopedToken === null) {
-            this.app.secretStorage.setSecret(scopedTokenId, token);
-            this.log("API token copied from legacy keychain id to vault-scoped id");
         }
         this.token = token;
         return token;

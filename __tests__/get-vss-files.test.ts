@@ -61,12 +61,9 @@ jest.mock('../src/settings', () => ({
 }));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
-    KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
-    CryptoHelper: class { },
     getVaultApiTokenId: () => 'pa-api-token',
     hasSecretValue: () => false,
     icons: {},
-    personalAssitant: '',
 }));
 jest.mock('../src/plugin-manifest', () => ({ PluginsUpdater: class { } }));
 jest.mock('../src/theme-manifest', () => ({ ThemeUpdater: class { } }));

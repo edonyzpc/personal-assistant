@@ -274,15 +274,11 @@ jest.mock('vanilla-picker', () => ({
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 jest.mock('../src/utils', () => ({
-    KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
     getVaultScopedSecret: (
         secretStorage: { getSecret: (id: string) => string | null },
         scopedId: string,
-        legacyId: string,
     ) => {
-        const scoped = secretStorage.getSecret(scopedId);
-        if (scoped !== null || scopedId === legacyId) return scoped;
-        return secretStorage.getSecret(legacyId);
+        return secretStorage.getSecret(scopedId);
     },
     hasSecretValue: (secret: string | null) => secret !== null && secret !== '',
 }));
@@ -482,7 +478,6 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
         getAPITokenSecretId: jest.fn(() => 'pa-api-token-vault-test'),
-        getLegacyAPITokenSecretId: jest.fn(() => 'pa-api-token'),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
         },
@@ -895,10 +890,9 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
         expect(merged.localGraph.resizeStyle.height).toBe(DEFAULT_SETTINGS.localGraph.resizeStyle.height);
     });
 
-    it('keeps top-level overrides (apiToken, debug, etc.)', () => {
-        const merged = mergeLoadedSettings({ debug: true, apiToken: '' });
+    it('keeps top-level overrides (debug, etc.)', () => {
+        const merged = mergeLoadedSettings({ debug: true });
         expect(merged.debug).toBe(true);
-        expect(merged.apiToken).toBe('');
     });
 
     it('treats arrays as opaque user values (no element-level merge)', () => {
@@ -1436,7 +1430,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.clearTokenCache).not.toHaveBeenCalled();
     });
 
-    it('clears scoped and legacy API token ids after confirmation', async () => {
+    it('clears scoped API token id after confirmation', async () => {
         setMockConfirmDecision(true);
         const plugin = makePlugin({ aiProvider: 'qwen' });
         const app = makeMockApp();
@@ -1452,7 +1446,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
         await secret.onChange!('');
 
         expect(app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token-vault-test', '');
-        expect(app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token', '');
         expect(plugin.clearTokenCache).toHaveBeenCalled();
     });
 });
@@ -1520,7 +1513,6 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
             // v1.x stored chat model in `modelName`, no `aiProvider` field.
             modelName: 'qwen-turbo',
             debug: false,
-            apiToken: 'sk-encrypted-blob',
         };
         const { settings, migrationApplied } = simulate(legacyBlob);
         expect(migrationApplied).toBe(true);

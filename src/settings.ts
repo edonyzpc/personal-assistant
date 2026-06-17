@@ -66,8 +66,6 @@ export interface PluginManagerSettings {
     // AI模型配置
     aiProvider: string; // 'qwen' | 'openai'
     aiProviderPreset?: string;
-    /** @deprecated legacy data.json token migrated to SecretStorage on load */
-    apiToken?: string;
     baseURL: string;
     chatModelName: string;
     policyModelName: string;
@@ -793,8 +791,7 @@ export class SettingTab extends PluginSettingTab {
         const plugin = this.plugin;
         const app = this.app;
         const secretId = plugin.getAPITokenSecretId();
-        const legacySecretId = plugin.getLegacyAPITokenSecretId();
-        const existing = getVaultScopedSecret(app.secretStorage, secretId, legacySecretId) ?? "";
+        const existing = getVaultScopedSecret(app.secretStorage, secretId) ?? "";
         const translate = this.t.bind(this);
 
         class ApiTokenSecretModal extends Modal {
@@ -873,15 +870,11 @@ export class SettingTab extends PluginSettingTab {
                                         return;
                                     }
                                     app.secretStorage.setSecret(secretId, "");
-                                    app.secretStorage.setSecret(legacySecretId, "");
                                     plugin.clearTokenCache();
                                     this.close();
                                     return;
                                 }
                                 app.secretStorage.setSecret(secretId, value);
-                                if (legacySecretId !== secretId) {
-                                    app.secretStorage.setSecret(legacySecretId, "");
-                                }
                                 plugin.clearTokenCache();
                                 this.close();
                                 new Notice(translate("plugin.settings.apiToken.modal.saved"), 3000);
@@ -1581,15 +1574,14 @@ export class SettingTab extends PluginSettingTab {
             .addComponent((el) => {
                 const secret = new SecretComponent(this.app, el);
                 const secretId = plugin.getAPITokenSecretId();
-                const legacySecretId = plugin.getLegacyAPITokenSecretId();
-                const existing = getVaultScopedSecret(this.app.secretStorage, secretId, legacySecretId);
+                const existing = getVaultScopedSecret(this.app.secretStorage, secretId);
                 if (hasSecretValue(existing)) {
                     secret.setValue(existing);
                 }
                 this.renameSecretComponentLinkButton(el);
                 secret.onChange(async (value: string) => {
                     if (value === "") {
-                        const stored = getVaultScopedSecret(this.app.secretStorage, secretId, legacySecretId);
+                        const stored = getVaultScopedSecret(this.app.secretStorage, secretId);
                         if (!hasSecretValue(stored)) {
                             return;
                         }
@@ -1606,14 +1598,10 @@ export class SettingTab extends PluginSettingTab {
                         // SecretStorage exposes only setSecret — writing "" is
                         // the equivalent of clearing the token.
                         this.app.secretStorage.setSecret(secretId, "");
-                        this.app.secretStorage.setSecret(legacySecretId, "");
                         plugin.clearTokenCache();
                         return;
                     }
                     this.app.secretStorage.setSecret(secretId, value);
-                    if (legacySecretId !== secretId) {
-                        this.app.secretStorage.setSecret(legacySecretId, "");
-                    }
                     plugin.clearTokenCache();
                 });
                 return secret;
