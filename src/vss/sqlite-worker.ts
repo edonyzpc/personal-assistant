@@ -673,6 +673,7 @@ function searchHybrid(
     const SEARCH_DEADLINE_MS = 500;
     const ftsRows: Array<Record<string, unknown>> = [];
     if (ftsQuery && performance.now() - startedAt < SEARCH_DEADLINE_MS) {
+        const ftsTemporalClause = buildTemporalWhereClause("c.last_modified", temporalFilter);
         try {
             database.exec({
                 sql: `
@@ -680,11 +681,11 @@ function searchHybrid(
                     FROM vss_chunks_fts
                     JOIN vss_chunks AS c ON c.id = vss_chunks_fts.rowid
                     WHERE vss_chunks_fts MATCH ?
-                    ${buildTemporalWhereClause("c.last_modified", temporalFilter).sql}
+                    ${ftsTemporalClause.sql}
                     ORDER BY rank
                     LIMIT ?
                 `,
-                bind: [ftsQuery, ...buildTemporalWhereClause("c.last_modified", temporalFilter).bind, k],
+                bind: [ftsQuery, ...ftsTemporalClause.bind, k],
                 rowMode: "object",
                 resultRows: ftsRows,
             });

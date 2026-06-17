@@ -135,9 +135,12 @@ export class MemoryExtractionScheduler {
     async runTypeAExtraction(conversationId: string): Promise<UserProfileSnapshot | null> {
         if (this.disposed) return null;
         await this.ensureUserProfileStoreReady();
+        if (this.disposed) return null;
         const conversation = await this.chatHistoryManager.findConversation(conversationId);
+        if (this.disposed) return null;
         if (!conversation) return this.userProfileSnapshot;
         const turns = await this.chatHistoryManager.getTurns(conversationId);
+        if (this.disposed) return null;
         const lastProcessedTurn = this.typeAProcessedTurnByConversation.get(conversationId) ?? -1;
         const newTurns = turns.filter((turn) => turn.turnIndex > lastProcessedTurn);
         if (newTurns.length === 0) return this.userProfileSnapshot;
@@ -167,10 +170,11 @@ export class MemoryExtractionScheduler {
 
     private async runTypeCRefreshUnlocked(): Promise<VaultMetacognitionSnapshot | null> {
         if (this.disposed) return null;
-        const snapshot = this.typeCAnalyzer.analyze(this.now());
+        const snapshot = await this.typeCAnalyzer.analyze(this.now());
         const markdown = this.typeCAnalyzer.renderMarkdown(snapshot);
         if (this.typeCWritePath) {
             await writeVaultInsightsIfChanged(this.app, this.typeCWritePath, markdown);
+            if (this.disposed) return null;
         }
         this.vaultSnapshot = snapshot;
         this.vaultInsightsMarkdown = markdown;

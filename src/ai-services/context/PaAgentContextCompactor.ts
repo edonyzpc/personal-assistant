@@ -1,4 +1,5 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
+import { cloneMessage, cloneTranscript } from "./clone-utils";
 
 export interface PaAgentMicroCompactionOptions {
     maxObservationChars: number;
@@ -189,39 +190,6 @@ function groupChatTurns(history: readonly ChatMessage[]): ChatMessage[][] {
 function truncateOneLine(value: string, maxChars: number): string {
     const normalized = value.replace(/\s+/g, " ").trim();
     return normalized.length <= maxChars ? normalized : `${normalized.slice(0, maxChars - 1)}...`;
-}
-
-function cloneTranscript(transcript: readonly PaAgentMessage[]): PaAgentMessage[] {
-    return transcript.map(cloneMessage);
-}
-
-function cloneMessage(message: PaAgentMessage): PaAgentMessage {
-    if (message.role === "user") {
-        return {
-            ...message,
-            content: Array.isArray(message.content)
-                ? message.content.map((part) => ({ ...part, metadata: part.metadata ? { ...part.metadata } : undefined }))
-                : message.content,
-        };
-    }
-    if (message.role === "assistant") {
-        return {
-            ...message,
-            content: message.content.map((part) => ({ ...part })),
-        };
-    }
-    return {
-        ...message,
-        content: {
-            ...message.content,
-            sourceRecords: message.content.sourceRecords?.map((record) => ({
-                ...record,
-                metadata: record.metadata ? { ...record.metadata } : undefined,
-            })),
-            contextUsed: message.content.contextUsed?.map((item) => ({ ...item })),
-            metadata: message.content.metadata ? { ...message.content.metadata } : undefined,
-        },
-    };
 }
 
 function cloneToolResultMessage(

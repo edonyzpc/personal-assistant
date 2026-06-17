@@ -602,9 +602,8 @@ export class PaAgentLoop {
 
     private createToolResultContent(result: PaAgentToolExecutionResult): PaToolResultContent {
         const includeInNextPrompt = result.includeInNextPrompt ?? defaultIncludeInNextPrompt(result.outcome);
-        const { promptText, truncated, originalLength } = includeInNextPrompt
-            ? this.consumeObservationBudget(result.promptText)
-            : { promptText: "", truncated: false, originalLength: result.promptText.length };
+        const promptText = includeInNextPrompt ? result.promptText : "";
+        const originalLength = result.promptText.length;
         return {
             promptText,
             ...(result.previewText !== undefined ? { previewText: result.previewText } : {}),
@@ -614,17 +613,10 @@ export class PaAgentLoop {
             metadata: {
                 outcome: result.outcome,
                 ...result.metadata,
-                ...(truncated ? {
-                    observationTruncated: true,
-                    originalPromptTextLength: originalLength,
-                } : {}),
+                originalLength,
+                observationChars: promptText.length,
             },
         };
-    }
-
-    private consumeObservationBudget(text: string): { promptText: string; truncated: boolean; originalLength: number } {
-        const originalLength = text.length;
-        return { promptText: text, truncated: false, originalLength };
     }
 
     private createUserMessage(): PaAgentMessage {

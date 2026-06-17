@@ -82,8 +82,8 @@ import {
     type PaAgentToolExecutor,
 } from "./pa-agent-loop";
 import {
-    PaAgentContextCompactor,
     PaAgentContextManager,
+    PaAgentContextProjector,
     type PaAgentInjectedContext,
     type PaAgentProviderUsage,
 } from "./context";
@@ -1193,10 +1193,7 @@ export class PaAgentRuntime {
     }
 
     private readInjectedContext(): PaAgentInjectedContext | undefined {
-        const provider = this.plugin as unknown as {
-            getMemoryExtractionPromptContext?: () => PaAgentInjectedContext;
-        };
-        return provider.getMemoryExtractionPromptContext?.();
+        return this.plugin.getMemoryExtractionPromptContext?.();
     }
 
 
@@ -1839,49 +1836,13 @@ function isToolAllowedByToolUseConstraints(
 // rather than instructions).
 export function formatCanonicalChatHistory(history: ChatMessage[] | undefined): string {
     if (!history || history.length === 0) return "";
-    const compactor = new PaAgentContextCompactor();
-    const compacted = compactor.compactChatHistory(history);
-    return formatCompactedChatHistory(compacted.summary, compacted.recentHistory, MAX_CHAT_HISTORY_CHARS);
-}
-
-function formatCompactedChatHistory(
-    summary: string,
-    recentHistory: ChatMessage[],
-    maxChars: number,
-): string {
-    let currentSummary = summary;
-    let currentHistory = [...recentHistory];
-    while (currentSummary || currentHistory.length > 0) {
-        const output = buildCompactedChatHistoryOutput(currentSummary, currentHistory);
-        if (output.length <= maxChars) return output;
-        if (currentHistory.length > 1) {
-            currentHistory = currentHistory.slice(1);
-            continue;
-        }
-        if (currentSummary.length > 0) {
-            currentSummary = currentSummary.slice(0, Math.max(0, currentSummary.length - 500)).trim();
-            continue;
-        }
-        return output.slice(0, maxChars);
-    }
-    return "";
-}
-
-function buildCompactedChatHistoryOutput(summary: string, history: ChatMessage[]): string {
-    const summaryBlock = summary
-        ? `<compaction_summary context_only="true">\n${escapeTaggedBoundary(summary, "compaction_summary")}\n</compaction_summary>`
-        : "";
-    const historyBlock = history.length > 0
-        ? `<chat_history context_only="true" format="json">\n${escapeTaggedBoundary(JSON.stringify(
-            history.map((message) => ({
-                role: message.role,
-                content: message.content,
-            })),
-            null,
-            2,
-        ), "chat_history")}\n</chat_history>`
-        : "";
-    return [summaryBlock, historyBlock].filter(Boolean).join("\n\n");
+    const projector = new PaAgentContextProjector();
+    const result = projector.projectUserInput({
+        prompt: "",
+        chatHistory: history,
+        maxHistoryChars: MAX_CHAT_HISTORY_CHARS,
+    });
+    return result.history.text;
 }
 
 function formatCanonicalHostContext(_hostContext: Record<string, unknown> | undefined): string {
