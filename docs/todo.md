@@ -15,11 +15,11 @@
   - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
   - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, v2.2.0 stable published.
 
-- [ ] Close v2.4 AI Insight Foundation release gate.
-  - Context: v2.4 方向从 Action Mode 调整为 AI 洞察力地基层(SPEC-D1~D4)。原 Action Mode(SPEC-C1/C2)推迟到 v2.5。
-  - Source: [`development-roadmap.md`](./development-roadmap.md) v2.4 section, SPEC-D1/D2/D3/D4 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md), [`ai-insight-improvement-analysis.md`](./ai-insight-improvement-analysis.md).
-  - Worktree strategy: 2 parallel worktrees (heading-aware-chunking ∥ pagelet-vss), D3/D4 sequential after D1 merge.
-  - Exit criteria: heading-aware chunking + VSS schema v2 rebuild verified, Pagelet 4 场景 VSS 接入完成, temporal query rewrite 工作, 检索窗口 4→6 + reranker 升级验证, v2.4.0 stable 发布.
+- [x] Close AI Insight Foundation D-series implementation gate.
+  - Context: AI Insight D1-D8 now covers heading-aware Memory chunks, Pagelet VSS related notes, temporal Memory search, wider Memory windows, Context Projector/Hygiene, Compactor/Budget, Type A user profile extraction, and Type C vault insights.
+  - Source: [`sdd-ai-insight-foundation.md`](./sdd-ai-insight-foundation.md), [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md), [`ai-insight-improvement-analysis.md`](./ai-insight-improvement-analysis.md).
+  - Result: D1-D8 code, focused tests, broad checks, deploy, and Obsidian test-vault smoke are recorded in the SDD tracker.
+  - Exit criteria: D-series implementation gate is closed; publish-ready release work still follows the normal release process and explicit publish confirmation.
 
 - [ ] Close v2 review follow-up stabilization before release.
   - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.

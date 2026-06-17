@@ -346,7 +346,7 @@ flowchart LR
   Scan --> Hash["清洗内容并计算 contentHash"]
   Hash --> Changed{"hash 变化?"}
   Changed -->|否| Skip["跳过 unchanged"]
-  Changed -->|是| Split["MarkdownTextSplitter\nchunkSize 4000\noverlap 80"]
+  Changed -->|是| Split["heading-aware chunker\nfrontmatter + heading path\nchunkSize 4000 / overlap 80"]
   Split --> Queue{"操作类型"}
   Queue -->|Rebuild| GlobalBatch["跨文件全局 chunk batch\nQwen v3/v4 <= 10 texts"]
   Queue -->|Refresh| FileBatch["逐文件 batch\n下一阶段再共享全局 pipeline"]

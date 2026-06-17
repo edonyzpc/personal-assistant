@@ -117,7 +117,7 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 4. **verify queue**：按桌面/移动端预算读取少量文件计算 hash；hash 相同只同步 `vss_files` metadata，hash 变化才标 dirty。
 5. **筛选 refresh 候选**：按静默窗口、最长延迟和每分钟处理上限挑选 dirty 文件；手动 Update 使用 force refresh。
 6. **去重判断**：读取本地文件记录，对比 `contentHash`，unchanged 直接跳过或同步 metadata。
-7. **生成 chunks**：变化文件用 `MarkdownTextSplitter(chunkSize=4000, chunkOverlap=80)` 切块。
+7. **生成 chunks**：变化文件用 heading-aware Markdown chunker 切块，保留 frontmatter 摘要、heading path、起止行号和 `chunkStrategy=heading-aware-v2` metadata；默认 `chunkSize=4000`、`chunkOverlap=80`。
 8. **调用 embedding**：Rebuild 使用跨文件全局 batch；refresh 当前仍按文件内 batch。
 9. **写入 SQLite**：按文件 upsert chunks 和 embeddings，更新本地 marker、dirty journal 和统计状态。
 
@@ -131,6 +131,7 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 - 单个文件 batch 失败后，后续 chunks 不再继续排队。
 - Rebuild 和 refresh 都能发出进度事件，Memory Notice 使用同一个 UI 更新。
 - VSS dispose 后 read/rebuild 路径不会重新 initialize；并发 stats/search 只触发一次 SQLite 初始化。
+- `VSS_SCHEMA_VERSION=2` 的旧 marker 会进入 `stale`/确认重建路径，避免 heading-aware chunking 切换后静默复用旧 chunks。
 - Foreground `opfs-sahpool-locked` 不触发 query embedding，也不加载 legacy JSON fallback；manual path 可 bounded retry 恢复 SQLite。
 - `SqliteVectorIndex` 在 worker 初始化 pending 时 dispose 会释放 Worker，后续请求拒绝而不是重建。
 - auto policy + durable ready + changed notes 时 Chat 不弹确认、不等待 refresh，会调度后台 reconcile/verify/flush。
