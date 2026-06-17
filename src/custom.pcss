@@ -4107,3 +4107,59 @@ body.is-mobile .pa-pagelet-tab-body {
 .pa-write-action-modal__section-body--multiline {
 	white-space: pre-line;
 }
+
+/* ──────────────────────────────────────────────────────────────────────
+ * Write Action Framework — append preview layout (Phase 4 SPEC-C1).
+ * ────────────────────────────────────────────────────────────────────── */
+.pa-preview-append-context {
+	max-height: 150px;
+	overflow-y: auto;
+}
+
+.pa-preview-modal-mobile .pa-preview-append-context {
+	display: none;
+}
+
+.pa-preview-modal-mobile .pa-preview-append-context.is-expanded {
+	display: block;
+}
+
+.pa-preview-append-context-toggle {
+	display: inline-flex;
+	align-items: center;
+	margin: 6px 0;
+	padding: 4px 10px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: 6px;
+	background: var(--background-secondary);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	cursor: pointer;
+}
+
+.pa-preview-append-context-toggle:hover {
+	background: var(--background-modifier-hover);
+	color: var(--text-normal);
+}
+
+.pa-write-action-modal__append-divider {
+	margin: 10px 0;
+	padding: 6px 0;
+	border-top: 1px dashed var(--background-modifier-border);
+	color: var(--text-muted);
+	font-size: var(--font-ui-smaller);
+	font-weight: 600;
+	text-align: center;
+}
+
+.pa-write-action-modal__append-size-warning {
+	margin-top: 8px;
+	padding: 8px 10px;
+	border: 1px solid var(--text-error, #ef4444);
+	border-radius: 6px;
+	background: color-mix(in srgb, var(--text-error, #ef4444) 8%, var(--background-primary));
+	color: var(--text-error, #ef4444);
+	font-size: var(--font-ui-small);
+	font-weight: 600;
+	line-height: 1.35;
+}

@@ -116,6 +116,9 @@ jest.mock("obsidian", () => ({
         load(): void {}
         unload(): void {}
     },
+    Platform: {
+        isMobile: false,
+    },
     MarkdownRenderer: {
         render: jest.fn(
             (_app: unknown, markdown: string, el: MockEl, sourcePath: string) => {

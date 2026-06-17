@@ -46,6 +46,7 @@ import { PolicyEngine, type PolicyEngineOptions } from "./policy-engine";
 import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { errorMessage } from "./agent-utils";
 import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-provider";
+import { AppendToolProvider } from "./append-tool-provider";
 import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
@@ -746,10 +747,20 @@ export class PaAgentRuntime {
         this.memoryTool = new MemorySearchTool(plugin, aiUtils);
         this.contextManager = new PaAgentContextManager();
         const runtimePlatform = this.options.runtimePlatform ?? "desktop";
+        // Operations Agent mode: when enabled, override policy to allow
+        // chat-with-actions and include the AppendToolProvider.
+        const operationsAgentEnabled = this.plugin.settings.operationsAgentEnabled === true;
+        const effectivePolicyOptions = operationsAgentEnabled && !options.policyOptions
+            ? {
+                runKind: "chat-with-actions" as const,
+                allowWrite: true,
+                allowedActionPermissions: ["local-filesystem-write" as const],
+            }
+            : options.policyOptions;
         this.toolRegistry = new CapabilityRegistry({
             policyEngine: new PolicyEngine({
                 platform: runtimePlatform,
-                ...options.policyOptions,
+                ...effectivePolicyOptions,
             }),
             telemetryEnabled: this.plugin.settings.shareAnonymousCapabilityUsage === true,
             onCapabilityEvent: (event) => {
@@ -793,6 +804,17 @@ export class PaAgentRuntime {
         this.skillContextProvider = options.skillContextProvider === null
             ? null
             : options.skillContextProvider ?? new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
+        // Operations Agent mode: inject the AppendToolProvider into the
+        // additional capability providers so it is registered alongside
+        // any caller-supplied providers (e.g., web search).
+        if (operationsAgentEnabled) {
+            const appendProvider = new AppendToolProvider();
+            const existingProviders = this.options.additionalCapabilityProviders ?? [];
+            this.options = {
+                ...this.options,
+                additionalCapabilityProviders: [...existingProviders, appendProvider],
+            };
+        }
     }
 
     /**

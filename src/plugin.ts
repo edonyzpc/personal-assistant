@@ -1539,6 +1539,16 @@ export class PluginManager extends Plugin {
     }
 
     /**
+     * Whether Operations Agent mode is enabled in the user's settings.
+     * When true, the PA Agent runtime switches to "chat-with-actions"
+     * policy and registers the AppendToolProvider so the model can
+     * propose write actions that go through the 4-gate framework.
+     */
+    get isOperationsAgentEnabled(): boolean {
+        return this.settings.operationsAgentEnabled;
+    }
+
+    /**
      * Opaque plugin reference for the orchestrator host contract.
      * Satisfies {@link AgentCapabilityContext['plugin']} at runtime
      * since PluginManager extends Plugin.
