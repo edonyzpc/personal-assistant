@@ -1,11 +1,12 @@
 import { describe, expect, it } from "@jest/globals";
 
 import {
+    PaAgentContextBudget,
     PaAgentContextCompactor,
     PaAgentContextHygiene,
     PaAgentContextManager,
 } from "../src/ai-services/context";
-import type { PaAgentMessage } from "../src/ai-services/chat-types";
+import type { ChatMessage, PaAgentMessage } from "../src/ai-services/chat-types";
 
 function user(id: string, content = "user"): PaAgentMessage {
     return { role: "user", id, content, timestamp: 1 };
@@ -16,6 +17,15 @@ function assistantWithToolCall(id: string, callId: string): PaAgentMessage {
         role: "assistant",
         id,
         content: [{ type: "toolCall", id: callId, name: "search_memory", input: {} }],
+        timestamp: 2,
+    };
+}
+
+function assistant(id: string, text: string): PaAgentMessage {
+    return {
+        role: "assistant",
+        id,
+        content: [{ type: "text", text }],
         timestamp: 2,
     };
 }
@@ -42,6 +52,51 @@ function toolResult(
     };
 }
 
+describe("PaAgentContextBudget", () => {
+    const baseBudgetInput = {
+        input: "hello",
+        availableSkills: "None",
+        toolDefinitions: "No tools",
+        toolObservations: "None",
+    };
+
+    it("recordProviderUsage reflects in snapshot", () => {
+        const budget = new PaAgentContextBudget();
+        budget.recordProviderUsage({ promptTokens: 100, completionTokens: 50 });
+        const snap = budget.snapshot(baseBudgetInput);
+        expect(snap.providerUsage?.promptTokens).toBe(100);
+    });
+
+    it("nearObservationLimit true at 70%", () => {
+        const budget = new PaAgentContextBudget();
+        const snap = budget.snapshot({
+            ...baseBudgetInput,
+            toolObservations: "x".repeat(45000),
+            maxObservationChars: 64000,
+        });
+        expect(snap.nearObservationLimit).toBe(true);
+    });
+
+    it("nearObservationLimit false below 70%", () => {
+        const budget = new PaAgentContextBudget();
+        const snap = budget.snapshot({
+            ...baseBudgetInput,
+            toolObservations: "x".repeat(40000),
+            maxObservationChars: 64000,
+        });
+        expect(snap.nearObservationLimit).toBe(false);
+    });
+
+    it("'None' toolObservations yields zero observation chars", () => {
+        const budget = new PaAgentContextBudget();
+        const snap = budget.snapshot({
+            ...baseBudgetInput,
+            toolObservations: "None",
+        });
+        expect(snap.toolObservationChars).toBe(0);
+    });
+});
+
 describe("PaAgentContextHygiene", () => {
     it("hides status-only tool results and removes orphan tool results", () => {
         const hygiene = new PaAgentContextHygiene();
@@ -61,6 +116,25 @@ describe("PaAgentContextHygiene", () => {
         expect(hidden.content.includeInNextPrompt).toBe(false);
         expect(hidden.content.promptText).toBe("");
         expect(hidden.content.metadata?.hygieneHiddenFromPrompt).toBe(true);
+    });
+
+    it("removes empty assistant messages", () => {
+        const hygiene = new PaAgentContextHygiene();
+        const emptyAssistant: PaAgentMessage = {
+            role: "assistant",
+            id: "a-empty",
+            content: [],
+            timestamp: 2,
+        };
+        const result = hygiene.clean([
+            user("u1"),
+            emptyAssistant,
+            assistant("a2", "real reply"),
+        ]);
+
+        expect(result.removedEmptyAssistantMessages).toBe(1);
+        expect(result.transcript.find((m) => m.id === "a-empty")).toBeUndefined();
+        expect(result.transcript).toHaveLength(2);
     });
 });
 
@@ -121,6 +195,40 @@ describe("PaAgentContextCompactor", () => {
         expect(capped.content.promptText.length).toBeLessThanOrEqual(160);
         expect(capped.content.metadata?.contextBudgetTruncated).toBe(true);
         expect(capped.content.sourceRecords?.[0]?.path).toBe("notes/a.md");
+    });
+});
+
+describe("compactChatHistory", () => {
+    function makeChatHistory(turns: number): ChatMessage[] {
+        return Array.from({ length: turns }, (_, i) => [
+            { role: "user" as const, content: `user-msg-${i}` },
+            { role: "assistant" as const, content: `assistant-msg-${i}` },
+        ]).flat();
+    }
+
+    it("deterministic summary format", () => {
+        const compactor = new PaAgentContextCompactor();
+        const history = makeChatHistory(15);
+        const result = compactor.compactChatHistory(history);
+
+        expect(result.recentHistory.length).toBeLessThanOrEqual(20);
+        expect(result.compactedCount).toBeGreaterThan(0);
+        expect(result.summary).toMatch(/^1\. User: .+ \| Assistant: .+/);
+    });
+
+    it("recent 10 turns preserved", () => {
+        const compactor = new PaAgentContextCompactor();
+        const history = makeChatHistory(12);
+        const result = compactor.compactChatHistory(history);
+
+        expect(result.recentHistory.length).toBe(20);
+        const firstRecentUser = result.recentHistory.find(
+            (m) => m.role === "user",
+        );
+        expect(firstRecentUser?.content).toBe("user-msg-2");
+        expect(result.summary).toContain("1. User: user-msg-0");
+        expect(result.summary).toContain("2. User: user-msg-1");
+        expect(result.compactedCount).toBe(4);
     });
 });
 
