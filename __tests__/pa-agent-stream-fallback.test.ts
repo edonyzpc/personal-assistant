@@ -47,6 +47,34 @@ describe("streamWithInvokeFallback (P0-D)", () => {
         expect(invoke).not.toHaveBeenCalled();
     });
 
+    it("emits provider usage diagnostics from streaming chunks", async () => {
+        const chain = makeChain({
+            stream: async function* () {
+                yield {
+                    content: "hello",
+                    usage_metadata: {
+                        input_tokens: 12,
+                        output_tokens: 3,
+                        total_tokens: 15,
+                    },
+                };
+            },
+        });
+
+        const chunks = await drain(streamWithInvokeFallback({ chain, input: {} }));
+
+        expect(chunks).toEqual([
+            {
+                type: "diagnostic",
+                diagnostic: {
+                    type: "provider_usage",
+                    usage: { promptTokens: 12, completionTokens: 3, totalTokens: 15 },
+                },
+            },
+            { type: "text_delta", text: "hello" },
+        ]);
+    });
+
     it("falls back to invoke() when chain.stream() rejects before any chunk is yielded", async () => {
         const invokeCalls: Array<[unknown, { signal?: AbortSignal } | undefined]> = [];
         const invoke: ChainInvoke = async (input, opts) => {
@@ -69,6 +97,36 @@ describe("streamWithInvokeFallback (P0-D)", () => {
         expect(invokeCalls).toEqual([[{ foo: "bar" }, undefined]]);
         expect(onFallback).toHaveBeenCalledTimes(1);
         expect(onFallback).toHaveBeenCalledWith("stream_setup_failed", expect.objectContaining({ message: "stream setup failed" }));
+    });
+
+    it("emits provider usage diagnostics from invoke fallback responses", async () => {
+        const chain = makeChain({
+            stream: () => {
+                throw new Error("stream failed");
+            },
+            invoke: async () => ({
+                content: "fallback answer",
+                response_metadata: {
+                    tokenUsage: {
+                        promptTokens: 20,
+                        completionTokens: 5,
+                    },
+                },
+            }),
+        });
+
+        const chunks = await drain(streamWithInvokeFallback({ chain, input: {} }));
+
+        expect(chunks).toEqual([
+            {
+                type: "diagnostic",
+                diagnostic: {
+                    type: "provider_usage",
+                    usage: { promptTokens: 20, completionTokens: 5, totalTokens: 25 },
+                },
+            },
+            { type: "text_delta", text: "fallback answer" },
+        ]);
     });
 
     it("falls back to invoke() when the stream iterator throws before yielding visible output", async () => {

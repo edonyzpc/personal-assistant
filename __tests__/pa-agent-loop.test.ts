@@ -1353,7 +1353,7 @@ describe("PaAgentLoop", () => {
         ]);
     });
 
-    it("truncates prompt observations across toolResults without dropping structured source metadata", async () => {
+    it("keeps full prompt observations in toolResults for context projection to budget later", async () => {
         const loop = new PaAgentLoop({
             runId: "run_1",
             userInput: "two tools",
@@ -1386,17 +1386,15 @@ describe("PaAgentLoop", () => {
 
         const result = await loop.run();
 
-        expect(result.turns[0].toolResults.map((message) => message.content.promptText)).toEqual(["abc", "de"]);
+        expect(result.turns[0].toolResults.map((message) => message.content.promptText)).toEqual(["abc", "defgh"]);
         expect(result.turns[0].toolResults[1]).toMatchObject({
             content: {
                 sourceRecords: [expect.objectContaining({ dedupKey: "call_2", sourceBoundary: "web" })],
                 contextUsed: [expect.objectContaining({ label: "webSearch" })],
-                metadata: expect.objectContaining({
-                    observationTruncated: true,
-                    originalPromptTextLength: 5,
-                    maxObservationChars: 5,
-                }),
             },
+        });
+        expect(result.turns[0].toolResults[1].content.metadata).not.toMatchObject({
+            observationTruncated: true,
         });
     });
 

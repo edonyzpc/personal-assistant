@@ -1,6 +1,6 @@
 import { ChatPromptTemplate, HumanMessagePromptTemplate, SystemMessagePromptTemplate } from "@langchain/core/prompts";
 
-import { rewriteQuery, REWRITE_SYSTEM_PROMPT, REWRITE_TIMEOUT_MS } from "./query-rewriter";
+import { rewriteQueryForSearch, REWRITE_SYSTEM_PROMPT, REWRITE_TIMEOUT_MS, type QueryTemporalIntent, type RewrittenQuery } from "./query-rewriter";
 import { clearPlatformTimeout, setPlatformTimeout } from "../platform-dom";
 import type {
     AIUtils,
@@ -81,6 +81,12 @@ import {
     type PaAgentModelStreamChunk,
     type PaAgentToolExecutor,
 } from "./pa-agent-loop";
+import {
+    PaAgentContextCompactor,
+    PaAgentContextManager,
+    type PaAgentInjectedContext,
+    type PaAgentProviderUsage,
+} from "./context";
 import {
     createInitialAgentControlSnapshot,
     toolConstraintsFromAgentControlSnapshot,
@@ -189,14 +195,14 @@ export interface RawSearchResult {
 }
 
 const MAX_TURN_WALL_CLOCK_MS = 180_000;
-const MAX_MEMORY_DOCUMENTS = 4;
-const MAX_MEMORY_CHARS = 2000;
-const MAX_MEMORY_RERANK_CANDIDATES = 6;
-const MAX_MEMORY_CANDIDATE_CHUNKS = 2;
-const MAX_MEMORY_CANDIDATE_EXCERPT_CHARS = 500;
+const MAX_MEMORY_DOCUMENTS = 8;
+const MAX_MEMORY_CHARS = 4000;
+const MAX_MEMORY_RERANK_CANDIDATES = 12;
+const MAX_MEMORY_CANDIDATE_CHUNKS = 3;
+const MAX_MEMORY_CANDIDATE_EXCERPT_CHARS = 1000;
 const MIN_MEMORY_SCORE = 0.01;
-const MAX_CHAT_HISTORY_TURNS = 20;
-export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 12000;
+const MAX_CHAT_HISTORY_CHARS = 60_000;
+export const MAX_READ_ONLY_TOOL_CONTEXT_CHARS = 24000;
 export const canFallbackToNonStreaming = (
     error: unknown,
     receivedAnyVisibleOutput: boolean,
@@ -718,6 +724,7 @@ export class PaAgentRuntime {
     private readonly plugin: PluginManager;
     private readonly planner: ChatPlanner;
     private readonly memoryTool: MemorySearchTool;
+    private readonly contextManager: PaAgentContextManager;
     private readonly toolRegistry: CapabilityRegistry;
     private readonly skillContextProvider: SkillContextProvider | null;
     private skillContextProviderRegistered = false;
@@ -737,6 +744,7 @@ export class PaAgentRuntime {
         this.options = options;
         this.planner = new ChatPlanner(aiUtils);
         this.memoryTool = new MemorySearchTool(plugin, aiUtils);
+        this.contextManager = new PaAgentContextManager();
         const runtimePlatform = this.options.runtimePlatform ?? "desktop";
         this.toolRegistry = new CapabilityRegistry({
             policyEngine: new PolicyEngine({
@@ -890,6 +898,7 @@ export class PaAgentRuntime {
         const loadAdditionalCapabilityProviders = this.loadAdditionalCapabilityProviders.bind(this);
         const toolRegistry = this.toolRegistry;
         const planner = this.planner;
+        const contextManager = this.contextManager;
         const buildCanonicalModelInput = (
             input: PaAgentModelInput,
             toolDefinitions?: ChatToolRegistryDefinition[],
@@ -899,6 +908,7 @@ export class PaAgentRuntime {
                 input,
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
+                this.readInjectedContext(),
             );
         const model: PaAgentModel = {
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {
@@ -942,7 +952,7 @@ export class PaAgentRuntime {
                 // P0-D: if streaming fails before any visible output (e.g., provider rejected stream
                 // outright or dropped the connection pre-flight), retry via chain.invoke() so the user
                 // still gets the answer instead of a hard runtime error.
-                yield* streamWithInvokeFallback({
+                for await (const chunk of streamWithInvokeFallback({
                     chain,
                     input: canonicalInput,
                     signal: options.signal,
@@ -959,7 +969,13 @@ export class PaAgentRuntime {
                             },
                         );
                     },
-                });
+                })) {
+                    const providerUsage = readProviderUsageDiagnostic(chunk);
+                    if (providerUsage) {
+                        contextManager.recordProviderUsage(providerUsage);
+                    }
+                    yield chunk;
+                }
             },
         };
         const baseToolExecutor = createPaAgentCapabilityToolExecutor({
@@ -1016,7 +1032,7 @@ export class PaAgentRuntime {
             maxTurns: this.options.maxModelTurns ?? 20,
             maxWallClockMs: this.options.maxWallClockMs ?? MAX_TURN_WALL_CLOCK_MS,
             maxToolCalls: this.options.answerStreamMaxToolCalls ?? 30,
-            maxObservationChars: this.options.answerStreamMaxObservationChars ?? 24_000,
+            maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
             startupTimings,
             // pi hybrid dispatch (P0-A): read-only/idempotent v2.0.0 tools run concurrently when the model
             // requests multiple in one batch. Any future tool that declares executionMode === "sequential"
@@ -1141,31 +1157,46 @@ export class PaAgentRuntime {
         input: PaAgentModelInput,
         toolUseConstraints?: PaAgentToolUseConstraints,
         toolDefinitions?: ChatToolRegistryDefinition[],
+        injectedContext?: PaAgentInjectedContext,
     ): Record<string, string> {
-        const history = formatCanonicalChatHistory(options.chatHistory);
         const availableSkills = formatSkillCatalog(input.hostContext);
         const hostContext = formatCanonicalHostContext(input.hostContext);
-        const runtimeInstruction = input.runtimeInstruction
-            ? `\n\n<runtime_instruction>\n${input.runtimeInstruction}\n</runtime_instruction>`
-            : "";
-        const userInput = [
-            history ? `Recent chat history:\n${history}` : "",
-            hostContext ? `Host context:\n${hostContext}` : "",
-            `User input:\n${options.prompt}${runtimeInstruction}`,
-        ].filter(Boolean).join("\n\n");
-        const toolObservations = formatToolObservations(input.transcript, input.turnIndex);
+        const toolDefinitionsText = input.toolMode === "final_answer_only"
+            ? "No tools are available in this finalization turn."
+            : formatPlannerToolDefinitions(toolDefinitions ?? filterToolDefinitionsByToolUseConstraints(
+                this.toolRegistry.listDefinitions(),
+                toolUseConstraints,
+            ));
+        const projection = this.contextManager.forPrompt({
+            prompt: options.prompt,
+            chatHistory: options.chatHistory,
+            transcript: input.transcript,
+            turnIndex: input.turnIndex,
+            hostContext,
+            runtimeInstruction: input.runtimeInstruction,
+            injectedContext,
+            availableSkills,
+            toolDefinitions: toolDefinitionsText,
+            maxHistoryChars: MAX_CHAT_HISTORY_CHARS,
+            maxPromptChars: 120_000,
+            maxObservationChars: this.options.answerStreamMaxObservationChars ?? 64_000,
+            formatToolObservations,
+        });
 
         return {
-            input: userInput,
-            available_skills: availableSkills,
-            tool_definitions: input.toolMode === "final_answer_only"
-                ? "No tools are available in this finalization turn."
-                : formatPlannerToolDefinitions(toolDefinitions ?? filterToolDefinitionsByToolUseConstraints(
-                    this.toolRegistry.listDefinitions(),
-                    toolUseConstraints,
-                )),
-            tool_observations: toolObservations,
+            input: projection.input,
+            available_skills: projection.availableSkills,
+            tool_definitions: projection.toolDefinitions,
+            tool_observations: projection.toolObservations,
+            __context_projection_diagnostic: JSON.stringify(projection.diagnostics),
         };
+    }
+
+    private readInjectedContext(): PaAgentInjectedContext | undefined {
+        const provider = this.plugin as unknown as {
+            getMemoryExtractionPromptContext?: () => PaAgentInjectedContext;
+        };
+        return provider.getMemoryExtractionPromptContext?.();
     }
 
 
@@ -1265,12 +1296,15 @@ export class MemorySearchTool {
         // Truly parallel: rewrite (if enabled) runs concurrently with embed inside searchHybrid.
         // If rewrite fails or times out, the override resolves null and searchHybrid falls back
         // to building the FTS query from the raw prompt — preserving prior error-isolation.
-        const ftsQueryOverridePromise: Promise<string | null> = policyModelName
+        const rewriteResultPromise: Promise<RewrittenQuery> = policyModelName
             ? this.rewriteQueryWithTimeout(query, policyModelName, signal)
-            : Promise.resolve(null);
+            : Promise.resolve({ keywords: null, temporal: "none" });
+        const ftsQueryOverridePromise = rewriteResultPromise.then((result) => result.keywords);
+        const temporalFilterPromise = rewriteResultPromise.then((result) => temporalIntentToFilter(result.temporal));
 
         const rawResults = await this.plugin.vss.searchHybrid(query, {
             ftsQueryOverridePromise,
+            temporalFilterPromise,
             signal,
         }) as RawSearchResult[];
 
@@ -1299,7 +1333,7 @@ export class MemorySearchTool {
         query: string,
         policyModelName: string,
         signal?: AbortSignal,
-    ): Promise<string | null> {
+    ): Promise<RewrittenQuery> {
         const controller = new AbortController();
         const combinedSignal = signal ? AbortSignal.any([signal, controller.signal]) : controller.signal;
         const timeoutId = setPlatformTimeout(() => controller.abort(), REWRITE_TIMEOUT_MS);
@@ -1318,9 +1352,9 @@ export class MemorySearchTool {
                 const response = await prompt.pipe(llm).invoke({ query: q }, { signal: s });
                 return typeof response.content === "string" ? response.content : "";
             };
-            return await rewriteQuery(query, invoker, combinedSignal);
+            return await rewriteQueryForSearch(query, invoker, combinedSignal);
         } catch {
-            return null;
+            return { keywords: null, temporal: "none" };
         } finally {
             clearPlatformTimeout(timeoutId);
         }
@@ -1344,7 +1378,10 @@ export class MemorySearchTool {
                 modelName: policyModelName,
             });
             const candidateList = candidates
-                .map((c, i) => `[${i}] ${c.path}: ${c.excerpt.slice(0, 400)}`)
+                .map((c, i) => {
+                    const heading = c.anchor?.headingPath?.length ? ` (${c.anchor.headingPath.join(" > ")})` : "";
+                    return `[${i}] ${c.path}${heading}: ${c.excerpt.slice(0, 1000)}`;
+                })
                 .join("\n");
             const escapedRerankPrompt = RERANK_SYSTEM_PROMPT.replace(/\{/g, "{{").replace(/\}/g, "}}");
             const prompt = ChatPromptTemplate.fromMessages([
@@ -1363,6 +1400,13 @@ export class MemorySearchTool {
             clearPlatformTimeout(timeoutId);
         }
     }
+}
+
+function temporalIntentToFilter(intent: QueryTemporalIntent): { since?: number; until?: number } | null {
+    const now = Date.now();
+    if (intent === "recent_7d") return { since: now - 7 * 24 * 60 * 60 * 1000 };
+    if (intent === "recent_30d") return { since: now - 30 * 24 * 60 * 60 * 1000 };
+    return null;
 }
 
 export function parseRerankResponse(content: string, candidates: MemoryCandidate[]): MemoryCandidate[] {
@@ -1411,7 +1455,7 @@ export interface PaAgentModelInputMetricsDiagnosticOptions {
 export function createPaAgentModelInputMetricsDiagnostic(
     options: PaAgentModelInputMetricsDiagnosticOptions,
 ): Record<string, unknown> {
-    return {
+    const base = {
         type: "model_input_metrics",
         inputChars: options.canonicalInput.input.length,
         availableSkillsChars: options.canonicalInput.available_skills.length,
@@ -1429,6 +1473,11 @@ export function createPaAgentModelInputMetricsDiagnostic(
             .map((definition) => definition.name)
             .sort(),
     };
+    const contextProjection = parseOptionalDiagnostic(options.canonicalInput.__context_projection_diagnostic);
+    return {
+        ...base,
+        ...(contextProjection ? { contextProjection } : {}),
+    };
 }
 
 function estimateSerializedChars(value: unknown): number {
@@ -1436,6 +1485,15 @@ function estimateSerializedChars(value: unknown): number {
         return JSON.stringify(value)?.length ?? 0;
     } catch {
         return 0;
+    }
+}
+
+function parseOptionalDiagnostic(value: unknown): unknown {
+    if (typeof value !== "string" || !value.trim()) return undefined;
+    try {
+        return JSON.parse(value);
+    } catch {
+        return undefined;
     }
 }
 
@@ -1775,43 +1833,55 @@ function isToolAllowedByToolUseConstraints(
 }
 
 // Exported so __tests__/pa-agent-runtime-chat-history.test.ts can pin both the
-// MAX_CHAT_HISTORY_TURNS truncation contract and the <chat_history> sandbox tag without
-// reaching into the full runtime. See SDD §3.4 / item 2.2 for the prompt-injection /
-// token-budget rationale (the tag mirrors the existing <untrusted> pattern so the LLM
-// treats history as data rather than instructions).
+// compaction contract and the <chat_history> sandbox tag without reaching into the full
+// runtime. See SDD §3.4 / item 2.2 for the prompt-injection / token-budget rationale
+// (the tag mirrors the existing <untrusted> pattern so the LLM treats history as data
+// rather than instructions).
 export function formatCanonicalChatHistory(history: ChatMessage[] | undefined): string {
     if (!history || history.length === 0) return "";
-    const recent = selectRecentChatHistoryTurns(history);
-    if (recent.length === 0) return "";
-    const body = JSON.stringify(
-        recent.map((message) => ({
-            role: message.role,
-            content: message.content,
-        })),
-        null,
-        2,
-    );
-    const safeBody = escapeTaggedBoundary(body, "chat_history");
-    return `<chat_history context_only="true" format="json">\n${safeBody}\n</chat_history>`;
+    const compactor = new PaAgentContextCompactor();
+    const compacted = compactor.compactChatHistory(history);
+    return formatCompactedChatHistory(compacted.summary, compacted.recentHistory, MAX_CHAT_HISTORY_CHARS);
 }
 
-function selectRecentChatHistoryTurns(history: ChatMessage[]): ChatMessage[] {
-    const turns: ChatMessage[][] = [];
-    let currentTurn: ChatMessage[] | null = null;
-
-    for (const message of history) {
-        if (message.role === "user") {
-            if (currentTurn) turns.push(currentTurn);
-            currentTurn = [message];
+function formatCompactedChatHistory(
+    summary: string,
+    recentHistory: ChatMessage[],
+    maxChars: number,
+): string {
+    let currentSummary = summary;
+    let currentHistory = [...recentHistory];
+    while (currentSummary || currentHistory.length > 0) {
+        const output = buildCompactedChatHistoryOutput(currentSummary, currentHistory);
+        if (output.length <= maxChars) return output;
+        if (currentHistory.length > 1) {
+            currentHistory = currentHistory.slice(1);
             continue;
         }
-        if (currentTurn) {
-            currentTurn.push(message);
+        if (currentSummary.length > 0) {
+            currentSummary = currentSummary.slice(0, Math.max(0, currentSummary.length - 500)).trim();
+            continue;
         }
+        return output.slice(0, maxChars);
     }
+    return "";
+}
 
-    if (currentTurn) turns.push(currentTurn);
-    return turns.slice(-MAX_CHAT_HISTORY_TURNS).flat();
+function buildCompactedChatHistoryOutput(summary: string, history: ChatMessage[]): string {
+    const summaryBlock = summary
+        ? `<compaction_summary context_only="true">\n${escapeTaggedBoundary(summary, "compaction_summary")}\n</compaction_summary>`
+        : "";
+    const historyBlock = history.length > 0
+        ? `<chat_history context_only="true" format="json">\n${escapeTaggedBoundary(JSON.stringify(
+            history.map((message) => ({
+                role: message.role,
+                content: message.content,
+            })),
+            null,
+            2,
+        ), "chat_history")}\n</chat_history>`
+        : "";
+    return [summaryBlock, historyBlock].filter(Boolean).join("\n\n");
 }
 
 function formatCanonicalHostContext(_hostContext: Record<string, unknown> | undefined): string {
@@ -1842,8 +1912,8 @@ function escapeUntrustedBoundary(value: string): string {
     return escapeTaggedBoundary(value, "untrusted");
 }
 
-function escapeTaggedBoundary(value: string, tagName: "chat_history" | "untrusted"): string {
-    const pattern = tagName === "chat_history" ? /<\/chat_history/gi : /<\/untrusted/gi;
+function escapeTaggedBoundary(value: string, tagName: "chat_history" | "compaction_summary" | "untrusted"): string {
+    const pattern = new RegExp(`</${tagName}`, "gi");
     return value.replace(pattern, `<\\/${tagName}`);
 }
 
@@ -2062,6 +2132,10 @@ export async function* streamWithInvokeFallback(args: {
     try {
         for await (const chunk of stream) {
             throwIfAborted(signal);
+            const providerUsage = extractProviderUsage(chunk);
+            if (providerUsage) {
+                yield { type: "diagnostic", diagnostic: { type: "provider_usage", usage: providerUsage } };
+            }
             const reasoning = getReasoningContent(chunk);
             if (reasoning) {
                 receivedAnyVisibleOutput = true;
@@ -2095,6 +2169,10 @@ async function* invokeAsModelChunks(
 ): AsyncGenerator<PaAgentModelStreamChunk, void, unknown> {
     const response = await chain.invoke(input, signal ? { signal } : undefined);
     throwIfAborted(signal);
+    const providerUsage = extractProviderUsage(response);
+    if (providerUsage) {
+        yield { type: "diagnostic", diagnostic: { type: "provider_usage", usage: providerUsage } };
+    }
     const reasoning = getReasoningContent(response);
     if (reasoning) {
         yield { type: "thinking_delta", text: reasoning };
@@ -2106,6 +2184,65 @@ async function* invokeAsModelChunks(
     for (const toolDelta of getCanonicalToolCallDeltas(response, streamedToolNames)) {
         yield toolDelta;
     }
+}
+
+function extractProviderUsage(value: unknown): PaAgentProviderUsage | undefined {
+    const record = asRecord(value);
+    if (!record) return undefined;
+    const responseMetadata = asRecord(record.response_metadata);
+    const additionalKwargs = asRecord(record.additional_kwargs);
+    const usageCandidates = [
+        record.usage_metadata,
+        record.usage,
+        additionalKwargs?.usage,
+        responseMetadata?.usage,
+        responseMetadata?.tokenUsage,
+        responseMetadata?.token_usage,
+        asRecord(record.llm_output)?.tokenUsage,
+    ];
+
+    for (const candidate of usageCandidates) {
+        const usage = normalizeProviderUsage(candidate);
+        if (usage) return usage;
+    }
+    return undefined;
+}
+
+function readProviderUsageDiagnostic(chunk: PaAgentModelStreamChunk): PaAgentProviderUsage | undefined {
+    if (chunk.type !== "diagnostic") return undefined;
+    const diagnostic = asRecord(chunk.diagnostic);
+    if (diagnostic?.type !== "provider_usage") return undefined;
+    return normalizeProviderUsage(diagnostic.usage);
+}
+
+function normalizeProviderUsage(value: unknown): PaAgentProviderUsage | undefined {
+    const record = asRecord(value);
+    if (!record) return undefined;
+    const usage: PaAgentProviderUsage = {};
+    const promptTokens = firstFiniteNumber(record, ["promptTokens", "prompt_tokens", "inputTokens", "input_tokens"]);
+    const completionTokens = firstFiniteNumber(record, [
+        "completionTokens",
+        "completion_tokens",
+        "outputTokens",
+        "output_tokens",
+    ]);
+    const totalTokens = firstFiniteNumber(record, ["totalTokens", "total_tokens"]);
+    if (promptTokens !== undefined) usage.promptTokens = promptTokens;
+    if (completionTokens !== undefined) usage.completionTokens = completionTokens;
+    if (totalTokens !== undefined) {
+        usage.totalTokens = totalTokens;
+    } else if (promptTokens !== undefined || completionTokens !== undefined) {
+        usage.totalTokens = (promptTokens ?? 0) + (completionTokens ?? 0);
+    }
+    return Object.keys(usage).length > 0 ? usage : undefined;
+}
+
+function firstFiniteNumber(record: Record<string, unknown>, keys: readonly string[]): number | undefined {
+    for (const key of keys) {
+        const value = record[key];
+        if (typeof value === "number" && Number.isFinite(value)) return value;
+    }
+    return undefined;
 }
 
 function stringifyModelContent(content: unknown): string {

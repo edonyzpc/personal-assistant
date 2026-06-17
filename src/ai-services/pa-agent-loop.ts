@@ -168,7 +168,6 @@ export class PaAgentLoop {
     private readonly now: () => number;
     private readonly createId: (prefix: string) => string;
     private readonly maxTurns: number;
-    private readonly maxObservationChars: number;
     private readonly assistantIdleTimeoutMs: number;
     private readonly maxWallClockMs: number;
     private readonly runStartedAt: number;
@@ -177,15 +176,12 @@ export class PaAgentLoop {
     private readonly turns: PaAgentTurnSummary[] = [];
     private readonly dispatcher: ToolExecutionDispatcher;
     private committedFinalText = "";
-    private remainingObservationChars: number;
     private endPayload?: Record<string, unknown>;
 
     constructor(private readonly options: PaAgentLoopOptions) {
         this.now = options.now ?? Date.now;
         this.createId = options.createId ?? createIncrementingIdFactory();
         this.maxTurns = options.maxTurns ?? 20;
-        this.maxObservationChars = options.maxObservationChars ?? 24_000;
-        this.remainingObservationChars = this.maxObservationChars;
         this.assistantIdleTimeoutMs = options.assistantIdleTimeoutMs ?? 60_000;
         this.maxWallClockMs = options.maxWallClockMs ?? 180_000;
         this.runStartedAt = this.now();
@@ -621,7 +617,6 @@ export class PaAgentLoop {
                 ...(truncated ? {
                     observationTruncated: true,
                     originalPromptTextLength: originalLength,
-                    maxObservationChars: this.maxObservationChars,
                 } : {}),
             },
         };
@@ -629,13 +624,7 @@ export class PaAgentLoop {
 
     private consumeObservationBudget(text: string): { promptText: string; truncated: boolean; originalLength: number } {
         const originalLength = text.length;
-        if (!Number.isFinite(this.maxObservationChars) || this.maxObservationChars < 0) {
-            return { promptText: text, truncated: false, originalLength };
-        }
-        const allowed = Math.max(0, this.remainingObservationChars);
-        const promptText = text.slice(0, allowed);
-        this.remainingObservationChars = Math.max(0, this.remainingObservationChars - promptText.length);
-        return { promptText, truncated: promptText.length < text.length, originalLength };
+        return { promptText: text, truncated: false, originalLength };
     }
 
     private createUserMessage(): PaAgentMessage {

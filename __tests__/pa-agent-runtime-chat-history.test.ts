@@ -29,16 +29,19 @@ describe("formatCanonicalChatHistory (#2.2)", () => {
         expect(out).toContain('"content": "hi"');
     });
 
-    it("truncates history to the last 20 user turns, preserving full message pairs", () => {
+    it("summarizes older history instead of dropping it behind a fixed turn cap", () => {
         const history = Array.from({ length: 25 }, (_, i) => ([
             { role: "user" as const, content: `user-turn-${i}` },
             { role: "assistant" as const, content: `assistant-turn-${i}` },
         ])).flat();
         const out = formatCanonicalChatHistory(history);
-        expect(out).not.toContain("user-turn-0");
-        expect(out).not.toContain("assistant-turn-4");
-        expect(out).toContain("user-turn-5");
-        expect(out).toContain("assistant-turn-5");
+        expect(out).toContain("<compaction_summary context_only=\"true\">");
+        expect(out).toContain("User: user-turn-0");
+        expect(out).toContain("Assistant: assistant-turn-0");
+        expect(out).not.toContain('"content": "user-turn-0"');
+        expect(out).not.toContain('"content": "assistant-turn-0"');
+        expect(out).toContain('"content": "user-turn-15"');
+        expect(out).toContain('"content": "assistant-turn-15"');
         expect(out).toContain("user-turn-24");
         expect(out).toContain("assistant-turn-24");
     });

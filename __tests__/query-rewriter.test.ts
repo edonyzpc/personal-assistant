@@ -1,6 +1,13 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
-import { rewriteQuery, parseKeywordQuery, isShortQuery, type RewriteInvoker } from "../src/ai-services/query-rewriter";
+import {
+    rewriteQuery,
+    rewriteQueryForSearch,
+    parseKeywordQuery,
+    parseRewrittenQuery,
+    isShortQuery,
+    type RewriteInvoker,
+} from "../src/ai-services/query-rewriter";
 
 function makeInvoker(content: string): RewriteInvoker {
     return jest.fn(async () => content);
@@ -92,6 +99,21 @@ describe("rewriteQuery", () => {
     });
 });
 
+describe("rewriteQueryForSearch", () => {
+    it("returns temporal intent for concise recent queries without invoking the model", async () => {
+        const invoke = makeInvoker('{"keywords":"ignored","temporal":"none"}');
+        const result = await rewriteQueryForSearch("latest notes", invoke);
+        expect(result).toEqual({ keywords: null, temporal: "recent_30d" });
+        expect(invoke).not.toHaveBeenCalled();
+    });
+
+    it("keeps rewritten keywords and temporal intent from the model", async () => {
+        const invoke = makeInvoker('{"keywords":"Memory refresh","temporal":"recent_7d"}');
+        const result = await rewriteQueryForSearch("what changed in Memory refresh last week", invoke);
+        expect(result).toEqual({ keywords: "Memory refresh", temporal: "recent_7d" });
+    });
+});
+
 describe("isShortQuery", () => {
     it("short English: 2 tokens", () => expect(isShortQuery("React hooks")).toBe(true));
     it("short English: 3 tokens", () => expect(isShortQuery("one two three")).toBe(true));
@@ -132,5 +154,19 @@ describe("parseKeywordQuery", () => {
 
     it("trims whitespace from keywords", () => {
         expect(parseKeywordQuery('{"keywords":"  React hooks  "}')).toBe("React hooks");
+    });
+});
+
+describe("parseRewrittenQuery", () => {
+    it("preserves temporal intent even when the model returns empty keywords", () => {
+        expect(parseRewrittenQuery('{"keywords":"","temporal":"recent_30d"}')).toEqual({
+            keywords: null,
+            temporal: "recent_30d",
+        });
+    });
+
+    it("parses temporal intent from markdown fenced JSON", () => {
+        expect(parseRewrittenQuery('```json\n{"keywords":"Pagelet review","temporal":"recent_7d"}\n```'))
+            .toEqual({ keywords: "Pagelet review", temporal: "recent_7d" });
     });
 });
