@@ -248,7 +248,7 @@ describe("PolicyEngine chat runtime backward-compat smoke (framework SDD §4.3)"
         });
         const decision = engine.canExport(capability);
         expect(decision.allowed).toBe(false);
-        expect(decision.reason).toMatch(/require runKind="review" AND allowWrite=true/);
+        expect(decision.reason).toMatch(/action capabilities require/);
     });
 
     it("chat runtime with allowWrite=true still rejects action (runKind gate)", () => {
@@ -262,7 +262,7 @@ describe("PolicyEngine chat runtime backward-compat smoke (framework SDD §4.3)"
         });
         const decision = engine.canExport(capability);
         expect(decision.allowed).toBe(false);
-        expect(decision.reason).toMatch(/require runKind="review"/);
+        expect(decision.reason).toMatch(/action capabilities require/);
     });
 
     it("review runtime preserves non-action chat constraints (no confirmation, no write permission)", () => {
@@ -300,5 +300,110 @@ describe("PolicyEngine chat runtime backward-compat smoke (framework SDD §4.3)"
             permission: "write" as AgentPermission,
             requiresConfirmation: true,
         }))).toEqual({ allowed: true });
+    });
+});
+
+describe("PolicyEngine chat-with-actions runKind (Operations Agent mode)", () => {
+    it("chat-with-actions + allowWrite=true + matching allowlist → allows action capabilities", () => {
+        const engine = new PolicyEngine({
+            runKind: "chat-with-actions",
+            allowWrite: true,
+            allowedActionPermissions: ["write"],
+        });
+        const capability = buildCapability({
+            kind: "action",
+            permission: "write" as AgentPermission,
+            requiresConfirmation: true,
+        });
+        expect(engine.canExport(capability)).toEqual({ allowed: true });
+    });
+
+    it("chat-with-actions + allowWrite=false → rejects action capabilities", () => {
+        const engine = new PolicyEngine({
+            runKind: "chat-with-actions",
+            allowWrite: false,
+            allowedActionPermissions: ["write"],
+        });
+        const capability = buildCapability({
+            kind: "action",
+            permission: "write" as AgentPermission,
+            requiresConfirmation: true,
+        });
+        const decision = engine.canExport(capability);
+        expect(decision.allowed).toBe(false);
+        expect(decision.reason).toMatch(/action capabilities require/);
+    });
+
+    it("chat-with-actions + allowWrite=true + empty allowlist → rejects action permission not in allowlist", () => {
+        const engine = new PolicyEngine({
+            runKind: "chat-with-actions",
+            allowWrite: true,
+            allowedActionPermissions: [],
+        });
+        const capability = buildCapability({
+            kind: "action",
+            permission: "write" as AgentPermission,
+            requiresConfirmation: true,
+        });
+        const decision = engine.canExport(capability);
+        expect(decision.allowed).toBe(false);
+        expect(decision.reason).toMatch(/not in allowlist/);
+    });
+
+    it("chat-with-actions preserves non-action chat constraints (read-only tool still allowed)", () => {
+        const engine = new PolicyEngine({
+            runKind: "chat-with-actions",
+            allowWrite: true,
+            allowedActionPermissions: ["write"],
+        });
+
+        // Non-action read-only tool → allowed
+        expect(engine.canExport(buildCapability({
+            kind: "tool",
+            permission: "read-only",
+        }))).toEqual({ allowed: true });
+
+        // Non-action write tool → still rejected (non-action constraints apply)
+        expect(engine.canExport(buildCapability({
+            kind: "tool",
+            permission: "write" as AgentPermission,
+        })).allowed).toBe(false);
+    });
+
+    it("review runKind continues to work after chat-with-actions addition (non-regression)", () => {
+        const engine = new PolicyEngine({
+            runKind: "review",
+            allowWrite: true,
+            allowedActionPermissions: ["write", "local-filesystem-write"],
+        });
+        // action + write → allowed
+        expect(engine.canExport(buildCapability({
+            kind: "action",
+            permission: "write" as AgentPermission,
+            requiresConfirmation: true,
+        }))).toEqual({ allowed: true });
+
+        // action + local-filesystem-write → allowed
+        expect(engine.canExport(buildCapability({
+            kind: "action",
+            permission: "local-filesystem-write" as AgentPermission,
+            requiresConfirmation: true,
+        }))).toEqual({ allowed: true });
+    });
+
+    it("chat runKind still rejects action capabilities (non-regression)", () => {
+        const engine = new PolicyEngine({
+            runKind: "chat",
+            allowWrite: true,
+            allowedActionPermissions: ["write"],
+        });
+        const capability = buildCapability({
+            kind: "action",
+            permission: "write" as AgentPermission,
+            requiresConfirmation: true,
+        });
+        const decision = engine.canExport(capability);
+        expect(decision.allowed).toBe(false);
+        expect(decision.reason).toMatch(/action capabilities require/);
     });
 });

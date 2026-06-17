@@ -11,7 +11,7 @@ export interface CapabilityPolicyDecision {
 }
 
 /** Runtime context discriminator for Write Action Framework v1. Chat runtime defaults to strict read-only. */
-export type PolicyRunKind = "chat" | "review";
+export type PolicyRunKind = "chat" | "review" | "chat-with-actions";
 
 export interface PolicyEngineOptions {
     platform?: AgentRuntimePlatform;
@@ -25,11 +25,11 @@ export interface PolicyEngineOptions {
      * - non-action requiresConfirmation must be false
      * - failureBehavior must be "recoverable"
      *
-     * When `runKind="review"` AND `allowWrite=true` (review runtime / future Operations
-     * Agent mode), kind="action" capabilities whose permission is listed in
-     * `allowedActionPermissions` are permitted. Any other combination
-     * (runKind="chat" with any allowWrite, or runKind="review" with allowWrite=false)
-     * keeps the strict chat-runtime behavior.
+     * When `runKind="review"` or `runKind="chat-with-actions"` AND `allowWrite=true`
+     * (review runtime / Operations Agent mode), kind="action" capabilities whose
+     * permission is listed in `allowedActionPermissions` are permitted. Any other
+     * combination (runKind="chat" with any allowWrite, or review/chat-with-actions
+     * with allowWrite=false) keeps the strict chat-runtime behavior.
      *
      * Non-action capabilities retain the v1 chat constraints regardless of runKind/allowWrite.
      */
@@ -65,10 +65,10 @@ export class PolicyEngine {
 
     private evaluate(capability: AgentCapability): CapabilityPolicyDecision {
         if (capability.kind === "action") {
-            if (this.runKind !== "review" || !this.allowWrite) {
+            if ((this.runKind !== "review" && this.runKind !== "chat-with-actions") || !this.allowWrite) {
                 return {
                     allowed: false,
-                    reason: `action capabilities require runKind="review" AND allowWrite=true`,
+                    reason: `action capabilities require runKind="review" or "chat-with-actions" AND allowWrite=true`,
                 };
             }
             if (!this.allowedActionPermissions.has(capability.permission)) {

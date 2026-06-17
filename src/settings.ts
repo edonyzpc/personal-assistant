@@ -87,6 +87,8 @@ export interface PluginManagerSettings {
     memoryExtractionEnabled: boolean;
     memoryExtractionNoticeDismissed: boolean;
     vssCacheExcludePath: string[];
+    /** Operations Agent mode (Beta): enable AI to append content to the active note. */
+    operationsAgentEnabled: boolean;
     /**
      * Pagelet (Review Assistant) namespace. Owned by `src/settings/pagelet/`;
      * merged + rendered through the helpers exported from that module so
@@ -168,6 +170,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
     // value, so existing users keep their configured exclusions.
     vssCacheExcludePath: [".obsidian"],
+    operationsAgentEnabled: false,
     // Pagelet defaults live next to the Pagelet settings module so adding a
     // field there does not require a parallel edit here.
     pagelet: { ...PAGELET_DEFAULTS },
@@ -507,6 +510,7 @@ export class SettingTab extends PluginSettingTab {
         this.renderAISection(containerEl);
         this.renderSkillsSection(containerEl);
         this.renderMemorySection(containerEl);
+        this.renderOperationsAgentSection(containerEl);
         this.renderPageletSection(containerEl);
         this.renderStatisticsSection(containerEl);
         this.renderRecordSection(containerEl);
@@ -2011,6 +2015,21 @@ export class SettingTab extends PluginSettingTab {
                     })
             });
         this.markFormControlSettings(container);
+    }
+
+    private renderOperationsAgentSection(parentEl: HTMLElement): void {
+        const plugin = this.plugin;
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.operationsAgent.name"))
+            .setDesc(this.t("plugin.settings.operationsAgent.desc"))
+            .addToggle((toggle) => {
+                toggle
+                    .setValue(plugin.settings.operationsAgentEnabled)
+                    .onChange(async (value) => {
+                        plugin.settings.operationsAgentEnabled = value;
+                        await plugin.saveSettings();
+                    });
+            });
     }
 
     private renderFeaturedImageSection(parentEl: HTMLElement): void {

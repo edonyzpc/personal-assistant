@@ -473,5 +473,8 @@
 
     "plugin.memoryExtraction.enabledNotice": "AI 记忆提取已启用。你的对话偏好将在本地提取。可在设置中关闭此功能。",
     "plugin.memoryExtraction.settings.enabled.name": "AI 记忆提取",
-    "plugin.memoryExtraction.settings.enabled.desc": "自动从对话中提取用户偏好和知识库洞察。数据存储在本地。"
+    "plugin.memoryExtraction.settings.enabled.desc": "自动从对话中提取用户偏好和知识库洞察。数据存储在本地。",
+
+    "plugin.settings.operationsAgent.name": "Operations Agent 模式 (Beta)",
+    "plugin.settings.operationsAgent.desc": "允许 AI 在预览和确认后向当前活跃笔记追加内容。每次操作都需要明确批准。"
 }

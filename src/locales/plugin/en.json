@@ -473,5 +473,8 @@
 
     "plugin.memoryExtraction.enabledNotice": "AI Memory Extraction is enabled. Your conversation preferences will be extracted locally. You can disable this in Settings.",
     "plugin.memoryExtraction.settings.enabled.name": "AI Memory Extraction",
-    "plugin.memoryExtraction.settings.enabled.desc": "Automatically extract user preferences and vault insights from conversations. Data is stored locally."
+    "plugin.memoryExtraction.settings.enabled.desc": "Automatically extract user preferences and vault insights from conversations. Data is stored locally.",
+
+    "plugin.settings.operationsAgent.name": "Operations Agent Mode (Beta)",
+    "plugin.settings.operationsAgent.desc": "Enable AI to append content to your active note after preview and confirmation. Requires explicit approval for each action."
 }
