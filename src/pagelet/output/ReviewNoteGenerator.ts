@@ -103,13 +103,16 @@ export class ReviewNoteGenerator {
 
         // 1. Read file contents (capped to avoid unbounded memory usage)
         const noteContents = await this.readFileContents(filesToRead, tokenBudget.input);
+        const enrichedContents = input.relatedNotes?.length
+            ? [...noteContents, ...input.relatedNotes]
+            : noteContents;
 
         // 2. Build prompt
         const sources = noteContents.map((n) => `[[${stripExtension(n.path)}]]`);
         const prompt = buildPeriodicSummaryPrompt(
             input.rangeDescription,
             input.scopeDays,
-            noteContents,
+            enrichedContents,
         );
         const precheck = preCheckCost(estimateTokens(prompt), {
             maxInputTokens: tokenBudget.input,

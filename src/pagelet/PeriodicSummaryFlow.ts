@@ -78,11 +78,24 @@ export class PeriodicSummaryFlow {
             const rangeStart = new Date(now.getTime() - scopeDays * 86400000);
             const rangeDesc = `${formatPageletDate(rangeStart)} to ${formatPageletDate(now)}`;
 
+            const scopeFiles = scope.included.map(c => c.file);
+            const primaryPath = scopeFiles[0]?.path ?? "";
+            const scopeContents = await Promise.all(
+                scopeFiles.slice(0, 5).map(async (f) => {
+                    try { return { path: f.path, content: await this.host.app.vault.cachedRead(f) }; }
+                    catch { return { path: f.path, content: "" }; }
+                }),
+            );
+            const relatedNotes = await this.host.findRelatedNotes(
+                primaryPath, scopeContents, scopeFiles.map(f => f.path),
+            ).catch(() => []);
+
             const note = await generator.generate(
                 {
-                    files: scope.included.map(c => c.file),
+                    files: scopeFiles,
                     rangeDescription: rangeDesc,
                     scopeDays,
+                    relatedNotes: relatedNotes.map((rn) => ({ path: rn.path, content: rn.content })),
                 },
                 { reviewsFolder: s.reviewsFolder },
                 this.host.createGenerateCallback(),

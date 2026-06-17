@@ -27,6 +27,8 @@ export interface PeriodicSummaryInput {
     rangeDescription: string;
     /** Scope in days (3, 7, or 14). */
     scopeDays: number;
+    /** Optional VSS-discovered related notes for cross-note context enrichment. */
+    relatedNotes?: Array<{ path: string; content: string }>;
 }
 
 // ---------------------------------------------------------------------------

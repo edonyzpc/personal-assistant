@@ -25,8 +25,16 @@ async function yieldToEventLoop(): Promise<void> {
     return new Promise(resolve => setTimeout(resolve, 0));
 }
 
+export type SemanticClusterProvider = (maxClusters: number) => Promise<Array<{ clusterId: number; label: string; paths: string[] }> | null>;
+
 export class TypeCVaultMetacognitionAnalyzer {
+    private semanticClusterProvider: SemanticClusterProvider | null = null;
+
     constructor(private readonly app: App) {}
+
+    setSemanticClusterProvider(provider: SemanticClusterProvider): void {
+        this.semanticClusterProvider = provider;
+    }
 
     async analyze(now = new Date()): Promise<VaultMetacognitionSnapshot> {
         const files = this.app.vault.getMarkdownFiles();
@@ -38,7 +46,17 @@ export class TypeCVaultMetacognitionAnalyzer {
         await yieldToEventLoop();
         const writingHabits = analyzeWritingHabits(files);
         await yieldToEventLoop();
-        const topicClusters = inferTopicClusters(files);
+        let topicClusters = inferTopicClusters(files);
+        if (this.semanticClusterProvider) {
+            try {
+                const semantic = await this.semanticClusterProvider(20);
+                if (semantic && semantic.length > 0) {
+                    topicClusters = semantic.map(c => ({ label: c.label, paths: c.paths }));
+                }
+            } catch {
+                // fallback to folder-based clustering
+            }
+        }
         await yieldToEventLoop();
         const knowledgeGaps = inferKnowledgeGaps(linkTopology.unresolvedLinks);
         const trends = inferTrends(files, now.getTime());

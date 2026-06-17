@@ -122,6 +122,10 @@ export class SqliteVectorIndex implements VectorIndex {
         return this.enqueue(() => this.send<null>("reset", {}).then(() => undefined));
     }
 
+    clusterVectors(maxClusters: number): Promise<Array<{ clusterId: number; label: string; paths: string[] }>> {
+        return this.enqueue(() => this.send<Array<{ clusterId: number; label: string; paths: string[] }>>("clusterVectors", { maxClusters }));
+    }
+
     async dispose(): Promise<void> {
         this.disposePromise ??= this.disposeUnlocked();
         return this.disposePromise;

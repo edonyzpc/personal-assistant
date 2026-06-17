@@ -3,8 +3,12 @@ import { TFile, normalizePath } from "obsidian";
 import type { ChatHistoryManager } from "../../chat/chat-history-manager";
 import { clearPlatformInterval, clearPlatformTimeout, setPlatformInterval, setPlatformTimeout, type PlatformIntervalHandle, type PlatformTimeoutHandle } from "../../platform-dom";
 import { MemoryUserProfileStore, type UserProfileStore } from "./profile-store";
-import { TypeAUserProfileExtractor, type UserProfileSnapshot } from "./type-a-extractor";
-import { TypeCVaultMetacognitionAnalyzer, type VaultMetacognitionSnapshot } from "./type-c-analyzer";
+import { TypeAUserProfileExtractor, type UserProfileCandidate, type UserProfileSnapshot } from "./type-a-extractor";
+import type { PersistedConversation, PersistedTurn } from "../../chat/chat-history-store";
+import { getOptionalPlatformDocument } from "../../platform-dom";
+import { TypeCVaultMetacognitionAnalyzer, type SemanticClusterProvider, type VaultMetacognitionSnapshot } from "./type-c-analyzer";
+
+export type CreateModelForExtraction = () => Promise<{ invoke: (prompt: string) => Promise<string> } | null>;
 
 export interface MemoryExtractionSchedulerOptions {
     app: App;
@@ -16,6 +20,7 @@ export interface MemoryExtractionSchedulerOptions {
     typeCRefreshIntervalMs?: number;
     typeCWritePath?: string | null;
     includeVaultInsightsInPrompt?: boolean;
+    createModelForExtraction?: CreateModelForExtraction;
 }
 
 export interface MemoryExtractionPromptContext {
@@ -51,6 +56,7 @@ export class MemoryExtractionScheduler {
     private lastTypeAConversationId: string | null = null;
     private typeCRefreshInFlight: Promise<VaultMetacognitionSnapshot | null> | null = null;
     private readonly typeAProcessedTurnByConversation = new Map<string, number>();
+    private readonly createModelForExtraction: CreateModelForExtraction | null;
 
     constructor(options: MemoryExtractionSchedulerOptions) {
         this.app = options.app;
@@ -64,7 +70,12 @@ export class MemoryExtractionScheduler {
             : normalizePath(options.typeCWritePath);
         this.includeVaultInsightsInPrompt = options.includeVaultInsightsInPrompt ?? false;
         this.userProfileStore = options.userProfileStore ?? new MemoryUserProfileStore();
+        this.createModelForExtraction = options.createModelForExtraction ?? null;
         this.typeCAnalyzer = new TypeCVaultMetacognitionAnalyzer(this.app);
+    }
+
+    setSemanticClusterProvider(provider: SemanticClusterProvider): void {
+        this.typeCAnalyzer.setSemanticClusterProvider(provider);
     }
 
     start(): void {
@@ -144,11 +155,7 @@ export class MemoryExtractionScheduler {
         const lastProcessedTurn = this.typeAProcessedTurnByConversation.get(conversationId) ?? -1;
         const newTurns = turns.filter((turn) => turn.turnIndex > lastProcessedTurn);
         if (newTurns.length === 0) return this.userProfileSnapshot;
-        const candidates = this.typeAExtractor.extractCandidates({
-            conversation,
-            turns: newTurns,
-            now: this.now,
-        });
+        const candidates = await this.extractTypeACandidates(conversation, newTurns);
         this.userProfileSnapshot = this.typeAExtractor.mergeCandidates(this.userProfileSnapshot, candidates, this.now());
         await this.userProfileStore.setProfile(this.userProfileSnapshot);
         this.typeAProcessedTurnByConversation.set(
@@ -156,6 +163,40 @@ export class MemoryExtractionScheduler {
             Math.max(...newTurns.map((turn) => turn.turnIndex)),
         );
         return this.userProfileSnapshot;
+    }
+
+    private async extractTypeACandidates(
+        conversation: PersistedConversation,
+        turns: PersistedTurn[],
+    ): Promise<UserProfileCandidate[]> {
+        const input = { conversation, turns, now: this.now };
+        if (this.createModelForExtraction && !this.isMobileHidden()) {
+            try {
+                const model = await this.createModelForExtraction();
+                if (model) {
+                    return await this.typeAExtractor.extractCandidatesWithLLM(
+                        input,
+                        (prompt) => model.invoke(prompt).then((result) => {
+                            if (typeof result === "string") return result;
+                            const content = (result as { content?: unknown })?.content;
+                            return content != null ? String(content) : String(result);
+                        }),
+                    );
+                }
+            } catch (error) {
+                this.log("LLM extraction failed, falling back to regex", error);
+            }
+        }
+        return this.typeAExtractor.extractCandidates(input);
+    }
+
+    private isMobileHidden(): boolean {
+        try {
+            const doc = getOptionalPlatformDocument();
+            return doc?.visibilityState === "hidden";
+        } catch {
+            return false;
+        }
     }
 
     async runTypeCRefresh(_reason: string): Promise<VaultMetacognitionSnapshot | null> {

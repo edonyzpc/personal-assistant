@@ -88,7 +88,7 @@ Loop rules:
 | --- | --- |
 | Created | 2026-06-01 |
 | Decision contract source | [`v2.1.2-decisions.md`](./v2.1.2-decisions.md) |
-| Current stage | A-series: SPEC-A0/A1/A2/A3/A4/A5 全部 `[x] Done`; SPEC-A6 spike [x] done, 迁移 [D]; SPEC-A7 `[D]` v2.6+; SPEC-A8/A9 `[T]`。B-series: SPEC-B1 `[x]` Done (`607c16a`→`08a312d`); SPEC-B2 `[ ]` 毕业 gate (等 smoke + release); SPEC-B3 `[~]` dataview [x] done, templater [ ] pending; SPEC-B4/B5 `[ ]` (v2.3)。C-series: SPEC-C1/C2 `[ ]` (v2.6)。D-series: SPEC-D1~D8 `[x]` implemented on 2026-06-16 with review fixes for temporal VSS filtering, Memory extraction vault boundaries, prompt sandbox trimming, Pagelet related-note timeout, and budget usage feedback; post-fix Obsidian re-smoke passed. Execution roadmap: [`development-roadmap.md`](./development-roadmap.md)。 |
+| Current stage | A-series: SPEC-A0/A1/A2/A3/A4/A5 全部 `[x] Done`; SPEC-A6 spike [x] done, 迁移 [D]; SPEC-A7 `[D]` v2.6+; SPEC-A8/A9 `[T]`。B-series: SPEC-B1 `[x]` Done (`607c16a`→`08a312d`); SPEC-B2 `[ ]` 毕业 gate (等 smoke + release); SPEC-B3 `[~]` dataview [x] done, templater [ ] pending; SPEC-B4/B5 `[ ]` (v2.3)。C-series: SPEC-C1/C2 `[ ]` (v2.6)。D-series: SPEC-D1~D8 `[x]` implemented on 2026-06-16。E-series: SPEC-E1~E6 `[x]` implemented on 2026-06-17 (AI Insight Activation — vault insights injection, discovery flow, graph-aware retrieval, Pagelet VSS full coverage, budget-compaction linkage, Type A LLM extraction, semantic clustering, temporal range); 3 must-fix + 7 should-fix from review applied. Execution roadmap: [`development-roadmap.md`](./development-roadmap.md)。 |
 | Runtime code changes in this pass | Review remediation: PA Agent history sandboxing, VSS search abort/rewrite safety, Obsidian Operations v1A capability invariant enforcement, chat setup banner refresh on settings save, and release/changelog/doc consistency fixes. |
 | Open contract decisions | None. All 5 original decisions + Q1-Q8 拍板 are frozen in the decision record. |
 | Blocked implementation areas | SPEC-A7 (v2.6+); SPEC-A8/A9 (triggered). |
@@ -123,6 +123,12 @@ Loop rules:
 | SPEC-D6 | Context Compactor + Budget(micro/full compaction + 动态预算) | `[x]` Implemented | v2.5 | SPEC-D5 | [`sdd-ai-insight-foundation.md`](./sdd-ai-insight-foundation.md) | `src/ai-services/context/*`、`src/ai-services/pa-agent-runtime.ts` | micro-compaction moved to projection boundary + deterministic history summary + chars/tokens/provider-usage diagnostics and budget feedback。 |
 | SPEC-D7 | Type A 用户画像(自动提取 + 注入) | `[x]` Implemented | v2.5 | SPEC-D5 | [`sdd-ai-insight-foundation.md`](./sdd-ai-insight-foundation.md) | `src/ai-services/memory-extraction/type-a-extractor.ts`、`profile-store.ts`、`extraction-scheduler.ts` | local-first 自动提取 + 对话边界触发 + IndexedDB 存储 + 置信度/recurrence。 |
 | SPEC-D8 | Type C Vault 元认知 + Extraction pipeline | `[x]` Implemented | v2.5 | SPEC-D5 | [`sdd-ai-insight-foundation.md`](./sdd-ai-insight-foundation.md) | `src/ai-services/memory-extraction/type-c-analyzer.ts`、`extraction-scheduler.ts` | 6 维度 metadata/topology 分析 + 独立调度 + internal snapshot；默认不写 vault、不注入 prompt。 |
+| SPEC-E1 | Vault Insights 激活 + Discovery 专用流程 | `[x]` Implemented | v2.5 | SPEC-D8 | [`ai-insight-activation-plan.md`](./ai-insight-activation-plan.md) §3 | `settings.ts`、`plugin.ts`、`pagelet/orchestrator.ts`、`pagelet/PageletHost.ts`、`pagelet/panel/` | vault insights opt-in 注入 prompt + onboarding Notice + Discovery 专用 LLM 分析 + VSS-not-ready 引导 + `PageletHost.findRelatedNotes` 合约。 |
+| SPEC-E2 | 图感知检索 (1-hop link expansion) | `[x]` Implemented | v2.5 | SPEC-E1 | [`sdd-graph-aware-retrieval.md`](./sdd-graph-aware-retrieval.md) | `pa-agent-runtime.ts` | 搜索命中笔记的 outbound wikilink 目标自动展开 + VSS chunk 内容填充 + score 衰减 0.5 + top-3×2 bounded。 |
+| SPEC-E3 | Pagelet VSS 全场景覆盖 | `[x]` Implemented | v2.5 | SPEC-E1 | [`ai-insight-activation-plan.md`](./ai-insight-activation-plan.md) §4.2 | `plugin.ts`、`pagelet/PeriodicSummaryFlow.ts`、`pagelet/output/` | Preload + Periodic Summary 接入 VSS related notes 搜索；`PeriodicSummaryInput.relatedNotes` 新增。 |
+| SPEC-E4 | Budget→Compaction 联动 + 测试补齐 | `[x]` Implemented | v2.5 | None | [`ai-insight-activation-plan.md`](./ai-insight-activation-plan.md) §4.3-4.4 | `context/PaAgentContextManager.ts`、`__tests__/pa-agent-context.test.ts` | Budget `nearObservationLimit` 触发二次 micro-compaction (targetRatio 0.4) + 5 个 review-backfill 测试。 |
+| SPEC-E5 | Type A LLM 后台提取 | `[x]` Implemented | v2.5 | SPEC-E1 | [`sdd-type-a-llm-extraction.md`](./sdd-type-a-llm-extraction.md) | `memory-extraction/type-a-extractor.ts`、`extraction-scheduler.ts`、`plugin.ts` | LLM 提取 `inferred_behavior` + regex fallback + mobile idle guard + cost tracking + consent i18n 更新。 |
+| SPEC-E6 | 语义聚类 + temporal range + 死代码清理 | `[x]` Implemented | v2.5 | SPEC-E1 | [`ai-insight-activation-plan.md`](./ai-insight-activation-plan.md) §5.2-5.4 | `vss/*`、`memory-extraction/type-c-analyzer.ts`、`query-rewriter.ts`、`pagelet/llm/prompts.ts` | Worker k-means 聚类 + 15K guard + `range:YYYY-MM-DD..YYYY-MM-DD` temporal + `buildQuickReviewPrompt`/`buildWritingAssistPrompt` 删除。 |
 
 ## Phase Ledger(by release window)
 
@@ -175,6 +181,17 @@ Loop rules:
 | SPEC-D6 | Self | ✓ code + review fixes | ✓ `pa-agent-context`, `pa-agent-stream-fallback` | Self-review + subagent review | ✓ `make deploy` | ✓ app smoke(Pagelet/runtime no errors) | Projection owns observation compaction/truncation; provider usage diagnostics feed budget tracker。 |
 | SPEC-D7 | Self | ✓ code | ✓ `memory-extraction` | Self-review | ✓ `make deploy` | ✓ app smoke(userProfile context present) | Type A local-first extraction persists through vault-scoped IndexedDB store。 |
 | SPEC-D8 | Self | ✓ code + review fixes | ✓ `memory-extraction` | Self-review + subagent review | ✓ `make deploy` | ✓ app smoke(Type C default no vault prompt injection) | Type C stays internal by default; no automatic vault note write or prompt injection。 |
+
+### v2.5 E-series（AI Insight Activation）
+
+| SPEC | SPEC Review | Dev | Test | Code Review | Deploy | Smoke | Fix / Disposition |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| SPEC-E1 | Self(activation plan §3 as design doc) | ✓ 2026-06-17 | ✓ 1848 tests | Self + 3-agent review (arch/product/perf) | ✓ `make deploy` | Pending | Vault insights opt-in + Discovery flow + PageletHost contract。 |
+| SPEC-E2 | Self([`sdd-graph-aware-retrieval.md`](./sdd-graph-aware-retrieval.md)) | ✓ 2026-06-17 | ✓ 1848 tests | Self + review fix(VSS chunk fill) | ✓ `make deploy` | Pending | 1-hop expansion with VSS chunk content; expanded candidates survive flattenCandidateDocuments。 |
+| SPEC-E3 | Self(activation plan §4.2) | ✓ 2026-06-17 | ✓ 1848 tests | Self | ✓ `make deploy` | Pending | Preload + PeriodicSummary VSS enrichment via findPageletRelatedNotes。 |
+| SPEC-E4 | Self(activation plan §4.3-4.4) | ✓ 2026-06-17 | ✓ 1848 tests(+5 backfill) | Self | ✓ `make deploy` | Pending | Budget-driven recompaction + annotateOrigins/constants/escape/production-values tests。 |
+| SPEC-E5 | Self([`sdd-type-a-llm-extraction.md`](./sdd-type-a-llm-extraction.md)) | ✓ 2026-06-17 | ✓ 1848 tests | Self + review must-fix(cost tracking) | ✓ `make deploy` | Pending | LLM extraction + regex fallback + mobile guard + cost tracking + consent i18n。 |
+| SPEC-E6 | Self(activation plan §5.2-5.4) | ✓ 2026-06-17 | ✓ 1848 tests | Self + review must-fix(O(n²) perf + 15K guard) | ✓ `make deploy` | Pending | Worker k-means + range: temporal + dead code removal。 |
 
 ### v2.6(Action Mode + Skill 扩展 + 清理, ≥ 2026-11-29)
 

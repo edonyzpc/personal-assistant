@@ -84,6 +84,7 @@ export interface PluginManagerSettings {
     numFeaturedImages: number;
     memoryExtractionEnabled: boolean;
     memoryExtractionNoticeDismissed: boolean;
+    memoryExtractionIncludeVaultInsights: boolean;
     vssCacheExcludePath: string[];
     /** Operations Agent mode (Beta): enable AI to append content to the active note. */
     operationsAgentEnabled: boolean;
@@ -163,6 +164,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     numFeaturedImages: 2,
     memoryExtractionEnabled: true,
     memoryExtractionNoticeDismissed: false,
+    memoryExtractionIncludeVaultInsights: false,
     // Generic default — the prior list ("8.template", "9.src", "a.subjects",
     // "b.notion") was the original developer's vault layout and made no sense
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
@@ -1885,6 +1887,20 @@ export class SettingTab extends PluginSettingTab {
                         await plugin.saveSettings();
                     });
             });
+
+        if (plugin.settings.memoryExtractionEnabled) {
+            new Setting(container)
+                .setName(this.t("plugin.memoryExtraction.settings.includeVaultInsights.name"))
+                .setDesc(this.t("plugin.memoryExtraction.settings.includeVaultInsights.desc"))
+                .addToggle((toggle) => {
+                    toggle
+                        .setValue(plugin.settings.memoryExtractionIncludeVaultInsights)
+                        .onChange(async (value) => {
+                            plugin.settings.memoryExtractionIncludeVaultInsights = value;
+                            await plugin.saveSettings();
+                        });
+                });
+        }
 
         this.memoryAdvancedContainer = container.createDiv();
         this.rebuildMemoryAdvanced();

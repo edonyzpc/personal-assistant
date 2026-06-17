@@ -134,6 +134,8 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
             requireDb();
             reset();
             return null;
+        case "clusterVectors":
+            return clusterVectorsInWorker(request.payload.maxClusters);
         case "dispose":
             disposed = true;
             dispose();
@@ -903,6 +905,104 @@ function isPoolPaused(pool: OpfsSahPool): boolean {
     } catch {
         return false;
     }
+}
+
+function clusterVectorsInWorker(maxClusters: number): Array<{ clusterId: number; label: string; paths: string[] }> {
+    const cache = getOrLoadVectorCache();
+    if (cache.size < 2) return [];
+
+    const idToPath = new Map<number, string>();
+    const rows: Array<Record<string, unknown>> = [];
+    requireDb().exec({
+        sql: "SELECT id, path FROM vss_chunks",
+        rowMode: "object",
+        resultRows: rows,
+    });
+    for (const row of rows) {
+        idToPath.set(Number(row.id), primitiveString(row.path));
+    }
+
+    const ids = [...cache.keys()].filter((id) => cache.has(id) && idToPath.has(id));
+    if (ids.length < 2) return [];
+    if (ids.length > 15000) return [];
+
+    const firstVec = cache.get(ids[0]);
+    if (!firstVec) return [];
+    const dims = firstVec.length;
+    const k = Math.min(maxClusters, Math.max(2, Math.floor(Math.sqrt(ids.length / 5))));
+
+    const assignments = new Int32Array(ids.length);
+    const centroids: Float32Array[] = [];
+    for (let i = 0; i < k; i++) {
+        const src = cache.get(ids[i % ids.length]);
+        centroids.push(src ? new Float32Array(src) : new Float32Array(dims));
+    }
+
+    const sums: Float32Array[] = [];
+    for (let i = 0; i < k; i++) sums.push(new Float32Array(dims));
+    const counts = new Int32Array(k);
+
+    for (let iter = 0; iter < 15; iter++) {
+        for (let i = 0; i < ids.length; i++) {
+            const vec = cache.get(ids[i]);
+            if (!vec) continue;
+            let bestDist = Infinity;
+            let bestC = 0;
+            for (let c = 0; c < k; c++) {
+                let dist = 0;
+                for (let d = 0; d < dims; d++) {
+                    const diff = vec[d] - centroids[c][d];
+                    dist += diff * diff;
+                }
+                if (dist < bestDist) { bestDist = dist; bestC = c; }
+            }
+            assignments[i] = bestC;
+        }
+        counts.fill(0);
+        for (const s of sums) s.fill(0);
+        for (let i = 0; i < ids.length; i++) {
+            const c = assignments[i];
+            const vec = cache.get(ids[i]);
+            if (!vec) continue;
+            counts[c]++;
+            const sum = sums[c];
+            for (let d = 0; d < dims; d++) sum[d] += vec[d];
+        }
+        for (let c = 0; c < k; c++) {
+            if (counts[c] === 0) continue;
+            for (let d = 0; d < dims; d++) centroids[c][d] = sums[c][d] / counts[c];
+        }
+    }
+
+    const clusterPaths = new Map<number, Set<string>>();
+    const folderCounts = new Map<number, Map<string, number>>();
+    for (let i = 0; i < ids.length; i++) {
+        const c = assignments[i];
+        const path = idToPath.get(ids[i]);
+        if (!path) continue;
+        if (!clusterPaths.has(c)) clusterPaths.set(c, new Set());
+        clusterPaths.get(c)!.add(path);
+        const folder = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "/";
+        if (!folderCounts.has(c)) folderCounts.set(c, new Map());
+        const fc = folderCounts.get(c)!;
+        fc.set(folder, (fc.get(folder) ?? 0) + 1);
+    }
+
+    const result: Array<{ clusterId: number; label: string; paths: string[] }> = [];
+    for (const [clusterId, paths] of clusterPaths) {
+        if (paths.size === 0) continue;
+        const fc = folderCounts.get(clusterId);
+        let label = `Cluster ${clusterId}`;
+        if (fc && fc.size > 0) {
+            let maxCount = 0;
+            for (const [folder, count] of fc) {
+                if (count > maxCount) { maxCount = count; label = folder; }
+            }
+        }
+        result.push({ clusterId, label, paths: [...paths].slice(0, 12) });
+    }
+
+    return result.sort((a, b) => b.paths.length - a.paths.length);
 }
 
 function getOrLoadVectorCache(): Map<number, Float32Array> {

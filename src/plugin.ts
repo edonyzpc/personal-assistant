@@ -67,7 +67,9 @@ import {
     type PageletDetailPayload,
 } from './pagelet/tab';
 import type { AnalyzeCallback } from './pagelet/preload/types';
-import { buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
+import type { DiscoveryResult } from './pagelet/panel/types';
+import { buildDiscoveryPrompt, buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
+import { buildDiscoveryResultFromFindings } from './pagelet/DiscoveryAnalyzer';
 import {
     MemoryExtractionScheduler,
     createUserProfileStore,
@@ -146,6 +148,7 @@ function arraysEqual(left: string[], right: string[]): boolean {
  */
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
 const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
+const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
 type TimeoutHandle = PlatformTimeoutHandle;
@@ -180,6 +183,22 @@ function writePageletBackgroundPreparationNoticeFlag(): void {
         getPlatformLocalStorage()?.setItem(PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY, "1");
     } catch {
         /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
+    }
+}
+
+function readVaultInsightsInjectionNoticeFlag(): boolean {
+    try {
+        return getPlatformLocalStorage()?.getItem(VAULT_INSIGHTS_INJECTION_NOTICE_KEY) === "1";
+    } catch {
+        return false;
+    }
+}
+
+function writeVaultInsightsInjectionNoticeFlag(): void {
+    try {
+        getPlatformLocalStorage()?.setItem(VAULT_INSIGHTS_INJECTION_NOTICE_KEY, "1");
+    } catch {
+        /* localStorage unavailable — silently skip */
     }
 }
 
@@ -219,6 +238,7 @@ export class PluginManager extends Plugin {
     private pageletCommandsRegistered = false;
     private pageletFocusCommandRegistered = false;
     private pageletBackgroundPreparationNoticeSurfacedThisBoot = false;
+    private vaultInsightsInjectionNoticeSurfacedThisBoot = false;
     private pageletRateLimiterInstance: PageletRateLimiter | null = null;
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
@@ -661,13 +681,37 @@ export class PluginManager extends Plugin {
                     chatHistoryManager: this.chatHistoryManager,
                     userProfileStore: this.createUserProfileStore(),
                     log: (message, error) => this.log(message, error),
+                    includeVaultInsightsInPrompt: this.settings.memoryExtractionIncludeVaultInsights,
+                    createModelForExtraction: async () => {
+                        const model = await this.createChatModel(0, { maxTokens: 256 });
+                        if (!model) return null;
+                        return {
+                            invoke: async (prompt: string) => {
+                                const result = await model.invoke(prompt);
+                                const text = coerceModelResultToString(result);
+                                this.pageletCostTracker.record({
+                                    inputTokens: estimateTokens(prompt),
+                                    outputTokens: estimateTokens(text),
+                                    provider: this.settings.aiProvider,
+                                    model: this.settings.chatModelName,
+                                });
+                                return text;
+                            },
+                        };
+                    },
                 });
+                if (this.vss) {
+                    this.memoryExtractionScheduler.setSemanticClusterProvider(
+                        (maxClusters) => this.vss!.clusterVectors(maxClusters),
+                    );
+                }
                 this.memoryExtractionScheduler.start();
                 if (!this.settings.memoryExtractionNoticeDismissed) {
                     new Notice(this.t("plugin.memoryExtraction.enabledNotice"));
                     this.settings.memoryExtractionNoticeDismissed = true;
                     void this.saveSettings();
                 }
+                this.surfaceVaultInsightsInjectionNotice();
             }
         } else {
             if (this.memoryExtractionScheduler) {
@@ -758,7 +802,21 @@ export class PluginManager extends Plugin {
                         files,
                         config.tokenBudget.input,
                     );
-                    const prompt = buildPreloadPrompt(noteContents, config.tokenBudget);
+                    const relatedNotes = await this.findPageletRelatedNotes(
+                        files[0]?.path ?? "",
+                        noteContents,
+                        files.map((f) => f.path),
+                    ).catch(() => []);
+                    const relatedBudget = Math.floor(config.tokenBudget.input * 0.3);
+                    const primaryBudget = { input: config.tokenBudget.input - relatedBudget, output: config.tokenBudget.output };
+                    const truncatedRelated = relatedNotes.length > 0
+                        ? relatedNotes.map((rn) => ({
+                            path: rn.path,
+                            content: rn.content.slice(0, Math.floor(relatedBudget / Math.max(1, relatedNotes.length))),
+                        }))
+                        : [];
+                    const enrichedContents = [...noteContents, ...truncatedRelated];
+                    const prompt = buildPreloadPrompt(enrichedContents, primaryBudget);
                     const model = await this.createChatModel(0.3, {
                         maxTokens: prompt.maxOutputTokens,
                     });
@@ -767,11 +825,7 @@ export class PluginManager extends Plugin {
                     }
                     const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
                     const result = await model.invoke(fullPrompt);
-                    const text = typeof result === "string"
-                        ? result
-                        : (result as { content?: unknown }).content != null
-                            ? String((result as { content: unknown }).content)
-                            : String(result);
+                    const text = coerceModelResultToString(result);
                     const parsed = parseStructuredResponse(text);
                     const inputTokens = estimateTokens(fullPrompt);
                     const outputTokens = estimateTokens(text);
@@ -892,11 +946,7 @@ export class PluginManager extends Plugin {
                         throw new Error("No AI model configured");
                     }
                     const result = await model.invoke(prompt);
-                    const text = typeof result === "string"
-                        ? result
-                        : (result as { content?: unknown }).content != null
-                            ? String((result as { content: unknown }).content)
-                            : String(result);
+                    const text = coerceModelResultToString(result);
                     const inputTokens = estimateTokens(prompt);
                     const outputTokens = estimateTokens(text);
                     this.pageletCostTracker.record({
@@ -914,6 +964,10 @@ export class PluginManager extends Plugin {
             },
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
             openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
+            findRelatedNotes: (primarySourcePath, noteContents, sourcePaths) =>
+                this.findPageletRelatedNotes(primarySourcePath, noteContents, sourcePaths),
+            discoverConnections: async (currentNote, relatedNotes) =>
+                this.runDiscoveryAnalysis(currentNote, relatedNotes),
         };
     }
 
@@ -1089,6 +1143,38 @@ export class PluginManager extends Plugin {
         } catch (error) {
             this.log("Pagelet related-note Memory readiness check skipped", error);
             return false;
+        }
+    }
+
+    private async runDiscoveryAnalysis(
+        currentNote: { path: string; content: string },
+        relatedNotes: Array<{ path: string; content: string }>,
+    ): Promise<DiscoveryResult | null> {
+        const prompt = buildDiscoveryPrompt(currentNote, relatedNotes, {
+            input: this.settings.pagelet.maxInputTokens,
+            output: this.settings.pagelet.maxOutputTokens,
+        });
+        const model = await this.createChatModel(0.3, {
+            maxTokens: prompt.maxOutputTokens,
+        });
+        if (!model) return null;
+        try {
+            const fullPrompt = prompt.systemPrompt + "\n\n" + prompt.userPrompt;
+            const result = await model.invoke(fullPrompt);
+            const text = coerceModelResultToString(result);
+            const inputTokens = estimateTokens(fullPrompt);
+            const outputTokens = estimateTokens(text);
+            this.pageletCostTracker.record({
+                inputTokens,
+                outputTokens,
+                provider: this.settings.aiProvider,
+                model: this.settings.chatModelName,
+            });
+            const parsed = parseStructuredResponse(text);
+            return buildDiscoveryResultFromFindings(parsed.findings, currentNote.path);
+        } catch (error) {
+            this.log("Discovery analysis failed", error);
+            return null;
         }
     }
 
@@ -1585,6 +1671,19 @@ export class PluginManager extends Plugin {
             this.log("Failed to fire Pagelet background preparation Notice", error);
         }
         writePageletBackgroundPreparationNoticeFlag();
+    }
+
+    private surfaceVaultInsightsInjectionNotice(): void {
+        if (this.vaultInsightsInjectionNoticeSurfacedThisBoot) return;
+        if (!this.settings.memoryExtractionIncludeVaultInsights) return;
+        if (readVaultInsightsInjectionNoticeFlag()) return;
+        this.vaultInsightsInjectionNoticeSurfacedThisBoot = true;
+        try {
+            new Notice(this.t("plugin.memoryExtraction.vaultInsightsInjection.onboardingNotice"), 10000);
+        } catch (error) {
+            this.log("Failed to fire vault insights injection Notice", error);
+        }
+        writeVaultInsightsInjectionNoticeFlag();
     }
 
     getVSSFiles() {
@@ -2107,6 +2206,12 @@ export class PluginManager extends Plugin {
     clearTokenCache(): void {
         this.token = "";
     }
+}
+
+function coerceModelResultToString(result: unknown): string {
+    if (typeof result === "string") return result;
+    const content = (result as { content?: unknown })?.content;
+    return content != null ? String(content) : String(result);
 }
 
 function setPluginTimeout(callback: () => void, ms: number): TimeoutHandle {

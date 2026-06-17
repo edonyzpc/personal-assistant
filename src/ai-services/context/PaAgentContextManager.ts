@@ -65,7 +65,9 @@ export class PaAgentContextManager {
             maxHistoryChars: input.maxHistoryChars,
         });
         const toolObservations = input.formatToolObservations(micro.transcript, input.turnIndex);
-        const budget = this.budget.snapshot({
+        let finalToolObservations = toolObservations;
+        let finalMicro = micro;
+        const firstBudget = this.budget.snapshot({
             input: projected.input,
             availableSkills: input.availableSkills,
             toolDefinitions: input.toolDefinitions,
@@ -74,11 +76,29 @@ export class PaAgentContextManager {
             maxObservationChars: input.maxObservationChars,
         });
 
+        if (firstBudget.nearObservationLimit) {
+            const aggressiveMicro = this.compactor.microCompact(hygiene.transcript, {
+                maxObservationChars: input.maxObservationChars,
+                targetRatio: 0.4,
+            });
+            finalMicro = aggressiveMicro;
+            finalToolObservations = input.formatToolObservations(aggressiveMicro.transcript, input.turnIndex);
+        }
+
+        const budget = this.budget.snapshot({
+            input: projected.input,
+            availableSkills: input.availableSkills,
+            toolDefinitions: input.toolDefinitions,
+            toolObservations: finalToolObservations,
+            maxPromptChars: input.maxPromptChars,
+            maxObservationChars: input.maxObservationChars,
+        });
+
         return {
             input: projected.input,
             availableSkills: input.availableSkills,
             toolDefinitions: input.toolDefinitions,
-            toolObservations,
+            toolObservations: finalToolObservations,
             budget,
             diagnostics: {
                 type: "context_projection",
@@ -89,9 +109,10 @@ export class PaAgentContextManager {
                     removedOrphanToolResults: hygiene.removedOrphanToolResults,
                 },
                 microCompaction: {
-                    compactedToolResults: micro.compactedToolResults,
-                    originalObservationChars: micro.originalObservationChars,
-                    compactedObservationChars: micro.compactedObservationChars,
+                    compactedToolResults: finalMicro.compactedToolResults,
+                    originalObservationChars: finalMicro.originalObservationChars,
+                    compactedObservationChars: finalMicro.compactedObservationChars,
+                    budgetDrivenRecompaction: firstBudget.nearObservationLimit,
                 },
                 historyCompaction: projected.history,
                 budget,

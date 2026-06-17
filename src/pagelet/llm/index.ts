@@ -16,8 +16,6 @@ export type {
 
 export {
     buildPreloadPrompt,
-    buildQuickReviewPrompt,
-    buildWritingAssistPrompt,
     buildDiscoveryPrompt,
     buildPeriodicSummaryPrompt,
 } from "./prompts";

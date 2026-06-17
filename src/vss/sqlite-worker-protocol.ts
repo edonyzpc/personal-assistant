@@ -42,7 +42,8 @@ export type SqliteWorkerRequest =
     | { id: number; type: "getStats"; payload: Record<string, never> }
     | { id: number; type: "verify"; payload: Record<string, never> }
     | { id: number; type: "reset"; payload: Record<string, never> }
-    | { id: number; type: "dispose"; payload: Record<string, never> };
+    | { id: number; type: "dispose"; payload: Record<string, never> }
+    | { id: number; type: "clusterVectors"; payload: { maxClusters: number } };
 
 export type SqliteWorkerSuccess =
     | { id: number; ok: true; result: VectorIndexStatus }
@@ -51,7 +52,8 @@ export type SqliteWorkerSuccess =
     | { id: number; ok: true; result: VectorSearchResult[] }
     | { id: number; ok: true; result: VSSFileRecord | null }
     | { id: number; ok: true; result: VSSIndexStats }
-    | { id: number; ok: true; result: null };
+    | { id: number; ok: true; result: null }
+    | { id: number; ok: true; result: Array<{ clusterId: number; label: string; paths: string[] }> };
 
 export interface SqliteWorkerFailure {
     id: number;

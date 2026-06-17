@@ -1329,11 +1329,22 @@ export class MemorySearchTool {
 
         throwIfAborted(signal);
         const candidates = normalizeSearchCandidates(rawResults);
+        const expanded = await expandByOneHop(
+            candidates,
+            this.plugin.app?.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined,
+            async (path: string) => {
+                const results = await this.plugin.vss?.searchHybrid(path, { signal }) as RawSearchResult[] | undefined;
+                return (results ?? []).filter((r) => {
+                    const p = (r.doc?.metadata as Record<string, unknown> | undefined)?.path;
+                    return typeof p === "string" && p === path;
+                });
+            },
+        );
 
         // Serial: rerank after candidates are ready
         const rankedCandidates = policyModelName
-            ? await this.rerankCandidates(query, candidates, policyModelName, signal)
-            : candidates;
+            ? await this.rerankCandidates(query, expanded, policyModelName, signal)
+            : expanded;
 
         const documents = flattenCandidateDocuments(rankedCandidates).slice(0, MAX_MEMORY_DOCUMENTS);
         const hasAnswerableContent = documents.length > 0;
@@ -1425,6 +1436,14 @@ function temporalIntentToFilter(intent: QueryTemporalIntent): { since?: number; 
     const now = Date.now();
     if (intent === "recent_7d") return { since: now - 7 * 24 * 60 * 60 * 1000 };
     if (intent === "recent_30d") return { since: now - 30 * 24 * 60 * 60 * 1000 };
+    if (typeof intent === "string" && intent.startsWith("range:")) {
+        const match = intent.slice(6).match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+        if (match) {
+            const since = Date.parse(match[1]);
+            const until = Date.parse(match[2]) + 86400000;
+            if (!isNaN(since) && !isNaN(until)) return { since, until };
+        }
+    }
     return null;
 }
 
@@ -1615,6 +1634,60 @@ function dedupeDocuments(documents: MemorySearchDocument[]): MemorySearchDocumen
         deduped.push(memoryDocument);
     }
     return deduped;
+}
+
+export async function expandByOneHop(
+    candidates: MemoryCandidate[],
+    resolvedLinks: Record<string, Record<string, number>> | undefined,
+    fetchChunks?: (path: string) => Promise<RawSearchResult[]>,
+): Promise<MemoryCandidate[]> {
+    if (!resolvedLinks || candidates.length === 0) return candidates;
+    const existingPaths = new Set(candidates.map((c) => c.path));
+    const expansionTargets: Array<{ parentId: string; parentScore: number; targetPath: string; index: number }> = [];
+    const topCandidates = candidates.slice(0, 3);
+    for (const parent of topCandidates) {
+        const outbound = resolvedLinks[parent.path];
+        if (!outbound) continue;
+        let added = 0;
+        for (const targetPath of Object.keys(outbound)) {
+            if (added >= 2) break;
+            if (!targetPath.endsWith(".md")) continue;
+            if (existingPaths.has(targetPath)) continue;
+            existingPaths.add(targetPath);
+            expansionTargets.push({
+                parentId: parent.candidateId,
+                parentScore: parent.score,
+                targetPath,
+                index: added,
+            });
+            added++;
+        }
+    }
+    if (expansionTargets.length === 0) return candidates;
+
+    const expanded: MemoryCandidate[] = [];
+    for (const target of expansionTargets) {
+        let documents: MemorySearchDocument[] = [];
+        let excerpt = `[linked from candidate ${target.parentId}]`;
+        if (fetchChunks) {
+            try {
+                const raw = await fetchChunks(target.targetPath);
+                const docs = normalizeSearchCandidates(raw);
+                if (docs.length > 0) {
+                    documents = docs[0].documents;
+                    excerpt = docs[0].excerpt;
+                }
+            } catch { /* use empty documents as fallback */ }
+        }
+        expanded.push({
+            candidateId: `link-${target.parentId}-${target.index}`,
+            path: target.targetPath,
+            score: target.parentScore * 0.5,
+            documents,
+            excerpt,
+        });
+    }
+    return [...candidates, ...expanded];
 }
 
 function readStringArray(value: unknown): string[] {

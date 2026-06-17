@@ -1541,6 +1541,16 @@ export class VSS {
         });
     }
 
+    async clusterVectors(maxClusters: number): Promise<Array<{ clusterId: number; label: string; paths: string[] }>> {
+        if (this.disposed || !this.index || !(this.index instanceof SqliteVectorIndex)) return [];
+        if (this.status !== "ready") return [];
+        try {
+            return await this.index.clusterVectors(maxClusters);
+        } catch {
+            return [];
+        }
+    }
+
     async getStats(options: { mode?: VSSIndexOpenMode } = {}): Promise<VSSIndexStats> {
         if (this.disposed) {
             return this.createUnavailableStats("uninitialized");

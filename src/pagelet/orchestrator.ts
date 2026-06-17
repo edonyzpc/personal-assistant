@@ -359,8 +359,7 @@ export class PageletOrchestrator {
             onReviewCurrent: () => this.reviewCurrentNote(),
             onQuickReview: () => this.openQuickReview(),
             onDiscoverConnections: async () => {
-                await this.analyzeCurrentNote();
-                this.handleExpandPanel("discover");
+                await this.discoverConnections();
             },
             onPeriodicSummary: () => {
                 void this.runPeriodicSummary();
@@ -494,6 +493,75 @@ export class PageletOrchestrator {
             range: "current",
             expectedActivePath: activeFile.path,
         });
+    }
+
+    private async discoverConnections(): Promise<void> {
+        const activeFile = this.host.app.workspace.getActiveFile?.();
+        if (!activeFile || !activeFile.path.endsWith(".md")) return;
+
+        const content = await this.host.app.vault.cachedRead(activeFile);
+        const currentNote = { path: activeFile.path, content };
+        const noteContents = [{ path: activeFile.path, content }];
+
+        this.petView?.stateMachine.transition("analysis-start");
+
+        try {
+            const relatedNotes = await this.host.findRelatedNotes(
+                activeFile.path, noteContents, [activeFile.path],
+            );
+
+            if (relatedNotes.length === 0) {
+                const locale = getPageletUiLanguage();
+                this.petView?.stateMachine.transition("analysis-done");
+                const isVssReady = this.host.settings.pagelet.enabled;
+                const titleKey = isVssReady
+                    ? "pagelet.discover.noResults.title"
+                    : "pagelet.discover.vssNotReady.title";
+                const descKey = isVssReady
+                    ? "pagelet.discover.noResults.desc"
+                    : "pagelet.discover.vssNotReady.desc";
+                this.panelView?.open("discover", [{
+                    title: pageletT(titleKey, locale),
+                    description: pageletT(descKey, locale),
+                    insightText: pageletT(descKey, locale),
+                    sourceFile: "",
+                    sourceTitle: "",
+                }], {});
+                return;
+            }
+
+            const result = await this.host.discoverConnections(currentNote, relatedNotes);
+            this.petView?.stateMachine.transition("analysis-done");
+
+            if (!result) {
+                this.handleExpandPanel("discover");
+                return;
+            }
+
+            const findings: PanelFinding[] = [
+                ...result.connections.map((c) => ({
+                    title: c.sharedConcepts[0] ?? "",
+                    description: c.sharedConcepts.join("; "),
+                    insightText: c.sharedConcepts.join("; "),
+                    sourceFile: c.fromNote,
+                    sourceTitle: c.toNote.split("/").pop()?.replace(/\.md$/, "") ?? c.toNote,
+                })),
+                ...result.gaps.map((g) => ({
+                    title: g.topic,
+                    description: g.description,
+                    insightText: g.description,
+                    sourceFile: activeFile.path,
+                    sourceTitle: g.topic,
+                })),
+            ];
+
+            this.panelView?.open("discover", findings, { connections: result.connections });
+        } catch (error) {
+            this.petView?.stateMachine.transition("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Discovery analysis failed", error);
+            new Notice(pageletT("pagelet.panel.status.actionFailed", getPageletUiLanguage()), 5000);
+        }
     }
 
     private async analyzeFiles(

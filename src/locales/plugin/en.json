@@ -471,9 +471,12 @@
     "plugin.memoryExtraction.vaultInsights.noneDetected": "None detected.",
     "plugin.memoryExtraction.vaultInsights.unresolvedLinkEvidence": "{count} unresolved link reference(s) point here.",
 
-    "plugin.memoryExtraction.enabledNotice": "AI Memory Extraction is enabled. Your conversation preferences will be extracted locally. You can disable this in Settings.",
+    "plugin.memoryExtraction.enabledNotice": "AI Memory Extraction is enabled. Your AI model analyzes conversations in the background to learn your preferences (API costs apply). You can disable this in Settings.",
     "plugin.memoryExtraction.settings.enabled.name": "AI Memory Extraction",
-    "plugin.memoryExtraction.settings.enabled.desc": "Automatically extract user preferences and vault insights from conversations. Data is stored locally.",
+    "plugin.memoryExtraction.settings.enabled.desc": "Automatically extract user preferences and vault insights from conversations using your configured AI model, which incurs API costs. Preferences are stored locally.",
+    "plugin.memoryExtraction.settings.includeVaultInsights.name": "Include Vault Insights in AI Context",
+    "plugin.memoryExtraction.settings.includeVaultInsights.desc": "Share vault structure overview (folders, tags, link topology) with the AI to improve context-aware answers.",
+    "plugin.memoryExtraction.vaultInsightsInjection.onboardingNotice": "PA now shares your vault structure overview with the AI to improve answers. This adds a small amount to each prompt. You can disable this in Settings > Memory.",
 
     "plugin.settings.operationsAgent.name": "Operations Agent Mode (Beta)",
     "plugin.settings.operationsAgent.desc": "Enable AI to append content to your active note after preview and confirmation. Requires explicit approval for each action."

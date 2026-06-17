@@ -18,6 +18,7 @@ import type { AnalyzeCallback } from "./preload/types";
 import type { GenerateCallback, GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
 import type { PageletDetailPayload } from "./tab/types";
+import type { DiscoveryResult } from "./panel/types";
 
 /**
  * Narrow host interface -- what the Pagelet orchestrator needs from the plugin.
@@ -95,4 +96,17 @@ export interface PageletHost {
 
     /** Open Pagelet detail results in a native Obsidian workspace leaf. */
     openPageletDetailView(payload: PageletDetailPayload): Promise<void> | void;
+
+    /** Find semantically related notes via VSS hybrid search. */
+    findRelatedNotes(
+        primarySourcePath: string,
+        noteContents: Array<{ path: string; content: string }>,
+        sourcePaths: readonly string[],
+    ): Promise<Array<{ path: string; content: string; score?: number; headingPath?: string[] }>>;
+
+    /** Run discovery analysis: find connections, themes, and gaps between the current note and related notes. */
+    discoverConnections(
+        currentNote: { path: string; content: string },
+        relatedNotes: Array<{ path: string; content: string }>,
+    ): Promise<DiscoveryResult | null>;
 }

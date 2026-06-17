@@ -169,4 +169,25 @@ describe("parseRewrittenQuery", () => {
         expect(parseRewrittenQuery('```json\n{"keywords":"Pagelet review","temporal":"recent_7d"}\n```'))
             .toEqual({ keywords: "Pagelet review", temporal: "recent_7d" });
     });
+
+    it("parses range: temporal intent with valid date range", () => {
+        expect(parseRewrittenQuery('{"keywords":"project notes","temporal":"range:2025-01-01..2025-03-31"}')).toEqual({
+            keywords: "project notes",
+            temporal: "range:2025-01-01..2025-03-31",
+        });
+    });
+
+    it("rejects range: temporal with invalid dates", () => {
+        expect(parseRewrittenQuery('{"keywords":"notes","temporal":"range:invalid..dates"}')).toEqual({
+            keywords: "notes",
+            temporal: "none",
+        });
+    });
+
+    it("rejects range: temporal with missing separator", () => {
+        expect(parseRewrittenQuery('{"keywords":"notes","temporal":"range:2025-01-01"}')).toEqual({
+            keywords: "notes",
+            temporal: "none",
+        });
+    });
 });

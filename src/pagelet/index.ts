@@ -215,8 +215,6 @@ export type { PageletHost } from "./PageletHost";
 
 export {
     buildPreloadPrompt,
-    buildQuickReviewPrompt,
-    buildWritingAssistPrompt,
     buildDiscoveryPrompt,
     buildPeriodicSummaryPrompt,
     parseStructuredResponse,

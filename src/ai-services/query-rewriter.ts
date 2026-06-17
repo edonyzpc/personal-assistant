@@ -2,7 +2,7 @@ export const REWRITE_TIMEOUT_MS = 30_000;
 
 export const REWRITE_SYSTEM_PROMPT = [
     "Extract search keywords from the user's question for full-text search in a personal knowledge base.",
-    'Return ONLY valid JSON: {"keywords":"<space-separated keywords>","temporal":"recent_7d|recent_30d|none"}',
+    'Return ONLY valid JSON: {"keywords":"<space-separated keywords>","temporal":"recent_7d|recent_30d|range:YYYY-MM-DD..YYYY-MM-DD|none"}',
     "Rules:",
     "- Extract 2-6 important terms from the query",
     "- Keep technical terms, proper nouns, error codes, function names verbatim",
@@ -10,11 +10,13 @@ export const REWRITE_SYSTEM_PROMPT = [
     "- For Chinese text, keep key noun phrases (2-4 chars each)",
     "- If the query is already concise keywords, return it unchanged",
     "- Never invent terms not present in the original query",
-    "- Set temporal to recent_7d or recent_30d only when the user explicitly asks about recent/latest/current work; otherwise use none",
+    "- Set temporal to recent_7d or recent_30d when the user asks about recent/latest/current work",
+    '- Use range:YYYY-MM-DD..YYYY-MM-DD when the user specifies a date range (e.g., "from January to March 2025" → "range:2025-01-01..2025-03-31")',
+    "- Otherwise use none",
 ].join("\n");
 
 export type RewriteInvoker = (query: string, signal?: AbortSignal) => Promise<string>;
-export type QueryTemporalIntent = "recent_7d" | "recent_30d" | "none";
+export type QueryTemporalIntent = "recent_7d" | "recent_30d" | "none" | `range:${string}`;
 
 export interface RewrittenQuery {
     keywords: string | null;
@@ -96,7 +98,15 @@ function parseTemporalIntent(content: string): QueryTemporalIntent {
 }
 
 function normalizeTemporalIntent(value: unknown): QueryTemporalIntent {
-    return value === "recent_7d" || value === "recent_30d" ? value : "none";
+    if (value === "recent_7d" || value === "recent_30d") return value;
+    if (typeof value === "string" && value.startsWith("range:")) {
+        const rangePart = value.slice(6);
+        const match = rangePart.match(/^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$/);
+        if (match && !isNaN(Date.parse(match[1])) && !isNaN(Date.parse(match[2]))) {
+            return value as QueryTemporalIntent;
+        }
+    }
+    return "none";
 }
 
 function detectTemporalIntentFromQuery(query: string): QueryTemporalIntent {

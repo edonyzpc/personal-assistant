@@ -78,6 +78,8 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         saveSettings: () => undefined,
         updatePageletSetting: jest.fn(),
         openPageletDetailView: () => undefined,
+        findRelatedNotes: async () => [],
+        discoverConnections: async () => null,
         ...overrides,
     };
     return host;

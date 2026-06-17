@@ -39,6 +39,21 @@ export interface TypeAExtractionInput {
 const PROFILE_MAX_CHARS = 1400;
 const RECURRENCE_THRESHOLD = 3;
 
+export type LLMInvoker = (prompt: string) => Promise<string>;
+
+const LLM_EXTRACTION_SYSTEM_PROMPT = [
+    "Analyze the following conversation turns and extract user preferences, corrections, and behavioral patterns.",
+    'Return ONLY valid JSON: {"extractions":[{"text":"<preference>","kind":"user_explicit|user_correction|inferred_behavior","confidence":"high|medium|low"}]}',
+    "Rules:",
+    "- user_explicit: user directly states a preference (\"I prefer\", \"remember\", \"I like\")",
+    "- user_correction: user corrects the AI (\"no not that\", \"don't\", \"instead\")",
+    "- inferred_behavior: observed pattern the user hasn't explicitly stated",
+    "- Only extract clear, actionable preferences, not general discussion topics",
+    "- Produce at most 5 extractions per batch",
+    "- confidence: high for direct statements, medium for strong patterns, low for weak signals",
+    "- Return {\"extractions\":[]} if no preferences are found",
+].join("\n");
+
 export class TypeAUserProfileExtractor {
     extractCandidates(input: TypeAExtractionInput): UserProfileCandidate[] {
         const observedAt = (input.now ?? (() => new Date()))().toISOString();
@@ -51,6 +66,29 @@ export class TypeAUserProfileExtractor {
             ));
         }
         return dedupeCandidates(candidates);
+    }
+
+    async extractCandidatesWithLLM(
+        input: TypeAExtractionInput,
+        invoke: LLMInvoker,
+    ): Promise<UserProfileCandidate[]> {
+        const observedAt = (input.now ?? (() => new Date()))().toISOString();
+        const turnTexts = input.turns.map((turn) => {
+            const userText = typeof turn.user.content === "string"
+                ? turn.user.content.slice(0, 500) : "";
+            const assistantText = typeof turn.assistant?.content === "string"
+                ? turn.assistant.content.slice(0, 300) : "";
+            return `User: ${userText}\nAssistant: ${assistantText}`;
+        }).join("\n---\n").slice(0, 2000);
+
+        const prompt = `${LLM_EXTRACTION_SYSTEM_PROMPT}\n\nConversation:\n${turnTexts}\n\nProduce the JSON output now.`;
+
+        try {
+            const response = await invoke(prompt);
+            return parseLLMExtractionResponse(response, input.conversation.id, observedAt);
+        } catch {
+            return this.extractCandidates(input);
+        }
     }
 
     mergeCandidates(
@@ -212,5 +250,41 @@ function kindRank(value: UserProfileEvidenceKind): number {
             return 2;
         case "discussed":
             return 1;
+    }
+}
+
+function parseLLMExtractionResponse(
+    response: string,
+    conversationId: string,
+    observedAt: string,
+): UserProfileCandidate[] {
+    try {
+        const trimmed = response.trim();
+        const jsonStart = trimmed.indexOf("{");
+        const jsonEnd = trimmed.lastIndexOf("}");
+        if (jsonStart === -1 || jsonEnd <= jsonStart) return [];
+        const parsed = JSON.parse(trimmed.slice(jsonStart, jsonEnd + 1));
+        const extractions = Array.isArray(parsed?.extractions) ? parsed.extractions : [];
+        return extractions
+            .filter((e: unknown): e is { text: string; kind: string; confidence: string } =>
+                e !== null && typeof e === "object"
+                && typeof (e as Record<string, unknown>).text === "string"
+                && typeof (e as Record<string, unknown>).kind === "string")
+            .map((e: { text: string; kind: string; confidence: string }) => {
+                const kind: UserProfileEvidenceKind =
+                    e.kind === "user_explicit" || e.kind === "user_correction"
+                    || e.kind === "inferred_behavior" || e.kind === "discussed"
+                        ? e.kind : "inferred_behavior";
+                const confidence: UserProfileConfidence =
+                    e.confidence === "high" || e.confidence === "medium" || e.confidence === "low"
+                        ? e.confidence : "medium";
+                const key = normalizeProfileKey(e.text);
+                if (!key) return null;
+                return { key, text: e.text, kind, confidence, conversationId, observedAt };
+            })
+            .filter((c: UserProfileCandidate | null): c is UserProfileCandidate => c !== null)
+            .slice(0, 5);
+    } catch {
+        return [];
     }
 }
