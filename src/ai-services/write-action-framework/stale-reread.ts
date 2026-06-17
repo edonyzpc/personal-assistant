@@ -46,12 +46,10 @@ function hexEncode(buffer: ArrayBuffer): string {
         .join("");
 }
 
-/** Compute SHA-256 hex digest of `text` using the platform Crypto API. */
-async function sha256(text: string): Promise<string> {
+/** Compute SHA-256 hex digest of `text` using the platform Crypto API. Returns null if Web Crypto is unavailable. */
+async function sha256(text: string): Promise<string | null> {
     const subtle = getPlatformCrypto()?.subtle;
-    if (!subtle) {
-        throw new Error("stale-reread mode B requires Web Crypto API (subtle)");
-    }
+    if (!subtle) return null;
     const digest = await subtle.digest("SHA-256", new TextEncoder().encode(text));
     return hexEncode(digest);
 }
@@ -84,8 +82,11 @@ export async function takeSnapshot(
 
     if (options?.includeContentHash && targetExists) {
         const content = await fs.read(targetPath);
-        snap.contentHash = await sha256(content);
-        snap.contentLength = new TextEncoder().encode(content).byteLength;
+        const hash = await sha256(content);
+        if (hash !== null) {
+            snap.contentHash = hash;
+            snap.contentLength = new TextEncoder().encode(content).byteLength;
+        }
     }
 
     return snap;
@@ -128,7 +129,7 @@ export async function checkStaleReread(
             drift.contentChanged = true;
         } else {
             const currentHash = await sha256(content);
-            if (currentHash !== snapshot.contentHash) {
+            if (currentHash !== null && currentHash !== snapshot.contentHash) {
                 drift.contentChanged = true;
             }
         }

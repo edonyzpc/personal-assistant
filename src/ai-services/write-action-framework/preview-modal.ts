@@ -162,12 +162,17 @@ export class WriteActionPreviewModal extends Modal {
 
         // Section 5: Action buttons (CTA + secondary). Labels come from the
         // spec so capabilities can i18n.
+        const isMobile = Platform.isMobile;
         new Setting(this.contentEl)
             .addButton((button) => {
                 button
                     .setCta()
                     .setButtonText(this.spec.confirmCopy.confirmLabel)
                     .onClick(() => this.resolveWith("confirmed", renderWarnings));
+                if (isMobile) {
+                    button.buttonEl.disabled = true;
+                    setTimeout(() => { button.buttonEl.disabled = false; }, 500);
+                }
             })
             .addButton((button) => {
                 button
@@ -263,17 +268,18 @@ export class WriteActionPreviewModal extends Modal {
 
         // Mobile toggle button for context visibility.
         if (isMobile) {
+            contextSection.style.display = "none";
             const toggleBtn = contentBlock.createEl("button", {
                 cls: "pa-preview-append-context-toggle",
                 text: "Show context",
             });
             toggleBtn.addEventListener("click", () => {
-                const isExpanded = contextSection.classList.contains("is-expanded");
+                const isExpanded = contextSection.style.display !== "none";
                 if (isExpanded) {
-                    contextSection.classList.remove("is-expanded");
+                    contextSection.style.display = "none";
                     toggleBtn.setText("Show context");
                 } else {
-                    contextSection.classList.add("is-expanded");
+                    contextSection.style.display = "";
                     toggleBtn.setText("Hide context");
                 }
             });

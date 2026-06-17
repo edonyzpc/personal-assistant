@@ -106,6 +106,11 @@ class AppendToCurrentNoteCapability implements AgentCapability {
     }
 
     toRegistryDefinition(): ChatToolRegistryDefinition {
+        // Registry definition uses "read-only" permission/sourceBoundary intentionally:
+        // the registry's permission field gates which tools the LLM can *discover*,
+        // not what they can *do*. Actual write permission is enforced by the
+        // PolicyEngine (this.permission = "local-filesystem-write") and the
+        // ActionExecutor 4-gate pipeline, not the registry definition.
         return {
             name: this.name,
             description: this.description,

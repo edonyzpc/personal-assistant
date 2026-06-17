@@ -380,17 +380,17 @@ export function validateAppendConfinement(activeFile: TFile | null): AppendConfi
         };
     }
 
-    // Forbidden dotfolder defense-in-depth: even though the user selected
-    // the file, the framework must not write into protected directories.
+    // Forbidden dotfolder defense-in-depth: scan ALL path segments (not just
+    // the top-level) to match create-file's full-segment scan. Catches paths
+    // like "notes/.obsidian/evil.md".
     const normalized = activeFile.path.replace(/\\/g, "/");
-    const firstSlash = normalized.indexOf("/");
-    const topSegment = firstSlash >= 0 ? normalized.substring(0, firstSlash) : "";
-    if (topSegment.length > 0) {
-        const folded = foldForDotfolderCheck(topSegment);
+    const segments = normalized.split("/").filter(Boolean);
+    for (const segment of segments) {
+        const folded = foldForDotfolderCheck(segment);
         if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(folded)) {
             return {
                 valid: false,
-                reason: `Cannot append to file in protected directory: ${topSegment}`,
+                reason: `Cannot append to file in protected directory: ${segment}`,
             };
         }
     }
