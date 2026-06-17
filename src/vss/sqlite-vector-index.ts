@@ -99,9 +99,10 @@ export class SqliteVectorIndex implements VectorIndex {
         ftsQuery: string | null,
         k: number,
         fusionTopK: number,
+        temporalFilter?: { since?: number; until?: number },
     ): Promise<VectorSearchResult[]> {
         return this.enqueue(() => this.send<VectorSearchResult[]>("searchHybrid", {
-            queryEmbedding, ftsQuery, k, fusionTopK,
+            queryEmbedding, ftsQuery, k, fusionTopK, temporalFilter,
         }));
     }
 

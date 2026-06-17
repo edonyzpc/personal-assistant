@@ -1,6 +1,6 @@
 import { Document } from "@langchain/core/documents";
 
-export const VSS_SCHEMA_VERSION = 1;
+export const VSS_SCHEMA_VERSION = 2;
 export const VSS_DEFAULT_DIMENSIONS = 1024;
 export const VSS_DEFAULT_DISTANCE_METRIC: VSSDistanceMetric = "COSINE";
 

@@ -1,7 +1,6 @@
 /* Copyright 2023 edonyzpc */
 import { Notice, Platform, TAbstractFile, TFile } from 'obsidian';
 import { Document } from "@langchain/core/documents";
-import { MarkdownTextSplitter } from '@langchain/textsplitters';
 
 import { AIService } from './ai-services/service';
 import { AIUtils, type CreateEmbeddingsOptions } from './ai-services/ai-utils';
@@ -32,6 +31,7 @@ import { confirmUserAction } from './confirm';
 import { buildFtsQuery } from './vss/fts-query-builder';
 import { throwIfAborted } from './ai-services/chat-utils';
 import { getPluginUiLanguage, pluginT } from './locales/plugin';
+import { createHeadingAwareMarkdownChunks } from './vss/markdown-chunker';
 
 const VSS_PARAMS = {
     quietWindow: 30 * 1000,
@@ -436,6 +436,9 @@ export class VSS {
         const marker = await this.stateStore.getMarker();
         if (!marker) return null;
         if (marker.deviceId !== this.deviceId) return null;
+        if (marker.schemaVersion !== VSS_SCHEMA_VERSION) {
+            this.status = "stale";
+        }
         const opfsScope = this.getVaultStorageScope().safeName;
         if (marker.opfsScope && marker.opfsScope !== opfsScope) return null;
         const profile = this.profile ?? this.createEmbeddingProfile();
@@ -1469,12 +1472,17 @@ export class VSS {
              * Reject and `null`-resolve are both treated as "no override" (fall back to prompt).
              */
             ftsQueryOverridePromise?: Promise<string | null>;
+            temporalFilter?: { since?: number; until?: number };
+            temporalFilterPromise?: Promise<{ since?: number; until?: number } | null>;
             signal?: AbortSignal;
         },
     ) {
         const safeOverridePromise: Promise<string | null> = options?.ftsQueryOverridePromise
             ? options.ftsQueryOverridePromise.catch(() => null)
             : Promise.resolve(options?.ftsQueryOverride ?? null);
+        const safeTemporalPromise: Promise<{ since?: number; until?: number } | null> = options?.temporalFilterPromise
+            ? options.temporalFilterPromise.catch(() => null)
+            : Promise.resolve(options?.temporalFilter ?? null);
         const signal = options?.signal;
         throwIfAborted(signal);
         if (this.disposed) return [];
@@ -1501,8 +1509,9 @@ export class VSS {
         // Parallel: kick off both rewrite override and embed; tolerate rewrite failures.
         // Precedence: when both ftsQueryOverridePromise and ftsQueryOverride are passed,
         // the promise wins (caller explicitly opted into parallel rewrite).
-        const [ftsOverride, queryEmbedding] = await waitForAbortablePromise(Promise.all([
+        const [ftsOverride, temporalFilter, queryEmbedding] = await waitForAbortablePromise(Promise.all([
             safeOverridePromise,
+            safeTemporalPromise,
             embeddings.embedQuery(prompt),
         ]), signal);
         const ftsQuery = ftsOverride != null
@@ -1524,7 +1533,7 @@ export class VSS {
                 return results.map(normalizeSearchResult);
             }
 
-            const results = await this.index.searchHybrid(queryEmbedding, ftsQuery, 8, 12);
+            const results = await this.index.searchHybrid(queryEmbedding, ftsQuery, 8, 12, temporalFilter ?? undefined);
             return results.map(normalizeSearchResult);
         }).catch((error) => {
             if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
@@ -1885,6 +1894,10 @@ export class VSS {
 
         const marker = this.marker;
         this.assertActive();
+        if (marker && marker.schemaVersion !== VSS_SCHEMA_VERSION) {
+            this.status = "stale";
+            return;
+        }
 
         let sqliteIndex: SqliteVectorIndex | null = null;
         try {
@@ -2054,30 +2067,19 @@ export class VSS {
     private async prepareFileChunks(file: TFile, contentHash: string): Promise<VSSChunk[]> {
         this.assertActive();
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
-        const { content } = this.aiUtils.getDocumentContent(markdown);
-        const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
+        const cleanedContent = this.aiUtils.cleanMarkdownContent(markdown);
 
         if (cleanedContent.trim().length === 0) {
             return [];
         }
 
-        const splitter = new MarkdownTextSplitter({ chunkSize: 4000, chunkOverlap: 80 });
-        const texts = await splitter.splitText(cleanedContent);
-        return texts.map((text, index): VSSChunk => ({
+        return createHeadingAwareMarkdownChunks({
             path: file.path,
-            chunkIndex: index,
-            content: text,
+            markdown: cleanedContent,
             contentHash,
             created: file.stat.ctime,
             lastModified: file.stat.mtime,
-            metadata: {
-                path: file.path,
-                created: file.stat.ctime,
-                lastModified: file.stat.mtime,
-                contentHash,
-                chunkIndex: index,
-            },
-        }));
+        });
     }
 
     private async embedTexts(
@@ -2193,8 +2195,7 @@ export class VSS {
             return { hash: null, tooLarge: true };
         }
         const markdown = await this.plugin.app.vault.adapter.read(file.path);
-        const { content } = this.aiUtils.getDocumentContent(markdown);
-        const cleanedContent = this.aiUtils.cleanMarkdownContent(content);
+        const cleanedContent = this.aiUtils.cleanMarkdownContent(markdown);
         if (!cleanedContent.trim()) return { hash: null, tooLarge: false };
         return { hash: await computeContentHash(cleanedContent), tooLarge: false };
     }

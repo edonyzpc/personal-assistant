@@ -2,7 +2,7 @@ import { describe, it, expect, jest, beforeEach, afterEach } from '@jest/globals
 import { VSS } from '../src/vss';
 import { computeContentHash, DirtyTimestamps } from '../src/vss-helpers';
 import { TFile } from 'obsidian';
-import { type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
+import { VSS_SCHEMA_VERSION, type EmbeddingProfile, type VectorIndex, type VectorIndexStatus, type VectorSearchResult, type VSSChunk, type VSSFileRecord, type VSSFileState, type VSSIndexMarker, type VSSIndexStats } from '../src/vss/types';
 import { fuseRRF, RRF_K } from '../src/vss/rrf';
 import { MemoryVSSIndexStateStore } from '../src/vss/local-state-store';
 import { getVSSDeviceId } from '../src/vss/state';
@@ -335,7 +335,7 @@ const createTFile = (path: string, stat: any = {}, extension: string = 'md', nam
 
 function createReadyMarker(overrides: Partial<VSSIndexMarker> = {}): VSSIndexMarker {
     return {
-        schemaVersion: 1,
+        schemaVersion: VSS_SCHEMA_VERSION,
         deviceId: getVSSDeviceId(),
         indexId: 'index-1',
         profileSignature: 'openai||model|1024|COSINE',
@@ -1950,7 +1950,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
             distanceMetric: 'COSINE',
         };
         (vss as any).marker = { // eslint-disable-line @typescript-eslint/no-explicit-any
-            schemaVersion: 1,
+            schemaVersion: VSS_SCHEMA_VERSION,
             deviceId: 'device-1',
             indexId: 'index-1',
             profileSignature: 'openai||model|1024|COSINE',

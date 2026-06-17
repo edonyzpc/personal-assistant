@@ -119,6 +119,7 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
                 request.payload.ftsQuery,
                 request.payload.k,
                 request.payload.fusionTopK,
+                request.payload.temporalFilter,
             );
         case "getFileRecord":
             requireDb();
@@ -376,6 +377,7 @@ function createSchema(database: SQLiteDatabase): void {
         );
 
         CREATE INDEX IF NOT EXISTS idx_vss_chunks_path ON vss_chunks(path);
+        CREATE INDEX IF NOT EXISTS idx_vss_chunks_last_modified ON vss_chunks(last_modified);
 
         CREATE VIRTUAL TABLE IF NOT EXISTS vss_chunks_fts USING fts5(
             content,
@@ -639,6 +641,7 @@ function searchHybrid(
     ftsQuery: string | null,
     k: number,
     fusionTopK: number,
+    temporalFilter?: { since?: number; until?: number },
 ): unknown[] {
     const profile = activeProfile;
     if (!profile) {
@@ -649,17 +652,18 @@ function searchHybrid(
     const database = requireDb();
 
     // Vector leg — brute-force
-    const cache = getOrLoadVectorCache();
+    const cache = getVectorCacheForTemporalFilter(temporalFilter);
     const queryVec = new Float32Array(queryEmbedding);
     const topK = bruteForceTopK(queryVec, cache, k, profile.distanceMetric);
 
-    const vectorIds = topK.map((r) => r.id);
-    const vectorPlaceholders = vectorIds.map(() => "?").join(",");
+    const requestedVectorIds = topK.map((r) => r.id);
+    const vectorPlaceholders = requestedVectorIds.map(() => "?").join(",");
     const vectorRows: Array<Record<string, unknown>> = [];
-    if (vectorIds.length > 0) {
+    if (requestedVectorIds.length > 0) {
+        const temporalClause = buildTemporalWhereClause("last_modified", temporalFilter);
         database.exec({
-            sql: `SELECT id, path, chunk_index, content, metadata FROM vss_chunks WHERE id IN (${vectorPlaceholders})`,
-            bind: vectorIds,
+            sql: `SELECT id, path, chunk_index, content, metadata FROM vss_chunks WHERE id IN (${vectorPlaceholders})${temporalClause.sql}`,
+            bind: [...requestedVectorIds, ...temporalClause.bind],
             rowMode: "object",
             resultRows: vectorRows,
         });
@@ -676,10 +680,11 @@ function searchHybrid(
                     FROM vss_chunks_fts
                     JOIN vss_chunks AS c ON c.id = vss_chunks_fts.rowid
                     WHERE vss_chunks_fts MATCH ?
+                    ${buildTemporalWhereClause("c.last_modified", temporalFilter).sql}
                     ORDER BY rank
                     LIMIT ?
                 `,
-                bind: [ftsQuery, k],
+                bind: [ftsQuery, ...buildTemporalWhereClause("c.last_modified", temporalFilter).bind, k],
                 rowMode: "object",
                 resultRows: ftsRows,
             });
@@ -695,6 +700,7 @@ function searchHybrid(
     for (const row of vectorRows) {
         rowById.set(Number(row.id), row);
     }
+    const vectorIds = requestedVectorIds.filter((id) => rowById.has(id));
     const ftsIds = ftsRows.map((row) => {
         const id = Number(row.id);
         if (!rowById.has(id)) rowById.set(id, row);
@@ -704,10 +710,11 @@ function searchHybrid(
     const fusedScores = fuseRRF([vectorIds, ftsIds], fusionTopK);
 
     lastSearchDurationMs = performance.now() - startedAt;
-    return [...fusedScores.entries()].map(([id, score]) => {
-        const row = rowById.get(id)!;
+    return [...fusedScores.entries()].flatMap(([id, score]) => {
+        const row = rowById.get(id);
+        if (!row) return [];
         const metadata = parseMetadata(row.metadata);
-        return {
+        return [{
             score,
             doc: {
                 pageContent: primitiveString(row.content),
@@ -717,8 +724,48 @@ function searchHybrid(
                     chunkIndex: Number(row.chunk_index ?? metadata.chunkIndex ?? 0),
                 },
             },
-        };
+        }];
     });
+}
+
+function getVectorCacheForTemporalFilter(
+    temporalFilter?: { since?: number; until?: number },
+): Map<number, Float32Array> {
+    const cache = getOrLoadVectorCache();
+    const temporalClause = buildTemporalWhereClause("last_modified", temporalFilter);
+    if (!temporalClause.sql) return cache;
+
+    const rows: Array<Record<string, unknown>> = [];
+    requireDb().exec({
+        sql: `SELECT id FROM vss_chunks WHERE 1=1${temporalClause.sql}`,
+        bind: temporalClause.bind,
+        rowMode: "object",
+        resultRows: rows,
+    });
+    const eligibleIds = new Set(rows.map((row) => Number(row.id)));
+    const filtered = new Map<number, Float32Array>();
+    for (const [id, vector] of cache) {
+        if (eligibleIds.has(id)) filtered.set(id, vector);
+    }
+    return filtered;
+}
+
+function buildTemporalWhereClause(
+    column: string,
+    temporalFilter?: { since?: number; until?: number },
+): { sql: string; bind: number[] } {
+    if (!temporalFilter) return { sql: "", bind: [] };
+    const clauses: string[] = [];
+    const bind: number[] = [];
+    if (typeof temporalFilter.since === "number" && Number.isFinite(temporalFilter.since)) {
+        clauses.push(`${column} >= ?`);
+        bind.push(temporalFilter.since);
+    }
+    if (typeof temporalFilter.until === "number" && Number.isFinite(temporalFilter.until)) {
+        clauses.push(`${column} <= ?`);
+        bind.push(temporalFilter.until);
+    }
+    return clauses.length > 0 ? { sql: ` AND ${clauses.join(" AND ")}`, bind } : { sql: "", bind: [] };
 }
 
 function getFileRecord(path: string): VSSFileRecord | null {

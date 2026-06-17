@@ -27,7 +27,17 @@ export type SqliteWorkerRequest =
     | { id: number; type: "listFilePaths"; payload: Record<string, never> }
     | { id: number; type: "listFileRecords"; payload: Record<string, never> }
     | { id: number; type: "search"; payload: { queryEmbedding: number[]; k: number } }
-    | { id: number; type: "searchHybrid"; payload: { queryEmbedding: number[]; ftsQuery: string | null; k: number; fusionTopK: number } }
+    | {
+        id: number;
+        type: "searchHybrid";
+        payload: {
+            queryEmbedding: number[];
+            ftsQuery: string | null;
+            k: number;
+            fusionTopK: number;
+            temporalFilter?: { since?: number; until?: number };
+        };
+    }
     | { id: number; type: "getFileRecord"; payload: { path: string } }
     | { id: number; type: "getStats"; payload: Record<string, never> }
     | { id: number; type: "verify"; payload: Record<string, never> }

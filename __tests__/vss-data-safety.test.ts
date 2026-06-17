@@ -38,6 +38,26 @@ function toFloat32Bytes(vector: number[]): Uint8Array {
     return new Uint8Array(arr.buffer);
 }
 
+function countPlaceholdersInInClause(sql: string): number {
+    const match = sql.match(/IN\s*\(([^)]*)\)/i);
+    if (!match) return 0;
+    return match[1].split(",").filter((part) => part.trim() === "?").length;
+}
+
+function matchesTemporalClause(row: InMemoryRow, sql: string, temporalBinds: readonly unknown[]): boolean {
+    let index = 0;
+    const lastModified = Number(row.last_modified);
+    if (sql.includes("last_modified >= ?")) {
+        const since = Number(temporalBinds[index++]);
+        if (Number.isFinite(since) && lastModified < since) return false;
+    }
+    if (sql.includes("last_modified <= ?")) {
+        const until = Number(temporalBinds[index++]);
+        if (Number.isFinite(until) && lastModified > until) return false;
+    }
+    return true;
+}
+
 /**
  * Creates a mock SQLite database that stores data in-memory maps,
  * enabling full round-trip verification of embedding data.
@@ -216,13 +236,28 @@ function createInMemoryMockDb() {
                 return;
             }
 
+            if (sql.includes("SELECT id FROM vss_chunks WHERE 1=1")) {
+                const temporalBinds = req.bind ?? [];
+                if (req.resultRows) {
+                    for (const [id, row] of chunks) {
+                        if (matchesTemporalClause(row, sql, temporalBinds)) {
+                            (req.resultRows as InMemoryRow[]).push({ id });
+                        }
+                    }
+                }
+                return;
+            }
+
             // SELECT for search metadata retrieval
             if (sql.includes("SELECT id, path, chunk_index, content, metadata FROM vss_chunks WHERE id IN")) {
-                const ids = req.bind ?? [];
+                const bind = req.bind ?? [];
+                const idCount = countPlaceholdersInInClause(sql);
+                const ids = bind.slice(0, idCount);
+                const temporalBinds = bind.slice(idCount);
                 if (req.resultRows) {
                     for (const id of ids) {
                         const row = chunks.get(Number(id));
-                        if (row) {
+                        if (row && matchesTemporalClause(row, sql, temporalBinds)) {
                             (req.resultRows as InMemoryRow[]).push({
                                 id: row.id,
                                 path: row.path,
@@ -238,7 +273,10 @@ function createInMemoryMockDb() {
 
             // FTS MATCH queries
             if (sql.includes("MATCH")) {
-                const [query, limit] = req.bind ?? [];
+                const bind = req.bind ?? [];
+                const query = bind[0];
+                const limit = bind[bind.length - 1];
+                const temporalBinds = bind.slice(1, -1);
                 if (req.resultRows) {
                     let count = 0;
                     for (const [id, content] of ftsEntries) {
@@ -246,7 +284,7 @@ function createInMemoryMockDb() {
                         const queryStr = String(query).replace(/['"]/g, "").toLowerCase();
                         if (content.toLowerCase().includes(queryStr)) {
                             const row = chunks.get(id);
-                            if (row) {
+                            if (row && matchesTemporalClause(row, sql, temporalBinds)) {
                                 (req.resultRows as InMemoryRow[]).push({
                                     id: row.id,
                                     path: row.path,
@@ -596,6 +634,63 @@ describe("SPEC-A6 data safety: hybrid search integrity", () => {
         expect(results.length).toBeGreaterThanOrEqual(1);
         const paths = results.map((r) => r.doc.metadata.path);
         expect(paths).toContain("note1.md");
+    });
+
+    it("hybrid search filters vector rows before temporal fusion", async () => {
+        const { db } = createInMemoryMockDb();
+        const workerScope = setupWorkerScope();
+        await initializeWorker(workerScope, db, { dimensions: 3 });
+
+        await send(workerScope, {
+            id: 1,
+            type: "upsertFile",
+            payload: {
+                fileState: { path: "old.md", contentHash: "old", mtime: 1, size: 10 },
+                chunks: [{
+                    path: "old.md",
+                    chunkIndex: 0,
+                    content: "old exact vector hit",
+                    contentHash: "old-c",
+                    created: 1,
+                    lastModified: 1,
+                    metadata: {},
+                }],
+                embeddings: [[1, 0, 0]],
+            },
+        });
+        await send(workerScope, {
+            id: 2,
+            type: "upsertFile",
+            payload: {
+                fileState: { path: "recent.md", contentHash: "recent", mtime: 1000, size: 10 },
+                chunks: [{
+                    path: "recent.md",
+                    chunkIndex: 0,
+                    content: "recent less exact vector hit",
+                    contentHash: "recent-c",
+                    created: 1,
+                    lastModified: 1000,
+                    metadata: {},
+                }],
+                embeddings: [[0.8, 0.2, 0]],
+            },
+        });
+
+        const response = await send(workerScope, {
+            id: 3,
+            type: "searchHybrid",
+            payload: {
+                queryEmbedding: [1, 0, 0],
+                ftsQuery: null,
+                k: 1,
+                fusionTopK: 5,
+                temporalFilter: { since: 500 },
+            },
+        });
+
+        expect(response.ok).toBe(true);
+        const results = response.result as unknown as Array<{ doc: { metadata: { path: string } } }>;
+        expect(results.map((result) => result.doc.metadata.path)).toEqual(["recent.md"]);
     });
 });
 
