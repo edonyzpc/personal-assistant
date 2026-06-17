@@ -17,6 +17,8 @@
  * can emit precise `gate.target-confinement.reject` debug events for triage.
  */
 
+import type { TFile } from "obsidian";
+
 import {
     FORBIDDEN_DOTFOLDER_SEGMENTS,
     INVISIBLE_CHARS_RE,
@@ -341,4 +343,57 @@ export async function validateTargetConfinement(
         return { ok: false, reason: "name_collision", detail: normalized };
     }
     return syncResult;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Append-specific confinement (Phase 3 — SPEC-C1)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export type AppendConfinementResult =
+    | { valid: true; file: TFile }
+    | { valid: false; reason: string };
+
+/**
+ * Validate that the active file is a valid append target.
+ *
+ * Unlike create-file confinement (where the path comes from the LLM and must
+ * pass a full allowlist/extension/spoof gauntlet), append targets come from
+ * `app.workspace.getActiveFile()` — the user's own selection. The validation
+ * is therefore simpler but still enforces:
+ *
+ *   1. An active file must exist (null → user has no file open)
+ *   2. File must be a .md file (append to non-markdown is not supported)
+ *   3. File must not be in a forbidden dotfolder (defense-in-depth: the user
+ *      should not be editing `.obsidian/` files, but the framework must not
+ *      write to them even if the workspace state is somehow spoofed)
+ */
+export function validateAppendConfinement(activeFile: TFile | null): AppendConfinementResult {
+    if (!activeFile) {
+        return { valid: false, reason: "No active file is open. Please open a note first." };
+    }
+
+    // Extension check: only .md files are valid append targets.
+    if (!activeFile.path.endsWith(".md")) {
+        return {
+            valid: false,
+            reason: `Cannot append to non-markdown file: ${activeFile.path}`,
+        };
+    }
+
+    // Forbidden dotfolder defense-in-depth: even though the user selected
+    // the file, the framework must not write into protected directories.
+    const normalized = activeFile.path.replace(/\\/g, "/");
+    const firstSlash = normalized.indexOf("/");
+    const topSegment = firstSlash >= 0 ? normalized.substring(0, firstSlash) : "";
+    if (topSegment.length > 0) {
+        const folded = foldForDotfolderCheck(topSegment);
+        if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(folded)) {
+            return {
+                valid: false,
+                reason: `Cannot append to file in protected directory: ${topSegment}`,
+            };
+        }
+    }
+
+    return { valid: true, file: activeFile };
 }

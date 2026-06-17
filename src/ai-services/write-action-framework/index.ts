@@ -16,10 +16,12 @@ export {
     ConfinementConfigError,
     DEFAULT_MAX_PATH_LENGTH,
     validateAllowedRoots,
+    validateAppendConfinement,
     validateTargetConfinement,
     validateTargetConfinementSync,
 } from "./target-confinement";
 export type {
+    AppendConfinementResult,
     ConfinementFsProbe,
     ConfinementRejectReason,
     ConfinementResult,
@@ -53,6 +55,18 @@ export type {
     PreviewShowOptions,
     PreviewShowResult,
 } from "./preview-modal";
+
+export {
+    APPEND_CONTENT_MAX_CHARS,
+    buildAppendPreview,
+    buildBoundaryMarker,
+    executeAppendWrite,
+    rollbackAppend,
+} from "./append-action";
+export type {
+    AppendActionInput,
+    AppendActionResult,
+} from "./append-action";
 
 export {
     createActionExecutor,
