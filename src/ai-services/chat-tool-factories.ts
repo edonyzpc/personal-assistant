@@ -357,7 +357,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
         validateInput: validateCurrentNoteContextInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const view = findCurrentMarkdownView(context.plugin.app.workspace);
+            const view = findCurrentMarkdownView(context.host.app.workspace);
             if (!view?.file?.path) {
                 return createToolFailureResult(
                     "get_current_note_context",
@@ -450,9 +450,9 @@ export function createSearchVaultMetadataTool(): ChatToolDefinition<SearchVaultM
         validateInput: validateSearchVaultMetadataInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const metadataCache = getMetadataCache(context.plugin);
+            const metadataCache = getMetadataCache(context.host);
             const querySignals = buildMetadataQuerySignals(input.query);
-            const matches = getMarkdownFiles(context.plugin)
+            const matches = getMarkdownFiles(context.host)
                 .map((file) => scoreMetadataMatch(file, metadataCache.getFileCache?.(file), querySignals))
                 .filter((match): match is VaultMetadataMatch => match !== null)
                 .sort((a, b) => b.score - a.score || (b.mtime ?? 0) - (a.mtime ?? 0) || a.path.localeCompare(b.path))
@@ -507,7 +507,7 @@ export function createListRecentNotesTool(): ChatToolDefinition<ListRecentNotesI
         execute: async (input, context) => {
             throwIfAborted(context.signal);
             const statKey = input.order === "created" ? "ctime" : "mtime";
-            const notes = getMarkdownFiles(context.plugin)
+            const notes = getMarkdownFiles(context.host)
                 .map(fileToRecentNote)
                 .sort((a, b) => (b[statKey] ?? 0) - (a[statKey] ?? 0) || a.path.localeCompare(b.path))
                 .slice(0, input.limit);
@@ -560,7 +560,7 @@ export function createReadNoteOutlineTool(): ChatToolDefinition<ReadNoteOutlineI
         validateInput: validateReadNoteOutlineInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const file = findMarkdownFileByPath(context.plugin, input.path);
+            const file = findMarkdownFileByPath(context.host, input.path);
             if (!file) {
                 return createToolFailureResult(
                     "read_note_outline",
@@ -569,9 +569,9 @@ export function createReadNoteOutlineTool(): ChatToolDefinition<ReadNoteOutlineI
                 );
             }
 
-            const cache = getMetadataCache(context.plugin).getFileCache?.(file);
+            const cache = getMetadataCache(context.host).getFileCache?.(file);
             const cachedHeadings = extractOutlineFromCache(cache, input.maxHeadings);
-            const outline = cachedHeadings ?? await extractOutlineFromFile(context.plugin, file, input.maxHeadings);
+            const outline = cachedHeadings ?? await extractOutlineFromFile(context.host, file, input.maxHeadings);
             throwIfAborted(context.signal);
 
             return {
@@ -624,8 +624,8 @@ export function createInspectObsidianNoteTool(): ChatToolDefinition<InspectObsid
         execute: async (input, context) => {
             throwIfAborted(context.signal);
             const file = input.path
-                ? findMarkdownFileByPath(context.plugin, input.path)
-                : findCurrentMarkdownView(context.plugin.app.workspace)?.file ?? null;
+                ? findMarkdownFileByPath(context.host, input.path)
+                : findCurrentMarkdownView(context.host.app.workspace)?.file ?? null;
             if (!file) {
                 return createToolFailureResult(
                     "inspect_obsidian_note",
@@ -634,11 +634,11 @@ export function createInspectObsidianNoteTool(): ChatToolDefinition<InspectObsid
                 );
             }
 
-            const metadataCache = getOptionalMetadataCache(context.plugin);
+            const metadataCache = getOptionalMetadataCache(context.host);
             const cache = metadataCache?.getFileCache?.(file);
-            const readResult = await readVaultFileWithBudget(context.plugin, file, INSPECT_NOTE_MAX_READ_BYTES);
+            const readResult = await readVaultFileWithBudget(context.host, file, INSPECT_NOTE_MAX_READ_BYTES);
             throwIfAborted(context.signal);
-            const unavailableSources = getUnavailableNoteStructureSources(context.plugin, metadataCache);
+            const unavailableSources = getUnavailableNoteStructureSources(context.host, metadataCache);
             const structure = buildNoteStructureSummary(file, cache, readResult.content, metadataCache, unavailableSources, {
                 truncated: readResult.truncated,
                 skippedSources: readResult.skippedForSize ? [VAULT_FILE_READ_SKIPPED_SIZE_SOURCE] : [],
@@ -687,12 +687,12 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
         validateInput: validateReadCanvasSummaryInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const file = findVaultFileByPath(context.plugin, input.path);
+            const file = findVaultFileByPath(context.host, input.path);
             if (!file || !file.path.toLowerCase().endsWith(".canvas")) {
                 return createToolFailureResult("read_canvas_summary", input.path, "Requested Canvas file was not found.");
             }
 
-            if (!canReadVaultFiles(context.plugin)) {
+            if (!canReadVaultFiles(context.host)) {
                 return {
                     ok: true,
                     tool: "read_canvas_summary",
@@ -702,7 +702,7 @@ export function createReadCanvasSummaryTool(): ChatToolDefinition<ReadCanvasSumm
                 };
             }
 
-            const readResult = await readVaultFileWithBudget(context.plugin, file, CANVAS_MAX_READ_BYTES);
+            const readResult = await readVaultFileWithBudget(context.host, file, CANVAS_MAX_READ_BYTES);
             throwIfAborted(context.signal);
             if (readResult.truncated) {
                 return {
@@ -775,7 +775,7 @@ export function createSearchVaultSnippetsTool(): ChatToolDefinition<SearchVaultS
         validateInput: validateSearchVaultSnippetsInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const result = await searchVaultSnippets(context.plugin, input, context.signal);
+            const result = await searchVaultSnippets(context.host, input, context.signal);
             return {
                 ok: true,
                 tool: "search_vault_snippets",
@@ -818,7 +818,7 @@ export function createListVaultTagsTool(): ChatToolDefinition<ListVaultTagsInput
         validateInput: validateListVaultTagsInput,
         execute: async (input, context) => {
             throwIfAborted(context.signal);
-            const result = await listVaultTags(context.plugin, input.limit, context.signal);
+            const result = await listVaultTags(context.host, input.limit, context.signal);
             return {
                 ok: true,
                 tool: "list_vault_tags",

@@ -1,4 +1,4 @@
-import type { PluginManager } from "../plugin";
+import type { AiServiceHost } from "./AiServiceHost";
 import type {
     SourceRecord,
     SourceRecordBoundary,
@@ -40,6 +40,20 @@ export type AgentCapabilityCost = ChatToolCost | "network-calls";
 export type AgentPlatformSupport = "desktop" | "mobile" | "both";
 export type AgentRuntimePlatform = "desktop" | "mobile";
 export type AgentSourceRecordKind = SourceRecordKind;
+export type AgentCapabilityTier = "free" | "paid";
+/**
+ * Temporary entitlement source for the paid-capability architecture. Until a
+ * real license provider is wired in, all paid capabilities should be available
+ * so the refactor does not change existing product behavior.
+ */
+export const MOCK_LICENSE_TIER: AgentCapabilityTier = "paid";
+
+export function normalizeAgentCapabilityTier(
+    value: unknown,
+    fallback: AgentCapabilityTier = MOCK_LICENSE_TIER,
+): AgentCapabilityTier {
+    return value === "free" || value === "paid" ? value : fallback;
+}
 /**
  * Per-capability tool execution mode (pi hybrid dispatch).
  * - "parallel" (default): read-only/idempotent tools may run concurrently in a tool batch.
@@ -67,7 +81,7 @@ export type AgentCapabilitySourceBoundary =
     | Extract<SourceRecordBoundary, "vault" | "web" | "skill-context">;
 
 export interface AgentCapabilityContext {
-    plugin: PluginManager;
+    host: AiServiceHost;
     turnId?: string;
     signal?: AbortSignal;
     platform?: AgentRuntimePlatform;
@@ -122,6 +136,10 @@ export interface AgentCapability {
     permission: AgentPermission;
     sourceBoundary: AgentCapabilitySourceBoundary;
     cost: AgentCapabilityCost;
+    /**
+     * Product tier gate. Omitted means "free" for backward compatibility.
+     */
+    tier?: AgentCapabilityTier;
     platform: AgentPlatformSupport;
     outputBudgetChars: number;
     timeoutMs: number;

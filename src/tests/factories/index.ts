@@ -8,3 +8,11 @@ export {
     type TestChatToolMetadata,
     type TestChatToolOutput,
 } from "./chat-tool-factory";
+export {
+    createAiServiceHost,
+    createChatHost,
+    createMemoryHost,
+    type AiServiceHostFixtureOverrides,
+    type ChatHostFixtureOverrides,
+    type MemoryHostFixtureOverrides,
+} from "./host-factory";

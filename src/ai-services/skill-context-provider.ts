@@ -207,6 +207,7 @@ class LoadSkillCapability implements AgentCapability {
     readonly permission = "read-only" as const;
     readonly sourceBoundary = "skill-context" as const;
     readonly cost = "free" as const;
+    readonly tier = "paid" as const;
     readonly platform = "both" as const;
     readonly outputBudgetChars = LOAD_SKILL_OUTPUT_BUDGET_CHARS;
     readonly timeoutMs = 5_000;

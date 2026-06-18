@@ -10,6 +10,7 @@ import {
     parseNativeToolCallsFromModelResponse,
 } from '../src/ai-services/pa-agent-runtime';
 import { CapabilityRegistry } from '../src/ai-services/capability-registry';
+import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from '../src/ai-services/capability-types';
 import { createChatToolCapability } from '../src/ai-services/capability-adapter';
 import { type ChatToolDefinition, type ChatToolResult } from '../src/ai-services/chat-tools';
 import type { AgentEvent as CanonicalAgentEvent, ChatMessage, LegacyAgentEvent as AgentEvent } from '../src/ai-services/chat-types';
@@ -192,6 +193,7 @@ function createPlugin(overrides: {
     baseURL?: string;
     qwenThinkingEnabled?: boolean;
     webSearchEnabled?: boolean;
+    licenseTier?: AgentCapabilityTier;
     skillContextEnabled?: boolean;
     enabledSkillIds?: string[];
 } = {}) {
@@ -205,7 +207,12 @@ function createPlugin(overrides: {
             apiToken: 'sk-SECRET_TOKEN_SENTINEL',
             qwenThinkingEnabled: overrides.qwenThinkingEnabled ?? false,
             webSearchEnabled: overrides.webSearchEnabled ?? false,
+            licenseTier: overrides.licenseTier ?? MOCK_LICENSE_TIER,
             policyModelName: '',
+            embeddingModelName: 'text-embedding-3-small',
+            memoryEnabled: true,
+            operationsAgentEnabled: false,
+            statisticsVaultId: 'test-vault',
             skillContextEnabled: overrides.skillContextEnabled ?? false,
             enabledSkillIds: overrides.enabledSkillIds ?? [],
             shareAnonymousCapabilityUsage: false,
@@ -231,6 +238,11 @@ function createPlugin(overrides: {
         },
         vss: {
             searchSimilarity: jest.fn(overrides.searchSimilarity ?? (async () => [])),
+            searchHybrid: jest.fn(async (query: string) => {
+                const search = overrides.searchSimilarity ?? (async () => []);
+                return search(query);
+            }),
+            getChunksByPath: jest.fn(async () => []),
         },
         memoryManager: {
             ensureReadyForChat: jest.fn(overrides.ensureReadyForChat ?? (async () => ({ decision: 'use-memory' }))),
@@ -240,17 +252,29 @@ function createPlugin(overrides: {
                 requiresApproval: false,
             }))),
         },
+        memorySearch: {
+            ensureReadyForChat: jest.fn(overrides.ensureReadyForChat ?? (async () => ({ decision: 'use-memory' }))),
+            searchHybrid: jest.fn(async (query: string) => {
+                const search = overrides.searchSimilarity ?? (async () => []);
+                return search(query);
+            }),
+            getChunksByPath: jest.fn(async () => []),
+        },
         log: jest.fn(),
+        getAPIToken: jest.fn(async () => 'sk-SECRET_TOKEN_SENTINEL'),
+        isOperationsAgentEnabled: false,
+        getMemoryExtractionPromptContext: jest.fn(() => undefined),
+        getResolvedLinks: jest.fn(() => overrides.resolvedLinks),
     };
 }
 
 function createRuntime(
-    plugin: ReturnType<typeof createPlugin>,
+    host: ReturnType<typeof createPlugin>,
     nativeToolPlanningInternalGate = false,
     extraOptions: Partial<ConstructorParameters<typeof PaAgentRuntime>[2]> = {},
 ) {
     return new PaAgentRuntime(
-        plugin as unknown as ConstructorParameters<typeof PaAgentRuntime>[0],
+        host as unknown as ConstructorParameters<typeof PaAgentRuntime>[0],
         {
             createChatModel: mockCreateChatModel,
             getNativeToolCallingCapability: mockGetNativeToolCallingCapability,
@@ -365,7 +389,7 @@ describe('streaming fallback policy', () => {
         registry.register(createChatToolCapability(definition, { providerId: 'test-cancel' }));
 
         await expect(registry.execute('get_current_note_context', {}, {
-            plugin: createPlugin() as unknown as Parameters<typeof registry.execute>[2]['plugin'],
+            host: createPlugin() as unknown as Parameters<typeof registry.execute>[2]["host"],
             signal: controller.signal,
         })).rejects.toMatchObject({ name: 'AbortError' });
     });

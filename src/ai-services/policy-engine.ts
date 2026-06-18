@@ -1,8 +1,11 @@
-import type {
-    AgentCapability,
-    AgentPermission,
-    AgentPermissionFuture,
-    AgentRuntimePlatform,
+import {
+    MOCK_LICENSE_TIER,
+    normalizeAgentCapabilityTier,
+    type AgentCapabilityTier,
+    type AgentCapability,
+    type AgentPermission,
+    type AgentPermissionFuture,
+    type AgentRuntimePlatform,
 } from "./capability-types";
 
 export interface CapabilityPolicyDecision {
@@ -15,11 +18,12 @@ export type PolicyRunKind = "chat" | "review" | "chat-with-actions";
 
 export interface PolicyEngineOptions {
     platform?: AgentRuntimePlatform;
+    licenseTier?: AgentCapabilityTier;
     /**
      * Write Action Framework v1 parameters (see framework SDD §4).
      *
-     * When omitted (legacy chat runtime caller, e.g. pa-agent-runtime.ts:488),
-     * PolicyEngine behavior is 100% unchanged from PA v1:
+     * When omitted, licenseTier defaults to the temporary mock paid entitlement
+     * while the rest of the chat runtime policy stays read-only by default:
      * - kind="action" rejected (defaults: runKind="chat", allowWrite=false)
      * - non-action permission must be "read-only" | "network-read"
      * - non-action requiresConfirmation must be false
@@ -40,12 +44,14 @@ export interface PolicyEngineOptions {
 
 export class PolicyEngine {
     private readonly platform: AgentRuntimePlatform;
+    private readonly licenseTier: AgentCapabilityTier;
     private readonly runKind: PolicyRunKind;
     private readonly allowWrite: boolean;
     private readonly allowedActionPermissions: ReadonlySet<AgentPermission>;
 
     constructor(options: PolicyEngineOptions = {}) {
         this.platform = options.platform ?? "desktop";
+        this.licenseTier = normalizeAgentCapabilityTier(options.licenseTier, MOCK_LICENSE_TIER);
         this.runKind = options.runKind ?? "chat";
         this.allowWrite = options.allowWrite ?? false;
         this.allowedActionPermissions = new Set<AgentPermission>(options.allowedActionPermissions ?? []);
@@ -64,6 +70,11 @@ export class PolicyEngine {
     }
 
     private evaluate(capability: AgentCapability): CapabilityPolicyDecision {
+        const capabilityTier = capability.tier ?? "free";
+        if (capabilityTier === "paid" && this.licenseTier === "free") {
+            return { allowed: false, reason: "premium-required" };
+        }
+
         if (capability.kind === "action") {
             if ((this.runKind !== "review" && this.runKind !== "chat-with-actions") || !this.allowWrite) {
                 return {

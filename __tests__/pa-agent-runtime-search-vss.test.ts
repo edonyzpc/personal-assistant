@@ -15,11 +15,11 @@ jest.mock("../src/ai-services/append-tool-provider", () => ({
 import { MemorySearchTool } from "../src/ai-services/pa-agent-runtime";
 import type { RewrittenQuery } from "../src/ai-services/query-rewriter";
 
-// Minimal plugin / AIUtils stubs for the searchVss contract tests. We do NOT
+// Minimal host / AIUtils stubs for the searchVss contract tests. We do NOT
 // boot a full PaAgentRuntime — searchVss only needs:
-//   - plugin.settings.policyModelName    (controls rewrite branch)
-//   - plugin.vss.searchHybrid            (assertion target)
-//   - plugin.memoryManager.ensureReadyForChat (only when calling search())
+//   - host.settings.policyModelName    (controls rewrite branch)
+//   - host.memorySearch.searchHybrid    (assertion target)
+//   - host.memorySearch.ensureReadyForChat (only when calling search())
 //   - aiUtils.createChatModel            (rewrite path; never reached when
 //                                         policyModelName is empty)
 
@@ -56,7 +56,8 @@ function makePlugin(opts: {
         settings: {
             policyModelName: opts.policyModelName,
         },
-        vss: {
+        memorySearch: {
+            ensureReadyForChat: jest.fn(async () => ({ decision: "use-memory" as const })),
             searchHybrid: jest.fn(async (prompt: string, options?: SearchHybridArgs["options"]) => {
                 calls.push({ prompt, options });
                 return searchHybrid({ prompt, options });
@@ -65,16 +66,9 @@ function makePlugin(opts: {
                 return getChunksByPath({ paths, options });
             }),
         },
-        app: {
-            metadataCache: {
-                resolvedLinks: opts.resolvedLinks,
-            },
-        },
-        memoryManager: {
-            ensureReadyForChat: jest.fn(async () => ({ decision: "use-memory" as const })),
-        },
+        getResolvedLinks: jest.fn(() => opts.resolvedLinks),
     };
-    return { plugin, calls };
+    return { plugin: { ...plugin, vss: plugin.memorySearch }, calls };
 }
 
 function makeAIUtils(invokerOverride?: () => Promise<{ content: string }>) {

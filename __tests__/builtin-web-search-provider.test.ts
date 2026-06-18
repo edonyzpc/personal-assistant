@@ -14,6 +14,7 @@ import {
 } from "../src/ai-services/builtin-web-search-provider";
 import { CapabilityRegistry } from "../src/ai-services/capability-registry";
 import type { AgentNetworkPolicy, ProviderLoadContext } from "../src/ai-services/capability-types";
+import { PolicyEngine } from "../src/ai-services/policy-engine";
 
 jest.mock("obsidian");
 
@@ -65,7 +66,7 @@ describe("BuiltinWebSearchProvider", () => {
             },
         }));
         const provider = createProvider({ request });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         expect(registry.exportProviderSchemas()).toEqual([expect.objectContaining({
@@ -78,7 +79,7 @@ describe("BuiltinWebSearchProvider", () => {
             query: "latest sk-SECRET_TOKEN_SENTINEL",
             limit: 3,
         }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-1",
         });
 
@@ -111,10 +112,10 @@ describe("BuiltinWebSearchProvider", () => {
             policy: createPolicy({ maxCallsPerTurn: 1 }),
             request: async () => okResponse(),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
         const context = {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-cap",
         };
 
@@ -134,12 +135,12 @@ describe("BuiltinWebSearchProvider", () => {
                 resolveRequest = resolve;
             })),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
         const controller = new AbortController();
 
         const pending = registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "cancel" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-abort",
             signal: controller.signal,
         });
@@ -165,11 +166,11 @@ describe("BuiltinWebSearchProvider", () => {
                 body: { results: [{ title: "A", url: "https://example.com/a", snippet: "x".repeat(200) }] },
             }),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         await expect(registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "large" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-large",
         })).resolves.toMatchObject({
             ok: false,
@@ -186,11 +187,11 @@ describe("BuiltinWebSearchProvider", () => {
                 body: { results: [{ title: "A", url: "https://example.com/a", snippet: "short" }] },
             }),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         await expect(registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "large raw" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-large-raw",
         })).resolves.toMatchObject({
             ok: false,
@@ -204,11 +205,11 @@ describe("BuiltinWebSearchProvider", () => {
                 throw new Error("network down");
             },
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         await expect(registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "failure" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-failure",
         })).resolves.toMatchObject({
             ok: false,
@@ -228,11 +229,11 @@ describe("BuiltinWebSearchProvider", () => {
                 },
             }),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         await expect(registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "failure" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-http-failure",
         })).resolves.toMatchObject({
             ok: false,
@@ -246,11 +247,11 @@ describe("BuiltinWebSearchProvider", () => {
             timeoutMs: 10,
             request: jest.fn(() => new Promise<BuiltinWebSearchHttpResponse>(() => undefined)),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         const pending = registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "timeout" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-timeout",
         });
         jest.advanceTimersByTime(10);
@@ -275,11 +276,11 @@ describe("BuiltinWebSearchProvider", () => {
                 },
             }),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         const result = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "long source" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-truncate",
         });
 
@@ -301,11 +302,11 @@ describe("BuiltinWebSearchProvider", () => {
                 },
             }),
         });
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, createLoadContext());
 
         const result = await registry.execute(BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "injection" }, {
-            plugin: createPlugin(),
+            host: createPlugin(),
             turnId: "turn-injection",
         });
 
@@ -389,7 +390,7 @@ describe("BuiltinWebSearchProvider", () => {
     it("loads on mobile through the Obsidian requestUrl transport", async () => {
         const provider = createProvider();
         const loadSpy = jest.spyOn(provider, "load");
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
 
         await expect(registry.registerProvider(provider, {
             turnId: "turn-mobile",
@@ -418,6 +419,12 @@ function createProvider(overrides: {
         apiKey: "apiKey" in overrides ? overrides.apiKey : "sk-SECRET_TOKEN_SENTINEL",
         request: overrides.request ?? (async () => okResponse()),
         timeoutMs: overrides.timeoutMs,
+    });
+}
+
+function createPaidCapabilityRegistry(): CapabilityRegistry {
+    return new CapabilityRegistry({
+        policyEngine: new PolicyEngine({ licenseTier: "paid" }),
     });
 }
 
@@ -471,5 +478,5 @@ function mockObsidianResponse(overrides: {
 function createPlugin() {
     return {
         log: jest.fn(),
-    } as unknown as Parameters<CapabilityRegistry["execute"]>[2]["plugin"];
+    } as unknown as Parameters<CapabilityRegistry["execute"]>[2]["host"];
 }

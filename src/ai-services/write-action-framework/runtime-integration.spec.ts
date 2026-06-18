@@ -32,7 +32,7 @@ import type {
 
 function makeContext(overrides: Partial<AgentCapabilityContext> = {}): AgentCapabilityContext {
     return {
-        plugin: {} as AgentCapabilityContext["plugin"],
+        host: {} as AgentCapabilityContext["host"],
         turnId: "turn-1",
         ...overrides,
     };

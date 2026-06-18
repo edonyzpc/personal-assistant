@@ -24,6 +24,7 @@ import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
 } from "../src/ai-services/pa-agent-host-tools";
+import { PolicyEngine } from "../src/ai-services/policy-engine";
 import { formatSkillCatalog, formatToolObservations } from "../src/ai-services/pa-agent-runtime";
 import type { PaAgentMessage } from "../src/ai-services/chat-types";
 import { BUNDLED_SKILL_RESOURCES } from "../src/ai-services/bundled-skills";
@@ -171,7 +172,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_memory_1", "search_memory", { query: "project launch notes" })],
                 [{ type: "text_delta", text: "Phase two starts Monday." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             onEvent: (event) => events.push(event),
             now: deterministicNow(),
@@ -236,7 +237,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_memory_alias_1", "search_memory", { question: "project launch notes" })],
                 [{ type: "text_delta", text: "Phase two starts Monday." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -280,7 +281,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_memory_missing_query_1", "search_memory", {})],
                 [{ type: "text_delta", text: "Sorry, I cannot answer without a query." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -318,7 +319,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_current_1", "get_current_note_context", { mode: "selection-or-nearby" })],
                 [{ type: "text_delta", text: "The selected text is project context." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             onEvent: (event) => events.push(event),
             now: deterministicNow(),
@@ -369,7 +370,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_current_1", "get_current_note_context", { mode: "nearby" })],
                 [{ type: "text_delta", text: "pa-positive-snippet-token-1701" }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -410,7 +411,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_current_1", "get_current_note_context", { mode: "selection-or-nearby" })],
                 [{ type: "text_delta", text: "pa-positive-snippet-token-1701" }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -431,7 +432,7 @@ describe("PA Agent canonical host tool executor", () => {
 
     it("feeds builtin webSearch toolResults into the follow-up assistant turn with web source records", async () => {
         const plugin = createPlugin();
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registerProvider(registry, new BuiltinWebSearchProvider({
             policy: createWebSearchPolicy(),
             apiKey: "sk-SECRET_TOKEN_SENTINEL",
@@ -454,7 +455,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_web_1", BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "latest docs", limit: 1 })],
                 [{ type: "text_delta", text: "External result found." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -485,7 +486,7 @@ describe("PA Agent canonical host tool executor", () => {
 
     it("normalizes canonical webSearch input drift before executing the builtin tool", async () => {
         const plugin = createPlugin();
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         const request = jest.fn(async (_request: unknown, _context: unknown) => ({
             status: 200,
             body: {
@@ -512,7 +513,7 @@ describe("PA Agent canonical host tool executor", () => {
                 })],
                 [{ type: "text_delta", text: "obsidian.md" }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -539,7 +540,7 @@ describe("PA Agent canonical host tool executor", () => {
 
     it("fails loud with schema_invalid when builtin webSearch tool call omits query (Phase A fail-loud)", async () => {
         const plugin = createPlugin();
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         const request = jest.fn(async (_request: unknown, _context: unknown) => ({
             status: 200,
             body: { results: [] },
@@ -558,7 +559,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_web_missing_query_1", BUILTIN_WEB_SEARCH_TOOL_NAME, {})],
                 [{ type: "text_delta", text: "Sorry, I cannot search without a query." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -580,7 +581,7 @@ describe("PA Agent canonical host tool executor", () => {
 
     it("does not create web source records when builtin webSearch returns no normalized web sources", async () => {
         const plugin = createPlugin();
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registerProvider(registry, new BuiltinWebSearchProvider({
             policy: createWebSearchPolicy(),
             apiKey: "sk-SECRET_TOKEN_SENTINEL",
@@ -603,7 +604,7 @@ describe("PA Agent canonical host tool executor", () => {
                 [toolCallChunk("call_web_empty_1", BUILTIN_WEB_SEARCH_TOOL_NAME, { query: "latest docs", limit: 1 })],
                 [{ type: "text_delta", text: "No normalized web sources were available." }],
             ], modelInputs),
-            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, plugin }),
+            toolExecutor: createPaAgentCapabilityToolExecutor({ registry, host: plugin }),
             hostPolicy: continueAfterToolResults(),
             now: deterministicNow(),
         });
@@ -697,7 +698,7 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
 
     async function setupRegistry() {
         const provider = new SkillContextProvider(BUNDLED_SKILL_RESOURCES);
-        const registry = new CapabilityRegistry();
+        const registry = createPaidCapabilityRegistry();
         await registry.registerProvider(provider, {
             turnId: "turn-load-skill-preflight",
             platform: "desktop",
@@ -710,7 +711,7 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            plugin: fakePlugin({ skillContextEnabled: false }),
+            host: fakePlugin({ skillContextEnabled: false }),
             platform: "desktop",
         });
 
@@ -731,7 +732,7 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            plugin: fakePlugin({ enabledSkillIds: [] }),
+            host: fakePlugin({ enabledSkillIds: [] }),
             platform: "desktop",
         });
 
@@ -752,7 +753,7 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            plugin: fakePlugin({ enabledSkillIds: ["json-canvas"] }),
+            host: fakePlugin({ enabledSkillIds: ["json-canvas"] }),
             platform: "desktop",
         });
 
@@ -775,7 +776,7 @@ describe("load_skill host preflight (A3 progressive disclosure)", () => {
         const registry = await setupRegistry();
         const executor = createPaAgentCapabilityToolExecutor({
             registry,
-            plugin: fakePlugin({ enabledSkillIds: ["obsidian-markdown"] }),
+            host: fakePlugin({ enabledSkillIds: ["obsidian-markdown"] }),
             platform: "desktop",
         });
 
@@ -1139,6 +1140,12 @@ function createCoreRegistry(
         createListVaultTagsTool(),
     ]));
     return registry;
+}
+
+function createPaidCapabilityRegistry(): CapabilityRegistry {
+    return new CapabilityRegistry({
+        policyEngine: new PolicyEngine({ licenseTier: "paid" }),
+    });
 }
 
 async function registerProvider(registry: CapabilityRegistry, provider: CapabilityProvider): Promise<void> {

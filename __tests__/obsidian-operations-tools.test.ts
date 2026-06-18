@@ -155,7 +155,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             },
         });
         const result = await createRegistry().execute('inspect_obsidian_note', { path: 'notes/project.md' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -206,7 +206,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
 
         const result = await createRegistry().execute('inspect_obsidian_note', '../outside.md', {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(false);
@@ -234,7 +234,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
 
         const result = await createRegistry().execute('inspect_obsidian_note', { path: 'notes/fenced.md' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -265,7 +265,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             },
         });
         const result = await createRegistry().execute('read_canvas_summary', { path: 'maps/project.canvas' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -296,7 +296,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             scope: 'notes/2026.05',
             limit: 5,
         }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -320,13 +320,13 @@ describe('Obsidian Operations v1A App API read tools', () => {
             query: 'pa-positive-snippet-token-1701',
             scope: 'notes/missing.md',
         }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
         const missingFolder = await createRegistry().execute('search_vault_snippets', {
             query: 'pa-positive-snippet-token-1701',
             scope: 'notes/2027.01',
         }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         for (const result of [missingFile, missingFolder]) {
@@ -355,7 +355,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             query: 'pa-positive-snippet-token-1701',
             scope: 'notes/source.txt',
         }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -384,7 +384,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             },
         });
         const result = await createRegistry().execute('list_vault_tags', { limit: 2 }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -422,13 +422,13 @@ describe('Obsidian Operations v1A App API read tools', () => {
         const inspect = await createRegistry().execute('inspect_obsidian_note', {
             path: 'notes/frontmatter.md',
         }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
         const tags = (inspect.content as InspectObsidianNoteOutput).tags ?? [];
         expect(tags).toEqual(expect.arrayContaining(['project', 'inbox', 'frontmatter-24']));
 
         const tagResult = await createRegistry().execute('list_vault_tags', { limit: 80 }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
         const tagContent = tagResult.content as VaultTagsOutput;
         const countedTags = tagContent.tags.map((entry) => entry.tag);
@@ -456,7 +456,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         for (const unsafeCase of unsafeCases) {
             const plugin = createPlugin();
             const result = await createRegistry().execute(unsafeCase.tool, unsafeCase.input, {
-                plugin: plugin as never,
+                host: plugin as never,
             });
 
             expect(result.ok).toBe(false);
@@ -483,10 +483,10 @@ describe('Obsidian Operations v1A App API read tools', () => {
         const metadataUnavailableNote = await registry.execute('inspect_obsidian_note', {
             path: 'notes/degraded.md',
         }, {
-            plugin: metadataUnavailablePlugin as never,
+            host: metadataUnavailablePlugin as never,
         });
         const metadataUnavailableTags = await registry.execute('list_vault_tags', { limit: 10 }, {
-            plugin: metadataUnavailablePlugin as never,
+            host: metadataUnavailablePlugin as never,
         });
 
         expect(metadataUnavailableNote.ok).toBe(true);
@@ -521,12 +521,12 @@ describe('Obsidian Operations v1A App API read tools', () => {
         const vaultReadUnavailableNote = await registry.execute('inspect_obsidian_note', {
             path: 'notes/metadata-only.md',
         }, {
-            plugin: vaultReadUnavailablePlugin as never,
+            host: vaultReadUnavailablePlugin as never,
         });
         const vaultReadUnavailableSnippets = await registry.execute('search_vault_snippets', {
             query: 'anything',
         }, {
-            plugin: vaultReadUnavailablePlugin as never,
+            host: vaultReadUnavailablePlugin as never,
         });
 
         expect(vaultReadUnavailableNote.ok).toBe(true);
@@ -564,7 +564,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
 
         const noteResult = await registry.execute('inspect_obsidian_note', { path: 'notes/huge.md' }, {
-            plugin: notePlugin as never,
+            host: notePlugin as never,
         });
 
         expect(notePlugin.app.vault.cachedRead).not.toHaveBeenCalled();
@@ -587,7 +587,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
 
         const canvasResult = await registry.execute('read_canvas_summary', { path: 'maps/huge.canvas' }, {
-            plugin: canvasPlugin as never,
+            host: canvasPlugin as never,
         });
 
         expect(canvasPlugin.app.vault.cachedRead).not.toHaveBeenCalled();
@@ -613,7 +613,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             query: 'pa-positive-snippet-token-1701',
             scope: 'notes',
         }, {
-            plugin: snippetPlugin as never,
+            host: snippetPlugin as never,
         });
 
         expect(snippetPlugin.app.vault.cachedRead).toHaveBeenCalledTimes(1);
@@ -645,7 +645,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
 
         const result = await registry.execute('inspect_obsidian_note', { path: 'notes/long.md' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
         const budget = registry.getDefinition('inspect_obsidian_note')?.outputBudgetChars ?? 0;
 
@@ -671,7 +671,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
             query: 'pa-positive-snippet-token-1701',
             scope: 'notes/multibyte.md',
         }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -698,7 +698,7 @@ describe('Obsidian Operations v1A App API read tools', () => {
         });
 
         const result = await createRegistry().execute('list_vault_tags', { limit: 5 }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(result.ok).toBe(true);
@@ -730,16 +730,16 @@ describe('Obsidian Operations v1A App API read tools', () => {
         const registry = createRegistry();
 
         const missing = await registry.execute('inspect_obsidian_note', { path: 'missing.md' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
         const noMatch = await registry.execute('search_vault_snippets', { query: 'pa-no-match-token-0000' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
         const largeNote = await registry.execute('inspect_obsidian_note', { path: 'notes/large.md' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
         const largeCanvas = await registry.execute('read_canvas_summary', { path: 'maps/large.canvas' }, {
-            plugin: plugin as never,
+            host: plugin as never,
         });
 
         expect(missing.ok).toBe(false);

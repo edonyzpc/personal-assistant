@@ -75,7 +75,7 @@ jest.mock("obsidian");
 // Stubs
 // ─────────────────────────────────────────────────────────────────────────────
 
-function fakePlugin(settings: Record<string, unknown> = {}): AgentCapabilityContext["plugin"] {
+function fakePlugin(settings: Record<string, unknown> = {}): AgentCapabilityContext["host"] {
     return {
         settings: { debug: false, ...settings },
         log: () => undefined,
@@ -288,14 +288,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
 
@@ -363,14 +363,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
 
@@ -415,14 +415,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
 
@@ -450,14 +450,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin({ app: { workspace: {} } }),
+            host: fakePlugin({ app: { workspace: {} } }),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin({ app: { workspace: {} } }),
+            host: fakePlugin({ app: { workspace: {} } }),
             platform: "desktop",
         });
 
@@ -501,14 +501,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const baseSpy = jest.spyOn(baseExecutor, "execute");
@@ -539,14 +539,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
             allowedToolNames: new Set<string>(["something_else"]),
         });
@@ -574,14 +574,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
 
@@ -603,14 +603,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: policyDenyHarness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: policyDenyHarness.actionExecutor,
             registry: policyDenyHarness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
 
@@ -631,14 +631,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
 
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor: harness.actionExecutor,
             registry: harness.registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
             allowedToolNames: new Set<string>(["something_else"]),
         });
@@ -679,14 +679,14 @@ describe("PA Agent runtime — Write Action Framework integration (Track A · A3
         });
         const baseExecutor = createPaAgentCapabilityToolExecutor({
             registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const executor = createWriteActionAwareToolExecutor({
             baseExecutor,
             actionExecutor,
             registry,
-            plugin: fakePlugin(),
+            host: fakePlugin(),
             platform: "desktop",
         });
         const result = await executor.execute(buildExecutionInput(WRITE_TOOL_NAME));

@@ -268,7 +268,7 @@ export function createChatToolCapability<Input, Output>(
             try {
                 validatedInput = definition.validateInput(input);
             } catch (error) {
-                context.plugin.log("Chat tool input validation failed", {
+                context.host.log("Chat tool input validation failed", {
                     tool: definition.name,
                     errorType: getErrorType(error),
                 });
@@ -285,7 +285,7 @@ export function createChatToolCapability<Input, Output>(
                 // statusMessage callbacks should not throw; ignore defensively.
             }
             const chatContext: ChatToolContext = {
-                plugin: context.plugin,
+                host: context.host,
                 signal: context.signal,
                 onBeforeVssSearch: context.onBeforeVssSearch,
                 onToolRunning: context.onToolRunning,
@@ -298,7 +298,7 @@ export function createChatToolCapability<Input, Output>(
                 if (isAbortError(error, context.signal)) {
                     throw context.signal?.aborted ? createAbortError() : error;
                 }
-                context.plugin.log("Chat tool execution failed", {
+                context.host.log("Chat tool execution failed", {
                     tool: definition.name,
                     errorType: getErrorType(error),
                 });

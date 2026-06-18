@@ -86,6 +86,7 @@ class AppendToCurrentNoteCapability implements AgentCapability {
     readonly permission = "local-filesystem-write" as const;
     readonly sourceBoundary: AgentCapabilitySourceBoundary = "vault";
     readonly cost = "free" as const;
+    readonly tier = "paid" as const;
     readonly platform = "both" as const;
     readonly outputBudgetChars = 1_000;
     readonly timeoutMs = 30_000;
@@ -136,7 +137,7 @@ class AppendToCurrentNoteCapability implements AgentCapability {
         //
         // For now, validate the active file confinement and return a
         // descriptive error directing callers to use the framework pipeline.
-        const activeFile = context.plugin?.app?.workspace?.getActiveFile?.() ?? null;
+        const activeFile = context.host?.app?.workspace?.getActiveFile?.() ?? null;
         const confinement = validateAppendConfinement(activeFile);
         if (!confinement.valid) {
             return {

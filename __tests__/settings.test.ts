@@ -298,6 +298,7 @@ import {
 } from '../src/settings';
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from '../src/operations-agent-flags';
 import { confirmUserAction } from '../src/confirm';
+import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
 
 function mockStringifyText(value: unknown): string {
@@ -923,6 +924,13 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
     it('falls back to defaults when array-backed settings are malformed', () => {
         const merged = mergeLoadedSettings({ colorGroups: 'corrupted' as unknown });
         expect(merged.colorGroups).toEqual(DEFAULT_SETTINGS.colorGroups);
+    });
+
+    it('uses the mock license tier regardless of persisted licenseTier data', () => {
+        expect(DEFAULT_SETTINGS.licenseTier).toBe(MOCK_LICENSE_TIER);
+        expect(mergeLoadedSettings({}).licenseTier).toBe(MOCK_LICENSE_TIER);
+        expect(mergeLoadedSettings({ licenseTier: 'free' }).licenseTier).toBe(MOCK_LICENSE_TIER);
+        expect(mergeLoadedSettings({ licenseTier: 'trial' }).licenseTier).toBe(MOCK_LICENSE_TIER);
     });
 });
 

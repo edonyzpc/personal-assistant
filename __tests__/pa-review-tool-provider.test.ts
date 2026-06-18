@@ -142,7 +142,7 @@ function makeContext(): AgentCapabilityContext {
     // The capability never touches the plugin from `context`; a minimal cast
     // is safer than constructing a fake PluginManager.
     return {
-        plugin: undefined as unknown as AgentCapabilityContext["plugin"],
+        host: undefined as unknown as AgentCapabilityContext["host"],
         turnId: "turn-test",
     };
 }
@@ -544,6 +544,7 @@ describe("createPaReviewRuntime", () => {
         });
         const bundle = runtime.buildPaAgentRuntimeOptions();
         expect(bundle.policyOptions).toEqual({
+            licenseTier: "paid",
             runKind: "review",
             allowWrite: true,
             allowedActionPermissions: ["local-filesystem-write"],

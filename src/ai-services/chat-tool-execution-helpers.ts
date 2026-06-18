@@ -15,7 +15,7 @@
 
 import { MarkdownView, type Workspace } from "obsidian";
 
-import type { PluginManager } from "../plugin";
+import type { AiServiceHost } from "./AiServiceHost";
 import type { ChatAgentSource } from "./chat-types";
 import { throwIfAborted } from "./chat-utils";
 import {
@@ -188,27 +188,27 @@ export function getFileTitle(file: { basename?: string; name?: string; path: str
     return lastSegment.replace(/\.md$/i, "");
 }
 
-export function getVault(plugin: PluginManager): VaultLike {
-    return plugin.app.vault as unknown as VaultLike;
+export function getVault(host: AiServiceHost): VaultLike {
+    return host.app.vault as unknown as VaultLike;
 }
 
-export function getMetadataCache(plugin: PluginManager): MetadataCacheLike {
-    return plugin.app.metadataCache as unknown as MetadataCacheLike;
+export function getMetadataCache(host: AiServiceHost): MetadataCacheLike {
+    return host.app.metadataCache as unknown as MetadataCacheLike;
 }
 
-export function getOptionalMetadataCache(plugin: PluginManager): MetadataCacheLike | undefined {
-    const metadataCache = plugin.app.metadataCache as unknown;
+export function getOptionalMetadataCache(host: AiServiceHost): MetadataCacheLike | undefined {
+    const metadataCache = host.app.metadataCache as unknown;
     return metadataCache && typeof metadataCache === "object"
         ? metadataCache as MetadataCacheLike
         : undefined;
 }
 
-export function getMarkdownFiles(plugin: PluginManager): MarkdownFileLike[] {
-    return getVault(plugin).getMarkdownFiles?.() ?? [];
+export function getMarkdownFiles(host: AiServiceHost): MarkdownFileLike[] {
+    return getVault(host).getMarkdownFiles?.() ?? [];
 }
 
-export async function readVaultFile(plugin: PluginManager, file: VaultFileLike): Promise<string> {
-    return await getVault(plugin).cachedRead?.(file) ?? "";
+export async function readVaultFile(host: AiServiceHost, file: VaultFileLike): Promise<string> {
+    return await getVault(host).cachedRead?.(file) ?? "";
 }
 
 interface BudgetedVaultRead {
@@ -219,7 +219,7 @@ interface BudgetedVaultRead {
 }
 
 export async function readVaultFileWithBudget(
-    plugin: PluginManager,
+    host: AiServiceHost,
     file: VaultFileLike,
     maxBytes: number,
 ): Promise<BudgetedVaultRead> {
@@ -233,7 +233,7 @@ export async function readVaultFileWithBudget(
         };
     }
 
-    const content = await readVaultFile(plugin, file);
+    const content = await readVaultFile(host, file);
     const contentBytes = getUtf8ByteLength(content);
     if (contentBytes <= maxBytes) {
         return {
@@ -257,8 +257,8 @@ export function getKnownFileSize(file: VaultFileLike): number | undefined {
     return typeof size === "number" && Number.isFinite(size) && size >= 0 ? size : undefined;
 }
 
-export function canReadVaultFiles(plugin: PluginManager): boolean {
-    return typeof getVault(plugin).cachedRead === "function";
+export function canReadVaultFiles(host: AiServiceHost): boolean {
+    return typeof getVault(host).cachedRead === "function";
 }
 
 export function getUtf8ByteLength(value: string): number {
@@ -287,33 +287,33 @@ export function truncateToUtf8ByteLength(value: string, maxBytes: number): strin
 }
 
 export function getUnavailableNoteStructureSources(
-    plugin: PluginManager,
+    host: AiServiceHost,
     metadataCache: MetadataCacheLike | undefined,
 ): string[] {
     const unavailableSources: string[] = [];
     if (!metadataCache || typeof metadataCache.getFileCache !== "function") {
         unavailableSources.push(METADATA_CACHE_UNAVAILABLE_SOURCE);
     }
-    if (!canReadVaultFiles(plugin)) {
+    if (!canReadVaultFiles(host)) {
         unavailableSources.push(VAULT_FILE_READ_UNAVAILABLE_SOURCE);
     }
     return unavailableSources;
 }
 
-export function findMarkdownFileByPath(plugin: PluginManager, path: string): MarkdownFileLike | null {
-    const byPath = getVault(plugin).getAbstractFileByPath?.(path);
+export function findMarkdownFileByPath(host: AiServiceHost, path: string): MarkdownFileLike | null {
+    const byPath = getVault(host).getAbstractFileByPath?.(path);
     if (isMarkdownFileLike(byPath)) {
         return byPath;
     }
-    return getMarkdownFiles(plugin).find((file) => file.path === path) ?? null;
+    return getMarkdownFiles(host).find((file) => file.path === path) ?? null;
 }
 
-export function findVaultFileByPath(plugin: PluginManager, path: string): VaultFileLike | null {
-    const byPath = getVault(plugin).getAbstractFileByPath?.(path);
+export function findVaultFileByPath(host: AiServiceHost, path: string): VaultFileLike | null {
+    const byPath = getVault(host).getAbstractFileByPath?.(path);
     if (isVaultFileLike(byPath)) {
         return byPath;
     }
-    return getMarkdownFiles(plugin).find((file) => file.path === path) ?? null;
+    return getMarkdownFiles(host).find((file) => file.path === path) ?? null;
 }
 
 export function isVaultFileLike(value: unknown): value is VaultFileLike {
@@ -919,11 +919,11 @@ function findDuplicateValues(values: string[]): string[] {
 }
 
 export async function searchVaultSnippets(
-    plugin: PluginManager,
+    host: AiServiceHost,
     input: SearchVaultSnippetsInput,
     signal: AbortSignal | undefined,
 ): Promise<VaultSnippetSearchOutput> {
-    if (!canReadVaultFiles(plugin)) {
+    if (!canReadVaultFiles(host)) {
         return {
             kind: "vault-snippets",
             query: input.query,
@@ -935,8 +935,8 @@ export async function searchVaultSnippets(
         };
     }
 
-    if (input.scope && !snippetScopeHasReadableMarkdown(plugin, input.scope)) {
-        const unsupportedScope = isUnsupportedSnippetFileScope(plugin, input.scope);
+    if (input.scope && !snippetScopeHasReadableMarkdown(host, input.scope)) {
+        const unsupportedScope = isUnsupportedSnippetFileScope(host, input.scope);
         return {
             kind: "vault-snippets",
             query: input.query,
@@ -960,7 +960,7 @@ export async function searchVaultSnippets(
     let omittedCount = 0;
     let truncated = false;
 
-    for (const file of getMarkdownFiles(plugin)) {
+    for (const file of getMarkdownFiles(host)) {
         if (!isFileWithinSnippetScope(file.path, input.scope)) continue;
         throwIfAborted(signal);
         if (consideredFiles >= SNIPPET_MAX_CANDIDATE_FILES) {
@@ -987,7 +987,7 @@ export async function searchVaultSnippets(
         }
 
         const contentBudget = Math.min(SNIPPET_MAX_FILE_BYTES, remainingByteBudget);
-        const readResult = await readVaultFileWithBudget(plugin, file, contentBudget);
+        const readResult = await readVaultFileWithBudget(host, file, contentBudget);
         if (readResult.skippedForSize) {
             skippedFiles++;
             truncated = true;
@@ -1026,16 +1026,16 @@ export async function searchVaultSnippets(
     };
 }
 
-function snippetScopeHasReadableMarkdown(plugin: PluginManager, scope: string): boolean {
+function snippetScopeHasReadableMarkdown(host: AiServiceHost, scope: string): boolean {
     if (scope.toLowerCase().endsWith(".md")) {
-        return Boolean(findMarkdownFileByPath(plugin, scope));
+        return Boolean(findMarkdownFileByPath(host, scope));
     }
-    return getMarkdownFiles(plugin).some((file) => isFileWithinSnippetScope(file.path, scope));
+    return getMarkdownFiles(host).some((file) => isFileWithinSnippetScope(file.path, scope));
 }
 
-function isUnsupportedSnippetFileScope(plugin: PluginManager, scope: string): boolean {
+function isUnsupportedSnippetFileScope(host: AiServiceHost, scope: string): boolean {
     if (scope.toLowerCase().endsWith(".md")) return false;
-    const abstractFile = getVault(plugin).getAbstractFileByPath?.(scope);
+    const abstractFile = getVault(host).getAbstractFileByPath?.(scope);
     if (!isVaultFileLike(abstractFile)) return false;
     const extension = typeof abstractFile.extension === "string" ? abstractFile.extension.toLowerCase() : "";
     if (extension) return extension !== "md";
@@ -1076,11 +1076,11 @@ function findSnippetMatch(
 }
 
 export async function listVaultTags(
-    plugin: PluginManager,
+    host: AiServiceHost,
     limit: number,
     signal?: AbortSignal,
 ): Promise<VaultTagsOutput> {
-    const metadataCache = getOptionalMetadataCache(plugin);
+    const metadataCache = getOptionalMetadataCache(host);
     if (!metadataCache || typeof metadataCache.getFileCache !== "function") {
         return {
             kind: "vault-tags",
@@ -1089,7 +1089,7 @@ export async function listVaultTags(
         };
     }
 
-    const files = getMarkdownFiles(plugin);
+    const files = getMarkdownFiles(host);
     const byTag = new Map<string, { count: number; representativePaths: string[] }>();
     let scannedFiles = 0;
     for (const file of files) {
@@ -1182,11 +1182,11 @@ export function extractOutlineFromCache(cache: FileCacheLike | null | undefined,
 }
 
 export async function extractOutlineFromFile(
-    plugin: PluginManager,
+    host: AiServiceHost,
     file: MarkdownFileLike,
     maxHeadings: number,
 ): Promise<ExtractedOutline> {
-    const content = await getVault(plugin).cachedRead?.(file) ?? "";
+    const content = await getVault(host).cachedRead?.(file) ?? "";
     const allLines = content.split(/\r?\n/);
     const lines = allLines.slice(0, NOTE_OUTLINE_SCAN_LINES);
     const allHeadings: NoteOutlineHeading[] = [];

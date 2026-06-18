@@ -6,7 +6,7 @@ import {
     isDashScopeCompatibleBaseURL,
     type QwenRequestOptions,
 } from './ai-utils';
-import type { PluginManager } from '../plugin'
+import type { AiServiceHost } from './AiServiceHost';
 import type { MemoryMode } from '../memory-manager';
 import {
     PaAgentRuntime,
@@ -46,19 +46,19 @@ export interface StreamLLMOptions {
  */
 export class ChatService {
     private aiUtils: AIUtils;
-    private plugin: PluginManager;
+    private host: AiServiceHost;
 
-    constructor(plugin: PluginManager) {
-        this.plugin = plugin;
-        this.aiUtils = new AIUtils(plugin);
+    constructor(host: AiServiceHost) {
+        this.host = host;
+        this.aiUtils = new AIUtils(host);
     }
 
     private getFinalAnswerQwenRequestOptions(): QwenRequestOptions | undefined {
-        if (this.plugin.settings.aiProvider !== "qwen") return undefined;
-        if (!isDashScopeCompatibleBaseURL(this.plugin.settings.baseURL)) return undefined;
+        if (this.host.settings.aiProvider !== "qwen") return undefined;
+        if (!isDashScopeCompatibleBaseURL(this.host.settings.baseURL)) return undefined;
 
         const qwenRequestOptions: QwenRequestOptions = {};
-        if (this.plugin.settings.qwenThinkingEnabled) {
+        if (this.host.settings.qwenThinkingEnabled) {
             qwenRequestOptions.enableThinking = true;
         }
         return qwenRequestOptions.enableThinking
@@ -67,9 +67,9 @@ export class ChatService {
     }
 
     private shouldLoadBuiltinWebSearchProvider(): boolean {
-        return this.plugin.settings.aiProvider === "qwen"
-            && this.plugin.settings.webSearchEnabled === true
-            && isDashScopeCompatibleBaseURL(this.plugin.settings.baseURL);
+        return this.host.settings.aiProvider === "qwen"
+            && this.host.settings.webSearchEnabled === true
+            && isDashScopeCompatibleBaseURL(this.host.settings.baseURL);
     }
 
     private async getAdditionalCapabilityProviders(): Promise<CapabilityProvider[]> {
@@ -83,7 +83,7 @@ export class ChatService {
     }
 
     private getBuiltinWebSearchEndpoint(): string {
-        return getBailianWebSearchEndpointForBaseURL(this.plugin.settings.baseURL);
+        return getBailianWebSearchEndpointForBaseURL(this.host.settings.baseURL);
     }
 
 
@@ -103,12 +103,15 @@ export class ChatService {
         };
         const additionalCapabilityProviders = await this.getAdditionalCapabilityProviders();
         const runtime = new PaAgentRuntime(
-            this.plugin,
+            this.host,
             this.aiUtils,
             {
                 ...nativeToolPlanningOptions,
                 runtimePlatform: Platform.isMobile ? "mobile" : "desktop",
                 additionalCapabilityProviders,
+                policyOptions: {
+                    licenseTier: this.host.settings.licenseTier,
+                },
             },
         );
         await runtime.streamTurn({

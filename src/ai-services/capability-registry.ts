@@ -248,7 +248,7 @@ export class CapabilityRegistry {
                 status: "unavailable",
                 durationMs: elapsedMs(started),
             });
-            context.plugin.log("Capability is not registered", { capability: name });
+            context.host.log("Capability is not registered", { capability: name });
             return createCapabilityFailureResult(name, "unregistered capability", "Skipped an unavailable read-only tool.");
         }
 
@@ -260,7 +260,7 @@ export class CapabilityRegistry {
                 status: "skipped",
                 durationMs: elapsedMs(started),
             });
-            context.plugin.log("Capability rejected by policy", {
+            context.host.log("Capability rejected by policy", {
                 capability: capability.name,
                 reason: decision.reason,
             });

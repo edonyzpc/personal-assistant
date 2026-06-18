@@ -182,13 +182,13 @@ describe("CapabilityRegistry and core tool capabilities", () => {
 
         expect(registry.exportProviderSchemas()).toEqual([]);
         await expect(registry.execute("search_vault_metadata", {}, {
-            plugin: createPlugin(),
+            host: createPlugin(),
         })).resolves.toMatchObject({
             ok: false,
             error: "Skipped a capability that is unavailable in this mode.",
         });
         await expect(registry.execute("read_note_outline", {}, {
-            plugin: createPlugin(),
+            host: createPlugin(),
         })).resolves.toMatchObject({
             ok: false,
             error: "Skipped a capability that is unavailable in this mode.",
@@ -328,7 +328,7 @@ describe("Capability telemetry hook", () => {
             },
         ));
 
-        await registry.execute("search_vault_metadata", {}, { plugin: createPlugin() });
+        await registry.execute("search_vault_metadata", {}, { host: createPlugin() });
 
         expect(onCapabilityEvent).not.toHaveBeenCalled();
     });
@@ -344,7 +344,7 @@ describe("Capability telemetry hook", () => {
             },
         ));
 
-        await registry.execute("search_vault_metadata", { query: "PRIVATE_PROMPT_SENTINEL" }, { plugin: createPlugin() });
+        await registry.execute("search_vault_metadata", { query: "PRIVATE_PROMPT_SENTINEL" }, { host: createPlugin() });
 
         expect(onCapabilityEvent).toHaveBeenCalledTimes(1);
         expect(onCapabilityEvent).toHaveBeenCalledWith({
@@ -430,7 +430,7 @@ function createProviderLoadContext(platform: ProviderLoadContext["platform"]): P
 function createPlugin() {
     return {
         log: jest.fn(),
-    } as unknown as Parameters<CapabilityRegistry["execute"]>[2]["plugin"];
+    } as unknown as Parameters<CapabilityRegistry["execute"]>[2]["host"];
 }
 
 function toRegistryDefinition<Input, Output>(

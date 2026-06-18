@@ -217,6 +217,7 @@ export class BuiltinWebSearchProvider implements CapabilityProvider {
             permission: "network-read",
             sourceBoundary: "web",
             cost: "network-calls",
+            tier: "paid",
             platform: "both",
             outputBudgetChars: this.policy.maxResponseBytes,
             timeoutMs: this.timeoutMs,

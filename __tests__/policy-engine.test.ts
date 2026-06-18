@@ -5,6 +5,7 @@ import type {
     AgentPermission,
     AgentPermissionFuture,
 } from "../src/ai-services/capability-types";
+import { MOCK_LICENSE_TIER, normalizeAgentCapabilityTier } from "../src/ai-services/capability-types";
 import { PolicyEngine } from "../src/ai-services/policy-engine";
 
 /**
@@ -188,6 +189,64 @@ describe("PolicyEngine decision matrix (framework SDD §4.2)", () => {
         const decision = engine.canExport(capability);
         expect(decision.allowed).toBe(false);
         expect(decision.reason).toMatch(/shell.*not in allowlist/);
+    });
+});
+
+describe("PolicyEngine capability tier gate", () => {
+    it("treats omitted capability tier as free for backward compatibility", () => {
+        const engine = new PolicyEngine();
+        const capability = buildCapability({ tier: undefined });
+
+        expect(engine.canExport(capability)).toEqual({ allowed: true });
+    });
+
+    it("uses the mock license tier by default while real authorization is not wired", () => {
+        const engine = new PolicyEngine();
+        const capability = buildCapability({ tier: "paid" });
+
+        expect(MOCK_LICENSE_TIER).toBe("paid");
+        expect(engine.canExport(capability)).toEqual({ allowed: true });
+    });
+
+    it("rejects paid capabilities when the license tier is free", () => {
+        const engine = new PolicyEngine({ licenseTier: "free" });
+        const capability = buildCapability({ tier: "paid" });
+
+        expect(engine.canExport(capability)).toEqual({
+            allowed: false,
+            reason: "premium-required",
+        });
+        expect(engine.canExecute(capability)).toEqual({
+            allowed: false,
+            reason: "premium-required",
+        });
+    });
+
+    it("allows paid capabilities when the license tier is paid", () => {
+        const engine = new PolicyEngine({ licenseTier: "paid" });
+        const capability = buildCapability({ tier: "paid" });
+
+        expect(engine.canExport(capability)).toEqual({ allowed: true });
+    });
+
+    it("normalizes malformed tier values to the configured fallback", () => {
+        expect(normalizeAgentCapabilityTier("trial", "free")).toBe("free");
+        expect(normalizeAgentCapabilityTier("trial", "paid")).toBe("paid");
+    });
+
+    it("runs the tier gate before action permission checks", () => {
+        const engine = new PolicyEngine({ licenseTier: "free" });
+        const capability = buildCapability({
+            kind: "action",
+            permission: "local-filesystem-write" as AgentPermission,
+            requiresConfirmation: true,
+            tier: "paid",
+        });
+
+        expect(engine.canExport(capability)).toEqual({
+            allowed: false,
+            reason: "premium-required",
+        });
     });
 });
 

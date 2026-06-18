@@ -3,7 +3,7 @@
  *
  * Moved here from the original chat-tools.ts monolith as part of Phase 3.1
  * (docs/archive/sdd-chat-tools-split.md). Leaf module — depends only on `./chat-types`
- * and `../plugin`.
+ * and the AI services host interface.
  *
  * NOTE: `*Like` (EditorLike/VaultFileLike/MarkdownFileLike/MarkdownViewLike/
  * VaultLike/MetadataCacheLike/FileCacheLike) intentionally live in
@@ -11,7 +11,7 @@
  * vault-adapter shapes to the public type surface.
  */
 
-import type { PluginManager } from "../plugin";
+import type { AiServiceHost } from "./AiServiceHost";
 import type {
     ChatToolName,
     ChatToolResult,
@@ -20,7 +20,7 @@ import type {
 export type { ChatToolName, ChatToolResult, MemorySearchResult } from "./chat-types";
 
 export interface ChatToolContext {
-    plugin: PluginManager;
+    host: AiServiceHost;
     signal?: AbortSignal;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;

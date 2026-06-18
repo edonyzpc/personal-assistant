@@ -1,4 +1,4 @@
-import type { PluginManager } from "../plugin";
+import type { AiServiceHost } from "./AiServiceHost";
 import { BUILTIN_WEB_SEARCH_TOOL_NAME } from "./builtin-web-search-provider";
 import type { CapabilityRegistry } from "./capability-registry";
 import type { AgentCapabilityExecutionMode, AgentRuntimePlatform } from "./capability-types";
@@ -25,7 +25,7 @@ const MAX_PREVIEW_CHARS = 1200;
 
 export interface PaAgentCapabilityToolExecutorOptions {
     registry: CapabilityRegistry;
-    plugin: PluginManager;
+    host: AiServiceHost;
     platform?: AgentRuntimePlatform;
     onBeforeVssSearch?: () => void;
     onToolRunning?: (tool: string, message: string) => void;
@@ -62,7 +62,7 @@ export function createPaAgentCapabilityToolExecutor(
                 };
             }
             if (toolCall.name === LOAD_SKILL_TOOL_NAME) {
-                const disabledRejection = preflightLoadSkill(toolCall, options.plugin);
+                const disabledRejection = preflightLoadSkill(toolCall, options.host);
                 if (disabledRejection) return disabledRejection;
             }
             const preparedResult = options.registry.prepareAndValidate(
@@ -87,7 +87,7 @@ export function createPaAgentCapabilityToolExecutor(
                 toolCall.name,
                 preparedResult.input,
                 {
-                    plugin: options.plugin,
+                    host: options.host,
                     turnId: input.turnId,
                     signal: input.signal,
                     platform: options.platform ?? "desktop",
@@ -138,9 +138,9 @@ export function isAllowedHostToolCall(
 
 function preflightLoadSkill(
     toolCall: PaAgentToolCall,
-    plugin: PluginManager,
+    host: AiServiceHost,
 ): PaAgentToolExecutionResult | null {
-    const settings = plugin.settings as unknown as Record<string, unknown>;
+    const settings = host.settings as unknown as Record<string, unknown>;
     const skillContextEnabled = settings.skillContextEnabled !== false;
     const enabledSkillIds = Array.isArray(settings.enabledSkillIds)
         ? (settings.enabledSkillIds as readonly string[])

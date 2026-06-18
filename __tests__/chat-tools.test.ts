@@ -201,7 +201,7 @@ describe('list_vault_tags cooperative cancellation (P0-B)', () => {
 
         await expect(
             tool.execute({ limit: 10 }, {
-                plugin: plugin as never,
+                host: plugin as never,
                 signal: controller.signal,
             } as never),
         ).rejects.toMatchObject({ name: 'AbortError' });
@@ -222,7 +222,7 @@ describe('list_vault_tags cooperative cancellation (P0-B)', () => {
         });
 
         const result = await tool.execute({ limit: 10 }, {
-            plugin: plugin as never,
+            host: plugin as never,
             signal: controller.signal,
         } as never).then(
             (v) => ({ status: 'fulfilled' as const, value: v }),
@@ -243,7 +243,7 @@ describe('list_vault_tags cooperative cancellation (P0-B)', () => {
         const plugin = makeFakePlugin(50);
 
         const result = await tool.execute({ limit: 10 }, {
-            plugin: plugin as never,
+            host: plugin as never,
             signal: new AbortController().signal,
         } as never);
 

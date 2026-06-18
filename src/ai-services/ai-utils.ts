@@ -3,7 +3,6 @@ import { Notice, getFrontMatterInfo, type FrontMatterInfo } from 'obsidian'
 import { ChatOpenAI, type ChatOpenAICallOptions, type ClientOptions } from '@langchain/openai';
 import { OpenAIEmbeddings } from '@langchain/openai';
 
-import type { PluginManager } from '../plugin'
 import { computeContentHash } from '../vss-helpers';
 import { obsidianFetch } from './obsidian-fetch';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
@@ -141,14 +140,25 @@ export interface QwenModelKwargs {
     enable_thinking?: boolean;
 }
 
+export interface AIUtilsHost {
+    readonly settings: {
+        aiProvider: string;
+        chatModelName: string;
+        embeddingModelName: string;
+        baseURL: string;
+    };
+    getAPIToken(): Promise<string>;
+    log(message: string, ...args: unknown[]): void;
+}
+
 /**
  * AI工具类，提供通用的AI功能
  */
 export class AIUtils {
-    private plugin: PluginManager;
+    private host: AIUtilsHost;
 
-    constructor(plugin: PluginManager) {
-        this.plugin = plugin;
+    constructor(host: AIUtilsHost) {
+        this.host = host;
     }
 
     private t(key: string): string {
@@ -159,7 +169,7 @@ export class AIUtils {
      * 获取API token
      */
     async getAPIToken(): Promise<string> {
-        return await this.plugin.getAPIToken();
+        return await this.host.getAPIToken();
     }
 
     private buildNoticeContent(title: string) {
@@ -228,9 +238,9 @@ export class AIUtils {
         temperature: number = 0.8,
         options: CreateChatModelOptions = {},
     ): Promise<ChatOpenAI<ChatOpenAICallOptions>> {
-        const provider = this.plugin.settings.aiProvider;
-        const modelName = options.modelName || this.plugin.settings.chatModelName;
-        const baseURL = this.plugin.settings.baseURL;
+        const provider = this.host.settings.aiProvider;
+        const modelName = options.modelName || this.host.settings.chatModelName;
+        const baseURL = this.host.settings.baseURL;
         const transport = options.transport ?? 'obsidian';
 
         switch (provider) {
@@ -266,9 +276,9 @@ export class AIUtils {
     getNativeToolCallingCapability(
         options: NativeToolCallingCapabilityOptions = {},
     ): NativeToolCallingCapability {
-        const provider = normalizeCapabilityValue(this.plugin.settings.aiProvider);
-        const model = normalizeCapabilityValue(this.plugin.settings.chatModelName);
-        const baseURL = normalizeBaseURL(this.plugin.settings.baseURL);
+        const provider = normalizeCapabilityValue(this.host.settings.aiProvider);
+        const model = normalizeCapabilityValue(this.host.settings.chatModelName);
+        const baseURL = normalizeBaseURL(this.host.settings.baseURL);
 
         if (!options.internalGate) {
             return {
@@ -335,9 +345,9 @@ export class AIUtils {
      * 创建嵌入模型实例
      */
     async createEmbeddings(dimensions?: number, options: CreateEmbeddingsOptions = {}): Promise<OpenAIEmbeddings> {
-        const provider = this.plugin.settings.aiProvider;
-        const modelName = this.plugin.settings.embeddingModelName;
-        const baseURL = this.plugin.settings.baseURL;
+        const provider = this.host.settings.aiProvider;
+        const modelName = this.host.settings.embeddingModelName;
+        const baseURL = this.host.settings.baseURL;
 
         switch (provider) {
             case 'qwen':
