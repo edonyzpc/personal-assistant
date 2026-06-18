@@ -4131,7 +4131,21 @@ body.is-mobile .pa-pagelet-tab-body {
 }
 
 .pa-preview-modal-mobile .pa-write-action-modal__append-body {
-	max-height: 32vh;
+	max-height: max(120px, 32vh);
+}
+
+.pa-insights-viewer {
+	max-height: 70vh;
+	overflow-y: auto;
+}
+
+.pa-insights-viewer__section {
+	margin-bottom: 1em;
+}
+
+.pa-insights-viewer__empty {
+	color: var(--text-muted);
+	font-style: italic;
 }
 
 .pa-preview-append-context-toggle {

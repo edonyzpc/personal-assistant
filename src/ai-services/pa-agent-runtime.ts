@@ -1643,24 +1643,44 @@ export async function expandByOneHop(
 ): Promise<MemoryCandidate[]> {
     if (!resolvedLinks || candidates.length === 0) return candidates;
     const existingPaths = new Set(candidates.map((c) => c.path));
-    const expansionTargets: Array<{ parentId: string; parentScore: number; targetPath: string; index: number }> = [];
+    const expansionTargets: Array<{ parentId: string; parentScore: number; targetPath: string; index: number; kind: "link" | "backlink" }> = [];
     const topCandidates = candidates.slice(0, 3);
+
     for (const parent of topCandidates) {
         const outbound = resolvedLinks[parent.path];
-        if (!outbound) continue;
-        let added = 0;
-        for (const targetPath of Object.keys(outbound)) {
-            if (added >= 2) break;
-            if (!targetPath.endsWith(".md")) continue;
-            if (existingPaths.has(targetPath)) continue;
-            existingPaths.add(targetPath);
+        if (outbound) {
+            let added = 0;
+            for (const targetPath of Object.keys(outbound)) {
+                if (added >= 2) break;
+                if (!targetPath.endsWith(".md")) continue;
+                if (existingPaths.has(targetPath)) continue;
+                existingPaths.add(targetPath);
+                expansionTargets.push({
+                    parentId: parent.candidateId,
+                    parentScore: parent.score,
+                    targetPath,
+                    index: added,
+                    kind: "link",
+                });
+                added++;
+            }
+        }
+
+        let inboundAdded = 0;
+        for (const [sourcePath, targets] of Object.entries(resolvedLinks)) {
+            if (inboundAdded >= 2) break;
+            if (!targets || !(parent.path in targets)) continue;
+            if (!sourcePath.endsWith(".md")) continue;
+            if (existingPaths.has(sourcePath)) continue;
+            existingPaths.add(sourcePath);
             expansionTargets.push({
                 parentId: parent.candidateId,
                 parentScore: parent.score,
-                targetPath,
-                index: added,
+                targetPath: sourcePath,
+                index: inboundAdded,
+                kind: "backlink",
             });
-            added++;
+            inboundAdded++;
         }
     }
     if (expansionTargets.length === 0) return candidates;
@@ -1686,10 +1706,11 @@ export async function expandByOneHop(
         const docs = normalizeSearchCandidates(rawByPath.get(target.targetPath) ?? []);
         if (docs.length === 0) continue;
 
+        const decay = target.kind === "backlink" ? 0.4 : 0.5;
         expanded.push({
-            candidateId: `link-${target.parentId}-${target.index}`,
+            candidateId: `${target.kind}-${target.parentId}-${target.index}`,
             path: target.targetPath,
-            score: target.parentScore * 0.5,
+            score: target.parentScore * decay,
             documents: docs[0].documents,
             excerpt: docs[0].excerpt,
         });

@@ -118,6 +118,48 @@ describe("expandByOneHop", () => {
         const result = await expandByOneHop(candidates, links, fetchChunks);
         expect(result).toEqual(candidates);
     });
+
+    it("expands inbound backlinks with 0.4 decay", async () => {
+        const candidates = [makeCandidate("c1", "notes/a.md", 0.8)];
+        const links: Record<string, Record<string, number>> = {
+            "notes/hub.md": { "notes/a.md": 1 },
+        };
+        const fetchChunks = jest.fn(async (paths: string[]) => paths.map((path) => makeRawChunk(path)));
+        const result = await expandByOneHop(candidates, links, fetchChunks);
+        expect(result.length).toBe(2);
+        expect(result[1].path).toBe("notes/hub.md");
+        expect(result[1].score).toBe(0.8 * 0.4);
+        expect(result[1].candidateId).toContain("backlink-");
+    });
+
+    it("expands both outbound and inbound links from the same parent", async () => {
+        const candidates = [makeCandidate("c1", "notes/a.md", 0.9)];
+        const links: Record<string, Record<string, number>> = {
+            "notes/a.md": { "notes/outbound.md": 1 },
+            "notes/inbound.md": { "notes/a.md": 1 },
+        };
+        const fetchChunks = jest.fn(async (paths: string[]) => paths.map((path) => makeRawChunk(path)));
+        const result = await expandByOneHop(candidates, links, fetchChunks);
+        expect(result.length).toBe(3);
+        const outbound = result.find((c) => c.path === "notes/outbound.md");
+        const inbound = result.find((c) => c.path === "notes/inbound.md");
+        expect(outbound?.score).toBe(0.9 * 0.5);
+        expect(inbound?.score).toBe(0.9 * 0.4);
+        expect(outbound?.candidateId).toContain("link-");
+        expect(inbound?.candidateId).toContain("backlink-");
+    });
+
+    it("does not duplicate paths between outbound and inbound expansions", async () => {
+        const candidates = [makeCandidate("c1", "notes/a.md", 0.9)];
+        const links: Record<string, Record<string, number>> = {
+            "notes/a.md": { "notes/shared.md": 1 },
+            "notes/shared.md": { "notes/a.md": 1 },
+        };
+        const fetchChunks = jest.fn(async (paths: string[]) => paths.map((path) => makeRawChunk(path)));
+        const result = await expandByOneHop(candidates, links, fetchChunks);
+        const sharedPaths = result.filter((c) => c.path === "notes/shared.md");
+        expect(sharedPaths.length).toBe(1);
+    });
 });
 
 describe("TypeAUserProfileExtractor.extractCandidatesWithLLM", () => {

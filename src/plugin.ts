@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import { type Debouncer, type MarkdownFileInfo, Editor, MarkdownView, Notice, Platform, Plugin, TFile, addIcon, debounce, moment as obsidianMoment, normalizePath, setIcon } from 'obsidian';
+import { type Debouncer, type MarkdownFileInfo, Component, Editor, MarkdownRenderer, MarkdownView, Modal, Notice, Platform, Plugin, TFile, addIcon, debounce, moment as obsidianMoment, normalizePath, setIcon } from 'obsidian';
 import { type CalloutManager, getApi } from "obsidian-callout-manager";
 
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
@@ -1987,6 +1987,55 @@ export class PluginManager extends Plugin {
                 await this.showTechnicalMemoryStatus();
             }),
         })
+
+        this.addCommand({
+            id: "show-ai-insights",
+            name: this.t("plugin.command.showAiInsights"),
+            checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, () => {
+                const context = this.getMemoryExtractionPromptContext();
+                this.openInsightsViewer(context);
+                return Promise.resolve();
+            }),
+        })
+    }
+
+    private openInsightsViewer(context: { userProfile?: string; vaultInsights?: string }): void {
+        const title = this.t("plugin.insightsViewer.title");
+        const emptyText = this.t("plugin.insightsViewer.noInsights");
+        const app = this.app;
+        const modal = new class extends Modal {
+            private renderHost = new Component();
+
+            onOpen(): void {
+                this.renderHost.load();
+                this.contentEl.empty();
+                this.contentEl.addClass("pa-insights-viewer");
+                this.contentEl.createEl("h2", { text: title });
+
+                if (!context.userProfile && !context.vaultInsights) {
+                    this.contentEl.createEl("p", {
+                        cls: "pa-insights-viewer__empty",
+                        text: emptyText,
+                    });
+                    return;
+                }
+
+                if (context.userProfile) {
+                    const section = this.contentEl.createDiv({ cls: "pa-insights-viewer__section" });
+                    MarkdownRenderer.render(app, context.userProfile, section, "", this.renderHost);
+                }
+                if (context.vaultInsights) {
+                    const section = this.contentEl.createDiv({ cls: "pa-insights-viewer__section" });
+                    MarkdownRenderer.render(app, context.vaultInsights, section, "", this.renderHost);
+                }
+            }
+
+            onClose(): void {
+                this.renderHost.unload();
+                this.contentEl.empty();
+            }
+        }(app);
+        modal.open();
     }
 
     private runAdvancedMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
