@@ -13,7 +13,7 @@ PluginManager 是一个 God Object（2300 行、42 imports、76 dependents、85 
 ### 重构目标
 
 1. **降耦合**：PluginManager 从 76 dependents 降至 < 10，通过 Host 接口隔离子系统
-2. **提性能**：三阶段启动减少感知启动时间 60-70%，移动端跳过桌面组件
+2. **稳启动**：以功能完整稳定为先，保留阶段化启动边界；移动端跳过桌面组件
 3. **降复杂度**：最大文件从 3424 行降至 < 800 行
 4. **支撑产品演进**：Capability Tier 系统为免费/付费分层提供架构基础
 
@@ -86,9 +86,9 @@ PluginManager（~600 行，纯协调器）
 
 | 阶段 | 时机 | 内容 | 目标耗时 |
 |------|------|------|---------|
-| Phase 1 | onload 同步 | loadSettings / registerViews / addCommands / ribbonIcon / statusBar | ~100ms |
-| Phase 2 | onLayoutReady | Memory 子系统 / vault events / editor extensions / MutationObserver（桌面） | 布局就绪后 |
-| Phase 3 | setTimeout(0) | Pagelet / MemoryExtraction / Stats / ChatHistory.initialize() | 空闲时 |
+| Phase 1 | onload 同步 | loadSettings / registerViews / addCommands / ribbonIcon / statusBar / Memory+Stats shell init | 稳定性优先 |
+| Phase 2 | onLayoutReady | ChatHistory.initialize / Callout / settings watcher / MutationObserver（桌面）/ 幂等 Memory+Stats guard | 布局就绪后 |
+| Phase 3 | setTimeout(0) | Pagelet / MemoryExtraction | 空闲时 |
 
 ---
 
@@ -531,7 +531,7 @@ this.registerEditorExtension([
 
 **修改 `src/plugin.ts` — 重构 `onload()` 方法**
 
-**Phase 1（阻塞 ~100ms）：**
+**Phase 1（稳定性优先阻塞段）：**
 
 ```typescript
 async onload() {
@@ -586,9 +586,11 @@ async onload() {
 
 > **Review 修复 #5：** `chatHistoryStore` + `chatHistoryManager` 创建移回 Phase 1（构造函数纯同步，无 I/O）。Obsidian workspace restore 时 view factory 立即执行，chatHistoryManager 必须已就绪。`initialize()` 仍延迟到 Phase 2。
 
-> **Review 修复 #6：** `registerEditorExtension()` 保留在 Phase 1（Obsidian API 要求 onload 内调用）。StatsManager 移至 Phase 2。
+> **Review 修复 #6：** `registerEditorExtension()` 保留在 Phase 1（Obsidian API 要求 onload 内调用）。StatsManager 原计划移至 Phase 2；2026-06-18 稳定性决策后改为在 `onload()` 早初始化，`onLayoutReady()` 保留幂等兜底。
 
 > **Review 修复（vault events）：** Vault event 注册移回 Phase 1，handler 内用 null-safe 访问（`this.vss?.markDirtyIfEligible(file)`），避免漏掉 Sync 驱动的事件。
+>
+> **Review 决策（2026-06-18）：** 以功能完整稳定为先，接受 Memory/Stats 在 `onload()` 早初始化。`onLayoutReady()` 保留幂等 `initializeMemorySubsystem()` / `initializeStatsSubsystem()` 调用作为兜底，但不再把“轻量 onload”作为当前验收目标。
 
 **Phase 2（onLayoutReady）：**
 
@@ -596,18 +598,14 @@ async onload() {
 private async onLayoutReady() {
     if (this.unloading) return;  // Review 修复 #8: onunload 保护
 
-    // Memory 子系统
-    const memoryHost = this.createMemoryHost();
-    this.vss = new VSS(memoryHost, this.vssCacheDir, this.createVSSIndexStateStore());
-    this.memoryManager = new MemoryManager(memoryHost, this.vss);
-    this.memoryManager.startAutoMaintenance();
-    await this.updateMemoryStatusBar();
+    // Memory 子系统（幂等；当前稳定性优先方案已在 onload() 早初始化）
+    await this.initializeMemorySubsystem();
 
     // Chat history 异步初始化
     void this.chatHistoryManager?.initialize();
 
-    // StatsManager（Phase 2，编辑前就绪）
-    this.statsManager = new StatsManager(this.createStatsHost());
+    // StatsManager（幂等；当前稳定性优先方案已在 onload() 早初始化）
+    this.initializeStatsSubsystem();
 
     // MutationObserver（桌面专用）
     if (Platform.isDesktop) { this.setupHoverPopoverObserver(); }

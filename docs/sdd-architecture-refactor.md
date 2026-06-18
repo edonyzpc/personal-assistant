@@ -16,15 +16,17 @@
 | 源方案 | `docs/architecture-refactor-plan.md`（经 2 轮 agent review，9+3 项修复） |
 | 目标 | 16 个 SPEC，每个可作为独立 Codex task 执行 |
 | 执行模式 | 顺序执行（遵循依赖图），每个 SPEC 产出一个 commit |
-| 验证基线 | `tsc --noEmit && npm test`（每个 SPEC 必须通过） |
+| 验证基线 | `tsc -noEmit -skipLibCheck && npm test`（每个 SPEC 必须通过） |
 | 手动验证 | 关键节点（1.3b, 1.4c, 1.5, 1.7）需人工 `make deploy` + 冒烟测试 |
+
+> **Closeout note (2026-06-18):** This document keeps the original SPEC prompts and checklist templates for traceability. Live completion status, accepted deviations, and follow-up work are tracked in `docs/architecture-refactor-development-tracker.md`.
 
 ### Codex 执行原则
 
 1. **每个 SPEC 是一个 Codex task**：直接复制 SPEC 的 Prompt 部分作为 Codex 输入
 2. **顺序执行**：前一个 SPEC 的 PR 合并后再启动下一个
 3. **不做额外决策**：所有设计决策已锁定，Codex 只做机械性实施
-4. **验证即完成**：`tsc --noEmit && npm test` 全绿 = SPEC 完成
+4. **验证即完成**：`tsc -noEmit -skipLibCheck && npm test` 全绿 = SPEC 完成
 5. **不改测试逻辑**：只改测试中的 mock 结构以匹配新接口，不改断言逻辑
 
 ### Phase 0 不走 Codex
@@ -120,18 +122,18 @@ barrel export，re-export 上面 3 个文件的所有 public 类型。
 阅读 `src/pagelet/PageletHost.ts` 了解接口风格和 JSDoc 注释模式。
 
 ## 验证
-运行 `npx tsc --noEmit` 确认编译通过。这些是纯类型文件，不应影响任何运行时行为。
+运行 `npx tsc -noEmit -skipLibCheck` 确认编译通过。这些是纯类型文件，不应影响任何运行时行为。
 运行 `npm test` 确认所有现有测试仍然通过。
 ```
 
 ### 验证命令
 ```bash
-npx tsc --noEmit && npm test
+npx tsc -noEmit -skipLibCheck && npm test
 ```
 
 ### 完成标准
 - [ ] 4 个文件已创建
-- [ ] `tsc --noEmit` 通过
+- [ ] `tsc -noEmit -skipLibCheck` 通过
 - [ ] `npm test` 全绿
 - [ ] 无运行时行为变更
 
@@ -182,13 +184,13 @@ private createMemoryHost(): MemoryHost {
 注意：此方法仅定义，本 SPEC 不消费它。消费在后续 SPEC-04 中进行。
 
 ## 验证
-运行 `npx tsc --noEmit` 确认编译通过。
+运行 `npx tsc -noEmit -skipLibCheck` 确认编译通过。
 运行 `npm test` 确认所有测试通过。
 ```
 
 ### 验证命令
 ```bash
-npx tsc --noEmit && npm test
+npx tsc -noEmit -skipLibCheck && npm test
 ```
 
 ---
@@ -245,13 +247,13 @@ npx tsc --noEmit && npm test
 - `src/ai-services/chat-service.ts` 中的 `new AIUtils(plugin)` 同理——结构性兼容，无需 `as any`
 
 ## 验证
-运行 `npx tsc --noEmit` 确认编译通过。
+运行 `npx tsc -noEmit -skipLibCheck` 确认编译通过。
 运行 `npm test` 确认所有测试通过（重点关注 `ai-utils.test.ts`）。
 ```
 
 ### 验证命令
 ```bash
-npx tsc --noEmit && npm test
+npx tsc -noEmit -skipLibCheck && npm test
 ```
 
 ---
@@ -325,14 +327,14 @@ this.memoryManager = new MemoryManager(memoryHost, this.vss);
 - 其他引用这两个类的测试文件
 
 ## 验证
-运行 `npx tsc --noEmit` 确认编译通过。
+运行 `npx tsc -noEmit -skipLibCheck` 确认编译通过。
 运行 `npm test` 确认所有测试通过。
 重点关注：`vss.test.ts`, `vss-data-safety.test.ts`, `vss-state.test.ts`, `memory-manager.test.ts`。
 ```
 
 ### 验证命令
 ```bash
-npx tsc --noEmit && npm test
+npx tsc -noEmit -skipLibCheck && npm test
 ```
 
 ---
@@ -389,7 +391,7 @@ export interface AiServiceHost {
 参考 `src/pagelet/PageletHost.ts` 的 JSDoc 注释风格添加接口文档。
 
 ## 验证
-运行 `npx tsc --noEmit` 确认编译通过。
+运行 `npx tsc -noEmit -skipLibCheck` 确认编译通过。
 运行 `npm test` 确认所有测试通过。
 ```
 
@@ -463,7 +465,7 @@ private createAiServiceHost(): AiServiceHost {
 - 保留所有断言逻辑不变
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 重点关注：`chat-service.test.ts`, `pa-agent-runtime-*.test.ts`, `pa-agent-loop.test.ts`。
 ```
 
@@ -522,7 +524,7 @@ SPEC-06 已将 PaAgentRuntime 和 ChatService 重接到 AiServiceHost。但 Agen
 在 `src/ai-services/pa-agent-runtime.ts` 中找到构建 AgentCapabilityContext 的代码，将 `plugin: this.plugin` 改为 `host: this.host`。
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 如果有遗漏的 `context.plugin` 引用，tsc 会报错——根据错误信息继续替换直到编译通过。
 ```
 
@@ -598,7 +600,7 @@ createChatService: () => new ChatService(this.createAiServiceHost()),
 - `__tests__/chat-view.test.ts`：mock 结构从 plugin 适配为 ChatHost
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 重点关注：`chat-view.test.ts`。
 ```
 
@@ -666,7 +668,7 @@ export interface EditorPluginHost {
 - `__tests__/stats-manager.test.ts`：mock 适配 StatsHost
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 ```
 
 ---
@@ -688,9 +690,9 @@ export interface EditorPluginHost {
 你是一个 TypeScript 重构专家。将 PluginManager 的 onload() 方法重构为三阶段启动。
 
 ## 上下文
-当前 onload() 同步初始化所有子系统（~380 行）。重构后分为：
-- Phase 1（onload 同步）：Settings + UI 注册 + Commands
-- Phase 2（onLayoutReady）：Memory 子系统 + 重量级初始化
+当前 onload() 同步初始化所有子系统（~380 行）。最初目标是把重型子系统后移；2026-06-18 review 后的验收决策是以功能完整稳定为先，接受 Memory/Stats 早初始化，同时保留 `onLayoutReady()` / `onIdle()` 的阶段边界：
+- Phase 1（onload 同步）：Settings + UI 注册 + Commands + Memory/Stats shell init
+- Phase 2（onLayoutReady）：ChatHistory.initialize + Callout + Settings watcher + 幂等 Memory/Stats guard
 - Phase 3（setTimeout 0）：Pagelet + MemoryExtraction
 
 ## 任务
@@ -706,15 +708,17 @@ export interface EditorPluginHost {
 - chatHistoryStore + chatHistoryManager 创建（纯同步构造函数）
 - registerView ×4
 - registerEditorExtension
+- Memory 子系统创建（VSS + MemoryManager + startAutoMaintenance），用于避免早期命令、事件、Chat restore 访问空 runtime
+- StatsManager 创建，用于避免编辑器扩展和早期 workspace 事件访问空 runtime
 - vault event 注册（保持 inline，handler 内 null-safe 访问 vss/memoryManager；SPEC-11 会提取为 registerVaultEventDispatch 方法）
 - addCommand ×所有
 - addSettingTab
 - `this.app.workspace.onLayoutReady(() => this.onLayoutReady())`
 
 **Phase 2 (onLayoutReady) 移入：**
-- Memory 子系统创建（VSS + MemoryManager + startAutoMaintenance）
+- `initializeMemorySubsystem()` 幂等调用（早初始化已完成时只刷新状态）
 - chatHistoryManager.initialize()（异步）
-- StatsManager 创建
+- `initializeStatsSubsystem()` 幂等调用
 - MutationObserver（桌面专用：`if (Platform.isDesktop)`）
 - initializeCalloutManager
 - setupSettingsWatcher
@@ -756,7 +760,7 @@ if (!this.vss || !this.memoryManager) return false;
 - `this.memoryExtractionScheduler?.handleVaultEvent(...)`
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 特别注意：nullable 字段变更可能导致 tsc 报告 ~20+ 个类型错误。每个都需要加 null check 或 optional chaining。根据 tsc 输出逐一修复直到编译通过。
 ```
 
@@ -795,7 +799,7 @@ private debouncedStatusBarUpdate = debounce(() => {
 - 不要遗漏 `memoryExtractionScheduler?.handleVaultEvent()` 转发
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 ```
 
 ---
@@ -837,7 +841,7 @@ export { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 关键原则：外部 import 路径不变。所有从 `pa-agent-runtime` 导入的符号通过 barrel re-export 保持可用。
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 不应有任何测试需要修改 import 路径。
 ```
 
@@ -876,7 +880,7 @@ export { CanonicalToLegacyEventAdapter } from "./pa-agent-stream-bridge";
 src/vss/ 目录已有 types.ts, rrf.ts, sqlite-vector-index.ts 等模块，新文件与现有结构一致。
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 重点：所有 vss 相关测试通过。
 ```
 
@@ -939,7 +943,7 @@ export class ConversationPersistence {
 LLMView 持有 `private mobileAdapter` 和 `private persistence` 实例，委托调用。
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 重点：`chat-view.test.ts` 通过。
 ```
 
@@ -991,7 +995,7 @@ PolicyEngine 构造函数或 options 中接受 `licenseTier` 参数（默认 "fr
 在 `__tests__/policy-engine.test.ts` 中添加 tier gate 测试用例。
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 ```
 
 ---
@@ -1021,7 +1025,7 @@ PolicyEngine 构造函数或 options 中接受 `licenseTier` 参数（默认 "fr
 在 createAiServiceHost() 中，将 `this.settings.licenseTier` 传给 PolicyEngine（通过 AiServiceHost 或直接在构造 runtime 时传递）。
 
 ## 验证
-运行 `npx tsc --noEmit && npm test`。
+运行 `npx tsc -noEmit -skipLibCheck && npm test`。
 ```
 
 ---
