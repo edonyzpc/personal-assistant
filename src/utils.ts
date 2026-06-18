@@ -177,4 +177,3 @@ export function getVaultScopedSecret(
 export function hasSecretValue(secret: string | null): secret is string {
     return secret !== null && secret !== "";
 }
-

@@ -241,7 +241,7 @@ forPrompt() {
   compactor.microCompact(transcript, maxObservationChars)
   projector.projectUserInput(...)
   budget = budget.snapshot(...)
-  
+
   // 新增：Budget 驱动的二次压缩
   if (budget.nearObservationLimit && budget.observationUsageRatio > 0.7) {
     compactor.microCompact(transcript, maxObservationChars, { targetRatio: 0.4 })
