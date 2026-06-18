@@ -269,18 +269,23 @@ export class WriteActionPreviewModal extends Modal {
         // Mobile toggle button for context visibility.
         if (isMobile) {
             let isContextExpanded = false;
+            contextSection.setAttribute("id", "pa-append-context");
             const toggleBtn = contentBlock.createEl("button", {
                 cls: "pa-preview-append-context-toggle",
                 text: "Show context",
             });
+            toggleBtn.setAttribute("aria-expanded", "false");
+            toggleBtn.setAttribute("aria-controls", "pa-append-context");
             toggleBtn.addEventListener("click", () => {
                 isContextExpanded = !isContextExpanded;
                 if (isContextExpanded) {
                     contextSection.addClass("is-expanded");
                     toggleBtn.setText("Hide context");
+                    toggleBtn.setAttribute("aria-expanded", "true");
                 } else {
                     contextSection.removeClass("is-expanded");
                     toggleBtn.setText("Show context");
+                    toggleBtn.setAttribute("aria-expanded", "false");
                 }
             });
         }
@@ -295,6 +300,9 @@ export class WriteActionPreviewModal extends Modal {
         const appendBody = contentBlock.createDiv({
             cls: "pa-write-action-modal__section-body pa-write-action-modal__append-body",
         });
+        appendBody.setAttribute("tabindex", "0");
+        appendBody.setAttribute("role", "region");
+        appendBody.setAttribute("aria-label", "Append content preview");
         this.renderContentBody(appendBody, renderWarnings);
 
         // Size warning when content exceeds threshold.

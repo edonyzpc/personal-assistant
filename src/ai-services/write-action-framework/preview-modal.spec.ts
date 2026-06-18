@@ -56,6 +56,7 @@ function createEl(): MockEl {
         return child;
     });
     el.addEventListener = jest.fn();
+    el.setAttribute = jest.fn();
     return el;
 }
 

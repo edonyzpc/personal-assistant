@@ -218,6 +218,7 @@ export class MemoryExtractionScheduler {
     async runTypeCRefresh(_reason: string): Promise<VaultMetacognitionSnapshot | null> {
         if (this.disposed) return null;
         if (!this.includeVaultInsightsInPrompt) return null;
+        if (this.isMobileHidden()) return null;
         if (this.typeCRefreshInFlight) return this.typeCRefreshInFlight;
         this.typeCRefreshInFlight = this.runTypeCRefreshUnlocked()
             .finally(() => {
