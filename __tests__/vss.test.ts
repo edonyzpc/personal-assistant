@@ -103,6 +103,7 @@ class FakeVectorIndex implements VectorIndex {
     });
     initialize = jest.fn<(profile: EmbeddingProfile) => Promise<VectorIndexStatus>>(async () => this.status);
     search = jest.fn<(queryEmbedding: number[], k: number) => Promise<VectorSearchResult[]>>(async () => []);
+    getChunksByPath = jest.fn<VectorIndex["getChunksByPath"]>(async () => []);
     getFileRecord = jest.fn<(path: string) => Promise<VSSFileRecord | null>>(async (path) => this.records.get(path) ?? null);
     getStats = jest.fn<() => Promise<VSSIndexStats>>(async () => ({
         status: this.status,

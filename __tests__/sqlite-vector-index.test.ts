@@ -217,6 +217,30 @@ describe('SqliteVectorIndex worker recovery', () => {
         }));
     });
 
+    it('sends getChunksByPath with exact paths and per-path limit', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        const chunkResults = [
+            { score: 1, doc: { pageContent: 'chunk1', metadata: { path: 'a.md', chunkIndex: 0 } } },
+            { score: 1, doc: { pageContent: 'chunk2', metadata: { path: 'b.md', chunkIndex: 0 } } },
+        ];
+        const worker = new MockWorker(true, chunkResults);
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        const results = await index.getChunksByPath(['a.md', 'b.md'], { limitPerPath: 2 });
+
+        expect(results).toEqual(chunkResults);
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'getChunksByPath',
+            payload: { paths: ['a.md', 'b.md'], limitPerPath: 2 },
+        }));
+    });
+
     it('reports unsupported worker fallback URLs when direct worker creation is blocked', async () => {
         Object.defineProperty(globalThis, 'Worker', {
             configurable: true,

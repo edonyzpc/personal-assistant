@@ -19,6 +19,7 @@ import {
     VSS_SCHEMA_VERSION,
     type EmbeddingProfile,
     type VectorIndex,
+    type VectorIndexPathLookupOptions,
     type VectorIndexStatus,
     type VectorSearchResult,
     type VSSChunk,
@@ -1534,6 +1535,52 @@ export class VSS {
             }
 
             const results = await this.index.searchHybrid(queryEmbedding, ftsQuery, 8, 12, temporalFilter ?? undefined);
+            return results.map(normalizeSearchResult);
+        }).catch((error) => {
+            if (this.disposed || getErrorCode(error) === "vss-disposed") return [];
+            throw error;
+        });
+    }
+
+    async getChunksByPath(paths: string[], options: VectorIndexPathLookupOptions = {}) {
+        const signal = options.signal;
+        throwIfAborted(signal);
+        const uniquePaths = [...new Set(paths.filter((path) => path.length > 0))];
+        if (uniquePaths.length === 0) return [];
+        if (this.disposed) return [];
+        await this.initialize();
+        throwIfAborted(signal);
+        if (this.index) {
+            await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+        }
+        throwIfAborted(signal);
+        if (!this.index || this.status === "uninitialized") {
+            return [];
+        }
+        if (this.status === "missing-local-index") {
+            this.showMissingIndexNotice();
+            return [];
+        }
+        if (this.status !== "ready") {
+            return [];
+        }
+
+        return this.runExclusive(async () => {
+            throwIfAborted(signal);
+            if (this.disposed) return [];
+            if (this.index) {
+                await this.ensureIndex({ allowFallback: false, mode: "foreground" });
+            }
+            throwIfAborted(signal);
+            if (!this.index || this.status !== "ready") return [];
+
+            const results = await waitForAbortablePromise(
+                this.index.getChunksByPath(uniquePaths, {
+                    limitPerPath: options.limitPerPath,
+                    signal,
+                }),
+                signal,
+            );
             return results.map(normalizeSearchResult);
         }).catch((error) => {
             if (this.disposed || getErrorCode(error) === "vss-disposed") return [];

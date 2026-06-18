@@ -1,6 +1,7 @@
 import type {
     EmbeddingProfile,
     VectorIndex,
+    VectorIndexPathLookupOptions,
     VectorIndexStatus,
     VectorSearchResult,
     VSSChunk,
@@ -92,6 +93,13 @@ export class SqliteVectorIndex implements VectorIndex {
 
     search(queryEmbedding: number[], k: number): Promise<VectorSearchResult[]> {
         return this.enqueue(() => this.send<VectorSearchResult[]>("search", { queryEmbedding, k }));
+    }
+
+    getChunksByPath(paths: string[], options: VectorIndexPathLookupOptions = {}): Promise<VectorSearchResult[]> {
+        return this.enqueue(() => this.send<VectorSearchResult[]>("getChunksByPath", {
+            paths,
+            limitPerPath: options.limitPerPath,
+        }));
     }
 
     searchHybrid(

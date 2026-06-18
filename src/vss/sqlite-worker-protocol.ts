@@ -27,6 +27,7 @@ export type SqliteWorkerRequest =
     | { id: number; type: "listFilePaths"; payload: Record<string, never> }
     | { id: number; type: "listFileRecords"; payload: Record<string, never> }
     | { id: number; type: "search"; payload: { queryEmbedding: number[]; k: number } }
+    | { id: number; type: "getChunksByPath"; payload: { paths: string[]; limitPerPath?: number } }
     | {
         id: number;
         type: "searchHybrid";

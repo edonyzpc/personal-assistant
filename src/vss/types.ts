@@ -46,6 +46,11 @@ export interface VectorSearchResult {
     doc: Document;
 }
 
+export interface VectorIndexPathLookupOptions {
+    limitPerPath?: number;
+    signal?: AbortSignal;
+}
+
 export interface VSSIndexStats {
     status: VectorIndexStatus;
     backend: string;
@@ -83,6 +88,7 @@ export interface VectorIndex {
     listFilePaths(): Promise<string[]>;
     listFileRecords(): Promise<VSSFileRecord[]>;
     search(queryEmbedding: number[], k: number): Promise<VectorSearchResult[]>;
+    getChunksByPath(paths: string[], options?: VectorIndexPathLookupOptions): Promise<VectorSearchResult[]>;
     getFileRecord(path: string): Promise<VSSFileRecord | null>;
     getStats(): Promise<VSSIndexStats>;
     verify(): Promise<VectorIndexStatus>;

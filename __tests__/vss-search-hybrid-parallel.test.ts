@@ -100,6 +100,7 @@ class FakeVectorIndex implements VectorIndex {
     updateFileMetadata = jest.fn<(fileState: VSSFileState) => Promise<void>>(async () => undefined);
     initialize = jest.fn<(profile: EmbeddingProfile) => Promise<VectorIndexStatus>>(async () => this.status);
     search = jest.fn<(queryEmbedding: number[], k: number) => Promise<VectorSearchResult[]>>(async () => []);
+    getChunksByPath = jest.fn<VectorIndex["getChunksByPath"]>(async () => []);
     getFileRecord = jest.fn<(path: string) => Promise<VSSFileRecord | null>>(async () => null);
     getStats = jest.fn<() => Promise<VSSIndexStats>>(async () => ({
         status: this.status,
@@ -340,6 +341,24 @@ describe('VSS searchHybrid parallel rewrite + embed', () => {
 
         expect(result).toEqual([]);
         expect(buildFtsQueryMock).not.toHaveBeenCalled();
+
+        vss.dispose();
+    });
+
+    it('returns empty exact path chunks from fallback indexes without embedding', async () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+
+        const result = await vss.getChunksByPath(['notes/a.md'], { limitPerPath: 2 });
+
+        expect(result).toEqual([]);
+        expect(index.getChunksByPath).toHaveBeenCalledWith(['notes/a.md'], {
+            limitPerPath: 2,
+            signal: undefined,
+        });
+        expect(embedQueryCalls.count).toBe(0);
 
         vss.dispose();
     });

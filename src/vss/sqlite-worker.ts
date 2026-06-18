@@ -112,6 +112,9 @@ async function handleRequest(request: SqliteWorkerRequest): Promise<unknown> {
         case "search":
             requireDb();
             return search(request.payload.queryEmbedding, request.payload.k);
+        case "getChunksByPath":
+            requireDb();
+            return getChunksByPath(request.payload.paths, request.payload.limitPerPath);
         case "searchHybrid":
             requireDb();
             return searchHybrid(
@@ -626,6 +629,47 @@ function search(queryEmbedding: number[], k: number): unknown[] {
         return {
             score: scoreFromDistance(distance, profile.distanceMetric),
             distance,
+            doc: {
+                pageContent: primitiveString(row.content),
+                metadata: {
+                    ...metadata,
+                    path: primitiveString(row.path, primitiveString(metadata.path)),
+                    chunkIndex: Number(row.chunk_index ?? metadata.chunkIndex ?? 0),
+                },
+            },
+        };
+    });
+}
+
+function getChunksByPath(paths: string[], limitPerPath = 3): unknown[] {
+    const uniquePaths = [...new Set(paths.filter((path) => path.length > 0))];
+    if (uniquePaths.length === 0) return [];
+
+    const requestedLimit = Number.isFinite(limitPerPath) ? Math.floor(limitPerPath) : 3;
+    const limit = Math.max(1, Math.min(50, requestedLimit));
+    const placeholders = uniquePaths.map(() => "?").join(",");
+    const rows: Array<Record<string, unknown>> = [];
+    requireDb().exec({
+        sql: `
+            SELECT path, chunk_index, content, metadata
+            FROM (
+                SELECT path, chunk_index, content, metadata,
+                    ROW_NUMBER() OVER (PARTITION BY path ORDER BY chunk_index ASC) AS path_rank
+                FROM vss_chunks
+                WHERE path IN (${placeholders})
+            )
+            WHERE path_rank <= ?
+            ORDER BY path, chunk_index
+        `,
+        bind: [...uniquePaths, limit],
+        rowMode: "object",
+        resultRows: rows,
+    });
+
+    return rows.map((row) => {
+        const metadata = parseMetadata(row.metadata);
+        return {
+            score: 1,
             doc: {
                 pageContent: primitiveString(row.content),
                 metadata: {
