@@ -179,11 +179,12 @@ describe("MemoryExtractionScheduler", () => {
         ]);
     });
 
-    it("keeps Type C internal by default and does not inject vault insights into prompts", async () => {
+    it("keeps Type C disabled by default and does not inject vault insights into prompts", async () => {
         const write = jest.fn();
+        const getMarkdownFiles = jest.fn(() => []);
         const app = {
             vault: {
-                getMarkdownFiles: () => [],
+                getMarkdownFiles,
                 adapter: {
                     exists: jest.fn(async () => false),
                     mkdir: jest.fn(async () => undefined),
@@ -208,8 +209,49 @@ describe("MemoryExtractionScheduler", () => {
 
         await scheduler.runTypeCRefresh("test");
 
+        expect(getMarkdownFiles).not.toHaveBeenCalled();
         expect(write).not.toHaveBeenCalled();
         expect(scheduler.getPromptContext().vaultInsights).toBeUndefined();
+    });
+
+    it("injects Vault Insights only while the include setting is enabled", async () => {
+        const getMarkdownFiles = jest.fn(() => []);
+        const app = {
+            vault: {
+                getMarkdownFiles,
+                adapter: {
+                    exists: jest.fn(async () => false),
+                    mkdir: jest.fn(async () => undefined),
+                    write: jest.fn(),
+                },
+            },
+            metadataCache: {
+                getFileCache: jest.fn(),
+                resolvedLinks: {},
+                unresolvedLinks: {},
+            },
+        };
+        const scheduler = new MemoryExtractionScheduler({
+            app: app as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(),
+                getTurns: jest.fn(),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true,
+            now: () => new Date("2026-06-16T08:00:00.000Z"),
+        });
+
+        await scheduler.runTypeCRefresh("test");
+
+        expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
+        expect(scheduler.getPromptContext().vaultInsights).toContain("# Vault Insights");
+
+        scheduler.setIncludeVaultInsightsInPrompt(false);
+        expect(scheduler.getPromptContext().vaultInsights).toBeUndefined();
+
+        await scheduler.runTypeCRefresh("after-disable");
+        expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -222,7 +264,7 @@ describe("MemoryExtractionScheduler lifecycle", () => {
         jest.useRealTimers();
     });
 
-    it("start() schedules a Type C refresh and dispose() cancels pending timers", () => {
+    it("start() does not schedule Type C while Vault Insights context is off", () => {
         const getMarkdownFiles = jest.fn(() => []);
         const app = {
             vault: {
@@ -250,6 +292,41 @@ describe("MemoryExtractionScheduler lifecycle", () => {
         });
 
         scheduler.start();
+        jest.advanceTimersByTime(48 * 60 * 60_000);
+
+        expect(getMarkdownFiles).not.toHaveBeenCalled();
+        scheduler.dispose();
+    });
+
+    it("start() schedules a Type C refresh when Vault Insights context is on and dispose() cancels pending timers", () => {
+        const getMarkdownFiles = jest.fn(() => []);
+        const app = {
+            vault: {
+                getMarkdownFiles,
+                adapter: {
+                    exists: jest.fn(async () => false),
+                    mkdir: jest.fn(async () => undefined),
+                    write: jest.fn(),
+                },
+            },
+            metadataCache: {
+                getFileCache: jest.fn(),
+                resolvedLinks: {},
+                unresolvedLinks: {},
+            },
+        };
+        const scheduler = new MemoryExtractionScheduler({
+            app: app as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(),
+                getTurns: jest.fn(),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true,
+            now: () => new Date("2026-06-16T08:00:00.000Z"),
+        });
+
+        scheduler.start();
         // startup refresh is scheduled at 15s delay
         jest.advanceTimersByTime(15_000);
         expect(getMarkdownFiles).toHaveBeenCalled();
@@ -260,6 +337,41 @@ describe("MemoryExtractionScheduler lifecycle", () => {
         // Advance well past the interval; no new calls should happen
         jest.advanceTimersByTime(48 * 60 * 60_000);
         expect(getMarkdownFiles.mock.calls.length).toBe(callCountAfterStart);
+    });
+
+    it("enabling Vault Insights context schedules one Type C refresh live", () => {
+        const getMarkdownFiles = jest.fn(() => []);
+        const app = {
+            vault: {
+                getMarkdownFiles,
+                adapter: {
+                    exists: jest.fn(async () => false),
+                    mkdir: jest.fn(async () => undefined),
+                    write: jest.fn(),
+                },
+            },
+            metadataCache: {
+                getFileCache: jest.fn(),
+                resolvedLinks: {},
+                unresolvedLinks: {},
+            },
+        };
+        const scheduler = new MemoryExtractionScheduler({
+            app: app as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(),
+                getTurns: jest.fn(),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            now: () => new Date("2026-06-16T08:00:00.000Z"),
+        });
+
+        scheduler.start();
+        scheduler.setIncludeVaultInsightsInPrompt(true);
+        jest.advanceTimersByTime(0);
+
+        expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
+        scheduler.dispose();
     });
 
     it("dispose() can be called safely without prior start()", () => {

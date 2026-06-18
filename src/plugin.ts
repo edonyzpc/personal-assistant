@@ -675,13 +675,14 @@ export class PluginManager extends Plugin {
 
     private syncMemoryExtractionRuntime(): void {
         if (this.settings.memoryExtractionEnabled && this.chatHistoryManager) {
+            const includeVaultInsights = this.settings.memoryExtractionIncludeVaultInsights === true;
             if (!this.memoryExtractionScheduler) {
                 this.memoryExtractionScheduler = new MemoryExtractionScheduler({
                     app: this.app,
                     chatHistoryManager: this.chatHistoryManager,
                     userProfileStore: this.createUserProfileStore(),
                     log: (message, error) => this.log(message, error),
-                    includeVaultInsightsInPrompt: this.settings.memoryExtractionIncludeVaultInsights,
+                    includeVaultInsightsInPrompt: includeVaultInsights,
                     createModelForExtraction: async () => {
                         const model = await this.createChatModel(0, { maxTokens: 256 });
                         if (!model) return null;
@@ -711,6 +712,9 @@ export class PluginManager extends Plugin {
                     this.settings.memoryExtractionNoticeDismissed = true;
                     void this.saveSettings();
                 }
+                this.surfaceVaultInsightsInjectionNotice();
+            } else {
+                this.memoryExtractionScheduler.setIncludeVaultInsightsInPrompt(includeVaultInsights);
                 this.surfaceVaultInsightsInjectionNotice();
             }
         } else {
@@ -1301,7 +1305,11 @@ export class PluginManager extends Plugin {
     }
 
     getMemoryExtractionPromptContext(): MemoryExtractionPromptContext {
-        return this.memoryExtractionScheduler?.getPromptContext() ?? {};
+        if (!this.settings.memoryExtractionEnabled) return {};
+        const context = this.memoryExtractionScheduler?.getPromptContext() ?? {};
+        if (this.settings.memoryExtractionIncludeVaultInsights) return context;
+        const { userProfile } = context;
+        return userProfile ? { userProfile } : {};
     }
 
     scheduleMemoryExtractionAfterChatTurn(conversationId: string, turnCount: number): void {

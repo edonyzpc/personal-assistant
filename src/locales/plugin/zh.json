@@ -473,7 +473,10 @@
 
     "plugin.memoryExtraction.enabledNotice": "AI 记忆提取已启用。你的 AI 模型将在后台分析对话以学习你的偏好（会产生 API 费用）。可在设置中关闭此功能。",
     "plugin.memoryExtraction.settings.enabled.name": "AI 记忆提取",
-    "plugin.memoryExtraction.settings.enabled.desc": "使用你配置的 AI 模型自动从对话中提取用户偏好和知识库洞察，会产生 API 费用。偏好数据存储在本地。",
+    "plugin.memoryExtraction.settings.enabled.desc": "使用你配置的 AI 模型自动从对话中提取用户偏好，并准备知识库洞察。默认开启；可能产生 API 费用，生成的记忆存储在本地。",
+    "plugin.memoryExtraction.settings.enableConfirm.title": "启用 AI 记忆提取？",
+    "plugin.memoryExtraction.settings.enableConfirm.message": "对话内容可能会发送给你配置的 AI 服务商。可能会使用 AI 额度或 API 调用。提取结果存储在本地，并用于后续 AI 上下文。",
+    "plugin.memoryExtraction.settings.enableConfirm.confirm": "启用提取",
     "plugin.memoryExtraction.settings.includeVaultInsights.name": "在 AI 上下文中包含知识库洞察",
     "plugin.memoryExtraction.settings.includeVaultInsights.desc": "将知识库结构概览（文件夹、标签、链接拓扑）分享给 AI，让回答更贴合你的知识库。",
     "plugin.memoryExtraction.vaultInsightsInjection.onboardingNotice": "PA 现在会将你的知识库结构概览分享给 AI 以改善回答质量。这会为每次对话增加少量 prompt 内容。你可以在设置 > 记忆中关闭此功能。",

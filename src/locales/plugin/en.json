@@ -473,7 +473,10 @@
 
     "plugin.memoryExtraction.enabledNotice": "AI Memory Extraction is enabled. Your AI model analyzes conversations in the background to learn your preferences (API costs apply). You can disable this in Settings.",
     "plugin.memoryExtraction.settings.enabled.name": "AI Memory Extraction",
-    "plugin.memoryExtraction.settings.enabled.desc": "Automatically extract user preferences and vault insights from conversations using your configured AI model, which incurs API costs. Preferences are stored locally.",
+    "plugin.memoryExtraction.settings.enabled.desc": "Automatically extract user preferences from conversations and prepare vault insights using your configured AI model. Enabled by default; API costs may apply and generated memory is stored locally.",
+    "plugin.memoryExtraction.settings.enableConfirm.title": "Enable AI Memory Extraction?",
+    "plugin.memoryExtraction.settings.enableConfirm.message": "Conversation content may be sent to your configured AI provider. AI credits or API calls may be used. Extracted memories are stored locally and used in future AI context.",
+    "plugin.memoryExtraction.settings.enableConfirm.confirm": "Enable extraction",
     "plugin.memoryExtraction.settings.includeVaultInsights.name": "Include Vault Insights in AI Context",
     "plugin.memoryExtraction.settings.includeVaultInsights.desc": "Share vault structure overview (folders, tags, link topology) with the AI to improve context-aware answers.",
     "plugin.memoryExtraction.vaultInsightsInjection.onboardingNotice": "PA now shares your vault structure overview with the AI to improve answers. This adds a small amount to each prompt. You can disable this in Settings > Memory.",

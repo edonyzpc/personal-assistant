@@ -1652,6 +1652,70 @@ describe('Phase 4 P1 UX', () => {
             expect(names).toContain('Advanced memory controls');
         });
 
+        it('keeps AI Memory Extraction and Vault Insights context on by default', () => {
+            expect(DEFAULT_SETTINGS.memoryExtractionEnabled).toBe(true);
+            expect(DEFAULT_SETTINGS.memoryExtractionIncludeVaultInsights).toBe(true);
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const records = getMockSettingRecords();
+            expect(records.find((r) => r.name === 'AI Memory Extraction')?.toggles[0])
+                .toMatchObject({ value: true });
+            expect(records.find((r) => r.name === 'Include Vault Insights in AI Context')?.toggles[0])
+                .toMatchObject({ value: true });
+        });
+
+        it('requires explicit confirmation before enabling AI Memory Extraction', async () => {
+            (confirmUserAction as jest.Mock).mockClear();
+            const plugin = makePlugin({ memoryExtractionEnabled: false });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const toggle = getMockSettingRecords()
+                .find((r) => r.name === 'AI Memory Extraction')?.toggles[0];
+            expect(toggle?.onChange).toBeDefined();
+
+            setMockConfirmDecision(false);
+            await toggle!.onChange!(true);
+            expect(confirmUserAction).toHaveBeenCalledTimes(1);
+            expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+            expect(toggle!.value).toBe(false);
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
+
+            (confirmUserAction as jest.Mock).mockClear();
+            setMockConfirmDecision(true);
+            await toggle!.onChange!(true);
+
+            expect(plugin.settings.memoryExtractionEnabled).toBe(true);
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+            const options = (confirmUserAction as jest.Mock).mock.calls[0]?.[1] as { message?: string };
+            expect(options?.message).toContain('Conversation content');
+            expect(options?.message).toContain('configured AI provider');
+            expect(options?.message).toContain('AI credits or API calls');
+            expect(options?.message).toContain('stored locally');
+            expect(options?.message).toContain('future AI context');
+            expect(getMockSettingRecords().map((r) => r.name)).toContain('Include Vault Insights in AI Context');
+        });
+
+        it('does not ask for confirmation when disabling AI Memory Extraction', async () => {
+            (confirmUserAction as jest.Mock).mockClear();
+            const plugin = makePlugin({ memoryExtractionEnabled: true });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const toggle = getMockSettingRecords()
+                .find((r) => r.name === 'AI Memory Extraction')?.toggles[0];
+            await toggle!.onChange!(false);
+
+            expect(confirmUserAction).not.toHaveBeenCalled();
+            expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+            expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+        });
+
         it('toggling memoryEnabled rebuilds sub-settings without calling display()', async () => {
             const plugin = makePlugin({ memoryEnabled: false });
             const tab = new SettingTab(makeMockApp() as never, plugin as never);

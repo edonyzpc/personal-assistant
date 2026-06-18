@@ -41,7 +41,7 @@ export class MemoryExtractionScheduler {
     private readonly typeAIntervalTurns: number;
     private readonly typeCRefreshIntervalMs: number;
     private readonly typeCWritePath: string | null;
-    private readonly includeVaultInsightsInPrompt: boolean;
+    private includeVaultInsightsInPrompt: boolean;
     private readonly userProfileStore: UserProfileStore;
     private readonly typeAExtractor = new TypeAUserProfileExtractor();
     private readonly typeCAnalyzer: TypeCVaultMetacognitionAnalyzer;
@@ -83,10 +83,10 @@ export class MemoryExtractionScheduler {
         void this.ensureUserProfileStoreReady().catch((error) => {
             this.log("Type A user profile store failed to initialize", error);
         });
-        this.typeCInterval = setPlatformInterval(() => {
-            this.scheduleTypeCRefresh("interval");
-        }, this.typeCRefreshIntervalMs);
-        this.scheduleTypeCRefresh("startup", 15_000);
+        if (this.includeVaultInsightsInPrompt) {
+            this.startTypeCRefreshLoop();
+            this.scheduleTypeCRefresh("startup", 15_000);
+        }
     }
 
     dispose(): void {
@@ -111,6 +111,20 @@ export class MemoryExtractionScheduler {
         };
     }
 
+    setIncludeVaultInsightsInPrompt(include: boolean): void {
+        if (this.disposed) return;
+        if (this.includeVaultInsightsInPrompt === include) return;
+        this.includeVaultInsightsInPrompt = include;
+        if (include) {
+            this.startTypeCRefreshLoop();
+            this.scheduleTypeCRefresh("settings");
+        } else {
+            this.stopTypeCRefreshLoop();
+            this.vaultSnapshot = null;
+            this.vaultInsightsMarkdown = "";
+        }
+    }
+
     scheduleTypeAExtraction(conversationId: string, turnCount: number, delayMs = 2_000): void {
         if (this.disposed) return;
         if (turnCount % this.typeAIntervalTurns !== 0 && this.lastTypeAConversationId === conversationId) return;
@@ -126,6 +140,7 @@ export class MemoryExtractionScheduler {
 
     handleVaultEvent(file: TAbstractFile | null, reason: string): void {
         if (this.disposed) return;
+        if (!this.includeVaultInsightsInPrompt) return;
         if (!(file instanceof TFile)) return;
         if (!file.path.endsWith(".md")) return;
         if (this.typeCWritePath && normalizePath(file.path) === this.typeCWritePath) return;
@@ -134,6 +149,7 @@ export class MemoryExtractionScheduler {
 
     scheduleTypeCRefresh(reason: string, delayMs = 0): void {
         if (this.disposed) return;
+        if (!this.includeVaultInsightsInPrompt) return;
         if (this.typeCTimer) clearPlatformTimeout(this.typeCTimer);
         this.typeCTimer = setPlatformTimeout(() => {
             this.typeCTimer = null;
@@ -201,6 +217,7 @@ export class MemoryExtractionScheduler {
 
     async runTypeCRefresh(_reason: string): Promise<VaultMetacognitionSnapshot | null> {
         if (this.disposed) return null;
+        if (!this.includeVaultInsightsInPrompt) return null;
         if (this.typeCRefreshInFlight) return this.typeCRefreshInFlight;
         this.typeCRefreshInFlight = this.runTypeCRefreshUnlocked()
             .finally(() => {
@@ -213,13 +230,28 @@ export class MemoryExtractionScheduler {
         if (this.disposed) return null;
         const snapshot = await this.typeCAnalyzer.analyze(this.now());
         const markdown = this.typeCAnalyzer.renderMarkdown(snapshot);
+        if (this.disposed || !this.includeVaultInsightsInPrompt) return null;
         if (this.typeCWritePath) {
             await writeVaultInsightsIfChanged(this.app, this.typeCWritePath, markdown);
-            if (this.disposed) return null;
+            if (this.disposed || !this.includeVaultInsightsInPrompt) return null;
         }
         this.vaultSnapshot = snapshot;
         this.vaultInsightsMarkdown = markdown;
         return snapshot;
+    }
+
+    private startTypeCRefreshLoop(): void {
+        if (this.typeCInterval) return;
+        this.typeCInterval = setPlatformInterval(() => {
+            this.scheduleTypeCRefresh("interval");
+        }, this.typeCRefreshIntervalMs);
+    }
+
+    private stopTypeCRefreshLoop(): void {
+        if (this.typeCTimer) clearPlatformTimeout(this.typeCTimer);
+        if (this.typeCInterval) clearPlatformInterval(this.typeCInterval);
+        this.typeCTimer = null;
+        this.typeCInterval = null;
     }
 
     private async ensureUserProfileStoreReady(): Promise<void> {

@@ -164,7 +164,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     numFeaturedImages: 2,
     memoryExtractionEnabled: true,
     memoryExtractionNoticeDismissed: false,
-    memoryExtractionIncludeVaultInsights: false,
+    memoryExtractionIncludeVaultInsights: true,
     // Generic default — the prior list ("8.template", "9.src", "a.subjects",
     // "b.notion") was the original developer's vault layout and made no sense
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
@@ -1883,8 +1883,20 @@ export class SettingTab extends PluginSettingTab {
                 toggle
                     .setValue(plugin.settings.memoryExtractionEnabled)
                     .onChange(async (value) => {
+                        if (value && !plugin.settings.memoryExtractionEnabled) {
+                            const confirmed = await confirmUserAction(this.app, {
+                                title: this.t("plugin.memoryExtraction.settings.enableConfirm.title"),
+                                message: this.t("plugin.memoryExtraction.settings.enableConfirm.message"),
+                                confirmText: this.t("plugin.memoryExtraction.settings.enableConfirm.confirm"),
+                            });
+                            if (!confirmed) {
+                                toggle.setValue(false);
+                                return;
+                            }
+                        }
                         plugin.settings.memoryExtractionEnabled = value;
                         await plugin.saveSettings();
+                        this.rebuildMemorySubSettings();
                     });
             });
 
