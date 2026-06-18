@@ -1,10 +1,19 @@
 /* Copyright 2023 edonyzpc */
 
-import { describe, expect, it, beforeEach, jest } from "@jest/globals";
+import { describe, expect, it, beforeEach, afterEach, jest } from "@jest/globals";
 
 import { ProactiveHints } from "../src/pagelet/hints/ProactiveHints";
 
 describe("ProactiveHints", () => {
+    function setLocalClock(hour: number, minute = 0) {
+        jest.useFakeTimers();
+        jest.setSystemTime(new Date(2026, 5, 18, hour, minute, 0, 0));
+    }
+
+    afterEach(() => {
+        jest.useRealTimers();
+    });
+
     /** Helper: build a default-enabled config with no quiet hours and generous cooldown. */
     function makeHints(overrides: Record<string, unknown> = {}) {
         return new ProactiveHints({
@@ -61,8 +70,7 @@ describe("ProactiveHints", () => {
         });
 
         it("returns false during quiet hours", () => {
-            // Set quiet hours to cover the current time.
-            // We use a 00:00-23:59 range to guarantee the test clock falls inside.
+            setLocalClock(12);
             const h = makeHints({
                 enabled: true,
                 cooldownMinutes: 0,
@@ -100,34 +108,27 @@ describe("ProactiveHints", () => {
 
     describe("quiet hours", () => {
         it("same-day range (09:00-17:00): blocks during, allows outside", () => {
-            const h = makeHints({
+            setLocalClock(12);
+            expect(makeHints({
                 quietHours: { enabled: true, start: "09:00", end: "17:00" },
-            });
-            const now = new Date();
-            const currentMinutes = now.getHours() * 60 + now.getMinutes();
-            const inRange = currentMinutes >= 540 && currentMinutes < 1020;
+            }).onInsightsReady()).toBe(false);
 
-            if (inRange) {
-                expect(h.onInsightsReady()).toBe(false);
-            } else {
-                expect(h.onInsightsReady()).toBe(true);
-            }
+            setLocalClock(18);
+            expect(makeHints({
+                quietHours: { enabled: true, start: "09:00", end: "17:00" },
+            }).onInsightsReady()).toBe(true);
         });
 
         it("midnight-wrap (22:00-06:00): blocks during, allows outside", () => {
-            const h = makeHints({
+            setLocalClock(23);
+            expect(makeHints({
                 quietHours: { enabled: true, start: "22:00", end: "06:00" },
-            });
-            const now = new Date();
-            const currentMinutes = now.getHours() * 60 + now.getMinutes();
-            // Wrapping: >= 22:00 (1320) OR < 06:00 (360)
-            const inRange = currentMinutes >= 1320 || currentMinutes < 360;
+            }).onInsightsReady()).toBe(false);
 
-            if (inRange) {
-                expect(h.onInsightsReady()).toBe(false);
-            } else {
-                expect(h.onInsightsReady()).toBe(true);
-            }
+            setLocalClock(12);
+            expect(makeHints({
+                quietHours: { enabled: true, start: "22:00", end: "06:00" },
+            }).onInsightsReady()).toBe(true);
         });
 
         it("disabled quiet hours: never blocks", () => {

@@ -127,40 +127,62 @@ const createOperationSummary = (overrides: Record<string, unknown> = {}) => ({
     ...overrides,
 });
 
-const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unknown> = {}) => ({
-    app: {},
-    settings: {
-        memoryEnabled: true,
-        memoryAutoCheckBeforeChat: true,
-        memoryApprovalPolicy: 'always',
-        ...settings,
-    },
-    vss: {
-        getMemoryReadiness: jest.fn(async () => plan),
-        canAutoMaintain: jest.fn(async () => true),
-        hasDirtyChanges: jest.fn(() => false),
-        hasPendingVerification: jest.fn(() => false),
-        verifyPendingChanges: jest.fn(async (_options?: unknown) => ({
-            ...createOperationSummary(),
-            markedDirty: 0,
-            hasMore: false,
-            bytesReadEstimate: 0,
-        })),
-        flush: jest.fn(async (_options?: unknown) => createOperationSummary()),
-        reconcileLocalFiles: jest.fn(async (_options?: unknown) => ({
-            ...createOperationSummary(),
-            scanned: 0,
-            markedDirty: 0,
-            verified: 0,
-            hasMore: false,
-        })),
-        refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
-        rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
-    },
-    saveSettings: jest.fn(async () => undefined),
-    updateMemoryStatusBar: jest.fn(async () => undefined),
-    log: jest.fn(),
-});
+const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unknown> = {}) => {
+    const plugin = {
+        app: {},
+        pluginId: 'personal-assistant',
+        settings: {
+            memoryEnabled: true,
+            memoryAutoCheckBeforeChat: true,
+            memoryApprovalPolicy: 'always',
+            vssCacheExcludePath: [],
+            debug: false,
+            aiProvider: 'openai',
+            chatModelName: 'gpt-4o-mini',
+            embeddingModelName: 'text-embedding-3-small',
+            baseURL: 'https://api.openai.com/v1',
+            statisticsVaultId: 'test-vault',
+            ...settings,
+        },
+        vss: {
+            getMemoryReadiness: jest.fn(async () => plan),
+            canAutoMaintain: jest.fn(async () => true),
+            hasDirtyChanges: jest.fn(() => false),
+            hasPendingVerification: jest.fn(() => false),
+            verifyPendingChanges: jest.fn(async (_options?: unknown) => ({
+                ...createOperationSummary(),
+                markedDirty: 0,
+                hasMore: false,
+                bytesReadEstimate: 0,
+            })),
+            flush: jest.fn(async (_options?: unknown) => createOperationSummary()),
+            reconcileLocalFiles: jest.fn(async (_options?: unknown) => ({
+                ...createOperationSummary(),
+                scanned: 0,
+                markedDirty: 0,
+                verified: 0,
+                hasMore: false,
+            })),
+            refreshLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
+            rebuildLocalIndex: jest.fn(async (_options?: { silent?: boolean }) => createOperationSummary()),
+        },
+        saveSettings: jest.fn(async () => undefined),
+        notifyStatusChanged: jest.fn(),
+        log: jest.fn(),
+        registerEvent: jest.fn(),
+        getVSSFiles: jest.fn(() => []),
+        getAPIToken: jest.fn(async () => 'test-token'),
+        updateMemorySetting: jest.fn((key: string, value: unknown) => {
+            (plugin.settings as Record<string, unknown>)[key] = value;
+        }),
+    };
+    return plugin;
+};
+
+const createManager = (plugin: ReturnType<typeof createPlugin>) => new MemoryManager(
+    plugin as unknown as ConstructorParameters<typeof MemoryManager>[0],
+    plugin.vss as unknown as ConstructorParameters<typeof MemoryManager>[1],
+);
 
 beforeEach(() => {
     mockSettingGroups.length = 0;
@@ -176,7 +198,7 @@ describe('MemoryManager chat decisions', () => {
 
     it('uses memory immediately when memory is ready', async () => {
         const plugin = createPlugin(createPlan());
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
 
         const decision = await manager.ensureReadyForChat('question');
 
@@ -196,7 +218,7 @@ describe('MemoryManager chat decisions', () => {
             hasMore: false,
             bytesReadEstimate: 128,
         });
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
 
         const decision = await manager.ensureReadyForChat('question');
 
@@ -206,7 +228,7 @@ describe('MemoryManager chat decisions', () => {
             fastPath: true,
         }));
         expect(plugin.vss.flush).not.toHaveBeenCalled();
-        expect(plugin.updateMemoryStatusBar).toHaveBeenCalled();
+        expect(plugin.notifyStatusChanged).toHaveBeenCalled();
     });
 
     it('runs a bounded verification pass before chat on mobile too', async () => {
@@ -214,7 +236,7 @@ describe('MemoryManager chat decisions', () => {
         obsidianMock.Platform.isMobile = true;
         try {
             const plugin = createPlugin(createPlan({ verificationPending: 1 }));
-            const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+            const manager = createManager(plugin);
 
             const decision = await manager.ensureReadyForChat('question');
 
@@ -249,7 +271,7 @@ describe('MemoryManager chat decisions', () => {
             hasMore: false,
             bytesReadEstimate: 128,
         });
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
         (manager as any).requestApproval = jest.fn(async () => 'answer-now'); // eslint-disable-line @typescript-eslint/no-explicit-any
 
         const decision = await manager.ensureReadyForChat('question');
@@ -266,7 +288,7 @@ describe('MemoryManager chat decisions', () => {
 
     it('answers normally when memory is disabled', async () => {
         const plugin = createPlugin(createPlan(), { memoryEnabled: false });
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
 
         const decision = await manager.ensureReadyForChat('question');
 
@@ -280,7 +302,7 @@ describe('MemoryManager chat decisions', () => {
             action: 'none',
             requiresApproval: false,
         }));
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
 
         const decision = await manager.ensureReadyForChat('question');
 
@@ -295,7 +317,7 @@ describe('MemoryManager chat decisions', () => {
 
     it('does not check readiness when pre-chat memory checks are disabled', async () => {
         const plugin = createPlugin(createPlan(), { memoryAutoCheckBeforeChat: false });
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
 
         const decision = await manager.ensureReadyForChat('question');
 
@@ -311,7 +333,7 @@ describe('MemoryManager chat decisions', () => {
             notesLikelyToUpdate: 2,
             requiresApproval: true,
         }), { memoryApprovalPolicy: 'auto-refresh-after-prepare' });
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
         (manager as any).requestApproval = jest.fn(); // eslint-disable-line @typescript-eslint/no-explicit-any
         manager.startAutoMaintenance();
 
@@ -331,7 +353,7 @@ describe('MemoryManager chat decisions', () => {
                 reason: 'auto-refresh',
             }));
             expect(plugin.vss.reconcileLocalFiles).toHaveBeenCalled();
-            expect(plugin.updateMemoryStatusBar).toHaveBeenCalled();
+            expect(plugin.notifyStatusChanged).toHaveBeenCalled();
         } finally {
             manager.stopAutoMaintenance();
             jest.useRealTimers();
@@ -347,7 +369,7 @@ describe('MemoryManager chat decisions', () => {
             requiresApproval: true,
         }), { memoryApprovalPolicy: 'auto-refresh-after-prepare' });
         plugin.vss.canAutoMaintain.mockResolvedValue(false);
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
         manager.startAutoMaintenance();
 
         try {
@@ -382,7 +404,7 @@ describe('MemoryManager chat decisions', () => {
         });
         plugin.vss.hasDirtyChanges.mockReturnValue(true);
         plugin.vss.hasPendingVerification.mockReturnValue(true);
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
         manager.startAutoMaintenance();
         const flushSpy = jest.spyOn(manager, 'scheduleAutoFlush');
         const verifySpy = jest.spyOn(manager, 'scheduleVerify');
@@ -390,7 +412,7 @@ describe('MemoryManager chat decisions', () => {
         try {
             await (manager as any).runBackgroundTask('verify', 'unit'); // eslint-disable-line @typescript-eslint/no-explicit-any
 
-            expect(plugin.updateMemoryStatusBar).toHaveBeenCalled();
+            expect(plugin.notifyStatusChanged).toHaveBeenCalled();
             expect(flushSpy).toHaveBeenCalledWith('verify', 0);
             expect(verifySpy).toHaveBeenCalledWith('retry:unit', expect.any(Number));
         } finally {
@@ -408,7 +430,7 @@ describe('MemoryManager command decisions', () => {
 
     it('keeps manual update on an approval-gated refresh path', async () => {
         const plugin = createPlugin(createPlan({ notesToCheck: 3 }));
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
         let approvalPlan: MemoryMaintenancePlan | undefined;
         let approvalContext: string | undefined;
         let preparedPlan: MemoryMaintenancePlan | undefined;
@@ -444,7 +466,7 @@ describe('MemoryManager command decisions', () => {
             action: 'rebuild',
             requiresApproval: true,
         }));
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
         (manager as any).requestApproval = jest.fn(async () => 'use-memory'); // eslint-disable-line @typescript-eslint/no-explicit-any
         (manager as any).prepareMemory = jest.fn(async () => ({ // eslint-disable-line @typescript-eslint/no-explicit-any
             ok: false,
@@ -498,7 +520,7 @@ describe('MemoryManager command decisions', () => {
                 updated: 3,
             });
         });
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
 
         try {
             await manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
@@ -542,7 +564,7 @@ describe('MemoryManager command decisions', () => {
         plugin.vss.rebuildLocalIndex.mockImplementation(async () => new Promise((resolve) => {
             resolveRebuild = resolve;
         }));
-        const manager = new MemoryManager(plugin as unknown as ConstructorParameters<typeof MemoryManager>[0]);
+        const manager = createManager(plugin);
 
         try {
             const preparing = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
@@ -554,7 +576,7 @@ describe('MemoryManager command decisions', () => {
             const result = await preparing;
 
             expect(result.ok).toBe(false);
-            expect(plugin.updateMemoryStatusBar).not.toHaveBeenCalled();
+            expect(plugin.notifyStatusChanged).not.toHaveBeenCalled();
             expect(mockNoticeMessages).not.toContain('Memory is ready. Your notes were not changed.');
         } finally {
             if (originalDocument) {

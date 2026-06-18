@@ -2,10 +2,10 @@ import { EditorState, Line, RangeSetBuilder, StateEffect, StateField, Transactio
 import { ViewUpdate, EditorView, ViewPlugin, Decoration, WidgetType } from "@codemirror/view";
 import type { DecorationSet, PluginValue } from "@codemirror/view";
 import { syntaxTree } from "@codemirror/language";
-import type PluginManager from "../main";
+import type { EditorPluginHost } from "./EditorPluginHost";
 import { cleanCommentsPreservingNewlines, getWordCount } from "./stats-utils";
 
-export const pluginField = StateField.define<PluginManager | null>({
+export const pluginField = StateField.define<EditorPluginHost | null>({
     create(state) {
         return null;
     },
@@ -134,7 +134,7 @@ class SectionWordCountEditorPlugin implements PluginValue {
         this.decorations = this.mkDeco(view);
     }
 
-    calculateLineCounts(state: EditorState, plugin: PluginManager) {
+    calculateLineCounts(state: EditorState, plugin: EditorPluginHost) {
         const stripComments = !plugin.settings.countComments;
         let docStr = state.doc.toString();
 

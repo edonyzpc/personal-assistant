@@ -90,7 +90,7 @@ function makeInput(overrides: Partial<PageletWriteReviewOutputInput> = {}): Page
 
 function makeContext(extras: Partial<AgentCapabilityContext> = {}): AgentCapabilityContext {
     return {
-        plugin: undefined as unknown as AgentCapabilityContext["plugin"],
+        host: undefined as unknown as AgentCapabilityContext["host"],
         turnId: "turn-cancel-abort",
         ...extras,
     };

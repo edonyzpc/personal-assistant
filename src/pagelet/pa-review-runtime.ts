@@ -60,6 +60,11 @@ import {
     type FsProbe,
     type PreviewRenderer,
 } from "../ai-services/write-action-framework";
+import {
+    MOCK_LICENSE_TIER,
+    normalizeAgentCapabilityTier,
+    type AgentCapabilityTier,
+} from "../ai-services/capability-types";
 import type { PageletLocale } from "../locales/pagelet";
 import type { PageletSettings } from "../settings/pagelet";
 
@@ -128,6 +133,7 @@ export interface PaReviewRuntime {
  */
 export interface PaReviewPaAgentOptionsBundle {
     policyOptions: {
+        licenseTier: AgentCapabilityTier;
         runKind: "review";
         allowWrite: true;
         allowedActionPermissions: ["local-filesystem-write"];
@@ -158,6 +164,7 @@ export interface CreatePaReviewRuntimeOptions {
     app: App;
     getPageletSettings: () => PageletSettings;
     getLocale?: () => PageletLocale;
+    licenseTier?: AgentCapabilityTier;
     /**
      * Optional override for the Obsidian-backed preview renderer. Defaults to
      * {@link createDefaultObsidianPreviewRenderer}(`app`). Tests substitute a
@@ -262,6 +269,7 @@ export function createPaReviewRuntime(
         debugObserver,
     });
 
+    const licenseTier = normalizeAgentCapabilityTier(options.licenseTier, MOCK_LICENSE_TIER);
     const runtime: PaReviewRuntime = {
         toolProvider,
         actionExecutor,
@@ -271,6 +279,7 @@ export function createPaReviewRuntime(
         buildPaAgentRuntimeOptions(): PaReviewPaAgentOptionsBundle {
             return {
                 policyOptions: {
+                    licenseTier,
                     runKind: "review",
                     allowWrite: true,
                     allowedActionPermissions: ["local-filesystem-write"],

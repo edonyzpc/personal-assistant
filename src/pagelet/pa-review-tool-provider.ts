@@ -525,6 +525,7 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
         permission: "local-filesystem-write",
         sourceBoundary: "vault",
         cost: "free",
+        tier: "paid",
         platform: "both",
         outputBudgetChars: 0,
         timeoutMs: 30_000,

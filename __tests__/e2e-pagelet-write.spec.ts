@@ -119,7 +119,7 @@ function makeContext(): AgentCapabilityContext {
     // the write path (they only consume `turnId` + the optional `signal`),
     // so a minimal stub avoids constructing a fake PluginManager.
     return {
-        plugin: undefined as unknown as AgentCapabilityContext["plugin"],
+        host: undefined as unknown as AgentCapabilityContext["host"],
         turnId: "turn-e2e",
     };
 }

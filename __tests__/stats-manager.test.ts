@@ -1,7 +1,7 @@
 import { describe, expect, it, jest } from "@jest/globals";
 import type { App, Vault } from "obsidian";
-import type PluginManager from "../src/main";
 import StatsManager, { combineActivityCounts, getStatsSnapshotRefreshDelayMs, getStatsWriteDelayMs } from "../src/stats/stats-manager";
+import type { StatsHost } from "../src/stats/StatsHost";
 import {
     createStatsLocalStore,
     MemoryStatsLocalStore,
@@ -118,9 +118,11 @@ function createManagerHarness(
     } as unknown as App;
     const plugin = {
         settings: {
+            debug: false,
             statsPath: ".obsidian/stats.json",
             statisticsVaultId: "vault-id",
             statisticsSyncEnabled: false,
+            countComments: false,
             ...options.settings,
         },
         registerEvent: jest.fn(),
@@ -128,7 +130,7 @@ function createManagerHarness(
     };
 
     return {
-        manager: new StatsManager(app, plugin as unknown as PluginManager),
+        manager: new StatsManager({ app, ...plugin } as unknown as StatsHost),
         plugin,
     };
 }
@@ -478,14 +480,16 @@ describe("StatsManager incremental snapshot", () => {
         } as unknown as App;
         const plugin = {
             settings: {
+                debug: false,
                 statsPath: ".obsidian/stats.json",
                 statisticsVaultId: "vault-id",
                 statisticsSyncEnabled: false,
+                countComments: false,
             },
             registerEvent: jest.fn(),
             log: jest.fn(),
         };
-        const manager = new StatsManager(app, plugin as unknown as PluginManager);
+        const manager = new StatsManager({ app, ...plugin } as unknown as StatsHost);
 
         const triggerVaultEvent = async (name: string, ...args: unknown[]) => {
             for (const handler of handlers.get(name) ?? []) {
@@ -760,11 +764,17 @@ describe("StatsManager incremental snapshot", () => {
         } as unknown as Vault;
         const app = { vault, workspace: { on: jest.fn(() => ({})) } } as unknown as App;
         const plugin = {
-            settings: { statsPath: ".obsidian/stats.json", statisticsVaultId: "vault-id", statisticsSyncEnabled: false },
+            settings: {
+                debug: false,
+                statsPath: ".obsidian/stats.json",
+                statisticsVaultId: "vault-id",
+                statisticsSyncEnabled: false,
+                countComments: false,
+            },
             registerEvent: jest.fn(),
             log: jest.fn(),
         };
-        const manager = new StatsManager(app, plugin as unknown as PluginManager);
+        const manager = new StatsManager({ app, ...plugin } as unknown as StatsHost);
 
         await withSilencedConsole(async () => {
             await manager.recalcTotals();

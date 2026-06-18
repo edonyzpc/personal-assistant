@@ -93,7 +93,7 @@ function makeInput(overrides: Partial<PageletWriteReviewOutputInput> = {}): Page
 
 function makeContext(): AgentCapabilityContext {
     return {
-        plugin: undefined as unknown as AgentCapabilityContext["plugin"],
+        host: undefined as unknown as AgentCapabilityContext["host"],
         turnId: "turn-no-loop",
     };
 }

@@ -1,8 +1,8 @@
 /* Copyright 2023 edonyzpc */
 
-import { Modal, Notice, Platform, Setting } from "obsidian";
-import type { PluginManager } from "./plugin";
-import type { VSSOperationSummary, VSSProgressEvent } from "./vss";
+import { Modal, Notice, Platform, Setting, type App } from "obsidian";
+import type { MemoryHost } from "./memory";
+import type { VSS, VSSOperationSummary, VSSProgressEvent } from "./vss";
 import { getPluginUiLanguage, pluginT, type PluginLocale } from "./locales/plugin";
 import {
     clearPlatformInterval,
@@ -161,7 +161,8 @@ function memoryT(key: string, params?: Readonly<Record<string, string | number>>
 }
 
 export class MemoryManager {
-    private readonly plugin: PluginManager;
+    private readonly host: MemoryHost;
+    private readonly vss: VSS;
     private lastAnswerNowAt = 0;
     private started = false;
     private autoFlushTimer: PlatformTimeoutHandle | null = null;
@@ -174,12 +175,13 @@ export class MemoryManager {
     private lifecycleVersion = 0;
     private shuttingDown = false;
 
-    constructor(plugin: PluginManager) {
-        this.plugin = plugin;
+    constructor(host: MemoryHost, vss: VSS) {
+        this.host = host;
+        this.vss = vss;
     }
 
     async getMaintenancePlan(): Promise<MemoryMaintenancePlan> {
-        return this.plugin.vss.getMemoryReadiness();
+        return this.vss.getMemoryReadiness();
     }
 
     startAutoMaintenance(): void {
@@ -273,11 +275,11 @@ export class MemoryManager {
 
     async ensureReadyForChat(_prompt?: string): Promise<MemoryDecisionResult> {
         const lifecycleToken = this.lifecycleVersion;
-        if (!this.plugin.settings.memoryEnabled) {
+        if (!this.host.settings.memoryEnabled) {
             return { decision: "answer-now" };
         }
 
-        if (!this.plugin.settings.memoryAutoCheckBeforeChat) {
+        if (!this.host.settings.memoryAutoCheckBeforeChat) {
             return { decision: "use-memory" };
         }
 
@@ -319,7 +321,7 @@ export class MemoryManager {
                     message: memoryT("plugin.memory.message.usingLastPrepared"),
                 };
             } else {
-                this.plugin.log("Memory changed, but background maintenance is waiting for durable local memory.");
+                this.host.log("Memory changed, but background maintenance is waiting for durable local memory.");
                 return {
                     decision: "use-memory",
                     message: memoryT("plugin.memory.message.backgroundUnavailable"),
@@ -372,8 +374,8 @@ export class MemoryManager {
         try {
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
             const summary = plan.action === "refresh"
-                ? await this.plugin.vss.refreshLocalIndex({ silent: true, onProgress: updateProgress })
-                : await this.plugin.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgress });
+                ? await this.vss.refreshLocalIndex({ silent: true, onProgress: updateProgress })
+                : await this.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgress });
             if (!this.isLifecycleCurrent(lifecycleToken)) {
                 return {
                     ok: false,
@@ -404,7 +406,7 @@ export class MemoryManager {
             await this.enableAutoRefreshAfterPrepare();
             if (this.isLifecycleCurrent(lifecycleToken)) {
                 this.scheduleReconcile("prepare", PREPARE_RECONCILE_DELAY_MS);
-                await this.plugin.updateMemoryStatusBar();
+                this.host.notifyStatusChanged();
             }
             return { ok: true, partial, summary };
         } catch (error) {
@@ -415,7 +417,7 @@ export class MemoryManager {
                     message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
                 };
             }
-            this.plugin.log("Could not prepare memory", error);
+            this.host.log("Could not prepare memory", error);
             return {
                 ok: false,
                 partial: false,
@@ -481,7 +483,7 @@ export class MemoryManager {
             if (!await this.canRunAutoMaintenance()) return;
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
             if (kind === "flush") {
-                const summary = await this.plugin.vss.flush({
+                const summary = await this.vss.flush({
                     silent: true,
                     reason: "auto-refresh",
                 });
@@ -490,23 +492,23 @@ export class MemoryManager {
                     throw new Error(`Background memory update skipped ${summary.failed} note(s).`);
                 }
                 if (!summary.aborted) {
-                    await this.plugin.updateMemoryStatusBar();
+                    this.host.notifyStatusChanged();
                 }
-                if (this.plugin.vss.hasDirtyChanges()) {
+                if (this.vss.hasDirtyChanges()) {
                     this.scheduleAutoFlush("dirty-pending", QUIET_AUTO_FLUSH_DELAY_MS);
                 }
             } else if (kind === "verify") {
-                const summary = await this.plugin.vss.verifyPendingChanges({ reason });
+                const summary = await this.vss.verifyPendingChanges({ reason });
                 if (!this.isLifecycleCurrent(lifecycleToken)) return;
                 if (!summary.aborted) {
-                    await this.plugin.updateMemoryStatusBar();
+                    this.host.notifyStatusChanged();
                 }
-                if (summary.dirtyConfirmed > 0 || this.plugin.vss.hasDirtyChanges()) {
+                if (summary.dirtyConfirmed > 0 || this.vss.hasDirtyChanges()) {
                     this.scheduleAutoFlush("verify", 0);
                 }
-                const hasPendingVerification = summary.hasMore || this.plugin.vss.hasPendingVerification();
+                const hasPendingVerification = summary.hasMore || this.vss.hasPendingVerification();
                 if (summary.failed > 0) {
-                    this.plugin.log("Background memory verification skipped some notes", { failed: summary.failed });
+                    this.host.log("Background memory verification skipped some notes", { failed: summary.failed });
                     const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
                     this.backgroundFailureCount++;
                     if (hasPendingVerification) {
@@ -518,7 +520,7 @@ export class MemoryManager {
                     this.scheduleVerify(reason);
                 }
             } else {
-                const summary = await this.plugin.vss.reconcileLocalFiles({
+                const summary = await this.vss.reconcileLocalFiles({
                     reason,
                     verifyHashLimit: reason === "periodic" ? 50 : 0,
                 });
@@ -527,22 +529,22 @@ export class MemoryManager {
                     throw new Error(`Background memory reconcile failed for ${summary.failed} note(s).`);
                 }
                 if (!summary.aborted) {
-                    await this.plugin.updateMemoryStatusBar();
+                    this.host.notifyStatusChanged();
                 }
                 if (summary.hasMore) {
                     this.scheduleReconcile(reason, 1_000);
                 }
-                if (summary.verificationQueued > 0 || this.plugin.vss.hasPendingVerification()) {
+                if (summary.verificationQueued > 0 || this.vss.hasPendingVerification()) {
                     this.scheduleVerify("reconcile");
                 }
-                if (summary.markedDirty > 0 || this.plugin.vss.hasDirtyChanges()) {
+                if (summary.markedDirty > 0 || this.vss.hasDirtyChanges()) {
                     this.scheduleAutoFlush("reconcile", 0);
                 }
             }
             this.backgroundFailureCount = 0;
         } catch (error) {
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
-            this.plugin.log("Background memory maintenance failed", { kind, reason, error });
+            this.host.log("Background memory maintenance failed", { kind, reason, error });
             const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
             this.backgroundFailureCount++;
             if (kind === "flush") {
@@ -562,20 +564,20 @@ export class MemoryManager {
 
     private async verifyPendingBeforeChat(lifecycleToken: number): Promise<void> {
         try {
-            const summary = await this.plugin.vss.verifyPendingChanges({
+            const summary = await this.vss.verifyPendingChanges({
                 reason: "chat",
                 fastPath: true,
             });
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
             if (!summary.aborted) {
-                await this.plugin.updateMemoryStatusBar();
+                this.host.notifyStatusChanged();
             }
-            if (summary.dirtyConfirmed > 0 || this.plugin.vss.hasDirtyChanges()) {
+            if (summary.dirtyConfirmed > 0 || this.vss.hasDirtyChanges()) {
                 this.scheduleAutoFlush("verify", 0);
             }
-            const hasPendingVerification = summary.hasMore || this.plugin.vss.hasPendingVerification();
+            const hasPendingVerification = summary.hasMore || this.vss.hasPendingVerification();
             if (summary.failed > 0) {
-                this.plugin.log("Chat memory verification skipped some notes", { failed: summary.failed });
+                this.host.log("Chat memory verification skipped some notes", { failed: summary.failed });
                 const delay = AUTO_FLUSH_RETRY_DELAYS_MS[Math.min(this.backgroundFailureCount, AUTO_FLUSH_RETRY_DELAYS_MS.length - 1)];
                 this.backgroundFailureCount++;
                 if (hasPendingVerification) {
@@ -586,14 +588,14 @@ export class MemoryManager {
             }
         } catch (error) {
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
-            this.plugin.log("Chat memory verification failed", error);
+            this.host.log("Chat memory verification failed", error);
             this.scheduleVerify("chat-retry");
         }
     }
 
     private isAutoPolicyEnabled(): boolean {
-        return this.plugin.settings.memoryEnabled
-            && this.plugin.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY;
+        return this.host.settings.memoryEnabled
+            && this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY;
     }
 
     private isLifecycleCurrent(token: number): boolean {
@@ -607,17 +609,17 @@ export class MemoryManager {
 
     private async canRunLocalMaintenance(): Promise<boolean> {
         try {
-            return await this.plugin.vss.canAutoMaintain();
+            return await this.vss.canAutoMaintain();
         } catch (error) {
-            this.plugin.log("Could not check background memory readiness", error);
+            this.host.log("Could not check background memory readiness", error);
             return false;
         }
     }
 
     private async enableAutoRefreshAfterPrepare(): Promise<void> {
-        if (this.plugin.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) return;
-        this.plugin.settings.memoryApprovalPolicy = AUTO_MEMORY_POLICY;
-        await (this.plugin as { saveSettings?: () => Promise<void> }).saveSettings?.();
+        if (this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY) return;
+        this.host.updateMemorySetting("memoryApprovalPolicy", AUTO_MEMORY_POLICY);
+        await this.host.saveSettings();
     }
 
     private getVerifyDelayMs(): number {
@@ -629,7 +631,7 @@ export class MemoryManager {
         context: MemoryApprovalContext = "chat",
     ): Promise<MemoryDecision> {
         return new Promise((resolve) => {
-            new MemoryApprovalModal(this.plugin, plan, resolve, context).open();
+            new MemoryApprovalModal(this.host.app, plan, resolve, context).open();
         });
     }
 
@@ -658,20 +660,18 @@ function getErrorCode(error: unknown): string | undefined {
 }
 
 export class MemoryApprovalModal extends Modal {
-    private readonly plugin: PluginManager;
     private readonly plan: MemoryMaintenancePlan;
     private readonly onDecision: (decision: MemoryDecision) => void;
     private readonly context: MemoryApprovalContext;
     private settled = false;
 
     constructor(
-        plugin: PluginManager,
+        app: App,
         plan: MemoryMaintenancePlan,
         onDecision: (decision: MemoryDecision) => void,
         context: MemoryApprovalContext = "chat",
     ) {
-        super(plugin.app);
-        this.plugin = plugin;
+        super(app);
         this.plan = plan;
         this.onDecision = onDecision;
         this.context = context;

@@ -6,6 +6,7 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { AIUtils, getDashScopeImageSynthesisUrl } from "./ai-services/ai-utils";
+import { ChatService } from "./ai-services/chat-service";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
@@ -23,6 +24,8 @@ import { STAT_PREVIEW_TYPE, Stat } from './stats-view'
 import StatsManager from './stats/stats-manager'
 import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from './stats/editor-plugin'
 import { normalizeStatisticsView } from './stats/stats-store';
+import type { EditorPluginHost } from './stats/EditorPluginHost';
+import type { StatsHost } from './stats/StatsHost';
 import { MemoryManager } from './memory-manager';
 import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
 import { confirmUserAction } from './confirm';
@@ -78,6 +81,9 @@ import {
     type MemoryExtractionPromptContext,
     type UserProfileStore,
 } from './ai-services/memory-extraction';
+import type { AiServiceHost } from './ai-services/AiServiceHost';
+import type { MemoryHost } from './memory';
+import type { ChatHost } from './chat/ChatHost';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -206,7 +212,7 @@ function writeVaultInsightsInjectionNoticeFlag(): void {
 
 export class PluginManager extends Plugin {
     settings!: PluginManagerSettings
-    private localGraph = new LocalGraph(this.app, this);
+    private _localGraph: LocalGraph | null = null;
     calloutManager: CalloutManager<true> | undefined;
     private updateDebouncer!: Debouncer<[file: TFile | null], void>;
     // Runtime-only state: tracks whether the "update-metadata" command has armed
@@ -221,8 +227,8 @@ export class PluginManager extends Plugin {
     private needsLegacyAiProviderMigration: boolean = false;
     private settingTab: SettingTab = new SettingTab(this.app, this);
     statsManager: StatsManager | undefined;
-    vss!: VSS;
-    memoryManager!: MemoryManager;
+    vss: VSS | null = null;
+    memoryManager: MemoryManager | null = null;
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
     private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
@@ -261,6 +267,15 @@ export class PluginManager extends Plugin {
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
     private hoverPopoverObserver: MutationObserver | null = null;
     private resizeDebounceTimer: TimeoutHandle | null = null;
+    private phase3Handle: PlatformTimeoutHandle | null = null;
+    private unloading = false;
+    private debouncedStatusBarUpdate = debounce(() => {
+        void this.updateMemoryStatusBar();
+    }, 300, true);
+
+    private get localGraph(): LocalGraph {
+        return (this._localGraph ??= new LocalGraph(this.app, this));
+    }
 
     private t(key: PluginMessageKey | string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
         return pluginT(key, getPluginUiLanguage(), params, fallback);
@@ -284,29 +299,6 @@ export class PluginManager extends Plugin {
             // register mobile debug log
             monkeyPatchConsole(this);
         }
-        // observe hover-editor popovers for local graph resize
-        this.hoverPopoverObserver = new MutationObserver((mutations) => {
-            for (const mutation of mutations) {
-                for (const node of Array.from(mutation.addedNodes)) {
-                    if (
-                        node.instanceOf(HTMLElement)
-                        && (node.matches('.popover.hover-popover.hover-editor')
-                            || node.querySelector('.popover.hover-popover.hover-editor'))
-                    ) {
-                        if (this.resizeDebounceTimer !== null) clearPluginTimeout(this.resizeDebounceTimer);
-                        this.resizeDebounceTimer = setPluginTimeout(() => {
-                            this.resizeDebounceTimer = null;
-                            if (!this.hoverPopoverObserver) return;
-                            this.localGraph.resize();
-                        }, 150);
-                        return;
-                    }
-                }
-            }
-        });
-        this.hoverPopoverObserver.observe(getPlatformDocument().body, {
-            childList: true,
-        });
 
         // This creates an icon in the left ribbon.
         addIcon(PA_CHAT_SUBAGENT_ICON, icons[PA_CHAT_SUBAGENT_ICON]);
@@ -336,14 +328,14 @@ export class PluginManager extends Plugin {
             });
         }
 
-        this.vss = this.initVss();
         this.chatHistoryStore = this.createChatHistoryStore();
         this.chatHistoryManager = new ChatHistoryManager({
             store: this.chatHistoryStore,
             log: (message, error) => this.log(message, error),
         });
-        void this.chatHistoryManager.initialize();
-        this.syncMemoryExtractionRuntime();
+        await this.initializeMemorySubsystem();
+        if (this.unloading) return;
+        this.initializeStatsSubsystem();
         this.registerView(
             RECORD_PREVIEW_TYPE,
             (leaf) => { return new RecordPreview(this.app, this, leaf); }
@@ -355,7 +347,7 @@ export class PluginManager extends Plugin {
         this.registerView(
             VIEW_TYPE_LLM,
             (leaf) => {
-                return new LLMView(leaf, this, this.vss);
+                return new LLMView(leaf, this.createChatHost());
             }
         );
         registerPageletDetailIcon();
@@ -365,14 +357,6 @@ export class PluginManager extends Plugin {
                 return new PageletDetailView(leaf, () => this.getPageletLocale());
             }
         );
-        this.memoryManager = new MemoryManager(this);
-        this.memoryManager.startAutoMaintenance();
-        await this.updateMemoryStatusBar();
-
-        this.app.workspace.onLayoutReady(() => {
-            void this.initializeCalloutManager();
-        });
-        this.statsManager = new StatsManager(this.app, this);
 
         this.addCommand({
             id: 'startup-recording',
@@ -533,7 +517,9 @@ export class PluginManager extends Plugin {
             id: "init-vss",
             name: this.t("plugin.command.prepareMemory"),
             checkCallback: (checking) => this.runMemoryCommand(checking, async () => {
-                await this.memoryManager.prepareFromCommand();
+                const memoryManager = this.memoryManager;
+                if (!memoryManager) return;
+                await memoryManager.prepareFromCommand();
             }),
         })
 
@@ -547,84 +533,9 @@ export class PluginManager extends Plugin {
             }
         });
 
-        // VSS lifecycle events mark local state dirty; approved memory can then maintain itself in the background.
-        this.registerEvent(
-            this.app.vault.on("create", async (file) => {
-                if (file instanceof TFile) {
-                    // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
-                    // Obsidian fires `create` (not `modify`) for a NEW file, so the
-                    // first Pagelet write of a review note arrives here. Without the
-                    // same guard applied to modify below, vss would index the
-                    // freshly-written review note, triggering a ripple.
-                    if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
-                        return;
-                    }
-                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-create");
-                    if (await this.vss.markDirtyIfEligible(file)) {
-                        this.memoryManager.scheduleAutoFlush("vault-create");
-                        await this.updateMemoryStatusBar();
-                    }
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.vault.on("modify", async (file) => {
-                if (file instanceof TFile) {
-                    // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
-                    // when the modify event was triggered by Pagelet's own
-                    // review-note write, skip downstream side-effects so the
-                    // listener does not re-invoke another review or mark a
-                    // freshly-written review note as dirty for VSS.
-                    if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
-                        return;
-                    }
-                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-modify");
-                    if (await this.vss.markDirtyIfEligible(file)) {
-                        this.memoryManager.scheduleAutoFlush("vault-modify");
-                        await this.updateMemoryStatusBar();
-                    }
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.vault.on("rename", async (file, oldPath) => {
-                this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-rename");
-                if (file instanceof TFile && await this.vss.handleRename(file, oldPath)) {
-                    this.memoryManager.scheduleAutoFlush("vault-rename");
-                    await this.updateMemoryStatusBar();
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.vault.on("delete", async (file) => {
-                if (file instanceof TFile) {
-                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-delete");
-                    await this.vss.handleDelete(file);
-                    await this.updateMemoryStatusBar();
-                }
-            })
-        );
-        this.registerEvent(
-            this.app.workspace.on("active-leaf-change", async () => {
-                await this.vss.handleActiveLeafChange();
-            })
-        );
-        this.registerEvent(
-            this.app.workspace.on("file-open", async (file) => {
-                if (await this.vss.handleFileOpen(file)) {
-                    const state = this.vss.getMaintenanceState();
-                    if (state.verificationPending > 0) {
-                        this.memoryManager.scheduleVerify("file-open");
-                    }
-                    if (state.dirtyCount > 0) {
-                        this.memoryManager.scheduleAutoFlush("file-open");
-                    }
-                    await this.updateMemoryStatusBar();
-                }
-            })
-        );
+        this.registerVaultEventDispatch();
         // Handle the Editor Plugins
-        this.registerEditorExtension([pluginField.init(() => this), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
+        this.registerEditorExtension([pluginField.init(() => this.createEditorPluginHost()), statusBarEditorPlugin, sectionWordCountEditorPlugin]);
 
         this.registerEvent(
             this.app.workspace.on("active-leaf-change", async (leaf) => {
@@ -642,12 +553,174 @@ export class PluginManager extends Plugin {
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(this.settingTab);
 
+        this.app.workspace.onLayoutReady(() => {
+            void this.onLayoutReady();
+        });
+    }
+
+    private async onLayoutReady(): Promise<void> {
+        if (this.unloading) return;
+
+        this.setupHoverPopoverObserver();
+        await this.initializeMemorySubsystem();
+        if (this.unloading) return;
+
+        void this.chatHistoryManager?.initialize();
+        this.initializeStatsSubsystem();
+        void this.initializeCalloutManager();
+        if (this.unloading) return;
+
+        this.setupSettingsWatcher();
+        if (!this.phase3Handle) {
+            this.phase3Handle = setPlatformTimeout(() => {
+                this.phase3Handle = null;
+                void this.onIdle();
+            }, 0);
+        }
+    }
+
+    private onIdle(): void {
+        if (this.unloading) return;
+        this.syncPageletRuntime();
+        this.syncMemoryExtractionRuntime();
+    }
+
+    private setupHoverPopoverObserver(): void {
+        if (!Platform.isDesktop || this.hoverPopoverObserver) return;
+
+        // Observe hover-editor popovers for local graph resize.
+        this.hoverPopoverObserver = new MutationObserver((mutations) => {
+            for (const mutation of mutations) {
+                for (const node of Array.from(mutation.addedNodes)) {
+                    if (
+                        node.instanceOf(HTMLElement)
+                        && (node.matches('.popover.hover-popover.hover-editor')
+                            || node.querySelector('.popover.hover-popover.hover-editor'))
+                    ) {
+                        if (this.resizeDebounceTimer !== null) clearPluginTimeout(this.resizeDebounceTimer);
+                        this.resizeDebounceTimer = setPluginTimeout(() => {
+                            this.resizeDebounceTimer = null;
+                            if (!this.hoverPopoverObserver) return;
+                            this.localGraph.resize();
+                        }, 150);
+                        return;
+                    }
+                }
+            }
+        });
+        this.hoverPopoverObserver.observe(getPlatformDocument().body, {
+            childList: true,
+        });
+    }
+
+    private async initializeMemorySubsystem(): Promise<void> {
+        if (this.vss && this.memoryManager) {
+            await this.updateMemoryStatusBar();
+            return;
+        }
+
+        const memoryHost = this.createMemoryHost();
+        if (!this.vss) {
+            this.vss = this.initVss(memoryHost);
+        }
+        if (!this.memoryManager) {
+            this.memoryManager = new MemoryManager(memoryHost, this.vss);
+            this.memoryManager.startAutoMaintenance();
+        }
+        await this.updateMemoryStatusBar();
+    }
+
+    private initializeStatsSubsystem(): void {
+        if (this.statsManager) return;
+        this.statsManager = new StatsManager(this.createStatsHost());
+    }
+
+    private setupSettingsWatcher(): void {
         this.pageletSettingsUnsubscribe?.();
         this.pageletSettingsUnsubscribe = this.onSettingsChanged(() => {
             this.syncPageletRuntime();
             this.syncMemoryExtractionRuntime();
         });
-        this.syncPageletRuntime();
+    }
+
+    private registerVaultEventDispatch(): void {
+        // VSS lifecycle events mark local state dirty; approved Memory can then maintain itself in the background.
+        this.registerEvent(
+            this.app.vault.on("create", async (file) => {
+                if (file instanceof TFile) {
+                    // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
+                    // Obsidian fires `create` (not `modify`) for a NEW file, so the
+                    // first Pagelet write of a review note arrives here. Without the
+                    // same guard applied to modify below, vss would index the
+                    // freshly-written review note, triggering a ripple.
+                    if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
+                        return;
+                    }
+                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-create");
+                    if (await this.vss?.markDirtyIfEligible(file)) {
+                        this.memoryManager?.scheduleAutoFlush("vault-create");
+                        this.debouncedStatusBarUpdate();
+                    }
+                }
+            })
+        );
+        this.registerEvent(
+            this.app.vault.on("modify", async (file) => {
+                if (file instanceof TFile) {
+                    // Pagelet reentrancy guard (Write Action Framework SDD §5.3 / R3):
+                    // when the modify event was triggered by Pagelet's own
+                    // review-note write, skip downstream side-effects so the
+                    // listener does not re-invoke another review or mark a
+                    // freshly-written review note as dirty for VSS.
+                    if (this.pageletRuntime?.isRecentSelfWrite(file.path)) {
+                        return;
+                    }
+                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-modify");
+                    if (await this.vss?.markDirtyIfEligible(file)) {
+                        this.memoryManager?.scheduleAutoFlush("vault-modify");
+                        this.debouncedStatusBarUpdate();
+                    }
+                }
+            })
+        );
+        this.registerEvent(
+            this.app.vault.on("rename", async (file, oldPath) => {
+                this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-rename");
+                if (file instanceof TFile && await this.vss?.handleRename(file, oldPath)) {
+                    this.memoryManager?.scheduleAutoFlush("vault-rename");
+                    this.debouncedStatusBarUpdate();
+                }
+            })
+        );
+        this.registerEvent(
+            this.app.vault.on("delete", async (file) => {
+                if (file instanceof TFile) {
+                    this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-delete");
+                    await this.vss?.handleDelete(file);
+                    this.debouncedStatusBarUpdate();
+                }
+            })
+        );
+        this.registerEvent(
+            this.app.workspace.on("active-leaf-change", async () => {
+                await this.vss?.handleActiveLeafChange();
+            })
+        );
+        this.registerEvent(
+            this.app.workspace.on("file-open", async (file) => {
+                if (await this.vss?.handleFileOpen(file)) {
+                    const state = this.vss?.getMaintenanceState();
+                    if (!state) return;
+                    if (state.verificationPending > 0) {
+                        this.memoryManager?.scheduleVerify("file-open");
+                    }
+                    if (state.dirtyCount > 0) {
+                        this.memoryManager?.scheduleAutoFlush("file-open");
+                    }
+                    this.debouncedStatusBarUpdate();
+                }
+            })
+        );
     }
 
     private syncPageletRuntime(): void {
@@ -703,9 +776,10 @@ export class PluginManager extends Plugin {
                         };
                     },
                 });
-                if (this.vss) {
+                const vss = this.vss;
+                if (vss) {
                     this.memoryExtractionScheduler.setSemanticClusterProvider(
-                        (maxClusters) => this.vss!.clusterVectors(maxClusters),
+                        (maxClusters) => vss.clusterVectors(maxClusters),
                     );
                 }
                 this.memoryExtractionScheduler.start();
@@ -793,6 +867,26 @@ export class PluginManager extends Plugin {
             this.log("Failed to register Pagelet focus command", error);
         }
         void PAGELET_FOCUS_LATEST_COMMAND_ID;
+    }
+
+    private createStatsHost(): StatsHost {
+        return {
+            app: this.app,
+            settings: this.settings,
+            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            registerEvent: (ref) => this.registerEvent(ref),
+        };
+    }
+
+    private createEditorPluginHost(): EditorPluginHost {
+        const getStatsManager = () => this.statsManager;
+        return {
+            app: this.app,
+            settings: this.settings,
+            get statsManager() {
+                return getStatsManager();
+            },
+        };
     }
 
     private createPageletHost(): PageletHost {
@@ -979,6 +1073,77 @@ export class PluginManager extends Plugin {
         };
     }
 
+    private createMemoryHost(): MemoryHost {
+        return {
+            app: this.app,
+            pluginId: this.manifest?.id ?? "personal-assistant",
+            settings: this.settings,
+            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            registerEvent: (ref) => this.registerEvent(ref),
+            saveSettings: () => this.saveSettings(),
+            getVSSFiles: () => this.getVSSFiles(),
+            getAPIToken: () => this.getAPIToken(),
+            notifyStatusChanged: () => this.debouncedStatusBarUpdate(),
+            updateMemorySetting: (key, value) => {
+                (this.settings as unknown as Record<string, unknown>)[key] = value;
+                void this.saveSettings();
+            },
+        };
+    }
+
+    private createAiServiceHost(): AiServiceHost {
+        return {
+            app: this.app,
+            settings: this.settings,
+            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            getAPIToken: () => this.getAPIToken(),
+            isOperationsAgentEnabled: this.isOperationsAgentEnabled,
+            getMemoryExtractionPromptContext: () =>
+                this.getMemoryExtractionPromptContext() as unknown as Record<string, unknown>,
+            memorySearch: {
+                ensureReadyForChat: (query) =>
+                    this.memoryManager?.ensureReadyForChat(query) ?? Promise.resolve({ decision: "answer-now" }),
+                searchHybrid: (query, opts) =>
+                    this.vss?.searchHybrid(query, opts) ?? Promise.resolve([]),
+                getChunksByPath: (paths, opts) =>
+                    this.vss?.getChunksByPath(paths, opts) ?? Promise.resolve([]),
+            },
+            getResolvedLinks: () =>
+                this.app?.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined,
+        };
+    }
+
+    createChatService(): ChatService {
+        return new ChatService(this.createAiServiceHost());
+    }
+
+    private createChatHost(): ChatHost {
+        return {
+            app: this.app,
+            settings: this.settings,
+            log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
+            getAISetupIssue: () => this.getAISetupIssue(),
+            chatHistoryManager: this.chatHistoryManager,
+            memoryStatus: {
+                getMaintenancePlan: () => this.memoryManager?.getMaintenancePlan() ?? Promise.resolve({
+                    reason: "unavailable",
+                    action: "none",
+                    notesToCheck: 0,
+                    requiresApproval: false,
+                    canAnswerNow: true,
+                }),
+                prepareFromCommand: () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
+                updateFromCommand: () => this.memoryManager?.updateFromCommand() ?? Promise.resolve(),
+                showTechnicalStatus: () => void this.showTechnicalMemoryStatus(),
+                onStatusChanged: (listener) => this.onMemoryStatusChanged(listener),
+            },
+            createChatService: () => new ChatService(this.createAiServiceHost()),
+            onSettingsChanged: (listener) => this.onSettingsChanged(listener),
+            scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
+                this.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),
+        };
+    }
+
     private getPageletRateLimiter(): PageletRateLimiter {
         if (!this.pageletRateLimiterInstance) {
             this.pageletRateLimiterInstance = new PageletRateLimiter({
@@ -1053,6 +1218,7 @@ export class PluginManager extends Plugin {
                 app: this.app,
                 getPageletSettings: () => this.settings.pagelet,
                 getLocale: () => this.getPageletLocale(),
+                licenseTier: this.settings.licenseTier,
                 debug: this.settings.debug,
             });
             this.log("Pagelet runtime initialized");
@@ -1210,7 +1376,7 @@ export class PluginManager extends Plugin {
                 targetPath,
             },
             {
-                plugin: this,
+                host: this.createAiServiceHost(),
                 turnId: `pagelet-review-note-${Date.now()}`,
             },
         );
@@ -1266,6 +1432,12 @@ export class PluginManager extends Plugin {
     }
 
     async onunload() {
+        this.unloading = true;
+        if (this.phase3Handle !== null) {
+            clearPlatformTimeout(this.phase3Handle);
+            this.phase3Handle = null;
+        }
+        this.debouncedStatusBarUpdate.cancel();
         const statsManager = this.statsManager;
         if (this.resizeDebounceTimer !== null) clearPluginTimeout(this.resizeDebounceTimer);
         this.resizeDebounceTimer = null;
@@ -1709,12 +1881,12 @@ export class PluginManager extends Plugin {
         );
     }
 
-    private initVss() {
+    private initVss(memoryHost: MemoryHost) {
         if (this.vss) {
             return this.vss;
         }
 
-        return new VSS(this, this.vssCacheDir, this.createVSSIndexStateStore());
+        return new VSS(memoryHost, this.vssCacheDir, this.createVSSIndexStateStore());
     }
 
     createVSSIndexStateStore(): VSSIndexStateStore {
@@ -1951,7 +2123,9 @@ export class PluginManager extends Plugin {
             id: "flush-vss-cache",
             name: this.t("plugin.command.updateMemoryNow"),
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
-                await this.memoryManager.updateFromCommand();
+                const memoryManager = this.memoryManager;
+                if (!memoryManager) return;
+                await memoryManager.updateFromCommand();
                 await this.updateMemoryStatusBar();
             }),
         })
@@ -1966,7 +2140,9 @@ export class PluginManager extends Plugin {
                     confirmText: this.t("plugin.memory.confirm.reset.confirm"),
                 });
                 if (!confirmed) return;
-                await this.vss.resetLocalIndex();
+                const vss = this.vss;
+                if (!vss) return;
+                await vss.resetLocalIndex();
                 await this.updateMemoryStatusBar();
             }),
         })
@@ -1975,7 +2151,9 @@ export class PluginManager extends Plugin {
             id: "clean-legacy-vss-json-cache",
             name: this.t("plugin.command.deleteOldMemoryCache"),
             checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, async () => {
-                await this.vss.cleanLegacyJsonCache();
+                const vss = this.vss;
+                if (!vss) return;
+                await vss.cleanLegacyJsonCache();
                 await this.updateMemoryStatusBar();
             }),
         })
@@ -2045,6 +2223,7 @@ export class PluginManager extends Plugin {
 
     private runMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
         if (!this.settings.memoryEnabled) return false;
+        if (!this.vss || !this.memoryManager) return false;
         if (this.getAISetupIssue() !== null) return false;
         if (!checking) {
             void action().catch((error) => {

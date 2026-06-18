@@ -11,6 +11,7 @@ const mockBundledSkillIds = [
     'pa-vault-link-health',
     'pa-plugin-config-review',
 ];
+const mockStatsManagerConstructor = jest.fn();
 
 jest.mock('obsidian', () => {
     class MockPlugin { }
@@ -94,7 +95,13 @@ jest.mock('../src/obsidian-hack/obsidian-mobile-debug', () => ({ monkeyPatchCons
 jest.mock('../src/callout', () => ({ CalloutModal: class { } }));
 jest.mock('../src/preview', () => ({ RECORD_PREVIEW_TYPE: 'record-preview', RecordPreview: class { } }));
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview', Stat: class { } }));
-jest.mock('../src/stats/stats-manager', () => ({ __esModule: true, default: class { } }));
+jest.mock('../src/stats/stats-manager', () => ({
+    __esModule: true,
+    default: jest.fn().mockImplementation((...args: unknown[]) => {
+        mockStatsManagerConstructor(...args);
+        return {};
+    }),
+}));
 jest.mock('../src/stats/editor-plugin', () => ({
     pluginField: { init: jest.fn(() => ({})) },
     statusBarEditorPlugin: {},
@@ -255,11 +262,24 @@ describe('plugin startup view registration', () => {
         plugin.registerEditorExtension = jest.fn();
         plugin.addSettingTab = jest.fn();
         plugin.log = jest.fn();
+        mockStatsManagerConstructor.mockClear();
 
         try {
             await plugin.onload();
 
             expect(startupOrder).toEqual(['migrate-start', 'migrate-saved', 'init-vss']);
+            expect(plugin.vss).toBeDefined();
+            expect(plugin.memoryManager).toBeDefined();
+            expect(plugin.statsManager).toBeDefined();
+            expect(plugin.initVss.mock.invocationCallOrder[0]).toBeLessThan(
+                registerView.mock.invocationCallOrder[0],
+            );
+            expect(plugin.initVss.mock.invocationCallOrder[0]).toBeLessThan(
+                plugin.registerEvent.mock.invocationCallOrder[0],
+            );
+            expect(mockStatsManagerConstructor.mock.invocationCallOrder[0]).toBeLessThan(
+                plugin.registerEditorExtension.mock.invocationCallOrder[0],
+            );
             expect(registerView).toHaveBeenCalledWith('record-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('stat-preview', expect.any(Function));
             expect(registerView).toHaveBeenCalledWith('llm-view', expect.any(Function));
@@ -270,7 +290,10 @@ describe('plugin startup view registration', () => {
             );
 
             layoutCallbacks.forEach((callback) => callback());
+            await Promise.resolve();
+            await Promise.resolve();
 
+            expect(startupOrder).toEqual(['migrate-start', 'migrate-saved', 'init-vss']);
             expect(plugin.initializeCalloutManager).toHaveBeenCalledTimes(1);
             expect(registerView).toHaveBeenCalledTimes(4);
         } finally {

@@ -1,5 +1,4 @@
-import { Platform, TFile, debounce, moment as obsidianMoment, type App, type Debouncer, type Vault, type Workspace } from "obsidian";
-import type PluginManager from "../main";
+import { Platform, TFile, debounce, moment as obsidianMoment, type Debouncer, type Vault, type Workspace } from "obsidian";
 import type {
     ActivityCounts,
     FileStat,
@@ -27,6 +26,7 @@ import {
 import type { FileCountCacheEntry, StatsLocalStore } from "./stats-local-store";
 import { SchemaIntegrityError } from "./stats-local-store";
 import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from "../platform-dom";
+import type { StatsHost } from "./StatsHost";
 
 const moment = obsidianMoment as unknown as () => { format: (format: string) => string };
 
@@ -71,7 +71,7 @@ export function combineActivityCounts(base: ActivityCounts, session: ActivityCou
 export default class StatsManager {
     private vault: Vault;
     private workspace: Workspace;
-    private plugin: PluginManager;
+    private host: StatsHost;
     private store: StatsRepository;
     private fileCountStore: StatsLocalStore;
     private modifiedFiles: ModifiedFiles = {};
@@ -98,12 +98,12 @@ export default class StatsManager {
     public debounceChange: Debouncer<[filePath: string | undefined, currentText: TextProvider, previousText?: TextProvider], Promise<void>>;
     private debounceWrite: Debouncer<[], Promise<void>>;
 
-    constructor(app: App, plugin: PluginManager) {
-        this.vault = app.vault;
-        this.workspace = app.workspace;
-        this.plugin = plugin;
+    constructor(host: StatsHost) {
+        this.vault = host.app.vault;
+        this.workspace = host.app.workspace;
+        this.host = host;
         this.today = moment().format("YYYY-MM-DD");
-        const bundle = this.createStore(this.plugin.settings.statisticsSyncEnabled);
+        const bundle = this.createStore(this.host.settings.statisticsSyncEnabled);
         this.store = bundle.repository;
         this.fileCountStore = bundle.fileCountStore;
         this.debounceChange = debounce(
@@ -117,7 +117,7 @@ export default class StatsManager {
             getStatsWriteDelayMs(Platform.isMobile),
             true
         );
-        this.plugin.registerEvent(
+        this.host.registerEvent(
             this.vault.on("rename", (newFile, oldPath) => {
                 this.invalidateDashboardCacheForPath(newFile.path);
                 this.invalidateDashboardCacheForPath(oldPath);
@@ -132,7 +132,7 @@ export default class StatsManager {
             })
         );
 
-        this.plugin.registerEvent(
+        this.host.registerEvent(
             this.vault.on("delete", (deletedFile) => {
                 this.invalidateDashboardCacheForPath(deletedFile.path);
                 if (Object.prototype.hasOwnProperty.call(this.modifiedFiles, deletedFile.path)) {
@@ -144,7 +144,7 @@ export default class StatsManager {
             })
         );
 
-        this.plugin.registerEvent(
+        this.host.registerEvent(
             this.vault.on("create", (createdFile) => {
                 this.invalidateDashboardCacheForPath(createdFile.path);
                 if (isTFileLike(createdFile) && this.handleCreateForFileCountCache(createdFile)) {
@@ -153,7 +153,7 @@ export default class StatsManager {
             })
         );
 
-        this.plugin.registerEvent(
+        this.host.registerEvent(
             this.vault.on("modify", (modifiedFile) => {
                 this.invalidateDashboardCacheForPath(modifiedFile.path);
                 if (this.handleModifyForFileCountCache(modifiedFile.path)) {
@@ -173,7 +173,7 @@ export default class StatsManager {
             return {
                 ...createEmptyDashboardData(this.store.getDeviceId()),
                 errors: [{
-                    path: this.plugin.settings.statsPath,
+                    path: this.host.settings.statsPath,
                     message: error instanceof Error ? error.message : String(error),
                 }],
             };
@@ -407,7 +407,7 @@ export default class StatsManager {
         try {
             existing = await this.store.readOwnShard(this.today);
         } catch (error) {
-            this.plugin.log("Skipping statistics writes for a damaged shard", error);
+            this.host.log("Skipping statistics writes for a damaged shard", error);
             this.currentShard = null;
             return;
         }
@@ -442,7 +442,7 @@ export default class StatsManager {
     }
 
     private countText(text: string): ActivityCounts {
-        const countableText = this.plugin.settings.countComments ? text : cleanComments(text);
+        const countableText = this.host.settings.countComments ? text : cleanComments(text);
         return {
             words: getWordCount(countableText),
             characters: getCharacterCount(countableText),
@@ -521,18 +521,18 @@ export default class StatsManager {
     }
 
     private async checkpointSync(): Promise<void> {
-        if (!this.plugin.settings.statisticsSyncEnabled) return;
+        if (!this.host.settings.statisticsSyncEnabled) return;
         try {
             await this.store.checkpointSync();
         } catch (error) {
-            this.plugin.log("Failed to sync statistics history", error);
+            this.host.log("Failed to sync statistics history", error);
         }
     }
 
     private createStore(syncEnabled: boolean): StatsRepositoryBundle {
         return createStatsRepository(this.vault, {
-            legacyStatsPath: this.plugin.settings.statsPath,
-            vaultId: this.plugin.settings.statisticsVaultId,
+            legacyStatsPath: this.host.settings.statsPath,
+            vaultId: this.host.settings.statisticsVaultId,
             syncEnabled,
         });
     }
@@ -561,7 +561,7 @@ export default class StatsManager {
             this.scheduleWrite();
         } catch (error) {
             if (!this.isDisposed) {
-                this.plugin.log("Failed to refresh statistics snapshot", error);
+                this.host.log("Failed to refresh statistics snapshot", error);
             }
         }
     }
@@ -673,7 +673,7 @@ export default class StatsManager {
         try {
             await this.fileCountStore.clearFileCountCache();
         } catch (error) {
-            this.plugin.log("Failed to clear file count cache", error);
+            this.host.log("Failed to clear file count cache", error);
             this.fileCountCacheUnavailable = true;
         }
     }
@@ -700,9 +700,9 @@ export default class StatsManager {
             return true;
         } catch (error) {
             if (error instanceof SchemaIntegrityError) {
-                this.plugin.log("Statistics file count cache schema incompatible; disabling incremental snapshot.", error);
+                this.host.log("Statistics file count cache schema incompatible; disabling incremental snapshot.", error);
             } else {
-                this.plugin.log("Failed to load file count cache", error);
+                this.host.log("Failed to load file count cache", error);
             }
             this.fileCountCacheUnavailable = true;
             return false;
@@ -833,7 +833,7 @@ export default class StatsManager {
                     await this.fileCountStore.deleteFileCountEntries(toDelete);
                 }
             } catch (error) {
-                this.plugin.log("Failed to persist file count cache", error);
+                this.host.log("Failed to persist file count cache", error);
             }
         }
 

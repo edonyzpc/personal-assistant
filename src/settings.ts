@@ -21,6 +21,7 @@ import { getPageletUiLanguage } from "./locales/pagelet";
 import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { getPlatformDocument, setPlatformTimeout } from "./platform-dom";
+import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from "./ai-services/capability-types";
 
 export interface ResizeStyle {
     width: number,
@@ -78,6 +79,7 @@ export interface PluginManagerSettings {
     showAdvancedMemoryControls: boolean;
     qwenThinkingEnabled: boolean;
     webSearchEnabled: boolean;
+    licenseTier: AgentCapabilityTier;
     shareAnonymousCapabilityUsage: boolean;
     skillContextEnabled: boolean;
     enabledSkillIds: string[];
@@ -158,6 +160,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     showAdvancedMemoryControls: false,
     qwenThinkingEnabled: false,
     webSearchEnabled: false,
+    licenseTier: MOCK_LICENSE_TIER,
     shareAnonymousCapabilityUsage: false,
     skillContextEnabled: true,
     enabledSkillIds: [...BUNDLED_SKILL_IDS],
@@ -248,6 +251,10 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
+    // Current builds use a mock paid entitlement so all paid-capability
+    // architecture stays enabled until a real authorization source is wired in.
+    // Do not trust persisted data.json for this field.
+    merged.licenseTier = MOCK_LICENSE_TIER;
     merged.operationsAgentEnabled = OPERATIONS_AGENT_RUNTIME_ENABLED;
     // Pagelet has its own per-field normalizer (8 fields, mixed types).
     // Delegating keeps the legacy merge focused on settings that predate
@@ -1927,6 +1934,19 @@ export class SettingTab extends PluginSettingTab {
         if (!plugin.settings.showAdvancedMemoryControls) return;
 
         const container = this.memoryAdvancedContainer;
+        const showMemoryNotReadyNotice = () => {
+            new Notice(this.t("plugin.memory.diagnostics.notInitializedSummary"), 5000);
+        };
+        const getMemoryManager = () => {
+            if (plugin.memoryManager) return plugin.memoryManager;
+            showMemoryNotReadyNotice();
+            return null;
+        };
+        const getVss = () => {
+            if (plugin.vss) return plugin.vss;
+            showMemoryNotReadyNotice();
+            return null;
+        };
 
         new Setting(container)
             .setName(this.t("plugin.settings.memory.background.name"))
@@ -1949,8 +1969,9 @@ export class SettingTab extends PluginSettingTab {
                         plugin.settings.memoryApprovalPolicy = value ? "auto-refresh-after-prepare" : "always";
                         await plugin.saveSettings();
                         if (value) {
-                            plugin.memoryManager.scheduleReconcile("settings");
-                            plugin.memoryManager.scheduleAutoFlush("settings");
+                            const memoryManager = getMemoryManager();
+                            memoryManager?.scheduleReconcile("settings");
+                            memoryManager?.scheduleAutoFlush("settings");
                         }
                     });
             });
@@ -1973,7 +1994,9 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.update.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.update.button")).onClick(async () => {
-                    await plugin.memoryManager.updateFromCommand();
+                    const memoryManager = getMemoryManager();
+                    if (!memoryManager) return;
+                    await memoryManager.updateFromCommand();
                     await plugin.updateMemoryStatusBar();
                 });
             });
@@ -1983,7 +2006,9 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.rebuild.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.rebuild.button")).onClick(async () => {
-                    await plugin.memoryManager.prepareFromCommand();
+                    const memoryManager = getMemoryManager();
+                    if (!memoryManager) return;
+                    await memoryManager.prepareFromCommand();
                 });
             });
 
@@ -1998,7 +2023,9 @@ export class SettingTab extends PluginSettingTab {
                         confirmText: this.t("plugin.memory.confirm.reset.confirm"),
                     });
                     if (!confirmed) return;
-                    await plugin.vss.resetLocalIndex();
+                    const vss = getVss();
+                    if (!vss) return;
+                    await vss.resetLocalIndex();
                     await plugin.updateMemoryStatusBar();
                 });
             });
@@ -2008,7 +2035,9 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.deleteCache.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.deleteCache.button")).onClick(async () => {
-                    await plugin.vss.cleanLegacyJsonCache();
+                    const vss = getVss();
+                    if (!vss) return;
+                    await vss.cleanLegacyJsonCache();
                     await plugin.updateMemoryStatusBar();
                 });
             });
