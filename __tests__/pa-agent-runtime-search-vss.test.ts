@@ -1,5 +1,17 @@
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 
+jest.mock("vanilla-picker", () => ({
+    __esModule: true,
+    default: class {
+        destroy = jest.fn();
+        constructor(_options: unknown) { /* options ignored in tests */ }
+    },
+}));
+
+jest.mock("../src/ai-services/append-tool-provider", () => ({
+    AppendToolProvider: class { },
+}));
+
 import { MemorySearchTool } from "../src/ai-services/pa-agent-runtime";
 import type { RewrittenQuery } from "../src/ai-services/query-rewriter";
 
@@ -21,12 +33,24 @@ interface SearchHybridArgs {
     };
 }
 
+interface GetChunksByPathArgs {
+    paths: string[];
+    options?: {
+        limitPerPath?: number;
+        signal?: AbortSignal;
+    };
+}
+
 function makePlugin(opts: {
     policyModelName: string;
     searchHybrid?: (args: SearchHybridArgs) => Promise<unknown>;
+    getChunksByPath?: (args: GetChunksByPathArgs) => Promise<unknown>;
+    resolvedLinks?: Record<string, Record<string, number>>;
 }) {
     const calls: SearchHybridArgs[] = [];
     const searchHybrid = opts.searchHybrid
+        ?? (async () => []);
+    const getChunksByPath = opts.getChunksByPath
         ?? (async () => []);
     const plugin = {
         settings: {
@@ -37,6 +61,14 @@ function makePlugin(opts: {
                 calls.push({ prompt, options });
                 return searchHybrid({ prompt, options });
             }),
+            getChunksByPath: jest.fn(async (paths: string[], options?: GetChunksByPathArgs["options"]) => {
+                return getChunksByPath({ paths, options });
+            }),
+        },
+        app: {
+            metadataCache: {
+                resolvedLinks: opts.resolvedLinks,
+            },
         },
         memoryManager: {
             ensureReadyForChat: jest.fn(async () => ({ decision: "use-memory" as const })),
@@ -243,5 +275,65 @@ describe("MemorySearchTool searchVss contract", () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await expect((tool as any).searchVss("hello world", undefined)).rejects.toThrow("backend exploded");
         expect(plugin.vss.searchHybrid).toHaveBeenCalledTimes(1);
+    });
+
+    it("uses direct batch path lookup for graph one-hop expansion without secondary searchHybrid calls", async () => {
+        const { plugin, calls } = makePlugin({
+            policyModelName: "",
+            resolvedLinks: {
+                "notes/a.md": { "notes/b.md": 1, "notes/c.md": 1 },
+            },
+            searchHybrid: async () => [{
+                score: 0.9,
+                doc: { pageContent: "root chunk", metadata: { path: "notes/a.md", chunkIndex: 0 } },
+            }],
+            getChunksByPath: async ({ paths }) => paths.map((path) => ({
+                score: 1,
+                doc: { pageContent: `linked chunk ${path}`, metadata: { path, chunkIndex: 0 } },
+            })),
+        });
+        const aiUtils = makeAIUtils();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tool = new MemorySearchTool(plugin as any, aiUtils as any);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (tool as any).searchVss("hello world", undefined);
+
+        expect(plugin.vss.searchHybrid).toHaveBeenCalledTimes(1);
+        expect(calls.map((call) => call.prompt)).toEqual(["hello world"]);
+        expect(plugin.vss.getChunksByPath).toHaveBeenCalledTimes(1);
+        expect(plugin.vss.getChunksByPath).toHaveBeenCalledWith(
+            ["notes/b.md", "notes/c.md"],
+            expect.objectContaining({ limitPerPath: 3 }),
+        );
+        expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            "notes/a.md",
+            "notes/b.md",
+            "notes/c.md",
+        ]);
+    });
+
+    it("does not append graph one-hop candidates when direct path lookup returns no chunks", async () => {
+        const { plugin } = makePlugin({
+            policyModelName: "",
+            resolvedLinks: {
+                "notes/a.md": { "notes/missing.md": 1 },
+            },
+            searchHybrid: async () => [{
+                score: 0.9,
+                doc: { pageContent: "root chunk", metadata: { path: "notes/a.md", chunkIndex: 0 } },
+            }],
+            getChunksByPath: async () => [],
+        });
+        const aiUtils = makeAIUtils();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tool = new MemorySearchTool(plugin as any, aiUtils as any);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (tool as any).searchVss("hello world", undefined);
+
+        expect(plugin.vss.searchHybrid).toHaveBeenCalledTimes(1);
+        expect(plugin.vss.getChunksByPath).toHaveBeenCalledTimes(1);
+        expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual(["notes/a.md"]);
     });
 });

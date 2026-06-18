@@ -5,6 +5,7 @@ import {
     PaAgentContextCompactor,
     PaAgentContextHygiene,
     PaAgentContextManager,
+    PaAgentContextProjector,
 } from "../src/ai-services/context";
 import type { ChatMessage, PaAgentMessage } from "../src/ai-services/chat-types";
 
@@ -344,6 +345,30 @@ describe("Review backfill: context limit constants", () => {
 });
 
 describe("Review backfill: Type C vault_insights escape", () => {
+    it("keeps repeated injected context in every stateless model turn", () => {
+        const projector = new PaAgentContextProjector(new PaAgentContextCompactor());
+        const injectedContext = {
+            userProfile: "# User Profile\n- Prefers concrete plans.",
+            vaultInsights: "# Vault Insights\n- Research has open gaps.",
+        };
+
+        const first = projector.projectUserInput({
+            prompt: "first",
+            injectedContext,
+            maxHistoryChars: 1000,
+        });
+        const second = projector.projectUserInput({
+            prompt: "second",
+            injectedContext,
+            maxHistoryChars: 1000,
+        });
+
+        expect(first.input).toContain("Prefers concrete plans.");
+        expect(second.input).toContain("Prefers concrete plans.");
+        expect(second.input).toContain("Research has open gaps.");
+        expect(second.input).not.toContain("Personal context unchanged from previous turn");
+    });
+
     it("escapes closing vault_insights tag in injected context", () => {
         const { PaAgentContextProjector: Proj } = require("../src/ai-services/context");
         const compactor = new PaAgentContextCompactor();

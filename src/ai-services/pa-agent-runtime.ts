@@ -1332,12 +1332,12 @@ export class MemorySearchTool {
         const expanded = await expandByOneHop(
             candidates,
             this.plugin.app?.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined,
-            async (path: string) => {
-                const results = await this.plugin.vss?.searchHybrid(path, { signal }) as RawSearchResult[] | undefined;
-                return (results ?? []).filter((r) => {
-                    const p = (r.doc?.metadata as Record<string, unknown> | undefined)?.path;
-                    return typeof p === "string" && p === path;
-                });
+            async (paths: string[]) => {
+                const results = await this.plugin.vss?.getChunksByPath(paths, {
+                    limitPerPath: MAX_MEMORY_CANDIDATE_CHUNKS,
+                    signal,
+                }) as RawSearchResult[] | undefined;
+                return results ?? [];
             },
         );
 
@@ -1639,7 +1639,7 @@ function dedupeDocuments(documents: MemorySearchDocument[]): MemorySearchDocumen
 export async function expandByOneHop(
     candidates: MemoryCandidate[],
     resolvedLinks: Record<string, Record<string, number>> | undefined,
-    fetchChunks?: (path: string) => Promise<RawSearchResult[]>,
+    fetchChunks?: (paths: string[]) => Promise<RawSearchResult[]>,
 ): Promise<MemoryCandidate[]> {
     if (!resolvedLinks || candidates.length === 0) return candidates;
     const existingPaths = new Set(candidates.map((c) => c.path));
@@ -1665,26 +1665,33 @@ export async function expandByOneHop(
     }
     if (expansionTargets.length === 0) return candidates;
 
+    const rawByPath = new Map<string, RawSearchResult[]>();
+    if (fetchChunks) {
+        try {
+            const targetPaths = expansionTargets.map((target) => target.targetPath);
+            const targetPathSet = new Set(targetPaths);
+            const raw = await fetchChunks(targetPaths);
+            for (const result of raw ?? []) {
+                const path = result.doc?.metadata?.path;
+                if (typeof path !== "string" || !targetPathSet.has(path)) continue;
+                const group = rawByPath.get(path) ?? [];
+                group.push(result);
+                rawByPath.set(path, group);
+            }
+        } catch { /* skip one-hop expansion when exact lookup is unavailable */ }
+    }
+
     const expanded: MemoryCandidate[] = [];
     for (const target of expansionTargets) {
-        let documents: MemorySearchDocument[] = [];
-        let excerpt = `[linked from candidate ${target.parentId}]`;
-        if (fetchChunks) {
-            try {
-                const raw = await fetchChunks(target.targetPath);
-                const docs = normalizeSearchCandidates(raw);
-                if (docs.length > 0) {
-                    documents = docs[0].documents;
-                    excerpt = docs[0].excerpt;
-                }
-            } catch { /* use empty documents as fallback */ }
-        }
+        const docs = normalizeSearchCandidates(rawByPath.get(target.targetPath) ?? []);
+        if (docs.length === 0) continue;
+
         expanded.push({
             candidateId: `link-${target.parentId}-${target.index}`,
             path: target.targetPath,
             score: target.parentScore * 0.5,
-            documents,
-            excerpt,
+            documents: docs[0].documents,
+            excerpt: docs[0].excerpt,
         });
     }
     return [...candidates, ...expanded];

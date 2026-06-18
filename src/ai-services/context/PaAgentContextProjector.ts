@@ -23,7 +23,6 @@ export interface PaAgentProjectedHistory {
 
 export class PaAgentContextProjector {
     private readonly compactor: PaAgentContextCompactor;
-    private previousInjectedContextKey: string | null = null;
 
     constructor(compactor = new PaAgentContextCompactor()) {
         this.compactor = compactor;
@@ -31,14 +30,7 @@ export class PaAgentContextProjector {
 
     projectUserInput(options: PaAgentProjectedInputOptions): { input: string; history: PaAgentProjectedHistory } {
         const history = this.projectHistory(options.chatHistory, options.maxHistoryChars);
-        const currentInjected = formatInjectedContext(options.injectedContext);
-        let injected: string;
-        if (currentInjected && currentInjected === this.previousInjectedContextKey) {
-            injected = "[Personal context unchanged from previous turn]";
-        } else {
-            injected = currentInjected;
-            this.previousInjectedContextKey = currentInjected;
-        }
+        const injected = formatInjectedContext(options.injectedContext);
         const runtimeInstruction = options.runtimeInstruction
             ? `\n\n<runtime_instruction>\n${options.runtimeInstruction}\n</runtime_instruction>`
             : "";

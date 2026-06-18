@@ -1,4 +1,16 @@
-import { describe, expect, it } from "@jest/globals";
+import { describe, expect, it, jest } from "@jest/globals";
+
+jest.mock("vanilla-picker", () => ({
+    __esModule: true,
+    default: class {
+        destroy = jest.fn();
+        constructor(_options: unknown) { /* options ignored in tests */ }
+    },
+}));
+
+jest.mock("../src/ai-services/append-tool-provider", () => ({
+    AppendToolProvider: class { },
+}));
 
 import { expandByOneHop } from "../src/ai-services/pa-agent-runtime";
 import { TypeAUserProfileExtractor } from "../src/ai-services/memory-extraction/type-a-extractor";
@@ -19,6 +31,13 @@ function makeCandidate(id: string, path: string, score: number): MemoryCandidate
     };
 }
 
+function makeRawChunk(path: string, score = 1) {
+    return {
+        score,
+        doc: { pageContent: `chunk content of ${path}`, metadata: { path, chunkIndex: 0 } },
+    };
+}
+
 describe("expandByOneHop", () => {
     it("returns original candidates when resolvedLinks is undefined", async () => {
         const candidates = [makeCandidate("c1", "notes/a.md", 0.9)];
@@ -34,11 +53,14 @@ describe("expandByOneHop", () => {
         const links: Record<string, Record<string, number>> = {
             "notes/a.md": { "notes/c.md": 1, "notes/d.md": 1 },
         };
-        const result = await expandByOneHop(candidates, links);
+        const fetchChunks = jest.fn(async (paths: string[]) => paths.map((path) => makeRawChunk(path)));
+        const result = await expandByOneHop(candidates, links, fetchChunks);
         expect(result.length).toBe(4);
         expect(result[2].path).toBe("notes/c.md");
         expect(result[3].path).toBe("notes/d.md");
         expect(result[2].score).toBe(0.9 * 0.5);
+        expect(fetchChunks).toHaveBeenCalledTimes(1);
+        expect(fetchChunks).toHaveBeenCalledWith(["notes/c.md", "notes/d.md"]);
     });
 
     it("skips already-present paths", async () => {
@@ -46,9 +68,11 @@ describe("expandByOneHop", () => {
         const links: Record<string, Record<string, number>> = {
             "notes/a.md": { "notes/a.md": 1, "notes/b.md": 1 },
         };
-        const result = await expandByOneHop(candidates, links);
+        const fetchChunks = jest.fn(async (paths: string[]) => paths.map((path) => makeRawChunk(path)));
+        const result = await expandByOneHop(candidates, links, fetchChunks);
         expect(result.length).toBe(2);
         expect(result[1].path).toBe("notes/b.md");
+        expect(fetchChunks).toHaveBeenCalledWith(["notes/b.md"]);
     });
 
     it("limits to 2 expansions per candidate", async () => {
@@ -56,8 +80,10 @@ describe("expandByOneHop", () => {
         const links: Record<string, Record<string, number>> = {
             "notes/a.md": { "notes/b.md": 1, "notes/c.md": 1, "notes/d.md": 1, "notes/e.md": 1 },
         };
-        const result = await expandByOneHop(candidates, links);
+        const fetchChunks = jest.fn(async (paths: string[]) => paths.map((path) => makeRawChunk(path)));
+        const result = await expandByOneHop(candidates, links, fetchChunks);
         expect(result.length).toBe(3);
+        expect(fetchChunks).toHaveBeenCalledWith(["notes/b.md", "notes/c.md"]);
     });
 
     it("uses fetchChunks to populate documents when provided", async () => {
@@ -65,14 +91,22 @@ describe("expandByOneHop", () => {
         const links: Record<string, Record<string, number>> = {
             "notes/a.md": { "notes/b.md": 1 },
         };
-        const fetchChunks = async (path: string) => [{
-            score: 0.7,
-            doc: { pageContent: `chunk content of ${path}`, metadata: { path } },
-        }];
+        const fetchChunks = jest.fn(async (paths: string[]) => paths.map((path) => makeRawChunk(path, 0.7)));
         const result = await expandByOneHop(candidates, links, fetchChunks);
         expect(result.length).toBe(2);
         expect(result[1].documents.length).toBeGreaterThan(0);
         expect(result[1].excerpt).not.toContain("[linked from");
+        expect(fetchChunks).toHaveBeenCalledWith(["notes/b.md"]);
+    });
+
+    it("does not append a candidate when exact lookup returns no chunks", async () => {
+        const candidates = [makeCandidate("c1", "notes/a.md", 0.9)];
+        const links: Record<string, Record<string, number>> = {
+            "notes/a.md": { "notes/b.md": 1 },
+        };
+        const fetchChunks = jest.fn(async () => []);
+        const result = await expandByOneHop(candidates, links, fetchChunks);
+        expect(result).toEqual(candidates);
     });
 
     it("falls back gracefully when fetchChunks throws", async () => {
@@ -82,8 +116,7 @@ describe("expandByOneHop", () => {
         };
         const fetchChunks = async () => { throw new Error("worker error"); };
         const result = await expandByOneHop(candidates, links, fetchChunks);
-        expect(result.length).toBe(2);
-        expect(result[1].documents).toEqual([]);
+        expect(result).toEqual(candidates);
     });
 });
 
