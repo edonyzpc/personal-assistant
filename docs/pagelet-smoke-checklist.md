@@ -31,6 +31,73 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-06-17 · Desktop test vault · v2.2+ broad runtime smoke
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: final `make deploy` (108 suites / 1887 tests, lint=0, build=0)
+- Obsidian: 1.13.1 desktop
+- Provider/model: configured test-vault provider for Memory embeddings, Type A
+  extraction, and Pagelet Discovery
+- Screenshots: `/private/tmp/pa-v22plus-pagelet-panel.png`,
+  `/private/tmp/pa-v22plus-discovery-final.png`,
+  `/private/tmp/pa-v22plus-surfaces.png`
+
+Runtime and product smoke:
+
+- PASS: Memory prepare/update recovered a stale/settings-changed local index to
+  SQLite OPFS ready (`31` files / `96` chunks, `storagePersisted=true`).
+- PASS: Type C Vault Insights are default-on in runtime settings and present in
+  prompt context with folder themes, tag taxonomy, link topology, writing habits,
+  topic/trend data.
+- PASS: Type A LLM extraction sent this smoke turn to the configured provider:
+  "For this smoke run, remember that I prefer validation summaries with PASS,
+  FAIL, and BLOCKED labels." The User Profile was updated with that preference.
+- PASS: Pagelet panel opened for `pagelet-smoke-golden.md` with current-note
+  scope and `Review selected (1)` DOM text.
+- PASS: Pagelet Discovery used Memory-backed related notes and rendered mapped
+  connections instead of the Memory-not-ready state.
+- PASS: Chat, Records Preview, and Vault Statistics commands opened real
+  workspace leaves; DOM showed `.llm-view`, `.pa-recordlist-preview-view`, and
+  `.pa-statistics-view` content.
+- PASS: Operations Agent remained gated off
+  (`operationsAgentEnabled=false`, `isOperationsAgentEnabled=false`).
+- PASS: Community-review source scan found no runtime `<style>` creation,
+  `innerHTML =`, or `outerHTML =` matches in `src/`.
+- PASS: `obsidian dev:errors vault=test` reported no captured errors after the
+  final smoke pass.
+
+Smoke-found fixes applied in this pass:
+
+- FIXED: Manual Memory rebuild could recover from stale marker state, but SQLite
+  WASM initialization then failed because the inline `blob:` WASM URL was
+  rejected by `SqliteVectorIndex.prepareWasmUrl()`. `blob:` WASM URLs are now
+  passed through to the worker, with regression coverage.
+- FIXED: Pagelet related-note search used too much source text for an
+  interaction-budget embedding query, causing Discovery to time out and show
+  false no-results. Related-note queries now use title/path plus an 800-character
+  excerpt, with regression coverage.
+- FIXED: Discovery connection mapping could display
+  `pagelet-smoke-golden.md ↔ pagelet-smoke-golden.md` when the model described
+  the related note in prose but set `sourceFile` to the current note. Mapping now
+  resolves targets from related-note aliases, including `en`/`zh` provider
+  fixture aliases.
+
+Caveats:
+
+- BLOCKED: Computer Use `get_app_state` timed out twice for Obsidian, so this
+  pass does not count new real click-through UI paths as passed. CLI commands,
+  DOM, screenshots, runtime eval, and console/error capture are counted.
+- BLOCKED: 2026-06-18 retry still could not complete true click-through smoke:
+  Computer Use `get_app_state` for `md.obsidian` timed out after 120s, and
+  macOS Accessibility (`System Events`) saw the Obsidian process but `0`
+  windows. Obsidian CLI screenshots still show the visible app UI, but no new
+  user-like clicks are counted.
+- NOTE: The existing test vault preserves its older 7 enabled skill ids even
+  though the bundled catalog now contains 9 skills. Fresh defaults still include
+  the full catalog; this pass did not change the old vault's user choice.
+
 ### 2026-06-16 · Desktop test vault · v2.2 beta.2 graduation smoke
 
 Environment:

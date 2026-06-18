@@ -13,12 +13,13 @@
   - Context: v2.2.0-beta.1 review (2026-06-15) identified 5 blocking fixes (C-2 PetSvg, H-1 RateLimiter, H-3 PreloadEngine, H-6 platform-dom, iOS Panel dvh) plus Orchestrator split, Bubble close behavior change, and Onboarding. Graduation requires commit + GUI smoke + provider re-test.
   - Source: [`development-roadmap.md`](./development-roadmap.md) v2.2 section, SPEC-B1/B2 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
   - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
+  - Latest smoke: 2026-06-17 broad runtime smoke passed after fixing SQLite inline WASM `blob:` loading, Pagelet related-note query timeout/no-results, and Discovery related-note mapping. Computer Use timed out reading Obsidian, so no new click-through UI smoke is counted in that pass; prior 2026-06-16 Pagelet GUI smoke remains the latest real click evidence.
   - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, v2.2.0 stable published.
 
 - [x] Close AI Insight Foundation D-series implementation gate.
   - Context: AI Insight D1-D8 now covers heading-aware Memory chunks, Pagelet VSS related notes, temporal Memory search, wider Memory windows, Context Projector/Hygiene, Compactor/Budget, Type A user profile extraction, and Type C vault insights.
   - Source: [`sdd-ai-insight-foundation.md`](./sdd-ai-insight-foundation.md), [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md), [`ai-insight-improvement-analysis.md`](./ai-insight-improvement-analysis.md).
-  - Result: D1-D8 code, focused tests, broad checks, deploy, and Obsidian test-vault smoke are recorded in the SDD tracker.
+  - Result: D1-D8 code, focused tests, broad checks, deploy, and Obsidian test-vault smoke are recorded in the SDD tracker. The follow-on E-series activation runtime smoke is also recorded in the v2 tracker with a Computer Use click-through caveat.
   - Exit criteria: D-series implementation gate is closed; publish-ready release work still follows the normal release process and explicit publish confirmation.
 
 - [ ] Close v2 review follow-up stabilization before release.
