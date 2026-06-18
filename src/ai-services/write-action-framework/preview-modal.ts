@@ -268,19 +268,19 @@ export class WriteActionPreviewModal extends Modal {
 
         // Mobile toggle button for context visibility.
         if (isMobile) {
-            contextSection.style.display = "none";
+            let isContextExpanded = false;
             const toggleBtn = contentBlock.createEl("button", {
                 cls: "pa-preview-append-context-toggle",
                 text: "Show context",
             });
             toggleBtn.addEventListener("click", () => {
-                const isExpanded = contextSection.style.display !== "none";
-                if (isExpanded) {
-                    contextSection.style.display = "none";
-                    toggleBtn.setText("Show context");
-                } else {
-                    contextSection.style.display = "";
+                isContextExpanded = !isContextExpanded;
+                if (isContextExpanded) {
+                    contextSection.addClass("is-expanded");
                     toggleBtn.setText("Hide context");
+                } else {
+                    contextSection.removeClass("is-expanded");
+                    toggleBtn.setText("Show context");
                 }
             });
         }
@@ -293,7 +293,7 @@ export class WriteActionPreviewModal extends Modal {
 
         // Append content body.
         const appendBody = contentBlock.createDiv({
-            cls: "pa-write-action-modal__section-body",
+            cls: "pa-write-action-modal__section-body pa-write-action-modal__append-body",
         });
         this.renderContentBody(appendBody, renderWarnings);
 

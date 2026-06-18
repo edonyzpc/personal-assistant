@@ -23,6 +23,14 @@ function createEl(): MockEl {
     el.addClass = jest.fn((cls?: unknown) => {
         if (typeof cls === "string") el.cls = el.cls ? `${el.cls} ${cls}` : cls;
     });
+    el.removeClass = jest.fn((cls?: unknown) => {
+        if (typeof cls === "string") {
+            el.cls = el.cls
+                .split(/\s+/)
+                .filter((entry: string) => entry && entry !== cls)
+                .join(" ");
+        }
+    });
     el.empty = jest.fn(() => {
         el.children.length = 0;
         el.text = "";
@@ -47,6 +55,7 @@ function createEl(): MockEl {
         el.children.push(child);
         return child;
     });
+    el.addEventListener = jest.fn();
     return el;
 }
 
@@ -261,6 +270,41 @@ describe("WriteActionPreviewModal (PreviewSpec section rendering)", () => {
         modal.onOpen();
         modal.forceResolve("aborted");
         expect(outcomes).toEqual(["aborted"]);
+    });
+
+    it("renders long append content inside a scrollable body with a size warning", () => {
+        const outcomes: ConfirmationOutcome[] = [];
+        const longBody = "x".repeat(50_001);
+        const modal = new WriteActionPreviewModal({} as never, buildSpec({
+            operationType: "append-to-current-note",
+            actionFamily: "append-to-current-note",
+            capabilityId: "append_to_current_note",
+            appendContext: {
+                insertionPoint: "end-of-file",
+                existingTailLines: ["last line"],
+            },
+            contentPreview: {
+                format: "markdown",
+                body: longBody,
+                byteSize: longBody.length,
+            },
+        }), (o) => outcomes.push(o));
+
+        modal.onOpen();
+
+        const contentEl = (modal as unknown as { contentEl: MockEl }).contentEl;
+        const nodes = flattenSubtree(contentEl);
+        const appendBody = nodes.find((c: MockEl) =>
+            typeof c.cls === "string"
+            && c.cls.includes("pa-write-action-modal__append-body"),
+        );
+        const warning = nodes.find((c: MockEl) =>
+            typeof c.cls === "string"
+            && c.cls.includes("pa-write-action-modal__append-size-warning"),
+        );
+        expect(appendBody).toBeDefined();
+        expect(warning?.text).toContain("50,001 characters");
+        expect(markdownRenderCalls[0].markdown).toBe(longBody);
     });
 
     it("does not double-resolve when onClose runs after a button click", () => {

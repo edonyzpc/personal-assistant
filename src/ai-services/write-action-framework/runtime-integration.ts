@@ -389,7 +389,9 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                     snapshot = await takeSnapshot(
                         { targetPath: confinement.normalizedPath, folder: snapshotFolder },
                         fsProbe,
-                        undefined,
+                        capability.staleRereadMode === "content-hash"
+                            ? { includeContentHash: true }
+                            : undefined,
                         now,
                     );
                 } catch (error) {

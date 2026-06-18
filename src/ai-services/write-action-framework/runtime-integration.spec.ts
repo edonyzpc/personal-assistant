@@ -416,6 +416,47 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect((driftEvent?.extra as { drift?: Record<string, boolean> } | undefined)?.drift?.targetAppeared).toBe(true);
     });
 
+    it("uses content-hash stale re-read mode when the capability requests it", async () => {
+        const events: DebugEvent[] = [];
+        let targetExistsChecks = 0;
+        let content = "before preview";
+        const fsProbe: FsProbe = {
+            exists: jest.fn(async (path: string) => {
+                if (path === ".pagelet") return true;
+                if (path === ".pagelet/foo.md") {
+                    targetExistsChecks += 1;
+                    return targetExistsChecks > 1;
+                }
+                return false;
+            }) as FsProbe["exists"],
+            read: jest.fn(async () => content) as FsProbe["read"],
+        };
+        const renderer: PreviewRenderer = {
+            show: jest.fn(async () => {
+                content = "after preview";
+                return { outcome: "confirmed" as ConfirmationOutcome };
+            }) as PreviewRenderer["show"],
+        };
+        const cap = makeCapability({
+            staleRereadMode: "content-hash",
+        });
+        const exec = createActionExecutor(defaultExecutorOptions({
+            debugObserver: makeObserver(events),
+            fsProbe,
+            previewRenderer: renderer,
+        }));
+
+        const result = await exec.execute(cap, {}, makeContext());
+
+        expect(result.status).toBe("failed");
+        expect((fsProbe.read as jest.Mock)).toHaveBeenCalledTimes(2);
+        const driftEvent = events.find((e) => e.type === "gate.stale-reread.drift");
+        expect(driftEvent?.errorCategory).toBe("stale_target");
+        expect((driftEvent?.extra as { drift?: Record<string, boolean> } | undefined)?.drift?.contentChanged)
+            .toBe(true);
+        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+    });
+
     it("captures buildPreview throwing as execute.fail with stage=buildPreview", async () => {
         const events: DebugEvent[] = [];
         const cap = makeCapability({
