@@ -71,6 +71,7 @@ import type { AnalyzeCallback } from './pagelet/preload/types';
 import type { DiscoveryResult } from './pagelet/panel/types';
 import { buildDiscoveryPrompt, buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
 import { buildDiscoveryResultFromFindings } from './pagelet/DiscoveryAnalyzer';
+import { buildPageletRelatedNotesQuery } from './pagelet/related-notes-query';
 import {
     MemoryExtractionScheduler,
     createUserProfileStore,
@@ -1099,7 +1100,7 @@ export class PluginManager extends Plugin {
         const excluded = new Set(sourcePaths.map((path) => normalizePath(path)));
         const primary = noteContents.find((entry) => normalizePath(entry.path) === normalizePath(primarySourcePath))
             ?? noteContents[0];
-        const query = primary.content.slice(0, 2400);
+        const query = buildPageletRelatedNotesQuery(primary);
         if (!query.trim()) return [];
         const controller = new AbortController();
         const timeout = setPlatformTimeout(() => controller.abort(), PAGELET_RELATED_NOTES_TIMEOUT_MS);
@@ -1178,7 +1179,7 @@ export class PluginManager extends Plugin {
                 model: this.settings.chatModelName,
             });
             const parsed = parseStructuredResponse(text);
-            return buildDiscoveryResultFromFindings(parsed.findings, currentNote.path);
+            return buildDiscoveryResultFromFindings(parsed.findings, currentNote.path, relatedNotes);
         } catch (error) {
             this.log("Discovery analysis failed", error);
             return null;
