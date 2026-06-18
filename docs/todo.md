@@ -13,7 +13,7 @@
   - Context: v2.2.0-beta.1 review (2026-06-15) identified 5 blocking fixes (C-2 PetSvg, H-1 RateLimiter, H-3 PreloadEngine, H-6 platform-dom, iOS Panel dvh) plus Orchestrator split, Bubble close behavior change, and Onboarding. Graduation requires commit + GUI smoke + provider re-test.
   - Source: [`development-roadmap.md`](./development-roadmap.md) v2.2 section, SPEC-B1/B2 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
   - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
-  - Latest smoke: 2026-06-17 broad runtime smoke passed after fixing SQLite inline WASM `blob:` loading, Pagelet related-note query timeout/no-results, and Discovery related-note mapping. Computer Use timed out reading Obsidian, so no new click-through UI smoke is counted in that pass; prior 2026-06-16 Pagelet GUI smoke remains the latest real click evidence.
+  - Latest smoke: 2026-06-18 post-commit redeploy check passed `make deploy` plus Obsidian CLI Pagelet runtime smoke after the 2026-06-17 broad runtime fixes (SQLite inline WASM `blob:` loading, Pagelet related-note query timeout/no-results, Discovery related-note mapping). Computer Use still timed out reading Obsidian and System Events still exposed `0` Obsidian windows, so no new click-through UI smoke is counted; prior 2026-06-16 Pagelet GUI smoke remains the latest real click evidence.
   - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, v2.2.0 stable published.
 
 - [x] Close AI Insight Foundation D-series implementation gate.

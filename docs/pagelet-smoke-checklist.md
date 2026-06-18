@@ -31,6 +31,35 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-06-18 · Desktop test vault · post-commit redeploy check
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: `make deploy` on current `master` after the smoke-fix commits
+  (108 suites / 1887 tests, lint=0, build=0)
+- Obsidian: 1.13.1 desktop
+- Screenshot: `/private/tmp/pa-goal-current-pagelet-panel.png`
+
+Runtime smoke:
+
+- PASS: `obsidian plugin:reload id=personal-assistant vault=test` reloaded the
+  deployed plugin successfully.
+- PASS: `pagelet-smoke-golden.md` was activated through Obsidian runtime eval,
+  then `Pagelet: Open Pagelet` rendered one `.pa-pagelet-panel`.
+- PASS: The panel DOM was `data-state=visible`, `display:flex`,
+  `opacity:1`, and contained current-note scope text including
+  `Review selected (1)` and `pagelet-smoke-golden`.
+- PASS: `obsidian dev:errors vault=test` reported no captured errors.
+
+UI/UX caveat:
+
+- BLOCKED: true click-through smoke is still blocked. Computer Use
+  `get_app_state` for `md.obsidian` timed out after 120s again, and macOS
+  Accessibility (`System Events`) still exposed the Obsidian process with
+  `0` windows. CLI runtime, DOM, and screenshot evidence remain valid, but no
+  new user-like click path is counted as passed.
+
 ### 2026-06-17 · Desktop test vault · v2.2+ broad runtime smoke
 
 Environment:
