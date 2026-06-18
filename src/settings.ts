@@ -19,6 +19,7 @@ import {
 } from "./settings/pagelet";
 import { getPageletUiLanguage } from "./locales/pagelet";
 import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
+import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { getPlatformDocument, setPlatformTimeout } from "./platform-dom";
 
 export interface ResizeStyle {
@@ -247,6 +248,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
+    merged.operationsAgentEnabled = OPERATIONS_AGENT_RUNTIME_ENABLED;
     // Pagelet has its own per-field normalizer (8 fields, mixed types).
     // Delegating keeps the legacy merge focused on settings that predate
     // Pagelet and avoids polluting this file with Pagelet-specific bounds.
@@ -2034,6 +2036,7 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private renderOperationsAgentSection(parentEl: HTMLElement): void {
+        if (!OPERATIONS_AGENT_RUNTIME_ENABLED) return;
         const plugin = this.plugin;
         new Setting(parentEl)
             .setName(this.t("plugin.settings.operationsAgent.name"))

@@ -25,6 +25,7 @@ import type {
     ChatToolProviderSchema,
     ChatToolRegistryDefinition,
 } from "./chat-tools";
+import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "../operations-agent-flags";
 import { validateAppendConfinement } from "./write-action-framework/target-confinement";
 
 export const APPEND_TOOL_PROVIDER_ID = "append-tool";
@@ -38,7 +39,7 @@ export class AppendToolProvider implements CapabilityProvider {
     readonly platform = "both" as const;
 
     async load(context: ProviderLoadContext): Promise<ProviderLoadResult> {
-        const operationsAgentEnabled = context.settings.operationsAgentEnabled === true;
+        const operationsAgentEnabled = OPERATIONS_AGENT_RUNTIME_ENABLED && context.settings.operationsAgentEnabled === true;
         if (!operationsAgentEnabled) {
             return {
                 status: "unavailable",

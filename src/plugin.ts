@@ -10,6 +10,7 @@ import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
 import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install } from './settings'
+import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { getVaultApiTokenId, hasSecretValue, icons } from './utils';
@@ -1641,7 +1642,7 @@ export class PluginManager extends Plugin {
      * propose write actions that go through the 4-gate framework.
      */
     get isOperationsAgentEnabled(): boolean {
-        return this.settings.operationsAgentEnabled;
+        return OPERATIONS_AGENT_RUNTIME_ENABLED;
     }
 
     /**

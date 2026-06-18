@@ -749,7 +749,7 @@ export class PaAgentRuntime {
         const runtimePlatform = this.options.runtimePlatform ?? "desktop";
         // Operations Agent mode: when enabled, override policy to allow
         // chat-with-actions and include the AppendToolProvider.
-        const operationsAgentEnabled = this.plugin.settings.operationsAgentEnabled === true;
+        const operationsAgentEnabled = this.plugin.isOperationsAgentEnabled;
         const effectivePolicyOptions = operationsAgentEnabled && !options.policyOptions
             ? {
                 runKind: "chat-with-actions" as const,

@@ -296,6 +296,7 @@ import {
     safeParseInt,
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
+import { OPERATIONS_AGENT_RUNTIME_ENABLED } from '../src/operations-agent-flags';
 import { confirmUserAction } from '../src/confirm';
 import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
 
@@ -578,6 +579,25 @@ describe('PA Agent telemetry settings', () => {
         expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s*{[\s\S]*?flex:\s*0 0 clamp\(280px,\s*44%,\s*560px\);[\s\S]*?justify-content:\s*flex-end;[\s\S]*?min-width:\s*240px;/);
         expect(css).toMatch(/\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s+input,[\s\S]*?\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control\s+\.setting-item-control\s+select\s*{[\s\S]*?width:\s*100%;/);
         expect(css).toMatch(/@media\s+\(max-width:\s*700px\)\s*{[\s\S]*?\.pa-settings-tab\s+\.setting-item\.pa-setting-has-form-control[\s\S]*?flex-direction:\s*column;[\s\S]*?\.setting-item-control[\s\S]*?width:\s*100%;/);
+    });
+});
+
+describe('Operations Agent disabled rollout', () => {
+    it('keeps Operations Agent unavailable even if legacy data had it enabled', () => {
+        expect(OPERATIONS_AGENT_RUNTIME_ENABLED).toBe(false);
+        expect(DEFAULT_SETTINGS.operationsAgentEnabled).toBe(false);
+        expect(mergeLoadedSettings({ operationsAgentEnabled: true }).operationsAgentEnabled).toBe(false);
+    });
+
+    it('does not render the Operations Agent settings entry', () => {
+        const plugin = makePlugin({ operationsAgentEnabled: true });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const names = getMockSettingRecords().map((record) => record.name);
+        expect(names).not.toContain('Operations Agent Mode (Beta)');
     });
 });
 
