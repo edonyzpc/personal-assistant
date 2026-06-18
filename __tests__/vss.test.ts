@@ -1802,6 +1802,25 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(plugin.getVSSFiles).toHaveBeenCalled();
     });
 
+    it('rebuilds when the local marker schema is stale', async () => {
+        const { plugin, vssStateStore } = createPlugin();
+        const index = new FakeVectorIndex();
+        setMockSqliteIndex(index);
+        await vssStateStore.setMarker({
+            ...createReadyMarker({ chunkCount: 8, fileCount: 3 }),
+            schemaVersion: VSS_SCHEMA_VERSION - 1,
+        });
+        const vss = new VSS(plugin, 'cache');
+
+        await vss.rebuildLocalIndex();
+        const stats = await vss.getStats();
+
+        expect(index.initialize).toHaveBeenCalled();
+        expect(index.reset).toHaveBeenCalled();
+        expect(stats.status).toBe('ready');
+        expect(plugin.getVSSFiles).toHaveBeenCalled();
+    });
+
     it('does not load legacy JSON fallback when SQLite is unavailable with old manifest/cache files', async () => {
         const { plugin, mockAdapter, vssStateStore } = createPlugin();
         const failingIndex = new FailingVectorIndex();

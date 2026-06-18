@@ -1953,7 +1953,9 @@ export class VSS {
         this.assertActive();
         if (marker && marker.schemaVersion !== VSS_SCHEMA_VERSION) {
             this.status = "stale";
-            return;
+            if (mode !== "manual") {
+                return;
+            }
         }
 
         let sqliteIndex: SqliteVectorIndex | null = null;
