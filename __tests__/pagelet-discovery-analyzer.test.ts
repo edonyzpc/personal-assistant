@@ -59,4 +59,46 @@ describe('buildDiscoveryResultFromFindings', () => {
 
         expect(result.connections[0]?.toNote).toBe('pagelet-provider-zh.md');
     });
+
+    it('matches CJK note titles via substring instead of word boundary', () => {
+        const result = buildDiscoveryResultFromFindings([{
+            text: '当前笔记和项目管理文档都缺少明确的验收标准。',
+            sourceFile: '我的研究.md',
+            sourceTitle: '我的研究',
+            category: 'connection',
+        }], '我的研究.md', [
+            { path: '项目管理.md' },
+            { path: '数据分析.md' },
+        ]);
+
+        expect(result.connections[0]?.toNote).toBe('项目管理.md');
+    });
+
+    it('does not false-match on common English substrings', () => {
+        const result = buildDiscoveryResultFromFindings([{
+            text: 'Both notes discuss data cancellation and testing procedures.',
+            sourceFile: 'my-research.md',
+            sourceTitle: 'My Research',
+            category: 'connection',
+        }], 'my-research.md', [
+            { path: 'data-analysis.md' },
+            { path: 'test-plan.md' },
+        ]);
+
+        expect(result.connections[0]?.toNote).toBe('data-analysis.md');
+    });
+
+    it('prefers the note with more unique matching terms', () => {
+        const result = buildDiscoveryResultFromFindings([{
+            text: 'The API design patterns document covers REST conventions.',
+            sourceFile: 'overview.md',
+            sourceTitle: 'Overview',
+            category: 'connection',
+        }], 'overview.md', [
+            { path: 'api-design-patterns.md' },
+            { path: 'api-reference.md' },
+        ]);
+
+        expect(result.connections[0]?.toNote).toBe('api-design-patterns.md');
+    });
 });
