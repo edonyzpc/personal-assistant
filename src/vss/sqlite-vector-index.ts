@@ -334,6 +334,7 @@ export class SqliteVectorIndex implements VectorIndex {
         this.assertActive();
         if (!this.wasmUrl) return undefined;
         if (isSameOriginUrl(this.wasmUrl)) return this.wasmUrl;
+        if (isBlobUrl(this.wasmUrl)) return this.wasmUrl;
         if (!isDataUrl(this.wasmUrl)) {
             throw createVectorIndexError(
                 "sqlite-asset-url-unsupported",
@@ -404,6 +405,10 @@ function isSameOriginUrl(url: string): boolean {
 
 function isDataUrl(url: string): boolean {
     return url.startsWith("data:");
+}
+
+function isBlobUrl(url: string): boolean {
+    return url.startsWith("blob:");
 }
 
 function dataUrlToBlob(url: string, fallbackType: string): Blob {

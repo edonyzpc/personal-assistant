@@ -172,6 +172,36 @@ describe('SqliteVectorIndex worker recovery', () => {
         }));
     });
 
+    it('passes inline WASM blob URLs directly to the worker', async () => {
+        Object.defineProperty(globalThis, 'Worker', {
+            configurable: true,
+            value: class { },
+        });
+        URL.createObjectURL = jest.fn(() => 'blob:unexpected-wrap');
+        const worker = new MockWorker(true, 'ready');
+        const index = new SqliteVectorIndex({
+            workerUrl: 'vss-sqlite-worker.js',
+            wasmUrl: 'blob:sqlite-wasm',
+            workerFactory: () => worker as unknown as Worker,
+        });
+
+        await expect(index.initialize({
+            provider: 'openai',
+            baseURL: '',
+            model: 'model',
+            dimensions: 1024,
+            distanceMetric: 'COSINE',
+        })).resolves.toBe('ready');
+
+        expect(URL.createObjectURL).not.toHaveBeenCalled();
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'initialize',
+            payload: expect.objectContaining({
+                wasmUrl: 'blob:sqlite-wasm',
+            }),
+        }));
+    });
+
     it('sends searchHybrid with correct payload and returns fused results', async () => {
         Object.defineProperty(globalThis, 'Worker', {
             configurable: true,
