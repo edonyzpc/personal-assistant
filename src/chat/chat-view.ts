@@ -1,15 +1,15 @@
-import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, Platform, type EventRef } from 'obsidian';
+import { WorkspaceLeaf, MarkdownView, Notice, ItemView, setIcon, Component, type EventRef } from 'obsidian';
 import { ChatService, type AgentEvent, type ChatAgentStatus, type ChatContextUsedItem, type ChatMessage, type ChatTurnMemoryMetadata } from '../ai-services/chat-service';
 import { BUNDLED_SKILL_CATALOG } from '../ai-services/bundled-skill-catalog';
 import { createPaAgentPersistedTurn, readChatHistoryTurnMetadata } from '../ai-services/pa-agent-history';
 import type { PaAgentMessage, PaAgentPersistedTurn, TurnEndStatus } from '../ai-services/chat-types';
-import type PluginManager from "../main";
-import { VSS } from '../vss'
 import type { MemoryMaintenancePlan } from '../memory-manager';
 import type { ThinkingStatusView, RenderedMessage, RuntimeWarningViewItem, CanonicalLifecycleUiState, UiTurn, TerminalTurnEntry, TimelineEntry } from './types';
 import { confirmChatAction, pickChatConversation } from './modals';
+import type { ChatHost } from './ChatHost';
 import type { ChatHistoryManager } from './chat-history-manager';
 import type { PersistedConversation, PersistedTurn } from './chat-history-store';
+import { ConversationPersistence } from './ConversationPersistence';
 import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getMermaidFenceSources, scheduleMermaidEnhancement, renderMermaidSourceWarning } from './mermaid';
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
@@ -18,6 +18,7 @@ import {
     type ChatRoleIdenticon,
     type ChatRoleIdenticonModel,
 } from './role-identicons';
+import { MobileInputAdapter } from './MobileInputAdapter';
 import { getPluginUiLanguage, makePluginTranslator, pluginT } from '../locales/plugin';
 import {
     cancelPlatformAnimationFrame,
@@ -25,7 +26,6 @@ import {
     getPlatformCustomElements,
     getOptionalPlatformDocument,
     getOptionalPlatformWindow,
-    getPlatformDocument,
     getPlatformPerformance,
     requestPlatformAnimationFrame,
     setPlatformTimeout,
@@ -40,7 +40,6 @@ export type { ChatMessage };
 
 const LIVE_MARKDOWN_SLOW_RENDER_MS = 12;
 const LIVE_MARKDOWN_RENDER_COOLDOWN_MS = 32;
-const KEYBOARD_LAYOUT_RESIZE_THRESHOLD_PX = 80;
 const CHAT_DRAWER_HOST_CLASS = 'pa-chat-drawer-host';
 const ROLE_IDENTICON_FILL_CLASSES: Record<string, string> = {
     'var(--pa-chat-role-identicon-yellow)': 'pa-chat-role-identicon-fill-yellow',
@@ -94,28 +93,6 @@ export { CHAT_MENU_IDLE_CLOSE_MS } from './menu-helpers';
 
 let ldrsLoadersRequested = false;
 
-type KeyboardPluginEventName = 'keyboardWillShow' | 'keyboardDidShow' | 'keyboardWillHide' | 'keyboardDidHide';
-type KeyboardWindowEventName = KeyboardPluginEventName | 'resize' | 'orientationchange';
-type KeyboardClearanceSource = 'native' | 'none' | 'visualViewport';
-
-interface KeyboardPluginInfo {
-    keyboardHeight?: number;
-}
-
-interface KeyboardPluginListenerHandle {
-    remove?: () => Promise<void> | void;
-}
-
-// Capacitor Keyboard plugin facade. We let the WebView/layout viewport handle mobile keyboard
-// geometry where possible, and only use native height as a fallback measurement.
-interface KeyboardPluginFacade {
-    addListener?: (
-        eventName: KeyboardPluginEventName,
-        listenerFunc: (info: KeyboardPluginInfo) => void,
-    ) => Promise<KeyboardPluginListenerHandle> | KeyboardPluginListenerHandle;
-    setResizeMode?: (options: { mode: string }) => Promise<void> | void;
-}
-
 function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) => void): void {
     if (ldrsLoadersRequested) return;
     if (!getPlatformCustomElements()) return;
@@ -132,12 +109,11 @@ function ensureChatLoadersRegistered(log?: (message: string, error?: unknown) =>
 
 
 export class LLMView extends ItemView {
-    plugin: PluginManager;
+    private readonly host: ChatHost;
     result: string = '';
     responseDiv!: HTMLDivElement;
     abortController: AbortController | null = null;
     chatHistory: ChatMessage[] = [];
-    vss: VSS;
     private chatService: ChatService;
     private viewSessionId = 0;
     private activeTurnId = 0;
@@ -147,27 +123,12 @@ export class LLMView extends ItemView {
     private statusBarResizeObserver: ResizeObserver | null = null;
     private statusBarResizeHandler: (() => void) | null = null;
     private statusBarResizeWindow: Window | null = null;
-    private keyboardVisualViewport: VisualViewport | null = null;
-    private keyboardUpdateHandler: (() => void) | null = null;
-    private keyboardUpdateFrame: PlatformAnimationFrameHandle | null = null;
-    private keyboardWindowListeners: Array<{ type: KeyboardWindowEventName; listener: EventListener; target: Window }> = [];
-    private keyboardPluginListenerHandles: KeyboardPluginListenerHandle[] = [];
-    private keyboardLayoutBaselineHeight = 0;
-    private nativeKeyboardHeight = 0;
-    private nativeKeyboardVisible = false;
+    private readonly mobileInputAdapter: MobileInputAdapter;
+    private readonly conversationPersistence: ConversationPersistence;
     private memoryStatusUnsubscribe: (() => void) | null = null;
     private settingsChangeUnsubscribe: (() => void) | null = null;
     private markdownRenderOwners = new Set<Component>();
-    private mobileTabBarHandle: HTMLElement | null = null;
-    private mobileTabBarOptions: HTMLElement | null = null;
-    private mobileTabBarOptionsHandler: (() => void) | null = null;
-    private mobileTabBarDismissTimer: PlatformTimeoutHandle | null = null;
     private chatDrawerHost: HTMLElement | null = null;
-    private activeConversationId: string | null = null;
-    private activeConversation: PersistedConversation | null = null;
-    private nextTurnIndex = 0;
-    private persistedTurnIndexByEntry = new WeakMap<TimelineEntry, number>();
-    private persistChain: Promise<void> = Promise.resolve();
     private composerTextArea: HTMLTextAreaElement | null = null;
     private syncComposerControlsForExternalPrefill: (() => void) | null = null;
     private viewTeardownCallbacks = new Set<() => void>();
@@ -188,15 +149,24 @@ export class LLMView extends ItemView {
         return true;
     }
 
-    constructor(leaf: WorkspaceLeaf, plugin: PluginManager, vss: VSS) {
+    constructor(leaf: WorkspaceLeaf, host: ChatHost) {
         super(leaf);
-        this.plugin = plugin;
-        this.vss = vss;
-        this.chatService = new ChatService(plugin);
+        this.host = host;
+        this.chatService = host.createChatService();
+        this.mobileInputAdapter = new MobileInputAdapter(this.containerEl, (message, ...args) => {
+            this.host.log(message, ...args);
+        });
+        this.conversationPersistence = new ConversationPersistence({
+            getManager: () => this.getChatHistoryManager(),
+            log: (message, error) => this.host.log(message, error),
+            scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) => {
+                this.host.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount);
+            },
+        });
     }
 
     private getChatHistoryManager(): ChatHistoryManager | undefined {
-        return this.plugin.chatHistoryManager;
+        return this.host.chatHistoryManager;
     }
 
     private createMarkdownRenderOwner(): Component {
@@ -228,7 +198,7 @@ export class LLMView extends ItemView {
             try {
                 callback();
             } catch (error) {
-                this.plugin.log?.("Could not tear down chat view resource", error);
+                this.host.log?.("Could not tear down chat view resource", error);
             }
         }
     }
@@ -248,7 +218,7 @@ export class LLMView extends ItemView {
     async onOpen() {
         const sessionId = this.startViewSession();
         const t = makePluginTranslator(getPluginUiLanguage());
-        ensureChatLoadersRegistered((message, error) => this.plugin.log(message, error));
+        ensureChatLoadersRegistered((message, error) => this.host.log(message, error));
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
@@ -259,7 +229,7 @@ export class LLMView extends ItemView {
         const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container' });
 
         const inputDiv = containerEl.createDiv({ cls: 'llm-input' });
-        this.setupMobileTabBarAutoHide(containerEl);
+        this.mobileInputAdapter.setupMobileTabBarAutoHide(containerEl);
         containerEl.createDiv({
             cls: 'pa-chat-keyboard-spacer',
             attr: { 'aria-hidden': 'true' },
@@ -437,7 +407,7 @@ export class LLMView extends ItemView {
             });
             this.scheduledScrollFrame = frameId;
         };
-        this.observeKeyboardClearance(containerEl, inputDiv, () => {
+        this.mobileInputAdapter.observeKeyboardClearance(containerEl, inputDiv, () => {
             scrollToBottom({ behavior: 'auto' });
         });
 
@@ -485,10 +455,10 @@ export class LLMView extends ItemView {
             skillTypeahead.hidden = true;
         };
         const getEnabledSkillTypeaheadEntries = () => {
-            if (this.plugin.settings?.skillContextEnabled === false) return [];
+            if (this.host.settings?.skillContextEnabled === false) return [];
             const enabledSkillIds = new Set(
-                Array.isArray(this.plugin.settings?.enabledSkillIds)
-                    ? this.plugin.settings.enabledSkillIds
+                Array.isArray(this.host.settings?.enabledSkillIds)
+                    ? this.host.settings.enabledSkillIds
                     : BUNDLED_SKILL_CATALOG.map((skill) => skill.id),
             );
             return BUNDLED_SKILL_CATALOG.filter((skill) => enabledSkillIds.has(skill.id));
@@ -587,7 +557,7 @@ export class LLMView extends ItemView {
         const syncComposerControls = () => {
             const generating = isGenerating();
             const hasDraft = textArea.value.trim().length > 0;
-            const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
+            const setupIssue = this.host.getAISetupIssue?.() ?? null;
             sendButton.disabled = generating || !hasDraft || setupIssue !== null;
             if (generating && !isStopping && !isFinalizing) {
                 textArea.setAttribute('placeholder', t("plugin.chat.placeholder.draftNextMessage"));
@@ -798,7 +768,7 @@ export class LLMView extends ItemView {
             syncComposerControls();
         };
         const getMemoryChipState = (plan?: MemoryMaintenancePlan | null): MemoryChipState => {
-            if (this.plugin.settings?.memoryEnabled === false) {
+            if (this.host.settings?.memoryEnabled === false) {
                 return { label: t("plugin.chat.memory.unavailable"), visualState: 'unavailable' };
             }
             if (!plan) {
@@ -842,9 +812,9 @@ export class LLMView extends ItemView {
         };
         const readMemoryPlan = async (): Promise<MemoryMaintenancePlan | null> => {
             try {
-                return await this.plugin.memoryManager?.getMaintenancePlan?.() ?? null;
+                return await this.host.memoryStatus.getMaintenancePlan();
             } catch (error) {
-                this.plugin.log?.("Could not read Memory state for chat chip", error);
+                this.host.log?.("Could not read Memory state for chat chip", error);
                 return { reason: 'unavailable', action: 'none', notesToCheck: 0, requiresApproval: false, canAnswerNow: true };
             }
         };
@@ -871,9 +841,9 @@ export class LLMView extends ItemView {
                 actionButton.onclick = () => {
                     closeMemoryMenu();
                     if (state.actionKind === 'update') {
-                        void this.plugin.memoryManager?.updateFromCommand?.().then(refreshMemoryChipState);
+                        void this.host.memoryStatus.updateFromCommand().then(refreshMemoryChipState);
                     } else {
-                        void this.plugin.memoryManager?.prepareFromCommand?.().then(refreshMemoryChipState);
+                        void this.host.memoryStatus.prepareFromCommand().then(refreshMemoryChipState);
                     }
                 };
             }
@@ -899,7 +869,7 @@ export class LLMView extends ItemView {
             });
             technicalButton.onclick = () => {
                 closeMemoryMenu();
-                void this.plugin.showTechnicalMemoryStatus?.();
+                this.host.memoryStatus.showTechnicalStatus();
             };
         };
         const renderEmptyState = () => {
@@ -907,7 +877,7 @@ export class LLMView extends ItemView {
             emptyStateEl = null;
             if (timelineEntries.length > 0 || isGenerating()) return;
 
-            const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
+            const setupIssue = this.host.getAISetupIssue?.() ?? null;
             if (setupIssue) {
                 emptyStateEl = this.responseDiv.createDiv({ cls: 'pa-chat-empty-state pa-chat-config-banner' });
                 emptyStateEl.createDiv({ cls: 'pa-chat-empty-title', text: t("plugin.chat.empty.setupTitle") });
@@ -992,7 +962,7 @@ export class LLMView extends ItemView {
             const renderOwner = this.createMarkdownRenderOwner();
 
             const renderStartedAt = getMonotonicTimeMs();
-            const renderPromise = renderMarkdownWithOwner(this.plugin, mermaidTransform.markdown, buffer, renderOwner);
+            const renderPromise = renderMarkdownWithOwner(this.host, mermaidTransform.markdown, buffer, renderOwner);
             options.onSynchronousRenderComplete?.(getMonotonicTimeMs() - renderStartedAt);
 
             return renderPromise
@@ -1012,7 +982,7 @@ export class LLMView extends ItemView {
                     if (!options.deferMermaid) {
                         scheduleMermaidEnhancement(
                             buffer,
-                            this.plugin,
+                            this.host,
                             mermaidTransform.sources,
                             () => rendered.renderToken === renderToken
                                 && buffer.parentElement === rendered.contentDiv,
@@ -1036,7 +1006,7 @@ export class LLMView extends ItemView {
                         try {
                             const fallbackTransform = deferMermaidFences(content);
                             await renderMarkdownWithOwner(
-                                this.plugin,
+                                this.host,
                                 fallbackTransform.markdown,
                                 fallbackBuffer,
                                 fallbackOwner,
@@ -1384,7 +1354,7 @@ export class LLMView extends ItemView {
             if (isGenerating()) return;
             const pairStart = this.chatHistory.indexOf(expectedUser);
             if (pairStart < 0 || this.chatHistory[pairStart + 1] !== expectedAssistant) return;
-            const confirmed = await confirmChatAction(this.plugin, {
+            const confirmed = await confirmChatAction(this.host, {
                 title: t("plugin.chat.confirm.deleteMessage.title"),
                 message: t("plugin.chat.confirm.deleteMessage.fullTurn"),
                 confirmText: t("plugin.chat.action.delete"),
@@ -1404,7 +1374,7 @@ export class LLMView extends ItemView {
             });
             renderTimeline();
             for (const entry of removedEntries) {
-                void this.deletePersistedTurnForEntry(entry);
+                void this.conversationPersistence.deletePersistedTurnForEntry(entry);
             }
             new Notice(t("plugin.chat.notice.messageDeleted"));
         };
@@ -1511,7 +1481,7 @@ export class LLMView extends ItemView {
             setIcon(deleteButton, 'trash');
             deleteButton.onclick = () => {
                 if (deleteButton.disabled || isGenerating()) return;
-                void confirmChatAction(this.plugin, {
+                void confirmChatAction(this.host, {
                     title: t("plugin.chat.confirm.deleteMessage.title"),
                     message: t("plugin.chat.confirm.deleteMessage.unfinishedTurn"),
                     confirmText: t("plugin.chat.action.delete"),
@@ -2078,7 +2048,7 @@ export class LLMView extends ItemView {
             };
             timelineEntries.push(historyEntry);
             this.result = responseContent;
-            await this.persistFinalizedTurn(prompt, historyEntry);
+            await this.conversationPersistence.persistFinalizedTurn(prompt, historyEntry);
 
             const deleteCompletedPair = () => deleteHistoryPairForMessages(userMessage, assistantMessage);
             ensureCompletedMessageActions(userRendered, {
@@ -2126,7 +2096,7 @@ export class LLMView extends ItemView {
 
         const sendPrompt = async (prompt: string) => {
             if (!prompt.trim() || isGenerating()) return;
-            const setupIssue = this.plugin.getAISetupIssue?.() ?? null;
+            const setupIssue = this.host.getAISetupIssue?.() ?? null;
             if (setupIssue) {
                 showComposerHint(setupIssue);
                 syncComposerControls();
@@ -2302,7 +2272,7 @@ export class LLMView extends ItemView {
         };
 
         clearButton.onclick = async () => {
-            const confirmed = await confirmChatAction(this.plugin, {
+            const confirmed = await confirmChatAction(this.host, {
                 title: t("plugin.chat.confirm.clearChat.title"),
                 message: t("plugin.chat.confirm.clearChat.message"),
                 confirmText: t("plugin.chat.confirm.clearChat.action"),
@@ -2310,17 +2280,15 @@ export class LLMView extends ItemView {
             });
             if (!confirmed) return;
             if (!isCurrentSession()) return;
-            await this.persistChain.catch(() => undefined);
+            await this.conversationPersistence.waitForPendingWrites();
             this.invalidateActiveTurn();
             isStopping = false;
             isFinalizing = false;
             this.cancelScheduledScroll();
-            const conversationIdToDelete = this.activeConversationId;
+            const conversationIdToDelete = this.conversationPersistence.activeConversationId;
             this.chatHistory = [];
             timelineEntries = [];
-            this.activeConversation = null;
-            this.activeConversationId = null;
-            this.nextTurnIndex = 0;
+            this.conversationPersistence.resetActiveConversationState();
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
@@ -2328,19 +2296,10 @@ export class LLMView extends ItemView {
             hideComposerHint();
             syncComposerControls();
             renderEmptyState();
-            const manager = await getReadyHistoryManager();
-            if (manager && conversationIdToDelete) {
-                try {
-                    await manager.deleteConversation(conversationIdToDelete);
-                } catch (error) {
-                    this.plugin.log?.("Failed to delete cleared conversation", error);
-                }
-            } else if (manager) {
-                try {
-                    await manager.setActiveConversationId(null);
-                } catch (error) {
-                    this.plugin.log?.("Failed to clear active conversation pointer", error);
-                }
+            if (conversationIdToDelete) {
+                await this.conversationPersistence.deleteConversation(conversationIdToDelete);
+            } else {
+                await this.conversationPersistence.clearActiveConversationPointer();
             }
             new Notice(t("plugin.chat.notice.currentChatCleared"));
         };
@@ -2391,38 +2350,22 @@ export class LLMView extends ItemView {
             conversation: PersistedConversation,
             turns: PersistedTurn[],
         ) => {
-            const manager = this.getChatHistoryManager();
-            if (!manager) return;
+            const hydrated = this.conversationPersistence.hydrateConversation(conversation, turns);
+            if (!hydrated) return;
             this.invalidateActiveTurn();
             isStopping = false;
             isFinalizing = false;
             this.cancelScheduledScroll();
-            this.chatHistory = [];
-            timelineEntries = [];
-            let maxTurnIndex = -1;
-            for (const turn of turns) {
-                const rehydrated = manager.deserializeTurn(turn);
-                this.chatHistory.push(rehydrated.userMessage, rehydrated.assistantMessage);
-                timelineEntries.push(rehydrated.historyEntry);
-                this.persistedTurnIndexByEntry.set(rehydrated.historyEntry, turn.turnIndex);
-                if (turn.turnIndex > maxTurnIndex) maxTurnIndex = turn.turnIndex;
-            }
-            this.activeConversation = conversation;
-            this.activeConversationId = conversation.id;
-            this.nextTurnIndex = maxTurnIndex + 1;
+            this.chatHistory = hydrated.chatHistory;
+            timelineEntries = hydrated.timelineEntries;
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             this.result = '';
             renderTimeline();
         };
         const getReadyHistoryManager = async (showNotice = false): Promise<ChatHistoryManager | null> => {
-            const manager = this.getChatHistoryManager();
+            const manager = await this.conversationPersistence.getReadyManager();
             if (!manager) {
-                if (showNotice) new Notice(t("plugin.chat.notice.historyUnavailable"));
-                return null;
-            }
-            await manager.initialize();
-            if (!manager.isAvailable()) {
                 if (showNotice) new Notice(t("plugin.chat.notice.historyUnavailable"));
                 return null;
             }
@@ -2431,25 +2374,13 @@ export class LLMView extends ItemView {
 
         const restoreActiveConversation = async () => {
             try {
-                const manager = await getReadyHistoryManager();
-                if (!manager) return;
-                const activeId = await manager.getActiveConversationId();
-                if (!activeId) return;
+                const loaded = await this.conversationPersistence.loadActiveConversation();
+                if (!loaded) return;
                 if (!isCurrentSession()) return;
                 if (isGenerating() || this.chatHistory.length > 0) return;
-                const conversation = await manager.findConversation(activeId);
-                if (!conversation) {
-                    await manager.setActiveConversationId(null);
-                    return;
-                }
-                if (!isCurrentSession()) return;
-                if (isGenerating() || this.chatHistory.length > 0) return;
-                const turns = await manager.getTurns(activeId);
-                if (!isCurrentSession()) return;
-                if (isGenerating() || this.chatHistory.length > 0) return;
-                applyRestoredConversation(conversation, turns);
+                applyRestoredConversation(loaded.conversation, loaded.turns);
             } catch (error) {
-                this.plugin.log?.("Failed to restore chat history", error);
+                this.host.log?.("Failed to restore chat history", error);
             }
         };
 
@@ -2458,12 +2389,12 @@ export class LLMView extends ItemView {
                 new Notice(t("plugin.chat.notice.waitForSwitch"));
                 return;
             }
-            await this.persistChain.catch(() => undefined);
-            const manager = await getReadyHistoryManager(true);
-            if (!manager) return;
+            await this.conversationPersistence.waitForPendingWrites();
+            const readyManager = await getReadyHistoryManager(true);
+            if (!readyManager) return;
             try {
-                const conversation = await manager.findConversation(conversationId);
-                if (!conversation) {
+                const loaded = await this.conversationPersistence.loadConversation(conversationId);
+                if (!loaded) {
                     new Notice(t("plugin.chat.notice.conversationMissing"));
                     return;
                 }
@@ -2472,12 +2403,15 @@ export class LLMView extends ItemView {
                     new Notice(t("plugin.chat.notice.waitForSwitch"));
                     return;
                 }
-                await manager.setActiveConversationId(conversationId);
-                const turns = await manager.getTurns(conversationId);
+                const committed = await this.conversationPersistence.commitActiveConversationPointer(
+                    loaded.conversation.id,
+                    isCurrentSession,
+                );
+                if (!committed) return;
                 if (!isCurrentSession()) return;
-                applyRestoredConversation(conversation, turns);
+                applyRestoredConversation(loaded.conversation, loaded.turns);
             } catch (error) {
-                this.plugin.log?.("Failed to switch chat conversation", error);
+                this.host.log?.("Failed to switch chat conversation", error);
                 new Notice(t("plugin.chat.notice.loadConversationFailed"));
             }
         };
@@ -2487,16 +2421,14 @@ export class LLMView extends ItemView {
                 new Notice(t("plugin.chat.notice.waitForNewChat"));
                 return;
             }
-            await this.persistChain.catch(() => undefined);
+            await this.conversationPersistence.waitForPendingWrites();
             this.invalidateActiveTurn();
             isStopping = false;
             isFinalizing = false;
             this.cancelScheduledScroll();
             this.chatHistory = [];
             timelineEntries = [];
-            this.activeConversation = null;
-            this.activeConversationId = null;
-            this.nextTurnIndex = 0;
+            this.conversationPersistence.resetActiveConversationState();
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
@@ -2504,14 +2436,7 @@ export class LLMView extends ItemView {
             hideComposerHint();
             syncComposerControls();
             renderEmptyState();
-            const manager = await getReadyHistoryManager();
-            if (manager) {
-                try {
-                    await manager.setActiveConversationId(null);
-                } catch (error) {
-                    this.plugin.log?.("Failed to clear active conversation pointer", error);
-                }
-            }
+            await this.conversationPersistence.clearActiveConversationPointer();
             new Notice(t("plugin.chat.notice.startedNewChat"));
         };
 
@@ -2522,9 +2447,9 @@ export class LLMView extends ItemView {
                 const conversations = await manager.listConversations();
                 if (!isCurrentSession()) return;
                 conversations.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-                const selection = await pickChatConversation(this.plugin, {
+                const selection = await pickChatConversation(this.host, {
                     conversations,
-                    activeConversationId: this.activeConversationId,
+                    activeConversationId: this.conversationPersistence.activeConversationId,
                     isStreaming: this.isStreaming,
                 });
                 if (!selection) return;
@@ -2534,7 +2459,7 @@ export class LLMView extends ItemView {
                     return;
                 }
                 if (selection.action === 'delete') {
-                    const confirmed = await confirmChatAction(this.plugin, {
+                    const confirmed = await confirmChatAction(this.host, {
                         title: t("plugin.chat.confirm.deleteConversation.title"),
                         message: t("plugin.chat.confirm.deleteConversation.message"),
                         confirmText: t("plugin.chat.action.delete"),
@@ -2544,14 +2469,14 @@ export class LLMView extends ItemView {
                     if (!isCurrentSession()) return;
                     await manager.deleteConversation(selection.conversationId);
                     if (!isCurrentSession()) return;
-                    if (selection.conversationId === this.activeConversationId) {
+                    if (selection.conversationId === this.conversationPersistence.activeConversationId) {
                         await startNewConversation();
                     } else {
                         new Notice(t("plugin.chat.notice.conversationDeleted"));
                     }
                 }
             } catch (error) {
-                this.plugin.log?.("Failed to open chat history picker", error);
+                this.host.log?.("Failed to open chat history picker", error);
                 new Notice(t("plugin.chat.notice.openHistoryFailed"));
             }
         };
@@ -2577,7 +2502,7 @@ export class LLMView extends ItemView {
             }
         };
         technicalMemoryButton.onclick = () => {
-            void this.plugin.showTechnicalMemoryStatus?.();
+            this.host.memoryStatus.showTechnicalStatus();
         };
         settingsButton.onclick = () => {
             const appWithSettings = this.app as typeof this.app & {
@@ -2609,11 +2534,11 @@ export class LLMView extends ItemView {
         syncComposerControls();
         renderEmptyState();
         void restoreActiveConversation();
-        this.memoryStatusUnsubscribe = this.plugin.onMemoryStatusChanged?.(async () => {
+        this.memoryStatusUnsubscribe = this.host.memoryStatus.onStatusChanged(async () => {
             if (!isCurrentSession()) return;
             await refreshMemoryChipState();
-        }) ?? null;
-        this.settingsChangeUnsubscribe = this.plugin.onSettingsChanged?.(() => {
+        });
+        this.settingsChangeUnsubscribe = this.host.onSettingsChanged?.(() => {
             if (!isCurrentSession()) return;
             syncComposerControls();
             renderEmptyState();
@@ -2632,10 +2557,10 @@ export class LLMView extends ItemView {
         this.panelResizeObserver?.disconnect();
         this.panelResizeObserver = null;
         this.disconnectStatusBarClearance();
-        this.disconnectKeyboardClearance();
+        this.mobileInputAdapter.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
         this.disconnectSettingsChangeListener();
-        this.teardownMobileTabBarAutoHide();
+        this.mobileInputAdapter.teardownMobileTabBarAutoHide();
         this.clearChatDrawerHost();
         this.composerTextArea = null;
         this.syncComposerControlsForExternalPrefill = null;
@@ -2644,7 +2569,7 @@ export class LLMView extends ItemView {
     private startViewSession(): number {
         this.runViewTeardownCallbacks();
         this.cancelScheduledScroll();
-        this.disconnectKeyboardClearance();
+        this.mobileInputAdapter.disconnectKeyboardClearance();
         this.disconnectMemoryStatusListener();
         this.disconnectSettingsChangeListener();
         this.viewSessionId += 1;
@@ -2661,69 +2586,6 @@ export class LLMView extends ItemView {
         this.settingsChangeUnsubscribe = null;
     }
 
-    private setupMobileTabBarAutoHide(containerEl: HTMLElement) {
-        this.teardownMobileTabBarAutoHide();
-        if (!Platform.isMobile) return;
-        const t = makePluginTranslator(getPluginUiLanguage());
-        const tabContainer = containerEl.closest('.workspace-drawer-tab-container');
-        if (!tabContainer) return;
-        const tabOptions = tabContainer.querySelector<HTMLElement>('.workspace-drawer-tab-options');
-        if (!tabOptions) return;
-        this.mobileTabBarOptions = tabOptions;
-
-        const handle = getPlatformDocument().createElement('div');
-        handle.className = 'pa-tab-bar-handle';
-        handle.setAttribute('aria-label', t("plugin.chat.mobile.showTabBar"));
-        handle.setAttribute('aria-expanded', 'false');
-        setIcon(handle, 'chevron-up');
-        containerEl.appendChild(handle);
-        this.mobileTabBarHandle = handle;
-
-        const dismiss = () => {
-            tabOptions.classList.remove('pa-tab-bar-visible');
-            setIcon(handle, 'chevron-up');
-            handle.setAttribute('aria-label', t("plugin.chat.mobile.showTabBar"));
-            handle.setAttribute('aria-expanded', 'false');
-        };
-        const scheduleDismiss = () => {
-            this.clearMobileTabBarDismissTimer();
-            this.mobileTabBarDismissTimer = setPlatformTimeout(dismiss, 5000);
-        };
-
-        handle.addEventListener('click', (e) => {
-            e.stopPropagation();
-            if (tabOptions.classList.contains('pa-tab-bar-visible')) {
-                this.clearMobileTabBarDismissTimer();
-                dismiss();
-            } else {
-                tabOptions.classList.add('pa-tab-bar-visible');
-                setIcon(handle, 'chevron-down');
-                handle.setAttribute('aria-label', t("plugin.chat.mobile.hideTabBar"));
-                handle.setAttribute('aria-expanded', 'true');
-                scheduleDismiss();
-            }
-        });
-
-        const tabOptionsHandler = () => {
-            this.clearMobileTabBarDismissTimer();
-            scheduleDismiss();
-        };
-        tabOptions.addEventListener('click', tabOptionsHandler);
-        this.mobileTabBarOptionsHandler = tabOptionsHandler;
-    }
-
-    private teardownMobileTabBarAutoHide() {
-        this.clearMobileTabBarDismissTimer();
-        if (this.mobileTabBarOptions && this.mobileTabBarOptionsHandler) {
-            this.mobileTabBarOptions.removeEventListener('click', this.mobileTabBarOptionsHandler);
-        }
-        this.mobileTabBarOptionsHandler = null;
-        this.mobileTabBarOptions?.classList.remove('pa-tab-bar-visible');
-        this.mobileTabBarOptions = null;
-        this.mobileTabBarHandle?.remove();
-        this.mobileTabBarHandle = null;
-    }
-
     private markChatDrawerHost(containerEl: HTMLElement) {
         this.clearChatDrawerHost();
         const drawerHost = containerEl.closest('.workspace-drawer-inner') as HTMLElement | null;
@@ -2735,13 +2597,6 @@ export class LLMView extends ItemView {
     private clearChatDrawerHost() {
         this.chatDrawerHost?.classList.remove(CHAT_DRAWER_HOST_CLASS);
         this.chatDrawerHost = null;
-    }
-
-    private clearMobileTabBarDismissTimer() {
-        if (this.mobileTabBarDismissTimer !== null) {
-            clearPlatformTimeout(this.mobileTabBarDismissTimer);
-            this.mobileTabBarDismissTimer = null;
-        }
     }
 
     private observePanelDensity(containerEl: HTMLElement) {
@@ -2817,359 +2672,6 @@ export class LLMView extends ItemView {
         this.statusBarResizeWindow = null;
     }
 
-    private observeKeyboardClearance(containerEl: HTMLElement, inputEl: HTMLElement, onClearanceChange?: () => void) {
-        this.disconnectKeyboardClearance();
-
-        let previousClearance = -1;
-        let previousAccessoryClearance = -1;
-        let previousComposerHeight = -1;
-        let previousSource: KeyboardClearanceSource = 'none';
-        let previousKeyboardVisible = false;
-        this.keyboardLayoutBaselineHeight = this.getLayoutViewportHeight();
-        const applyClearance = (notify: boolean) => {
-            const measurement = this.measureKeyboardClearance(containerEl, inputEl);
-            const clearance = measurement.realClearance;
-            if (
-                clearance === previousClearance
-                && measurement.accessoryClearance === previousAccessoryClearance
-                && measurement.composerHeight === previousComposerHeight
-                && measurement.source === previousSource
-                && measurement.keyboardVisible === previousKeyboardVisible
-            ) {
-                return;
-            }
-            previousClearance = clearance;
-            previousAccessoryClearance = measurement.accessoryClearance;
-            previousComposerHeight = measurement.composerHeight;
-            previousSource = measurement.source;
-            previousKeyboardVisible = measurement.keyboardVisible;
-            this.setKeyboardClearanceStyles(containerEl, clearance, measurement.keyboardVisible);
-            this.syncKeyboardComposerOverlay(containerEl, clearance, measurement.accessoryClearance, measurement.composerHeight, measurement.source, measurement.keyboardVisible);
-            if (notify) {
-                onClearanceChange?.();
-            }
-        };
-        const updateClearance = () => {
-            this.keyboardUpdateFrame = null;
-            applyClearance(true);
-        };
-        const scheduleUpdate = () => {
-            if (this.keyboardUpdateFrame !== null) return;
-            this.keyboardUpdateFrame = requestPlatformAnimationFrame(updateClearance);
-        };
-
-        this.keyboardUpdateHandler = scheduleUpdate;
-        this.keyboardVisualViewport = this.getVisualViewport();
-        applyClearance(false);
-
-        this.keyboardVisualViewport?.addEventListener('resize', scheduleUpdate);
-        this.keyboardVisualViewport?.addEventListener('scroll', scheduleUpdate);
-
-        this.addWindowKeyboardListener('resize', scheduleUpdate);
-        this.addWindowKeyboardListener('orientationchange', scheduleUpdate);
-        this.observeNativeKeyboardEvents(scheduleUpdate);
-    }
-
-    private disconnectKeyboardClearance() {
-        if (this.keyboardUpdateFrame !== null) {
-            cancelPlatformAnimationFrame(this.keyboardUpdateFrame);
-        }
-        this.keyboardUpdateFrame = null;
-
-        if (this.keyboardUpdateHandler) {
-            this.keyboardVisualViewport?.removeEventListener('resize', this.keyboardUpdateHandler);
-            this.keyboardVisualViewport?.removeEventListener('scroll', this.keyboardUpdateHandler);
-        }
-        for (const { type, listener, target } of this.keyboardWindowListeners) {
-            target.removeEventListener(type, listener);
-        }
-        this.keyboardWindowListeners = [];
-
-        for (const handle of this.keyboardPluginListenerHandles.splice(0)) {
-            this.safeInvokeKeyboardPlugin(
-                () => handle.remove?.(),
-                'Could not remove native keyboard listener',
-            );
-        }
-
-        this.keyboardVisualViewport = null;
-        this.keyboardUpdateHandler = null;
-        this.nativeKeyboardHeight = 0;
-        this.nativeKeyboardVisible = false;
-        this.keyboardLayoutBaselineHeight = 0;
-        this.setKeyboardClearanceStyles(this.containerEl, 0, false);
-        this.clearKeyboardComposerOverlay(this.containerEl);
-    }
-
-    private getVisualViewport(): VisualViewport | null {
-        return getOptionalPlatformWindow()?.visualViewport ?? null;
-    }
-
-    private measureKeyboardClearance(containerEl: HTMLElement, inputEl: HTMLElement): {
-        realClearance: number;
-        accessoryClearance: number;
-        composerHeight: number;
-        source: KeyboardClearanceSource;
-        keyboardVisible: boolean;
-    } {
-        if (!containerEl.getBoundingClientRect) {
-            return {
-                realClearance: 0,
-                accessoryClearance: 0,
-                composerHeight: 0,
-                source: 'none',
-                keyboardVisible: false,
-            };
-        }
-
-        const viewRect = containerEl.getBoundingClientRect();
-        const visualViewport = this.getVisualViewport();
-        const viewportOverlap = this.calculateVisualViewportKeyboardOverlap(viewRect, visualViewport);
-        const nativeOverlap = this.calculateKeyboardHeightOverlap(viewRect, this.nativeKeyboardHeight);
-        const realClearance = Math.max(viewportOverlap, nativeOverlap);
-        const composerHeight = this.measureComposerHeight(inputEl);
-        const nativeFallbackPreferred = this.nativeKeyboardVisible
-            && nativeOverlap > 0
-            && nativeOverlap >= viewportOverlap;
-        const source = realClearance <= 0
-            ? 'none'
-            : nativeFallbackPreferred
-                ? 'native'
-                : viewportOverlap >= nativeOverlap
-                    ? 'visualViewport'
-                    : 'native';
-        const keyboardVisible = realClearance > 0
-            || this.nativeKeyboardVisible
-            || this.isVisualViewportKeyboardLikelyVisible(visualViewport);
-        const accessoryClearance = 0;
-        if (!keyboardVisible) {
-            this.refreshKeyboardLayoutBaselineHeight();
-        }
-
-        return {
-            realClearance,
-            accessoryClearance,
-            composerHeight,
-            source,
-            keyboardVisible,
-        };
-    }
-
-    private measureComposerHeight(inputEl: HTMLElement): number {
-        const composerRect = inputEl.getBoundingClientRect?.();
-        return composerRect?.height && Number.isFinite(composerRect.height)
-            ? Math.ceil(composerRect.height)
-            : 0;
-    }
-
-    private calculateVisualViewportKeyboardOverlap(viewRect: DOMRect, viewport: VisualViewport | null): number {
-        if (!viewport) return 0;
-
-        const viewportBottom = viewport.offsetTop + viewport.height;
-        if (!Number.isFinite(viewportBottom) || viewportBottom <= 0) return 0;
-        const overlap = viewRect.bottom - viewportBottom;
-        if (overlap <= 1) return 0;
-        return Math.ceil(Math.min(overlap, viewRect.height));
-    }
-
-    private calculateKeyboardHeightOverlap(viewRect: DOMRect, keyboardHeight: number): number {
-        if (keyboardHeight <= 0) return 0;
-
-        const layoutHeight = this.getLayoutViewportHeight();
-        if (
-            layoutHeight > 0
-            && this.keyboardLayoutBaselineHeight > 0
-            && layoutHeight < this.keyboardLayoutBaselineHeight - KEYBOARD_LAYOUT_RESIZE_THRESHOLD_PX
-        ) {
-            const residualOverlap = viewRect.bottom - layoutHeight;
-            if (residualOverlap <= 1) return 0;
-            return Math.ceil(Math.min(residualOverlap, viewRect.height));
-        }
-        if (layoutHeight <= 0) return Math.ceil(Math.min(keyboardHeight, viewRect.height));
-
-        const keyboardTop = layoutHeight - keyboardHeight;
-        const overlap = viewRect.bottom - keyboardTop;
-        if (overlap <= 1) return 0;
-        return Math.ceil(Math.min(overlap, keyboardHeight, viewRect.height));
-    }
-
-    private isVisualViewportKeyboardLikelyVisible(viewport: VisualViewport | null): boolean {
-        if (!viewport) return false;
-        const layoutHeight = this.getLayoutViewportHeight();
-        const viewportBottom = viewport.offsetTop + viewport.height;
-        if (!Number.isFinite(viewportBottom) || viewportBottom <= 0 || layoutHeight <= 0) return false;
-        return viewportBottom < layoutHeight - 1;
-    }
-
-    private refreshKeyboardLayoutBaselineHeight() {
-        const layoutHeight = this.getLayoutViewportHeight();
-        if (layoutHeight > 0) {
-            this.keyboardLayoutBaselineHeight = layoutHeight;
-        }
-    }
-
-    private syncKeyboardComposerOverlay(
-        containerEl: HTMLElement,
-        clearance: number,
-        accessoryClearance: number,
-        composerHeight: number,
-        source: KeyboardClearanceSource,
-        keyboardVisible: boolean,
-    ) {
-        if (!keyboardVisible) {
-            this.clearKeyboardComposerOverlay(containerEl);
-            return;
-        }
-
-        containerEl.setCssProps({
-            '--pa-chat-composer-height': `${composerHeight}px`,
-            '--pa-chat-keyboard-accessory-clearance': `${accessoryClearance}px`,
-        });
-        containerEl.classList.add('is-keyboard-open');
-        if (source === 'native' && clearance > 0) {
-            containerEl.classList.add('is-keyboard-native-fallback');
-        } else {
-            containerEl.classList.remove('is-keyboard-native-fallback');
-        }
-    }
-
-    private clearKeyboardComposerOverlay(containerEl: HTMLElement) {
-        containerEl.classList.remove('is-keyboard-open');
-        containerEl.classList.remove('is-keyboard-native-fallback');
-        containerEl.setCssProps({
-            '--pa-chat-composer-height': '0px',
-            '--pa-chat-keyboard-accessory-clearance': '0px',
-        });
-    }
-
-    private setKeyboardClearanceStyles(containerEl: HTMLElement, clearance: number, keyboardVisible: boolean) {
-        // When JS has measured a real overlap (visualViewport or Capacitor keyboard event),
-        // pin the explicit pixel value. A visible keyboard with no residual overlap gets an
-        // explicit zero so the mobile spacer does not consume env(keyboard-inset-height).
-        // Once the keyboard is closed, reset to the CSS env() fallback for the next show.
-        if (clearance > 0) {
-            containerEl.setCssProps({
-                '--pa-chat-keyboard-clearance': `${clearance}px`,
-                '--pa-chat-keyboard-offset': `-${clearance}px`,
-            });
-        } else if (keyboardVisible) {
-            containerEl.setCssProps({
-                '--pa-chat-keyboard-clearance': '0px',
-                '--pa-chat-keyboard-offset': '0px',
-            });
-        } else {
-            containerEl.setCssProps({
-                '--pa-chat-keyboard-clearance': 'env(keyboard-inset-height, 0px)',
-                '--pa-chat-keyboard-offset': 'calc(0px - env(keyboard-inset-height, 0px))',
-            });
-        }
-    }
-
-    private getLayoutViewportHeight(): number {
-        const win = getOptionalPlatformWindow();
-        if (Number.isFinite(win?.innerHeight) && (win?.innerHeight ?? 0) > 0) {
-            return win?.innerHeight ?? 0;
-        }
-        const doc = getOptionalPlatformDocument();
-        return doc?.documentElement?.clientHeight
-            ?? doc?.body?.clientHeight
-            ?? 0;
-    }
-
-    private observeNativeKeyboardEvents(scheduleUpdate: () => void) {
-        const handleShow = (source: unknown) => {
-            const keyboardHeight = this.readKeyboardHeight(source);
-            this.nativeKeyboardVisible = true;
-            if (keyboardHeight > 0) {
-                this.nativeKeyboardHeight = keyboardHeight;
-            }
-            scheduleUpdate();
-        };
-        const handleHide = () => {
-            this.nativeKeyboardVisible = false;
-            this.nativeKeyboardHeight = 0;
-            scheduleUpdate();
-        };
-
-        this.addWindowKeyboardListener('keyboardWillShow', handleShow);
-        this.addWindowKeyboardListener('keyboardDidShow', handleShow);
-        this.addWindowKeyboardListener('keyboardWillHide', handleHide);
-        this.addWindowKeyboardListener('keyboardDidHide', handleHide);
-
-        const keyboardPlugin = this.getNativeKeyboardPlugin();
-        if (!keyboardPlugin?.addListener) return;
-        // Let Capacitor resize the layout viewport; native events only provide fallback
-        // keyboard height when the viewport has not reflected the keyboard yet.
-        this.safeInvokeKeyboardPlugin(
-            () => keyboardPlugin.setResizeMode?.({ mode: 'body' }),
-            'Could not set native keyboard resize mode',
-        );
-        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardWillShow', handleShow, scheduleUpdate);
-        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardDidShow', handleShow, scheduleUpdate);
-        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardWillHide', handleHide, scheduleUpdate);
-        this.addKeyboardPluginListener(keyboardPlugin, 'keyboardDidHide', handleHide, scheduleUpdate);
-    }
-
-    private addWindowKeyboardListener(type: KeyboardWindowEventName, listener: (source: unknown) => void) {
-        const win = getOptionalPlatformWindow();
-        if (typeof win?.addEventListener !== 'function') return;
-        const eventListener: EventListener = (event) => listener(event);
-        win.addEventListener(type, eventListener);
-        this.keyboardWindowListeners.push({ type, listener: eventListener, target: win });
-    }
-
-    private addKeyboardPluginListener(
-        keyboardPlugin: KeyboardPluginFacade,
-        type: KeyboardPluginEventName,
-        listener: (source: unknown) => void,
-        activeHandler: () => void,
-    ) {
-        try {
-            const handleOrPromise = keyboardPlugin.addListener?.(type, listener);
-            if (!handleOrPromise) return;
-            void Promise.resolve(handleOrPromise).then((handle) => {
-                if (!handle) return;
-                if (this.keyboardUpdateHandler !== activeHandler) {
-                    void handle.remove?.();
-                    return;
-                }
-                this.keyboardPluginListenerHandles.push(handle);
-            }).catch((error) => {
-                this.plugin.log?.('Could not observe native keyboard events', error);
-            });
-        } catch (error) {
-            this.plugin.log?.('Could not observe native keyboard events', error);
-        }
-    }
-
-    private getNativeKeyboardPlugin(): KeyboardPluginFacade | null {
-        if (typeof window === 'undefined') return null;
-        const candidate = window as typeof window & {
-            Capacitor?: {
-                Plugins?: {
-                    Keyboard?: KeyboardPluginFacade;
-                };
-            };
-        };
-        return candidate.Capacitor?.Plugins?.Keyboard ?? null;
-    }
-
-    // Wraps a Capacitor plugin call that may return void OR a Promise. The naive
-    // `try { void op(); } catch {}` pattern silently drops async rejections — this helper
-    // also attaches a .catch() so unhandled rejections do not leak.
-    private safeInvokeKeyboardPlugin(op: () => unknown, errorMessage: string): void {
-        try {
-            const result = op();
-            if (result && typeof (result as Promise<unknown>).catch === 'function') {
-                (result as Promise<unknown>).catch((error) => {
-                    this.plugin.log?.(errorMessage, error);
-                });
-            }
-        } catch (error) {
-            this.plugin.log?.(errorMessage, error);
-        }
-    }
-
     private shouldFocusComposerTextArea(
         target: EventTarget | null,
         composerRow: HTMLElement,
@@ -3225,18 +2727,6 @@ export class LLMView extends ItemView {
             'switch',
             'textbox',
         ].includes(role));
-    }
-
-    private readKeyboardHeight(source: unknown): number {
-        const value = this.readKeyboardHeightValue(source)
-            ?? this.readKeyboardHeightValue((source as { detail?: unknown } | null)?.detail);
-        const keyboardHeight = typeof value === 'number' ? value : Number(value);
-        return Number.isFinite(keyboardHeight) && keyboardHeight > 0 ? keyboardHeight : 0;
-    }
-
-    private readKeyboardHeightValue(source: unknown): unknown {
-        if (!source || typeof source !== 'object') return undefined;
-        return (source as { keyboardHeight?: unknown }).keyboardHeight;
     }
 
     private getStatusBarElement(): HTMLElement | null {
@@ -3311,7 +2801,7 @@ export class LLMView extends ItemView {
                 evt.stopPropagation();
                 const openInNewLeaf = this.isMemoryReferenceLink(link) || evt.metaKey || evt.ctrlKey;
                 void this.openChatInternalLink(noteHref, openInNewLeaf).catch((error) => {
-                    this.plugin.log?.("Could not open chat internal link", error);
+                    this.host.log?.("Could not open chat internal link", error);
                     new Notice(pluginT("plugin.chat.notice.openNoteFailed", getPluginUiLanguage(), { note: noteHref }), 4000);
                 });
             });
@@ -3357,68 +2847,4 @@ export class LLMView extends ItemView {
         return this.app.workspace.getLeavesOfType('markdown')[0] ?? null;
     }
 
-    private persistFinalizedTurn(
-        prompt: string,
-        entry: TimelineEntry,
-    ): Promise<void> {
-        const next = this.persistChain
-            .catch(() => undefined)
-            .then(() => this.runPersistFinalizedTurn(prompt, entry));
-        this.persistChain = next;
-        return next;
-    }
-
-    private async runPersistFinalizedTurn(
-        prompt: string,
-        entry: TimelineEntry,
-    ): Promise<void> {
-        if (entry.kind !== 'history') return;
-        const manager = this.getChatHistoryManager();
-        if (!manager) return;
-        await manager.initialize();
-        if (!manager.isAvailable()) return;
-        try {
-            let conversation = this.activeConversation;
-            let conversationId = this.activeConversationId;
-            if (!conversation || !conversationId) {
-                const created = await manager.startConversation(prompt);
-                conversation = created;
-                conversationId = created.id;
-                this.activeConversation = conversation;
-                this.activeConversationId = conversationId;
-                this.nextTurnIndex = 0;
-            }
-            const turnIndex = this.nextTurnIndex;
-            const updated = await manager.recordTurn({
-                conversationId,
-                turnIndex,
-                entry,
-                userPrompt: prompt,
-                conversation,
-            });
-            this.activeConversation = updated;
-            this.nextTurnIndex = turnIndex + 1;
-            this.persistedTurnIndexByEntry.set(entry, turnIndex);
-            this.plugin.scheduleMemoryExtractionAfterChatTurn?.(conversationId, updated.turnCount);
-            await manager.maybePrune();
-        } catch (error) {
-            this.plugin.log?.("Failed to persist chat turn", error);
-        }
-    }
-
-    private async deletePersistedTurnForEntry(entry: TimelineEntry): Promise<void> {
-        if (entry.kind !== 'history') return;
-        const manager = this.getChatHistoryManager();
-        if (!manager || !manager.isAvailable()) return;
-        const conversationId = this.activeConversationId;
-        if (!conversationId) return;
-        const turnIndex = this.persistedTurnIndexByEntry.get(entry);
-        if (turnIndex === undefined) return;
-        try {
-            await manager.deleteTurn(conversationId, turnIndex);
-            this.persistedTurnIndexByEntry.delete(entry);
-        } catch (error) {
-            this.plugin.log?.("Failed to delete persisted chat turn", error);
-        }
-    }
 }

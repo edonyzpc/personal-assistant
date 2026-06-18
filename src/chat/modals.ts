@@ -1,5 +1,4 @@
-import { Modal, Setting } from 'obsidian';
-import type PluginManager from '../main';
+import { Modal, Setting, type App } from 'obsidian';
 import type { PersistedConversation } from './chat-history-store';
 import { getPluginUiLanguage, makePluginTranslator, type PluginTranslator } from '../locales/plugin';
 import { getOptionalPlatformDocument } from '../platform-dom';
@@ -12,15 +11,19 @@ export interface ChatConfirmationOptions {
     danger?: boolean;
 }
 
+interface ChatModalHost {
+    readonly app: App;
+}
+
 export class ChatConfirmationModal extends Modal {
     private resolved = false;
 
     constructor(
-        plugin: PluginManager,
+        host: ChatModalHost,
         private readonly options: ChatConfirmationOptions,
         private readonly onResolve: (confirmed: boolean) => void,
     ) {
-        super(plugin.app);
+        super(host.app);
     }
 
     onOpen() {
@@ -58,13 +61,13 @@ export class ChatConfirmationModal extends Modal {
     }
 }
 
-export function confirmChatAction(plugin: PluginManager, options: ChatConfirmationOptions): Promise<boolean> {
+export function confirmChatAction(host: ChatModalHost, options: ChatConfirmationOptions): Promise<boolean> {
     if (!getOptionalPlatformDocument()) {
         return Promise.resolve(true);
     }
 
     return new Promise((resolve) => {
-        new ChatConfirmationModal(plugin, options, resolve).open();
+        new ChatConfirmationModal(host, options, resolve).open();
     });
 }
 
@@ -83,11 +86,11 @@ export class ChatHistoryPickerModal extends Modal {
     private resolved = false;
 
     constructor(
-        plugin: PluginManager,
+        host: ChatModalHost,
         private readonly options: ChatHistoryPickerOptions,
         private readonly onResolve: (selection: ChatHistoryPickerSelection | null) => void,
     ) {
-        super(plugin.app);
+        super(host.app);
     }
 
     onOpen() {
@@ -171,14 +174,14 @@ export class ChatHistoryPickerModal extends Modal {
 }
 
 export function pickChatConversation(
-    plugin: PluginManager,
+    host: ChatModalHost,
     options: ChatHistoryPickerOptions,
 ): Promise<ChatHistoryPickerSelection | null> {
     if (!getOptionalPlatformDocument()) {
         return Promise.resolve(null);
     }
     return new Promise((resolve) => {
-        new ChatHistoryPickerModal(plugin, options, resolve).open();
+        new ChatHistoryPickerModal(host, options, resolve).open();
     });
 }
 

@@ -1,5 +1,4 @@
-import { setIcon, Component, Modal, MarkdownRenderer } from 'obsidian';
-import type PluginManager from '../main';
+import { setIcon, Component, Modal, MarkdownRenderer, type App } from 'obsidian';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
 import { toError } from "../error-utils";
 import {
@@ -20,18 +19,22 @@ export type MermaidFenceTransform = {
 
 let mermaidPreviewModalId = 0;
 
+interface ChatRenderHost {
+    readonly app: App;
+}
+
 function mermaidT(key: string, params?: Readonly<Record<string, string | number>>): string {
     return pluginT(key, getPluginUiLanguage(), params);
 }
 
 export function renderMarkdownWithOwner(
-    plugin: PluginManager,
+    host: ChatRenderHost,
     markdown: string,
     target: HTMLElement,
     owner: Component,
 ): Promise<void> {
     try {
-        return Promise.resolve(MarkdownRenderer.render(plugin.app, markdown, target, '', owner));
+        return Promise.resolve(MarkdownRenderer.render(host.app, markdown, target, '', owner));
     } catch (error) {
         return Promise.reject(toError(error));
     }
@@ -47,10 +50,10 @@ export class MermaidPreviewModal extends Modal {
     private renderOwner: Component | null = null;
 
     constructor(
-        private readonly plugin: PluginManager,
+        private readonly host: ChatRenderHost,
         private readonly mermaidSource: string,
     ) {
-        super(plugin.app);
+        super(host.app);
     }
 
     onOpen() {
@@ -67,7 +70,7 @@ export class MermaidPreviewModal extends Modal {
         const viewport = contentEl.createDiv({ cls: 'pa-chat-mermaid-modal-viewport' });
         this.renderOwner = new Component();
         void renderMarkdownWithOwner(
-            this.plugin,
+            this.host,
             createFencedCodeBlock('mermaid', this.mermaidSource),
             viewport,
             this.renderOwner,
@@ -261,7 +264,7 @@ export function renderMermaidSourceWarning(buffer: HTMLElement) {
     });
 }
 
-export function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager, mermaidSources: string[]): boolean {
+export function enhanceMermaidDiagrams(root: HTMLElement, host: ChatRenderHost, mermaidSources: string[]): boolean {
     const doc = getOptionalPlatformDocument();
     if (typeof doc?.createElement !== 'function') return true;
 
@@ -299,7 +302,7 @@ export function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager,
         label.textContent = mermaidT('plugin.mermaid.open');
         button.appendChild(label);
         button.onclick = () => {
-            new MermaidPreviewModal(plugin, mermaidSource).open();
+            new MermaidPreviewModal(host, mermaidSource).open();
         };
 
         diagram.parentElement.insertBefore(shell, diagram);
@@ -315,7 +318,7 @@ export function enhanceMermaidDiagrams(root: HTMLElement, plugin: PluginManager,
 
 export function scheduleMermaidEnhancement(
     root: HTMLElement,
-    plugin: PluginManager,
+    host: ChatRenderHost,
     mermaidSources: string[],
     isCurrent: () => boolean,
     owner?: Component,
@@ -355,7 +358,7 @@ export function scheduleMermaidEnhancement(
             stop();
             return true;
         }
-        const complete = enhanceMermaidDiagrams(root, plugin, mermaidSources);
+        const complete = enhanceMermaidDiagrams(root, host, mermaidSources);
         if (complete) stop();
         return complete;
     };

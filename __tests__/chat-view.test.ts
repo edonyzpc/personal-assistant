@@ -612,6 +612,7 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
     const plugin = {
         app,
         settings: {
+            debug: false,
             memoryEnabled: true,
             memoryApprovalPolicy: 'always',
             skillContextEnabled: true,
@@ -624,9 +625,12 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
                 'pa-vault-link-health',
                 'pa-plugin-config-review',
             ],
+            aiProvider: 'openai',
+            baseURL: '',
+            chatModelName: 'gpt-test',
         },
         chatHistoryManager: options.chatHistoryManager,
-        memoryManager: {
+        memoryStatus: {
             getMaintenancePlan: jest.fn(async (): Promise<MemoryMaintenancePlan> => ({
                 reason: 'ready',
                 action: 'none',
@@ -636,28 +640,30 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
             })),
             prepareFromCommand: jest.fn(async () => undefined),
             updateFromCommand: jest.fn(async () => undefined),
+            showTechnicalStatus: jest.fn(() => undefined),
+            onStatusChanged: jest.fn((listener: () => void | Promise<void>) => {
+                memoryStatusListeners.add(listener);
+                return () => {
+                    memoryStatusListeners.delete(listener);
+                };
+            }),
         },
-        showTechnicalMemoryStatus: jest.fn(async () => undefined),
         getAISetupIssue: jest.fn(() => setupIssue),
-        onMemoryStatusChanged: jest.fn((listener: () => void | Promise<void>) => {
-            memoryStatusListeners.add(listener);
-            return () => {
-                memoryStatusListeners.delete(listener);
-            };
-        }),
         onSettingsChanged: jest.fn((listener: () => void | Promise<void>) => {
             settingsChangeListeners.add(listener);
             return () => {
                 settingsChangeListeners.delete(listener);
             };
         }),
+        createChatService: jest.fn(() => ({
+            streamLLM: mockStreamLLM,
+        })),
         log: jest.fn(),
     };
     const leaf = { app, containerEl };
     const view = new LLMView(
         leaf as unknown as ConstructorParameters<typeof LLMView>[0],
         plugin as unknown as ConstructorParameters<typeof LLMView>[1],
-        {} as unknown as ConstructorParameters<typeof LLMView>[2],
     );
     createdViews.add(view);
     const emitWorkspaceEvent = (eventName: string, ...args: unknown[]) => {
@@ -3965,7 +3971,7 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryStatusText.textContent).toBe('Show Memory Status');
         expect(memoryStatusButton.children).toEqual([memoryStatusIcon, memoryStatusText]);
         memoryStatusButton.click();
-        expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
+        expect(plugin.memoryStatus.showTechnicalStatus).toHaveBeenCalledTimes(1);
     });
 
     it('auto-closes the composer More menu after idle time and resets on activity', async () => {
@@ -4217,7 +4223,7 @@ describe('LLMView turn lifecycle', () => {
             resolvePlan = resolve;
         });
         const { view, containerEl, plugin } = createView();
-        plugin.memoryManager.getMaintenancePlan.mockReturnValue(pendingPlan);
+        plugin.memoryStatus.getMaintenancePlan.mockReturnValue(pendingPlan);
         await view.onOpen();
 
         const memoryChip = getButtonByClass(containerEl, 'pa-chat-memory-chip');
@@ -4247,7 +4253,7 @@ describe('LLMView turn lifecycle', () => {
 
     it('opens the Memory chip menu with product state and update action', async () => {
         const { view, containerEl, plugin } = createView();
-        plugin.memoryManager.getMaintenancePlan.mockResolvedValue({
+        plugin.memoryStatus.getMaintenancePlan.mockResolvedValue({
             reason: 'changed-notes',
             action: 'refresh',
             notesToCheck: 4,
@@ -4269,12 +4275,12 @@ describe('LLMView turn lifecycle', () => {
         getButtonByText(memoryMenu, 'Update memory').click();
         await flushPromises();
 
-        expect(plugin.memoryManager.updateFromCommand).toHaveBeenCalledTimes(1);
+        expect(plugin.memoryStatus.updateFromCommand).toHaveBeenCalledTimes(1);
     });
 
     it('refreshes the Memory chip when background memory status changes', async () => {
         const { view, containerEl, plugin, emitMemoryStatusChanged } = createView();
-        plugin.memoryManager.getMaintenancePlan
+        plugin.memoryStatus.getMaintenancePlan
             .mockResolvedValueOnce({
                 reason: 'changed-notes',
                 action: 'refresh',
@@ -4334,7 +4340,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
         getButtonByText(memoryMenu, 'Show Memory Status').click();
-        expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
+        expect(plugin.memoryStatus.showTechnicalStatus).toHaveBeenCalledTimes(1);
     });
 
     it('adds a polite live region and keyboard toggle to the activity row', async () => {
