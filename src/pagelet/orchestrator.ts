@@ -513,11 +513,11 @@ export class PageletOrchestrator {
             if (relatedNotes.length === 0) {
                 const locale = getPageletUiLanguage();
                 this.petView?.stateMachine.transition("analysis-done");
-                const isVssReady = this.host.settings.pagelet.enabled;
-                const titleKey = isVssReady
+                const isMemoryReady = await this.host.isMemoryReadyForPageletDiscovery();
+                const titleKey = isMemoryReady
                     ? "pagelet.discover.noResults.title"
                     : "pagelet.discover.vssNotReady.title";
-                const descKey = isVssReady
+                const descKey = isMemoryReady
                     ? "pagelet.discover.noResults.desc"
                     : "pagelet.discover.vssNotReady.desc";
                 this.panelView?.open("discover", [{
@@ -543,8 +543,8 @@ export class PageletOrchestrator {
                     title: c.sharedConcepts[0] ?? "",
                     description: c.sharedConcepts.join("; "),
                     insightText: c.sharedConcepts.join("; "),
-                    sourceFile: c.fromNote,
-                    sourceTitle: c.toNote.split("/").pop()?.replace(/\.md$/, "") ?? c.toNote,
+                    sourceFile: c.toNote,
+                    sourceTitle: noteTitleFromPath(c.toNote),
                 })),
                 ...result.gaps.map((g) => ({
                     title: g.topic,
@@ -857,4 +857,10 @@ function normalizeRelatedNoteName(noteName: string): string {
     const heading = value.indexOf("#");
     if (heading >= 0) value = value.slice(0, heading);
     return value.trim();
+}
+
+function noteTitleFromPath(path: string): string {
+    const normalized = path.trim();
+    if (!normalized) return "";
+    return normalized.split("/").pop()?.replace(/\.md$/i, "") ?? normalized;
 }

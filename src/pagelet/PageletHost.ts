@@ -104,6 +104,9 @@ export interface PageletHost {
         sourcePaths: readonly string[],
     ): Promise<Array<{ path: string; content: string; score?: number; headingPath?: string[] }>>;
 
+    /** Whether Memory is prepared enough for Pagelet connection discovery. */
+    isMemoryReadyForPageletDiscovery(): Promise<boolean>;
+
     /** Run discovery analysis: find connections, themes, and gaps between the current note and related notes. */
     discoverConnections(
         currentNote: { path: string; content: string },

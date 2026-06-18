@@ -21,6 +21,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             },
             vault: {
                 getMarkdownFiles: jest.fn(() => [activeFile]),
+                cachedRead: jest.fn(async () => "Current note body"),
                 getAbstractFileByPath: jest.fn((path: string) => (
                     path === activeFile.path ? activeFile : null
                 )),
@@ -79,6 +80,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
         updatePageletSetting: jest.fn(),
         openPageletDetailView: () => undefined,
         findRelatedNotes: async () => [],
+        isMemoryReadyForPageletDiscovery: async () => true,
         discoverConnections: async () => null,
         ...overrides,
     };
@@ -343,6 +345,73 @@ describe("PageletOrchestrator review panel scope flow", () => {
             [expect.objectContaining({ description: "Review selected output." })],
             expect.objectContaining({
                 scope: expect.objectContaining({ range: "last3" }),
+            }),
+        );
+    });
+});
+
+describe("PageletOrchestrator connection discovery", () => {
+    it("shows the Memory-not-ready empty state when related-note search is unavailable", async () => {
+        const panelView = { open: jest.fn() };
+        const discoverConnections = jest.fn(async () => null);
+        const host = makeHost({
+            findRelatedNotes: async () => [],
+            isMemoryReadyForPageletDiscovery: async () => false,
+            discoverConnections,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+
+        expect(discoverConnections).not.toHaveBeenCalled();
+        expect(panelView.open).toHaveBeenCalledWith(
+            "discover",
+            [expect.objectContaining({
+                title: "Enable Memory to Discover Connections",
+                description: expect.stringContaining("Memory to be prepared"),
+                sourceFile: "",
+                sourceTitle: "",
+            })],
+            {},
+        );
+    });
+
+    it("maps connection findings to the related note opened by Source", async () => {
+        const panelView = { open: jest.fn() };
+        const host = makeHost({
+            findRelatedNotes: async () => [{
+                path: "notes/related.md",
+                content: "Related note body",
+                score: 0.82,
+            }],
+            discoverConnections: async () => ({
+                connections: [{
+                    fromNote: "notes/current.md",
+                    toNote: "notes/related.md",
+                    strength: "medium" as const,
+                    sharedConcepts: ["shared concept"],
+                }],
+                themes: [],
+                gaps: [],
+            }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+
+        expect(panelView.open).toHaveBeenCalledWith(
+            "discover",
+            [expect.objectContaining({
+                sourceFile: "notes/related.md",
+                sourceTitle: "related",
+            })],
+            expect.objectContaining({
+                connections: [expect.objectContaining({
+                    fromNote: "notes/current.md",
+                    toNote: "notes/related.md",
+                })],
             }),
         );
     });

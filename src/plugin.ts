@@ -970,6 +970,8 @@ export class PluginManager extends Plugin {
             openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
             findRelatedNotes: (primarySourcePath, noteContents, sourcePaths) =>
                 this.findPageletRelatedNotes(primarySourcePath, noteContents, sourcePaths),
+            isMemoryReadyForPageletDiscovery: () =>
+                this.isPageletMemorySearchReady(),
             discoverConnections: async (currentNote, relatedNotes) =>
                 this.runDiscoveryAnalysis(currentNote, relatedNotes),
         };
