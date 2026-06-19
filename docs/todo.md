@@ -9,12 +9,12 @@
   - Follow-ups: run a dedicated mobile smoke pass for the final panel Save / expand-to-tab path. This closeout does not start release/publish flow.
   - Exit criteria: Pagelet docs match actual behavior, and no release/publish flow starts until Pagelet beta functionality is complete.
 
-- [ ] Close v2.2 Pagelet review fixes and graduate Pagelet to stable.
+- [x] Close Pagelet release verification for the v2.7 consolidated release.
   - Context: v2.2.0-beta.1 review (2026-06-15) identified 5 blocking fixes (C-2 PetSvg, H-1 RateLimiter, H-3 PreloadEngine, H-6 platform-dom, iOS Panel dvh) plus Orchestrator split, Bubble close behavior change, and Onboarding. Graduation requires commit + GUI smoke + provider re-test.
   - Source: [`development-roadmap.md`](./development-roadmap.md) v2.2 section, SPEC-B1/B2 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
   - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
-  - Latest smoke: 2026-06-18 post-commit redeploy check passed `make deploy` plus Obsidian CLI Pagelet runtime smoke after the 2026-06-17 broad runtime fixes (SQLite inline WASM `blob:` loading, Pagelet related-note query timeout/no-results, Discovery related-note mapping). Computer Use still timed out reading Obsidian and System Events still exposed `0` Obsidian windows, so no new click-through UI smoke is counted; prior 2026-06-16 Pagelet GUI smoke remains the latest real click evidence.
-  - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, v2.2.0 stable published.
+  - Latest smoke: 2026-06-19 post-fix v2.7 smoke passed `make deploy`, Obsidian plugin reload, `dev:errors`, AI Insights viewer, Discovery panel, Pagelet runner 20 PASS / 0 bugs, Qwen `qwen-plus` Pagelet output on English and Chinese fixtures, DashScope-compatible `deepseek-v4-flash` Pagelet output, and iOS real-device Pagelet/Chat/AI Insights basics. Provider OQ002 is accepted because DeepSeek is expected to run through the Bailian / DashScope-compatible platform in this project. Bubble click-through uses earlier checklist evidence plus the latest runner pet/panel mount evidence.
+  - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, then included in the v2.7 consolidated release instead of publishing a separate v2.2 stable.
 
 - [x] Close AI Insight Foundation D-series implementation gate.
   - Context: AI Insight D1-D8 now covers heading-aware Memory chunks, Pagelet VSS related notes, temporal Memory search, wider Memory windows, Context Projector/Hygiene, Compactor/Budget, Type A user profile extraction, and Type C vault insights.
@@ -22,13 +22,13 @@
   - Result: D1-D8 code, focused tests, broad checks, deploy, and Obsidian test-vault smoke are recorded in the SDD tracker. The follow-on E-series activation runtime smoke is also recorded in the v2 tracker with a Computer Use click-through caveat.
   - Exit criteria: D-series implementation gate is closed; publish-ready release work still follows the normal release process and explicit publish confirmation.
 
-- [ ] Close v2 review follow-up stabilization before release.
+- [x] Defer v2 review follow-up stabilization outside the v2.7 release gate.
   - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.
   - Completed so far: API token migration clears `data.json`; scoped/legacy keychain fallback is in place; API Token editor/clear confirmation works; provider switching confirms preset replacement; Settings data-safety fixes are covered by tests; chat history modal overflow/duplicate preview issues are fixed; chat history persistence exists in IndexedDB-backed store/manager code; chat-tools split, statistics incremental snapshot cache, WASM lazy load, and RequiredCapability refactor are implemented; foreground OPFS marker recovery is removed and manual technical recovery is bounded.
   - Evidence so far: focused VSS/SQLite tests passed; full serialized Jest passed 51 suites / 864 tests; `npm run lint`; `npm run build`; `git diff --check`; `make deploy`; Obsidian test-vault `Update memory now` smoke completed with Memory diagnostics Ready and notes unchanged.
-  - Remaining decisions: accept/defer open original v2 Phase 1-2 items (`prompt` lines, `getVSSFiles()` optimization, strict mode, coverage threshold, rerank excerpt length, prompt token de-dup, chat-history sandbox, catalog simplification, rewrite+embedding parallelization) and the full Settings IA/componentization follow-up before cutting a release.
+  - Remaining decisions: open original v2 Phase 1-2 items (`prompt` lines, `getVSSFiles()` optimization, strict mode, coverage threshold, rerank excerpt length, prompt token de-dup, chat-history sandbox, catalog simplification, rewrite+embedding parallelization) and the full Settings IA/componentization follow-up are accepted as post-v2.7 follow-ups, not v2.7 release blockers.
   - High-risk smoke completed in the 2026-05-30 conversation after explicit confirmation: `Update plugins`, `Update themes`, AI Featured Images, and actual Memory reset/delete-old-cache execution.
-  - Exit criteria: status docs stay aligned with code, and open v2 items are explicitly accepted/deferred or implemented before release.
+  - Exit criteria: status docs stay aligned with code, and open v2 items are explicitly deferred outside the v2.7 release gate.
 
 - [x] Fix structured vault tool argument extraction exposed by broad PA Agent desktop smoke.
   - Context: 2026-05-24 Computer Use smoke in the Obsidian `test` vault passed core PA Agent paths but found that several structured read tools can be selected while required model-provided arguments are lost before execution.

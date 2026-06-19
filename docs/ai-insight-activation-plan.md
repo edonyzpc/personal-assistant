@@ -1,7 +1,7 @@
 # AI Insight 激活方案：从管道到洞察
 
 **创建日期**: 2026-06-17
-**最后更新**: 2026-06-17（整合产品决策与实现状态）
+**最后更新**: 2026-06-19（同步当前实现口径）
 **版本归属**: v2.5（合并发布）
 **前置文档**:
 - `docs/ai-insight-foundation-audit.md` — D1-D8 完成度审计
@@ -12,7 +12,7 @@
 
 | # | 决策 | 结论 | 说明 |
 |---|------|------|------|
-| AD-1 | Type C vault insights 注入 prompt | **默认开启** | 推翻 SDD §3.9.3 "默认不注入"。Projector diffing 控制成本（第 2+ 轮仅 ~50 chars）。Settings 提供关闭选项。 |
+| AD-1 | Type C vault insights 注入 prompt | **默认开启** | 推翻 SDD §3.9.3 "默认不注入"。当前通过 Type C 摘要长度限制、tag boundary escaping、Budget diagnostics 控制成本；尚未实现 Projector diffing。Settings 提供关闭选项。 |
 | AD-2 | 图感知检索 (1-hop link expansion) | **纳入 v2.5** | 需要正式设计，不用 activation plan 简化方案。单独做方案分析。 |
 | AD-3 | Type A 用户画像演进路线 | **直接 LLM 提取** | 跳过 local-first 行为统计，一步到位实现 SDD D7 原设计的 LLM 后台提取（inferred_behavior + 置信度 + recurrence）。 |
 | AD-4 | 版本归属 | **全部合并到 v2.5** | SDD D1-D8 作为 v2.4 已关闭。Activation plan 全部内容合并到 v2.5 发布。 |
@@ -33,7 +33,7 @@ D1-D8 已将 RAG 管道从"教科书式"升级为"工业级"：
 - **切片质量** heading-aware + frontmatter 保留 (D1)
 - **检索窗口** 4→8 文档、500→1000 字符摘要 (D4)
 - **时间感知** query-rewriter temporal intent (D3)
-- **上下文管理** Projector / Hygiene / Compactor / Budget 全套 (D5-D6)
+- **上下文管理** Projector / Hygiene / Compactor / Budget (D5-D6)：origin 标注、injected context、history/micro compaction 与预算诊断已实现；host-context diffing 未实现
 - **用户画像** regex 提取显式偏好 + IndexedDB 存储 (D7)
 - **Vault 元认知** 7 维度结构分析 + 独立调度 (D8)
 - **Pagelet VSS** 前台 3 场景接入语义搜索 (D2)
@@ -42,12 +42,13 @@ D1-D8 已将 RAG 管道从"教科书式"升级为"工业级"：
 
 **管道重建完成了，但管道里流的"洞察"还是稀的。**
 
-审计发现的三层差距：
+Activation 设计启动前的审计发现三层差距；这些是 pre-activation
+baseline，不代表 2026-06-19 当前实现状态：
 
 ```
 Level 1 搜索准确性: ██████████ 显著提升
 Level 2 关联发现:   ████░░░░░░ 部分提升（无图遍历、Discovery 无专用逻辑）
-Level 3 理解深度:   ██░░░░░░░░ 基础建设完成但未激活（Type C 不注入、Type A 只捕获显式表达）
+Level 3 理解深度:   ██░░░░░░░░ 基础建设完成但未激活（当时 Type C 不注入、Type A 只捕获显式表达）
 ```
 
 ### 1.4 关键发现：多个能力已建未用
@@ -229,7 +230,7 @@ Phase 3: 深化理解能力           ~7-10 天   ← LLM 提取 + 语义聚类
 
 ### 4.3 P2-C：Budget → Compaction 联动
 
-**动机**：SDD D6 §3.7 要求 Budget 超限触发 Compaction，当前 `nearObservationLimit` 被计算但未消费。
+**当前状态**：已实现。`PaAgentContextBudget.snapshot()` 产出 `nearObservationLimit`，`PaAgentContextManager.forPrompt()` 在接近 observation limit 时用 `targetRatio: 0.4` 触发二次 micro-compaction，并在 diagnostics 中标记 `budgetDrivenRecompaction`。
 
 **改动**：
 
@@ -470,9 +471,9 @@ Phase 3 (理解深度)                                   可并行
 
 | 风险 | 影响 | 缓解 |
 |------|------|------|
-| Type C insights 注入增加 prompt 长度 | 低 | `summarizeVaultInsightsForPrompt` 已限制 40 行 / 3000 字符；Projector diffing 第 2+ 轮仅 ~50 chars；Context Budget 追踪 |
+| Type C insights 注入增加 prompt 长度 | 低 | `summarizeVaultInsightsForPrompt` 已限制 40 行 / 3000 字符；Projector 对 injected context 做边界转义；Context Budget 追踪 prompt/observation/provider usage。Projector diffing 尚未实现。 |
 | 图感知检索设计复杂度 | 中 | AD-2 要求独立设计而非简化方案；设计阶段充分评估候选膨胀和延迟影响 |
-| Type A LLM 提取增加 API 成本 | 中 | 每 8 轮一次轻量提取（~500-1000 tokens）；对话切换一次完整提取；Settings 总开关已存在；首次启用 Notice 需补充 cost disclosure |
+| Type A LLM 提取增加 API 成本 | 中 | 每 8 轮一次轻量提取（~500-1000 tokens）；对话切换一次完整提取；Settings 总开关和启用确认文案已说明 AI credits/API calls；cost tracking 记录估算 token/provider/model |
 | Type A LLM 提取质量不稳定 | 中 | 置信度分级 + recurrence promotion（3 次独立对话确认）过滤噪声；fallback 到 regex 保底 |
 | Worker 内 k-means 阻塞 | 低 | Worker 本身不在主线程；mini-batch k-means 对 10K chunks ~200ms；可加 yield |
 | Discovery LLM 调用失败 | 低 | fallback 到通用 review（现有行为） |

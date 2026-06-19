@@ -2,7 +2,7 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
-## [2.7.0](https://github.com/edonyzpc/personal-assistant/compare/2.3.0-beta.1...2.7.0) (2026-06-19)
+## [2.7.0](https://github.com/edonyzpc/personal-assistant/compare/2.1.2...2.7.0) (2026-06-19)
 
 ### Features
 - vss: migrate to @sqlite.org/sqlite-wasm (SPEC-A6)
@@ -11,7 +11,7 @@ All notable changes to this project will be documented in this file. See [standa
 - vss: add heading-aware chunking and temporal hybrid search
 - memory-extraction: add scheduled user profile and vault insight pipeline
 - memory-extraction: settings toggle, i18n, scheduler lifecycle, IDB timeout
-- context: async TypeC analysis, projection optimizations, and context diffing
+- context: async TypeC analysis, projection optimizations, and context hygiene diagnostics
 - write-action: extend types and PolicyEngine for append action family (C1-P1)
 - write-action: implement stale re-read mode B with SHA-256 content hash (C1-P2)
 - write-action: implement append-to-current-note action family (C1-P3)

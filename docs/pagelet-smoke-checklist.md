@@ -31,6 +31,196 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-06-19 · Desktop test vault · v2.7 post-fix consolidated smoke
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: `make deploy` on current v2.7 AI Insight/Pagelet blocker fixes
+  (109 suites / 1920 tests, lint=0, build=0)
+- Obsidian: 1.13.1 desktop
+- Smoke targets: `pagelet-smoke-golden.md`, `pagelet-provider-en.md`,
+  `pagelet-provider-zh.md`
+- Evidence sources: Obsidian CLI/eval, visible-window state, and targeted DOM
+  inspection. Broad Settings/console dumps were intentionally not captured to
+  avoid exposing API tokens or prompts.
+
+Runtime smoke:
+
+- PASS: `obsidian plugin:reload id=personal-assistant vault=test` reloaded the
+  deployed plugin, `personal-assistant:show-ai-insights` was present in command
+  discovery, and `dev:errors` reported no captured errors.
+- PASS: `Pagelet: Open Pagelet` mounted one `.pa-pagelet-panel` for
+  `pagelet-smoke-golden.md` with current-note scope and
+  `Review selected (1)` visible in DOM text.
+- PASS: The repo-local smoke runner completed with 20 PASS / 0 bugs. It covered
+  command registration, panel mount, pet mount, scoped review setup, and the
+  background-preparation command. Caveat: the runner avoids live provider calls.
+- PASS: AI Insights viewer opened from the normal user-facing command and
+  rendered `User Profile`, `Vault Insights`, `Folder Themes`, `Tag Taxonomy`,
+  `Link Topology`, and `Writing Habits` content.
+- PASS: Discovery rendered the Connection Discovery view with multiple
+  connection cards and a gap/follow-up card for `pagelet-smoke-golden.md`,
+  exercising the current connection/gap display path after the
+  `insight`/`action` parser-tolerance fix.
+- PASS: Provider smoke with Qwen / DashScope `qwen-plus` generated 3 Pagelet
+  suggestion cards for `pagelet-smoke-golden.md`; functional output evidence
+  was used because the parser path was not directly observable.
+- PASS: Provider smoke with Qwen / DashScope `qwen-plus` generated a Chinese
+  Evidence suggestion card for `pagelet-provider-zh.md`; DOM evidence showed the
+  active note, Chinese rationale/action copy, and related-note output.
+- PASS: Provider smoke with DashScope-compatible `deepseek-v4-flash` generated
+  3 Pagelet suggestion cards for `pagelet-provider-en.md` after the provider
+  debounce/cache window; functional output evidence was used because the parser
+  path was not directly observable.
+- PASS: Final `dev:errors` after the additional provider pass reported no
+  captured errors, the active leaf was restored to `pagelet-smoke-golden.md`,
+  and the test-vault provider fields were restored to the original
+  DashScope-compatible `deepseek-v4-flash` configuration.
+
+Caveats:
+
+- ACCEPTED: Provider OQ002 is closed for v2.7. The release owner confirmed that
+  DeepSeek is expected to run through the Bailian / DashScope-compatible
+  platform in this project, so `deepseek-v4-flash` via DashScope-compatible
+  runtime counts as the DeepSeek provider evidence.
+- NOT TESTED IN THIS PASS: user-like Bubble click-through. The DOM/runtime
+  runner confirmed pet/panel mount, and earlier checklist evidence covers
+  bubble behavior, but this pass did not add a fresh pure click-through
+  recording.
+
+### 2026-06-19 · iOS real device · v2.7 mobile smoke
+
+Environment:
+
+- Device: USB-connected iPhone via iPhone Mirroring; USB serial
+  `00008130000E549114A0001C`
+- Mirroring target: `Edony iPhone 15` after correcting the initial wrong-device
+  target (`Edony's iPhone 16`)
+- Obsidian iOS: 1.13.1 (339), TestFlight beta prompt observed
+- Vault: iCloud Obsidian `test` vault
+- Plugin build: current v2.7 pre-release build copied into the iCloud vault's
+  `.obsidian/plugins/personal-assistant/` folder from Mac before smoke
+- Smoke note: existing mobile note `2026-05-01`
+
+Runtime and visual smoke:
+
+- PASS: macOS USB enumeration detected the connected physical iPhone as
+  `iPhone@02110000` with USB serial `00008130000E549114A0001C`.
+- PASS: iPhone Mirroring entered the correct device after onboarding and exposed
+  the live iPhone home screen for remote interaction.
+- PASS: Obsidian iOS launched from iPhone Spotlight and opened the iCloud `test`
+  vault. A Personal Assistant Vault Insights onboarding notice appeared at
+  startup.
+- PASS: Obsidian iOS command palette exposed
+  `Personal Assistant: Pagelet: Open Pagelet`,
+  `Personal Assistant: Open Chat in Sidebar`, and
+  `Personal Assistant: Show AI Insights`.
+- PASS: Pagelet mobile panel opened from command palette. The panel respected the
+  phone viewport and safe area: close control, scope segmented controls,
+  selected-note row, and bottom `Review selected (1)` action were visible and
+  reachable without horizontal overflow.
+- PASS: Pagelet reviewed the selected mobile note and rendered suggestion cards
+  with Chinese rationale/action copy. The preview modal opened from
+  `Save as review note` and showed target
+  `.pagelet/pagelet-review-2026-06-19.md` plus generated suggestion content.
+- PASS: Chat opened in the mobile sidebar. The composer was visible in the
+  bottom safe area, a minimal `pass` smoke prompt was sent, thinking completed,
+  and the assistant returned a response.
+- PASS: AI Insights viewer opened from command palette and rendered `User
+  Profile`, `Vault Insights`, `Folder Themes`, and `Tag Taxonomy` content.
+
+Caveats:
+
+- NOTE: Evidence source is iPhone Mirroring visible-window interaction on a real
+  USB-connected iPhone. Safari Web Inspector / console capture was not completed
+  in this pass.
+- NOTE: `pagelet-smoke-golden.md` had been copied into the iCloud vault from Mac,
+  but it did not appear in Obsidian iOS quick switcher during this run. The smoke
+  therefore used the existing mobile note `2026-05-01`.
+- NOTE: Exact long English Chat prompt input was unreliable through iPhone
+  Mirroring due to iOS keyboard/autocorrect behavior, so the Chat smoke used the
+  minimal prompt `pass`.
+- NOTE: The Pagelet save preview modal was verified, but final confirm/save was
+  not completed because this Computer Use session did not expose a reliable
+  scroll gesture for the modal.
+
+### 2026-06-19 · Desktop test vault · AI Insights entry smoke
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: `make deploy` on current v2.7 pre-release blocker fixes
+- Obsidian: 1.13.1 desktop
+- Smoke target: `pagelet-smoke-golden.md`
+
+Runtime and visual smoke:
+
+- PASS: `make deploy` rebuilt the plugin, ran the full deploy gate, and copied
+  `dist/main.js`, `dist/manifest.json`, `dist/manifest-beta.json`, and
+  `dist/styles.css` into the test vault plugin directory.
+- PASS: macOS visible-window evidence showed the active Obsidian window title as
+  `pagelet-smoke-golden - test - Obsidian 1.13.1`.
+- PASS: macOS UI-script command-palette evidence showed
+  `Personal Assistant: Show AI Insights`, confirming the command is visible
+  without requiring Advanced Memory Controls.
+- PASS: Opening the command rendered the AI Insights viewer with Vault Insights
+  content, including `Link Topology`, `pagelet-smoke-golden.md: 0 inbound, 1
+  outbound`, `Writing Habits`, and `Average note length: 86 words`.
+- PASS: The same visible-window evidence showed `Memory ready`.
+
+Caveats:
+
+- NOTE: This is an AI Insights viewer smoke only. It does not complete the full
+  v2.7 Pagelet smoke matrix, Provider OQ002 matrix, or iOS real-device smoke.
+- NOTE: During this run, `obsidian plugin:reload`, `obsidian plugin`, and
+  `obsidian open` all reported that the CLI could not find the running Obsidian
+  app. GUI launch through `obsidian://open` and macOS UI-script/visible-window
+  evidence were used instead.
+- NOTE: No `dev:errors` result was captured in this pass because the Obsidian
+  CLI/eval path was unavailable.
+
+### 2026-06-19 · Desktop test vault · refactor closeout smoke
+
+Environment:
+
+- Vault: repo-local `test/` vault
+- Deployment: `make deploy` on current `master` refactor closeout changes
+- Obsidian: 1.13.1 desktop
+- Smoke target: `pagelet-smoke-golden.md`
+
+Runtime and visual smoke:
+
+- PASS: `make deploy` and `obsidian plugin:reload id=personal-assistant vault=test`
+  loaded the current plugin assets into the test vault.
+- PASS: `pagelet-smoke-golden.md` was restored as the active markdown leaf before
+  reviewing, avoiding the earlier false failure mode where Stats/Records could be
+  active instead of the target note.
+- PASS: Pagelet review generated 3 suggestion cards for the intended active note.
+- PASS: Chat provider smoke sent `Reply exactly: PASS: refactor smoke chat works.`
+  and received `PASS: refactor smoke chat works.`
+- PASS: Memory/VSS runtime checks reported durable SQLite WASM OPFS storage
+  (`sqlite-wasm-opfs-sahpool`), persisted storage, and Memory ready.
+- PASS: Settings was verified in its independent Obsidian window. The AI provider,
+  API token, Base URL, model fields, Memory controls, Memory Exclude Path, Pagelet
+  toggle, reviews folder, output language, temperature, and token limit controls
+  were visible and readable without overlap.
+- PASS: Vault Statistics Preview and Records Preview rendered visible content.
+  Stats showed the Overview tab, summary cards, and chart; Records showed Pagelet
+  smoke fixture headings, long prompt-injection text, and the smoke-test link.
+- PASS: `obsidian dev:errors vault=test` reported no captured errors, and the
+  active leaf was restored to `markdown:pagelet-smoke-golden.md` at the end.
+
+Caveats:
+
+- NOTE: Computer Use click/scroll APIs still had session-binding issues during
+  this pass. Visual evidence came from Computer Use visible-window reads,
+  Obsidian CLI/eval, and macOS UI-script scrolling for the independent Settings
+  window rather than a single pure manual click-through recording.
+- NOTE: The sqlite OPFS/opfs-wl VFS install warnings were observed again. They
+  are treated as low-risk console noise for this smoke because durable backend
+  and Memory-ready runtime evidence passed.
+
 ### 2026-06-18 · Desktop test vault · post-commit redeploy check
 
 Environment:
@@ -537,43 +727,53 @@ output via the native `json_schema` path or falls back gracefully to the
 JSON-mode parser. This section replaces the one-shot OQ002 spike with a
 repeatable per-release check.
 
-**Prerequisites**: Debug mode ON (Settings → Personal Assistant → Debug).
-Prepare two test notes: one Chinese (~200 chars), one English (~200 words).
+**Prerequisites**: Prepare two test notes: one Chinese (~200 chars), one
+English (~200 words). Debug mode can be enabled when available, but do not rely
+on a `pagelet.schema_parse` console event; that event is not emitted by the
+current codebase.
 
 For **each** provider below, configure it in Settings → Personal Assistant
 → Model, then trigger Pagelet on both test notes:
 
 ### Qwen / DashScope (qwen-plus)
 
+- [ ] Record provider/model/evidence source: ________________________________
 - [ ] Chinese note → review completes, modal shows valid suggestions
 - [ ] English note → review completes, modal shows valid suggestions
-- [ ] Console: check `pagelet.schema_parse` event — expected path:
-      `structured` (native json_schema). Record actual path: __________
+- [ ] Parser path / fallback: expected `structured` when observable. Record
+      actual path, or `not observable` with the functional evidence used:
+      ________________________________
 
 ### Qwen / DashScope (qwen-max or qwen-flash)
 
+- [ ] Record provider/model/evidence source: ________________________________
 - [ ] Chinese note → review completes
 - [ ] English note → review completes
-- [ ] Console path: expected `structured`. Actual: __________
+- [ ] Parser path / fallback: expected `structured` when observable. Actual or
+      caveat: ________________________________
 
-### DeepSeek (direct API, deepseek-chat)
+### DeepSeek via Bailian / DashScope-compatible runtime (deepseek-v4-flash)
 
+- [ ] Record provider/model/evidence source: ________________________________
 - [ ] Chinese note → review completes
 - [ ] English note → review completes
-- [ ] Console path: expected `json-mode-fallback` (DeepSeek does not
-      support json_schema). Actual: __________
+- [ ] Parser path / fallback: expected DashScope-compatible structured output
+      path when observable.
+      Actual or caveat: ________________________________
 
 ### OpenAI-compatible (if configured)
 
+- [ ] Record provider/model/evidence source: ________________________________
 - [ ] Chinese note → review completes
 - [ ] English note → review completes
-- [ ] Console path: expected `structured`. Actual: __________
+- [ ] Parser path / fallback: expected `structured` when observable. Actual or
+      caveat: ________________________________
 
 ### Evaluation criteria
 
-- If a provider's fallback rate > 30% across its runs (i.e. both notes
-  hit fallback when structured was expected), file as **S1** with the
-  provider name and console output.
+- If a provider's observable fallback rate > 30% across its runs (i.e. both
+  notes hit fallback when structured was expected), file as **S1** with the
+  provider name and evidence source.
 - If fallback produces invalid output (zod validation failure after
   retry), file as **S0**.
 - If a provider is unavailable (no API key), mark as `SKIP — no key`

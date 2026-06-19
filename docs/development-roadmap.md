@@ -1,6 +1,6 @@
 # Development Roadmap
 
-> **Created**: 2026-06-15 · **Last updated**: 2026-06-18
+> **Created**: 2026-06-15 · **Last updated**: 2026-06-19
 >
 > SPEC details live in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
 > Architecture context in [`architecture-overview.md`](./architecture-overview.md).
@@ -18,24 +18,47 @@ v2.4  ████████████████████  Code Complet
 v2.5  ████████████████████  Code Complete (2026-06-17)
 v2.6  ████████████████████  Code Complete (C1+A7; C2 deferred)
 ────────────────────────────────────────────────────
-v2.7  Release pending       验证 + 发布物
+v2.7  Release prepared      local tag 2.7.0; publish pending
 ```
 
 ---
 
 ## v2.7 — 合并 Release
 
-**Scope**: v2.2~v2.6 全部已完成代码的正式发布。零编码工作。
+**Scope**: v2.2~v2.6 全部已完成代码的正式发布，并补齐 v2.7 pre-release blocker。2026-06-19 补齐项包括 AI Insights 一等入口、Discovery `insight`/`action` 映射、Type A malformed JSON fallback、Vault Insights onboarding Notice 测试和实现口径文档同步。
 
 ### Release Checklist
 
 | # | 项目 | 类别 | 状态 |
 |---|------|------|------|
-| 1 | Provider OQ002 矩阵 ≥ 2 providers 结构化输出 | 验证 | [ ] |
-| 2 | iOS 真机验证（dvh/safe-area/移动端 guard） | 验证 | [ ] |
-| 3 | Pagelet smoke checklist（Bubble/Discovery/Onboarding/AI Insights） | 验证 | [ ] |
-| 4 | manifest.json / manifest-beta.json / versions.json → 2.7.0 | 发布物 | [ ] |
-| 5 | CHANGELOG / Release Notes | 发布物 | [ ] |
+| 0 | AI Insight pre-release code blockers | 代码/测试 | [x] |
+| 1 | Provider OQ002 矩阵 ≥ 2 providers 结构化输出 | 验证 | [x] |
+| 2 | iOS 真机验证（dvh/safe-area/移动端 guard） | 验证 | [x] |
+| 3 | Pagelet smoke checklist（Bubble/Discovery/Onboarding/AI Insights） | 验证 | [x] |
+| 4 | manifest.json / manifest-beta.json / versions.json → 2.7.0 | 发布物 | [x] |
+| 5 | CHANGELOG / Release Notes | 发布物 | [x] |
+
+### Release Verification Notes
+
+- 2026-06-19 已补齐 AI Insight pre-release code blockers 的代码/测试：
+  AI Insights 一等入口、Settings 入口、Discovery `insight`/`action` 容错映射、
+  Type A malformed JSON fallback、Vault Insights onboarding Notice 覆盖，以及
+  相关实现口径文档同步。
+- 2026-06-19 iOS 真机 smoke 已通过移动端 Pagelet panel、Chat 基础路径、AI
+  Insights viewer 和 Vault Insights onboarding Notice。Pagelet final
+  confirm/save 因 iPhone Mirroring 滚动手势限制未完成，作为 caveat 记录。
+- 2026-06-19 desktop post-fix smoke 已通过 AI Insights viewer、Discovery panel、
+  Qwen `qwen-plus` Pagelet structured output（英文 golden note + 中文 fixture）、
+  DashScope-compatible `deepseek-v4-flash` Pagelet structured output、Pagelet
+  runner 20 PASS / 0 bugs、`dev:errors` clean。
+- Provider OQ002 关闭：release owner 确认 DeepSeek 预期通过百炼平台使用，因此
+  DashScope-compatible `deepseek-v4-flash` smoke 计入 DeepSeek provider evidence。
+- Pagelet smoke checklist 关闭：Discovery / Onboarding / AI Insights 使用 2026-06-19
+  证据，Bubble 使用早前 checklist 的 click-through 证据加本轮 runner 的 pet/panel
+  mount 证据。
+- 2026-06-19 release metadata 已生成本地 `2.7.0` release commit/tag；
+  `package.json`、lockfile、`manifest.json`、`manifest-beta.json`、`versions.json`
+  和 `CHANGELOG.md` 均已更新。远端 publish / GitHub Release 尚未执行。
 
 ### v2.7 产品叙事
 

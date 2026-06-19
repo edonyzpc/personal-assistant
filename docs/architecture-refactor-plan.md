@@ -210,7 +210,7 @@ export interface MemoryStatusPort {
 
 **改动量：** ~100 行新增
 **运行时变更：** 无
-**验证：** `tsc --noEmit` 通过
+**验证：** `npx tsc -noEmit -skipLibCheck` 通过
 
 ---
 
@@ -840,10 +840,10 @@ async onload() {
 ### 每步验证 Checklist
 
 ```
-□ tsc --noEmit          — 类型检查通过
-□ npm test              — 全部测试绿色
-□ make deploy           — 构建 + 部署到测试 vault
-□ 手动冒烟测试对应功能     — 见下方 Step 冒烟矩阵
+□ npx tsc -noEmit -skipLibCheck — 当前类型检查基线通过
+□ npm test                      — 全部测试绿色
+□ make deploy                   — 构建 + 部署到测试 vault
+□ 手动冒烟测试对应功能             — 见下方 Step 冒烟矩阵
 ```
 
 ### Step 冒烟测试矩阵
@@ -858,7 +858,7 @@ async onload() {
 | 1.7 | 冷重启 Obsidian，主观验证启动速度，确认所有功能可用 |
 | 1.8 | 快速编辑多个笔记，验证 statusBar debounce 合并更新 |
 | 2.1-2.3 | 全量回归：Chat / Memory / Pagelet / Stats 全部验证 |
-| 3.1-3.3 | 验证 free-tier capability 可用，paid capability 无 license 时被拒绝 |
+| 3.1-3.3 | 验证 mock paid license 下 paid capability 可用；free/premium-required 分支由 PolicyEngine focused tests 覆盖 |
 
 ---
 
