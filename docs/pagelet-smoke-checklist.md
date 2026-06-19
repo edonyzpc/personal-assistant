@@ -35,8 +35,8 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 Environment:
 
-- Ref: local `2.7.0` tagged candidate after the release-review follow-up docs
-  and Settings color-picker fixes.
+- Ref: local `2.7.0` tagged candidate after the release-review follow-up docs,
+  v2.7 user guide, and Settings color-picker fixes.
 - Scope: final release gate evidence, not a new interactive UI smoke pass.
 
 Gate results:

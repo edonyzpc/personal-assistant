@@ -16,6 +16,8 @@
 
 > ***NOTE***: Newest beta feature: **Pagelet** — a quiet review assistant for your notes (produces structured suggestions, saves as review notes). Also supports LLM chat with Memory. Before preparing memory, the assistant explains data flow, AI provider usage, and possible cost, then asks for your approval.
 
+> ***v2.7 guide***: Before trying the release, read the [v2.7 user guide](./docs/v2.7-user-guide-en.md). It explains AI Insights, Memory, Pagelet, Research, safe save flows, best practices, and a short release-video script from a user workflow perspective. Chinese version: [v2.7 用户指南](./docs/v2.7-user-guide.md).
+
 ## AI Chat in 60 seconds
 
 Three steps to get talking to your notes:

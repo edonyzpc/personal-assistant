@@ -6,7 +6,7 @@ This directory is split into current product/runtime contracts and archived hist
 
 | Area | Current docs |
 | --- | --- |
-| User workflows | [Pagelet user guide](./pagelet-user-guide.md), [Pagelet smoke checklist](./pagelet-smoke-checklist.md) |
+| User workflows | [v2.7 user guide (English)](./v2.7-user-guide-en.md), [v2.7 用户指南](./v2.7-user-guide.md), [Pagelet user guide](./pagelet-user-guide.md), [Pagelet smoke checklist](./pagelet-smoke-checklist.md) |
 | Project gates | [Project TODO](./todo.md), [Release process](./release-process.md), [Reusable refactor workflow](./refactor-workflow.md) |
 | PA Agent | [Architecture plan](./pa-agent-architecture-plan.md), [Runtime lifecycle plan](./pa-agent-runtime-lifecycle-plan.md), [Context management research](./agent-context-management-research.md), [Control policy SDD](./pa-agent-control-policy-sdd.md), [Control policy tracker](./pa-agent-control-policy-development-tracker.md) |
 | v2 follow-up | [v2 post-release tracker](./v2-post-release-spec-driven-development.md), [v2.1.2 decisions](./v2.1.2-decisions.md), [v2.1.2 review snapshot](./v2.1.2-comprehensive-review.md), [v2 fix plan](./v2-fix-plan.md), [AI insight improvement analysis](./ai-insight-improvement-analysis.md) |

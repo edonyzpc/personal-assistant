@@ -61,6 +61,7 @@ All notable changes to this project will be documented in this file. See [standa
 - track architecture refactor progress and phase decisions
 - release: record v2.7 smoke status
 - release: close v2.7 verification gates
+- release: add English and Chinese v2.7 user guides, best practices, and release-video script
 
 ### Tests
 - add coverage for budget, compactor, hygiene, Type A/C, scheduler, and chunker

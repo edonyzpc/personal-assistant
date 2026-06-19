@@ -37,6 +37,7 @@ v2.7  Release prepared      local tag 2.7.0; publish pending
 | 3 | Pagelet smoke checklist（Bubble/Discovery/Onboarding/AI Insights） | 验证 | [x] |
 | 4 | manifest.json / manifest-beta.json / versions.json → 2.7.0 | 发布物 | [x] |
 | 5 | CHANGELOG / Release Notes | 发布物 | [x] |
+| 6 | v2.7 英文/中文用户说明 / 最佳实践 / 视频脚本 | 用户文档 | [x] |
 
 ### Release Verification Notes
 
@@ -60,11 +61,15 @@ v2.7  Release prepared      local tag 2.7.0; publish pending
 - 2026-06-19 release metadata 已生成本地 `2.7.0` release commit/tag；
   `package.json`、lockfile、`manifest.json`、`manifest-beta.json`、`versions.json`
   和 `CHANGELOG.md` 均已更新。远端 publish / GitHub Release 尚未执行。
-- 2026-06-19 final pre-publish gate 在 release-review follow-up 后的本地
-  `2.7.0` tagged candidate 上补跑并记录：coverage Jest、typecheck、lint、
-  build、bundle audit、whitespace scan、source review scan、`make deploy`。
-  该记录覆盖 final Settings native color picker / `vanilla-picker` removal
-  follow-up。
+- 2026-06-19 final pre-publish gate 在 release-review follow-up 和 v2.7 用户
+  指南 follow-up 后的本地 `2.7.0` tagged candidate 上补跑并记录：coverage
+  Jest、typecheck、lint、build、bundle audit、whitespace scan、source review
+  scan、`make deploy`。该记录覆盖 final Settings native color picker /
+  `vanilla-picker` removal follow-up。
+- 2026-06-19 补齐 v2.7 英文/中文用户说明：`docs/v2.7-user-guide-en.md`
+  面向海外用户作为主入口，`docs/v2.7-user-guide.md` 保留中文版。两者从
+  用户工作流说明 AI Insights、Memory、Pagelet、Research、安全保存、最佳
+  实践和发布视频脚本，并从 README / README-CN / docs index 建立入口。
 
 ### v2.7 产品叙事
 
