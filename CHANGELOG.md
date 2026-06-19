@@ -35,6 +35,7 @@ All notable changes to this project will be documented in this file. See [standa
 - review: mobile guard for Type C refresh and ARIA for append preview
 - pagelet: rewrite discovery alias matching with CJK support and scoring
 - ai-insights: expose insights viewer for release
+- settings: replace vanilla-picker graph color control with Obsidian native color picker
 
 ### Improvements
 - pagelet: relocate v1 UI primitives to src/pagelet/ui/ (SPEC-B4)

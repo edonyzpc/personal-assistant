@@ -33,7 +33,7 @@ v2.7  Release prepared      local tag 2.7.0; publish pending
 |---|------|------|------|
 | 0 | AI Insight pre-release code blockers | 代码/测试 | [x] |
 | 1 | Provider OQ002 矩阵 ≥ 2 providers 结构化输出 | 验证 | [x] |
-| 2 | iOS 真机验证（dvh/safe-area/移动端 guard） | 验证 | [x] |
+| 2 | iOS 真机验证（dvh/safe-area/移动端 guard；final save caveated） | 验证 | [x] |
 | 3 | Pagelet smoke checklist（Bubble/Discovery/Onboarding/AI Insights） | 验证 | [x] |
 | 4 | manifest.json / manifest-beta.json / versions.json → 2.7.0 | 发布物 | [x] |
 | 5 | CHANGELOG / Release Notes | 发布物 | [x] |
@@ -44,9 +44,10 @@ v2.7  Release prepared      local tag 2.7.0; publish pending
   AI Insights 一等入口、Settings 入口、Discovery `insight`/`action` 容错映射、
   Type A malformed JSON fallback、Vault Insights onboarding Notice 覆盖，以及
   相关实现口径文档同步。
-- 2026-06-19 iOS 真机 smoke 已通过移动端 Pagelet panel、Chat 基础路径、AI
-  Insights viewer 和 Vault Insights onboarding Notice。Pagelet final
-  confirm/save 因 iPhone Mirroring 滚动手势限制未完成，作为 caveat 记录。
+- 2026-06-19 iOS 真机 smoke 已通过移动端 Pagelet panel 基础布局、
+  dvh/safe-area、mobile guard、Chat 基础路径、AI Insights viewer 和 Vault
+  Insights onboarding Notice。Pagelet final confirm/save 因 iPhone Mirroring
+  滚动手势限制未完成，作为 v2.7 caveat 明确记录，不作为已验证保存路径声明。
 - 2026-06-19 desktop post-fix smoke 已通过 AI Insights viewer、Discovery panel、
   Qwen `qwen-plus` Pagelet structured output（英文 golden note + 中文 fixture）、
   DashScope-compatible `deepseek-v4-flash` Pagelet structured output、Pagelet
@@ -59,6 +60,11 @@ v2.7  Release prepared      local tag 2.7.0; publish pending
 - 2026-06-19 release metadata 已生成本地 `2.7.0` release commit/tag；
   `package.json`、lockfile、`manifest.json`、`manifest-beta.json`、`versions.json`
   和 `CHANGELOG.md` 均已更新。远端 publish / GitHub Release 尚未执行。
+- 2026-06-19 final pre-publish gate 在 release-review follow-up 后的本地
+  `2.7.0` tagged candidate 上补跑并记录：coverage Jest、typecheck、lint、
+  build、bundle audit、whitespace scan、source review scan、`make deploy`。
+  该记录覆盖 final Settings native color picker / `vanilla-picker` removal
+  follow-up。
 
 ### v2.7 产品叙事
 

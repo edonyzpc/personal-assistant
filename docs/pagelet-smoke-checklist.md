@@ -31,6 +31,35 @@ The checks below verify behaviour the test mocks cannot reproduce.
 
 ## Latest Verification Log
 
+### 2026-06-19 · Final pre-publish gate · v2.7 release-review follow-up
+
+Environment:
+
+- Ref: local `2.7.0` tagged candidate after the release-review follow-up docs
+  and Settings color-picker fixes.
+- Scope: final release gate evidence, not a new interactive UI smoke pass.
+
+Gate results:
+
+- PASS: `npm test -- --runInBand --coverage`.
+- PASS: `npx tsc -noEmit -skipLibCheck`.
+- PASS: `npm run lint`.
+- PASS: `npm run build`.
+- PASS: `npm run audit:bundle`.
+- PASS: `git diff --check`.
+- PASS: source scan for runtime `createElement("style")`, `.innerHTML =`, and
+  `.outerHTML =` assignments in `src`.
+- PASS: `make deploy` copied the final build into the repo-local `test/` vault
+  after running Jest, lint, and build.
+
+Caveats:
+
+- No new manual click-through smoke was performed in this final gate. It relies
+  on the desktop/iOS mixed-evidence smoke records below.
+- Mobile Pagelet final confirm/save remains caveated; mobile basics,
+  safe-area/dvh, mobile guard, Chat, AI Insights viewer, and onboarding Notice
+  are the verified iOS scope for v2.7.
+
 ### 2026-06-19 · Desktop test vault · v2.7 post-fix consolidated smoke
 
 Environment:
@@ -144,6 +173,9 @@ Caveats:
 - NOTE: The Pagelet save preview modal was verified, but final confirm/save was
   not completed because this Computer Use session did not expose a reliable
   scroll gesture for the modal.
+- Status: PASS for iOS basics, panel layout, dvh/safe-area, mobile guard, Chat
+  basic prompt, AI Insights viewer, and Vault Insights onboarding Notice. NOT
+  TESTED for Pagelet final confirm/save.
 
 ### 2026-06-19 · Desktop test vault · AI Insights entry smoke
 
@@ -874,11 +906,11 @@ and keep the affected change out of release scope.
 
 ### Mobile smoke items
 
-- [ ] Repeat the golden path on a mobile vault
-- [ ] Modal is responsive (no horizontal scrollbar, buttons reachable with
-      one thumb)
-- [ ] Command palette entry points are reachable on mobile
-- [ ] Suggested-action confirm + cancel both reachable without keyboard
+- [x] Mobile basics on a real iOS vault
+- [x] Modal/panel basics are responsive for the observed path
+- [x] Command palette entry points are reachable on mobile
+- [ ] Suggested-action final confirm + cancel both reachable without keyboard
+      (not completed in v2.7 due to iPhone Mirroring scroll limitations)
 
 ## Prompt-injection negative cases (LLM-driven)
 
@@ -919,8 +951,8 @@ prompt-engineered escape via natural language.
 (Record any anomalies here as you go; the C2 commit instructions cover
 how to fix-and-commit separately under `fix(pagelet|framework): ...`.)
 
-| Step # | Severity | What you saw | Repro |
-|--------|----------|--------------|-------|
-| Panel 6c | S1 | Research button no-ops when Chat UI is not already open | Close Chat view → click Research on a Link suggestion → nothing happens |
-| Panel 6c | S2 | Research button tooltip text clipped by panel overflow | Hover Research button → tooltip rectangle visible but text obscured |
-| Golden 7 | S2 | `pagelet_detected_language: en` on Chinese note `波斯猫.md` | Review 波斯猫.md → open generated review note → check frontmatter |
+| Step # | Severity | Status | What you saw | Repro / disposition |
+|--------|----------|--------|--------------|---------------------|
+| Panel 6c | S1 | Closed by follow-up test | Research button no-ops when Chat UI is not already open | `__tests__/pagelet-research-manager.test.ts` covers creating a Chat leaf when none exists; no open S1 blocker remains for v2.7. |
+| Panel 6c | S2 | Deferred post-v2.7 | Research button tooltip text clipped by panel overflow | UI polish follow-up; non-blocking S2 and not part of the v2.7 release gate. |
+| Golden 7 | S2 | Closed by prompt/schema + provider smoke | `pagelet_detected_language: en` on Chinese note `波斯猫.md` | Tail prompt now forces `detected_language` to the detected runtime language, and 2026-06-19 provider smoke covers Chinese fixtures. |
