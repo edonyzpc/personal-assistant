@@ -63,6 +63,7 @@ PA Agent v1 fully owns the default ChatService path; no rollback flag remains.
 | Skill selection | Automatic plus user-explicit selection | User-explicit skill selection wins. Automatic selection uses metadata and small budgets. |
 | Source model | Three separate buckets | Memory references, Context Used, and Web sources stay separate. |
 | Web search | Builtin MCP WebSearch only | Web search must use the builtin WebSearch tool. Provider built-in web search is not passed to final answer model calls and does not appear as fallback/status. |
+| User Profile tool constraints | Soft context only | AI Insights/User Profile may record durable preferences for visibility and personalization, but it must not register, suppress, or force tools. WebSearch routing remains current-turn intent plus host policy; persistent tool controls require a separate structured ToolPolicy/AgentControlSnapshot path. |
 | MCP v1 scope | Builtin remote MCP only, first Bailian WebSearch | No user-configured MCP, local stdio MCP, shell bridge, arbitrary endpoint, or MCP self-expansion. |
 | MCP trigger | Model-called tool in answer-stream loop | No keyword trigger. Tool description and policy guide use. |
 | Desktop/mobile | Core, existing tools, skill context, and builtin WebSearch target both platforms | Desktop mobile-emulation smoke covers core PA Chat and the historical WebSearch-unavailable path. Real iPhone smoke covers core chat/direct answer, current-note answer after retry, current-note-only full-context exact token lookup, historical mobile WebSearch-unavailable behavior, positive mobile WebSearch after API-key entitlement fix, no-memory warning suppression, WebSearch ordinary recovery, WebSearch cancel/recovery, and general cancel/recovery. stdio MCP, CLI, shell, scripts are future desktop-only. |
@@ -468,6 +469,7 @@ Network policy:
 - Failure is recoverable and should not fail the whole chat.
 - The model may call WebSearch MCP from the answer-stream loop when needed. There is no keyword trigger.
 - Tool description should guide use for latest information, community discussion, official docs, external facts, or explicit search requests.
+- AI Insights/User Profile content must not suppress WebSearch by itself. Current-turn source constraints such as "do not use web search" are runtime policy inputs; durable profile text is personalization context unless a future structured ToolPolicy explicitly consumes it.
 - Obsidian `requestUrl` transports may not provide hard network cancellation or streaming byte caps. MCP adapters must treat abort as "ignore future results and stop updating the turn", use conservative deadlines, enforce maximum serialized response size, and return a recoverable unavailable/failed result on over-budget responses.
 
 Provider built-in web search policy:
