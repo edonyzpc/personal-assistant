@@ -4,7 +4,7 @@ import { Component, MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
-import { getDistinctChatHistoryPreview } from '../src/chat/modals';
+import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
 
@@ -141,6 +141,14 @@ class MockElement {
         for (const cls of value.split(/\s+/).filter(Boolean)) {
             this.classList.add(cls);
         }
+    }
+
+    addClass(...classes: string[]) {
+        this.classList.add(...classes);
+    }
+
+    removeClass(...classes: string[]) {
+        this.classList.remove(...classes);
     }
 
     createDiv(options?: CreateOptions) {
@@ -448,6 +456,14 @@ function getResponseDiv(view: LLMView) {
 
 function allText(root: MockElement): string {
     return [root.textContent, ...root.children.map(allText)].join('');
+}
+
+function getRoleIdenticonShapeSignature(root: MockElement, className: string): string {
+    const identicon = getElementByClass(root, className);
+    return getElementsByClass(identicon, 'pa-chat-role-identicon-filled-cell')
+        .map((cell) => `${cell.getAttribute('x')}:${cell.getAttribute('y')}`)
+        .sort()
+        .join('|');
 }
 
 function getCssRuleBlock(css: string, selector: string): string {
@@ -1025,6 +1041,10 @@ describe('LLMView turn lifecycle', () => {
     it('defers live Mermaid rendering and wraps the final diagram with a viewer button', async () => {
         const renderedMarkdown: string[] = [];
         let openedModal: { modalEl: MockElement; contentEl: MockElement } | null = null;
+        const loadedOwners = new WeakSet<Component>();
+        jest.spyOn(Component.prototype, 'load').mockImplementation(function (this: Component) {
+            loadedOwners.add(this);
+        });
         const modalOpenSpy = jest.spyOn(Modal.prototype, 'open').mockImplementation(function (this: Modal) {
             const modal = this as unknown as { modalEl: MockElement; contentEl: MockElement; onOpen: () => void };
             modal.modalEl = new MockElement('div');
@@ -1038,13 +1058,15 @@ describe('LLMView turn lifecycle', () => {
                 createElement: (tagName: string) => new MockElement(tagName),
             },
         });
-        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement, sourcePath?: string, owner?: Component) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement, _sourcePath?: string, owner?: Component) => {
             renderedMarkdown.push(markdown);
             if (markdown.includes('```mermaid') && !markdown.includes('A --> B')) {
                 throw new Error('incomplete Mermaid');
             }
             el.setText(markdown);
             if (markdown.includes('```mermaid')) {
+                expect(owner).toBeDefined();
+                expect(owner ? loadedOwners.has(owner) : false).toBe(true);
                 el.createDiv({ cls: 'block-language-mermaid' });
             }
         });
@@ -1096,6 +1118,61 @@ describe('LLMView turn lifecycle', () => {
             { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
         ]);
         modalOpenSpy.mockRestore();
+    });
+
+    it('renders final Mermaid in the attached message DOM with the current note source path', async () => {
+        const loadedOwners = new WeakSet<Component>();
+        jest.spyOn(Component.prototype, 'load').mockImplementation(function (this: Component) {
+            loadedOwners.add(this);
+        });
+        const finalMermaidRenderCalls: Array<{
+            attachedToMessageContent: boolean;
+            ownerLoaded: boolean;
+            sourcePath: string | undefined;
+        }> = [];
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createElement: (tagName: string) => new MockElement(tagName),
+            },
+        });
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement, sourcePath?: string, owner?: Component) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement, sourcePath?: string, owner?: Component) => {
+            el.setText(markdown);
+            if (markdown.includes('```mermaid')) {
+                finalMermaidRenderCalls.push({
+                    attachedToMessageContent: Boolean(el.parentElement?.classList.contains('message-content')),
+                    ownerLoaded: owner ? loadedOwners.has(owner) : false,
+                    sourcePath,
+                });
+                el.createDiv({ cls: 'block-language-mermaid' });
+            }
+        });
+        const { view, containerEl, app } = createView({ withMarkdownLeaf: true });
+        await view.onOpen();
+
+        const content = '```mermaid\ngraph TD\nA --> B\n```';
+        getTextArea(containerEl).value = 'draw a graph';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        app.workspace.getActiveFile.mockReturnValue({ path: '0.unsorted/Cat.md', extension: 'md' });
+
+        streamCalls[0].onChunk(content);
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        expect(finalMermaidRenderCalls).toEqual([
+            {
+                attachedToMessageContent: true,
+                ownerLoaded: true,
+                sourcePath: '0.unsorted/Dog.md',
+            },
+        ]);
+        expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(1);
+        expect(view.chatHistory).toEqual([
+            { role: 'user', content: 'draw a graph' },
+            { role: 'assistant', content },
+        ]);
     });
 
     it('wraps Mermaid containers that appear after the rendered buffer is attached', async () => {
@@ -1312,21 +1389,22 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('falls back to Mermaid source when final Mermaid rendering throws synchronously', async () => {
-        const renderedMarkdown: string[] = [];
-        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
-            renderedMarkdown.push(markdown);
+        const renderedMarkdown: Array<{ markdown: string; sourcePath: string | undefined }> = [];
+        (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement, sourcePath?: string) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement, sourcePath?: string) => {
+            renderedMarkdown.push({ markdown, sourcePath });
             if (markdown.includes('```mermaid')) {
                 throw new Error('Mermaid render failed');
             }
             el.setText(markdown);
         });
-        const { view, containerEl } = createView();
+        const { view, containerEl, app } = createView({ withMarkdownLeaf: true });
         await view.onOpen();
 
         const content = '```mermaid\ngraph TD\nA --> B\n```';
         getTextArea(containerEl).value = 'broken graph';
         void getButtonByText(containerEl, 'Ask').click();
         await flushPromises();
+        app.workspace.getActiveFile.mockReturnValue({ path: '0.unsorted/Cat.md', extension: 'md' });
         streamCalls[0].onChunk(content);
         await flushPromises();
         await flushPromises();
@@ -1335,8 +1413,9 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         await flushPromises();
 
-        expect(renderedMarkdown.some((markdown) => markdown.includes('```mermaid'))).toBe(true);
-        expect(renderedMarkdown[renderedMarkdown.length - 1]).toContain('```text');
+        expect(renderedMarkdown.some(({ markdown }) => markdown.includes('```mermaid'))).toBe(true);
+        expect(renderedMarkdown[renderedMarkdown.length - 1].markdown).toContain('```text');
+        expect(renderedMarkdown[renderedMarkdown.length - 1].sourcePath).toBe('0.unsorted/Dog.md');
         expect(allText(containerEl)).toContain('Mermaid diagram could not be rendered; showing source.');
         expect(view.chatHistory).toEqual([
             { role: 'user', content: 'broken graph' },
@@ -2274,6 +2353,55 @@ describe('LLMView turn lifecycle', () => {
         expect(restoredAssistantMessage.getAttribute('aria-busy')).toBeNull();
     });
 
+    it('refreshes role identicon shapes when starting a new chat', async () => {
+        const originalCrypto = globalThis.crypto;
+        const randomUUID = jest.fn()
+            .mockReturnValueOnce('constructor-seed')
+            .mockReturnValueOnce('session-alpha')
+            .mockReturnValueOnce('session-bravo');
+        Object.defineProperty(globalThis, 'crypto', {
+            configurable: true,
+            value: { randomUUID },
+        });
+
+        try {
+            const { view, containerEl } = createView();
+            await view.onOpen();
+
+            getTextArea(containerEl).value = 'first prompt';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            streamCalls[0].onChunk('first answer');
+            streamCalls[0].resolve();
+            await flushPromises();
+            await flushPromises();
+            const firstAssistantShape = getRoleIdenticonShapeSignature(containerEl, 'pa-chat-role-identicon-assistant');
+
+            getButtonByText(containerEl, 'New Chat').click();
+            await flushPromises();
+            getTextArea(containerEl).value = 'second prompt';
+            void getButtonByText(containerEl, 'Ask').click();
+            await flushPromises();
+            streamCalls[1].onChunk('second answer');
+            streamCalls[1].resolve();
+            await flushPromises();
+            await flushPromises();
+            const secondAssistantShape = getRoleIdenticonShapeSignature(containerEl, 'pa-chat-role-identicon-assistant');
+
+            expect(randomUUID).toHaveBeenCalledTimes(3);
+            expect(firstAssistantShape).not.toBe(secondAssistantShape);
+            expect(view.chatHistory).toEqual([
+                { role: 'user', content: 'second prompt' },
+                { role: 'assistant', content: 'second answer' },
+            ]);
+        } finally {
+            Object.defineProperty(globalThis, 'crypto', {
+                configurable: true,
+                value: originalCrypto,
+            });
+        }
+    });
+
     it('ignores stale clear and delete confirmations after the view session changes', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -2301,6 +2429,28 @@ describe('LLMView turn lifecycle', () => {
             { role: 'user', content: 'first prompt' },
             { role: 'assistant', content: 'first answer' },
         ]);
+    });
+
+    it('scopes chat confirmation modal styles to the chat confirmation shell', () => {
+        const { app } = createView();
+        const modal = new ChatConfirmationModal(
+            { app: app as never },
+            {
+                title: 'Clear current chat?',
+                message: 'This clears the current chat and draft.',
+                confirmText: 'Clear current chat',
+                danger: true,
+            },
+            jest.fn(),
+        );
+        const modalLike = modal as unknown as { modalEl: MockElement; contentEl: MockElement; onOpen: () => void };
+
+        modalLike.modalEl = new MockElement('div');
+        modalLike.contentEl = new MockElement('div');
+        modalLike.onOpen();
+
+        expect(modalLike.modalEl.classList.contains('pa-chat-confirmation-modal-shell')).toBe(true);
+        expect(modalLike.contentEl.classList.contains('pa-chat-confirmation-modal')).toBe(true);
     });
 
     it('keeps terminal retry rows intact when a newer generation is active', async () => {
@@ -2908,23 +3058,30 @@ describe('LLMView turn lifecycle', () => {
     it('sizes role identicons for desktop and compact chat panes', () => {
         const css = readFileSync('src/custom.pcss', 'utf8');
         const assistantIdenticonModel = getChatRoleIdenticonModel('assistant');
+        const identiconBlock = getCssRuleBlock(css, '.llm-view .pa-chat-role-identicon');
 
-        expect(css).toMatch(/\.llm-view\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*24px;[\s\S]*?--pa-chat-role-icon-padding:\s*2px;[\s\S]*?gap:\s*7px;/);
+        expect(css).toMatch(/\.llm-view\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*22px;[\s\S]*?--pa-chat-role-icon-padding:\s*2px;[\s\S]*?gap:\s*6px;/);
         expect(css).toMatch(/\.llm-view\s+\.pa-chat-role-identicon\s*{[\s\S]*?flex:\s*0 0 var\(--pa-chat-role-icon-size\);[\s\S]*?width:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?height:\s*var\(--pa-chat-role-icon-size\);[\s\S]*?padding:\s*var\(--pa-chat-role-icon-padding\);/);
-        expect(css).toMatch(/\.llm-view\.is-compact\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*26px;[\s\S]*?gap:\s*8px;/);
+        expect(identiconBlock).toContain('border-radius: 8px;');
+        expect(identiconBlock).not.toContain('border-radius: 50%;');
+        expect(css).toMatch(/\.llm-view\.is-compact\s+\.message-role\s*{[\s\S]*?--pa-chat-role-icon-size:\s*24px;[\s\S]*?gap:\s*7px;/);
         expect(assistantIdenticonModel.viewBox).toBe('-3 -3 26 26');
         expect(assistantIdenticonModel.cellSize).toBe(4);
     });
 
-    it('keeps role identicon shapes and palette colors stable by role seed', () => {
-        const firstAssistantModel = getChatRoleIdenticonModel('assistant');
-        const secondAssistantModel = getChatRoleIdenticonModel('assistant');
-        const userModel = getChatRoleIdenticonModel('user');
+    it('keeps role identicon colors stable while varying shapes by session seed', () => {
+        const firstAssistantModel = getChatRoleIdenticonModel('assistant', 'session-alpha');
+        const secondAssistantModel = getChatRoleIdenticonModel('assistant', 'session-alpha');
+        const nextAssistantModel = getChatRoleIdenticonModel('assistant', 'session-bravo');
+        const userModel = getChatRoleIdenticonModel('user', 'session-alpha');
 
         expect(firstAssistantModel.cells).toEqual(secondAssistantModel.cells);
         expect(firstAssistantModel.emptyCells).toEqual(secondAssistantModel.emptyCells);
+        expect(firstAssistantModel.cells).not.toEqual(nextAssistantModel.cells);
+        expect(firstAssistantModel.emptyCells).not.toEqual(nextAssistantModel.emptyCells);
         expect(userModel.cells).not.toEqual(firstAssistantModel.cells);
         expect(firstAssistantModel.fill).toBe('var(--pa-chat-role-identicon-purple)');
+        expect(nextAssistantModel.fill).toBe(firstAssistantModel.fill);
         expect(userModel.fill).toBe('var(--pa-chat-role-identicon-blue)');
         expect(firstAssistantModel.cells.length).toBeGreaterThan(0);
         expect(firstAssistantModel.cells.length + firstAssistantModel.emptyCells.length).toBe(25);
@@ -3003,6 +3160,11 @@ describe('LLMView turn lifecycle', () => {
         const mobileInputBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input');
         const mobileTextareaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-input textarea');
         const mobileButtonsBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons');
+        const iconButtonBlock = getCssRuleBlock(css, '.pa-chat-icon-button,\n.llm-buttons button.pa-chat-icon-button');
+        const iconButtonSvgBlock = getCssRuleBlock(css, '.pa-chat-icon-button svg,\n.llm-buttons button.pa-chat-icon-button svg');
+        const memoryChipBlock = getCssRuleBlock(css, '.pa-chat-memory-chip,\n.llm-buttons button.pa-chat-memory-chip');
+        const memoryChipSvgBlock = getCssRuleBlock(css, '.pa-chat-memory-chip svg,\n.llm-buttons button.pa-chat-memory-chip svg');
+        const cancelButtonBlock = getCssRuleBlock(css, '.llm-buttons button.cancel-button');
         const mobileIconButtonBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button');
         const mobileIconButtonHitAreaBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button::before');
         const mobileIconButtonSvgBlock = getCssRuleBlock(css, 'body.is-mobile .llm-buttons button.pa-chat-icon-button svg');
@@ -3048,15 +3210,30 @@ describe('LLMView turn lifecycle', () => {
         expect(mobileButtonsBlock).toContain('gap: 4px;');
         expect(mobileButtonsBlock).toContain('right: 7px;');
         expect(mobileButtonsBlock).toContain('bottom: 7px;');
-        expect(mobileIconButtonBlock).toContain('width: 30px;');
-        expect(mobileIconButtonBlock).toContain('height: 30px;');
-        expect(mobileIconButtonBlock).toContain('flex: 0 0 30px;');
-        expect(mobileIconButtonBlock).toContain('border-radius: 9px;');
+        expect(iconButtonBlock).toContain('width: 30px;');
+        expect(iconButtonBlock).toContain('height: 30px;');
+        expect(iconButtonBlock).toContain('flex: 0 0 30px;');
+        expect(iconButtonBlock).toContain('border-radius: 7px;');
+        expect(iconButtonSvgBlock).toContain('width: 15px;');
+        expect(iconButtonSvgBlock).toContain('height: 15px;');
+        expect(memoryChipBlock).toContain('width: 30px;');
+        expect(memoryChipBlock).toContain('height: 30px;');
+        expect(memoryChipBlock).toContain('flex: 0 0 30px;');
+        expect(memoryChipBlock).toContain('border-radius: 7px;');
+        expect(memoryChipSvgBlock).toContain('width: 15px;');
+        expect(memoryChipSvgBlock).toContain('height: 15px;');
+        expect(cancelButtonBlock).toContain('width: 30px;');
+        expect(cancelButtonBlock).toContain('height: 30px;');
+        expect(cancelButtonBlock).toContain('border-radius: 7px;');
+        expect(mobileIconButtonBlock).toContain('width: 28px;');
+        expect(mobileIconButtonBlock).toContain('height: 28px;');
+        expect(mobileIconButtonBlock).toContain('flex: 0 0 28px;');
+        expect(mobileIconButtonBlock).toContain('border-radius: 8px;');
         expect(mobileIconButtonHitAreaBlock).toContain('content: "";');
-        expect(mobileIconButtonHitAreaBlock).toContain('inset: -7px;');
+        expect(mobileIconButtonHitAreaBlock).toContain('inset: -8px;');
         expect(mobileIconButtonHitAreaBlock).toContain('border-radius: 14px;');
-        expect(mobileIconButtonSvgBlock).toContain('width: 14px;');
-        expect(mobileIconButtonSvgBlock).toContain('height: 14px;');
+        expect(mobileIconButtonSvgBlock).toContain('width: 13px;');
+        expect(mobileIconButtonSvgBlock).toContain('height: 13px;');
         expect(mobileCompactInputBlock).toContain('padding: 8px 8px calc(8px + var(--pa-chat-status-bar-clearance, 0px));');
         expect(mobileCompactTextareaBlock).toContain('height: 66px;');
         expect(mobileCompactTextareaBlock).toContain('min-height: 66px;');
@@ -3122,6 +3299,21 @@ describe('LLMView turn lifecycle', () => {
         expect(css).toMatch(/\.pa-chat-history-open\s*{[\s\S]*?max-width:\s*100%;[\s\S]*?min-width:\s*0;[\s\S]*?overflow:\s*hidden;/);
         expect(css).toMatch(/\.pa-chat-history-title,\s*\n\.pa-chat-history-preview,\s*\n\.pa-chat-history-meta\s*{[\s\S]*?text-overflow:\s*ellipsis;[\s\S]*?white-space:\s*nowrap;/);
         expect(css).toMatch(/body\.is-mobile\s+\.pa-chat-history-modal-shell\s*{[\s\S]*?max-width:\s*calc\(100vw - 24px\);/);
+    });
+
+    it('keeps destructive chat confirmation hover contrast high', () => {
+        const css = readFileSync('src/custom.pcss', 'utf8');
+        const baseWarningBlock = getCssRuleBlock(css, '.pa-chat-confirmation-modal button.mod-warning,\n.pa-chat-confirmation-modal button.mod-destructive');
+        const hoverWarningBlock = getCssRuleBlock(css, '.pa-chat-confirmation-modal button.mod-warning:hover,\n.pa-chat-confirmation-modal button.mod-warning:focus-visible,\n.pa-chat-confirmation-modal button.mod-destructive:hover,\n.pa-chat-confirmation-modal button.mod-destructive:focus-visible');
+        const activeWarningBlock = getCssRuleBlock(css, '.pa-chat-confirmation-modal button.mod-warning:active,\n.pa-chat-confirmation-modal button.mod-destructive:active');
+
+        expect(baseWarningBlock).toContain('background-color: color-mix(in srgb, var(--text-error, #ef4444) 14%, var(--background-primary));');
+        expect(baseWarningBlock).toContain('color: var(--text-error, #ef4444);');
+        expect(baseWarningBlock).not.toContain('color: var(--text-on-accent, #ffffff);');
+        expect(hoverWarningBlock).toContain('background-color: color-mix(in srgb, var(--text-error, #ef4444) 86%, #7f1d1d);');
+        expect(hoverWarningBlock).toContain('color: var(--text-on-accent, #ffffff);');
+        expect(activeWarningBlock).toContain('background-color: color-mix(in srgb, var(--text-error, #ef4444) 72%, #7f1d1d);');
+        expect(activeWarningBlock).toContain('color: var(--text-on-accent, #ffffff);');
     });
 
     it('hides chat history previews that duplicate the title', () => {
@@ -3260,6 +3452,89 @@ describe('LLMView turn lifecycle', () => {
         await view.onOpen();
 
         expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('28px');
+    });
+
+    it('updates bottom clearance when the Obsidian status bar appears after chat opens', async () => {
+        const { view, containerEl } = createView({ panelWidth: 900 });
+        const body = new MockElement('body');
+        type MockMutationObserverInstance = {
+            callback: MutationCallback;
+            observe: jest.Mock;
+            disconnect: jest.Mock;
+        };
+        const mutationObservers: MockMutationObserverInstance[] = [];
+        class MockMutationObserver {
+            readonly observe = jest.fn();
+            readonly disconnect = jest.fn();
+
+            constructor(readonly callback: MutationCallback) {
+                mutationObservers.push(this);
+            }
+        }
+        containerEl.boundingRect = { left: 0, top: 0, right: 900, bottom: 700, width: 900, height: 700 };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: { body },
+        });
+        Object.defineProperty(globalThis, 'MutationObserver', {
+            configurable: true,
+            value: MockMutationObserver,
+        });
+
+        await view.onOpen();
+        expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('0px');
+        expect(mutationObservers).toHaveLength(1);
+        expect(mutationObservers[0].observe).toHaveBeenCalledWith(body, {
+            attributes: true,
+            attributeFilter: ['class', 'style'],
+            childList: true,
+            subtree: true,
+        });
+
+        const unrelated = body.createDiv({ cls: 'not-status-bar' });
+        mutationObservers[0].callback([
+            {
+                type: 'childList',
+                target: body,
+                addedNodes: [unrelated],
+            } as unknown as MutationRecord,
+        ], {} as MutationObserver);
+        expect(animationFrames).toHaveLength(0);
+
+        const statusBar = body.createDiv({ cls: 'status-bar' });
+        statusBar.boundingRect = { left: 600, top: 672, right: 900, bottom: 700, width: 300, height: 28 };
+        mutationObservers[0].callback([
+            {
+                type: 'childList',
+                target: body,
+                addedNodes: [statusBar],
+            } as unknown as MutationRecord,
+        ], {} as MutationObserver);
+        mutationObservers[0].callback([
+            {
+                type: 'attributes',
+                target: statusBar,
+                addedNodes: [],
+                removedNodes: [],
+            } as unknown as MutationRecord,
+        ], {} as MutationObserver);
+
+        expect(animationFrames).toHaveLength(1);
+        runAnimationFrames();
+        expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('28px');
+
+        const laterUnrelated = body.createDiv({ cls: 'still-not-status-bar' });
+        mutationObservers[0].callback([
+            {
+                type: 'childList',
+                target: body,
+                addedNodes: [laterUnrelated],
+            } as unknown as MutationRecord,
+        ], {} as MutationObserver);
+        expect(animationFrames).toHaveLength(0);
+
+        await view.onClose();
+        expect(mutationObservers[0].disconnect).toHaveBeenCalled();
     });
 
     it('reserves keyboard clearance from the mobile visual viewport and disconnects listeners', async () => {
