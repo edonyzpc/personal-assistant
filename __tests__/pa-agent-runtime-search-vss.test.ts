@@ -1,13 +1,5 @@
 import { describe, expect, it, jest, beforeEach } from "@jest/globals";
 
-jest.mock("vanilla-picker", () => ({
-    __esModule: true,
-    default: class {
-        destroy = jest.fn();
-        constructor(_options: unknown) { /* options ignored in tests */ }
-    },
-}));
-
 jest.mock("../src/ai-services/append-tool-provider", () => ({
     AppendToolProvider: class { },
 }));

@@ -1,7 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
 import { App, Modal, Notice, PluginSettingTab, SecretComponent, Setting, debounce, setIcon } from "obsidian";
-import Picker from "vanilla-picker";
 
 import type { PluginManager } from "./plugin"
 import { BUNDLED_SKILL_CATALOG, BUNDLED_SKILL_IDS } from "./ai-services/bundled-skill-catalog";
@@ -206,6 +205,16 @@ const PREVIEW_LIMITS_MAX = 100;
 const LOCAL_GRAPH_DEPTH_MAX = 6;
 const LOCAL_GRAPH_DIMENSION_MAX = 2000;
 const FEATURED_IMAGE_COUNT_MAX = 4;
+
+function formatGraphColorHex(rgb: number): string {
+    const normalized = Number.isFinite(rgb) ? rgb : DEFAULT_GRAPH_COLOR.color.rgb;
+    return `#${(normalized & 0xffffff).toString(16).padStart(6, "0")}`;
+}
+
+function normalizeGraphColorInput(value: string): string | null {
+    const match = value.trim().match(/^#?([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/);
+    return match?.[1]?.toLowerCase() ?? null;
+}
 
 /**
  * Parse an integer from user input, falling back to a known-valid value when
@@ -463,9 +472,6 @@ export class SettingTab extends PluginSettingTab {
     private secretPickerEditClickHandler: ((event: MouseEvent) => void) | null = null;
     private secretPickerDocument: Document | null = null;
 
-    // vanilla-picker instances; destroyed before rebuilding graphColorsContainer.
-    private activePickers: Picker[] = [];
-
     // Set by rebuildQwenOptions(); invoked by Base URL onChange.
     private refreshQwenResponseOptionAvailability: (() => void) | null = null;
 
@@ -495,7 +501,6 @@ export class SettingTab extends PluginSettingTab {
         const { containerEl } = this;
         const doc = getPlatformDocument();
 
-        this.destroyPickers();
         containerEl.empty();
         (containerEl as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-settings-tab");
         (containerEl as HTMLElement & { classList?: DOMTokenList }).classList?.add("pa-settings-tab");
@@ -534,9 +539,6 @@ export class SettingTab extends PluginSettingTab {
 
     hide(): void {
         // Obsidian invokes hide() when the user closes the settings tab.
-        // Tear down Pickers explicitly so popup elements + listeners are not
-        // orphaned when the tab DOM is detached.
-        this.destroyPickers();
         this.stopSecretPickerObserver();
         getPlatformDocument().body?.classList.remove("pa-settings-tab-open");
         // Flush any pending text-input save: the onChange handlers have
@@ -544,13 +546,6 @@ export class SettingTab extends PluginSettingTab {
         // the current settings object captures the user's latest input.
         this.debouncedSave.cancel();
         void this.plugin.saveSettings();
-    }
-
-    private destroyPickers(): void {
-        for (const picker of this.activePickers) {
-            try { picker.destroy(); } catch { /* picker may already be torn down */ }
-        }
-        this.activePickers = [];
     }
 
     private startSecretPickerObserver(): void {
@@ -1161,8 +1156,6 @@ export class SettingTab extends PluginSettingTab {
 
     private rebuildGraphColors(): void {
         if (!this.graphColorsContainer) return;
-        // Tear down old Pickers before discarding their DOM hosts.
-        this.destroyPickers();
         this.graphColorsContainer.empty();
 
         const plugin = this.plugin;
@@ -1174,14 +1167,7 @@ export class SettingTab extends PluginSettingTab {
         colorGroups.forEach((colorGroup) => {
             // find if the item is exist in plugin.settings
             const index = this.findGraphColor(colorGroup);
-            const color = `#${colorGroup.color.rgb.toString(16)}`;
-            const hexToRGB = (hex: string) => {
-                const r = parseInt(hex.slice(1, 3), 16);
-                const g = parseInt(hex.slice(3, 5), 16);
-                const b = parseInt(hex.slice(5, 7), 16);
-                return "rgb(" + r + ", " + g + ", " + b + ")";
-            };
-            const colorRgb = hexToRGB(color);
+            const color = formatGraphColorHex(colorGroup.color.rgb);
             const nameEl = getPlatformDocument().createDocumentFragment();
             nameEl.createSpan({ text: "●" }).setCssStyles({ color });
             nameEl.appendText(` ${this.t("plugin.settings.graphColors.colorFor", { query: colorGroup.query })}`);
@@ -1197,30 +1183,15 @@ export class SettingTab extends PluginSettingTab {
                             }
                         })
                 })
-                .addButton(btn => {
-                    btn.setButtonText(this.t("plugin.settings.graphColors.change"));
-                    const picker = new Picker({
-                        parent: btn.buttonEl,
-                        onDone: async (color) => {
-                            // hex format color: #00000000, [0] '#', [1-6] rgb, [7-8] alpha
-                            let hexColor = color.hex.split('#')[1];
-                            this.log(`origin hex color = ${hexColor}`);
-                            // only get the color value without alpha, obsidian set alpha as 0xff by default
-                            if (hexColor.length === 8) {
-                                hexColor = hexColor.substring(0, 6);
-                            }
-                            this.log(`hexColor without alpha ${hexColor}`);
-                            if (index > -1) {
-                                plugin.settings.colorGroups[index].color.rgb = parseInt(hexColor, 16);
-                                await plugin.saveSettings();
-                                this.rebuildGraphColors();
-                            }
-                        },
-                        popup: "left",
-                        color: colorRgb,
-                        alpha: false,
+                .addColorPicker(picker => {
+                    picker.setValue(color).onChange(async (value) => {
+                        if (index < 0) return;
+                        const hexColor = normalizeGraphColorInput(value);
+                        if (!hexColor) return;
+                        plugin.settings.colorGroups[index].color.rgb = parseInt(hexColor, 16);
+                        await plugin.saveSettings();
+                        this.rebuildGraphColors();
                     });
-                    this.activePickers.push(picker);
                 })
                 .addExtraButton(btn => {
                     btn.setIcon("trash").setTooltip(this.t("plugin.settings.graphColors.remove")).onClick(async () => {

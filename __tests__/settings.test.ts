@@ -63,10 +63,11 @@ jest.mock('obsidian', () => ({
             }>;
             buttons: Array<{ text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> }>;
             texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
+            colorPickers: Array<{ value?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
         };
 
         constructor(_containerEl: unknown) {
-            this.record = { toggles: [], dropdowns: [], buttons: [], texts: [] };
+            this.record = { toggles: [], dropdowns: [], buttons: [], texts: [], colorPickers: [] };
             const globalObj = globalThis as typeof globalThis & {
                 __paSettingRecords?: Array<{
                     name?: string;
@@ -79,6 +80,7 @@ jest.mock('obsidian', () => ({
                     }>;
                     buttons: Array<{ text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> }>;
                     texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
+                    colorPickers: Array<{ value?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
                 }>;
             };
             globalObj.__paSettingRecords = globalObj.__paSettingRecords ?? [];
@@ -219,6 +221,29 @@ jest.mock('obsidian', () => ({
             return this;
         }
 
+        addColorPicker(callback: (picker: {
+            setValue: (value: string) => unknown;
+            onChange: (callback: (value: string) => unknown) => unknown;
+        }) => void) {
+            const colorPicker: { value?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] } = {
+                setValueCalls: [],
+            };
+            this.record.colorPickers.push(colorPicker);
+            const pickerComponent = {
+                setValue: (value: string) => {
+                    colorPicker.value = value;
+                    colorPicker.setValueCalls.push(value);
+                    return pickerComponent;
+                },
+                onChange: (cb: (value: string) => unknown) => {
+                    colorPicker.onChange = cb;
+                    return pickerComponent;
+                },
+            };
+            callback(pickerComponent);
+            return this;
+        }
+
         addExtraButton(callback: (button: {
             setIcon: (icon: string) => unknown;
             setTooltip: (tooltip: string) => unknown;
@@ -265,16 +290,6 @@ jest.mock('../src/confirm', () => {
         confirmUserAction: jest.fn(async () => globalObj.__paConfirmDecision ?? false),
     };
 });
-
-jest.mock('vanilla-picker', () => ({
-    __esModule: true,
-    // Each Picker instance gets its own destroy spy so tests can assert
-    // teardown without sharing call counts across instances.
-    default: class {
-        destroy = jest.fn();
-        constructor(_options: unknown) { /* options ignored in tests */ }
-    },
-}));
 
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
@@ -415,6 +430,11 @@ type MockTextRecord = {
     onChange?: (value: string) => unknown;
     setValueCalls: unknown[];
 };
+type MockColorPickerRecord = {
+    value?: string;
+    onChange?: (value: string) => unknown;
+    setValueCalls: unknown[];
+};
 type MockSettingRecord = {
     name?: string;
     desc?: string;
@@ -422,6 +442,7 @@ type MockSettingRecord = {
     dropdowns: Array<MockDropdownRecord>;
     buttons: Array<MockButtonRecord>;
     texts: Array<MockTextRecord>;
+    colorPickers: Array<MockColorPickerRecord>;
 };
 type MockDebounceRecord = { calls: unknown[][]; cancelled: number; runs: number; pending: boolean; lastArgs?: unknown[] };
 function getMockDebounceRecords(): MockDebounceRecord[] {
@@ -733,9 +754,7 @@ describe('PA Agent skill settings', () => {
 });
 
 describe('Phase 1 refactor invariants', () => {
-    type PickerProbe = { destroy: jest.Mock };
     type SettingTabInternals = {
-        activePickers: PickerProbe[];
         rebuildGraphColors: () => void;
         rebuildProviderConfig: () => void;
         graphColorsContainer: unknown;
@@ -746,43 +765,41 @@ describe('Phase 1 refactor invariants', () => {
         memoryAdvancedContainer: unknown;
     };
 
-    it('hide() destroys all active Pickers and resets the registry', () => {
+    it('renders graph colors with the native color picker component', () => {
         const plugin = makePlugin({ enableGraphColors: true });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();
 
-        const internals = tab as unknown as SettingTabInternals;
-        const captured = [...internals.activePickers];
-        expect(captured.length).toBeGreaterThan(0);
-
-        tab.hide();
-
-        for (const picker of captured) {
-            expect(picker.destroy).toHaveBeenCalledTimes(1);
-        }
-        expect(internals.activePickers).toHaveLength(0);
+        const record = getMockSettingRecords()
+            .find((entry) => entry.desc === 'This will be the Color used in the graph view.');
+        expect(record?.colorPickers[0]).toMatchObject({
+            value: '#64fa64',
+        });
     });
 
-    it('rebuildGraphColors destroys prior Pickers before creating new ones', () => {
+    it('graph color picker saves the normalized color and rebuilds the graph color section', async () => {
         const plugin = makePlugin({ enableGraphColors: true });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
 
         tab.display();
 
-        const internals = tab as unknown as SettingTabInternals;
-        const oldPickers = [...internals.activePickers];
-        expect(oldPickers).toHaveLength(1); // DEFAULT_SETTINGS.colorGroups has one entry
+        const initialRecordCount = getMockSettingRecords().length;
+        const record = getMockSettingRecords()
+            .find((entry) => entry.desc === 'This will be the Color used in the graph view.');
+        const colorPicker = record?.colorPickers[0];
 
-        internals.rebuildGraphColors();
+        await Promise.resolve(colorPicker?.onChange?.('#123456'));
 
-        for (const picker of oldPickers) {
-            expect(picker.destroy).toHaveBeenCalledTimes(1);
-        }
-        expect(internals.activePickers).toHaveLength(1);
-        expect(internals.activePickers[0]).not.toBe(oldPickers[0]);
+        expect(plugin.settings.colorGroups[0].color.rgb).toBe(0x123456);
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+        expect(getMockSettingRecords().length).toBeGreaterThan(initialRecordCount);
+        const latestGraphColorRecord = [...getMockSettingRecords()]
+            .reverse()
+            .find((entry) => entry.desc === 'This will be the Color used in the graph view.');
+        expect(latestGraphColorRecord?.colorPickers[0]?.value).toBe('#123456');
     });
 
     it('switching AI provider runs rebuildProviderConfig — not full display()', async () => {
