@@ -14,6 +14,7 @@ import { renderMarkdownWithOwner, containsMermaidFence, deferMermaidFences, getM
 import { CHAT_MENU_IDLE_CLOSE_MS, createChatMenuItem, createChatMenuDivider, createChatMenuLabel } from './menu-helpers';
 import { formatSourceSummary, mergeContextUsedItems, normalizeContextUsedItems, normalizeSourceRecords, mergeSourceRecords, getContextUsedItemsFromStatus, formatAgentStatus, formatCanonicalToolStatus, formatCanonicalToolCompletedStatus, formatRuntimeWarningLabel, formatRuntimeWarningDetail, formatCanonicalTerminalSummary, runtimeWarningKey } from './formatters';
 import {
+    createChatRoleIdenticonSessionSeed,
     getChatRoleIdenticonModel,
     type ChatRoleIdenticon,
     type ChatRoleIdenticonModel,
@@ -121,6 +122,8 @@ export class LLMView extends ItemView {
     private scheduledScrollFrame: PlatformAnimationFrameHandle | null = null;
     private panelResizeObserver: ResizeObserver | null = null;
     private statusBarResizeObserver: ResizeObserver | null = null;
+    private statusBarMutationObserver: MutationObserver | null = null;
+    private statusBarClearanceFrame: PlatformAnimationFrameHandle | null = null;
     private statusBarResizeHandler: (() => void) | null = null;
     private statusBarResizeWindow: Window | null = null;
     private readonly mobileInputAdapter: MobileInputAdapter;
@@ -132,6 +135,7 @@ export class LLMView extends ItemView {
     private composerTextArea: HTMLTextAreaElement | null = null;
     private syncComposerControlsForExternalPrefill: (() => void) | null = null;
     private viewTeardownCallbacks = new Set<() => void>();
+    private roleIdenticonSessionSeed = createChatRoleIdenticonSessionSeed();
 
     get isStreaming(): boolean {
         return this.abortController !== null;
@@ -171,6 +175,7 @@ export class LLMView extends ItemView {
 
     private createMarkdownRenderOwner(): Component {
         const owner = new Component();
+        owner.load();
         this.markdownRenderOwners.add(owner);
         return owner;
     }
@@ -217,6 +222,7 @@ export class LLMView extends ItemView {
 
     async onOpen() {
         const sessionId = this.startViewSession();
+        this.resetRoleIdenticonSessionSeed();
         const t = makePluginTranslator(getPluginUiLanguage());
         ensureChatLoadersRegistered((message, error) => this.host.log(message, error));
         const { containerEl } = this;
@@ -710,7 +716,7 @@ export class LLMView extends ItemView {
                 createRoleIdenticon(
                     roleEl,
                     options.identicon,
-                    getChatRoleIdenticonModel(options.identicon),
+                    getChatRoleIdenticonModel(options.identicon, this.roleIdenticonSessionSeed),
                     Boolean(options.activeIdenticon && options.identicon === 'assistant'),
                 );
             }
@@ -960,9 +966,26 @@ export class LLMView extends ItemView {
                 ? deferMermaidFences(content)
                 : { markdown: content, deferred: false, sources: getMermaidFenceSources(content) };
             const renderOwner = this.createMarkdownRenderOwner();
+            const sourcePath = rendered.sourcePath;
+            const renderInAttachedBuffer = !options.deferMermaid
+                && mermaidTransform.sources.some((source) => source.trim().length > 0)
+                && rendered.contentDiv.parentElement !== null;
+
+            if (renderInAttachedBuffer) {
+                this.unloadMarkdownRenderOwner(rendered.renderOwner);
+                rendered.renderOwner = undefined;
+                rendered.contentDiv.empty();
+                rendered.contentDiv.appendChild(buffer);
+            }
 
             const renderStartedAt = getMonotonicTimeMs();
-            const renderPromise = renderMarkdownWithOwner(this.host, mermaidTransform.markdown, buffer, renderOwner);
+            const renderPromise = renderMarkdownWithOwner(
+                this.host,
+                mermaidTransform.markdown,
+                buffer,
+                renderOwner,
+                sourcePath,
+            );
             options.onSynchronousRenderComplete?.(getMonotonicTimeMs() - renderStartedAt);
 
             return renderPromise
@@ -972,9 +995,14 @@ export class LLMView extends ItemView {
                         removeElement(buffer);
                         return false;
                     }
-                    this.unloadMarkdownRenderOwner(rendered.renderOwner);
-                    rendered.contentDiv.empty();
-                    rendered.contentDiv.appendChild(buffer);
+                    if (!renderInAttachedBuffer) {
+                        this.unloadMarkdownRenderOwner(rendered.renderOwner);
+                        rendered.contentDiv.empty();
+                        rendered.contentDiv.appendChild(buffer);
+                    } else if (buffer.parentElement !== rendered.contentDiv) {
+                        rendered.contentDiv.empty();
+                        rendered.contentDiv.appendChild(buffer);
+                    }
                     rendered.renderOwner = renderOwner;
                     rendered.renderedContent = content;
                     rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
@@ -1010,6 +1038,7 @@ export class LLMView extends ItemView {
                                 fallbackTransform.markdown,
                                 fallbackBuffer,
                                 fallbackOwner,
+                                sourcePath,
                             );
                             if (rendered.renderToken !== renderToken || !isLive()) {
                                 this.unloadMarkdownRenderOwner(fallbackOwner);
@@ -1267,6 +1296,7 @@ export class LLMView extends ItemView {
                 memoryMetadata?: ChatTurnMemoryMetadata;
                 showAssistantLoader?: boolean;
                 skipInitialRender?: boolean;
+                sourcePath?: string;
             } = {},
         ): RenderedMessage => {
             const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
@@ -1301,6 +1331,7 @@ export class LLMView extends ItemView {
             menuButton.setAttribute('aria-expanded', 'false');
             menuButton.hidden = true;
             const actionMenu = actionDiv.createDiv({ cls: 'pa-chat-menu pa-chat-message-menu' });
+            const sourcePath = options.sourcePath ?? this.getMarkdownRenderSourcePath();
             const rendered: RenderedMessage = {
                 messageDiv,
                 roleEl,
@@ -1312,6 +1343,7 @@ export class LLMView extends ItemView {
                 copyButton,
                 renderToken: 0,
                 copyContent: message.content,
+                sourcePath,
                 memoryMetadata: options.memoryMetadata ?? message.memoryMetadata,
                 canonicalTurn: message.canonicalTurn,
             };
@@ -2109,6 +2141,7 @@ export class LLMView extends ItemView {
             sendButton.disabled = true;
             shouldAutoScroll = true;
             const turnId = this.startTurn();
+            const turnSourcePath = this.getMarkdownRenderSourcePath();
             const controller = new AbortController();
             this.abortController = controller;
             const isLiveTurn = () => this.isCurrentTurn(sessionId, turnId, controller);
@@ -2129,7 +2162,7 @@ export class LLMView extends ItemView {
             try {
                 turn.userMessage = createMessageElement(
                     { role: 'user', content: prompt },
-                    { animate: true, forceScroll: true, isLive: isUiTurnVisible },
+                    { animate: true, forceScroll: true, isLive: isUiTurnVisible, sourcePath: turnSourcePath },
                 );
                 textArea.value = '';
                 hideComposerHint();
@@ -2143,6 +2176,7 @@ export class LLMView extends ItemView {
                         animate: true,
                         showAssistantLoader: true,
                         skipInitialRender: true,
+                        sourcePath: turnSourcePath,
                     },
                 );
 
@@ -2175,6 +2209,7 @@ export class LLMView extends ItemView {
                                 isLive: isLiveTurn,
                                 memoryMetadata: turn.memoryMetadata,
                                 skipInitialRender: true,
+                                sourcePath: turnSourcePath,
                             },
                         );
                     } else {
@@ -2289,6 +2324,7 @@ export class LLMView extends ItemView {
             this.chatHistory = [];
             timelineEntries = [];
             this.conversationPersistence.resetActiveConversationState();
+            this.resetRoleIdenticonSessionSeed();
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
@@ -2429,6 +2465,7 @@ export class LLMView extends ItemView {
             this.chatHistory = [];
             timelineEntries = [];
             this.conversationPersistence.resetActiveConversationState();
+            this.resetRoleIdenticonSessionSeed();
             this.unloadAllMarkdownRenderOwners();
             this.responseDiv.empty();
             textArea.value = '';
@@ -2576,6 +2613,10 @@ export class LLMView extends ItemView {
         return this.viewSessionId;
     }
 
+    private resetRoleIdenticonSessionSeed(): void {
+        this.roleIdenticonSessionSeed = createChatRoleIdenticonSessionSeed();
+    }
+
     private disconnectMemoryStatusListener() {
         this.memoryStatusUnsubscribe?.();
         this.memoryStatusUnsubscribe = null;
@@ -2641,29 +2682,87 @@ export class LLMView extends ItemView {
             const clearance = this.calculateStatusBarClearance(containerEl);
             containerEl.setCssProps({ '--pa-chat-status-bar-clearance': `${clearance}px` });
         };
+        let observedStatusBarEl: HTMLElement | null = null;
+        const syncObservedStatusBar = () => {
+            if (!this.statusBarResizeObserver) return;
+            const statusBarEl = this.getStatusBarElement();
+            if (statusBarEl === observedStatusBarEl) return;
+            if (observedStatusBarEl) {
+                this.statusBarResizeObserver.unobserve(observedStatusBarEl);
+            }
+            observedStatusBarEl = statusBarEl;
+            if (observedStatusBarEl) {
+                this.statusBarResizeObserver.observe(observedStatusBarEl);
+            }
+        };
+        const refreshClearanceNow = () => {
+            this.statusBarClearanceFrame = null;
+            syncObservedStatusBar();
+            updateClearance();
+        };
+        const refreshClearance = () => {
+            if (this.statusBarClearanceFrame !== null) return;
+            this.statusBarClearanceFrame = requestPlatformAnimationFrame(refreshClearanceNow);
+        };
+        const elementIsStatusBarOrChild = (value: unknown): boolean => {
+            const element = value as HTMLElement | null;
+            if (!element || typeof element !== 'object') return false;
+            if (typeof element.classList?.contains === 'function' && element.classList.contains('status-bar')) return true;
+            if (typeof element.closest === 'function' && element.closest('.status-bar')) return true;
+            return false;
+        };
+        const elementContainsStatusBar = (value: unknown): boolean => {
+            const element = value as HTMLElement | null;
+            if (!element || typeof element !== 'object') return false;
+            return elementIsStatusBarOrChild(element)
+                || Boolean(typeof element.querySelector === 'function' && element.querySelector('.status-bar'));
+        };
+        const mutationTouchesStatusBar = (mutations: MutationRecord[]): boolean => mutations.some((mutation) => {
+            if (elementIsStatusBarOrChild(mutation.target)) return true;
+            const addedNodes = Array.from(mutation.addedNodes ?? []);
+            if (addedNodes.some(elementContainsStatusBar)) return true;
+            const removedNodes = Array.from(mutation.removedNodes ?? []);
+            return removedNodes.some(elementContainsStatusBar);
+        });
 
         updateClearance();
 
         if (typeof ResizeObserver !== 'undefined') {
-            this.statusBarResizeObserver = new ResizeObserver(updateClearance);
+            this.statusBarResizeObserver = new ResizeObserver(refreshClearance);
             this.statusBarResizeObserver.observe(containerEl);
-            const statusBarEl = this.getStatusBarElement();
-            if (statusBarEl) {
-                this.statusBarResizeObserver.observe(statusBarEl);
-            }
+            syncObservedStatusBar();
+        }
+
+        const doc = getOptionalPlatformDocument();
+        if (typeof MutationObserver !== 'undefined' && doc?.body) {
+            this.statusBarMutationObserver = new MutationObserver((mutations) => {
+                if (mutationTouchesStatusBar(mutations)) refreshClearance();
+            });
+            this.statusBarMutationObserver.observe(doc.body, {
+                attributes: true,
+                attributeFilter: ['class', 'style'],
+                childList: true,
+                subtree: true,
+            });
         }
 
         const win = getOptionalPlatformWindow();
         if (typeof win?.addEventListener === 'function') {
-            this.statusBarResizeHandler = updateClearance;
+            this.statusBarResizeHandler = refreshClearance;
             this.statusBarResizeWindow = win;
-            win.addEventListener('resize', updateClearance);
+            win.addEventListener('resize', refreshClearance);
         }
     }
 
     private disconnectStatusBarClearance() {
+        if (this.statusBarClearanceFrame !== null) {
+            cancelPlatformAnimationFrame(this.statusBarClearanceFrame);
+            this.statusBarClearanceFrame = null;
+        }
         this.statusBarResizeObserver?.disconnect();
         this.statusBarResizeObserver = null;
+        this.statusBarMutationObserver?.disconnect();
+        this.statusBarMutationObserver = null;
 
         if (this.statusBarResizeHandler && this.statusBarResizeWindow) {
             this.statusBarResizeWindow.removeEventListener('resize', this.statusBarResizeHandler);
@@ -2823,12 +2922,18 @@ export class LLMView extends ItemView {
         return false;
     }
 
+    private getMarkdownRenderSourcePath(): string {
+        const workspace = this.app.workspace;
+        const activeFile = workspace.getActiveFile?.();
+        if (activeFile?.path) return activeFile.path;
+        const markdownLeaf = this.getMarkdownTargetLeaf();
+        return markdownLeaf?.view instanceof MarkdownView ? markdownLeaf.view.file?.path ?? "" : "";
+    }
+
     private async openChatInternalLink(noteHref: string, openInNewLeaf: boolean) {
         const workspace = this.app.workspace;
         const markdownLeaf = this.getMarkdownTargetLeaf();
-        const sourcePath = workspace.getActiveFile()?.path
-            ?? (markdownLeaf?.view instanceof MarkdownView ? markdownLeaf.view.file?.path : undefined)
-            ?? "";
+        const sourcePath = this.getMarkdownRenderSourcePath();
 
         if (!openInNewLeaf && markdownLeaf) {
             await workspace.setActiveLeaf(markdownLeaf, { focus: true });

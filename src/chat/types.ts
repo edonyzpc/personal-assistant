@@ -34,6 +34,7 @@ export type RenderedMessage = {
     renderToken: number;
     copyContent: string;
     renderOwner?: Component;
+    sourcePath: string;
     renderedContent?: string;
     renderedContentMode?: 'full' | 'deferred-mermaid';
     memoryMetadata?: ChatTurnMemoryMetadata;

@@ -33,6 +33,21 @@ const MOD = 2 ** 32;
 const HASH_START = 2166136261;
 const HASH_MULTIPLIER = 131;
 
+export function createChatRoleIdenticonSessionSeed(): string {
+    const cryptoProvider = globalThis.crypto;
+    if (typeof cryptoProvider?.randomUUID === 'function') {
+        return cryptoProvider.randomUUID();
+    }
+
+    if (typeof cryptoProvider?.getRandomValues === 'function') {
+        const values = new Uint32Array(2);
+        cryptoProvider.getRandomValues(values);
+        return `${values[0].toString(36)}-${values[1].toString(36)}`;
+    }
+
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
 function hash(seed: string): number {
     let hashValue = HASH_START;
     for (let index = 0; index < seed.length; index += 1) {
@@ -49,9 +64,9 @@ function cellKey(row: number, col: number): string {
     return `${row}:${col}`;
 }
 
-function createRoleIdenticonModel(role: ChatRoleIdenticon): ChatRoleIdenticonModel {
+function createRoleIdenticonModel(role: ChatRoleIdenticon, sessionSeed?: string): ChatRoleIdenticonModel {
     const seed = ROLE_IDENTICON_SEEDS[role];
-    const shapeHash = hash(`${seed}:shape`);
+    const shapeHash = hash(`${seed}:shape${sessionSeed ? `:${sessionSeed}` : ''}`);
     const colorHash = hash(`${seed}:color`);
     const fill = ROLE_IDENTICON_PALETTE[Math.floor((colorHash / MOD) * ROLE_IDENTICON_PALETTE.length)];
     const filled = new Set<string>();
@@ -100,6 +115,6 @@ function createRoleIdenticonModel(role: ChatRoleIdenticon): ChatRoleIdenticonMod
     };
 }
 
-export function getChatRoleIdenticonModel(role: ChatRoleIdenticon): ChatRoleIdenticonModel {
-    return createRoleIdenticonModel(role);
+export function getChatRoleIdenticonModel(role: ChatRoleIdenticon, sessionSeed?: string): ChatRoleIdenticonModel {
+    return createRoleIdenticonModel(role, sessionSeed);
 }

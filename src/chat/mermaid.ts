@@ -32,9 +32,10 @@ export function renderMarkdownWithOwner(
     markdown: string,
     target: HTMLElement,
     owner: Component,
+    sourcePath = '',
 ): Promise<void> {
     try {
-        return Promise.resolve(MarkdownRenderer.render(host.app, markdown, target, '', owner));
+        return Promise.resolve(MarkdownRenderer.render(host.app, markdown, target, sourcePath, owner));
     } catch (error) {
         return Promise.reject(toError(error));
     }
@@ -69,6 +70,7 @@ export class MermaidPreviewModal extends Modal {
         this.modalEl.setAttribute('aria-labelledby', titleId);
         const viewport = contentEl.createDiv({ cls: 'pa-chat-mermaid-modal-viewport' });
         this.renderOwner = new Component();
+        this.renderOwner.load();
         void renderMarkdownWithOwner(
             this.host,
             createFencedCodeBlock('mermaid', this.mermaidSource),

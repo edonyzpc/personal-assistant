@@ -28,7 +28,9 @@ export class ChatConfirmationModal extends Modal {
 
     onOpen() {
         const { contentEl } = this;
+        (this as unknown as { modalEl?: HTMLElement }).modalEl?.addClass('pa-chat-confirmation-modal-shell');
         contentEl.empty();
+        contentEl.addClass('pa-chat-confirmation-modal');
         contentEl.createEl('h2', { text: this.options.title });
         contentEl.createEl('p', { text: this.options.message });
         new Setting(contentEl)
