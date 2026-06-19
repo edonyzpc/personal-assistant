@@ -19,7 +19,7 @@ export function buildDiscoveryResultFromFindings(
 ): DiscoveryResult {
     const currentTerms = new Set(noteMatchTerms(currentNotePath));
     const connections: NoteConnection[] = findings
-        .filter((f) => f.category === "connection")
+        .filter((f) => isConnectionFinding(f))
         .map((f) => ({
             fromNote: currentNotePath,
             toNote: resolveConnectionTarget(f, currentNotePath, relatedNotes, currentTerms),
@@ -30,9 +30,17 @@ export function buildDiscoveryResultFromFindings(
         connections,
         themes: [],
         gaps: findings
-            .filter((f) => f.category === "gap")
+            .filter((f) => isGapFinding(f))
             .map((f) => ({ topic: f.sourceTitle || "", description: f.text })),
     };
+}
+
+function isConnectionFinding(finding: StructuredFinding): boolean {
+    return finding.category === "connection" || finding.category === "insight";
+}
+
+function isGapFinding(finding: StructuredFinding): boolean {
+    return finding.category === "gap" || finding.category === "action";
 }
 
 function resolveConnectionTarget(

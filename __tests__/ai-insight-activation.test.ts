@@ -202,11 +202,46 @@ describe("TypeAUserProfileExtractor.extractCandidatesWithLLM", () => {
         expect(result[0].kind).toBe("user_explicit");
     });
 
-    it("handles malformed JSON response gracefully", async () => {
+    it("falls back to regex when LLM returns malformed JSON", async () => {
         const invoke = async () => "not valid json at all";
         const turns = [{
             turnIndex: 0,
-            user: { content: "hello" },
+            user: { content: "I prefer simple explanations." },
+            assistant: { content: "hi" },
+        }];
+        const result = await extractor.extractCandidatesWithLLM(
+            { conversation: baseConversation, turns: turns as any },
+            invoke,
+        );
+        expect(result.length).toBeGreaterThan(0);
+        expect(result[0]).toEqual(expect.objectContaining({
+            kind: "user_explicit",
+            text: "I prefer simple explanations.",
+        }));
+    });
+
+    it("falls back to regex when LLM returns schema-invalid JSON", async () => {
+        const invoke = async () => JSON.stringify({ findings: [] });
+        const turns = [{
+            turnIndex: 0,
+            user: { content: "I prefer simple explanations." },
+            assistant: { content: "hi" },
+        }];
+        const result = await extractor.extractCandidatesWithLLM(
+            { conversation: baseConversation, turns: turns as any },
+            invoke,
+        );
+        expect(result).toEqual([expect.objectContaining({
+            kind: "user_explicit",
+            text: "I prefer simple explanations.",
+        })]);
+    });
+
+    it("keeps a valid empty JSON response empty instead of falling back", async () => {
+        const invoke = async () => JSON.stringify({ extractions: [] });
+        const turns = [{
+            turnIndex: 0,
+            user: { content: "I prefer simple explanations." },
             assistant: { content: "hi" },
         }];
         const result = await extractor.extractCandidatesWithLLM(

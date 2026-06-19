@@ -111,6 +111,13 @@ export class MemoryExtractionScheduler {
         };
     }
 
+    getInsightsViewerContext(): MemoryExtractionPromptContext {
+        return {
+            ...(this.userProfileSnapshot?.markdown ? { userProfile: this.userProfileSnapshot.markdown } : {}),
+            ...(this.vaultInsightsMarkdown ? { vaultInsights: this.vaultInsightsMarkdown } : {}),
+        };
+    }
+
     setIncludeVaultInsightsInPrompt(include: boolean): void {
         if (this.disposed) return;
         if (this.includeVaultInsightsInPrompt === include) return;

@@ -1,7 +1,9 @@
 import { describe, expect, it, jest } from '@jest/globals';
-import { TFile } from 'obsidian';
+import { MarkdownRenderer, TFile } from 'obsidian';
+import type { App } from 'obsidian';
 
 const mockNoticeMessages: string[] = [];
+const mockOpenedModals: Array<{ contentEl: MockModalContentRecord; onOpen?: () => void; onClose?: () => void }> = [];
 const mockBundledSkillIds = [
     'obsidian-markdown',
     'obsidian-bases',
@@ -11,10 +13,52 @@ const mockBundledSkillIds = [
     'pa-vault-link-health',
     'pa-plugin-config-review',
 ];
+
+type MockModalContentRecord = {
+    tagName: string;
+    textContent: string;
+    classes: string[];
+    children: MockModalContentRecord[];
+};
+type RegisteredPluginCommand = {
+    id: string;
+    checkCallback: (checking: boolean) => boolean;
+};
 const mockStatsManagerConstructor = jest.fn();
 
 jest.mock('obsidian', () => {
     class MockPlugin { }
+    class MockModalContentEl {
+        tagName: string;
+        textContent = '';
+        classes: string[] = [];
+        children: MockModalContentEl[] = [];
+
+        constructor(tagName = 'div') {
+            this.tagName = tagName;
+        }
+
+        empty() {
+            this.children = [];
+            this.textContent = '';
+        }
+
+        addClass(cls: string) {
+            this.classes.push(cls);
+        }
+
+        createEl(tagName: string, options?: { text?: string; cls?: string }) {
+            const child = new MockModalContentEl(tagName);
+            if (options?.text) child.textContent = options.text;
+            if (options?.cls) child.classes.push(options.cls);
+            this.children.push(child);
+            return child;
+        }
+
+        createDiv(options?: { text?: string; cls?: string }) {
+            return this.createEl('div', options);
+        }
+    }
     class MockTFile {
         path: string;
         extension: string;
@@ -50,8 +94,22 @@ jest.mock('obsidian', () => {
         // src/plugin.ts → src/pagelet → pa-review-runtime) extends these
         // Obsidian primitives at module-load time; without stubs the class
         // declaration throws "Class extends value undefined".
-        Modal: class { },
-        Component: class { },
+        Modal: class {
+            contentEl = new MockModalContentEl();
+            constructor(_app?: unknown) { }
+            open() {
+                mockOpenedModals.push(this as {
+                    contentEl: MockModalContentEl;
+                    onOpen?: () => void;
+                    onClose?: () => void;
+                });
+                (this as { onOpen?: () => void }).onOpen?.();
+            }
+        },
+        Component: class {
+            load() { }
+            unload() { }
+        },
         Setting: class { },
         MarkdownRenderer: { render: jest.fn(), renderMarkdown: jest.fn() },
     };
@@ -116,6 +174,67 @@ const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
     return new FileCtor(path);
 };
+
+const collectModalTexts = (node: MockModalContentRecord): string[] => [
+    node.textContent,
+    ...node.children.flatMap(collectModalTexts),
+].filter(Boolean);
+
+const VAULT_INSIGHTS_NOTICE_KEY = 'pa-vault-insights-injection-notice';
+
+function installMockWindowLocalStorage(initial: Record<string, string> = {}) {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    const previousActiveWindow = Object.getOwnPropertyDescriptor(globalThis, 'activeWindow');
+    const store = new Map(Object.entries(initial));
+    const storage = {
+        getItem: jest.fn((key: string) => store.get(key) ?? null),
+        setItem: jest.fn((key: string, value: string) => {
+            store.set(key, String(value));
+        }),
+        removeItem: jest.fn((key: string) => {
+            store.delete(key);
+        }),
+        clear: jest.fn(() => {
+            store.clear();
+        }),
+        key: jest.fn((index: number) => [...store.keys()][index] ?? null),
+        get length() {
+            return store.size;
+        },
+    };
+    Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: { localStorage: storage },
+    });
+    Object.defineProperty(globalThis, 'activeWindow', {
+        configurable: true,
+        value: { localStorage: storage },
+    });
+    return {
+        storage,
+        restore: () => {
+            if (previousWindow) {
+                Object.defineProperty(globalThis, 'window', previousWindow);
+            } else {
+                delete (globalThis as { window?: Window }).window;
+            }
+            if (previousActiveWindow) {
+                Object.defineProperty(globalThis, 'activeWindow', previousActiveWindow);
+            } else {
+                delete (globalThis as { activeWindow?: Window }).activeWindow;
+            }
+        },
+    };
+}
+
+function getRegisteredCommand(
+    plugin: { addCommand: jest.Mock },
+    id: string,
+): RegisteredPluginCommand | undefined {
+    const calls = plugin.addCommand.mock.calls as Array<[RegisteredPluginCommand]>;
+    return calls.map(([command]) => command)
+        .find((entry: RegisteredPluginCommand) => entry.id === id);
+}
 
 const createMigrationApp = (configDir?: string) => ({
     ...(configDir ? { vault: { configDir } } : {}),
@@ -299,6 +418,221 @@ describe('plugin startup view registration', () => {
         } finally {
             globalThis.document = originalDocument;
             globalThis.MutationObserver = originalMutationObserver;
+        }
+    });
+});
+
+describe('AI Insights command and viewer', () => {
+    it('registers show-ai-insights without requiring Advanced memory controls', () => {
+        mockOpenedModals.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {};
+        plugin.settings = {
+            memoryEnabled: true,
+            memoryExtractionEnabled: true,
+            showAdvancedMemoryControls: false,
+        };
+        plugin.getAISetupIssue = jest.fn(() => null);
+        plugin.addCommand = jest.fn();
+        plugin.log = jest.fn();
+
+        plugin.registerAdvancedMemoryCommands();
+        const command = getRegisteredCommand(plugin, 'show-ai-insights');
+
+        expect(command?.checkCallback(true)).toBe(true);
+        expect(command?.checkCallback(false)).toBe(true);
+        expect(mockOpenedModals).toHaveLength(1);
+    });
+
+    it('hides show-ai-insights when AI setup is incomplete', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            memoryEnabled: true,
+            memoryExtractionEnabled: true,
+            showAdvancedMemoryControls: false,
+        };
+        plugin.getAISetupIssue = jest.fn(() => 'Choose your AI provider');
+        plugin.addCommand = jest.fn();
+
+        plugin.registerAdvancedMemoryCommands();
+        const command = getRegisteredCommand(plugin, 'show-ai-insights');
+
+        expect(command?.checkCallback(true)).toBe(false);
+    });
+
+    it.each([
+        { memoryEnabled: false, memoryExtractionEnabled: true },
+        { memoryEnabled: true, memoryExtractionEnabled: false },
+    ])('hides show-ai-insights when memory gates are disabled: %j', (settings) => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            ...settings,
+            showAdvancedMemoryControls: false,
+        };
+        plugin.getAISetupIssue = jest.fn(() => null);
+        plugin.addCommand = jest.fn();
+
+        plugin.registerAdvancedMemoryCommands();
+        const command = getRegisteredCommand(plugin, 'show-ai-insights');
+
+        expect(command?.checkCallback(true)).toBe(false);
+    });
+
+    it('renders an empty state when AI insights have not been generated', () => {
+        mockOpenedModals.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {};
+        plugin.memoryExtractionScheduler = null;
+
+        plugin.showAiInsights();
+
+        const texts = collectModalTexts(mockOpenedModals[0].contentEl);
+        expect(texts).toContain('AI Insights');
+        expect(texts).toEqual(expect.arrayContaining([
+            expect.stringContaining('No insights available yet'),
+        ]));
+    });
+
+    it('renders user profile and vault insights markdown when present', () => {
+        mockOpenedModals.length = 0;
+        const renderMock = MarkdownRenderer.render as unknown as jest.Mock;
+        renderMock.mockClear();
+        const app = {} as App;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = app;
+        plugin.getMemoryExtractionPromptContext = jest.fn(() => ({
+            userProfile: '# Prompt Profile',
+            vaultInsights: '# Prompt Summary',
+        }));
+        plugin.memoryExtractionScheduler = {
+            getInsightsViewerContext: jest.fn(() => ({
+                userProfile: '# User Profile\n- Prefers concise plans',
+                vaultInsights: '# Vault Insights\n- Release docs are active',
+            })),
+        };
+
+        plugin.showAiInsights();
+
+        expect(renderMock).toHaveBeenCalledWith(
+            app,
+            '# User Profile\n- Prefers concise plans',
+            expect.anything(),
+            '',
+            expect.anything(),
+        );
+        expect(renderMock).toHaveBeenCalledWith(
+            app,
+            '# Vault Insights\n- Release docs are active',
+            expect.anything(),
+            '',
+            expect.anything(),
+        );
+        expect(renderMock).not.toHaveBeenCalledWith(
+            app,
+            '# Prompt Summary',
+            expect.anything(),
+            '',
+            expect.anything(),
+        );
+    });
+});
+
+describe('Vault Insights onboarding notice', () => {
+    it('fires once on first trigger and stores the localStorage flag', () => {
+        mockNoticeMessages.length = 0;
+        const { storage, restore } = installMockWindowLocalStorage();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { memoryExtractionIncludeVaultInsights: true };
+        plugin.log = jest.fn();
+
+        try {
+            plugin.surfaceVaultInsightsInjectionNotice();
+
+            expect(mockNoticeMessages).toHaveLength(1);
+            expect(mockNoticeMessages[0]).toContain('vault structure overview');
+            expect(storage.setItem).toHaveBeenCalledWith(VAULT_INSIGHTS_NOTICE_KEY, '1');
+        } finally {
+            restore();
+        }
+    });
+
+    it('does not repeat the onboarding notice during the same boot', () => {
+        mockNoticeMessages.length = 0;
+        const { storage, restore } = installMockWindowLocalStorage();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { memoryExtractionIncludeVaultInsights: true };
+        plugin.log = jest.fn();
+
+        try {
+            plugin.surfaceVaultInsightsInjectionNotice();
+            plugin.surfaceVaultInsightsInjectionNotice();
+
+            expect(mockNoticeMessages).toHaveLength(1);
+            expect(storage.setItem).toHaveBeenCalledTimes(1);
+        } finally {
+            restore();
+        }
+    });
+
+    it('does not fire when the localStorage flag already exists', () => {
+        mockNoticeMessages.length = 0;
+        const { storage, restore } = installMockWindowLocalStorage({
+            [VAULT_INSIGHTS_NOTICE_KEY]: '1',
+        });
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { memoryExtractionIncludeVaultInsights: true };
+        plugin.log = jest.fn();
+
+        try {
+            plugin.surfaceVaultInsightsInjectionNotice();
+
+            expect(mockNoticeMessages).toEqual([]);
+            expect(storage.setItem).not.toHaveBeenCalled();
+        } finally {
+            restore();
+        }
+    });
+
+    it('fires through memory extraction runtime startup when Vault Insights context is enabled', () => {
+        mockNoticeMessages.length = 0;
+        const { storage, restore } = installMockWindowLocalStorage();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {
+            vault: {
+                getMarkdownFiles: jest.fn(() => []),
+            },
+            metadataCache: {
+                getFileCache: jest.fn(),
+                resolvedLinks: {},
+                unresolvedLinks: {},
+            },
+        };
+        plugin.settings = {
+            memoryExtractionEnabled: true,
+            memoryExtractionIncludeVaultInsights: true,
+            memoryExtractionNoticeDismissed: true,
+        };
+        plugin.chatHistoryManager = {
+            findConversation: jest.fn(),
+            getTurns: jest.fn(),
+        };
+        plugin.createUserProfileStore = jest.fn(() => ({
+            initialize: jest.fn(async () => undefined),
+            getProfile: jest.fn(async () => null),
+            setProfile: jest.fn(async () => undefined),
+            dispose: jest.fn(async () => undefined),
+        }));
+        plugin.log = jest.fn();
+
+        try {
+            plugin.syncMemoryExtractionRuntime();
+
+            expect(mockNoticeMessages).toHaveLength(1);
+            expect(mockNoticeMessages[0]).toContain('vault structure overview');
+            expect(storage.setItem).toHaveBeenCalledWith(VAULT_INSIGHTS_NOTICE_KEY, '1');
+        } finally {
+            plugin.memoryExtractionScheduler?.dispose();
+            restore();
         }
     });
 });

@@ -61,7 +61,7 @@ jest.mock('obsidian', () => ({
                 options: Array<{ value: string; text: string }>;
                 onChange?: (value: string) => unknown;
             }>;
-            buttons: Array<{ text?: string; onClick?: () => unknown | Promise<unknown> }>;
+            buttons: Array<{ text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> }>;
             texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
         };
 
@@ -77,7 +77,7 @@ jest.mock('obsidian', () => ({
                         options: Array<{ value: string; text: string }>;
                         onChange?: (value: string) => unknown;
                     }>;
-                    buttons: Array<{ text?: string; onClick?: () => unknown | Promise<unknown> }>;
+                    buttons: Array<{ text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> }>;
                     texts: Array<{ value?: unknown; placeholder?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
                 }>;
             };
@@ -194,15 +194,20 @@ jest.mock('obsidian', () => ({
             buttonEl: unknown;
             setCta: () => unknown;
             setButtonText: (text: string) => unknown;
+            setDisabled: (disabled: boolean) => unknown;
             onClick: (callback: () => void) => unknown;
         }) => void) {
-            const button: { text?: string; onClick?: () => unknown | Promise<unknown> } = {};
+            const button: { text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> } = {};
             this.record.buttons.push(button);
             const buttonComponent = {
                 buttonEl: {},
                 setCta: () => buttonComponent,
                 setButtonText: (text: string) => {
                     button.text = text;
+                    return buttonComponent;
+                },
+                setDisabled: (disabled: boolean) => {
+                    button.disabled = disabled;
                     return buttonComponent;
                 },
                 onClick: (cb: () => void) => {
@@ -403,7 +408,7 @@ type MockDropdownRecord = {
     options: Array<{ value: string; text: string }>;
     onChange?: (value: string) => unknown;
 };
-type MockButtonRecord = { text?: string; onClick?: () => unknown | Promise<unknown> };
+type MockButtonRecord = { text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> };
 type MockTextRecord = {
     value?: unknown;
     placeholder?: string;
@@ -479,6 +484,8 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             cleanLegacyJsonCache: jest.fn(async () => undefined),
         },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
+        canShowAiInsights: jest.fn(() => true),
+        showAiInsights: jest.fn(),
         getAPITokenSecretId: jest.fn(() => 'pa-api-token-vault-test'),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
@@ -1693,6 +1700,41 @@ describe('Phase 4 P1 UX', () => {
                 .toMatchObject({ value: true });
             expect(records.find((r) => r.name === 'Include Vault Insights in AI Context')?.toggles[0])
                 .toMatchObject({ value: true });
+        });
+
+        it('shows AI Insights entry point without enabling Advanced memory controls', () => {
+            const plugin = makePlugin({ showAdvancedMemoryControls: false });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const record = getMockSettingRecords().find((r) => r.name === 'AI Insights');
+            expect(record?.buttons[0]).toMatchObject({
+                text: 'View AI Insights',
+                disabled: false,
+            });
+
+            record?.buttons[0]?.onClick?.();
+            expect(plugin.showAiInsights).toHaveBeenCalledTimes(1);
+        });
+
+        it('re-checks the AI Insights gate before opening from Settings', () => {
+            const plugin = makePlugin({ showAdvancedMemoryControls: false });
+            (plugin.canShowAiInsights as jest.Mock)
+                .mockReturnValueOnce(true)
+                .mockReturnValueOnce(false);
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const record = getMockSettingRecords().find((r) => r.name === 'AI Insights');
+            expect(record?.buttons[0]).toMatchObject({
+                text: 'View AI Insights',
+                disabled: false,
+            });
+
+            record?.buttons[0]?.onClick?.();
+            expect(plugin.showAiInsights).not.toHaveBeenCalled();
         });
 
         it('requires explicit confirmation before enabling AI Memory Extraction', async () => {

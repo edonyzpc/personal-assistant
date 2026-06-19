@@ -2169,12 +2169,21 @@ export class PluginManager extends Plugin {
         this.addCommand({
             id: "show-ai-insights",
             name: this.t("plugin.command.showAiInsights"),
-            checkCallback: (checking) => this.runAdvancedMemoryCommand(checking, () => {
-                const context = this.getMemoryExtractionPromptContext();
-                this.openInsightsViewer(context);
-                return Promise.resolve();
+            checkCallback: (checking) => this.runMemoryExtractionCommand(checking, async () => {
+                this.showAiInsights();
             }),
         })
+    }
+
+    canShowAiInsights(): boolean {
+        return this.settings.memoryEnabled
+            && this.settings.memoryExtractionEnabled
+            && this.getAISetupIssue() === null;
+    }
+
+    showAiInsights(): void {
+        const context = this.memoryExtractionScheduler?.getInsightsViewerContext() ?? {};
+        this.openInsightsViewer(context);
     }
 
     private openInsightsViewer(context: { userProfile?: string; vaultInsights?: string }): void {
@@ -2219,6 +2228,17 @@ export class PluginManager extends Plugin {
     private runAdvancedMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {
         if (!this.settings.memoryEnabled || !this.settings.showAdvancedMemoryControls) return false;
         return this.runMemoryCommand(checking, action);
+    }
+
+    private runMemoryExtractionCommand(checking: boolean, action: () => Promise<void>): boolean {
+        if (!this.canShowAiInsights()) return false;
+        if (!checking) {
+            void action().catch((error) => {
+                this.log("Memory extraction command failed", error);
+                new Notice(this.t("plugin.notice.memoryActionFailed"), 5000);
+            });
+        }
+        return true;
     }
 
     private runMemoryCommand(checking: boolean, action: () => Promise<void>): boolean {

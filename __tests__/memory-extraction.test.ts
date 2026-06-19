@@ -253,6 +253,27 @@ describe("MemoryExtractionScheduler", () => {
         await scheduler.runTypeCRefresh("after-disable");
         expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
     });
+
+    it("keeps full Vault Insights for the viewer while prompt context is summarized", () => {
+        const scheduler = new MemoryExtractionScheduler({
+            app: { vault: { getMarkdownFiles: () => [] }, metadataCache: {} } as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(),
+                getTurns: jest.fn(),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true,
+            now: () => new Date("2026-06-16T08:00:00.000Z"),
+        });
+        const fullMarkdown = [
+            "# Vault Insights",
+            ...Array.from({ length: 45 }, (_, i) => `- Insight line ${i + 1}`),
+        ].join("\n");
+        (scheduler as any).vaultInsightsMarkdown = fullMarkdown;
+
+        expect(scheduler.getPromptContext().vaultInsights).not.toContain("Insight line 45");
+        expect(scheduler.getInsightsViewerContext().vaultInsights).toContain("Insight line 45");
+    });
 });
 
 describe("MemoryExtractionScheduler lifecycle", () => {

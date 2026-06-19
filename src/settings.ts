@@ -1911,6 +1911,20 @@ export class SettingTab extends PluginSettingTab {
 
         if (plugin.settings.memoryExtractionEnabled) {
             new Setting(container)
+                .setName(this.t("plugin.memoryExtraction.settings.viewInsights.name"))
+                .setDesc(this.t("plugin.memoryExtraction.settings.viewInsights.desc"))
+                .addButton((button) => {
+                    button
+                        .setButtonText(this.t("plugin.memoryExtraction.settings.viewInsights.button"))
+                        .setCta()
+                        .setDisabled(!plugin.canShowAiInsights())
+                        .onClick(() => {
+                            if (!plugin.canShowAiInsights()) return;
+                            plugin.showAiInsights();
+                        });
+                });
+
+            new Setting(container)
                 .setName(this.t("plugin.memoryExtraction.settings.includeVaultInsights.name"))
                 .setDesc(this.t("plugin.memoryExtraction.settings.includeVaultInsights.desc"))
                 .addToggle((toggle) => {

@@ -101,4 +101,36 @@ describe('buildDiscoveryResultFromFindings', () => {
 
         expect(result.connections[0]?.toNote).toBe('api-design-patterns.md');
     });
+
+    it('renders insight findings as connection cards', () => {
+        const result = buildDiscoveryResultFromFindings([{
+            text: 'The current note and release checklist both revolve around pre-release evidence.',
+            sourceFile: 'pagelet-smoke-golden.md',
+            sourceTitle: 'Pagelet Smoke Golden',
+            category: 'insight',
+        }], 'pagelet-smoke-golden.md', [
+            { path: 'release-checklist.md' },
+        ]);
+
+        expect(result.connections).toHaveLength(1);
+        expect(result.connections[0]).toEqual(expect.objectContaining({
+            fromNote: 'pagelet-smoke-golden.md',
+            toNote: 'release-checklist.md',
+            sharedConcepts: [expect.stringContaining('pre-release evidence')],
+        }));
+    });
+
+    it('renders action findings as gap cards', () => {
+        const result = buildDiscoveryResultFromFindings([{
+            text: 'Add a follow-up note that links provider evidence back to the release checklist.',
+            sourceFile: 'provider-smoke.md',
+            sourceTitle: 'Provider Smoke',
+            category: 'action',
+        }], 'release-checklist.md');
+
+        expect(result.gaps).toEqual([{
+            topic: 'Provider Smoke',
+            description: 'Add a follow-up note that links provider evidence back to the release checklist.',
+        }]);
+    });
 });

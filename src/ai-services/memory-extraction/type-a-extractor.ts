@@ -36,6 +36,10 @@ export interface TypeAExtractionInput {
     now?: () => Date;
 }
 
+type LLMExtractionParseResult =
+    | { status: "parsed"; candidates: UserProfileCandidate[] }
+    | { status: "malformed" };
+
 const PROFILE_MAX_CHARS = 1400;
 const RECURRENCE_THRESHOLD = 3;
 
@@ -85,7 +89,10 @@ export class TypeAUserProfileExtractor {
 
         try {
             const response = await invoke(prompt);
-            return parseLLMExtractionResponse(response, input.conversation.id, observedAt);
+            const parsed = parseLLMExtractionResponse(response, input.conversation.id, observedAt);
+            return parsed.status === "parsed"
+                ? parsed.candidates
+                : this.extractCandidates(input);
         } catch {
             return this.extractCandidates(input);
         }
@@ -257,15 +264,18 @@ function parseLLMExtractionResponse(
     response: string,
     conversationId: string,
     observedAt: string,
-): UserProfileCandidate[] {
+): LLMExtractionParseResult {
     try {
         const trimmed = response.trim();
         const jsonStart = trimmed.indexOf("{");
         const jsonEnd = trimmed.lastIndexOf("}");
-        if (jsonStart === -1 || jsonEnd <= jsonStart) return [];
+        if (jsonStart === -1 || jsonEnd <= jsonStart) return { status: "malformed" };
         const parsed = JSON.parse(trimmed.slice(jsonStart, jsonEnd + 1));
-        const extractions = Array.isArray(parsed?.extractions) ? parsed.extractions : [];
-        return extractions
+        if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.extractions)) {
+            return { status: "malformed" };
+        }
+        const extractions = parsed.extractions;
+        const candidates = extractions
             .filter((e: unknown): e is { text: string; kind: string; confidence: string } =>
                 e !== null && typeof e === "object"
                 && typeof (e as Record<string, unknown>).text === "string"
@@ -284,7 +294,8 @@ function parseLLMExtractionResponse(
             })
             .filter((c: UserProfileCandidate | null): c is UserProfileCandidate => c !== null)
             .slice(0, 5);
+        return { status: "parsed", candidates };
     } catch {
-        return [];
+        return { status: "malformed" };
     }
 }
