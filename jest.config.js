@@ -35,6 +35,12 @@ module.exports = {
     "/__tests__/",
     "/scripts/",
     "/src/types/",
+    // Pure re-export barrels generate V8 helper functions but carry no
+    // behavior to unit-test directly. Cover their source modules instead.
+    "/src/pagelet/index\\.ts$",
+    "/src/pagelet/compat/index\\.ts$",
+    "/src/pagelet/ui/index\\.ts$",
+    "/src/ai-services/write-action-framework/index\\.ts$",
   ],
 
   // Indicates which provider should be used to instrument code for coverage
