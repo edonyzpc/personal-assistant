@@ -2,6 +2,69 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.7.0](https://github.com/edonyzpc/personal-assistant/compare/2.3.0-beta.1...2.7.0) (2026-06-19)
+
+### Features
+- vss: migrate to @sqlite.org/sqlite-wasm (SPEC-A6)
+- skill: add obsidian-templater built-in skill (SPEC-B3)
+- pa-agent: add context projection and budget-aware prompt building
+- vss: add heading-aware chunking and temporal hybrid search
+- memory-extraction: add scheduled user profile and vault insight pipeline
+- memory-extraction: settings toggle, i18n, scheduler lifecycle, IDB timeout
+- context: async TypeC analysis, projection optimizations, and context diffing
+- write-action: extend types and PolicyEngine for append action family (C1-P1)
+- write-action: implement stale re-read mode B with SHA-256 content hash (C1-P2)
+- write-action: implement append-to-current-note action family (C1-P3)
+- write-action: append preview layout and prompt injection tests (C1-P4)
+- pa-agent: wire Operations Agent mode into runtime (C1-P5)
+- ai-insight: activate AI insight capabilities (SPEC-E1~E6, v2.5)
+- memory: enable vault insights context controls
+- vss: add exact chunk lookup by path
+- ai-insight: bidirectional 1-hop expansion and AI Insights viewer
+
+### Fix
+- pagelet: smoke-driven fixes and graduation smoke record
+- write-action: review-driven fixes for preview modal, crypto, and confinement
+- pa-agent: hydrate link expansion with exact chunks
+- pagelet: clarify discover empty states
+- write-action: tighten append preview safeguards
+- pa-agent: gate operations agent runtime
+- vss: rebuild stale schema memory indexes
+- vss: allow inline blob wasm urls for sqlite init
+- pagelet: resolve discovery connections from related note aliases
+- review: mobile guard for Type C refresh and ARIA for append preview
+- pagelet: rewrite discovery alias matching with CJK support and scoring
+- ai-insights: expose insights viewer for release
+
+### Improvements
+- pagelet: relocate v1 UI primitives to src/pagelet/ui/ (SPEC-B4)
+- pagelet: extract 4 modules from Orchestrator (SPEC-B5)
+- fix+refactor: bug fixes, clone-utils extraction, and dead code cleanup
+- cleanup: remove apiToken v1.x migration code (SPEC-A7)
+- repo: trim stray whitespace
+- vss: split VSS into dedicated modules
+- ai-services: introduce hosts and split PA runtime modules
+- chat: extract host adapters and persistence helpers
+- plugin: add host adapters for memory, pagelet, and stats
+
+### Docs
+- add v2.3 implementation plan and review test coverage
+- draft and review Operations Agent mode SDD
+- v2.4 AI insight foundation SDD with context+memory architecture
+- update v2.4/v2.5 spec status and VSS design docs
+- ai-insight: align activation status
+- pagelet: record runtime smoke fixes and closeout state
+- smoke: record post-commit redeploy check
+- roadmap: align SPEC tracker and roadmap for v2.7 merge release
+- refactor: add architecture refactoring plan and Codex-driven SDD
+- track architecture refactor progress and phase decisions
+- release: record v2.7 smoke status
+- release: close v2.7 verification gates
+
+### Tests
+- add coverage for budget, compactor, hygiene, Type A/C, scheduler, and chunker
+- release: ignore pure barrels in coverage gate
+
 ## [Unreleased]
 
 ## [2.3.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.2.0-beta.2...2.3.0-beta.1) (2026-06-16)
