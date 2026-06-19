@@ -1,5 +1,6 @@
 import type { PersistedConversation, PersistedTurn } from "../../chat/chat-history-store";
 import { pluginT, getPluginUiLanguage } from "../../locales/plugin";
+import { isExplicitCurrentNoteOnlyRequest, isExplicitNoWebRequest } from "../chat-tool-prepare-helpers";
 
 export type UserProfileEvidenceKind =
     | "user_explicit"
@@ -53,6 +54,7 @@ const LLM_EXTRACTION_SYSTEM_PROMPT = [
     "- user_correction: user corrects the AI (\"no not that\", \"don't\", \"instead\")",
     "- inferred_behavior: observed pattern the user hasn't explicitly stated",
     "- Only extract clear, actionable preferences, not general discussion topics",
+    "- Do not extract one-off tool/source constraints such as 'do not use web search', 'no internet', 'current note only', or 'only my notes' unless the user explicitly says it is a future/default/always preference.",
     "- Produce at most 5 extractions per batch",
     "- confidence: high for direct statements, medium for strong patterns, low for weak signals",
     "- Return {\"extractions\":[]} if no preferences are found",
@@ -105,6 +107,7 @@ export class TypeAUserProfileExtractor {
     ): UserProfileSnapshot {
         const byKey = new Map<string, UserProfileRecord>();
         for (const record of existing?.records ?? []) {
+            if (!isProfileTextEligibleForStorage(record.text)) continue;
             byKey.set(record.key, {
                 ...record,
                 conversationIds: [...record.conversationIds],
@@ -113,6 +116,7 @@ export class TypeAUserProfileExtractor {
 
         for (const candidate of candidates) {
             if (candidate.kind === "discussed" || candidate.confidence === "low") continue;
+            if (!isProfileTextEligibleForStorage(candidate.text)) continue;
             const existingRecord = byKey.get(candidate.key);
             if (!existingRecord) {
                 const confirmed = candidate.kind === "user_explicit"
@@ -170,7 +174,9 @@ export function extractCandidatesFromText(
             || sentence.match(/(?:记住|请记住|我偏好|我更喜欢|我通常|我的偏好是)/);
         const correction = sentence.match(/\b(?:don't|do not|not like that|instead|actually)\b/i)
             || sentence.match(/(?:不是这样|不要|请改成|应该|其实)/);
-        if (!explicit && !correction) continue;
+        const durableToolPreference = isToolOrSourceConstraint(sentence) && isDurableToolPreference(sentence);
+        if (!explicit && !correction && !durableToolPreference) continue;
+        if (!isProfileTextEligibleForStorage(sentence)) continue;
         const key = normalizeProfileKey(sentence);
         if (!key) continue;
         candidates.push({
@@ -187,8 +193,9 @@ export function extractCandidatesFromText(
 
 export function renderUserProfileMarkdown(records: readonly UserProfileRecord[], now = new Date()): string {
     const lang = getPluginUiLanguage();
-    const confirmed = records.filter((record) => record.confirmed);
-    const tentative = records.filter((record) => !record.confirmed);
+    const eligibleRecords = records.filter((record) => isProfileTextEligibleForStorage(record.text));
+    const confirmed = eligibleRecords.filter((record) => record.confirmed);
+    const tentative = eligibleRecords.filter((record) => !record.confirmed);
     const lines = [
         `# ${pluginT("plugin.memoryExtraction.userProfile.title", lang)}`,
         "",
@@ -210,6 +217,43 @@ export function renderUserProfileMarkdown(records: readonly UserProfileRecord[],
         : `${markdown.slice(0, PROFILE_MAX_CHARS - 14).trim()}\n...`;
 }
 
+export function sanitizeUserProfileSnapshot(
+    snapshot: UserProfileSnapshot | null,
+    now = new Date(),
+): UserProfileSnapshot | null {
+    if (!snapshot) return null;
+    const records = snapshot.records.filter((record) => isProfileTextEligibleForStorage(record.text));
+    return {
+        updatedAt: records.length === snapshot.records.length ? snapshot.updatedAt : now.toISOString(),
+        records,
+        markdown: renderUserProfileMarkdown(records, records.length === snapshot.records.length
+            ? new Date(snapshot.updatedAt)
+            : now),
+    };
+}
+
+export function sanitizeUserProfileMarkdownForPrompt(markdown: string): string {
+    return markdown
+        .split(/\r?\n/)
+        .filter((line) => {
+            const trimmed = line.trim();
+            if (!trimmed) return true;
+            const bulletText = trimmed.replace(/^[-*]\s+/, "");
+            return isProfileTextEligibleForPromptInjection(bulletText);
+        })
+        .join("\n")
+        .trim();
+}
+
+export function isProfileTextEligibleForStorage(text: string): boolean {
+    if (!isToolOrSourceConstraint(text)) return true;
+    return isDurableToolPreference(text);
+}
+
+export function isProfileTextEligibleForPromptInjection(text: string): boolean {
+    return !isToolOrSourceConstraint(text);
+}
+
 function normalizeProfileKey(value: string): string {
     return value
         .toLowerCase()
@@ -218,6 +262,31 @@ function normalizeProfileKey(value: string): string {
         .split(/\s+/)
         .slice(0, 10)
         .join("-");
+}
+
+function isToolOrSourceConstraint(text: string): boolean {
+    return isWebAccessConstraint(text)
+        || isExplicitCurrentNoteOnlyRequest(text)
+        || isMemoryOrNotesScopeConstraint(text);
+}
+
+function isWebAccessConstraint(text: string): boolean {
+    return isExplicitNoWebRequest(text)
+        || /\b(?:do not|don't|never|no|without|avoid|prefer not to)\s+(?:use\s+)?(?:web\s*search|internet|online search|go online)\b/i.test(text)
+        || /(?:不要|别|不|无需).{0,12}(?:联网|上网|网络搜索|网页搜索|搜索网页|查网|查网络|查网页|web\s*search)/i.test(text)
+        || /(?:联网|上网|网络搜索|网页搜索|搜索网页|查网|查网络|查网页|web\s*search).{0,12}(?:不要|别|不|无需)/i.test(text);
+}
+
+function isMemoryOrNotesScopeConstraint(text: string): boolean {
+    return /\b(?:do not|don't|never|no|without)\s+(?:use\s+)?(?:memory|my notes|my vault|vault notes)\b/i.test(text)
+        || /\b(?:only|just)\s+(?:use|search|read|from)\s+(?:memory|my notes|my vault|vault notes)\b/i.test(text)
+        || /(?:只|仅).{0,8}(?:用|看|查|从|搜索)?.{0,8}(?:我的)?(?:笔记|记忆|memory|vault)/i.test(text)
+        || /(?:不要|别|不|无需).{0,8}(?:用|使用|搜索|查)?.{0,8}(?:Memory|memory|记忆|笔记库|我的笔记)/.test(text);
+}
+
+function isDurableToolPreference(text: string): boolean {
+    return /\b(?:always|never|by default|default to|from now on|going forward|in future|in the future|for future requests|future requests|every time)\b/i.test(text)
+        || /(?:以后|今后|往后|默认|每次|总是|永远|长期|所有对话|所有回答|每次都|以后都)/.test(text);
 }
 
 function dedupeCandidates(candidates: readonly UserProfileCandidate[]): UserProfileCandidate[] {
@@ -274,13 +343,13 @@ function parseLLMExtractionResponse(
         if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.extractions)) {
             return { status: "malformed" };
         }
-        const extractions = parsed.extractions;
+        const extractions: unknown[] = parsed.extractions;
         const candidates = extractions
             .filter((e: unknown): e is { text: string; kind: string; confidence: string } =>
                 e !== null && typeof e === "object"
                 && typeof (e as Record<string, unknown>).text === "string"
                 && typeof (e as Record<string, unknown>).kind === "string")
-            .map((e: { text: string; kind: string; confidence: string }) => {
+            .map((e: { text: string; kind: string; confidence: string }): UserProfileCandidate | null => {
                 const kind: UserProfileEvidenceKind =
                     e.kind === "user_explicit" || e.kind === "user_correction"
                     || e.kind === "inferred_behavior" || e.kind === "discussed"
@@ -293,6 +362,7 @@ function parseLLMExtractionResponse(
                 return { key, text: e.text, kind, confidence, conversationId, observedAt };
             })
             .filter((c: UserProfileCandidate | null): c is UserProfileCandidate => c !== null)
+            .filter((candidate: UserProfileCandidate) => isProfileTextEligibleForStorage(candidate.text))
             .slice(0, 5);
         return { status: "parsed", candidates };
     } catch {

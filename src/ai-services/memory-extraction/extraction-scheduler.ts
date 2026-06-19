@@ -3,7 +3,12 @@ import { TFile, normalizePath } from "obsidian";
 import type { ChatHistoryManager } from "../../chat/chat-history-manager";
 import { clearPlatformInterval, clearPlatformTimeout, setPlatformInterval, setPlatformTimeout, type PlatformIntervalHandle, type PlatformTimeoutHandle } from "../../platform-dom";
 import { MemoryUserProfileStore, type UserProfileStore } from "./profile-store";
-import { TypeAUserProfileExtractor, type UserProfileCandidate, type UserProfileSnapshot } from "./type-a-extractor";
+import {
+    sanitizeUserProfileSnapshot,
+    TypeAUserProfileExtractor,
+    type UserProfileCandidate,
+    type UserProfileSnapshot,
+} from "./type-a-extractor";
 import type { PersistedConversation, PersistedTurn } from "../../chat/chat-history-store";
 import { getOptionalPlatformDocument } from "../../platform-dom";
 import { TypeCVaultMetacognitionAnalyzer, type SemanticClusterProvider, type VaultMetacognitionSnapshot } from "./type-c-analyzer";
@@ -266,7 +271,11 @@ export class MemoryExtractionScheduler {
         if (!this.userProfileStoreReady) {
             this.userProfileStoreReady = this.userProfileStore.initialize()
                 .then(async () => {
-                    this.userProfileSnapshot = await this.userProfileStore.getProfile();
+                    const storedProfile = await this.userProfileStore.getProfile();
+                    this.userProfileSnapshot = sanitizeUserProfileSnapshot(storedProfile, this.now());
+                    if (storedProfile && this.userProfileSnapshot && hasUserProfileSnapshotChanged(storedProfile, this.userProfileSnapshot)) {
+                        await this.userProfileStore.setProfile(this.userProfileSnapshot);
+                    }
                 })
                 .catch((error) => {
                     this.userProfileStoreReady = null;
@@ -275,6 +284,29 @@ export class MemoryExtractionScheduler {
         }
         await this.userProfileStoreReady;
     }
+}
+
+function hasUserProfileSnapshotChanged(
+    before: UserProfileSnapshot,
+    after: UserProfileSnapshot,
+): boolean {
+    if (before.markdown !== after.markdown) return true;
+    if (before.records.length !== after.records.length) return true;
+    return before.records.some((record, index) => {
+        const next = after.records[index];
+        return !next
+            || record.key !== next.key
+            || record.text !== next.text
+            || record.kind !== next.kind
+            || record.confidence !== next.confidence
+            || record.confirmed !== next.confirmed
+            || record.occurrences !== next.occurrences
+            || record.observedAt !== next.observedAt
+            || record.conversationId !== next.conversationId
+            || record.conversationIds.length !== next.conversationIds.length
+            || record.conversationIds.some((conversationId, conversationIndex) =>
+                conversationId !== next.conversationIds[conversationIndex]);
+    });
 }
 
 async function writeVaultInsightsIfChanged(app: App, path: string, markdown: string): Promise<void> {

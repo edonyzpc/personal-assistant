@@ -7,6 +7,8 @@ import {
     TypeCVaultMetacognitionAnalyzer,
     extractCandidatesFromText,
     renderUserProfileMarkdown,
+    sanitizeUserProfileMarkdownForPrompt,
+    sanitizeUserProfileSnapshot,
 } from "../src/ai-services/memory-extraction";
 import type { UserProfileCandidate, UserProfileRecord } from "../src/ai-services/memory-extraction";
 
@@ -58,6 +60,95 @@ describe("TypeAUserProfileExtractor", () => {
         expect(candidates.some((c) => c.kind === "user_correction")).toBe(true);
     });
 
+    it("does not extract one-off no-web weather constraints into User Profile", () => {
+        const candidates = extractCandidatesFromText(
+            "不要联网，看一下杭州今天的天气。",
+            "c-no-web-once",
+            "2026-06-16T08:00:00.000Z",
+        );
+
+        expect(candidates).toHaveLength(0);
+    });
+
+    it("keeps explicit future/default web search preferences eligible for User Profile", () => {
+        const extractor = new TypeAUserProfileExtractor();
+        const candidates = extractCandidatesFromText(
+            "以后默认不要用 web search。",
+            "c-no-web-default",
+            "2026-06-16T08:00:00.000Z",
+        );
+        const snapshot = extractor.mergeCandidates(null, candidates, new Date("2026-06-16T08:00:00.000Z"));
+
+        expect(candidates).toHaveLength(1);
+        expect(snapshot.records[0].confirmed).toBe(true);
+        expect(snapshot.markdown).toContain("以后默认不要用 web search");
+    });
+
+    it("keeps explicit English durable web search preferences eligible for User Profile", () => {
+        const extractor = new TypeAUserProfileExtractor();
+        const candidates = extractCandidatesFromText(
+            "Always avoid web search unless I explicitly ask for it.",
+            "c-no-web-always",
+            "2026-06-16T08:00:00.000Z",
+        );
+        const snapshot = extractor.mergeCandidates(null, candidates, new Date("2026-06-16T08:00:00.000Z"));
+
+        expect(candidates).toHaveLength(1);
+        expect(snapshot.markdown).toContain("Always avoid web search unless I explicitly ask for it.");
+    });
+
+    it("does not extract this-turn web search constraints into User Profile", () => {
+        const candidates = extractCandidatesFromText(
+            "这次不要用 web search。",
+            "c-no-web-this-turn",
+            "2026-06-16T08:00:00.000Z",
+        );
+
+        expect(candidates).toHaveLength(0);
+    });
+
+    it("does not extract one-off current-note or notes-only source constraints into User Profile", () => {
+        expect(extractCandidatesFromText(
+            "只看当前笔记。",
+            "c-current-note-only",
+            "2026-06-16T08:00:00.000Z",
+        )).toHaveLength(0);
+        expect(extractCandidatesFromText(
+            "Only use my notes for this answer.",
+            "c-notes-only",
+            "2026-06-16T08:00:00.000Z",
+        )).toHaveLength(0);
+    });
+
+    it("filters LLM-extracted one-off tool constraints before merging profile candidates", async () => {
+        const extractor = new TypeAUserProfileExtractor();
+        const candidates = await extractor.extractCandidatesWithLLM({
+            conversation: {
+                id: "c-llm-no-web",
+                title: "Weather",
+                createdAt: "2026-06-16T00:00:00.000Z",
+                updatedAt: "2026-06-16T00:00:00.000Z",
+                turnCount: 1,
+                preview: "Weather",
+            },
+            turns: [{
+                conversationId: "c-llm-no-web",
+                turnIndex: 1,
+                user: { role: "user", content: "不要联网，看一下杭州今天的天气。" },
+                assistant: { role: "assistant", content: "不联网时无法核验实时天气。" },
+            }],
+            now: () => new Date("2026-06-16T08:00:00.000Z"),
+        }, async () => JSON.stringify({
+            extractions: [{
+                text: "不要联网，看一下杭州今天的天气。",
+                kind: "user_correction",
+                confidence: "high",
+            }],
+        }));
+
+        expect(candidates).toHaveLength(0);
+    });
+
     it("promotes tentative inferred_behavior records to confirmed after 3 independent conversations", () => {
         const extractor = new TypeAUserProfileExtractor();
         const makeCandidate = (conversationId: string): UserProfileCandidate => ({
@@ -98,9 +189,121 @@ describe("TypeAUserProfileExtractor", () => {
         const markdown = renderUserProfileMarkdown(records, new Date("2026-06-16T08:00:00.000Z"));
         expect(markdown.length).toBeLessThanOrEqual(1400);
     });
+
+    it("sanitizes existing polluted no-web records from stored User Profile snapshots", () => {
+        const snapshot = sanitizeUserProfileSnapshot({
+            updatedAt: "2026-06-15T08:00:00.000Z",
+            records: [
+                {
+                    key: "one-off-no-web",
+                    text: "不要联网，看一下杭州今天的天气。",
+                    kind: "user_correction",
+                    confidence: "high",
+                    conversationId: "c-old",
+                    observedAt: "2026-06-15T08:00:00.000Z",
+                    occurrences: 1,
+                    conversationIds: ["c-old"],
+                    confirmed: true,
+                },
+                {
+                    key: "style",
+                    text: "不要用列表格式",
+                    kind: "user_correction",
+                    confidence: "high",
+                    conversationId: "c-style",
+                    observedAt: "2026-06-15T08:00:00.000Z",
+                    occurrences: 1,
+                    conversationIds: ["c-style"],
+                    confirmed: true,
+                },
+            ],
+            markdown: [
+                "# User Profile",
+                "- 不要联网，看一下杭州今天的天气。",
+                "- 不要用列表格式",
+            ].join("\n"),
+        }, new Date("2026-06-16T08:00:00.000Z"));
+
+        expect(snapshot?.records.map((record) => record.text)).toEqual(["不要用列表格式"]);
+        expect(snapshot?.markdown).not.toContain("不要联网");
+        expect(snapshot?.markdown).toContain("不要用列表格式");
+    });
+
+    it("sanitizes polluted profile markdown before prompt injection", () => {
+        const sanitized = sanitizeUserProfileMarkdownForPrompt([
+            "# User Profile",
+            "- 不要联网，看一下杭州今天的天气。",
+            "- 以后默认不要用 web search。",
+            "- Remember I prefer concise Conventional Commits.",
+        ].join("\n"));
+
+        expect(sanitized).not.toContain("杭州今天的天气");
+        expect(sanitized).not.toContain("以后默认不要用 web search");
+        expect(sanitized).toContain("Remember I prefer concise Conventional Commits.");
+    });
 });
 
 describe("MemoryExtractionScheduler", () => {
+    it("sanitizes and persists polluted stored User Profile snapshots on load", async () => {
+        const storedProfile = {
+            updatedAt: "2026-06-15T08:00:00.000Z",
+            records: [
+                {
+                    key: "one-off-no-web",
+                    text: "不要联网，看一下杭州今天的天气。",
+                    kind: "user_correction" as const,
+                    confidence: "high" as const,
+                    conversationId: "c-old",
+                    observedAt: "2026-06-15T08:00:00.000Z",
+                    occurrences: 1,
+                    conversationIds: ["c-old"],
+                    confirmed: true,
+                },
+                {
+                    key: "style",
+                    text: "Remember I prefer concise Conventional Commits.",
+                    kind: "user_explicit" as const,
+                    confidence: "high" as const,
+                    conversationId: "c-style",
+                    observedAt: "2026-06-15T08:00:00.000Z",
+                    occurrences: 1,
+                    conversationIds: ["c-style"],
+                    confirmed: true,
+                },
+            ],
+            markdown: [
+                "# User Profile",
+                "- Remember I prefer concise Conventional Commits.",
+            ].join("\n"),
+        };
+        const userProfileStore = {
+            initialize: jest.fn(async () => undefined),
+            getProfile: jest.fn(async () => storedProfile),
+            setProfile: jest.fn(async (_snapshot: unknown) => undefined),
+            dispose: jest.fn(async () => undefined),
+        };
+        const scheduler = new MemoryExtractionScheduler({
+            app: {} as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(async () => null),
+                getTurns: jest.fn(),
+            } as any,
+            userProfileStore,
+            now: () => new Date("2026-06-16T08:00:00.000Z"),
+        });
+
+        const snapshot = await scheduler.runTypeAExtraction("missing");
+
+        expect(snapshot?.records.map((record) => record.text)).toEqual([
+            "Remember I prefer concise Conventional Commits.",
+        ]);
+        expect(snapshot?.markdown).not.toContain("不要联网");
+        expect(userProfileStore.setProfile).toHaveBeenCalledWith(expect.objectContaining({
+            records: [expect.objectContaining({ text: "Remember I prefer concise Conventional Commits." })],
+            markdown: expect.not.stringContaining("不要联网"),
+        }));
+    });
+
     it("loads and persists Type A profile snapshots through the provided store", async () => {
         const userProfileStore = new MemoryUserProfileStore();
         const chatHistoryManager = {

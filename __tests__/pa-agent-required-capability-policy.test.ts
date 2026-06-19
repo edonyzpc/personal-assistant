@@ -83,6 +83,15 @@ describe("PA Agent required capability HostPolicy", () => {
             expect(classifyRequiredCapabilitiesDeterministic("杭州现在气温多少").items).toEqual([
                 expect.objectContaining({ capability: "webSearch", level: "required" }),
             ]);
+            expect(classifyRequiredCapabilitiesDeterministic("今天北京天气").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("北京今天天气").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
+            expect(classifyRequiredCapabilitiesDeterministic("上海现在气温多少").items).toEqual([
+                expect.objectContaining({ capability: "webSearch", level: "required" }),
+            ]);
             expect(classifyRequiredCapabilitiesDeterministic("今天北京空气质量怎么样").items).toEqual([
                 expect.objectContaining({ capability: "webSearch", level: "required" }),
             ]);
@@ -93,6 +102,15 @@ describe("PA Agent required capability HostPolicy", () => {
                 expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
             );
             expect(classifyRequiredCapabilitiesDeterministic("当前笔记里空气质量是什么意思").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
+            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里有没有北京天气记录").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
+            expect(classifyRequiredCapabilitiesDeterministic("我的笔记里今天写的天气段落").items).not.toEqual(
+                expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
+            );
+            expect(classifyRequiredCapabilitiesDeterministic("当前笔记里“天气”这个词是什么意思").items).not.toEqual(
                 expect.arrayContaining([expect.objectContaining({ capability: "webSearch" })]),
             );
         });

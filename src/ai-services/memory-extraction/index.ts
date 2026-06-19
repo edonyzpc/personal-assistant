@@ -1,7 +1,11 @@
 export {
     TypeAUserProfileExtractor,
     extractCandidatesFromText,
+    isProfileTextEligibleForPromptInjection,
+    isProfileTextEligibleForStorage,
     renderUserProfileMarkdown,
+    sanitizeUserProfileMarkdownForPrompt,
+    sanitizeUserProfileSnapshot,
 } from "./type-a-extractor";
 export type {
     UserProfileCandidate,

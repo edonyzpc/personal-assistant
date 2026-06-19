@@ -273,6 +273,35 @@ describe("PaAgentContextManager", () => {
         expect(projection.budget.estimatedPromptTokens).toBeGreaterThan(0);
     });
 
+    it("filters one-off tool/source constraints from injected profile context", () => {
+        const manager = new PaAgentContextManager();
+        const projection = manager.forPrompt({
+            prompt: "查一下今天北京天气情况",
+            chatHistory: [],
+            transcript: [user("u1")],
+            turnIndex: 1,
+            injectedContext: {
+                userProfile: [
+                    "# User Profile",
+                    "- 不要联网，看一下杭州今天的天气。",
+                    "- 以后默认不要用 web search。",
+                    "- Remember I prefer concise Conventional Commits.",
+                ].join("\n"),
+            },
+            availableSkills: "None",
+            toolDefinitions: "webSearch",
+            maxHistoryChars: 2000,
+            maxPromptChars: 4000,
+            maxObservationChars: 1000,
+            formatToolObservations: () => "None",
+        });
+
+        expect(projection.input).toContain("<user_profile context_only=\"true\" source=\"memory_extraction\">");
+        expect(projection.input).not.toContain("杭州今天的天气");
+        expect(projection.input).not.toContain("以后默认不要用 web search");
+        expect(projection.input).toContain("Remember I prefer concise Conventional Commits.");
+    });
+
     it("trims long history without cutting through sandbox wrappers", () => {
         const manager = new PaAgentContextManager();
         const chatHistory = Array.from({ length: 16 }, (_, index) => ([

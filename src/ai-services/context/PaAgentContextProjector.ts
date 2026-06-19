@@ -1,4 +1,5 @@
 import type { ChatMessage, PaAgentMessage } from "../chat-types";
+import { sanitizeUserProfileMarkdownForPrompt } from "../memory-extraction/type-a-extractor";
 import { PaAgentContextCompactor } from "./PaAgentContextCompactor";
 
 export interface PaAgentInjectedContext {
@@ -105,9 +106,12 @@ function formatChatHistory(history: ChatMessage[]): string {
 
 function formatInjectedContext(context: PaAgentInjectedContext | undefined): string {
     if (!context) return "";
+    const userProfile = context.userProfile
+        ? sanitizeUserProfileMarkdownForPrompt(context.userProfile)
+        : "";
     const blocks = [
-        context.userProfile?.trim()
-            ? `<user_profile context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(context.userProfile.trim(), "user_profile")}\n</user_profile>`
+        userProfile
+            ? `<user_profile context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(userProfile, "user_profile")}\n</user_profile>`
             : "",
         context.vaultInsights?.trim()
             ? `<vault_insights context_only="true" source="memory_extraction">\n${escapeTaggedBoundary(context.vaultInsights.trim(), "vault_insights")}\n</vault_insights>`

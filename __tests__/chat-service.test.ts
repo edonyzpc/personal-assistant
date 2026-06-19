@@ -196,6 +196,7 @@ function createPlugin(overrides: {
     licenseTier?: AgentCapabilityTier;
     skillContextEnabled?: boolean;
     enabledSkillIds?: string[];
+    memoryExtractionPromptContext?: Record<string, unknown>;
 } = {}) {
     const markdownFiles = overrides.markdownFiles ?? [];
     const abstractFiles = [...markdownFiles, ...(overrides.abstractFiles ?? [])];
@@ -263,7 +264,7 @@ function createPlugin(overrides: {
         log: jest.fn(),
         getAPIToken: jest.fn(async () => 'sk-SECRET_TOKEN_SENTINEL'),
         isOperationsAgentEnabled: false,
-        getMemoryExtractionPromptContext: jest.fn(() => undefined),
+        getMemoryExtractionPromptContext: jest.fn(() => overrides.memoryExtractionPromptContext),
         getResolvedLinks: jest.fn(() => overrides.resolvedLinks),
     };
 }
@@ -686,6 +687,66 @@ describe('ChatService.streamLLM integration', () => {
                 warnings: expect.any(Array),
             }),
         });
+    });
+
+    it('does not let polluted User Profile suppress available WebSearch', async () => {
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamChunksModel([{ content: 'weather answer' }], (input) => {
+            modelInputs.push(input);
+        });
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({
+            webSearchEnabled: true,
+            memoryExtractionPromptContext: {
+                userProfile: [
+                    '# User Profile',
+                    '- 不要联网，看一下杭州今天的天气。',
+                    '- I prefer concise plans.',
+                ].join('\n'),
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('看一下杭州今天的天气', jest.fn());
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name)
+            .sort();
+        expect(exportedToolNames).toEqual(['webSearch']);
+        expect(modelInputs[0]?.tool_definitions).toContain('webSearch');
+        expect(modelInputs[0]?.input).not.toContain('不要联网');
+        expect(modelInputs[0]?.input).not.toContain('杭州今天的天气。');
+        expect(modelInputs[0]?.input).toContain('I prefer concise plans.');
+        expect(modelInputs[0]?.input).not.toContain('explicitly forbids web or internet access');
+    });
+
+    it('lets current-turn no-web override profile content that mentions using WebSearch', async () => {
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamChunksModel([{ content: 'no web weather answer' }], (input) => {
+            modelInputs.push(input);
+        });
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({
+            webSearchEnabled: true,
+            memoryExtractionPromptContext: {
+                userProfile: [
+                    '# User Profile',
+                    '- I usually prefer web search for weather checks.',
+                    '- I prefer concise plans.',
+                ].join('\n'),
+            },
+        });
+        const service = new ChatService(plugin as unknown as ConstructorParameters<typeof ChatService>[0]);
+
+        await service.streamLLM('不要联网，看一下杭州今天的天气', jest.fn());
+
+        const exportedToolNames = ((model.bindTools as jest.Mock).mock.calls[0]?.[0] as Array<{ function?: { name?: string } }>)
+            .map((tool) => tool.function?.name)
+            .sort();
+        expect(exportedToolNames).toEqual(['get_current_note_context', 'search_memory']);
+        expect(modelInputs[0]?.tool_definitions).not.toContain('webSearch');
+        expect(modelInputs[0]?.input).toContain('explicitly forbids web or internet access');
+        expect(modelInputs[0]?.input).toContain('I usually prefer web search for weather checks.');
     });
 
     it('keeps load_skill bound when a skill catalog is rendered in narrowed source-scoped turns', async () => {

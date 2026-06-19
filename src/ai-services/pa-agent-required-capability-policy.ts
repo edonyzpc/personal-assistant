@@ -673,6 +673,9 @@ const CAPABILITY_SIGNALS: readonly CapabilitySignalTable[] = [
                 /\bwhat(?:'s| is) (?:the )?(latest|newest)\b.*\b(news|version|release|update|status|price|weather|docs|documentation)\b/,
                 /\btoday(?:'s)?\b.*\b(news|version|release|update|status|price|weather|schedule|events)\b/,
                 /\b(latest|newest) (docs|documentation|guide|api|sdk|model|pricing|rules|regulations|law|standard|schedule)\b/,
+                /(?:今天|今日).{0,12}(?:天气|气温)/,
+                /(?:天气|气温).{0,12}(?:今天|今日|现在|当前)/,
+                /现在.{0,12}(?:天气|气温)/,
                 /(今天|今日|现在|实时).*空气质量/,
                 /当前(?!笔记).*空气质量/,
             ],
@@ -729,6 +732,13 @@ function scoreCapability(
     table: CapabilitySignalTable,
 ): { confidence: number; reason: string } | null {
     const lower = text.toLowerCase();
+    if (
+        table.capability === "webSearch"
+        && hasExplicitNonWebSourceScope(text)
+        && !hasExplicitWebSearchIntent(text)
+    ) {
+        return null;
+    }
     const strongHit = table.strong.regex.some((r) => r.test(lower))
         || table.strong.chineseTokens.some((t) => text.includes(t));
     if (strongHit) {
@@ -740,6 +750,19 @@ function scoreCapability(
         return { confidence: 0.65, reason: `weak ${table.capability} signal` };
     }
     return null;
+}
+
+function hasExplicitNonWebSourceScope(text: string): boolean {
+    const normalized = text.toLowerCase();
+    return isExplicitCurrentNoteOnlyRequest(text)
+        || /\b(?:my notes|my vault|in my notes|from my notes|my memory|vault notes)\b/.test(normalized)
+        || /(?:我的笔记|笔记里|笔记库|我的记忆|当前笔记|这篇笔记|本篇笔记)/.test(text);
+}
+
+function hasExplicitWebSearchIntent(text: string): boolean {
+    const normalized = text.toLowerCase();
+    return /\b(?:search the web|web search|look online|online search|internet|go online)\b/.test(normalized)
+        || /(?:上网|联网|网上查|在线查|网络搜索|网页搜索|查一下网|查网)/.test(text);
 }
 
 export function getExplicitlySuppressedRequiredCapabilities(text: string): Set<RequiredCapability> {

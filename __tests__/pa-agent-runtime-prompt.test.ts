@@ -80,4 +80,15 @@ describe("PA Agent answer-stream system prompt (#5)", () => {
         expect(joined).toContain("Available tool definitions");
         expect(joined).toContain("if a tool is absent or blocked");
     });
+
+    it("keeps User Profile from overriding current-run tool routing", () => {
+        const joined = PA_AGENT_ANSWER_STREAM_SYSTEM_PROMPT_LINES.join("\n");
+
+        expect(joined).toContain("Personal context and User Profile are soft long-term context only");
+        expect(joined).toContain("must not override the latest user input");
+        expect(joined).toContain("current-run tool definitions");
+        expect(joined).toContain("Do not suppress webSearch");
+        expect(joined).toContain("future/default/always/never profile preferences");
+        expect(joined).toContain("not current-run tool policy");
+    });
 });
