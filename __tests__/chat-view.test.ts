@@ -3454,6 +3454,31 @@ describe('LLMView turn lifecycle', () => {
         expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('28px');
     });
 
+    it('rechecks status bar clearance after the first chat layout frame settles', async () => {
+        const { view, containerEl } = createView({ panelWidth: 900 });
+        const statusBar = new MockElement('div');
+        containerEl.boundingRect = { left: 0, top: 0, right: 900, bottom: 0, width: 900, height: 0 };
+        statusBar.boundingRect = { left: 600, top: 672, right: 900, bottom: 700, width: 300, height: 28 };
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                body: {
+                    querySelector: jest.fn((selector: string) => selector === '.status-bar' ? statusBar : null),
+                },
+            },
+        });
+
+        await view.onOpen();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('0px');
+        expect(animationFrames).toHaveLength(1);
+
+        containerEl.boundingRect = { left: 0, top: 0, right: 900, bottom: 700, width: 900, height: 700 };
+        runAnimationFrames();
+
+        expect(containerEl.style.getPropertyValue('--pa-chat-status-bar-clearance')).toBe('28px');
+    });
+
     it('updates bottom clearance when the Obsidian status bar appears after chat opens', async () => {
         const { view, containerEl } = createView({ panelWidth: 900 });
         const body = new MockElement('body');

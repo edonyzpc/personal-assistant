@@ -2752,6 +2752,10 @@ export class LLMView extends ItemView {
             this.statusBarResizeWindow = win;
             win.addEventListener('resize', refreshClearance);
         }
+
+        if (this.getStatusBarElement()) {
+            refreshClearance();
+        }
     }
 
     private disconnectStatusBarClearance() {
