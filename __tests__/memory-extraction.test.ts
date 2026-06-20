@@ -40,6 +40,23 @@ describe("TypeAUserProfileExtractor", () => {
         expect(snapshot.markdown).toContain("Remember I prefer concise Conventional Commits.");
     });
 
+    it("splits profile candidates at sentence and newline boundaries without lookbehind syntax", () => {
+        const candidates = extractCandidatesFromText(
+            [
+                "Remember I prefer concise answers. Please remember I usually write docs in Chinese.",
+                "Note that I always want signed commits.",
+            ].join("\n"),
+            "c-split",
+            "2026-06-16T08:00:00.000Z",
+        );
+
+        expect(candidates.map((candidate) => candidate.text)).toEqual([
+            "Remember I prefer concise answers.",
+            "Please remember I usually write docs in Chinese.",
+            "Note that I always want signed commits.",
+        ]);
+    });
+
     it("extracts user_correction candidates from English correction phrases", () => {
         const candidates = extractCandidatesFromText(
             "I told you don't use bullet points",

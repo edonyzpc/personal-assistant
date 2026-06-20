@@ -168,7 +168,7 @@ export function extractCandidatesFromText(
     observedAt: string,
 ): UserProfileCandidate[] {
     const candidates: UserProfileCandidate[] = [];
-    const sentences = text.split(/(?<=[.!?。！？])\s+|\n+/).map((entry) => entry.trim()).filter(Boolean);
+    const sentences = splitUserProfileSentences(text);
     for (const sentence of sentences) {
         const explicit = sentence.match(/\b(?:remember|please remember|note that|i prefer|i usually|i always|my preference is)\b/i)
             || sentence.match(/(?:记住|请记住|我偏好|我更喜欢|我通常|我的偏好是)/);
@@ -189,6 +189,30 @@ export function extractCandidatesFromText(
         });
     }
     return candidates;
+}
+
+function splitUserProfileSentences(text: string): string[] {
+    const sentences: string[] = [];
+    const sentenceBoundary = /[.!?。！？]\s+/g;
+
+    for (const line of text.split(/\n+/)) {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) continue;
+
+        let start = 0;
+        sentenceBoundary.lastIndex = 0;
+        for (let match = sentenceBoundary.exec(trimmedLine); match; match = sentenceBoundary.exec(trimmedLine)) {
+            const end = match.index + 1;
+            const sentence = trimmedLine.slice(start, end).trim();
+            if (sentence) sentences.push(sentence);
+            start = match.index + match[0].length;
+        }
+
+        const tail = trimmedLine.slice(start).trim();
+        if (tail) sentences.push(tail);
+    }
+
+    return sentences;
 }
 
 export function renderUserProfileMarkdown(records: readonly UserProfileRecord[], now = new Date()): string {
