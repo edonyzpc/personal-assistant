@@ -8,7 +8,7 @@
  * Do NOT tidy the decimals.
  */
 
-import type { PetState } from "./types";
+import type { PetState, PetTaskKind } from "./types";
 import { getPlatformDocument } from "../../platform-dom";
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,17 @@ const LIGHT_STROKE: Readonly<Record<PetState, string>> = {
     nudge: "#3dba82",
 };
 
-function strokeColor(state: PetState, isLight: boolean): string {
+const TASK_STROKE: Readonly<Record<PetTaskKind, string>> = {
+    review: "#4f73e6",
+    connection: "#14936b",
+    summary: "#c77700",
+    background: "#7c3aed",
+};
+
+function strokeColor(state: PetState, isLight: boolean, taskKind: PetTaskKind): string {
+    if (state === "working") {
+        return TASK_STROKE[taskKind];
+    }
     return isLight ? LIGHT_STROKE[state] : DARK_STROKE[state];
 }
 
@@ -114,7 +124,7 @@ function replaceSvgChildren(svgEl: SVGElement, children: SVGElement[]): void {
     }
 }
 
-export function createPetSvgElement(state: PetState): SVGSVGElement {
+export function createPetSvgElement(state: PetState, taskKind: PetTaskKind = "review"): SVGSVGElement {
     const svg = createSvgElement("svg");
     svg.setAttribute("xmlns", SVG_NS);
     svg.setAttribute("viewBox", VIEWBOX);
@@ -122,7 +132,7 @@ export function createPetSvgElement(state: PetState): SVGSVGElement {
     svg.setAttribute("height", "52");
     svg.setAttribute("aria-hidden", "true");
     svg.setAttribute("focusable", "false");
-    replaceSvgChildren(svg, buildInnerNodes(state, DARK_STROKE[state]));
+    replaceSvgChildren(svg, buildInnerNodes(state, strokeColor(state, false, taskKind)));
     return svg;
 }
 
@@ -202,7 +212,8 @@ export function updatePetSvgState(
     svgEl: SVGElement,
     state: PetState,
     isLightTheme: boolean,
+    taskKind: PetTaskKind = "review",
 ): void {
-    const color = strokeColor(state, isLightTheme);
+    const color = strokeColor(state, isLightTheme, taskKind);
     replaceSvgChildren(svgEl, buildInnerNodes(state, color));
 }

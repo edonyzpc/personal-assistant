@@ -101,7 +101,7 @@ Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statist
 
 ### VSS SQLite/WASM 依赖说明
 
-本地 VSS SQLite 后端使用固定版本 `@sqliteai/sqlite-wasm@3.50.4-sync.0.8.30-vector.0.9.23`。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。
+本地 VSS SQLite 后端使用官方 `@sqlite.org/sqlite-wasm` 包，固定版本为 `3.53.0-build1`。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。
 
 ### Mobile VSS 验证说明
 

@@ -13,7 +13,7 @@
 
 import { getPageletUiLanguage } from "../locales/pagelet";
 
-import type { BubbleContent, BubbleFinding } from "./bubble/types";
+import type { BubbleContent, BubbleFinding, BubbleQuickAccessCallbacks } from "./bubble/types";
 import type { BubbleView } from "./bubble/BubbleView";
 import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
 import type { PreloadCache } from "./preload/PreloadCache";
@@ -35,6 +35,10 @@ export interface BubbleCoordinatorCallbacks {
     onDismiss(): void;
     /** Trigger an immediate foreground review. */
     onReviewCurrentNote(): void;
+    /** Trigger note-connection discovery. */
+    onDiscoverConnections(): void;
+    /** Generate a periodic summary. */
+    onPeriodicSummary(): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +89,26 @@ export class BubbleCoordinator {
     // Bubble content builders
     // ======================================================================
 
+    private buildQuickAccessCallbacks(bubbleView: BubbleView): BubbleQuickAccessCallbacks {
+        return {
+            onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
+            onSourceClick: (link) => this.callbacks.onSourceClick(link),
+            onDismiss: () => this.callbacks.onDismiss(),
+            onReviewCurrentNote: () => {
+                bubbleView.close();
+                this.callbacks.onReviewCurrentNote();
+            },
+            onDiscoverConnections: () => {
+                bubbleView.close();
+                this.callbacks.onDiscoverConnections();
+            },
+            onPeriodicSummary: () => {
+                bubbleView.close();
+                this.callbacks.onPeriodicSummary();
+            },
+        };
+    }
+
     /**
      * Show the Bubble with cached background preparation findings, or an
      * empty state that offers to trigger an immediate analysis cycle.
@@ -98,6 +122,7 @@ export class BubbleCoordinator {
 
         const locale = getPageletUiLanguage();
         const cachedFindings = this.preloadCache.getFindings();
+        const quickAccessCallbacks = this.buildQuickAccessCallbacks(bubbleView);
 
         if (!this.host.settings.pagelet.onboardingShown && cachedFindings.length === 0) {
             const content = buildOnboardingContent(() => {
@@ -119,13 +144,9 @@ export class BubbleCoordinator {
                 sourceLink: f.sourceFile,
                 sourceTitle: f.sourceTitle,
             }));
-            content = buildQuickReviewContent(findings, {
-                onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
-                onSourceClick: (link) => this.callbacks.onSourceClick(link),
-                onDismiss: () => this.callbacks.onDismiss(),
-            }, locale);
+            content = buildQuickReviewContent(findings, quickAccessCallbacks, locale);
         } else {
-            content = buildEmptyContent(() => { this.callbacks.onReviewCurrentNote(); }, locale);
+            content = buildEmptyContent(quickAccessCallbacks, locale);
         }
 
         bubbleView.show(content, anchorEl);
@@ -171,6 +192,7 @@ export class BubbleCoordinator {
         if (!bubbleView || !anchorEl) return;
 
         const locale = getPageletUiLanguage();
+        const quickAccessCallbacks = this.buildQuickAccessCallbacks(bubbleView);
 
         if (rawFindings.length > 0) {
             const findings: BubbleFinding[] = rawFindings.map((f) => ({
@@ -185,7 +207,7 @@ export class BubbleCoordinator {
             }, locale);
             bubbleView.show(content, anchorEl);
         } else {
-            const content = buildEmptyContent(() => { this.callbacks.onReviewCurrentNote(); }, locale);
+            const content = buildEmptyContent(quickAccessCallbacks, locale);
             bubbleView.show(content, anchorEl);
         }
     }

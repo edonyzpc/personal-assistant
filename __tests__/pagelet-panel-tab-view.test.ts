@@ -9,6 +9,20 @@
 
 import { afterAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
 
+const mockMarkdownRender = jest.fn((
+    _app: unknown,
+    markdown: string,
+    target: HTMLElement,
+    _sourcePath: string,
+    _component: unknown,
+) => {
+    const rendered = (globalThis as unknown as { document: Document }).document.createElement("div");
+    rendered.className = "mermaid";
+    rendered.textContent = markdown;
+    target.appendChild(rendered);
+    return Promise.resolve();
+});
+
 jest.mock("obsidian", () => ({
     Notice: jest.fn(),
     addIcon: jest.fn(),
@@ -16,18 +30,28 @@ jest.mock("obsidian", () => ({
         load(): void {}
         unload(): void {}
     },
+    MarkdownRenderer: {
+        render: mockMarkdownRender,
+    },
     ItemView: class {
+        app: unknown;
         leaf: unknown;
         contentEl: unknown;
 
         constructor(leaf: unknown) {
+            this.app = {};
             this.leaf = leaf;
             this.contentEl = (globalThis as unknown as { document: Document }).document.createElement("div");
         }
     },
 }));
 
-type Listener = (event: { stopPropagation(): void; preventDefault(): void; target?: unknown }) => void | Promise<void>;
+type Listener = (event: {
+    stopPropagation(): void;
+    preventDefault(): void;
+    target?: unknown;
+    [key: string]: unknown;
+}) => void | Promise<void>;
 
 class FakeElement {
     readonly tagName: string;
@@ -83,6 +107,9 @@ class FakeElement {
     }
 
     appendChild<T extends FakeElement>(child: T): T {
+        if (child.parent) {
+            child.parent.children = child.parent.children.filter((candidate) => candidate !== child);
+        }
         child.parent = this;
         child.setConnected(this.isConnected);
         this.children.push(child);
@@ -151,6 +178,31 @@ class FakeElement {
                 target: this,
             });
         }
+    }
+
+    async dispatch(type: string, event: Record<string, unknown> = {}): Promise<void> {
+        for (const listener of this.listeners.get(type) ?? []) {
+            await listener({
+                stopPropagation: (): void => undefined,
+                preventDefault: (): void => undefined,
+                target: this,
+                ...event,
+            });
+        }
+    }
+
+    getBoundingClientRect(): DOMRect {
+        return {
+            top: 0,
+            left: 0,
+            right: 360,
+            bottom: 220,
+            width: 360,
+            height: 220,
+            x: 0,
+            y: 0,
+            toJSON: () => ({}),
+        } as DOMRect;
     }
 
     querySelector(selector: string): FakeElement | null {
@@ -230,6 +282,7 @@ import {
 describe("Pagelet panel and tab view regressions", () => {
     beforeEach(() => {
         globalRecord.document = new FakeDocument();
+        mockMarkdownRender.mockClear();
     });
 
     afterAll(() => {
@@ -280,6 +333,243 @@ describe("Pagelet panel and tab view regressions", () => {
         const contentEl = view.contentEl as unknown as FakeElement;
         expect(contentEl.textContent).toContain("No findings yet");
         expect(contentEl.querySelector(".pa-pagelet-tab-header")).toBeNull();
+    });
+
+    it("renders discovery payloads in the native detail tab", async () => {
+        const view = new PageletDetailView({} as never, () => "en");
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "discover",
+            content: [{
+                title: "Diary thread",
+                description: "Shared diary thread",
+                insightText: "Shared concepts: current note links to a related diary note.",
+                sourceFile: "Diary-2023-04-03.md",
+                sourceTitle: "Diary-2023-04-03",
+            }],
+            extra: {
+                connections: [{
+                    fromNote: "2.fleeting/Test-2023-04-08.md",
+                    toNote: "Diary-2023-04-03.md",
+                    strength: "medium",
+                    sharedConcepts: ["diary thread"],
+                }],
+            },
+        });
+
+        const contentEl = view.contentEl as unknown as FakeElement;
+        expect(mockMarkdownRender).not.toHaveBeenCalled();
+        expect(contentEl.textContent).toContain("Connection Map");
+        expect(contentEl.textContent).toContain("Discovered Connections");
+        expect(contentEl.textContent).toContain("Test-2023-04-08");
+        expect(contentEl.textContent).toContain("Diary-2023-04-03");
+        expect(contentEl.querySelector(".pa-pagelet-panel-connection-graph")).not.toBeNull();
+        expect(contentEl.querySelectorAll(".pa-pagelet-panel-connection-node")).toHaveLength(2);
+        expect(contentEl.querySelectorAll(".pa-pagelet-panel-connection-edge")).toHaveLength(1);
+        expect(contentEl.textContent).not.toContain("No findings yet");
+    });
+
+    it("renders periodic summary markdown in the native detail tab", async () => {
+        const view = new PageletDetailView({} as never, () => "en");
+        const markdown = [
+            "# Periodic Summary",
+            "",
+            "## Summary",
+            "A concise periodic summary.",
+            "",
+            "- First insight",
+        ].join("\n");
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "summary",
+            content: [{
+                title: "pagelet-weekly-review.md",
+                description: "Raw finding text should not render in the summary tab.",
+            }],
+            extra: { markdown },
+            sourcePath: ".pagelet/pagelet-weekly-review.md",
+        });
+
+        const contentEl = view.contentEl as unknown as FakeElement;
+        expect(mockMarkdownRender).toHaveBeenCalledTimes(1);
+        expect(mockMarkdownRender).toHaveBeenCalledWith(
+            expect.anything(),
+            markdown,
+            expect.anything(),
+            ".pagelet/pagelet-weekly-review.md",
+            expect.anything(),
+        );
+        expect(contentEl.querySelector(".pa-pagelet-panel-summary-preview")).not.toBeNull();
+        expect(contentEl.textContent).toContain("Periodic Summary Preview");
+        expect(contentEl.textContent).toContain("A concise periodic summary.");
+        expect(contentEl.textContent).not.toContain("1 findings found");
+        expect(contentEl.textContent).not.toContain("Raw finding text should not render");
+    });
+
+    it("saves periodic summary markdown from the native detail tab", async () => {
+        const markdown = "# Periodic Summary\n\nA concise periodic summary.";
+        const summarySaveNote = {
+            fileName: "pagelet-weekly-review.md",
+            markdown,
+            targetFolder: ".pagelet",
+            targetPath: ".pagelet/pagelet-weekly-review.md",
+            sources: ["notes/current.md"],
+            tokenCost: { input: 1, output: 2 },
+        };
+        const saveSummary = jest.fn(async (_note: typeof summarySaveNote) => ({
+            success: true,
+            filePath: ".pagelet/pagelet-weekly-review.md",
+        }));
+        const view = new PageletDetailView({} as never, () => "en", saveSummary);
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "summary",
+            content: [],
+            extra: { markdown },
+            sourcePath: summarySaveNote.targetPath,
+            summarySaveNote,
+        });
+
+        const contentEl = view.contentEl as unknown as FakeElement;
+        const saveButton = contentEl.querySelector(".pa-pagelet-tab-summary-save");
+        expect(saveButton).not.toBeNull();
+        expect(saveButton?.textContent).toBe("Save as review note");
+
+        await saveButton?.click();
+
+        expect(saveSummary).toHaveBeenCalledWith(summarySaveNote);
+        expect(saveButton?.disabled).toBe(true);
+        expect(saveButton?.getAttribute("aria-busy")).toBeNull();
+        expect(saveButton?.textContent).toBe("Saved");
+        const stateText = JSON.stringify(view.getState());
+        expect(stateText).not.toContain(markdown);
+        expect((view.getState() as { payload?: { summarySaveNote?: unknown } }).payload?.summarySaveNote).toBeUndefined();
+    });
+
+    it("does not restore unsaved summary markdown from native view state history", async () => {
+        const markdown = "# Periodic Summary\n\nA concise periodic summary.";
+        const summarySaveNote = {
+            fileName: "pagelet-weekly-review.md",
+            markdown,
+            targetFolder: ".pagelet",
+            targetPath: ".pagelet/pagelet-weekly-review.md",
+            sources: ["notes/current.md"],
+            tokenCost: { input: 1, output: 2 },
+        };
+        const view = new PageletDetailView({} as never, () => "en");
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "summary",
+            content: [],
+            extra: { markdown },
+            sourcePath: summarySaveNote.targetPath,
+            summarySaveNote,
+        });
+
+        const state = view.getState();
+        const stateText = JSON.stringify(state);
+        expect(stateText).not.toContain(markdown);
+        expect(stateText).not.toContain("summarySaveNote");
+        expect(stateText).toContain(summarySaveNote.targetPath);
+
+        const restored = new PageletDetailView({} as never, () => "en");
+        await restored.onOpen();
+        await restored.setState(state, {} as never);
+
+        const contentEl = restored.contentEl as unknown as FakeElement;
+        expect(contentEl.textContent).toContain("Result no longer available");
+        expect(contentEl.textContent).toContain("open a saved review or summary note");
+        expect(contentEl.textContent).not.toContain("A concise periodic summary.");
+        expect(contentEl.querySelector(".pa-pagelet-tab-summary-save")).toBeNull();
+    });
+
+    it("does not restore discovery payloads from native view state history", async () => {
+        const view = new PageletDetailView({} as never, () => "en");
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "discover",
+            content: [{
+                title: "Diary thread",
+                description: "Shared diary thread",
+                insightText: "Shared concepts: current note links to a related diary note.",
+                sourceFile: "Diary-2023-04-03.md",
+                sourceTitle: "Diary-2023-04-03",
+                actions: [{
+                    label: "Non serializable action",
+                    callback: () => undefined,
+                }],
+            }],
+            extra: {
+                connections: [{
+                    fromNote: "2.fleeting/Test-2023-04-08.md",
+                    toNote: "Diary-2023-04-03.md",
+                    strength: "medium",
+                    sharedConcepts: ["diary thread"],
+                }],
+            },
+        });
+        const serializedState = JSON.parse(JSON.stringify(view.getState()));
+        expect(JSON.stringify(serializedState)).not.toContain("Non serializable action");
+        expect(JSON.stringify(serializedState)).not.toContain("Diary thread");
+        expect(JSON.stringify(serializedState)).not.toContain("diary thread");
+
+        const restored = new PageletDetailView({} as never, () => "en");
+        await restored.onOpen();
+        await restored.setState(serializedState, {} as never);
+
+        const contentEl = restored.contentEl as unknown as FakeElement;
+        expect(contentEl.textContent).toContain("Result no longer available");
+        expect(contentEl.textContent).not.toContain("Connection Map");
+        expect(contentEl.textContent).not.toContain("Discovered Connections");
+        expect(contentEl.textContent).not.toContain("Test-2023-04-08");
+        expect(contentEl.textContent).not.toContain("Diary-2023-04-03");
+        expect(contentEl.querySelector(".pa-pagelet-panel-connection-graph")).toBeNull();
+    });
+
+    it("does not persist panel-only extra fields in native detail state", async () => {
+        const view = new PageletDetailView({} as never, () => "en");
+        const connections = [{
+            fromNote: "2.fleeting/Test-2023-04-08.md",
+            toNote: "Diary-2023-04-03.md",
+            strength: "medium" as const,
+            sharedConcepts: ["diary thread"],
+        }];
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "discover",
+            content: [],
+            extra: {
+                connections,
+                scope: {
+                    range: "last7",
+                    candidates: [],
+                    includedCount: 0,
+                    skippedCount: 0,
+                },
+            } as never,
+        });
+
+        const state = view.getState() as { payload?: { extra?: Record<string, unknown> } };
+        expect(state.payload?.extra).toBeUndefined();
+        expect(JSON.stringify(state)).not.toContain("diary thread");
     });
 
     it("shows visible review progress and restores the panel after current-note review", async () => {
@@ -479,5 +769,216 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelectorAll(".pa-pagelet-suggestion-card")).toHaveLength(1);
         expect(container.textContent).toContain("Second action.");
         expect(container.textContent).not.toContain("First action.");
+    });
+
+    it("renders discovery note connections as an interactive SVG graph", async () => {
+        const relatedNoteClick = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onRelatedNoteClick: relatedNoteClick,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [{
+            title: "Current note 'Test-2023-04-08' links to",
+            description: "Finding prose should not become a graph node.",
+        }], {
+            sourcePath: "2.fleeting/Test-2023-04-08.md",
+            connections: [
+                {
+                    fromNote: "2.fleeting/Test-2023-04-08.md",
+                    toNote: "Diary-2023-04-03.md",
+                    strength: "medium",
+                    sharedConcepts: ["diary thread"],
+                },
+                {
+                    fromNote: "2.fleeting/Test-2023-04-08.md",
+                    toNote: "PA-Memory/vault-insights.md",
+                    strength: "strong",
+                    sharedConcepts: ["tag1"],
+                },
+            ],
+        });
+
+        expect(mockMarkdownRender).not.toHaveBeenCalled();
+        const graph = container.querySelector(".pa-pagelet-panel-connection-graph");
+        expect(graph).not.toBeNull();
+        expect(graph?.getAttribute("role")).toBe("group");
+        expect(graph?.getAttribute("aria-label")).toBe("Note connection graph");
+        expect(container.querySelector(".pa-pagelet-panel-connection-mermaid")).toBeNull();
+
+        const nodes = container.querySelectorAll(".pa-pagelet-panel-connection-node");
+        const edges = container.querySelectorAll(".pa-pagelet-panel-connection-edge");
+        const dots = container.querySelectorAll(".pa-pagelet-panel-connection-node-dot");
+        expect(nodes).toHaveLength(3);
+        expect(edges).toHaveLength(2);
+        expect(dots.map((dot) => dot.getAttribute("r"))).toEqual(["3.5", "2.75", "2.75"]);
+        expect(nodes.map((node) => node.getAttribute("data-note-path"))).toEqual([
+            "2.fleeting/Test-2023-04-08.md",
+            "Diary-2023-04-03.md",
+            "PA-Memory/vault-insights.md",
+        ]);
+        expect(nodes[0]?.getAttribute("role")).toBe("button");
+        expect(nodes[0]?.getAttribute("aria-label")).toBe("Open note 2.fleeting/Test-2023-04-08.md");
+        expect(edges.map((edge) => edge.getAttribute("data-strength"))).toEqual(["medium", "strong"]);
+        expect(container.textContent).toContain("Test-2023-04-08");
+        expect(container.textContent).toContain("Diary-2023-04-03");
+        expect(container.textContent).toContain("vault-insights");
+        expect(container.textContent).not.toContain("Current note");
+
+        await nodes[1]?.click();
+        expect(relatedNoteClick).toHaveBeenCalledWith(
+            "Diary-2023-04-03.md",
+            "2.fleeting/Test-2023-04-08.md",
+        );
+    });
+
+    it("expires Discovery graph drag click suppression before the next intentional click", async () => {
+        jest.useFakeTimers();
+        try {
+            const relatedNoteClick = jest.fn();
+            const container = new FakeElement("div");
+            container.isConnected = true;
+            const panel = new PanelView({
+                app: {} as never,
+                callbacks: {
+                    onClose: () => undefined,
+                    onExpandToTab: () => undefined,
+                    onSaveAsReviewNote: async () => undefined,
+                    onSourceClick: () => undefined,
+                    onRelatedNoteClick: relatedNoteClick,
+                },
+                getLocale: () => "en",
+            });
+
+            panel.mount(container as unknown as HTMLElement);
+            panel.open("discover", [{
+                title: "Diary thread",
+                description: "Finding prose should not become a graph node.",
+            }], {
+                sourcePath: "2.fleeting/Test-2023-04-08.md",
+                connections: [{
+                    fromNote: "2.fleeting/Test-2023-04-08.md",
+                    toNote: "Diary-2023-04-03.md",
+                    strength: "medium",
+                    sharedConcepts: ["diary thread"],
+                }],
+            });
+
+            const graph = container.querySelector(".pa-pagelet-panel-connection-graph");
+            const node = container.querySelectorAll(".pa-pagelet-panel-connection-node")[1];
+            expect(graph).not.toBeNull();
+            expect(node).not.toBeUndefined();
+
+            await node?.dispatch("pointerdown", {
+                pointerId: 1,
+                pointerType: "mouse",
+                clientX: 20,
+                clientY: 20,
+            });
+            await graph?.dispatch("pointermove", {
+                pointerId: 1,
+                pointerType: "mouse",
+                clientX: 60,
+                clientY: 60,
+            });
+            await graph?.dispatch("pointerup", {
+                pointerId: 1,
+                pointerType: "mouse",
+                clientX: 60,
+                clientY: 60,
+            });
+
+            expect(node?.getAttribute("data-suppress-click")).toBe("true");
+            jest.advanceTimersByTime(251);
+            expect(node?.getAttribute("data-suppress-click")).toBeNull();
+
+            await node?.click();
+
+            expect(relatedNoteClick).toHaveBeenCalledWith(
+                "Diary-2023-04-03.md",
+                "2.fleeting/Test-2023-04-08.md",
+            );
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("uses explicit Discovery source path as the current graph node", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onRelatedNoteClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [{
+            title: "Current note",
+            description: "Finding prose should not become a graph node.",
+        }], {
+            sourcePath: "notes/current.md",
+            connections: [{
+                fromNote: "notes/other.md",
+                toNote: "notes/current.md",
+                strength: "medium",
+                sharedConcepts: ["shared concept"],
+            }],
+        });
+
+        const nodes = container.querySelectorAll(".pa-pagelet-panel-connection-node");
+        expect(nodes.map((node) => node.getAttribute("data-note-path"))).toEqual([
+            "notes/current.md",
+            "notes/other.md",
+        ]);
+        expect(nodes[0]?.classList.contains("pa-pagelet-panel-connection-node--current")).toBe(true);
+    });
+
+    it("does not turn Discovery status copy into clickable graph nodes", () => {
+        const relatedNoteClick = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onRelatedNoteClick: relatedNoteClick,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("discover", [{
+            title: "Enable Memory to Discover Connections",
+            description: "Discovery needs Memory to be prepared first.",
+            insightText: "Discovery needs Memory to be prepared first.",
+            sourceFile: "",
+            sourceTitle: "",
+        }], {});
+
+        expect(container.querySelector(".pa-pagelet-panel-connection-graph")).toBeNull();
+        expect(container.querySelectorAll(".pa-pagelet-panel-connection-node")).toHaveLength(0);
+        expect(container.textContent).toContain("No connection graph yet.");
+        expect(container.textContent).toContain("Enable Memory to Discover Connections");
+        expect(relatedNoteClick).not.toHaveBeenCalled();
     });
 });

@@ -15,10 +15,23 @@
  *   component, consistent with the project's existing raw DOM pattern.
  */
 
+import { Component } from "obsidian";
+import type { App } from "obsidian";
+
+import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import type { PanelFinding } from "../panel/types";
-import type { TabSection } from "./types";
+import type { PageletDetailPayload, TabSection } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { clearChildren, el } from "../dom-utils";
+import { renderDiscoveryLayout, renderSummaryPreview } from "../panel/PanelLayouts";
+
+interface TabViewOptions {
+    app?: App;
+    onConnectionNodeClick?: (noteName: string, sourcePath?: string) => void;
+    onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
+}
+
+type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState">;
 
 // ---------------------------------------------------------------------------
 // TabView
@@ -40,9 +53,12 @@ export class TabView {
     private bodyEl: HTMLDivElement | null = null;
     private containerEl: HTMLElement | null = null;
     private _isOpen = false;
+    private readonly options: TabViewOptions;
+    private renderComponent: Component | null = null;
 
-    constructor(locale: PageletLocale = "en") {
+    constructor(locale: PageletLocale = "en", options: TabViewOptions = {}) {
         this.locale = locale;
+        this.options = options;
     }
 
     // -----------------------------------------------------------------------
@@ -77,12 +93,13 @@ export class TabView {
     open(
         title: string,
         content: PanelFinding[] | TabSection[],
+        options: TabOpenOptions = {},
     ): void {
         this.ensureMounted();
         if (!this.rootEl || !this.bodyEl) return;
 
         this.rootEl.setAttribute("aria-label", title);
-        this.renderContent(content);
+        this.renderContent(content, options);
         this._isOpen = true;
     }
 
@@ -98,6 +115,7 @@ export class TabView {
 
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
+        this.unloadRenderComponent();
         if (this.rootEl) {
             this.rootEl.remove();
             this.rootEl = null;
@@ -130,9 +148,45 @@ export class TabView {
     // Content rendering
     // -----------------------------------------------------------------------
 
-    private renderContent(content: PanelFinding[] | TabSection[]): void {
+    private renderContent(
+        content: PanelFinding[] | TabSection[],
+        options: TabOpenOptions = {},
+    ): void {
         if (!this.bodyEl) return;
         clearChildren(this.bodyEl);
+
+        if (options.restoredFromState) {
+            this.unloadRenderComponent();
+            this.renderRestoredState();
+            return;
+        }
+
+        if (options.layoutType === "summary") {
+            const markdown = options.extra?.markdown;
+            if (typeof markdown === "string" && markdown.trim().length > 0) {
+                this.renderSummaryContent(markdown, options);
+            } else {
+                this.unloadRenderComponent();
+                this.renderEmptyState();
+            }
+            return;
+        }
+
+        this.unloadRenderComponent();
+
+        if (options.layoutType === "discover" && !isTabSections(content)) {
+            renderDiscoveryLayout(
+                this.bodyEl,
+                content as PanelFinding[],
+                options.extra?.connections,
+                this.locale,
+                {
+                    sourcePath: options.sourcePath,
+                    onConnectionNodeClick: this.options.onConnectionNodeClick,
+                },
+            );
+            return;
+        }
 
         if (content.length === 0) {
             this.renderEmptyState();
@@ -160,6 +214,24 @@ export class TabView {
             pageletT("pagelet.tab.empty.title", this.locale)));
         card.appendChild(el("div", "pa-pagelet-tab-empty-body",
             pageletT("pagelet.tab.empty.body", this.locale)));
+        section.appendChild(card);
+
+        this.bodyEl.appendChild(section);
+    }
+
+    /** Render state restored from Obsidian without hidden full AI output. */
+    private renderRestoredState(): void {
+        if (!this.bodyEl) return;
+
+        const section = el("div", "pa-pagelet-tab-section");
+        section.appendChild(el("h2", undefined,
+            pageletT("pagelet.tab.overview", this.locale)));
+
+        const card = el("div", "pa-pagelet-tab-empty-card");
+        card.appendChild(el("div", "pa-pagelet-tab-empty-title",
+            pageletT("pagelet.tab.restored.title", this.locale)));
+        card.appendChild(el("div", "pa-pagelet-tab-empty-body",
+            pageletT("pagelet.tab.restored.body", this.locale)));
         section.appendChild(card);
 
         this.bodyEl.appendChild(section);
@@ -280,6 +352,56 @@ export class TabView {
 
             this.bodyEl.appendChild(findingsSection);
         }
+    }
+
+    private renderSummaryContent(markdown: string, options: TabOpenOptions): void {
+        if (!this.bodyEl) return;
+        this.unloadRenderComponent();
+        this.renderComponent = new Component();
+        this.renderComponent.load();
+
+        renderSummaryPreview(
+            this.bodyEl,
+            markdown,
+            this.options.app,
+            this.renderComponent,
+            options.sourcePath ?? "",
+            this.locale,
+        );
+        this.renderSummaryActions(options.summarySaveNote);
+    }
+
+    private renderSummaryActions(summarySaveNote?: GeneratedReviewNote): void {
+        if (!this.bodyEl || !summarySaveNote || !this.options.onSaveSummaryNote) return;
+
+        const actions = el("div", "pa-pagelet-tab-summary-actions");
+        const saveBtn = el("button", "pa-pagelet-tab-summary-save", pageletT("pagelet.panel.save", this.locale));
+        saveBtn.addEventListener("click", async (event) => {
+            event.preventDefault();
+            if (saveBtn.disabled) return;
+            saveBtn.disabled = true;
+            saveBtn.setAttribute("aria-busy", "true");
+            saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.locale);
+
+            const result = await this.options.onSaveSummaryNote?.(summarySaveNote);
+            saveBtn.removeAttribute("aria-busy");
+            if (result?.success) {
+                saveBtn.textContent = pageletT("pagelet.tab.summarySaved", this.locale);
+                saveBtn.setAttribute("aria-disabled", "true");
+                return;
+            }
+
+            saveBtn.disabled = false;
+            saveBtn.setAttribute("aria-disabled", "false");
+            saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
+        });
+        actions.appendChild(saveBtn);
+        this.bodyEl.appendChild(actions);
+    }
+
+    private unloadRenderComponent(): void {
+        this.renderComponent?.unload();
+        this.renderComponent = null;
     }
 }
 

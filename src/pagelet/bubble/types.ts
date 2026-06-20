@@ -32,6 +32,8 @@ export interface BubbleContent {
 /** Quick action button in the Bubble */
 export interface BubbleAction {
     label: string;
+    description?: string;
+    icon?: string;
     primary?: boolean;
     callback: () => void;
 }
@@ -41,6 +43,13 @@ export interface BubbleCallbacks {
     onExpandPanel: (type?: string) => void;
     onSourceClick: (sourceLink: string) => void;
     onDismiss: () => void;
+}
+
+/** Quick-access callbacks for Pagelet's primary user-facing functions. */
+export interface BubbleQuickAccessCallbacks extends BubbleCallbacks {
+    onReviewCurrentNote: () => void;
+    onDiscoverConnections: () => void;
+    onPeriodicSummary: () => void;
 }
 
 /** Options for creating a BubbleView */

@@ -87,7 +87,7 @@ export function registerPageletCommands(
 
     host.addCommand({
         id: PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
-        name: pageletT("pagelet.command.preloadStatus", locale),
+        name: pageletT("pagelet.command.preloadStatusLegacy", locale),
         callback: () => { void callbacks.onShowBackgroundPreparationStatus(); },
     });
 

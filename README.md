@@ -128,7 +128,7 @@ Personal Assistant does not include telemetry or analytics. By default, Statisti
 
 ### VSS SQLite/WASM dependency note
 
-The local VSS SQLite backend uses `@sqliteai/sqlite-wasm` pinned to `3.50.4-sync.0.8.30-vector.0.9.23`. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
+The local VSS SQLite backend uses the official `@sqlite.org/sqlite-wasm` package pinned to `3.53.0-build1`. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
 
 ### Mobile VSS validation note
 

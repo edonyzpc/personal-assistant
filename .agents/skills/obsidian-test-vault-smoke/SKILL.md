@@ -13,6 +13,19 @@ Automated Jest/lint/build checks are implementation validation. They are not app
 
 Do not claim UI/UX validation from CLI or DOM checks alone. UI/UX smoke requires the visible app window and real user-like interaction, usually with Computer Use, screenshots, or direct visual inspection.
 
+## Smoke Tiers
+
+Pick the lightest tier that covers the changed surface. Do not blindly run both full Jest and `make deploy` when `make deploy` will already run test, lint, and build; use focused checks first for fast failure localization, then close with the appropriate app tier.
+
+| Tier | Use when | Required checks |
+| --- | --- | --- |
+| `quick` | Narrow code-only or test-only change | `git status --short`, relevant `git diff`, nearest Jest suites, `npx tsc -noEmit -skipLibCheck` when type-sensitive, `git diff --check` |
+| `app-runtime` | Runtime, command, packaging, Pagelet shell, Chat/Preview/Stats mount, Memory readiness | `make deploy`, plugin reload, CLI/DOM runner checks, fresh console/error capture |
+| `full-ui` | Visible UI, CSS/layout/copy, Pagelet workflow, settings, release/beta confidence | `app-runtime` plus real Obsidian window interaction, screenshots, UX notes, and provider/write-path checks when applicable |
+| `release-gate` | Release, broad refactor, shared infrastructure | Focused checks if useful, then `make deploy`, full app runtime, required UI/UX surfaces, docs/tracker reconciliation if smoke evidence changes |
+
+If `make deploy` passes, it has already run full Jest, lint, build, and asset deployment. Run standalone `npm test -- --runInBand` before `make deploy` only when you need serialized failure detail or a broad pre-deploy signal.
+
 ## Fast Path
 
 Run from the `personal-assistant` repo root.
@@ -24,7 +37,7 @@ Run from the `personal-assistant` repo root.
 2. Run focused tests first:
    - Use nearest Jest tests for narrow changes.
    - For shared runtime or type-sensitive changes, include `npx tsc -noEmit -skipLibCheck`.
-   - For broad or release-facing work, run `npm test -- --runInBand`, `npm run lint`, `npm run build`, and `git diff --check`.
+   - For broad or release-facing work, prefer `make deploy` as the final local gate because it runs tests, lint, build, and deploys assets.
 
 3. Deploy and reload the real plugin:
 
@@ -42,8 +55,8 @@ Prefer `obsidian plugin:reload id=personal-assistant vault=test` after `make dep
 ```bash
 obsidian open path=pagelet-smoke-golden.md vault=test
 obsidian command id=personal-assistant:pa-pagelet:open-panel vault=test
-obsidian dev:dom selector=.pa-pagelet-view total vault=test
-obsidian dev:dom selector=.pa-pagelet-view text vault=test
+obsidian dev:dom selector=.pa-pagelet-panel total vault=test
+obsidian dev:dom selector=.pa-pagelet-panel text vault=test
 ```
 
 5. Decide whether UI/UX smoke is required:
@@ -102,10 +115,10 @@ Use CLI developer commands for setup, instrumentation, and debugging. Use Comput
 DOM assertions:
 
 ```bash
-obsidian dev:dom selector=.pa-pagelet-view total vault=test
-obsidian dev:dom selector=.pa-pagelet-view text vault=test
-obsidian dev:dom selector=.pa-pagelet-view attr=aria-label vault=test
-obsidian dev:dom selector=.pa-pagelet-view css=display vault=test
+obsidian dev:dom selector=.pa-pagelet-panel total vault=test
+obsidian dev:dom selector=.pa-pagelet-panel text vault=test
+obsidian dev:dom selector=.pa-pagelet-panel attr=aria-label vault=test
+obsidian dev:dom selector=.pa-pagelet-panel css=display vault=test
 ```
 
 Runtime eval:
@@ -122,15 +135,18 @@ obsidian eval code="app.plugins.plugins['personal-assistant']?.settings?.aiProvi
 obsidian eval code="(async()=>await app.vault.adapter.read('pagelet-smoke-runner.js').catch(()=> 'missing'))()" vault=test
 ```
 
-Console capture must be sequential. Do not run `dev:console` and `dev:debug off` in parallel:
+Console capture must be sequential. Use a fresh debug window so old buffered errors are not mistaken for this smoke run. Do not run `dev:console` and `dev:debug off` in parallel:
 
 ```bash
+obsidian dev:debug off vault=test
 obsidian dev:debug on vault=test
 # run the action under test
-obsidian dev:console limit=50 vault=test
+obsidian dev:console limit=120 vault=test
 obsidian dev:errors vault=test
 obsidian dev:debug off vault=test
 ```
+
+Treat `dev:errors` entries whose timestamps predate the fresh `dev:debug on` as historical noise unless they recur during the current action. Record low-risk Obsidian/app noise separately from plugin errors.
 
 Screenshots and mobile emulation:
 
@@ -141,6 +157,17 @@ obsidian dev:mobile off vault=test
 ```
 
 Use CLI developer commands for instrumentation and setup. Do not use them as a substitute for UI/UX smoke when the user-facing experience is part of the change.
+
+### UI Evidence Mismatch
+
+When Computer Use, screenshot, accessibility tree, and DOM disagree, do not guess. Cross-check visibility and hit testing:
+
+```bash
+obsidian eval code="(()=>{const el=document.querySelector('.pa-pagelet-panel'); if(!el) return null; const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return {x:r.x,y:r.y,width:r.width,height:r.height,display:s.display,visibility:s.visibility,opacity:s.opacity,zIndex:s.zIndex,text:el.textContent?.slice(0,160)}})()" vault=test
+obsidian eval code="(()=>[[900,80],[1050,120],[1240,120]].map(([x,y])=>{const el=document.elementFromPoint(x,y); return {x,y,tag:el?.tagName,cls:el?.className,text:el?.textContent?.slice(0,80)}}))()" vault=test
+```
+
+Use this as supporting evidence only. A visible UI/UX PASS still needs real-window observation or screenshot evidence after the UI settles.
 
 ## UI/UX Interaction Smoke
 
@@ -269,7 +296,7 @@ Classify UX findings by user impact:
 
 ## Pagelet Runner
 
-For Pagelet regressions, prefer the durable runner after deployment and plugin reload:
+For Pagelet regressions, prefer the durable shell runner after deployment and plugin reload:
 
 ```bash
 make deploy
@@ -306,6 +333,67 @@ Interpretation:
 - `SKIP`: optional UI affordance or fixture was not present in that run.
 
 If the runner sends prompts to the configured AI provider, treat that as allowed for smoke unless the user says otherwise, and report which smoke path ran plus the provider/model from the result artifact.
+
+## Pagelet Full Flow Smoke
+
+Use this when Pagelet UI, state, save flow, write actions, related notes, provider integration, or docs for the user workflow changed. Keep the target markdown note active before review.
+
+Recommended sequence:
+
+```bash
+make deploy
+cp scripts/pagelet-smoke-runner.js test/pagelet-smoke-runner.js
+obsidian plugin:reload id=personal-assistant vault=test
+obsidian open path=pagelet-smoke-golden.md vault=test
+obsidian eval code="app.workspace.getActiveFile()?.path" vault=test
+obsidian dev:debug off vault=test
+obsidian dev:debug on vault=test
+obsidian eval code="(async()=>eval(await app.vault.adapter.read('pagelet-smoke-runner.js')))()" vault=test
+```
+
+Then use the real Obsidian window for the UX path where practical:
+
+- Open Pagelet from the visible pet/ribbon or command path.
+- Toggle `Current`, `Yesterday`, `Last 3 days`, and `Last 7 days`; verify selected rows, skipped rows, and text-unit estimates.
+- Run `Review selected` only on test-vault fixture notes; report provider/model and note paths.
+- Verify loading/progress, result cards, related notes, source buttons, `Research`, `Add to draft`, `Dismiss`, `Remove`, draft textarea editing, and `Expand to tab`.
+- For save flow, verify preview/confirmation appears before writing, then confirm and read the generated `.pagelet/` note.
+- Verify Write Action Framework evidence in console when saving: `gate.target-confinement.ok`, `gate.preview.shown`, `gate.confirmation.received`, `gate.stale-reread.ok`, and `execute.ok`.
+
+Useful post-save evidence:
+
+```bash
+obsidian files folder=.pagelet ext=md vault=test
+obsidian read path=.pagelet/<new-review-note>.md vault=test
+obsidian dev:console limit=200 vault=test
+obsidian dev:errors vault=test
+obsidian dev:debug off vault=test
+```
+
+Provider-backed review is allowed only for repo-local test-vault fixture content unless the user approves broader data. If CLI/Computer Use action is blocked because note text may be sent to an AI provider, do not work around the block; ask for explicit approval or mark that path `BLOCKED`.
+
+## Cross-Surface Mount Matrix
+
+Run this lightweight matrix after broad plugin, command registration, packaging, or shared UI changes. It is not a substitute for surface-specific UI/UX smoke.
+
+```bash
+obsidian command id=personal-assistant:open-chat vault=test
+obsidian dev:dom selector=.llm-view total vault=test
+obsidian dev:dom selector=.llm-chat-container total vault=test
+obsidian dev:dom selector=.llm-input total vault=test
+
+obsidian command id=personal-assistant:preview-records vault=test
+obsidian dev:dom selector=#persoanl-assistant-record-list total vault=test
+obsidian dev:dom selector=.pa-recordlist-preview-view total vault=test
+
+obsidian command id=personal-assistant:show-statistics vault=test
+obsidian dev:dom selector=.pa-statistics-view total vault=test
+obsidian dev:dom selector=.pa-statistics-view text vault=test
+
+obsidian eval code="(()=>{const s=app.plugins.plugins['personal-assistant']?.settings; return {aiProvider:s?.aiProvider ?? null, chatModelName:s?.chatModelName ?? null, pageletEnabled:s?.pagelet?.enabled ?? null, pageletPreloadEnabled:s?.pagelet?.preloadEnabled ?? null};})()" vault=test
+```
+
+Do not send a Chat prompt, trigger Memory rebuild, or change settings in this matrix unless the changed code requires it.
 
 ## Surface Checklist
 

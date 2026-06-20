@@ -196,6 +196,25 @@ describe("PetView locale labels", () => {
     it("resolves Chinese aria-label when the Pagelet UI locale is zh", () => {
         expect(getPetAriaLabel("zh")).toBe("拾页助手");
     });
+
+    it("resolves task-specific aria-label while working", () => {
+        expect(getPetAriaLabel("en", "working", "connection")).toBe("Pagelet assistant: discovering connections");
+        expect(getPetAriaLabel("zh", "working", "summary")).toBe("拾页助手: 正在准备周期性整理");
+    });
+});
+
+describe("PetView task kind", () => {
+    it("defaults to review and can switch task kind before mounting", () => {
+        const view = new PetView({
+            callbacks: { onToggleBubble: () => undefined },
+        });
+
+        expect(view.taskKind).toBe("review");
+
+        view.setTaskKind("summary");
+
+        expect(view.taskKind).toBe("summary");
+    });
 });
 
 describe("PetView touch suppression", () => {

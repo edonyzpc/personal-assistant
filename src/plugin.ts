@@ -354,7 +354,11 @@ export class PluginManager extends Plugin {
         this.registerView(
             PAGELET_DETAIL_VIEW_TYPE,
             (leaf) => {
-                return new PageletDetailView(leaf, () => this.getPageletLocale());
+                return new PageletDetailView(
+                    leaf,
+                    () => this.getPageletLocale(),
+                    (note) => this.writePageletReviewNote(note),
+                );
             }
         );
 

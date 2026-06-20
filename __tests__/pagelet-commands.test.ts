@@ -38,7 +38,7 @@ function makeCallbacks(): PageletCommandCallbacks {
 }
 
 describe("registerPageletCommands", () => {
-    it("registers final Pagelet open/review/status commands", () => {
+    it("registers final Pagelet open/review/status commands without duplicates", () => {
         const host = makeHost();
         const callbacks = makeCallbacks();
 
@@ -50,6 +50,9 @@ describe("registerPageletCommands", () => {
             PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
             PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
         ]));
+
+        expect(new Set(host.registered.map((command) => command.id)).size).toBe(host.registered.length);
+        expect(new Set(host.registered.map((command) => command.name)).size).toBe(host.registered.length);
     });
 
     it("dispatches commands to the provided callbacks", () => {

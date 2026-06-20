@@ -15,13 +15,36 @@
 }
 
 @keyframes pa-pagelet-pet-breathe {
-    0%, 100% { transform: scale(1); }
-    50% { transform: scale(1.02); }
+    0%, 100% { transform: translateY(0) rotate(-1deg) scale(1); }
+    50% { transform: translateY(2px) rotate(1.4deg) scale(1.055); }
 }
 
 @keyframes pa-pagelet-pet-pulse {
     0%, 100% { transform: scale(1); }
     50% { transform: scale(1.04); }
+}
+
+@keyframes pa-pagelet-pet-review-scan {
+    0%, 100% { transform: translateY(0) scale(1); }
+    38% { transform: translateY(-3px) scale(1.035); }
+    72% { transform: translateY(1px) scale(0.99); }
+}
+
+@keyframes pa-pagelet-pet-connection-weave {
+    0%, 100% { transform: translateX(0) rotate(0); }
+    28% { transform: translateX(-3px) rotate(-3deg); }
+    72% { transform: translateX(3px) rotate(3deg); }
+}
+
+@keyframes pa-pagelet-pet-summary-page {
+    0%, 100% { transform: translateY(0) scaleY(1); }
+    42% { transform: translateY(-2px) scaleY(0.94); }
+    68% { transform: translateY(1px) scaleY(1.06); }
+}
+
+@keyframes pa-pagelet-pet-task-ring {
+    0%, 100% { opacity: 0.16; transform: scale(0.94); }
+    50% { opacity: 0.38; transform: scale(1.08); }
 }
 
 @keyframes pa-pagelet-pet-bounce {
@@ -38,8 +61,8 @@
 }
 
 @keyframes pa-pagelet-pet-dot-pulse {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: 0.3; transform: scale(0.72); }
 }
 
 @keyframes pa-pagelet-pet-nudge-dot-glow {
@@ -54,13 +77,13 @@
 }
 
 @keyframes pa-pagelet-pet-zzz-float-1 {
-    0% { transform: translate(0, 0) scale(1); opacity: 0.5; }
-    100% { transform: translate(4px, -14px) scale(0.8); opacity: 0; }
+    0% { transform: translate(0, 0) scale(1); opacity: 0.9; }
+    100% { transform: translate(5px, -18px) scale(0.74); opacity: 0; }
 }
 
 @keyframes pa-pagelet-pet-zzz-float-2 {
-    0% { transform: translate(0, 0) scale(1); opacity: 0.35; }
-    100% { transform: translate(6px, -18px) scale(0.7); opacity: 0; }
+    0% { transform: translate(0, 0) scale(1); opacity: 0.72; }
+    100% { transform: translate(8px, -24px) scale(0.64); opacity: 0; }
 }
 
 /* ---------- Container ---------- */
@@ -72,6 +95,7 @@
     user-select: none;
     -webkit-user-select: none;
     transition: filter 0.4s ease, opacity 0.4s ease;
+    --pa-pagelet-pet-task-color: #4f73e6;
 }
 
 /* ---------- Corner positioning ---------- */
@@ -94,6 +118,14 @@
     border: 0;
     border-radius: 0;
     box-shadow: none;
+}
+
+.pa-pagelet-pet-wrapper::before,
+.pa-pagelet-pet-wrapper::after {
+    content: "";
+    position: absolute;
+    pointer-events: none;
+    opacity: 0;
 }
 
 /* ---------- Notification dot ---------- */
@@ -126,11 +158,77 @@
 }
 
 .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap {
-    animation: pa-pagelet-pet-breathe 5s ease-in-out infinite;
+    animation: pa-pagelet-pet-breathe 3.6s ease-in-out infinite;
+    transform-origin: center;
 }
 
 .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-svg-wrap {
     animation: pa-pagelet-pet-pulse 1.4s ease-in-out infinite;
+    transform-origin: center;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="review"] {
+    --pa-pagelet-pet-task-color: #4f73e6;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="connection"] {
+    --pa-pagelet-pet-task-color: #14936b;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="summary"] {
+    --pa-pagelet-pet-task-color: #c77700;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="background"] {
+    --pa-pagelet-pet-task-color: #7c3aed;
+}
+
+.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper::before {
+    inset: 4px;
+    border: 1.5px solid color-mix(in srgb, var(--pa-pagelet-pet-task-color) 72%, transparent);
+    border-radius: 12px;
+    box-shadow: 0 0 12px color-mix(in srgb, var(--pa-pagelet-pet-task-color) 28%, transparent);
+    animation: pa-pagelet-pet-task-ring 1.45s ease-in-out infinite;
+    opacity: 0.44;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="connection"] .pa-pagelet-pet-wrapper::before {
+    inset: 3px;
+    border-radius: 999px;
+    border-style: dashed;
+    animation-duration: 1.15s;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="summary"] .pa-pagelet-pet-wrapper::before {
+    inset: 6px 8px;
+    border-radius: 6px;
+    animation-duration: 1.7s;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="review"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-review-scan 1.25s ease-in-out infinite;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="connection"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-connection-weave 1.35s ease-in-out infinite;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="summary"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-summary-page 1.55s ease-in-out infinite;
+}
+
+.pa-pagelet-pet[data-state="working"][data-task="background"] .pa-pagelet-pet-svg-wrap {
+    animation: pa-pagelet-pet-pulse 1.9s ease-in-out infinite;
+}
+
+.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-svg-wrap svg path {
+    stroke: var(--pa-pagelet-pet-task-color);
+}
+
+.pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-dot {
+    fill: var(--pa-pagelet-pet-task-color);
+    transform-box: fill-box;
+    transform-origin: center;
 }
 
 .pa-pagelet-pet[data-state="nudge"] .pa-pagelet-pet-svg-wrap {
@@ -162,22 +260,37 @@
 
 /* Resting zzz float */
 .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz1 {
-    animation: pa-pagelet-pet-zzz-float-1 3s ease-out infinite;
+    animation: pa-pagelet-pet-zzz-float-1 2.8s ease-out infinite;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.22));
 }
 .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-zzz2 {
-    animation: pa-pagelet-pet-zzz-float-2 3s ease-out infinite 0.8s;
+    animation: pa-pagelet-pet-zzz-float-2 2.8s ease-out infinite 0.7s;
+    filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.22));
+}
+
+.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-sleep-zzz text {
+    opacity: 0.76;
+}
+
+.pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper::after {
+    inset: 8px;
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--background-modifier-hover, #3a3a3a) 72%, transparent);
+    opacity: 0.16;
 }
 
 /* ---------- Resting opacity ---------- */
 
 .pa-pagelet-pet[data-state="resting"] {
-    opacity: 0.55;
+    opacity: 0.8;
+    filter: saturate(0.72);
 }
 
 .pa-pagelet-pet[data-state="working"],
 .pa-pagelet-pet[data-state="nudge"],
 .pa-pagelet-pet[data-state="idle"] {
     opacity: 1;
+    filter: none;
 }
 
 /* ---------- Error flash ---------- */
@@ -200,12 +313,17 @@
 
 [data-theme="light"] .pa-pagelet-pet[data-state="resting"],
 .theme-light .pa-pagelet-pet[data-state="resting"] {
-    opacity: 0.4;
+    opacity: 0.76;
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap,
 .theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-svg-wrap {
-    filter: saturate(0) brightness(0.85);
+    filter: saturate(0.42) brightness(0.95);
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper::after,
+.theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper::after {
+    background: rgba(127, 144, 160, 0.16);
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-wrapper,
@@ -219,7 +337,13 @@
 [data-theme="light"] .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-sleep-zzz text,
 .theme-light .pa-pagelet-pet[data-state="resting"] .pa-pagelet-pet-sleep-zzz text {
     fill: #999;
-    opacity: 0.6;
+    opacity: 0.76;
+}
+
+[data-theme="light"] .pa-pagelet-pet[data-state="working"],
+.theme-light .pa-pagelet-pet[data-state="working"] {
+    opacity: 1;
+    filter: none;
 }
 
 [data-theme="light"] .pa-pagelet-pet[data-state="idle"] .pa-pagelet-pet-wrapper,
@@ -266,6 +390,7 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 @media (prefers-reduced-motion: reduce) {
     .pa-pagelet-pet[data-state] .pa-pagelet-pet-svg-wrap,
     .pa-pagelet-pet[data-state] .pa-pagelet-pet-blink-group,
+    .pa-pagelet-pet[data-state="working"] .pa-pagelet-pet-wrapper::before,
     .pa-pagelet-pet[data-state] .pa-pagelet-pet-zzz1,
     .pa-pagelet-pet[data-state] .pa-pagelet-pet-zzz2,
     .pa-pagelet-pet-notification,

@@ -5,6 +5,7 @@ export { PetStateMachine } from "./PetStateMachine";
 export { updatePetSvgState } from "./PetSvg";
 export type {
     PetState,
+    PetTaskKind,
     PetCorner,
     PetRenderer,
     PetRendererOptions,

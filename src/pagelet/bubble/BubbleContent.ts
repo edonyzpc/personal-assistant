@@ -13,6 +13,7 @@ import type {
     BubbleCallbacks,
     BubbleContent,
     BubbleFinding,
+    BubbleQuickAccessCallbacks,
 } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 
@@ -25,6 +26,34 @@ const MAX_FINDINGS = 3;
 /** Maximum findings shown in the nudge bubble */
 const MAX_NUDGE_FINDINGS = 2;
 
+function buildPageletQuickAccessActions(
+    callbacks: BubbleQuickAccessCallbacks,
+    locale: PageletLocale,
+    options: { primaryReview?: boolean } = {},
+): BubbleAction[] {
+    return [
+        {
+            label: pageletT("pagelet.bubble.triggerAnalysis", locale),
+            description: pageletT("pagelet.bubble.triggerAnalysisDescription", locale),
+            icon: "search",
+            primary: options.primaryReview ?? true,
+            callback: callbacks.onReviewCurrentNote,
+        },
+        {
+            label: pageletT("pagelet.bubble.discover", locale),
+            description: pageletT("pagelet.bubble.discoverDescription", locale),
+            icon: "link",
+            callback: callbacks.onDiscoverConnections,
+        },
+        {
+            label: pageletT("pagelet.bubble.periodicSummary", locale),
+            description: pageletT("pagelet.bubble.periodicSummaryDescription", locale),
+            icon: "calendar",
+            callback: callbacks.onPeriodicSummary,
+        },
+    ];
+}
+
 // ---------------------------------------------------------------------------
 // Public builders
 // ---------------------------------------------------------------------------
@@ -32,29 +61,22 @@ const MAX_NUDGE_FINDINGS = 2;
 /** Build content for Quick Review (Scenario 1) */
 export function buildQuickReviewContent(
     findings: BubbleFinding[],
-    callbacks: BubbleCallbacks,
+    callbacks: BubbleQuickAccessCallbacks,
     locale: PageletLocale = "en",
 ): BubbleContent {
-    const actions: BubbleAction[] = [
-        {
-            label: pageletT("pagelet.bubble.reviewRecent", locale),
-            primary: true,
-            callback: () => callbacks.onExpandPanel("review"),
-        },
-        {
-            label: pageletT("pagelet.bubble.viewCurrent", locale),
-            callback: () => callbacks.onExpandPanel("current"),
-        },
-        {
-            label: pageletT("pagelet.bubble.discover", locale),
-            callback: () => callbacks.onExpandPanel("discover"),
-        },
-    ];
-
     return {
         type: "quick-review",
         findings: findings.slice(0, MAX_FINDINGS),
-        actions,
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.viewDetails", locale),
+                description: pageletT("pagelet.bubble.viewDetailsDescription", locale),
+                icon: "panel-right-open",
+                primary: true,
+                callback: () => callbacks.onExpandPanel("prepared"),
+            },
+            ...buildPageletQuickAccessActions(callbacks, locale, { primaryReview: false }),
+        ],
     };
 }
 
@@ -86,25 +108,13 @@ export function buildWritingAssistContent(
 /** Build content for Knowledge Discovery (Scenario 3) */
 export function buildDiscoveryContent(
     findings: BubbleFinding[],
-    callbacks: BubbleCallbacks,
+    callbacks: BubbleQuickAccessCallbacks,
     locale: PageletLocale = "en",
 ): BubbleContent {
-    const actions: BubbleAction[] = [
-        {
-            label: pageletT("pagelet.bubble.discover", locale),
-            primary: true,
-            callback: () => callbacks.onExpandPanel("discover"),
-        },
-        {
-            label: pageletT("pagelet.bubble.viewCurrent", locale),
-            callback: () => callbacks.onExpandPanel("current"),
-        },
-    ];
-
     return {
         type: "discovery",
         findings: findings.slice(0, MAX_FINDINGS),
-        actions,
+        actions: buildPageletQuickAccessActions(callbacks, locale),
     };
 }
 
@@ -118,7 +128,7 @@ export function buildNudgeContent(
         {
             label: pageletT("pagelet.bubble.viewSuggestions", locale),
             primary: true,
-            callback: () => callbacks.onExpandPanel(),
+            callback: () => callbacks.onExpandPanel("prepared"),
         },
         {
             label: pageletT("pagelet.bubble.later", locale),
@@ -151,20 +161,12 @@ export function buildOnboardingContent(
 
 /** Build empty state content (no cached results) */
 export function buildEmptyContent(
-    onTriggerAnalysis: () => void,
+    callbacks: BubbleQuickAccessCallbacks,
     locale: PageletLocale = "en",
 ): BubbleContent {
-    const actions: BubbleAction[] = [
-        {
-            label: pageletT("pagelet.bubble.triggerAnalysis", locale),
-            primary: true,
-            callback: onTriggerAnalysis,
-        },
-    ];
-
     return {
         type: "empty",
         findings: [{ text: pageletT("pagelet.bubble.empty", locale) }],
-        actions,
+        actions: buildPageletQuickAccessActions(callbacks, locale),
     };
 }

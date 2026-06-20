@@ -8,20 +8,24 @@
  * state via `setState()`.
  */
 
-import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState } from "./types";
+import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState, PetTaskKind } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { clearPlatformTimeout, getPlatformDocument, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
 import { createHtmlElement } from "../dom-utils";
 import { createPetSvgElement, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
 
-export function getPetAriaLabel(locale: PageletLocale, state?: PetState): string {
+export function getPetAriaLabel(locale: PageletLocale, state?: PetState, taskKind?: PetTaskKind): string {
     const base = pageletT("pagelet.pet.ariaLabel", locale);
+    if (state === "working" && taskKind) {
+        return `${base}: ${pageletT(`pagelet.pet.task.${taskKind}`, locale)}`;
+    }
     return state ? `${base}: ${pageletT(`pagelet.pet.${state}`, locale)}` : base;
 }
 
 export class PetView implements PetRenderer {
     private _state: PetState;
+    private _taskKind: PetTaskKind;
     private _corner: PetCorner;
     private readonly _callbacks: PetCallbacks;
     private readonly _stateMachine: PetStateMachine;
@@ -44,6 +48,7 @@ export class PetView implements PetRenderer {
 
     constructor(options: PetRendererOptions) {
         this._state = options.initialState ?? "idle";
+        this._taskKind = options.initialTaskKind ?? "review";
         this._corner = options.corner ?? "bottom-right";
         this._callbacks = options.callbacks;
         this._getLocale = options.getLocale ?? (() => "en");
@@ -90,10 +95,11 @@ export class PetView implements PetRenderer {
         const root = createHtmlElement("div");
         root.className = "pa-pagelet-pet";
         root.setAttribute("data-state", this._state);
+        root.setAttribute("data-task", this._taskKind);
         root.setAttribute("data-corner", this._corner);
         root.setAttribute("tabindex", "0");
         root.setAttribute("role", "button");
-        root.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state));
+        root.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state, this._taskKind));
         root.setAttribute("aria-live", "polite");
 
         const wrapper = createHtmlElement("div");
@@ -105,7 +111,7 @@ export class PetView implements PetRenderer {
         const svgWrap = createHtmlElement("div");
         svgWrap.className = "pa-pagelet-pet-svg-wrap";
 
-        const svgEl = createPetSvgElement(this._state);
+        const svgEl = createPetSvgElement(this._state, this._taskKind);
 
         svgWrap.appendChild(svgEl);
         wrapper.appendChild(notification);
@@ -165,6 +171,10 @@ export class PetView implements PetRenderer {
         return this._state;
     }
 
+    get taskKind(): PetTaskKind {
+        return this._taskKind;
+    }
+
     /** Set state (delegates to state machine, which triggers applyState). */
     setState(state: PetState): void {
         if (this._destroyed) return;
@@ -175,6 +185,18 @@ export class PetView implements PetRenderer {
     /** Expose the state machine for event-driven transitions. */
     get stateMachine(): PetStateMachine {
         return this._stateMachine;
+    }
+
+    /** Set the current task visualized while the Pet is working. */
+    setTaskKind(taskKind: PetTaskKind): void {
+        if (this._destroyed) return;
+        if (taskKind === this._taskKind) return;
+        this._taskKind = taskKind;
+        this._rootEl?.setAttribute("data-task", taskKind);
+        if (this._state === "working") {
+            this._rootEl?.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state, this._taskKind));
+            this.applyThemeColors();
+        }
     }
 
     /** Set corner position. */
@@ -228,7 +250,8 @@ export class PetView implements PetRenderer {
     private applyState(): void {
         if (!this._rootEl || !this._svgEl) return;
         this._rootEl.setAttribute("data-state", this._state);
-        this._rootEl.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state));
+        this._rootEl.setAttribute("data-task", this._taskKind);
+        this._rootEl.setAttribute("aria-label", getPetAriaLabel(this._getLocale(), this._state, this._taskKind));
         this.applyThemeColors();
     }
 
@@ -242,7 +265,7 @@ export class PetView implements PetRenderer {
     private applyThemeColors(): void {
         if (!this._svgEl) return;
         const isLight = this.detectLightTheme();
-        updatePetSvgState(this._svgEl, this._state, isLight);
+        updatePetSvgState(this._svgEl, this._state, isLight, this._taskKind);
     }
 
     private detectLightTheme(): boolean {

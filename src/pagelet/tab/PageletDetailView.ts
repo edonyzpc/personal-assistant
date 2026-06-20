@@ -1,15 +1,27 @@
 /* Copyright 2023 edonyzpc */
 
-import { ItemView, WorkspaceLeaf, addIcon, type ViewStateResult } from "obsidian";
+import {
+    ItemView,
+    Notice,
+    addIcon,
+    type ViewStateResult,
+    type WorkspaceLeaf,
+} from "obsidian";
 
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locales/pagelet";
 import { buildMascotMarkup } from "../ui/mascot";
+import type { GeneratedReviewNote, WriteResult } from "../output/types";
+import { resolveRelatedMarkdownNote } from "../related-note";
 import { TabView } from "./TabView";
-import type { PageletDetailContent, PageletDetailPayload } from "./types";
+import type {
+    PageletDetailContent,
+    PageletDetailLayoutType,
+    PageletDetailPayload,
+} from "./types";
 
 export const PAGELET_DETAIL_VIEW_TYPE = "pa-pagelet-detail-view";
 export const PAGELET_DETAIL_ICON = "pa-pagelet";
-const PAGELET_DETAIL_STATE_VERSION = 1;
+const PAGELET_DETAIL_STATE_VERSION = 3;
 
 function buildPageletDetailIconSvg(): string {
     const markup = buildMascotMarkup("idle", {
@@ -41,17 +53,21 @@ export function registerPageletDetailIcon(): void {
 
 export class PageletDetailView extends ItemView {
     private readonly getLocale: () => PageletLocale;
+    private readonly onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
     private renderer: TabView | null = null;
     private title: string;
     private content: PageletDetailContent = [];
     private locale: PageletLocale;
+    private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState"> = {};
 
     constructor(
         leaf: WorkspaceLeaf,
         getLocale: () => PageletLocale = getPageletUiLanguage,
+        onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>,
     ) {
         super(leaf);
         this.getLocale = getLocale;
+        this.onSaveSummaryNote = onSaveSummaryNote;
         this.locale = getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
         registerPageletDetailIcon();
@@ -70,11 +86,19 @@ export class PageletDetailView extends ItemView {
     }
 
     async onOpen(): Promise<void> {
-        this.locale = this.getLocale();
-        this.title = pageletT("pagelet.tab.title", this.locale);
-        this.renderer = new TabView(this.locale);
+        if (!this.hasPayload()) {
+            this.locale = this.getLocale();
+            this.title = pageletT("pagelet.tab.title", this.locale);
+        }
+        this.renderer = new TabView(this.locale, {
+            app: this.app,
+            onConnectionNodeClick: (noteName, sourcePath) => this.openRelatedNote(noteName, sourcePath),
+            onSaveSummaryNote: this.onSaveSummaryNote
+                ? (note) => this.saveSummaryNote(note)
+                : undefined,
+        });
         this.renderer.mount(this.contentEl);
-        this.renderer.open(this.title, this.content);
+        this.renderer.open(this.title, this.content, this.payloadOptions);
     }
 
     async onClose(): Promise<void> {
@@ -83,24 +107,146 @@ export class PageletDetailView extends ItemView {
     }
 
     setPayload(payload: PageletDetailPayload): void {
-        this.title = payload.title;
-        this.content = payload.content;
-        this.locale = payload.locale;
-        this.renderer?.setLocale(payload.locale);
-        this.renderer?.open(payload.title, payload.content);
+        this.applyPayload(payload);
+        this.renderPayload();
     }
 
     getState(): Record<string, unknown> {
+        const payload: Record<string, unknown> = {
+            title: this.title,
+            locale: this.locale,
+            restoredFromState: true,
+        };
+        if (this.payloadOptions.layoutType) {
+            payload.layoutType = this.payloadOptions.layoutType;
+        }
+        if (this.payloadOptions.sourcePath) {
+            payload.sourcePath = this.payloadOptions.sourcePath;
+        }
         return {
             version: PAGELET_DETAIL_STATE_VERSION,
+            payload,
         };
     }
 
-    async setState(_state: unknown, _result: ViewStateResult): Promise<void> {
+    async setState(state: unknown, _result: ViewStateResult): Promise<void> {
+        const restored = readPageletDetailState(state, this.getLocale());
+        if (restored) {
+            this.applyPayload(restored);
+        } else {
+            this.resetPayload();
+        }
+        this.renderPayload();
+    }
+
+    private applyPayload(payload: PageletDetailPayload): void {
+        this.title = payload.title;
+        this.content = payload.content;
+        this.locale = payload.locale;
+        this.payloadOptions = {
+            layoutType: payload.layoutType,
+            extra: payload.extra,
+            sourcePath: payload.sourcePath,
+            summarySaveNote: payload.summarySaveNote,
+            restoredFromState: payload.restoredFromState,
+        };
+    }
+
+    private resetPayload(): void {
         this.locale = this.getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.content = [];
-        this.renderer?.setLocale(this.locale);
-        this.renderer?.open(this.title, this.content);
+        this.payloadOptions = {};
     }
+
+    private renderPayload(): void {
+        this.renderer?.setLocale(this.locale);
+        this.renderer?.open(this.title, this.content, this.payloadOptions);
+    }
+
+    private hasPayload(): boolean {
+        return this.content.length > 0
+            || Boolean(this.payloadOptions.layoutType)
+            || Boolean(this.payloadOptions.extra)
+            || Boolean(this.payloadOptions.sourcePath)
+            || Boolean(this.payloadOptions.summarySaveNote)
+            || Boolean(this.payloadOptions.restoredFromState);
+    }
+
+    private async saveSummaryNote(note: GeneratedReviewNote): Promise<WriteResult> {
+        if (!this.onSaveSummaryNote) {
+            return { success: false, error: pageletT("pagelet.panel.status.error", this.locale) };
+        }
+
+        try {
+            const result = await this.onSaveSummaryNote(note);
+            if (result.success) {
+                this.payloadOptions.summarySaveNote = undefined;
+                new Notice(pageletT("pagelet.reviewNote.created", this.locale, { path: result.filePath ?? "" }), 5000);
+            } else {
+                new Notice(pageletT("pagelet.reviewNote.createFailed", this.locale, { error: result.error ?? "" }), 5000);
+            }
+            return result;
+        } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            new Notice(pageletT("pagelet.reviewNote.createFailed", this.locale, { error: message }), 5000);
+            return { success: false, error: message };
+        }
+    }
+
+    private openRelatedNote(noteName: string, sourcePath?: string): void {
+        const file = resolveRelatedMarkdownNote(
+            this.app,
+            noteName,
+            sourcePath ?? this.payloadOptions.sourcePath,
+        );
+        if (!file) {
+            new Notice(pageletT("pagelet.panel.status.relatedMissing", this.locale), 3000);
+            return;
+        }
+        const leaf = this.app.workspace.getMostRecentLeaf();
+        if (!leaf) return;
+        void leaf.openFile(file).then(() => {
+            new Notice(pageletT("pagelet.panel.status.relatedOpened", this.locale), 2500);
+        });
+    }
+}
+
+function readPageletDetailState(
+    state: unknown,
+    fallbackLocale: PageletLocale,
+): PageletDetailPayload | null {
+    if (!isRecord(state)) return null;
+    const payload = state.payload;
+    if (!isRecord(payload)) return null;
+
+    const locale = normalizePageletLocale(payload.locale) ?? fallbackLocale;
+    const title = typeof payload.title === "string" && payload.title.trim().length > 0
+        ? payload.title
+        : pageletT("pagelet.tab.title", locale);
+
+    const result: PageletDetailPayload = {
+        title,
+        content: [],
+        locale,
+        restoredFromState: true,
+    };
+    const layoutType = normalizePageletDetailLayoutType(payload.layoutType);
+    if (layoutType) result.layoutType = layoutType;
+    if (typeof payload.sourcePath === "string") result.sourcePath = payload.sourcePath;
+    return result;
+}
+
+function normalizePageletLocale(value: unknown): PageletLocale | null {
+    return value === "en" || value === "zh" ? value : null;
+}
+
+function normalizePageletDetailLayoutType(value: unknown): PageletDetailLayoutType | undefined {
+    return value === "review" || value === "current" || value === "discover" || value === "summary"
+        ? value
+        : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }

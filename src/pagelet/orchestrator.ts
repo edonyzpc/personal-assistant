@@ -25,10 +25,10 @@ import { isObsidianModalOpen } from "./dom-utils";
 
 import { BubbleView } from "./bubble/BubbleView";
 import { PanelView } from "./panel/PanelView";
-import type { PanelFinding, PanelLayoutType } from "./panel/types";
+import type { PanelFinding, PanelLayoutType, PanelOpenExtra } from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
 import { ProactiveHints } from "./hints/ProactiveHints";
-import type { PetCorner } from "./pet/types";
+import type { PetCorner, PetTaskKind } from "./pet/types";
 import { PetView } from "./pet/PetView";
 import { PreloadBudget } from "./preload/PreloadBudget";
 import { PreloadCache } from "./preload/PreloadCache";
@@ -47,6 +47,8 @@ import { BubbleCoordinator } from "./BubbleCoordinator";
 import { PeriodicSummaryFlow } from "./PeriodicSummaryFlow";
 import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
+import { resolveRelatedMarkdownNote } from "./related-note";
+import type { PageletDetailPayload } from "./tab/types";
 
 // Re-export so existing `import { PageletHost } from "./orchestrator"` keeps working.
 export type { PageletHost } from "./PageletHost";
@@ -57,6 +59,7 @@ export class PageletOrchestrator {
     private bubbleView: BubbleView | null = null;
     private panelView: PanelView | null = null;
     private currentPanelLayout: PanelLayoutType | null = null;
+    private preservePanelSessionOnClose = false;
     private readonly handleEscape: (e: KeyboardEvent) => void;
     private readonly preloadCache: PreloadCache;
     private readonly preloadBudget: PreloadBudget;
@@ -119,7 +122,7 @@ export class PageletOrchestrator {
 
         // Delegate: review note save flow
         this.saveFlow = new ReviewNoteSaveFlow(host, {
-            petTransition: (event) => this.petView?.stateMachine.transition(event),
+            petTransition: (event) => this.transitionPet(event, "review"),
             petFlashError: () => this.petView?.flashError(),
             closePanel: () => this.panelView?.close(),
             getAnalysisSourcePath: () => this.sessionManager.analysisSourcePath,
@@ -137,7 +140,7 @@ export class PageletOrchestrator {
             host, this.preloadCache, this.preloadBudget,
             this.changeDetector, this.scopeResolver,
             {
-                onPetTransition: (event) => this.petView?.stateMachine.transition(event),
+                onPetTransition: (event) => this.transitionPet(event, "background"),
                 onPetFlashError: () => this.petView?.flashError(),
                 onInsightsReady: () => this.proactiveHints.onInsightsReady(),
             },
@@ -149,11 +152,13 @@ export class PageletOrchestrator {
             onSourceClick: (link) => this.handleSourceClick(link),
             onDismiss: () => this.handleBubbleDismiss(),
             onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
+            onDiscoverConnections: () => { void this.discoverConnections(); },
+            onPeriodicSummary: () => { void this.runPeriodicSummary(); },
         });
 
         // Delegate: periodic summary flow
         this.periodicSummary = new PeriodicSummaryFlow(host, this.scopeResolver, {
-            petTransition: (event) => this.petView?.stateMachine.transition(event),
+            petTransition: (event) => this.transitionPet(event, "summary"),
             petFlashError: () => this.petView?.flashError(),
             beginForegroundReviewRun: () => this.sessionManager.beginForegroundReviewRun(),
             finishForegroundReviewRun: () => this.sessionManager.finishForegroundReviewRun(),
@@ -236,7 +241,7 @@ export class PageletOrchestrator {
                     this.sessionManager.handleScopeCandidateToggle(path, included);
                     this.refreshReviewPanel();
                 },
-                onRelatedNoteClick: (noteName) => this.handleRelatedNoteClick(noteName),
+                onRelatedNoteClick: (noteName, sourcePath) => this.handleRelatedNoteClick(noteName, sourcePath),
                 onResearchFinding: (finding) => this.handleResearchFinding(finding),
                 onToggleHints: () => this.toggleProactiveHints(),
             },
@@ -393,6 +398,17 @@ export class PageletOrchestrator {
         await this.analyzeCurrentNote(options);
     }
 
+    private setPetTaskKind(taskKind: PetTaskKind): void {
+        this.petView?.setTaskKind?.(taskKind);
+    }
+
+    private transitionPet(event: "analysis-start" | "analysis-done" | "insights-ready", taskKind?: PetTaskKind): void {
+        if (event === "analysis-start" && taskKind) {
+            this.setPetTaskKind(taskKind);
+        }
+        this.petView?.stateMachine.transition(event);
+    }
+
     private async reviewSelectedScope(): Promise<void> {
         const plan = this.sessionManager.ensureScopePlan();
         if (!plan) {
@@ -498,21 +514,28 @@ export class PageletOrchestrator {
     private async discoverConnections(): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
+        if (!this.sessionManager.beginForegroundReviewRun()) return;
 
-        const content = await this.host.app.vault.cachedRead(activeFile);
-        const currentNote = { path: activeFile.path, content };
-        const noteContents = [{ path: activeFile.path, content }];
-
-        this.petView?.stateMachine.transition("analysis-start");
+        let petFinished = false;
+        const finishPet = (): void => {
+            if (petFinished) return;
+            petFinished = true;
+            this.transitionPet("analysis-done");
+        };
+        this.transitionPet("analysis-start", "connection");
 
         try {
+            const content = await this.host.app.vault.cachedRead(activeFile);
+            const currentNote = { path: activeFile.path, content };
+            const noteContents = [{ path: activeFile.path, content }];
+
             const relatedNotes = await this.host.findRelatedNotes(
                 activeFile.path, noteContents, [activeFile.path],
             );
 
             if (relatedNotes.length === 0) {
                 const locale = getPageletUiLanguage();
-                this.petView?.stateMachine.transition("analysis-done");
+                finishPet();
                 const isMemoryReady = await this.host.isMemoryReadyForPageletDiscovery();
                 const titleKey = isMemoryReady
                     ? "pagelet.discover.noResults.title"
@@ -520,18 +543,18 @@ export class PageletOrchestrator {
                 const descKey = isMemoryReady
                     ? "pagelet.discover.noResults.desc"
                     : "pagelet.discover.vssNotReady.desc";
-                this.panelView?.open("discover", [{
+                this.openDiscoveryPanel([{
                     title: pageletT(titleKey, locale),
                     description: pageletT(descKey, locale),
                     insightText: pageletT(descKey, locale),
                     sourceFile: "",
                     sourceTitle: "",
-                }], {});
+                }], { sourcePath: activeFile.path });
                 return;
             }
 
             const result = await this.host.discoverConnections(currentNote, relatedNotes);
-            this.petView?.stateMachine.transition("analysis-done");
+            finishPet();
 
             if (!result) {
                 this.handleExpandPanel("discover");
@@ -555,12 +578,17 @@ export class PageletOrchestrator {
                 })),
             ];
 
-            this.panelView?.open("discover", findings, { connections: result.connections });
+            this.openDiscoveryPanel(findings, {
+                connections: result.connections,
+                sourcePath: activeFile.path,
+            });
         } catch (error) {
-            this.petView?.stateMachine.transition("analysis-done");
+            finishPet();
             this.petView?.flashError();
             this.host.log("Discovery analysis failed", error);
             new Notice(pageletT("pagelet.panel.status.actionFailed", getPageletUiLanguage()), 5000);
+        } finally {
+            this.sessionManager.finishForegroundReviewRun();
         }
     }
 
@@ -576,7 +604,7 @@ export class PageletOrchestrator {
         if (files.length === 0) return;
         if (!this.sessionManager.beginForegroundReviewRun()) return;
 
-        this.petView?.stateMachine.transition("analysis-start");
+        this.transitionPet("analysis-start", "review");
 
         try {
             const result = await this.sessionManager.analyzeFiles(
@@ -590,10 +618,11 @@ export class PageletOrchestrator {
 
             if (!result) {
                 // Run was stale/superseded/destroyed
+                this.transitionPet("analysis-done");
                 return;
             }
 
-            this.petView?.stateMachine.transition("analysis-done");
+            this.transitionPet("analysis-done");
 
             if (options.preferPanel) {
                 this.currentPanelLayout = options.panelLayout;
@@ -613,7 +642,7 @@ export class PageletOrchestrator {
                 this.bubbleView, this.petView, result.rawFindings,
             );
         } catch (error) {
-            this.petView?.stateMachine.transition("analysis-done");
+            this.transitionPet("analysis-done");
             this.petView?.flashError();
             this.host.log("Current note analysis failed", error);
             const message = error instanceof Error ? error.message : String(error);
@@ -751,39 +780,99 @@ export class PageletOrchestrator {
     private handleExpandPanel(type?: string): void {
         this.bubbleView?.close();
         const requestedType = type === "writing" ? "current" : type;
-        const layoutType = (requestedType === "review" || requestedType === "current" || requestedType === "discover" || requestedType === "summary")
-            ? requestedType : "review";
+        const usePreparedFindings = requestedType === "prepared";
+        const isKnownLayout = requestedType === "review"
+            || requestedType === "current"
+            || requestedType === "discover"
+            || requestedType === "summary";
+        let layoutType: PanelLayoutType = "review";
+        if (!usePreparedFindings && isKnownLayout) {
+            layoutType = requestedType;
+        }
         this.currentPanelLayout = layoutType;
         if (layoutType !== "summary") {
             this.saveFlow.clearPending();
         }
-        // Use current-note analysis findings only while they still match the
-        // active note; otherwise fall back to background preparation cache.
-        let panelFindings = this.sessionManager.currentAnalysisFindings();
-        if (panelFindings.length === 0 && layoutType !== "review") {
+        // Prepared findings come from the background cache and may not belong
+        // to the active note. Keep them in the generic review layout rather
+        // than presenting them as current-note analysis.
+        let panelFindings = usePreparedFindings
+            ? []
+            : this.sessionManager.currentAnalysisFindings();
+        if (panelFindings.length === 0 && (usePreparedFindings || layoutType !== "review")) {
             panelFindings = this.sessionManager.toPanelFindings(this.preloadCache.getFindings());
         }
 
-        this.panelView?.open(layoutType, panelFindings, this.sessionManager.panelExtraForLayout(layoutType));
+        this.panelView?.open(
+            layoutType,
+            panelFindings,
+            usePreparedFindings ? undefined : this.sessionManager.panelExtraForLayout(layoutType),
+        );
     }
 
     /** Expand Panel -> Tab. */
     private expandPanelToTab(): void {
-        this.panelView?.close();
+        const layoutType = this.panelView?.currentLayoutType ?? this.currentPanelLayout ?? "review";
+        const panelFindings = this.panelView?.currentVisibleFindings ?? [];
+        const panelExtra = this.panelView?.currentPanelExtra;
+        const summarySaveNote = layoutType === "summary"
+            ? this.saveFlow.pending ?? undefined
+            : undefined;
+        const sourcePath = layoutType === "summary"
+            ? summarySaveNote?.targetPath
+            : panelExtra?.sourcePath;
+        this.preservePanelSessionOnClose = true;
+        try {
+            this.panelView?.close();
+        } finally {
+            this.preservePanelSessionOnClose = false;
+        }
         const locale = getPageletUiLanguage();
         const title = pageletT("pagelet.tab.title", locale);
-        const currentFindings = this.sessionManager.currentAnalysisFindings();
-        const findings = currentFindings.length > 0
-            ? currentFindings
-            : this.sessionManager.toPanelFindings(this.preloadCache.getFindings());
-        void Promise.resolve(this.host.openPageletDetailView({
+        const hasPanelContent = panelFindings.length > 0
+            || Boolean(panelExtra?.connections && panelExtra.connections.length > 0)
+            || Boolean(panelExtra?.markdown);
+        let findings = panelFindings;
+        if (!hasPanelContent) {
+            const currentFindings = this.sessionManager.currentAnalysisFindings();
+            findings = currentFindings.length > 0
+                ? currentFindings
+                : this.sessionManager.toPanelFindings(this.preloadCache.getFindings());
+        }
+        const detailExtra = this.detailExtraForTab(panelExtra ?? this.sessionManager.panelExtraForLayout(layoutType));
+        const payload: PageletDetailPayload = {
             title,
             content: findings,
             locale,
-        })).catch((error: unknown) => {
+            layoutType,
+        };
+        if (detailExtra) {
+            payload.extra = detailExtra;
+        }
+        if (sourcePath) {
+            payload.sourcePath = sourcePath;
+        }
+        if (summarySaveNote) {
+            payload.summarySaveNote = summarySaveNote;
+        }
+        void Promise.resolve(this.host.openPageletDetailView(payload)).catch((error: unknown) => {
             this.host.log("Failed to open Pagelet detail view", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
         });
+    }
+
+    private detailExtraForTab(extra: PanelOpenExtra | undefined): PageletDetailPayload["extra"] | undefined {
+        if (!extra) return undefined;
+        const detailExtra: PageletDetailPayload["extra"] = {};
+        if (extra.connections && extra.connections.length > 0) {
+            detailExtra.connections = extra.connections;
+        }
+        if (typeof extra.markdown === "string") {
+            detailExtra.markdown = extra.markdown;
+        }
+        return detailExtra.connections || detailExtra.markdown !== undefined
+            ? detailExtra
+            : undefined;
     }
 
     /** Save Panel findings as review note. */
@@ -791,7 +880,14 @@ export class PageletOrchestrator {
         await this.saveFlow.saveFindingsAsReviewNote(findings, this.currentPanelLayout);
     }
 
+    private openDiscoveryPanel(findings: PanelFinding[], extra: PanelOpenExtra = {}): void {
+        this.currentPanelLayout = "discover";
+        this.saveFlow.clearPending();
+        this.panelView?.open("discover", findings, extra);
+    }
+
     private clearPanelSession(): void {
+        if (this.preservePanelSessionOnClose) return;
         if (this.saveFlow.isSaveInProgress) return;
         this.currentPanelLayout = null;
         this.saveFlow.clearPending();
@@ -805,8 +901,8 @@ export class PageletOrchestrator {
         if (leaf) void leaf.openFile(file as Parameters<WorkspaceLeaf["openFile"]>[0]);
     }
 
-    private handleRelatedNoteClick(noteName: string): void {
-        const file = this.findRelatedNote(noteName);
+    private handleRelatedNoteClick(noteName: string, sourcePath?: string): void {
+        const file = resolveRelatedMarkdownNote(this.host.app, noteName, sourcePath);
         if (!file) {
             new Notice(this.t("pagelet.panel.status.relatedMissing"), 3000);
             return;
@@ -816,19 +912,6 @@ export class PageletOrchestrator {
         void leaf.openFile(file).then(() => {
             new Notice(this.t("pagelet.panel.status.relatedOpened"), 2500);
         });
-    }
-
-    private findRelatedNote(noteName: string): TFile | null {
-        const normalized = normalizeRelatedNoteName(noteName);
-        if (!normalized) return null;
-        const directPath = normalized.endsWith(".md") ? normalized : `${normalized}.md`;
-        const direct = this.host.app.vault.getAbstractFileByPath(directPath);
-        if (direct && "extension" in direct && direct.extension === "md") return direct as TFile;
-        const basename = directPath.replace(/\.md$/i, "").split("/").pop() ?? "";
-        if (!basename) return null;
-        const resolved = this.host.app.metadataCache.getFirstLinkpathDest(basename, "");
-        if (resolved && resolved.extension === "md") return resolved;
-        return null;
     }
 
     private async handleResearchFinding(finding: PanelFinding): Promise<void> {
@@ -845,18 +928,6 @@ export class PageletOrchestrator {
 
     /** Handle Bubble dismiss. Hook exists for future telemetry. */
     private handleBubbleDismiss(): void { /* no-op */ }
-}
-
-function normalizeRelatedNoteName(noteName: string): string {
-    let value = noteName.trim();
-    if (value.startsWith("[[") && value.endsWith("]]")) {
-        value = value.slice(2, -2);
-    }
-    const pipe = value.indexOf("|");
-    if (pipe >= 0) value = value.slice(0, pipe);
-    const heading = value.indexOf("#");
-    if (heading >= 0) value = value.slice(0, heading);
-    return value.trim();
 }
 
 function noteTitleFromPath(path: string): string {

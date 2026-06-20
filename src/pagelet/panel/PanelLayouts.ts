@@ -23,8 +23,13 @@ import {
     createSuggestionCardRenderer,
     type SuggestionCardRenderer,
 } from "../ui";
-import { getPlatformDocument } from "../../platform-dom";
 import { clearChildren, el } from "../dom-utils";
+import {
+    clearPlatformTimeout,
+    getPlatformDocument,
+    setPlatformTimeout,
+    type PlatformTimeoutHandle,
+} from "../../platform-dom";
 
 export interface PanelLayoutRenderOptions {
     onSuggestionRenderer?: (renderer: SuggestionCardRenderer) => void;
@@ -32,7 +37,9 @@ export interface PanelLayoutRenderOptions {
     onSuggestionAccept?: (finding: PanelFinding) => void;
     onSuggestionDismiss?: (finding: PanelFinding) => void;
     onRelatedNoteClick?: (noteName: string, finding: PanelFinding) => void;
+    onConnectionNodeClick?: (noteName: string, sourcePath?: string) => void;
     onResearchFinding?: (finding: PanelFinding) => void;
+    sourcePath?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -237,15 +244,15 @@ export function renderCurrentNoteAnalysis(
 /**
  * Render knowledge discovery map + connections.
  *
- * Creates a simplified connection map with positioned note nodes
- * and dashed SVG lines between them, followed by a list of
- * connections with strength indicators.
+ * Creates an interactive note graph, followed by a list of
+ * discovered connections with strength indicators.
  */
 export function renderDiscoveryLayout(
     container: HTMLElement,
     findings: PanelFinding[],
     connections?: NoteConnection[],
     locale: PageletLocale = "en",
+    options: PanelLayoutRenderOptions = {},
 ): void {
     clearChildren(container);
 
@@ -257,7 +264,13 @@ export function renderDiscoveryLayout(
             pageletT("pagelet.panel.discovery.map", locale)),
     );
     const mapWrap = el("div", "pa-pagelet-panel-card-wrap");
-    mapWrap.appendChild(renderConnectionMap(findings, connections));
+    mapWrap.appendChild(renderConnectionMap(
+        findings,
+        connections,
+        locale,
+        options.sourcePath,
+        options.onConnectionNodeClick,
+    ));
     wrapper.appendChild(mapWrap);
 
     // Connection list section
@@ -290,119 +303,436 @@ export function renderDiscoveryLayout(
     container.appendChild(wrapper);
 }
 
-/** Build the connection map container with nodes and SVG lines. */
+const MAX_CONNECTION_MAP_NODES = 8;
+const MAX_CONNECTION_LABEL_CHARS = 34;
+const CONNECTION_GRAPH_WIDTH = 360;
+const CONNECTION_GRAPH_HEIGHT = 220;
+const CONNECTION_GRAPH_SVG_NS = "http://www.w3.org/2000/svg";
+const CONNECTION_GRAPH_CLICK_SUPPRESS_MS = 250;
+
+interface ConnectionGraphNode {
+    name: string;
+    label: string;
+    x: number;
+    y: number;
+    radius: number;
+    fill: string;
+    stroke: string;
+    current: boolean;
+}
+
+interface ConnectionGraphEdge {
+    from: number;
+    to: number;
+    strength: NoteConnection["strength"];
+    color: string;
+}
+
+/** Build the connection map container with an interactive SVG graph. */
 function renderConnectionMap(
     findings: PanelFinding[],
     connections?: NoteConnection[],
+    locale: PageletLocale = "en",
+    sourcePath?: string,
+    onNodeClick?: (noteName: string, sourcePath?: string) => void,
 ): HTMLElement {
     const map = el("div", "pa-pagelet-panel-connection-map");
+    const viewport = el("div", "pa-pagelet-panel-connection-graph-wrap");
+    map.appendChild(viewport);
 
-    // Determine center and related nodes from findings/connections
-    const nodeNames: string[] = [];
-    if (findings.length > 0) {
-        nodeNames.push(findings[0].title);
+    const nodeNames = collectConnectionNodeNames(findings, connections, sourcePath);
+    if (nodeNames.length === 0) {
+        viewport.appendChild(el("div", "pa-pagelet-panel-connection-empty",
+            pageletT("pagelet.panel.discovery.emptyMap", locale)));
+        return map;
     }
 
-    // Collect unique note names from connections
-    if (connections) {
-        for (const c of connections) {
-            if (!nodeNames.includes(c.fromNote)) nodeNames.push(c.fromNote);
-            if (!nodeNames.includes(c.toNote)) nodeNames.push(c.toNote);
-        }
-    }
-
-    // Fallback to finding titles if we don't have enough nodes
-    if (nodeNames.length < 2) {
-        for (const f of findings) {
-            if (!nodeNames.includes(f.title)) nodeNames.push(f.title);
-        }
-    }
-
-    // Position nodes in a radial layout around center
-    const positions = calculateNodePositions(nodeNames.length);
-
-    // Create SVG for connection lines
-    const svgNS = "http://www.w3.org/2000/svg";
-    const doc = getPlatformDocument();
-    const svg = doc.createElementNS(svgNS, "svg");
-    svg.setAttribute("class", "pa-pagelet-panel-connection-svg");
-    svg.setAttribute("aria-hidden", "true");
-
-    // Draw lines between connected nodes
-    if (connections) {
-        for (const conn of connections) {
-            const fromIdx = nodeNames.indexOf(conn.fromNote);
-            const toIdx = nodeNames.indexOf(conn.toNote);
-            if (fromIdx >= 0 && toIdx >= 0) {
-                const line = doc.createElementNS(svgNS, "line");
-                line.setAttribute("x1", positions[fromIdx].x + "%");
-                line.setAttribute("y1", positions[fromIdx].y + "%");
-                line.setAttribute("x2", positions[toIdx].x + "%");
-                line.setAttribute("y2", positions[toIdx].y + "%");
-                line.setAttribute("stroke", "var(--background-modifier-border, #3a3a3a)");
-                line.setAttribute("stroke-width", conn.strength === "strong" ? "1.6" : "1.0");
-                line.setAttribute("stroke-dasharray", "4 3");
-                if (conn.strength === "weak") {
-                    line.setAttribute("opacity", "0.5");
-                }
-                svg.appendChild(line);
-            }
-        }
-    } else if (nodeNames.length > 1) {
-        // No connections data -- draw lines from center to all others
-        for (let i = 1; i < nodeNames.length && i < positions.length; i++) {
-            const line = doc.createElementNS(svgNS, "line");
-            line.setAttribute("x1", positions[0].x + "%");
-            line.setAttribute("y1", positions[0].y + "%");
-            line.setAttribute("x2", positions[i].x + "%");
-            line.setAttribute("y2", positions[i].y + "%");
-            line.setAttribute("stroke", "var(--background-modifier-border, #3a3a3a)");
-            line.setAttribute("stroke-width", "1.2");
-            line.setAttribute("stroke-dasharray", "4 3");
-            svg.appendChild(line);
-        }
-    }
-
-    map.appendChild(svg);
-
-    // Create node elements
-    for (let i = 0; i < nodeNames.length && i < positions.length; i++) {
-        const node = el("div",
-            i === 0
-                ? "pa-pagelet-panel-map-node pa-pagelet-panel-map-node--center"
-                : "pa-pagelet-panel-map-node pa-pagelet-panel-map-node--related",
-            nodeNames[i],
-        );
-        node.setCssStyles({
-            left: positions[i].x + "%",
-            top: positions[i].y + "%",
-            transform: "translate(-50%, -50%)",
-        });
-        map.appendChild(node);
-    }
-
+    renderInteractiveConnectionGraph(viewport, nodeNames, connections, locale, sourcePath, onNodeClick);
     return map;
 }
 
-/** Calculate radial positions for nodes (center + radial layout). */
-function calculateNodePositions(
-    count: number,
-): Array<{ x: number; y: number }> {
-    if (count === 0) return [];
-    // Center node
-    const positions: Array<{ x: number; y: number }> = [{ x: 50, y: 50 }];
+function collectConnectionNodeNames(
+    findings: readonly PanelFinding[],
+    connections?: readonly NoteConnection[],
+    sourcePath?: string,
+): string[] {
+    const nodes: string[] = [];
+    const seen = new Set<string>();
+    const push = (name: string | undefined): void => {
+        const normalized = normalizeNoteNodeName(name);
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        nodes.push(normalized);
+    };
 
-    // Surrounding nodes in a circle
-    const radius = 32; // percentage from center
-    for (let i = 1; i < count; i++) {
-        const angle = ((i - 1) / (count - 1)) * 2 * Math.PI - Math.PI / 2;
-        positions.push({
-            x: Math.round(50 + radius * Math.cos(angle)),
-            y: Math.round(50 + radius * Math.sin(angle)),
-        });
+    push(sourcePath);
+
+    if (connections && connections.length > 0) {
+        const currentNote = normalizeNoteNodeName(sourcePath).length > 0
+            ? sourcePath
+            : connections.find((connection) =>
+                normalizeNoteNodeName(connection.fromNote).length > 0
+            )?.fromNote;
+        push(currentNote);
+        for (const connection of connections) {
+            push(connection.fromNote);
+            push(connection.toNote);
+        }
     }
 
-    return positions;
+    if (nodes.length < 2) {
+        for (const finding of findings) {
+            push(finding.sourceFile);
+        }
+    }
+
+    return nodes.slice(0, MAX_CONNECTION_MAP_NODES);
+}
+
+function normalizeNoteNodeName(name: string | undefined): string {
+    return (name ?? "").trim().replace(/\\/g, "/").replace(/\/+/g, "/");
+}
+
+function renderInteractiveConnectionGraph(
+    viewport: HTMLElement,
+    nodeNames: readonly string[],
+    connections?: readonly NoteConnection[],
+    locale: PageletLocale = "en",
+    sourcePath?: string,
+    onNodeClick?: (noteName: string, sourcePath?: string) => void,
+): void {
+    const doc = getPlatformDocument();
+    const { nodes, edges } = buildConnectionGraphModel(nodeNames, connections);
+    const svg = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "svg");
+    svg.setAttribute("class", "pa-pagelet-panel-connection-graph");
+    svg.setAttribute("viewBox", `0 0 ${CONNECTION_GRAPH_WIDTH} ${CONNECTION_GRAPH_HEIGHT}`);
+    svg.setAttribute("role", "group");
+    svg.setAttribute("aria-label", pageletT("pagelet.panel.discovery.graphAriaLabel", locale));
+
+    const edgeLayer = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "g");
+    edgeLayer.setAttribute("class", "pa-pagelet-panel-connection-edge-layer");
+    const nodeLayer = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "g");
+    nodeLayer.setAttribute("class", "pa-pagelet-panel-connection-node-layer");
+    svg.appendChild(edgeLayer);
+    svg.appendChild(nodeLayer);
+
+    const edgeElements = edges.map((edge) => {
+        const line = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "line");
+        line.setAttribute("class", `pa-pagelet-panel-connection-edge pa-pagelet-panel-connection-edge--${edge.strength}`);
+        line.setAttribute("stroke", edge.color);
+        line.setAttribute("data-strength", edge.strength);
+        edgeLayer.appendChild(line);
+        return line;
+    });
+
+    let activeDrag: {
+        index: number;
+        pointerId: number;
+        start: { x: number; y: number };
+        pointerType: string;
+        moved: boolean;
+    } | null = null;
+    const suppressClickTimers = new WeakMap<SVGGElement, PlatformTimeoutHandle>();
+    const clearSuppressedClick = (group: SVGGElement): void => {
+        const timer = suppressClickTimers.get(group);
+        if (timer !== undefined) {
+            clearPlatformTimeout(timer);
+            suppressClickTimers.delete(group);
+        }
+        group.removeAttribute("data-suppress-click");
+    };
+    const suppressNextClick = (group: SVGGElement): void => {
+        clearSuppressedClick(group);
+        group.setAttribute("data-suppress-click", "true");
+        const timer = setPlatformTimeout(() => {
+            suppressClickTimers.delete(group);
+            group.removeAttribute("data-suppress-click");
+        }, CONNECTION_GRAPH_CLICK_SUPPRESS_MS);
+        suppressClickTimers.set(group, timer);
+    };
+
+    const nodeGroups = nodes.map((node, index) => {
+        const group = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "g");
+        group.setAttribute("class", [
+            "pa-pagelet-panel-connection-node",
+            node.current ? "pa-pagelet-panel-connection-node--current" : "",
+        ].filter(Boolean).join(" "));
+        group.setAttribute("data-note-path", node.name);
+        group.setAttribute("role", "button");
+        group.setAttribute("tabindex", "0");
+        group.setAttribute("aria-label", pageletT("pagelet.panel.discovery.openNoteAriaLabel", locale, {
+            note: node.name,
+        }));
+
+        const title = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "title");
+        title.textContent = node.name;
+        group.appendChild(title);
+
+        const hit = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "circle");
+        hit.setAttribute("class", "pa-pagelet-panel-connection-node-hit");
+        hit.setAttribute("r", String(Math.max(node.radius + 12, 26)));
+        group.appendChild(hit);
+
+        const circle = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "circle");
+        circle.setAttribute("class", "pa-pagelet-panel-connection-node-dot");
+        circle.setAttribute("r", String(node.radius));
+        circle.setAttribute("fill", node.fill);
+        circle.setAttribute("stroke", node.stroke);
+        group.appendChild(circle);
+
+        const text = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "text");
+        text.setAttribute("class", "pa-pagelet-panel-connection-node-label");
+        text.textContent = node.label;
+        group.appendChild(text);
+
+        group.addEventListener("pointerdown", (event) => {
+            if (event.pointerType !== "touch") {
+                event.preventDefault();
+            }
+            event.stopPropagation();
+            activeDrag = {
+                index,
+                pointerId: event.pointerId,
+                start: pointerToGraphPoint(svg, event),
+                pointerType: event.pointerType,
+                moved: false,
+            };
+            group.setAttribute("data-dragging", "true");
+            try {
+                (group as unknown as { setPointerCapture?: (pointerId: number) => void })
+                    .setPointerCapture?.(event.pointerId);
+            } catch {
+                // Synthetic pointer events used by smoke tests may not own capture.
+            }
+        });
+        group.addEventListener("click", (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            if (group.getAttribute("data-suppress-click") === "true") {
+                clearSuppressedClick(group);
+                return;
+            }
+            onNodeClick?.(node.name, sourcePath);
+        });
+        group.addEventListener("keydown", (event) => {
+            if (event.key !== "Enter" && event.key !== " ") return;
+            event.preventDefault();
+            event.stopPropagation();
+            onNodeClick?.(node.name, sourcePath);
+        });
+
+        nodeLayer.appendChild(group);
+        updateNodeGroup(group, node);
+        return group;
+    });
+
+    const updateEdges = (): void => {
+        edges.forEach((edge, index) => {
+            const from = nodes[edge.from];
+            const to = nodes[edge.to];
+            const line = edgeElements[index];
+            line.setAttribute("x1", String(from.x));
+            line.setAttribute("y1", String(from.y));
+            line.setAttribute("x2", String(to.x));
+            line.setAttribute("y2", String(to.y));
+        });
+    };
+    updateEdges();
+
+    const finishDrag = (event: PointerEvent): void => {
+        if (!activeDrag || event.pointerId !== activeDrag.pointerId) return;
+        const group = nodeGroups[activeDrag.index];
+        group.removeAttribute("data-dragging");
+        if (activeDrag.moved) {
+            suppressNextClick(group);
+        }
+        activeDrag = null;
+    };
+
+    svg.addEventListener("pointermove", (event) => {
+        if (!activeDrag || event.pointerId !== activeDrag.pointerId) return;
+        const point = pointerToGraphPoint(svg, event);
+        const node = nodes[activeDrag.index];
+        const deltaX = point.x - activeDrag.start.x;
+        const deltaY = point.y - activeDrag.start.y;
+        if (
+            activeDrag.pointerType === "touch"
+            && !activeDrag.moved
+            && Math.abs(deltaY) > 6
+            && Math.abs(deltaY) > Math.abs(deltaX)
+        ) {
+            nodeGroups[activeDrag.index].removeAttribute("data-dragging");
+            activeDrag = null;
+            return;
+        }
+        if (Math.abs(deltaX) + Math.abs(deltaY) > 3) {
+            activeDrag.moved = true;
+        }
+        if (!activeDrag.moved) return;
+        event.preventDefault();
+        node.x = clamp(point.x, 18, CONNECTION_GRAPH_WIDTH - 18);
+        node.y = clamp(point.y, 18, CONNECTION_GRAPH_HEIGHT - 18);
+        updateNodeGroup(nodeGroups[activeDrag.index], node);
+        updateEdges();
+    });
+    svg.addEventListener("pointerup", finishDrag);
+    svg.addEventListener("pointercancel", finishDrag);
+    svg.addEventListener("mouseleave", () => {
+        if (!activeDrag) return;
+        nodeGroups[activeDrag.index].removeAttribute("data-dragging");
+        activeDrag = null;
+    });
+
+    viewport.appendChild(svg);
+}
+
+function findDuplicateBaseLabels(nodeNames: readonly string[]): Set<string> {
+    const counts = new Map<string, number>();
+    for (const name of nodeNames) {
+        const key = basenameWithoutMarkdown(name).toLowerCase();
+        counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    return new Set([...counts.entries()]
+        .filter(([, count]) => count > 1)
+        .map(([name]) => name));
+}
+
+function formatConnectionGraphLabel(
+    noteName: string,
+    duplicateBaseLabels: ReadonlySet<string>,
+): string {
+    const baseName = basenameWithoutMarkdown(noteName);
+    const label = duplicateBaseLabels.has(baseName.toLowerCase())
+        ? noteName.replace(/\.md$/i, "")
+        : baseName;
+    return truncateMiddle(label, MAX_CONNECTION_LABEL_CHARS);
+}
+
+function basenameWithoutMarkdown(noteName: string): string {
+    const normalized = normalizeNoteNodeName(noteName).replace(/\/$/g, "");
+    const parts = normalized.split("/").filter(Boolean);
+    const baseName = parts.length > 0 ? parts[parts.length - 1] : normalized;
+    return (baseName || normalized || "Untitled").replace(/\.md$/i, "");
+}
+
+function truncateMiddle(value: string, maxLength: number): string {
+    if (value.length <= maxLength) return value;
+    const suffixLength = Math.floor((maxLength - 3) / 2);
+    const prefixLength = maxLength - 3 - suffixLength;
+    return `${value.slice(0, prefixLength)}...${value.slice(value.length - suffixLength)}`;
+}
+
+function buildConnectionGraphModel(
+    nodeNames: readonly string[],
+    connections?: readonly NoteConnection[],
+): { nodes: ConnectionGraphNode[]; edges: ConnectionGraphEdge[] } {
+    const duplicateBaseLabels = findDuplicateBaseLabels(nodeNames);
+    const positions = calculateConnectionGraphPositions(nodeNames.length);
+    const nodes = nodeNames.map((name, index): ConnectionGraphNode => {
+        const color = CONNECTION_NODE_PALETTE[index % CONNECTION_NODE_PALETTE.length];
+        return {
+            name,
+            label: formatConnectionGraphLabel(name, duplicateBaseLabels),
+            x: positions[index]?.x ?? CONNECTION_GRAPH_WIDTH / 2,
+            y: positions[index]?.y ?? CONNECTION_GRAPH_HEIGHT / 2,
+            radius: index === 0 ? 3.5 : 2.75,
+            fill: color.fill,
+            stroke: color.stroke,
+            current: index === 0,
+        };
+    });
+    const nodeIndex = new Map(nodeNames.map((name, index) => [name, index]));
+    const edges: ConnectionGraphEdge[] = [];
+    const rendered = new Set<string>();
+    const addEdge = (
+        fromName: string,
+        toName: string,
+        strength: NoteConnection["strength"] = "medium",
+    ): void => {
+        const from = nodeIndex.get(normalizeNoteNodeName(fromName));
+        const to = nodeIndex.get(normalizeNoteNodeName(toName));
+        if (from === undefined || to === undefined || from === to) return;
+        const key = [from, to].sort().join("-");
+        if (rendered.has(key)) return;
+        rendered.add(key);
+        edges.push({ from, to, strength, color: connectionEdgeColor(strength, edges.length) });
+    };
+
+    if (connections && connections.length > 0) {
+        for (const connection of connections) {
+            addEdge(connection.fromNote, connection.toNote, connection.strength);
+        }
+    } else {
+        for (const related of nodeNames.slice(1)) {
+            addEdge(nodeNames[0], related);
+        }
+    }
+
+    return { nodes, edges };
+}
+
+const CONNECTION_NODE_PALETTE = [
+    { fill: "#38bdf8", stroke: "#0369a1" },
+    { fill: "#a78bfa", stroke: "#6d28d9" },
+    { fill: "#34d399", stroke: "#047857" },
+    { fill: "#f59e0b", stroke: "#b45309" },
+    { fill: "#fb7185", stroke: "#be123c" },
+    { fill: "#2dd4bf", stroke: "#0f766e" },
+    { fill: "#c084fc", stroke: "#7e22ce" },
+    { fill: "#84cc16", stroke: "#4d7c0f" },
+];
+
+function calculateConnectionGraphPositions(count: number): Array<{ x: number; y: number }> {
+    if (count <= 0) return [];
+    const center = { x: 132, y: 112 };
+    const positions = [center];
+    const relatedCount = count - 1;
+    if (relatedCount <= 0) return positions;
+
+    for (let i = 0; i < relatedCount; i++) {
+        const angle = relatedCount === 1
+            ? 0
+            : -Math.PI * 0.52 + (i / (relatedCount - 1)) * Math.PI * 1.04;
+        positions.push({
+            x: Math.round(center.x + Math.cos(angle) * 112),
+            y: Math.round(center.y + Math.sin(angle) * 76),
+        });
+    }
+    return positions.map((point) => ({
+        x: clamp(point.x, 28, CONNECTION_GRAPH_WIDTH - 48),
+        y: clamp(point.y, 26, CONNECTION_GRAPH_HEIGHT - 26),
+    }));
+}
+
+function connectionEdgeColor(strength: NoteConnection["strength"], index: number): string {
+    if (strength === "strong") return "#0ea5e9";
+    if (strength === "weak") return "#a78bfa";
+    return ["#22c55e", "#f59e0b", "#ec4899", "#14b8a6"][index % 4];
+}
+
+function pointerToGraphPoint(svg: SVGSVGElement, event: PointerEvent): { x: number; y: number } {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) {
+        return { x: CONNECTION_GRAPH_WIDTH / 2, y: CONNECTION_GRAPH_HEIGHT / 2 };
+    }
+    return {
+        x: ((event.clientX - rect.left) / rect.width) * CONNECTION_GRAPH_WIDTH,
+        y: ((event.clientY - rect.top) / rect.height) * CONNECTION_GRAPH_HEIGHT,
+    };
+}
+
+function updateNodeGroup(group: SVGGElement, node: ConnectionGraphNode): void {
+    group.setAttribute("transform", `translate(${node.x} ${node.y})`);
+    const label = group.querySelector<SVGTextElement>(".pa-pagelet-panel-connection-node-label");
+    if (!label) return;
+    const labelOnRight = node.x < CONNECTION_GRAPH_WIDTH * 0.68;
+    label.setAttribute("x", String(labelOnRight ? node.radius + 9 : -node.radius - 9));
+    label.setAttribute("y", "4");
+    label.setAttribute("text-anchor", labelOnRight ? "start" : "end");
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.min(max, Math.max(min, value));
 }
 
 /** Build a connection item for the list below the map. */

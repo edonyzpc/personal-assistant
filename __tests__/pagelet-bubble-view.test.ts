@@ -1,0 +1,683 @@
+/* Copyright 2023 edonyzpc */
+
+/**
+ * Regression coverage for the Pagelet bubble reading layout.
+ *
+ * The project does not depend on jsdom, so this file uses the same
+ * small fake-DOM approach as the other raw-DOM Pagelet view tests.
+ */
+
+import { afterAll, beforeEach, describe, expect, it, jest } from "@jest/globals";
+
+jest.mock("obsidian", () => ({
+    Notice: jest.fn(),
+    setIcon: jest.fn((element: { setAttribute(name: string, value: string): void }, icon: string) => {
+        element.setAttribute("data-icon", icon);
+    }),
+}));
+
+type Listener = (event: {
+    stopPropagation(): void;
+    preventDefault(): void;
+    target?: unknown;
+}) => void | Promise<void>;
+
+interface FakeRect {
+    top: number;
+    left: number;
+    right: number;
+    bottom: number;
+    width: number;
+    height: number;
+}
+
+class FakeClassList {
+    constructor(private readonly owner: FakeElement) {}
+
+    add(...classes: string[]): void {
+        const tokens = new Set(this.tokens());
+        for (const cls of classes) tokens.add(cls);
+        this.owner.className = [...tokens].join(" ");
+    }
+
+    remove(...classes: string[]): void {
+        const remove = new Set(classes);
+        this.owner.className = this.tokens().filter((cls) => !remove.has(cls)).join(" ");
+    }
+
+    contains(className: string): boolean {
+        return this.tokens().includes(className);
+    }
+
+    private tokens(): string[] {
+        return this.owner.className.split(/\s+/).filter(Boolean);
+    }
+}
+
+class FakeElement {
+    readonly tagName: string;
+    className = "";
+    readonly classList = new FakeClassList(this);
+    readonly style: Record<string, string> = {};
+    private ownText = "";
+    private attrs = new Map<string, string>();
+    private listeners = new Map<string, Listener[]>();
+    private rect: FakeRect = {
+        top: 400,
+        left: 400,
+        right: 780,
+        bottom: 620,
+        width: 380,
+        height: 220,
+    };
+    children: FakeElement[] = [];
+    parent: FakeElement | null = null;
+    offsetParent: FakeElement | null = null;
+    childOffsetParent: FakeElement | null = null;
+    childRectOnAppend: Partial<FakeRect> | null = null;
+    isConnected = false;
+    scrollTop = 0;
+    scrollLeft = 0;
+    focusCalls = 0;
+    lastFocusOptions: unknown = null;
+
+    constructor(tagName: string) {
+        this.tagName = tagName.toUpperCase();
+    }
+
+    get textContent(): string {
+        return this.ownText + this.children.map((child) => child.textContent).join("");
+    }
+
+    set textContent(value: string | null) {
+        this.ownText = value ?? "";
+        for (const child of this.children) child.parent = null;
+        this.children = [];
+    }
+
+    get firstChild(): FakeElement | null {
+        return this.children[0] ?? null;
+    }
+
+    get parentElement(): FakeElement | null {
+        return this.parent;
+    }
+
+    get offsetWidth(): number {
+        return 380;
+    }
+
+    get offsetHeight(): number {
+        return 220;
+    }
+
+    appendChild<T extends FakeElement>(child: T): T {
+        child.parent = this;
+        child.offsetParent = this.childOffsetParent ?? this;
+        if (this.childRectOnAppend) {
+            child.setRect(this.childRectOnAppend);
+        }
+        child.setConnected(this.isConnected);
+        this.children.push(child);
+        return child;
+    }
+
+    removeChild<T extends FakeElement>(child: T): T {
+        this.children = this.children.filter((candidate) => candidate !== child);
+        child.parent = null;
+        child.offsetParent = null;
+        child.setConnected(false);
+        return child;
+    }
+
+    remove(): void {
+        this.parent?.removeChild(this);
+    }
+
+    contains(target: unknown): boolean {
+        if (target === this) return true;
+        return this.children.some((child) => child.contains(target));
+    }
+
+    setAttribute(name: string, value: string): void {
+        if (name === "class") this.className = value;
+        this.attrs.set(name, value);
+    }
+
+    getAttribute(name: string): string | null {
+        return this.attrs.get(name) ?? null;
+    }
+
+    removeAttribute(name: string): void {
+        if (name === "class") this.className = "";
+        this.attrs.delete(name);
+    }
+
+    setCssStyles(styles: Record<string, string>): void {
+        Object.assign(this.style, styles);
+    }
+
+    setRect(rect: Partial<FakeRect>): void {
+        this.rect = { ...this.rect, ...rect };
+    }
+
+    getBoundingClientRect(): DOMRect {
+        return {
+            ...this.rect,
+            x: this.rect.left,
+            y: this.rect.top,
+            toJSON: () => ({}),
+        } as DOMRect;
+    }
+
+    addEventListener(type: string, listener: Listener): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: Listener): void {
+        const listeners = this.listeners.get(type) ?? [];
+        this.listeners.set(type, listeners.filter((candidate) => candidate !== listener));
+    }
+
+    async click(): Promise<void> {
+        for (const listener of this.listeners.get("click") ?? []) {
+            await listener({
+                stopPropagation: (): void => undefined,
+                preventDefault: (): void => undefined,
+                target: this,
+            });
+        }
+    }
+
+    focus(options?: unknown): void {
+        this.focusCalls += 1;
+        this.lastFocusOptions = options ?? null;
+    }
+
+    querySelector(selector: string): FakeElement | null {
+        return this.querySelectorAll(selector)[0] ?? null;
+    }
+
+    querySelectorAll(selector: string): FakeElement[] {
+        const matches: FakeElement[] = [];
+        const visit = (node: FakeElement): void => {
+            if (selector === "*") {
+                matches.push(node);
+            } else if (selector.startsWith(".")) {
+                if (node.classList.contains(selector.slice(1))) matches.push(node);
+            } else if (node.tagName.toLowerCase() === selector.toLowerCase()) {
+                matches.push(node);
+            }
+            for (const child of node.children) visit(child);
+        };
+        visit(this);
+        return matches;
+    }
+
+    private setConnected(value: boolean): void {
+        this.isConnected = value;
+        for (const child of this.children) child.setConnected(value);
+    }
+}
+
+class FakeDocument {
+    readonly body = new FakeElement("body");
+    readonly documentElement = { clientWidth: 1200, clientHeight: 900 };
+    private listeners = new Map<string, Listener[]>();
+
+    constructor() {
+        this.body.isConnected = true;
+    }
+
+    createElement(tagName: string): FakeElement {
+        return new FakeElement(tagName);
+    }
+
+    addEventListener(type: string, listener: Listener): void {
+        const listeners = this.listeners.get(type) ?? [];
+        listeners.push(listener);
+        this.listeners.set(type, listeners);
+    }
+
+    removeEventListener(type: string, listener: Listener): void {
+        const listeners = this.listeners.get(type) ?? [];
+        this.listeners.set(type, listeners.filter((candidate) => candidate !== listener));
+    }
+
+    async dispatch(type: string, event: Parameters<Listener>[0]): Promise<void> {
+        for (const listener of this.listeners.get(type) ?? []) {
+            await listener(event);
+        }
+    }
+}
+
+const globalRecord = globalThis as unknown as Record<string, unknown>;
+const originalDocument = globalRecord.document;
+const originalWindow = globalRecord.window;
+
+globalRecord.document = new FakeDocument();
+
+import { BubbleView } from "../src/pagelet/bubble/BubbleView";
+
+describe("Pagelet BubbleView", () => {
+    beforeEach(() => {
+        globalRecord.document = new FakeDocument();
+        globalRecord.window = undefined;
+    });
+
+    afterAll(() => {
+        globalRecord.document = originalDocument;
+        globalRecord.window = originalWindow;
+    });
+
+    it("renders source links below finding text so long titles cannot squeeze the reading column", () => {
+        const onSourceClick = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "writing-assist",
+            findings: [{
+                text: "After segment 1, add a rollback section with clear retrospective criteria.",
+                sourceLink: "Weekly Product Review.md",
+                sourceTitle: "Weekly Product Review",
+            }],
+            actions: [],
+        }, anchor as unknown as HTMLElement);
+
+        const item = container.querySelector(".pa-pagelet-bubble-items")?.querySelector("li");
+        const body = item?.querySelector(".pa-pagelet-bubble-item-body");
+        const text = body?.querySelector(".pa-pagelet-bubble-text");
+        const source = body?.querySelector(".pa-pagelet-bubble-source-link");
+
+        expect(body).not.toBeNull();
+        expect(text?.textContent).toBe(
+            "After segment 1, add a rollback section with clear retrospective criteria.",
+        );
+        expect(source?.textContent).toBe("Weekly Product Review");
+        expect(source?.getAttribute("title")).toBe("Weekly Product Review");
+        expect(item?.children.map((child) => child.className)).toEqual([
+            "pa-pagelet-bubble-bullet",
+            "pa-pagelet-bubble-item-body",
+        ]);
+
+        view.destroy();
+    });
+
+    it("renders icon and description quick actions as a rich vertical action group", () => {
+        const onReview = jest.fn();
+        const onDiscover = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "empty",
+            findings: [{ text: "No new findings yet." }],
+            actions: [{
+                label: "Review current note",
+                description: "Scan the active note now",
+                icon: "search",
+                primary: true,
+                callback: onReview,
+            }, {
+                label: "Discover connections",
+                description: "Find related notes",
+                icon: "link",
+                callback: onDiscover,
+            }],
+        }, anchor as unknown as HTMLElement);
+
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+        const actions = bubble?.querySelector(".pa-pagelet-bubble-actions");
+        const buttons = actions?.querySelectorAll(".pa-pagelet-bubble-btn") ?? [];
+
+        expect(bubble?.getAttribute("data-content-type")).toBe("empty");
+        expect(actions?.classList.contains("pa-pagelet-bubble-actions--rich")).toBe(true);
+        expect(buttons).toHaveLength(2);
+        expect(buttons[0].getAttribute("type")).toBe("button");
+        expect(buttons[0].getAttribute("data-icon")).toBeNull();
+        expect(buttons[0].querySelector(".pa-pagelet-bubble-btn-icon")?.getAttribute("data-icon")).toBe("search");
+        expect(buttons[0].querySelector(".pa-pagelet-bubble-btn-label")?.textContent).toBe("Review current note");
+        expect(buttons[0].querySelector(".pa-pagelet-bubble-btn-description")?.textContent).toBe("Scan the active note now");
+        expect(buttons[0].getAttribute("aria-label")).toBe("Review current note: Scan the active note now");
+
+        view.destroy();
+    });
+
+    it("keeps the first desktop placement inside the visible viewport edge", () => {
+        const doc = globalRecord.document as FakeDocument;
+        doc.documentElement.clientWidth = 426;
+        doc.documentElement.clientHeight = 900;
+
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        container.setRect({
+            top: 0,
+            left: 0,
+            right: 520,
+            bottom: 900,
+            width: 520,
+            height: 900,
+        });
+        const anchor = new FakeElement("button");
+        anchor.setRect({
+            top: 760,
+            left: 390,
+            right: 446,
+            bottom: 816,
+            width: 56,
+            height: 56,
+        });
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "writing-assist",
+            findings: [{ text: "No new findings yet." }],
+            actions: [],
+        }, anchor as unknown as HTMLElement);
+
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+
+        expect(bubble?.style.maxWidth).toBe("394px");
+        expect(bubble?.style.maxHeight).toBe("868px");
+        expect(bubble?.style.overflowY).toBe("auto");
+        expect(bubble?.style.left).toBe("30px");
+        expect(bubble?.getAttribute("data-placement")).toBe("above");
+
+        view.destroy();
+    });
+
+    it("keeps tall desktop quick actions scrollable inside short windows", () => {
+        const doc = globalRecord.document as FakeDocument;
+        doc.documentElement.clientWidth = 426;
+        doc.documentElement.clientHeight = 180;
+
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        container.setRect({
+            top: 0,
+            left: 0,
+            right: 426,
+            bottom: 180,
+            width: 426,
+            height: 180,
+        });
+        const anchor = new FakeElement("button");
+        anchor.setRect({
+            top: 120,
+            left: 360,
+            right: 416,
+            bottom: 176,
+            width: 56,
+            height: 56,
+        });
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "empty",
+            findings: [{ text: "No new findings yet." }],
+            actions: [{
+                label: "Review current note",
+                description: "Scan the active note now",
+                icon: "search",
+                primary: true,
+                callback: () => undefined,
+            }, {
+                label: "Discover connections",
+                description: "Find related notes",
+                icon: "link",
+                callback: () => undefined,
+            }, {
+                label: "Periodic summary",
+                description: "Summarize recent changes",
+                icon: "calendar",
+                callback: () => undefined,
+            }],
+        }, anchor as unknown as HTMLElement);
+
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+
+        expect(bubble?.style.maxHeight).toBe("160px");
+        expect(bubble?.style.overflowY).toBe("auto");
+
+        view.destroy();
+    });
+
+    it("moves focus into the bubble and restores focus to the anchor on close", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        anchor.isConnected = true;
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "empty",
+            findings: [{ text: "No new findings yet." }],
+            actions: [{
+                label: "Review current note",
+                description: "Scan the active note now",
+                icon: "search",
+                primary: true,
+                callback: () => undefined,
+            }],
+        }, anchor as unknown as HTMLElement);
+
+        const primary = container.querySelector(".pa-pagelet-bubble-btn");
+
+        expect(primary?.focusCalls).toBe(1);
+        expect(primary?.lastFocusOptions).toEqual({ preventScroll: true });
+
+        view.close();
+
+        expect(anchor.focusCalls).toBe(1);
+        expect(anchor.lastFocusOptions).toEqual({ preventScroll: true });
+
+        view.destroy();
+    });
+
+    it("does not restore focus to the anchor when dismissed by outside click", async () => {
+        jest.useFakeTimers();
+        try {
+            const doc = globalRecord.document as FakeDocument;
+            const onDismiss = jest.fn();
+            const container = new FakeElement("div");
+            container.isConnected = true;
+            const anchor = new FakeElement("button");
+            anchor.isConnected = true;
+            const outside = new FakeElement("div");
+            const view = new BubbleView({
+                callbacks: {
+                    onDismiss,
+                    onExpandPanel: () => undefined,
+                    onSourceClick: () => undefined,
+                },
+                getLocale: () => "en",
+            });
+
+            view.mount(container as unknown as HTMLElement);
+            view.show({
+                type: "empty",
+                findings: [{ text: "No new findings yet." }],
+                actions: [{
+                    label: "Review current note",
+                    description: "Scan the active note now",
+                    icon: "search",
+                    primary: true,
+                    callback: () => undefined,
+                }],
+            }, anchor as unknown as HTMLElement);
+            jest.runOnlyPendingTimers();
+
+            await doc.dispatch("click", {
+                stopPropagation: (): void => undefined,
+                preventDefault: (): void => undefined,
+                target: outside,
+            });
+
+            expect(view.bubbleState).toBe("hidden");
+            expect(anchor.focusCalls).toBe(0);
+            expect(onDismiss).toHaveBeenCalledTimes(1);
+
+            view.destroy();
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
+    it("uses the bubble offset parent when the workspace container starts before the viewport", () => {
+        const doc = globalRecord.document as FakeDocument;
+        doc.documentElement.clientWidth = 1264;
+        doc.documentElement.clientHeight = 882;
+
+        const viewportParent = new FakeElement("div");
+        viewportParent.setRect({
+            top: 0,
+            left: 0,
+            right: 1264,
+            bottom: 882,
+            width: 1264,
+            height: 882,
+        });
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        container.childOffsetParent = viewportParent;
+        container.setRect({
+            top: 0,
+            left: -38,
+            right: 1302,
+            bottom: 882,
+            width: 1340,
+            height: 882,
+        });
+        const anchor = new FakeElement("button");
+        anchor.setRect({
+            top: 790,
+            left: 1188,
+            right: 1244,
+            bottom: 846,
+            width: 56,
+            height: 56,
+        });
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "writing-assist",
+            findings: [{ text: "No new findings yet." }],
+            actions: [],
+        }, anchor as unknown as HTMLElement);
+
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+
+        expect(bubble?.style.maxWidth).toBe("1232px");
+        expect(bubble?.style.left).toBe("868px");
+
+        view.destroy();
+    });
+
+    it("uses layout width instead of transformed first-frame width for edge clamping", () => {
+        const doc = globalRecord.document as FakeDocument;
+        doc.documentElement.clientWidth = 1264;
+        doc.documentElement.clientHeight = 882;
+
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        container.childRectOnAppend = {
+            left: 0,
+            right: 342,
+            width: 342,
+            height: 126,
+        };
+        container.setRect({
+            top: 0,
+            left: 0,
+            right: 1264,
+            bottom: 882,
+            width: 1264,
+            height: 882,
+        });
+        const anchor = new FakeElement("button");
+        anchor.setRect({
+            top: 790,
+            left: 1188,
+            right: 1244,
+            bottom: 846,
+            width: 56,
+            height: 56,
+        });
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "writing-assist",
+            findings: [{ text: "No new findings yet." }],
+            actions: [],
+        }, anchor as unknown as HTMLElement);
+
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+
+        expect(bubble?.style.left).toBe("868px");
+
+        view.destroy();
+    });
+});

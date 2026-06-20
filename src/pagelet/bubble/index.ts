@@ -26,5 +26,6 @@ export type {
     BubbleContent,
     BubbleAction,
     BubbleCallbacks,
+    BubbleQuickAccessCallbacks,
     BubbleViewOptions,
 } from "./types";

@@ -145,6 +145,15 @@ export class PanelView {
     get currentLayoutType(): PanelLayoutType | null {
         return this.currentLayout;
     }
+
+    get currentVisibleFindings(): PanelFinding[] {
+        return this.visibleFindings();
+    }
+
+    get currentPanelExtra(): PanelOpenExtra | undefined {
+        return this.currentExtra;
+    }
+
     private currentFindings: PanelFinding[] = [];
     private currentExtra: PanelOpenExtra | undefined;
     private currentContentKey = "";
@@ -305,7 +314,11 @@ export class PanelView {
                 break;
             case "discover":
                 renderDiscoveryLayout(
-                    contentEl, visibleFindings, this.currentExtra?.connections, this.getLocale(),
+                    contentEl,
+                    visibleFindings,
+                    this.currentExtra?.connections,
+                    this.getLocale(),
+                    renderOptions,
                 );
                 break;
             case "summary": {
@@ -377,6 +390,7 @@ export class PanelView {
 
     private buildRenderOptions(): PanelLayoutRenderOptions {
         const options: PanelLayoutRenderOptions = {
+            sourcePath: this.currentExtra?.sourcePath,
             onSuggestionRenderer: (renderer) => {
                 this.suggestionRenderers.push(renderer);
             },
@@ -387,7 +401,16 @@ export class PanelView {
             onSuggestionDismiss: (finding) => this.dismissSuggestion(finding),
         };
         if (this.options.callbacks.onRelatedNoteClick) {
-            options.onRelatedNoteClick = (noteName) => this.options.callbacks.onRelatedNoteClick?.(noteName);
+            options.onRelatedNoteClick = (noteName, finding) =>
+                this.options.callbacks.onRelatedNoteClick?.(
+                    noteName,
+                    finding.sourceFile ?? this.currentExtra?.sourcePath,
+                );
+            options.onConnectionNodeClick = (noteName, sourcePath) =>
+                this.options.callbacks.onRelatedNoteClick?.(
+                    noteName,
+                    sourcePath ?? this.currentExtra?.sourcePath,
+                );
         }
         if (this.options.callbacks.onResearchFinding) {
             options.onResearchFinding = (finding) => {

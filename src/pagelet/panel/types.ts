@@ -54,7 +54,7 @@ export interface PanelCallbacks {
     onRunSelectedReview?: () => void | Promise<void>;
     onScopeRangeChange?: (range: PageletReviewRange) => void;
     onScopeCandidateToggle?: (path: string, included: boolean) => void;
-    onRelatedNoteClick?: (noteName: string) => void;
+    onRelatedNoteClick?: (noteName: string, sourcePath?: string) => void;
     onResearchFinding?: (finding: PanelFinding) => void | Promise<void>;
     onToggleHints?: () => void;
 }
@@ -88,6 +88,7 @@ export interface PanelOpenExtra {
     connections?: NoteConnection[];
     markdown?: string;
     scope?: PanelScopeState;
+    sourcePath?: string;
 }
 
 /** Discovery connection between notes */

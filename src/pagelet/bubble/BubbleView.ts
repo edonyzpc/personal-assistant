@@ -24,10 +24,12 @@
  */
 
 import type {
+    BubbleAction,
     BubbleContent,
     BubbleState,
     BubbleViewOptions,
 } from "./types";
+import { setIcon } from "obsidian";
 import { getPageletUiLanguage, pageletT } from "../../locales/pagelet";
 import {
     clearPlatformTimeout,
@@ -56,10 +58,83 @@ function isMobile(): boolean {
 const ANCHOR_MARGIN = 20;
 /** Minimum distance from the viewport top before flipping below. */
 const MIN_TOP_SPACE = 16;
+/** Minimum visible inset from the bubble to the containing viewport edge. */
+const EDGE_MARGIN = 16;
+/** Desktop bubble width used by CSS and measurement fallbacks. */
+const DESKTOP_BUBBLE_WIDTH = 380;
 
 // calculatePlacement logic is inlined in applyDesktopLayout to account
 // for container-relative positioning (position:fixed inside a
 // transformed container).
+
+interface VisibleBounds {
+    left: number;
+    right: number;
+    top: number;
+    bottom: number;
+    width: number;
+}
+
+interface BubbleCloseOptions {
+    restoreFocus?: boolean;
+}
+
+function clamp(value: number, min: number, max: number): number {
+    return Math.max(min, Math.min(value, max));
+}
+
+function minPositive(fallback: number, ...values: Array<number | undefined>): number {
+    const positive = values.filter((value): value is number => typeof value === "number" && value > 0);
+    return positive.length > 0 ? Math.min(...positive) : fallback;
+}
+
+function usesRichActionLayout(actions: BubbleAction[]): boolean {
+    return actions.some((action) => Boolean(action.icon || action.description));
+}
+
+function getVisibleBounds(
+    containerRect: DOMRect | undefined,
+    positioningRect: DOMRect | undefined,
+    positioningScrollLeft: number,
+    positioningScrollTop: number,
+): VisibleBounds {
+    const docEl = getPlatformDocument().documentElement;
+    const win = getOptionalPlatformWindow();
+    const viewportW = minPositive(DESKTOP_BUBBLE_WIDTH, docEl.clientWidth, win?.innerWidth, containerRect?.right);
+    const viewportH = minPositive(600, docEl.clientHeight, win?.innerHeight, containerRect?.bottom);
+    const offsetX = positioningRect?.left ?? 0;
+    const offsetY = positioningRect?.top ?? 0;
+    const containerLeft = containerRect?.left ?? 0;
+    const containerRight = containerRect?.right ?? viewportW;
+    const containerTop = containerRect?.top ?? 0;
+    const containerBottom = containerRect?.bottom ?? viewportH;
+
+    const visibleLeft = Math.max(0, containerLeft);
+    const visibleRight = Math.max(visibleLeft, Math.min(viewportW, containerRight));
+    const visibleTop = Math.max(0, containerTop);
+    const visibleBottom = Math.max(visibleTop, Math.min(viewportH, containerBottom));
+
+    return {
+        left: visibleLeft - offsetX + positioningScrollLeft,
+        right: visibleRight - offsetX + positioningScrollLeft,
+        top: visibleTop - offsetY + positioningScrollTop,
+        bottom: visibleBottom - offsetY + positioningScrollTop,
+        width: visibleRight - visibleLeft,
+    };
+}
+
+function getPositioningContext(
+    rootEl: HTMLElement,
+    containerEl: HTMLElement | null,
+): { rect: DOMRect | undefined; scrollLeft: number; scrollTop: number } {
+    const offsetParent = rootEl.offsetParent as HTMLElement | null | undefined;
+    const positioningEl = offsetParent ?? containerEl;
+    return {
+        rect: positioningEl?.getBoundingClientRect(),
+        scrollLeft: positioningEl?.scrollLeft ?? 0,
+        scrollTop: positioningEl?.scrollTop ?? 0,
+    };
+}
 
 // ---------------------------------------------------------------------------
 // BubbleView
@@ -89,6 +164,7 @@ export class BubbleView {
 
     // Reference to the anchor element for click-outside detection.
     private anchorEl: HTMLElement | null = null;
+    private focusRestoreEl: HTMLElement | null = null;
 
     // Timer ID for deferred global listener attachment (see Fix 1).
     private attachTimerId: PlatformTimeoutHandle | null = null;
@@ -157,6 +233,7 @@ export class BubbleView {
         if (!this.rootEl) return;
 
         this.anchorEl = anchorEl;
+        this.focusRestoreEl = anchorEl;
         this.currentContent = content;
         this.renderContent(content);
 
@@ -169,17 +246,23 @@ export class BubbleView {
         }
 
         this.setState("visible");
+        this.focusInitialControl();
         this.attachGlobalListeners();
     }
 
     /** Fully close/hide the bubble. */
-    close(): void {
+    close(options: BubbleCloseOptions = {}): void {
         const wasVisible = this.state !== "hidden" && !!this.rootEl?.isConnected;
+        const focusRestoreEl = this.focusRestoreEl;
         this.setState("hidden");
         this.detachGlobalListeners();
         this.anchorEl = null;
+        this.focusRestoreEl = null;
         if (wasVisible && this.rootEl) {
             this.scheduleUnmount(this.rootEl);
+        }
+        if (options.restoreFocus !== false) {
+            this.restoreFocus(focusRestoreEl);
         }
     }
 
@@ -203,6 +286,7 @@ export class BubbleView {
         }
         this.containerEl = null;
         this.anchorEl = null;
+        this.focusRestoreEl = null;
         this.currentContent = null;
         this.state = "hidden";
     }
@@ -303,6 +387,8 @@ export class BubbleView {
     private renderContent(content: BubbleContent): void {
         if (!this.rootEl) return;
 
+        this.rootEl.setAttribute("data-content-type", content.type);
+
         // Rebuild findings list
         const itemsEl = this.rootEl.querySelector(".pa-pagelet-bubble-items");
         if (itemsEl) {
@@ -314,23 +400,29 @@ export class BubbleView {
                 bullet.className = "pa-pagelet-bubble-bullet";
                 li.appendChild(bullet);
 
+                const itemBody = createHtmlElement("span");
+                itemBody.className = "pa-pagelet-bubble-item-body";
+
                 const textSpan = createHtmlElement("span");
+                textSpan.className = "pa-pagelet-bubble-text";
                 textSpan.textContent = finding.text;
-                li.appendChild(textSpan);
+                itemBody.appendChild(textSpan);
 
                 if (finding.sourceLink) {
                     const link = createHtmlElement("a");
                     link.className = "pa-pagelet-bubble-source-link";
                     link.textContent = finding.sourceTitle ?? finding.sourceLink;
                     link.setAttribute("href", "#");
+                    link.setAttribute("title", finding.sourceTitle ?? finding.sourceLink);
                     link.addEventListener("click", (e) => {
                         e.preventDefault();
                         e.stopPropagation();
                         this.options.callbacks.onSourceClick(finding.sourceLink!);
                     });
-                    li.appendChild(link);
+                    itemBody.appendChild(link);
                 }
 
+                li.appendChild(itemBody);
                 itemsEl.appendChild(li);
             }
         }
@@ -339,13 +431,44 @@ export class BubbleView {
         const actionsEl = this.rootEl.querySelector(".pa-pagelet-bubble-actions");
         if (actionsEl) {
             clearChildren(actionsEl);
+            actionsEl.className = usesRichActionLayout(content.actions)
+                ? "pa-pagelet-bubble-actions pa-pagelet-bubble-actions--rich"
+                : "pa-pagelet-bubble-actions";
             for (const action of content.actions) {
                 const btn = createHtmlElement("button");
                 btn.className = "pa-pagelet-bubble-btn";
+                btn.setAttribute("type", "button");
                 if (action.primary) {
                     btn.classList.add("primary");
                 }
-                btn.textContent = action.label;
+                if (action.description) {
+                    btn.setAttribute("title", `${action.label}: ${action.description}`);
+                    btn.setAttribute("aria-label", `${action.label}: ${action.description}`);
+                }
+                if (action.icon) {
+                    const icon = createHtmlElement("span");
+                    icon.className = "pa-pagelet-bubble-btn-icon";
+                    icon.setAttribute("aria-hidden", "true");
+                    setIcon(icon, action.icon);
+                    btn.appendChild(icon);
+                }
+
+                const copy = createHtmlElement("span");
+                copy.className = "pa-pagelet-bubble-btn-copy";
+
+                const label = createHtmlElement("span");
+                label.className = "pa-pagelet-bubble-btn-label";
+                label.textContent = action.label;
+                copy.appendChild(label);
+
+                if (action.description) {
+                    const description = createHtmlElement("span");
+                    description.className = "pa-pagelet-bubble-btn-description";
+                    description.textContent = action.description;
+                    copy.appendChild(description);
+                }
+
+                btn.appendChild(copy);
                 btn.addEventListener("click", (e) => {
                     e.stopPropagation();
                     action.callback();
@@ -368,14 +491,23 @@ export class BubbleView {
 
         // Compute container offset for absolute positioning.
         const containerRect = this.containerEl?.getBoundingClientRect();
-        const offsetX = containerRect?.left ?? 0;
-        const offsetY = containerRect?.top ?? 0;
-        // Account for container scroll (absolute pos is relative to content, not viewport)
-        const scrollTop = this.containerEl?.scrollTop ?? 0;
-        const scrollLeft = this.containerEl?.scrollLeft ?? 0;
+        const positioning = getPositioningContext(this.rootEl, this.containerEl);
+        const offsetX = positioning.rect?.left ?? 0;
+        const offsetY = positioning.rect?.top ?? 0;
+        const visibleBounds = getVisibleBounds(
+            containerRect,
+            positioning.rect,
+            positioning.scrollLeft,
+            positioning.scrollTop,
+        );
+        const maxBubbleW = Math.max(1, visibleBounds.width - EDGE_MARGIN * 2);
+        const maxBubbleH = Math.max(160, visibleBounds.bottom - visibleBounds.top - EDGE_MARGIN * 2);
 
         // Use a temporary measurement to get the bubble's natural size.
         this.rootEl.setCssStyles({
+            maxWidth: `${maxBubbleW}px`,
+            maxHeight: `${maxBubbleH}px`,
+            overflowY: "auto",
             visibility: "hidden",
             display: "block",
         });
@@ -387,30 +519,33 @@ export class BubbleView {
             display: "",
         });
 
-        const bubbleW = bubbleRect.width || 300;
-        const bubbleH = bubbleRect.height || 200;
-        const containerW = containerRect?.width ?? getPlatformDocument().documentElement.clientWidth;
+        const bubbleW = Math.min(this.rootEl.offsetWidth || bubbleRect.width || DESKTOP_BUBBLE_WIDTH, maxBubbleW);
+        const bubbleH = Math.min(this.rootEl.offsetHeight || bubbleRect.height || 200, maxBubbleH);
 
         // Place above anchor by default; flip below if not enough room.
         let placement: "above" | "below" = "above";
-        let top = anchorRect.top - offsetY + scrollTop - bubbleH - ANCHOR_MARGIN;
-        if (anchorRect.top - offsetY - bubbleH - ANCHOR_MARGIN < MIN_TOP_SPACE) {
+        let top = anchorRect.top - offsetY + positioning.scrollTop - bubbleH - ANCHOR_MARGIN;
+        if (top < visibleBounds.top + MIN_TOP_SPACE) {
             placement = "below";
-            top = anchorRect.bottom - offsetY + scrollTop + ANCHOR_MARGIN;
+            top = anchorRect.bottom - offsetY + positioning.scrollTop + ANCHOR_MARGIN;
         }
+        const maxTop = Math.max(visibleBounds.top + MIN_TOP_SPACE, visibleBounds.bottom - bubbleH - EDGE_MARGIN);
+        top = clamp(top, visibleBounds.top + MIN_TOP_SPACE, maxTop);
 
         // Center horizontally on anchor, clamped to container bounds.
-        const anchorCenterX = anchorRect.left - offsetX + scrollLeft + anchorRect.width / 2;
-        let left = anchorCenterX - bubbleW / 2;
-        if (left < 8) left = 8;
-        const maxLeft = containerW - bubbleW - 16;
-        if (left > maxLeft) left = maxLeft;
+        const anchorCenterX = anchorRect.left - offsetX + positioning.scrollLeft + anchorRect.width / 2;
+        const minLeft = visibleBounds.left + EDGE_MARGIN;
+        const maxLeft = Math.max(minLeft, visibleBounds.right - bubbleW - EDGE_MARGIN);
+        const left = clamp(anchorCenterX - bubbleW / 2, minLeft, maxLeft);
 
         this.rootEl.setCssStyles({
             top: `${top}px`,
             left: `${left}px`,
             right: "",
             bottom: "",
+            maxWidth: `${maxBubbleW}px`,
+            maxHeight: `${maxBubbleH}px`,
+            overflowY: "auto",
         });
         this.rootEl.setAttribute("data-placement", placement);
 
@@ -428,27 +563,39 @@ export class BubbleView {
 
         const anchorRect = this.anchorEl.getBoundingClientRect();
         const containerRect = this.containerEl.getBoundingClientRect();
-        const offsetX = containerRect.left;
-        const offsetY = containerRect.top;
-        const scrollTop = this.containerEl.scrollTop;
-        const scrollLeft = this.containerEl.scrollLeft;
-        const bubbleW = this.rootEl.offsetWidth || 300;
-        const bubbleH = this.rootEl.offsetHeight || 200;
-        const containerW = containerRect.width;
+        const positioning = getPositioningContext(this.rootEl, this.containerEl);
+        const offsetX = positioning.rect?.left ?? 0;
+        const offsetY = positioning.rect?.top ?? 0;
+        const visibleBounds = getVisibleBounds(
+            containerRect,
+            positioning.rect,
+            positioning.scrollLeft,
+            positioning.scrollTop,
+        );
+        const maxBubbleW = Math.max(1, visibleBounds.width - EDGE_MARGIN * 2);
+        const maxBubbleH = Math.max(160, visibleBounds.bottom - visibleBounds.top - EDGE_MARGIN * 2);
+        this.rootEl.setCssStyles({
+            maxWidth: `${maxBubbleW}px`,
+            maxHeight: `${maxBubbleH}px`,
+            overflowY: "auto",
+        });
+        const bubbleW = Math.min(this.rootEl.offsetWidth || DESKTOP_BUBBLE_WIDTH, maxBubbleW);
+        const bubbleH = Math.min(this.rootEl.offsetHeight || 200, maxBubbleH);
         const placement = this.rootEl.getAttribute("data-placement") as "above" | "below" || "above";
 
         let top: number;
         if (placement === "below") {
-            top = anchorRect.bottom - offsetY + scrollTop + ANCHOR_MARGIN;
+            top = anchorRect.bottom - offsetY + positioning.scrollTop + ANCHOR_MARGIN;
         } else {
-            top = anchorRect.top - offsetY + scrollTop - bubbleH - ANCHOR_MARGIN;
+            top = anchorRect.top - offsetY + positioning.scrollTop - bubbleH - ANCHOR_MARGIN;
         }
+        const maxTop = Math.max(visibleBounds.top + MIN_TOP_SPACE, visibleBounds.bottom - bubbleH - EDGE_MARGIN);
+        top = clamp(top, visibleBounds.top + MIN_TOP_SPACE, maxTop);
 
-        const anchorCenterX = anchorRect.left - offsetX + scrollLeft + anchorRect.width / 2;
-        let left = anchorCenterX - bubbleW / 2;
-        if (left < 8) left = 8;
-        const maxLeft = containerW - bubbleW - 16;
-        if (left > maxLeft) left = maxLeft;
+        const anchorCenterX = anchorRect.left - offsetX + positioning.scrollLeft + anchorRect.width / 2;
+        const minLeft = visibleBounds.left + EDGE_MARGIN;
+        const maxLeft = Math.max(minLeft, visibleBounds.right - bubbleW - EDGE_MARGIN);
+        const left = clamp(anchorCenterX - bubbleW / 2, minLeft, maxLeft);
 
         this.rootEl.setCssStyles({
             top: `${top}px`,
@@ -473,8 +620,34 @@ export class BubbleView {
             left: "",
             right: "",
             bottom: "",
+            maxWidth: "",
+            maxHeight: "",
+            overflowY: "",
         });
         this.rootEl.removeAttribute("data-placement");
+    }
+
+    private focusInitialControl(): void {
+        if (!this.rootEl) return;
+        const buttons = Array.from(this.rootEl.querySelectorAll<HTMLElement>(".pa-pagelet-bubble-btn"));
+        const target = buttons.find((button) => button.classList.contains("primary"))
+            ?? buttons[0]
+            ?? this.rootEl.querySelector<HTMLElement>(".pa-pagelet-bubble-close");
+        this.focusElement(target);
+    }
+
+    private restoreFocus(target: HTMLElement | null): void {
+        if (!target?.isConnected) return;
+        this.focusElement(target);
+    }
+
+    private focusElement(target: HTMLElement | null): void {
+        if (!target) return;
+        try {
+            target.focus({ preventScroll: true });
+        } catch {
+            target.focus();
+        }
     }
 
     // -----------------------------------------------------------------------
@@ -534,7 +707,7 @@ export class BubbleView {
 
         // Click outside — close the bubble.
         if (this.state === "visible") {
-            this.close();
+            this.close({ restoreFocus: false });
             this.options.callbacks.onDismiss();
         }
     }

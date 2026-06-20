@@ -1,7 +1,8 @@
 /* Copyright 2023 edonyzpc */
 
 import type { PageletLocale } from "../../locales/pagelet";
-import type { PanelFinding } from "../panel/types";
+import type { GeneratedReviewNote } from "../output/types";
+import type { NoteConnection, PanelFinding } from "../panel/types";
 
 /**
  * Pagelet -- Tab component types.
@@ -24,9 +25,20 @@ export interface TabCard {
 }
 
 export type PageletDetailContent = PanelFinding[] | TabSection[];
+export type PageletDetailLayoutType = "review" | "current" | "discover" | "summary";
+
+export interface PageletDetailExtra {
+    connections?: NoteConnection[];
+    markdown?: string;
+}
 
 export interface PageletDetailPayload {
     title: string;
     content: PageletDetailContent;
     locale: PageletLocale;
+    layoutType?: PageletDetailLayoutType;
+    extra?: PageletDetailExtra;
+    sourcePath?: string;
+    summarySaveNote?: GeneratedReviewNote;
+    restoredFromState?: boolean;
 }
