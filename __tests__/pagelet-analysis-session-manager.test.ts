@@ -2,10 +2,34 @@
 
 import { describe, expect, it, jest } from "@jest/globals";
 
-jest.mock("obsidian", () => ({
-    Notice: jest.fn(),
-    normalizePath: (path: string) => path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/g, ""),
-}));
+jest.mock("obsidian", () => {
+    class MockTFile {
+        path: string;
+        basename: string;
+        extension: string;
+        stat: { size: number; mtime: number; ctime: number };
+
+        constructor(path: string, stat: { size?: number; mtime?: number; ctime?: number } = {}) {
+            this.path = path;
+            const name = path.split("/").pop() ?? path;
+            this.extension = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+            this.basename = this.extension ? name.slice(0, -this.extension.length - 1) : name;
+            this.stat = {
+                size: stat.size ?? 100,
+                mtime: stat.mtime ?? Date.now(),
+                ctime: stat.ctime ?? Date.now(),
+            };
+        }
+    }
+
+    return {
+        Notice: jest.fn(),
+        TFile: MockTFile,
+        normalizePath: (path: string) => path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/g, ""),
+    };
+});
+
+import { TFile } from "obsidian";
 
 import {
     AnalysisSessionManager,
@@ -18,13 +42,15 @@ import type { PreloadFinding } from "../src/pagelet/preload/types";
 // Helpers
 // ---------------------------------------------------------------------------
 
-function makeHost(overrides: Partial<AnalysisSessionHost> = {}): AnalysisSessionHost {
-    const activeFile = {
-        path: "notes/current.md",
-        basename: "current",
-        extension: "md",
-        stat: { size: 100, mtime: Date.now(), ctime: Date.now() },
+function makeTFile(path: string, stat: { size?: number; mtime?: number; ctime?: number } = {}): TFile {
+    const FileCtor = TFile as unknown as {
+        new(path: string, stat?: { size?: number; mtime?: number; ctime?: number }): TFile;
     };
+    return new FileCtor(path, stat);
+}
+
+function makeHost(overrides: Partial<AnalysisSessionHost> = {}): AnalysisSessionHost {
+    const activeFile = makeTFile("notes/current.md", { size: 100, mtime: Date.now(), ctime: Date.now() });
 
     return {
         app: {

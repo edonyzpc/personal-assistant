@@ -9,8 +9,7 @@
  * through a narrow {@link AnalysisSessionHost} callback interface.
  */
 
-import { Notice } from "obsidian";
-import type { App, TFile } from "obsidian";
+import { Notice, TFile, type App } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
@@ -218,8 +217,8 @@ export class AnalysisSessionManager {
             excludedPatterns: s.excludedPatterns,
             getMetadata: (path) => {
                 const file = this.host.app.vault.getAbstractFileByPath(path);
-                if (!file || !("extension" in file) || file.extension !== "md") return undefined;
-                return this.host.app.metadataCache.getFileCache(file as TFile) ?? undefined;
+                if (!(file instanceof TFile) || file.extension !== "md") return undefined;
+                return this.host.app.metadataCache.getFileCache(file) ?? undefined;
             },
         });
     }

@@ -239,7 +239,7 @@ function getLegacyStatsSyncRecordHash(record: StatsDailyDeviceRecord): string {
     return hashString(JSON.stringify(recordToSyncLine(record)));
 }
 
-function parseJson(content: string, path: string, errors: StatsStoreError[]): unknown | undefined {
+function parseJson(content: string, path: string, errors: StatsStoreError[]): unknown {
     try {
         return JSON.parse(content);
     } catch (error) {

@@ -38,10 +38,24 @@ function makeContext(overrides: Partial<AgentCapabilityContext> = {}): AgentCapa
     };
 }
 
-function makeFsProbe(existsMap: Record<string, boolean> = {}): FsProbe {
+type TestFsProbe = FsProbe & {
+    _existsMock: jest.MockedFunction<FsProbe["exists"]>;
+    _readMock: jest.MockedFunction<FsProbe["read"]>;
+};
+
+type TestWriteActionCapability = WriteActionCapability & {
+    _buildPreviewMock: jest.MockedFunction<WriteActionCapability["buildPreview"]>;
+    _executeWriteMock: jest.MockedFunction<WriteActionCapability["executeWrite"]>;
+};
+
+function makeFsProbe(existsMap: Record<string, boolean> = {}): TestFsProbe {
+    const existsMock = jest.fn(async (path: string) => existsMap[path] ?? false) as jest.MockedFunction<FsProbe["exists"]>;
+    const readMock = jest.fn(async () => "") as jest.MockedFunction<FsProbe["read"]>;
     return {
-        exists: jest.fn(async (path: string) => existsMap[path] ?? false) as FsProbe["exists"],
-        read: jest.fn(async () => "") as FsProbe["read"],
+        exists: existsMock,
+        read: readMock,
+        _existsMock: existsMock,
+        _readMock: readMock,
     };
 }
 
@@ -62,7 +76,7 @@ function makeRenderer(outcomes: ConfirmationOutcome[]): PreviewRenderer {
 function makeCapability(
     overrides: Partial<WriteActionCapability> = {},
     spec: Partial<PreviewSpec> = {},
-): WriteActionCapability {
+): TestWriteActionCapability {
     const previewSpec: PreviewSpec = {
         operationType: "create-file",
         actionFamily: "pagelet-review-note",
@@ -88,6 +102,14 @@ function makeCapability(
         ...spec,
     };
     const initialTargetPath = previewSpec.target.displayPath;
+    const buildPreviewMock = jest.fn(async () => previewSpec) as jest.MockedFunction<WriteActionCapability["buildPreview"]>;
+    const executeWriteMock = jest.fn(async () => ({
+        status: "ok" as const,
+        observation: { createdPath: ".pagelet/foo.md" },
+        sourceRecords: [],
+        inputSummary: "wrote",
+        sources: [],
+    })) as jest.MockedFunction<WriteActionCapability["executeWrite"]>;
     // ChatToolName / ChatToolPermission / etc. are string-literal unions of the
     // shipped tool names. Tests use a placeholder name + assertions to opt out.
     const cap: WriteActionCapability = {
@@ -142,17 +164,14 @@ function makeCapability(
         },
         getTargetPath: ((): WriteActionCapability["getTargetPath"] =>
             (() => initialTargetPath))(),
-        buildPreview: jest.fn(async () => previewSpec) as WriteActionCapability["buildPreview"],
-        executeWrite: jest.fn(async () => ({
-            status: "ok",
-            observation: { createdPath: ".pagelet/foo.md" },
-            sourceRecords: [],
-            inputSummary: "wrote",
-            sources: [],
-        })) as WriteActionCapability["executeWrite"],
+        buildPreview: buildPreviewMock,
+        executeWrite: executeWriteMock,
         ...overrides,
     };
-    return cap;
+    return Object.assign(cap, {
+        _buildPreviewMock: buildPreviewMock,
+        _executeWriteMock: executeWriteMock,
+    });
 }
 
 function defaultExecutorOptions(overrides: Partial<ActionExecutorOptions> = {}): ActionExecutorOptions {
@@ -268,14 +287,14 @@ describe("ActionExecutor (4-gate orchestration, framework SDD §3.2)", () => {
             "execute.ok",
         ]);
         // capability.executeWrite was called with hooks containing markSelfWrite
-        expect((cap.executeWrite as jest.Mock)).toHaveBeenCalledTimes(1);
+        expect(cap._executeWriteMock).toHaveBeenCalledTimes(1);
     });
 
     it("calls buildPreview before Gate 1 and feeds target.path into confinement", async () => {
         const cap = makeCapability();
         const exec = createActionExecutor(defaultExecutorOptions());
         await exec.execute(cap, { foo: 1 }, makeContext());
-        expect((cap.buildPreview as jest.Mock)).toHaveBeenCalledTimes(1);
+        expect(cap._buildPreviewMock).toHaveBeenCalledTimes(1);
     });
 
     it("re-marks self-write on the success path so a slow executeWrite cannot age out the TTL (Fix #7)", async () => {
@@ -341,10 +360,10 @@ describe("ActionExecutor (gate rejection paths)", () => {
         expect(types).toEqual(["gate.target-confinement.reject"]);
         expect(events[0].errorCategory).toBe("rejected_at_confinement");
         expect(events[0].extra?.reason).toBe("absolute_path");
-        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+        expect(cap._executeWriteMock).not.toHaveBeenCalled();
         // Fix #3: buildPreview is NOT called when getTargetPath fails
         // confinement, since Gate 1 runs first.
-        expect((cap.buildPreview as jest.Mock)).not.toHaveBeenCalled();
+        expect(cap._buildPreviewMock).not.toHaveBeenCalled();
     });
 
     it("returns failure + emits gate.confirmation.received with outcome when user cancels", async () => {
@@ -365,7 +384,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
         ]);
         const confirmation = events[2];
         expect(confirmation.extra?.outcome).toBe("cancelled");
-        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+        expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 
     it("returns failure for cancelled/aborted outcomes (still emits gate.confirmation.received)", async () => {
@@ -379,7 +398,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
             const result = await exec.execute(cap, {}, makeContext());
             expect(result.status).toBe("failed");
             expect(events.find((e) => e.type === "gate.confirmation.received")?.extra?.outcome).toBe(outcome);
-            expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+            expect(cap._executeWriteMock).not.toHaveBeenCalled();
         }
     });
 
@@ -420,6 +439,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
         const events: DebugEvent[] = [];
         let targetExistsChecks = 0;
         let content = "before preview";
+        const readMock = jest.fn(async () => content) as jest.MockedFunction<FsProbe["read"]>;
         const fsProbe: FsProbe = {
             exists: jest.fn(async (path: string) => {
                 if (path === ".pagelet") return true;
@@ -429,7 +449,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
                 }
                 return false;
             }) as FsProbe["exists"],
-            read: jest.fn(async () => content) as FsProbe["read"],
+            read: readMock,
         };
         const renderer: PreviewRenderer = {
             show: jest.fn(async () => {
@@ -449,12 +469,12 @@ describe("ActionExecutor (gate rejection paths)", () => {
         const result = await exec.execute(cap, {}, makeContext());
 
         expect(result.status).toBe("failed");
-        expect((fsProbe.read as jest.Mock)).toHaveBeenCalledTimes(2);
+        expect(readMock).toHaveBeenCalledTimes(2);
         const driftEvent = events.find((e) => e.type === "gate.stale-reread.drift");
         expect(driftEvent?.errorCategory).toBe("stale_target");
         expect((driftEvent?.extra as { drift?: Record<string, boolean> } | undefined)?.drift?.contentChanged)
             .toBe(true);
-        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+        expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 
     it("captures buildPreview throwing as execute.fail with stage=buildPreview", async () => {
@@ -485,8 +505,8 @@ describe("ActionExecutor (gate rejection paths)", () => {
         const evt = events.find((e) => e.type === "gate.target-confinement.reject");
         expect(evt?.extra?.stage).toBe("getTargetPath");
         expect(evt?.errorCategory).toBe("user_aborted");
-        expect((cap.buildPreview as jest.Mock)).not.toHaveBeenCalled();
-        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+        expect(cap._buildPreviewMock).not.toHaveBeenCalled();
+        expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 
     it("rejects when spec.target.displayPath disagrees with getTargetPath (Fix #3)", async () => {
@@ -501,7 +521,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
         const evt = events.find((e) => e.type === "gate.target-confinement.reject");
         expect(evt?.errorCategory).toBe("rejected_at_confinement");
         expect(evt?.extra?.reason).toBe("path mismatch between getTargetPath and buildPreview");
-        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+        expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 
     it("returns failure + emits gate.confirmation.received with renderWarnings when preview render throws (Fix #5)", async () => {
@@ -521,7 +541,7 @@ describe("ActionExecutor (gate rejection paths)", () => {
         const evt = events.find((e) => e.type === "gate.confirmation.received");
         expect(evt?.errorCategory).toBe("preview_render_failed");
         expect(evt?.extra?.outcome).toBe("aborted");
-        expect((cap.executeWrite as jest.Mock)).not.toHaveBeenCalled();
+        expect(cap._executeWriteMock).not.toHaveBeenCalled();
     });
 });
 
@@ -702,7 +722,7 @@ describe("ActionExecutor (execute & rollback)", () => {
         const exec = createActionExecutor(defaultExecutorOptions({ previewRenderer: renderer }));
         await exec.execute(cap, {}, makeContext({ signal: controller.signal }));
         expect((showSpy as jest.Mock)).toHaveBeenCalled();
-        const call = (showSpy as jest.Mock).mock.calls[0] as unknown[];
+        const call = (showSpy as jest.Mock).mock.calls[0];
         const opts = call[1] as { signal?: AbortSignal } | undefined;
         expect(opts?.signal).toBe(controller.signal);
     });

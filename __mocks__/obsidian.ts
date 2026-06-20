@@ -4,6 +4,8 @@ interface MockNoticeEl {
     addClass: () => void;
     parentElement?: { addClass: () => void };
     setCssStyles: (styles?: Record<string, string>) => void;
+    createEl: () => MockNoticeEl;
+    querySelector: () => MockNoticeEl | null;
 }
 
 export class Notice {
@@ -13,7 +15,10 @@ export class Notice {
         addClass: () => { },
         parentElement: { addClass: () => { } },
         setCssStyles: () => { },
+        createEl: () => this.noticeEl,
+        querySelector: () => null,
     };
+    messageEl = this.noticeEl;
 }
 
 export class Modal {
@@ -225,5 +230,37 @@ export function debounce<T extends unknown[], V>(cb: (...args: [...T]) => V, tim
     return debounced;
 }
 
-export type TFile = { path: string; stat?: { mtime: number; ctime: number; size?: number }; extension?: string; name?: string };
-export type TAbstractFile = TFile;
+export class TAbstractFile {
+    path: string;
+    name: string;
+
+    constructor(path = "") {
+        this.path = path;
+        this.name = path.split("/").pop() ?? path;
+    }
+}
+
+export class TFile extends TAbstractFile {
+    stat: { mtime: number; ctime: number; size?: number };
+    extension: string;
+    basename: string;
+
+    constructor(
+        path = "",
+        stat: { mtime?: number; ctime?: number; size?: number } = {},
+        extension?: string,
+        name?: string,
+    ) {
+        super(path);
+        this.name = name ?? this.name;
+        this.extension = extension ?? this.name.split(".").pop() ?? "";
+        this.basename = this.name.endsWith(`.${this.extension}`)
+            ? this.name.slice(0, -this.extension.length - 1)
+            : this.name;
+        this.stat = {
+            mtime: stat.mtime ?? 0,
+            ctime: stat.ctime ?? 0,
+            ...(stat.size === undefined ? {} : { size: stat.size }),
+        };
+    }
+}

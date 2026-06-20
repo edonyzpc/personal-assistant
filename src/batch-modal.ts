@@ -1,4 +1,4 @@
-import { App, Modal, Notice, Setting, ToggleComponent } from 'obsidian'
+import { App, Modal, Notice, Setting, ToggleComponent, type ButtonComponent } from 'obsidian'
 
 import { type Plugin } from './modal'
 import { getInternalPlugins } from './obsidian-internals';
@@ -63,64 +63,77 @@ export class BatchPluginControlModal extends Modal {
                 });
         }
 
+        const setTogglesDisabled = (disabled: boolean): void => {
+            toggles.forEach((toggle) => {
+                toggle.setDisabled(disabled);
+            });
+        };
+        const applyDesiredPluginStates = async (btn: ButtonComponent): Promise<void> => {
+            const pluginStates = Array.from(desiredPluginStates.values());
+
+            if (pluginStates.length === 0) {
+                new Notice(batchModalT("plugin.modal.batch.noChanges"));
+                this.close();
+                return;
+            }
+
+            btn.setDisabled(true);
+            setTogglesDisabled(true);
+            let failedCount = 0;
+
+            for (const { plugin, enabled } of pluginStates) {
+                const action = enabled ? "enable" : "disable";
+                try {
+                    console.log(`${action} ${plugin.name}`);
+                    const result = enabled
+                        ? await this.obsidianPlugins?.enablePluginAndSave(plugin.id)
+                        : await this.obsidianPlugins?.disablePluginAndSave(plugin.id);
+
+                    if (result === false) {
+                        failedCount += 1;
+                    } else {
+                        desiredPluginStates.delete(plugin.id);
+                    }
+                } catch (error) {
+                    failedCount += 1;
+                    console.error(`${action} plugin[${plugin.name}] failed`, error);
+                }
+            }
+
+            if (failedCount > 0) {
+                btn.setDisabled(false);
+                setTogglesDisabled(false);
+                const pluginWord = batchModalT(
+                    failedCount > 1
+                        ? "plugin.modal.batch.pluginPlural"
+                        : "plugin.modal.batch.pluginSingular"
+                );
+                new Notice(batchModalT("plugin.modal.batch.failed", { count: failedCount, pluginWord }));
+                return;
+            }
+
+            const pluginWord = batchModalT(
+                pluginStates.length > 1
+                    ? "plugin.modal.batch.pluginPlural"
+                    : "plugin.modal.batch.pluginSingular"
+            );
+            new Notice(batchModalT("plugin.modal.batch.success", {
+                count: pluginStates.length,
+                pluginWord,
+            }));
+            this.close();
+        };
+
         new Setting(this.contentEl)
             .addButton((btn) =>
                 btn.setButtonText(batchModalT('plugin.modal.batch.ok'))
                     .setCta()
-                    .onClick(async () => {
-                        const pluginStates = Array.from(desiredPluginStates.values());
-
-                        if (pluginStates.length === 0) {
-                            new Notice(batchModalT("plugin.modal.batch.noChanges"));
-                            this.close();
-                            return;
-                        }
-
-                        btn.setDisabled(true);
-                        toggles.forEach((toggle) => toggle.setDisabled(true));
-                        let failedCount = 0;
-
-                        for (const { plugin, enabled } of pluginStates) {
-                            const action = enabled ? "enable" : "disable";
-                            try {
-                                console.log(`${action} ${plugin.name}`);
-                                const result = enabled
-                                    ? await this.obsidianPlugins?.enablePluginAndSave(plugin.id)
-                                    : await this.obsidianPlugins?.disablePluginAndSave(plugin.id);
-
-                                if (result === false) {
-                                    failedCount += 1;
-                                } else {
-                                    desiredPluginStates.delete(plugin.id);
-                                }
-                            } catch (error) {
-                                failedCount += 1;
-                                console.error(`${action} plugin[${plugin.name}] failed`, error);
-                            }
-                        }
-
-                        if (failedCount > 0) {
+                    .onClick(() => {
+                        void applyDesiredPluginStates(btn).catch((error) => {
+                            console.error("batch plugin update failed", error);
                             btn.setDisabled(false);
-                            toggles.forEach((toggle) => toggle.setDisabled(false));
-                            const pluginWord = batchModalT(
-                                failedCount > 1
-                                    ? "plugin.modal.batch.pluginPlural"
-                                    : "plugin.modal.batch.pluginSingular"
-                            );
-                            new Notice(batchModalT("plugin.modal.batch.failed", { count: failedCount, pluginWord }));
-                            return;
-                        }
-
-                        const pluginWord = batchModalT(
-                            pluginStates.length > 1
-                                ? "plugin.modal.batch.pluginPlural"
-                                : "plugin.modal.batch.pluginSingular"
-                        );
-                        new Notice(batchModalT("plugin.modal.batch.success", {
-                            count: pluginStates.length,
-                            pluginWord,
-                        }));
-                        this.close();
+                            setTogglesDisabled(false);
+                        });
                     }));
     }
 }

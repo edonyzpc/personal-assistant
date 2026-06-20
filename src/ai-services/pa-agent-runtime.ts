@@ -217,8 +217,10 @@ interface NativeToolRunnable {
     invoke(input: unknown, options?: { signal?: AbortSignal }): Promise<unknown>;
 }
 
+type MaybePromise<T> = T | PromiseLike<T>;
+
 interface NativeToolStreamingRunnable {
-    stream(input: unknown, options?: { signal?: AbortSignal }): AsyncIterable<unknown>;
+    stream(input: unknown, options?: { signal?: AbortSignal }): MaybePromise<AsyncIterable<unknown>>;
 }
 
 interface NativeToolStreamingAndInvocableRunnable extends NativeToolStreamingRunnable {
@@ -914,7 +916,7 @@ export class PaAgentRuntime {
             model,
             toolExecutor,
             hostPolicy: {
-                afterTurn: requiredCapabilityPolicy.hostPolicy.afterTurn,
+                afterTurn: (summary) => requiredCapabilityPolicy.hostPolicy.afterTurn(summary),
             },
             onEvent: (event) => eventAdapter.handle(event),
             ...(hostContext ? { hostContext } : {}),

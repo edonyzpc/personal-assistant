@@ -27,6 +27,7 @@
 
 import { Component, MarkdownRenderer, Modal, Platform, Setting, type App } from "obsidian";
 
+import { setPlatformTimeout } from "../../platform-dom";
 import type { ConfirmationOutcome, PreviewSpec } from "./types";
 
 /** Content-length threshold for the append size warning (characters). */
@@ -171,7 +172,7 @@ export class WriteActionPreviewModal extends Modal {
                     .onClick(() => this.resolveWith("confirmed", renderWarnings));
                 if (isMobile) {
                     button.buttonEl.disabled = true;
-                    setTimeout(() => { button.buttonEl.disabled = false; }, 500);
+                    setPlatformTimeout(() => { button.buttonEl.disabled = false; }, 500);
                 }
             })
             .addButton((button) => {

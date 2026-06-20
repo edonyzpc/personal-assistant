@@ -1,6 +1,10 @@
 import type { Vault } from "obsidian";
 import { getVaultConfigDirStorageScope } from "../../obsidian-paths";
-import { getPlatformIndexedDB } from "../../platform-dom";
+import {
+    clearPlatformTimeout,
+    getPlatformIndexedDB,
+    setPlatformTimeout,
+} from "../../platform-dom";
 import type { UserProfileRecord, UserProfileSnapshot } from "./type-a-extractor";
 
 const USER_PROFILE_DB_VERSION = 1;
@@ -12,10 +16,10 @@ const IDB_TIMEOUT_MS = 10_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
     return new Promise<T>((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error(`IndexedDB ${label} timed out after ${ms}ms`)), ms);
+        const timer = setPlatformTimeout(() => reject(new Error(`IndexedDB ${label} timed out after ${ms}ms`)), ms);
         promise.then(
-            (value) => { clearTimeout(timer); resolve(value); },
-            (error) => { clearTimeout(timer); reject(error); },
+            (value) => { clearPlatformTimeout(timer); resolve(value); },
+            (error) => { clearPlatformTimeout(timer); reject(error); },
         );
     });
 }

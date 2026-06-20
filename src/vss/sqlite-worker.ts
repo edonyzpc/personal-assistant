@@ -15,8 +15,30 @@ import { fuseRRF } from "./rrf";
 import { bruteForceTopK } from "./brute-force-search";
 import type { SqliteWorkerRequest, SqliteWorkerResponse } from "./sqlite-worker-protocol";
 
-type SQLiteDatabase = any; // sqlite-wasm's OO API is runtime-shaped and broad.
-type SQLiteModule = any;
+type SQLiteExecOptions = {
+    sql: string;
+    bind?: unknown[];
+    rowMode?: string;
+    resultRows?: unknown[];
+};
+type SQLiteStatement = {
+    bind(index: number, value: unknown): SQLiteStatement;
+    bindAsBlob(index: number, value: Uint8Array): SQLiteStatement;
+    step(): boolean;
+    reset(clearBindings?: boolean): void;
+    finalize(): void;
+};
+type SQLiteDatabase = {
+    exec(input: string | SQLiteExecOptions): unknown;
+    prepare(sql: string): SQLiteStatement;
+    close(): void;
+};
+type SQLiteModule = {
+    installOpfsSAHPoolVfs?: (options: Record<string, unknown>) => Promise<SQLiteOpfsPool>;
+};
+type SQLiteOpfsPool = SQLiteModule & OpfsSahPool & {
+    OpfsSAHPoolDb?: new (filename: string, flags?: string) => SQLiteDatabase;
+};
 type OpfsSahPool = {
     pauseVfs?: () => unknown;
 };
@@ -222,7 +244,7 @@ async function openOpfsDatabase(
         throw createWorkerError("opfs-sahpool-unavailable", "sqlite-wasm does not expose opfs-sahpool.");
     }
 
-    let pool: SQLiteModule;
+    let pool: SQLiteOpfsPool;
     try {
         pool = await module.installOpfsSAHPoolVfs({
             name: options.vfsName ?? "opfs-sahpool",

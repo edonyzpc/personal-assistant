@@ -221,6 +221,17 @@ describe("PaReviewToolProvider — capability surface", () => {
         expect(provider.capability.targetConfinement.allowedExtensions).toEqual([".md"]);
     });
 
+    it("fail-closes reviewsFolder under the current Vault#configDir", () => {
+        const { adapter } = recordingVault();
+        const provider = createPaReviewToolProvider({
+            getSettings: () => ({ reviewsFolder: "vault-config/reviews" }),
+            vault: { adapter, configDir: "vault-config" },
+        });
+
+        expect(provider.capability.targetConfinement.allowedRoots).toEqual([".pagelet/"]);
+        expect(provider.capability.targetConfinement.forbiddenRoots).toEqual(["vault-config"]);
+    });
+
     it("provider.load returns the capability under 'available'", async () => {
         const provider = buildProvider();
         const result = await provider.load({

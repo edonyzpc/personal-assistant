@@ -67,7 +67,7 @@ export interface PaAgentToolExecutor {
      * when omitted). When the loop is in "hybrid" mode, any tool returning "sequential" forces the whole
      * batch to run serially.
      */
-    getExecutionMode?(toolName: string): AgentCapabilityExecutionMode | undefined;
+    getExecutionMode?: (toolName: string) => AgentCapabilityExecutionMode | undefined;
 }
 
 export type PaAgentToolMode = "normal" | "final_answer_only";

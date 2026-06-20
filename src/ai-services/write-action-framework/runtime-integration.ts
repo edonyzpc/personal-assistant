@@ -672,7 +672,7 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                             durationMs: now() - removeStart,
                             extra: {
                                 layer: "framework",
-                                cascade: Boolean(cap.rollback),
+                                cascade: typeof cap.rollback === "function",
                                 normalizedPath,
                                 targetCategory: cap.targetCategory,
                             },
@@ -683,7 +683,7 @@ export function createActionExecutor(options: ActionExecutorOptions): ActionExec
                             errorCategory: "fs_error",
                             extra: {
                                 layer: "framework",
-                                cascade: Boolean(cap.rollback),
+                                cascade: typeof cap.rollback === "function",
                                 normalizedPath,
                                 message: describeError(error),
                                 targetCategory: cap.targetCategory,

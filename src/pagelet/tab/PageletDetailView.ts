@@ -9,6 +9,7 @@ import {
 } from "obsidian";
 
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locales/pagelet";
+import { getPlatformCrypto } from "../../platform-dom";
 import { buildMascotMarkup } from "../ui/mascot";
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import { resolveRelatedMarkdownNote } from "../related-note";
@@ -28,8 +29,9 @@ const pageletDetailSessionCache = new Map<string, PageletDetailPayload>();
 let pageletDetailSessionCounter = 0;
 
 function createPageletDetailSessionId(): string {
-    if (typeof globalThis.crypto?.randomUUID === "function") {
-        return globalThis.crypto.randomUUID();
+    const cryptoProvider = getPlatformCrypto();
+    if (typeof cryptoProvider?.randomUUID === "function") {
+        return cryptoProvider.randomUUID();
     }
     pageletDetailSessionCounter += 1;
     return `pagelet-detail-${Date.now().toString(36)}-${pageletDetailSessionCounter.toString(36)}`;

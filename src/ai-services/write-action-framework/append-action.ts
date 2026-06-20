@@ -16,7 +16,7 @@
  *     preview and execute
  */
 
-import type { App, TFile } from "obsidian";
+import { TFile, type App } from "obsidian";
 
 import type { PreviewSpec } from "./types";
 
@@ -169,7 +169,8 @@ export async function rollbackAppend(
         // File was removed externally — nothing to rollback.
         return;
     }
-    // TFile check: getAbstractFileByPath returns TAbstractFile; we need TFile for modify.
-    // In Obsidian, if getAbstractFileByPath returns non-null for a .md path, it's a TFile.
-    await app.vault.modify(file as TFile, result.originalContent);
+    if (!(file instanceof TFile)) {
+        return;
+    }
+    await app.vault.modify(file, result.originalContent);
 }

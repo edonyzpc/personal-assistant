@@ -46,7 +46,6 @@ import {
     VAULT_METADATA_MAX_LIMIT,
 } from "./chat-tool-constants";
 import {
-    type EditorLike,
     applyOutline,
     buildCanvasStructureSummary,
     buildMetadataQuerySignals,
@@ -367,7 +366,7 @@ export function createCurrentNoteContextTool(): ChatToolDefinition<CurrentNoteCo
             }
 
             const file = view.file;
-            const editor = view.editor as EditorLike | undefined;
+            const editor = view.editor;
             const output: CurrentNoteContextOutput = {
                 path: file.path,
                 title: getFileTitle(file),

@@ -19,6 +19,7 @@ import {
 import { getPageletUiLanguage } from "./locales/pagelet";
 import { getPluginUiLanguage, pluginT, type PluginMessageKey } from "./locales/plugin";
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
+import { LEGACY_CONFIG_DIR } from "./obsidian-paths";
 import { getPlatformDocument, setPlatformTimeout } from "./platform-dom";
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from "./ai-services/capability-types";
 
@@ -172,7 +173,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     // "b.notion") was the original developer's vault layout and made no sense
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
     // value, so existing users keep their configured exclusions.
-    vssCacheExcludePath: [".obsidian"],
+    vssCacheExcludePath: [LEGACY_CONFIG_DIR],
     operationsAgentEnabled: false,
     // Pagelet defaults live next to the Pagelet settings module so adding a
     // field there does not require a parallel edit here.
@@ -356,7 +357,7 @@ export function isFreshInstall(loaded: unknown): boolean {
     if (loaded == null) return true;
     if (typeof loaded !== "object") return false;
     if (Array.isArray(loaded)) return false;
-    return Object.keys(loaded as object).length === 0;
+    return Object.keys(loaded).length === 0;
 }
 
 /**
@@ -493,7 +494,7 @@ export class SettingTab extends PluginSettingTab {
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
     }
 
-    private t(key: PluginMessageKey | string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
+    private t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
         return pluginT(key, getPluginUiLanguage(), params, fallback);
     }
 
@@ -559,7 +560,7 @@ export class SettingTab extends PluginSettingTab {
                 return;
             }
 
-            const actions = Array.from(row.querySelectorAll<HTMLElement>(".clickable-icon"));
+            const actions = row.findAll(".clickable-icon");
             if (actions.length < 2 || action !== actions[actions.length - 1]) {
                 return;
             }
@@ -605,15 +606,13 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private patchSecretPickerActions(): void {
-        const rows = getPlatformDocument().querySelectorAll<HTMLElement>(
-            ".modal .suggestion-item",
-        );
+        const rows = getPlatformDocument().body?.findAll(".modal .suggestion-item") ?? [];
         rows.forEach((row) => {
             if (!this.isSecretPickerRow(row)) {
                 return;
             }
             this.markSecretPickerRow(row);
-            const actions = Array.from(row.querySelectorAll<HTMLElement>(".clickable-icon"));
+            const actions = row.findAll(".clickable-icon");
             if (actions.length < 2) {
                 return;
             }
@@ -649,18 +648,15 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private markFormControlSettings(containerEl: HTMLElement): void {
-        if (typeof containerEl.querySelectorAll !== "function") {
-            return;
-        }
-        const settings = Array.from(containerEl.querySelectorAll<HTMLElement>(".setting-item"));
+        const settings = containerEl.findAll(".setting-item");
         settings.forEach((settingEl) => {
             const controlEl = settingEl.querySelector<HTMLElement>(".setting-item-control");
             if (!controlEl) {
                 return;
             }
-            const controls = Array.from(controlEl.querySelectorAll<HTMLElement>(
+            const controls = controlEl.findAll(
                 "input[type='text'], input[type='number'], input:not([type]), select",
-            ));
+            );
             if (!controls.length) {
                 return;
             }
@@ -715,7 +711,7 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private findAddSecretButton(modal: HTMLElement): HTMLElement | null {
-        return Array.from(modal.querySelectorAll<HTMLElement>("button, .clickable-icon"))
+        return modal.findAll("button, .clickable-icon")
             .find((element) => {
                 const text = element.textContent?.trim();
                 return text === "Add secret..." || text === "Add secret…";
@@ -723,9 +719,11 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private findSecretPickerModal(): HTMLElement | null {
-        const modal = Array.from(getPlatformDocument().querySelectorAll<HTMLElement>("body.pa-settings-tab-open .modal"))
+        const body = getPlatformDocument().body;
+        if (!body?.classList.contains("pa-settings-tab-open")) return null;
+        const modal = body.findAll(".modal")
             .reverse()
-            .find((modal) => Array.from(modal.querySelectorAll<HTMLElement>(".suggestion-item")).some((row) => this.isSecretPickerRow(row))) ?? null;
+            .find((modal) => modal.findAll(".suggestion-item").some((row) => this.isSecretPickerRow(row))) ?? null;
         modal?.classList.add("pa-secret-picker-modal");
         return modal;
     }
@@ -734,7 +732,7 @@ export class SettingTab extends PluginSettingTab {
         const maxAttempts = 12;
         const modal = this.findAddSecretModal();
         if (modal) {
-            const inputs = Array.from(modal.querySelectorAll<HTMLInputElement>("input"));
+            const inputs = this.findInputElements(modal);
             const idInput = this.findSecretIdInput(inputs);
             const secretInput = this.findSecretValueInput(inputs, idInput);
             if (idInput && secretInput) {
@@ -756,14 +754,20 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private findAddSecretModal(): HTMLElement | null {
-        return Array.from(getPlatformDocument().querySelectorAll<HTMLElement>("body .modal"))
+        return (getPlatformDocument().body?.findAll(".modal") ?? [])
             .reverse()
             .find((modal) => {
                 const title = modal.querySelector("h1, h2, h3, .modal-title")?.textContent?.trim();
-                const inputs = modal.querySelectorAll("input");
-                const hasSecretIdInput = Array.from(inputs).some((input) => input.placeholder === "secret-name");
+                const inputs = this.findInputElements(modal);
+                const hasSecretIdInput = inputs.some((input) => input.placeholder === "secret-name");
                 return inputs.length >= 2 && (hasSecretIdInput || title === "Add secret" || title === "Edit secret");
             }) ?? null;
+    }
+
+    private findInputElements(root: HTMLElement): HTMLInputElement[] {
+        return root.findAll("input").filter((element): element is HTMLInputElement =>
+            element.tagName.toLowerCase() === "input",
+        );
     }
 
     private findSecretIdInput(inputs: HTMLInputElement[]): HTMLInputElement | null {
@@ -909,13 +913,7 @@ export class SettingTab extends PluginSettingTab {
         };
         maybeContainer.addClass?.("pa-api-token-secret-component");
 
-        const root = (maybeContainer.closest?.(".setting-item") as HTMLElement | null) ?? container;
-        const maybeRoot = root as HTMLElement & {
-            querySelectorAll?: HTMLElement["querySelectorAll"];
-        };
-        if (typeof maybeRoot.querySelectorAll !== "function") {
-            return;
-        }
+        const root = maybeContainer.closest?.(".setting-item") ?? container;
 
         const bindKeychainButton = (button: HTMLElement) => {
             if (button.dataset.paApiTokenKeychainPatched === "true") {
@@ -932,9 +930,9 @@ export class SettingTab extends PluginSettingTab {
 
         const rename = () => {
             const keychainLabel = this.t("plugin.settings.apiToken.openKeychain");
-            const candidates = Array.from(maybeRoot.querySelectorAll<HTMLElement>(
+            const candidates = root.findAll(
                 "button, .clickable-icon, .setting-item-control *",
-            ));
+            );
             let renamed = false;
             candidates.forEach((element) => {
                 const text = element.textContent?.trim();
@@ -1389,7 +1387,7 @@ export class SettingTab extends PluginSettingTab {
                         type: STAT_PREVIEW_TYPE,
                         active: false,
                     });
-                    this.app.workspace.revealLeaf(leaf);
+                    await this.app.workspace.revealLeaf(leaf);
                 });
             });
         new Setting(parentEl).setName(this.t("plugin.settings.statistics.sync.name"))

@@ -21,7 +21,6 @@ export {
     type MascotRenderer,
     type MascotRendererOptions,
     type MascotSetStateOptions,
-    type MascotState,
     type MascotSvgCircle,
     type MascotSvgPath,
     type MascotSvgShapes,

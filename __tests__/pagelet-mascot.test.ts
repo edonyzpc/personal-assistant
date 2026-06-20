@@ -12,7 +12,7 @@
  *    re-applies markup, no-ops on identical state w/o message change,
  *    and respects an aborted signal.
  *  - i18n parity: real `pageletT` lookup against the registered
- *    `pagelet.mascot.*` keys returns non-empty strings for all 4 states
+ *    `pagelet.pet.*` keys returns non-empty strings for all 4 states
  *    in both EN and ZH (catches a B3 dictionary regression).
  */
 
@@ -24,7 +24,6 @@ import {
     MASCOT_STATE_STROKE_VAR,
     MASCOT_SVG_VIEWBOX,
     buildMascotMarkup,
-    type MascotState,
     type MascotTranslator,
 } from "../src/pagelet/ui/mascot";
 import {
@@ -33,6 +32,7 @@ import {
     type MascotDomNode,
 } from "../src/pagelet/ui/mascot/dom-renderer";
 import { pageletT } from "../src/locales/pagelet";
+import type { PetState } from "../src/pagelet/pet/types";
 
 // ---------------------------------------------------------------------------
 // Test utilities
@@ -181,12 +181,12 @@ function findAllByTag(node: StubNode, tag: string): StubNode[] {
 
 describe("MASCOT constants", () => {
     it("ships exactly 4 states in the canonical order", () => {
-        expect([...MASCOT_STATES]).toEqual(["idle", "thinking", "done", "error"]);
+        expect([...MASCOT_STATES]).toEqual(["resting", "idle", "working", "nudge"]);
     });
 
-    it("maps each state to a distinct stroke CSS custom property", () => {
+    it("maps each state to a stroke CSS custom property", () => {
         const values = new Set(MASCOT_STATES.map((s) => MASCOT_STATE_STROKE_VAR[s]));
-        expect(values.size).toBe(4);
+        expect(values.size).toBe(3);
         // Sanity: the prop names follow the `pa-pagelet-color-*` token
         // family the visual spec defines.
         for (const v of values) expect(v).toMatch(/^--pa-pagelet-color-/);
@@ -194,7 +194,7 @@ describe("MASCOT constants", () => {
 
     it("maps each state to its canonical i18n key", () => {
         for (const state of MASCOT_STATES) {
-            expect(MASCOT_STATE_I18N_KEY[state]).toBe(`pagelet.mascot.${state}`);
+            expect(MASCOT_STATE_I18N_KEY[state]).toBe(`pagelet.pet.${state}`);
         }
     });
 
@@ -223,13 +223,13 @@ describe("buildMascotMarkup", () => {
     it("falls back to the EN spec default when the translator surfaces the key", () => {
         // Passthrough translator returns the key on a miss; the builder
         // should detect this and fall through to the hard-coded EN
-        // default so production UI never shows "pagelet.mascot.idle".
+        // default so production UI never shows "pagelet.pet.idle".
         const markup = buildMascotMarkup("idle", { translator: keyTranslator() });
         expect(markup.message).toBe("Pagelet is watching.");
     });
 
     it("uses the explicit messageOverride when supplied", () => {
-        const markup = buildMascotMarkup("thinking", {
+        const markup = buildMascotMarkup("working", {
             translator: keyTranslator(),
             messageOverride: "Reviewing notes/foo.md…",
         });
@@ -238,9 +238,9 @@ describe("buildMascotMarkup", () => {
 
     it("looks up the canonical i18n key for the state's message", () => {
         const { translator, calls } = recordingTranslator();
-        buildMascotMarkup("done", { translator });
+        buildMascotMarkup("nudge", { translator });
         const keys = calls.map((c) => c.key);
-        expect(keys).toContain("pagelet.mascot.done");
+        expect(keys).toContain("pagelet.pet.nudge");
         expect(keys).toContain("pagelet.a11y.mascotLabel");
     });
 
@@ -265,8 +265,8 @@ describe("buildMascotMarkup", () => {
         for (const arc of animated) expect(arc.strokeWidth).toBe(1.4);
     });
 
-    it("thinking state includes 3 pulsing circles with staggered delays", () => {
-        const markup = buildMascotMarkup("thinking", { translator: keyTranslator() });
+    it("working state includes 3 pulsing circles with staggered delays", () => {
+        const markup = buildMascotMarkup("working", { translator: keyTranslator() });
         expect(markup.svgShapes.circles).toBeDefined();
         const circles = markup.svgShapes.circles!;
         expect(circles).toHaveLength(3);
@@ -277,18 +277,12 @@ describe("buildMascotMarkup", () => {
         ]);
     });
 
-    it("done state replaces eyes with two upward V chevrons", () => {
-        const markup = buildMascotMarkup("done", { translator: keyTranslator() });
-        // No pulse circles, no blink anims — done is static (D005).
+    it("nudge state replaces eyes with two upward V chevrons", () => {
+        const markup = buildMascotMarkup("nudge", { translator: keyTranslator() });
+        // No pulse circles, no blink anims — nudge is static (D005).
         expect(markup.svgShapes.circles).toBeUndefined();
         const animated = markup.svgShapes.paths.filter((p) => p.animClass);
         expect(animated).toHaveLength(0);
-    });
-
-    it("error state includes both x-shaped eyes and a frown mouth", () => {
-        const markup = buildMascotMarkup("error", { translator: keyTranslator() });
-        // Body + fold + 2 X eyes + frown = 5 paths total.
-        expect(markup.svgShapes.paths).toHaveLength(5);
     });
 });
 
@@ -357,11 +351,11 @@ describe("createMascotRendererWithHost", () => {
             initialState: "idle",
             translator: keyTranslator(),
         });
-        const expectedTexts: Record<MascotState, string> = {
+        const expectedTexts: Record<PetState, string> = {
+            resting: "(resting)",
             idle: "Pagelet is watching.",
-            thinking: "Let me take a look…",
-            done: "Done — see what I noticed.",
-            error: "Something went wrong. Try again or send feedback.",
+            working: "Preparing…",
+            nudge: "(insights ready)",
         };
 
         for (const state of MASCOT_STATES) {
@@ -382,7 +376,7 @@ describe("createMascotRendererWithHost", () => {
             initialState: "idle",
             translator: keyTranslator(),
         });
-        renderer.setState("thinking", { message: "Reviewing notes/foo.md…" });
+        renderer.setState("working", { message: "Reviewing notes/foo.md…" });
         const msg = findByClass(root.children[0], "pa-pagelet-mascot__message");
         expect(msg.text).toBe("Reviewing notes/foo.md…");
     });
@@ -396,7 +390,7 @@ describe("createMascotRendererWithHost", () => {
         });
         const controller = new AbortController();
         controller.abort();
-        renderer.setState("error", { signal: controller.signal });
+        renderer.setState("nudge", { signal: controller.signal });
         expect(renderer.state).toBe("idle");
         // Class still reflects idle.
         expect(root.children[0].classList).toContain("pa-pagelet-mascot--idle");
@@ -448,16 +442,16 @@ describe("createMascotRendererWithHost", () => {
         const { host, root } = makeStubHost();
         const renderer = createMascotRendererWithHost(root, {
             host,
-            initialState: "thinking",
+            initialState: "working",
             translator: keyTranslator(),
         });
-        // Thinking has 3 circles + 2 outline paths.
+        // Working has 3 circles + 2 outline paths.
         const svgBefore = findAllByTag(root.children[0], "svg")[0];
         expect(findAllByTag(svgBefore, "circle")).toHaveLength(3);
         expect(findAllByTag(svgBefore, "path")).toHaveLength(2);
 
-        renderer.setState("done");
-        // Done has 0 circles + 4 paths.
+        renderer.setState("nudge");
+        // Nudge has 0 circles + 4 paths.
         const svgAfter = findAllByTag(root.children[0], "svg")[0];
         expect(findAllByTag(svgAfter, "circle")).toHaveLength(0);
         expect(findAllByTag(svgAfter, "path")).toHaveLength(4);

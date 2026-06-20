@@ -1,3 +1,5 @@
+import { getPlatformCrypto } from "../platform-dom";
+
 export type ChatRoleIdenticon = 'user' | 'assistant';
 export type ChatRoleIdenticonCell = {
     row: number;
@@ -34,7 +36,7 @@ const HASH_START = 2166136261;
 const HASH_MULTIPLIER = 131;
 
 export function createChatRoleIdenticonSessionSeed(): string {
-    const cryptoProvider = globalThis.crypto;
+    const cryptoProvider = getPlatformCrypto();
     if (typeof cryptoProvider?.randomUUID === 'function') {
         return cryptoProvider.randomUUID();
     }

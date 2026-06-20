@@ -70,6 +70,31 @@ describe("PreloadEngine", () => {
 });
 
 describe("ScopeResolver privacy exclusions", () => {
+    it("excludes files under the current Vault#configDir", () => {
+        const configNote = makeFile("vault-config/plugins/personal-assistant/data.md", Date.now());
+        const app = {
+            vault: {
+                configDir: "vault-config",
+                getMarkdownFiles: jest.fn(() => [configNote]),
+            },
+            metadataCache: {
+                getFileCache: jest.fn(() => null),
+            },
+        };
+        const resolver = new ScopeResolver(app as never, {
+            excludedFolders: [],
+            excludedTags: [],
+            excludedPatterns: [],
+            maxFileSizeBytes: 100 * 1024,
+            reviewsFolder: ".pagelet",
+        });
+
+        expect(resolver.resolveCurrentNote(configNote as never)).toMatchObject({
+            included: [],
+            excluded: [{ reason: "plugin-generated" }],
+        });
+    });
+
     it("hard-excludes no-ai and no-review tags even when excludedTags is empty", () => {
         const noAi = makeFile("notes/private.md", Date.now());
         const noReview = makeFile("notes/no-review.md", Date.now());

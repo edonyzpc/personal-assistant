@@ -90,6 +90,8 @@ export interface ConfinementConfig {
      * folder only after preview confirmation.
      */
     allowMissingParent?: boolean;
+    /** Optional vault-relative roots that must never be targeted, even if allowedRoots is misconfigured. */
+    forbiddenRoots?: readonly string[];
     /** Optional caller-supplied additional reject patterns; runs after built-in categorized checks. */
     rejectPatterns?: readonly RegExp[];
 }

@@ -812,52 +812,11 @@ export class PanelView {
         const saveBtn = createHtmlElement("button");
         saveBtn.className = "pa-pagelet-panel-save-btn";
         saveBtn.textContent = pageletT("pagelet.panel.save", this.getLocale());
-        saveBtn.addEventListener("click", async (e) => {
+        saveBtn.addEventListener("click", (e) => {
             e.stopPropagation();
-            if (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected") {
-                const run = this.primaryButtonMode === "run-selected"
-                    ? this.options.callbacks.onRunSelectedReview
-                    : this.options.callbacks.onRunReview;
-                if (!run) return;
-                saveBtn.disabled = true;
-                saveBtn.setAttribute("aria-busy", "true");
-                const previousLabel = saveBtn.textContent ?? "";
-                const progressLabel = this.primaryButtonMode === "run-selected"
-                    ? pageletT("pagelet.panel.status.thinking", this.getLocale())
-                    : pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
-                saveBtn.textContent = progressLabel;
-                this.renderReviewProgress(progressLabel);
-                try {
-                    await run();
-                } finally {
-                    if (
-                        this.saveBtnEl === saveBtn
-                        && (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected")
-                    ) {
-                        saveBtn.disabled = false;
-                        saveBtn.removeAttribute("aria-busy");
-                        saveBtn.textContent = previousLabel;
-                        if (this.currentLayout === "review" && this.currentFindings.length === 0 && this.bodyEl) {
-                            this.renderCurrentLayout();
-                        }
-                    }
-                }
-                return;
-            }
-            if (saveBtn.disabled) return;
-            saveBtn.disabled = true;
-            saveBtn.setAttribute("aria-busy", "true");
-            const previousLabel = saveBtn.textContent ?? "";
-            saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.getLocale());
-            try {
-                await this.options.callbacks.onSaveAsReviewNote(this.saveFindings());
-            } finally {
-                if (this.saveBtnEl === saveBtn && this.primaryButtonMode === "save") {
-                    saveBtn.disabled = false;
-                    saveBtn.removeAttribute("aria-busy");
-                    saveBtn.textContent = previousLabel;
-                }
-            }
+            void this.handlePrimaryButtonClick(saveBtn).catch((error) => {
+                console.error("Pagelet panel primary action failed", error);
+            });
         });
         this.saveBtnEl = saveBtn;
         footer.appendChild(saveBtn);
@@ -875,6 +834,54 @@ export class PanelView {
 
         return root;
     }
+
+    private async handlePrimaryButtonClick(saveBtn: HTMLButtonElement): Promise<void> {
+        if (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected") {
+            const run = this.primaryButtonMode === "run-selected"
+                ? this.options.callbacks.onRunSelectedReview
+                : this.options.callbacks.onRunReview;
+            if (!run) return;
+            saveBtn.disabled = true;
+            saveBtn.setAttribute("aria-busy", "true");
+            const previousLabel = saveBtn.textContent ?? "";
+            const progressLabel = this.primaryButtonMode === "run-selected"
+                ? pageletT("pagelet.panel.status.thinking", this.getLocale())
+                : pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
+            saveBtn.textContent = progressLabel;
+            this.renderReviewProgress(progressLabel);
+            try {
+                await run();
+            } finally {
+                if (
+                    this.saveBtnEl === saveBtn
+                    && (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected")
+                ) {
+                    saveBtn.disabled = false;
+                    saveBtn.removeAttribute("aria-busy");
+                    saveBtn.textContent = previousLabel;
+                    if (this.currentLayout === "review" && this.currentFindings.length === 0 && this.bodyEl) {
+                        this.renderCurrentLayout();
+                    }
+                }
+            }
+            return;
+        }
+        if (saveBtn.disabled) return;
+        saveBtn.disabled = true;
+        saveBtn.setAttribute("aria-busy", "true");
+        const previousLabel = saveBtn.textContent ?? "";
+        saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.getLocale());
+        try {
+            await this.options.callbacks.onSaveAsReviewNote(this.saveFindings());
+        } finally {
+            if (this.saveBtnEl === saveBtn && this.primaryButtonMode === "save") {
+                saveBtn.disabled = false;
+                saveBtn.removeAttribute("aria-busy");
+                saveBtn.textContent = previousLabel;
+            }
+        }
+    }
+
 
     private renderReviewProgress(label?: string): void {
         if (!this.bodyEl) return;

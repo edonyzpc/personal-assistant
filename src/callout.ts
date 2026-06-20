@@ -85,7 +85,13 @@ export class CalloutModal extends SuggestModal<Callout> {
     }
 
     // Perform action on the selected suggestion.
-    async onChooseSuggestion(callout: Callout, evt: MouseEvent | KeyboardEvent) {
+    onChooseSuggestion(callout: Callout, _evt: MouseEvent | KeyboardEvent): void {
+        void this.chooseCallout(callout).catch((error) => {
+            console.error("Failed to choose callout", error);
+        });
+    }
+
+    private async chooseCallout(callout: Callout): Promise<void> {
         const title = getTitleFromCallout(callout);
         const calloutMarkdownContent = `
 > [!${callout.id}] ${title}

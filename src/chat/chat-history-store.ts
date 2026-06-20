@@ -352,7 +352,7 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
     private async getMetadataEntry<T>(key: string): Promise<T | null> {
         const store = this.getStore(METADATA_STORE, "readonly");
         const entry = await requestToPromise<{ key: string; value: T } | undefined>(store.get(key));
-        return entry ? (entry.value as T) : null;
+        return entry ? entry.value : null;
     }
 
     private openDatabase(): Promise<IDBDatabase> {
@@ -395,7 +395,7 @@ export class IndexedDbChatHistoryStore implements ChatHistoryStore {
         if (!this.db) {
             throw new Error("Chat history store is not initialized.");
         }
-        return this.db.transaction(storeNames as string | string[], mode);
+        return this.db.transaction(storeNames, mode);
     }
 }
 

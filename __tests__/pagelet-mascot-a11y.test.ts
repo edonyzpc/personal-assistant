@@ -4,9 +4,9 @@
  * Track B · B5 unit tests for mascot a11y extensions:
  *  - `prefers-reduced-motion`: strips SVG animation classes AND tags the
  *    root with the `--reduce-motion` modifier (markup layer + renderer).
- *  - `aria-live`: announces `done` (polite) / `error` (assertive) on real
+ *  - `aria-live`: announces `nudge` (polite) on real
  *    state transitions; does NOT re-announce when only the message
- *    changes; clears the region on `idle` / `thinking`.
+ *    changes; clears the region on `resting` / `idle` / `working`.
  *  - Live region DOM is mounted with the right ARIA attributes.
  *  - State-level + i18n-key mappings are stable.
  *  - i18n parity: real `pageletT` returns non-empty EN + ZH announcements.
@@ -20,7 +20,6 @@ import {
     MASCOT_STATE_LIVE_LEVEL,
     buildMascotMarkup,
     type MascotLiveAnnouncement,
-    type MascotState,
     type MascotTranslator,
 } from "../src/pagelet/ui/mascot";
 import {
@@ -29,6 +28,7 @@ import {
     type MascotDomNode,
 } from "../src/pagelet/ui/mascot/dom-renderer";
 import { pageletT } from "../src/locales/pagelet";
+import type { PetState } from "../src/pagelet/pet/types";
 
 // ---------------------------------------------------------------------------
 // Tiny stub host — same shape as pagelet-mascot.test.ts but local to this
@@ -140,17 +140,18 @@ function keyTranslator(): MascotTranslator {
 // ---------------------------------------------------------------------------
 
 describe("MASCOT_STATE_LIVE_LEVEL", () => {
-    it("idle / thinking are silent", () => {
+    it("resting / idle / working are silent", () => {
+        expect(MASCOT_STATE_LIVE_LEVEL.resting).toBe("off");
         expect(MASCOT_STATE_LIVE_LEVEL.idle).toBe("off");
-        expect(MASCOT_STATE_LIVE_LEVEL.thinking).toBe("off");
+        expect(MASCOT_STATE_LIVE_LEVEL.working).toBe("off");
     });
 
-    it("done is polite (non-interrupting)", () => {
-        expect(MASCOT_STATE_LIVE_LEVEL.done).toBe("polite");
+    it("nudge is polite (non-interrupting)", () => {
+        expect(MASCOT_STATE_LIVE_LEVEL.nudge).toBe("polite");
     });
 
-    it("error is assertive (interrupts pending speech)", () => {
-        expect(MASCOT_STATE_LIVE_LEVEL.error).toBe("assertive");
+    it("has no assertive Pet state", () => {
+        expect(Object.values(MASCOT_STATE_LIVE_LEVEL)).not.toContain("assertive");
     });
 
     it("is frozen so callers can rely on referential stability", () => {
@@ -159,14 +160,14 @@ describe("MASCOT_STATE_LIVE_LEVEL", () => {
 });
 
 describe("MASCOT_STATE_ANNOUNCE_I18N_KEY", () => {
-    it("idle / thinking have no announce key", () => {
+    it("resting / idle / working have no announce key", () => {
+        expect(MASCOT_STATE_ANNOUNCE_I18N_KEY.resting).toBeNull();
         expect(MASCOT_STATE_ANNOUNCE_I18N_KEY.idle).toBeNull();
-        expect(MASCOT_STATE_ANNOUNCE_I18N_KEY.thinking).toBeNull();
+        expect(MASCOT_STATE_ANNOUNCE_I18N_KEY.working).toBeNull();
     });
 
-    it("done + error map to the canonical pagelet.a11y.announce.* keys", () => {
-        expect(MASCOT_STATE_ANNOUNCE_I18N_KEY.done).toBe("pagelet.a11y.announce.done");
-        expect(MASCOT_STATE_ANNOUNCE_I18N_KEY.error).toBe("pagelet.a11y.announce.error");
+    it("nudge maps to the canonical pagelet.a11y.announce.done key", () => {
+        expect(MASCOT_STATE_ANNOUNCE_I18N_KEY.nudge).toBe("pagelet.a11y.announce.done");
     });
 
     it("is frozen", () => {
@@ -179,11 +180,9 @@ describe("MASCOT_STATE_ANNOUNCE_I18N_KEY", () => {
 // ---------------------------------------------------------------------------
 
 describe("pageletT × announce keys", () => {
-    it("returns a non-empty EN string for both announce keys", () => {
+    it("returns a non-empty EN string for the nudge announce key", () => {
         expect(pageletT("pagelet.a11y.announce.done", "en").length).toBeGreaterThan(0);
         expect(pageletT("pagelet.a11y.announce.done", "en")).not.toBe("pagelet.a11y.announce.done");
-        expect(pageletT("pagelet.a11y.announce.error", "en").length).toBeGreaterThan(0);
-        expect(pageletT("pagelet.a11y.announce.error", "en")).not.toBe("pagelet.a11y.announce.error");
     });
 
     it("returns a non-empty ZH string that differs from EN", () => {
@@ -191,11 +190,6 @@ describe("pageletT × announce keys", () => {
         const zhDone = pageletT("pagelet.a11y.announce.done", "zh");
         expect(zhDone.length).toBeGreaterThan(0);
         expect(zhDone).not.toBe(enDone);
-
-        const enErr = pageletT("pagelet.a11y.announce.error", "en");
-        const zhErr = pageletT("pagelet.a11y.announce.error", "zh");
-        expect(zhErr.length).toBeGreaterThan(0);
-        expect(zhErr).not.toBe(enErr);
     });
 });
 
@@ -232,8 +226,8 @@ describe("buildMascotMarkup — reducedMotion", () => {
         }
     });
 
-    it("strips animClass from thinking's pulse circles when reducedMotion is true", () => {
-        const markup = buildMascotMarkup("thinking", {
+    it("strips animClass from working's pulse circles when reducedMotion is true", () => {
+        const markup = buildMascotMarkup("working", {
             translator: keyTranslator(),
             reducedMotion: true,
         });
@@ -286,7 +280,7 @@ describe("createMascotRendererWithHost — prefersReducedMotion", () => {
 
         // User toggles OS reduce-motion mid-session.
         reduced = true;
-        renderer.setState("thinking");
+        renderer.setState("working");
         expect(root.children[0].classList).toContain("pa-pagelet-mascot--reduce-motion");
         // Probe invoked again — at least 2 calls (mount + setState).
         expect(probe.mock.calls.length).toBeGreaterThanOrEqual(2);
@@ -332,7 +326,7 @@ describe("createMascotRendererWithHost — aria-live announcements", () => {
         expect(live.text).toBe("");
     });
 
-    it("announces done at polite level on state transition", () => {
+    it("announces nudge at polite level on state transition", () => {
         const { host, root } = makeStubHost();
         const seam = jest.fn<(a: MascotLiveAnnouncement) => void>();
         const renderer = createMascotRendererWithHost(root, {
@@ -345,10 +339,10 @@ describe("createMascotRendererWithHost — aria-live announcements", () => {
         // receives the event so external recorders see the full sequence).
         seam.mockClear();
 
-        renderer.setState("done");
+        renderer.setState("nudge");
         expect(seam).toHaveBeenCalledTimes(1);
         const arg = seam.mock.calls[0][0];
-        expect(arg.state).toBe("done");
+        expect(arg.state).toBe("nudge");
         expect(arg.level).toBe("polite");
         expect(arg.message.length).toBeGreaterThan(0);
 
@@ -357,48 +351,30 @@ describe("createMascotRendererWithHost — aria-live announcements", () => {
         expect(live.text).toBe(arg.message);
     });
 
-    it("announces error at assertive level on state transition", () => {
-        const { host, root } = makeStubHost();
-        const seam = jest.fn<(a: MascotLiveAnnouncement) => void>();
-        const renderer = createMascotRendererWithHost(root, {
-            host,
-            initialState: "idle",
-            translator: keyTranslator(),
-            announceLiveRegion: seam,
-        });
-        seam.mockClear();
-        renderer.setState("error");
-        const arg = seam.mock.calls[0][0];
-        expect(arg.state).toBe("error");
-        expect(arg.level).toBe("assertive");
-        expect(arg.message.length).toBeGreaterThan(0);
-        expect(liveEl(root).attrs["aria-live"]).toBe("assertive");
-    });
-
     it("does NOT re-announce when only the message changes (same state)", () => {
         const { host, root } = makeStubHost();
         const seam = jest.fn<(a: MascotLiveAnnouncement) => void>();
         const renderer = createMascotRendererWithHost(root, {
             host,
-            initialState: "thinking",
+            initialState: "working",
             translator: keyTranslator(),
             announceLiveRegion: seam,
         });
         seam.mockClear();
-        renderer.setState("thinking", { message: "Reviewing notes/foo.md…" });
-        renderer.setState("thinking", { message: "Reviewing notes/bar.md…" });
-        // No announce — thinking → thinking with new message must stay silent.
+        renderer.setState("working", { message: "Reviewing notes/foo.md…" });
+        renderer.setState("working", { message: "Reviewing notes/bar.md…" });
+        // No announce — working → working with new message must stay silent.
         expect(seam).not.toHaveBeenCalled();
     });
 
-    it("clears the region (level=off, empty text) when transitioning to idle / thinking", () => {
+    it("clears the region (level=off, empty text) when transitioning to idle", () => {
         const { host, root } = makeStubHost();
         const renderer = createMascotRendererWithHost(root, {
             host,
-            initialState: "done",
+            initialState: "nudge",
             translator: keyTranslator(),
         });
-        // Initial done announces something.
+        // Initial nudge announces something.
         const live = liveEl(root);
         expect(live.attrs["aria-live"]).toBe("polite");
         expect(live.text.length).toBeGreaterThan(0);
@@ -408,7 +384,7 @@ describe("createMascotRendererWithHost — aria-live announcements", () => {
         expect(live.text).toBe("");
     });
 
-    it("re-announces when the state cycles done → idle → done", () => {
+    it("re-announces when the state cycles nudge → idle → nudge", () => {
         const { host, root } = makeStubHost();
         const seam = jest.fn<(a: MascotLiveAnnouncement) => void>();
         const renderer = createMascotRendererWithHost(root, {
@@ -418,11 +394,11 @@ describe("createMascotRendererWithHost — aria-live announcements", () => {
             announceLiveRegion: seam,
         });
         seam.mockClear();
-        renderer.setState("done");
+        renderer.setState("nudge");
         renderer.setState("idle");
-        renderer.setState("done");
-        const doneCalls = seam.mock.calls.filter((c) => c[0].state === "done");
-        expect(doneCalls.length).toBe(2);
+        renderer.setState("nudge");
+        const nudgeCalls = seam.mock.calls.filter((c) => c[0].state === "nudge");
+        expect(nudgeCalls.length).toBe(2);
     });
 
     it("seam receives the resolved (translated) message", () => {
@@ -439,7 +415,7 @@ describe("createMascotRendererWithHost — aria-live announcements", () => {
             announceLiveRegion: seam,
         });
         seam.mockClear();
-        renderer.setState("done");
+        renderer.setState("nudge");
         const arg = seam.mock.calls[0][0];
         expect(arg.message).toBe("TRANSLATED-DONE");
         expect(liveEl(root).text).toBe("TRANSLATED-DONE");
@@ -456,22 +432,22 @@ describe("createMascotRendererWithHost — aria-live announcements", () => {
             announceLiveRegion: seam,
         });
         seam.mockClear();
-        renderer.setState("error");
+        renderer.setState("nudge");
         const arg = seam.mock.calls[0][0];
         // Should NOT be the raw key.
-        expect(arg.message).not.toBe("pagelet.a11y.announce.error");
+        expect(arg.message).not.toBe("pagelet.a11y.announce.done");
         // Should be the hard-coded EN fallback.
-        expect(arg.message).toBe("Pagelet review failed. Open the panel for details.");
+        expect(arg.message).toBe("Pagelet finished reviewing. Suggestions are ready.");
     });
 });
 
 // ---------------------------------------------------------------------------
-// Mount-time announcement: a renderer that starts in done / error must
+// Mount-time announcement: a renderer that starts in nudge must
 // announce on mount (catches "host restoring mascot from a saved state").
 // ---------------------------------------------------------------------------
 
 describe("createMascotRendererWithHost — mount-time announcement", () => {
-    it.each<MascotState>(["done", "error"])(
+    it.each<PetState>(["nudge"])(
         "announces on initial mount when state is %s",
         (state) => {
             const { host, root } = makeStubHost();
@@ -488,18 +464,21 @@ describe("createMascotRendererWithHost — mount-time announcement", () => {
         },
     );
 
-    it("announces idle / thinking on mount but with level='off' + empty message", () => {
-        const { host, root } = makeStubHost();
-        const seam = jest.fn<(a: MascotLiveAnnouncement) => void>();
-        createMascotRendererWithHost(root, {
-            host,
-            initialState: "idle",
-            translator: (key: string, fallback?: string) => fallback ?? key,
-            announceLiveRegion: seam,
-        });
-        // Mount fires the seam once (full sequence visibility for tests).
-        expect(seam).toHaveBeenCalledTimes(1);
-        expect(seam.mock.calls[0][0].level).toBe("off");
-        expect(seam.mock.calls[0][0].message).toBe("");
-    });
+    it.each<PetState>(["resting", "idle", "working"])(
+        "announces %s on mount but with level='off' + empty message",
+        (state) => {
+            const { host, root } = makeStubHost();
+            const seam = jest.fn<(a: MascotLiveAnnouncement) => void>();
+            createMascotRendererWithHost(root, {
+                host,
+                initialState: state,
+                translator: (key: string, fallback?: string) => fallback ?? key,
+                announceLiveRegion: seam,
+            });
+            // Mount fires the seam once (full sequence visibility for tests).
+            expect(seam).toHaveBeenCalledTimes(1);
+            expect(seam.mock.calls[0][0].level).toBe("off");
+            expect(seam.mock.calls[0][0].message).toBe("");
+        },
+    );
 });

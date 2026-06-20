@@ -409,6 +409,30 @@ class MockDomNode {
     createSpan(options?: MockElOptions) {
         return this.createEl('span', options);
     }
+
+    findAll(selector: string): MockDomNode[] {
+        const selectorGroups = selector.split(',').map((part) => part.trim()).filter(Boolean);
+        const matches = (node: MockDomNode, part: string): boolean => {
+            if (part.includes(' ')) {
+                return matches(node, part.split(/\s+/).pop() ?? part);
+            }
+            if (part.startsWith('.')) {
+                return node.classes.includes(part.slice(1));
+            }
+            return node.tagName.toLowerCase() === part.toLowerCase();
+        };
+        const results: MockDomNode[] = [];
+        const walk = (node: MockDomNode): void => {
+            for (const child of node.children) {
+                if (selectorGroups.some((part) => matches(child, part))) {
+                    results.push(child);
+                }
+                walk(child);
+            }
+        };
+        walk(this);
+        return results;
+    }
 }
 
 class MockContainerEl extends MockDomNode {

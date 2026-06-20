@@ -62,6 +62,7 @@ jest.mock('obsidian', () => ({
             setCssStyles: jest.fn(),
             querySelector: jest.fn((selector: string) => selector === '.pa-notice__body' ? this.progressBody : null),
         };
+        messageEl = this.noticeEl;
     },
     Platform: { isMobile: false },
     Modal: class {

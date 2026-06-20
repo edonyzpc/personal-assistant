@@ -67,7 +67,7 @@ export class AssistantRobot {
         const tags = await this.aiService.generateTags(this.editor, this.view, this.plugin.app);
 
         if (this.view.file) {
-            this.plugin.app.fileManager.processFrontMatter(this.view.file, (frontmatter) => {
+            await this.plugin.app.fileManager.processFrontMatter(this.view.file, (frontmatter) => {
                 const oldTags = frontmatter["tags"] || [];
                 frontmatter["tags"] = oldTags.concat(tags);
             });
@@ -95,7 +95,7 @@ export class AssistantFeaturedImageHelper {
         this.plugin = plugin
         this.editor = editor
         this.view = view;
-        this.log = plugin.log;
+        this.log = (...msg: unknown[]) => plugin.log(...msg);
         this.aiService = new AIService(plugin);
     }
 

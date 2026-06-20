@@ -201,7 +201,11 @@ export class BubbleView {
         this.handleKeydown = this.onKeydown.bind(this);
         this.handleResize = () => {
             if (this.state !== "hidden" && this.anchorEl && this.rootEl) {
-                this.repositionBubble();
+                if (isMobile()) {
+                    this.applyMobileLayout();
+                } else {
+                    this.repositionBubble();
+                }
             }
         };
         this.handleTouchStart = this.onTouchStart.bind(this);

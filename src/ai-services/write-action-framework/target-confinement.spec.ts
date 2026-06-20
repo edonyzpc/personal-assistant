@@ -89,6 +89,34 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
         expect(result).toMatchObject({ ok: false, reason: "forbidden_dotfolder", detail: ".obsidian" });
     });
 
+    it("rejects paths under caller-supplied forbiddenRoots before allowlist", () => {
+        const cfg: ConfinementConfig = {
+            allowedRoots: ["vault-config/reviews/"],
+            allowedExtensions: [".md"],
+            forbiddenRoots: ["vault-config"],
+        };
+        const result = validateTargetConfinementSync("vault-config/reviews/evil.md", cfg);
+        expect(result).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: "vault-config",
+        });
+    });
+
+    it("case-folds caller-supplied forbiddenRoots", () => {
+        const cfg: ConfinementConfig = {
+            allowedRoots: ["Vault-Config/reviews/"],
+            allowedExtensions: [".md"],
+            forbiddenRoots: ["vault-config"],
+        };
+        const result = validateTargetConfinementSync("Vault-Config/reviews/evil.md", cfg);
+        expect(result).toMatchObject({
+            ok: false,
+            reason: "forbidden_dotfolder",
+            detail: "vault-config",
+        });
+    });
+
     it("rejects forbidden_dotfolder for top-level .git segment", () => {
         expect(validateTargetConfinementSync(".git/config.md", baseConfig)).toMatchObject({
             ok: false,
@@ -352,9 +380,13 @@ describe("validateTargetConfinementSync (framework SDD §2.2)", () => {
 });
 
 describe("validateTargetConfinement (async with FS probe)", () => {
-    function probe(map: Record<string, boolean>): ConfinementFsProbe {
+    function probe(map: Record<string, boolean>): ConfinementFsProbe & {
+        _existsMock: jest.MockedFunction<ConfinementFsProbe["exists"]>;
+    } {
+        const existsMock = jest.fn(async (path: string) => map[path] ?? false) as jest.MockedFunction<ConfinementFsProbe["exists"]>;
         return {
-            exists: jest.fn(async (path: string) => map[path] ?? false) as ConfinementFsProbe["exists"],
+            exists: existsMock,
+            _existsMock: existsMock,
         };
     }
 
@@ -399,7 +431,7 @@ describe("validateTargetConfinement (async with FS probe)", () => {
         const fs = probe({});
         const result = await validateTargetConfinement("/etc/passwd", baseConfig, fs);
         expect(result).toMatchObject({ ok: false, reason: "absolute_path" });
-        expect((fs.exists as jest.Mock)).not.toHaveBeenCalled();
+        expect(fs._existsMock).not.toHaveBeenCalled();
     });
 });
 
@@ -429,6 +461,22 @@ describe("validateAllowedRoots (framework SDD §2.2 / issue #358 AC #1)", () => 
         expect(() => validateAllowedRoots([".git/"])).toThrow(ConfinementConfigError);
         expect(() => validateAllowedRoots([".trash/"])).toThrow(ConfinementConfigError);
         expect(() => validateAllowedRoots([".obsidian.bak/"])).toThrow(ConfinementConfigError);
+    });
+
+    it("throws for roots inside caller-supplied forbiddenRoots", () => {
+        expect(() => validateAllowedRoots(
+            ["vault-config/reviews/"],
+            { forbiddenRoots: ["vault-config"] },
+        )).toThrow(ConfinementConfigError);
+        try {
+            validateAllowedRoots(["Vault-Config/reviews/"], { forbiddenRoots: ["vault-config"] });
+        } catch (err) {
+            expect(err).toBeInstanceOf(ConfinementConfigError);
+            const e = err as ConfinementConfigError;
+            expect(e.reason).toBe("forbidden_dotfolder");
+            expect(e.offendingRoot).toBe("Vault-Config/reviews/");
+            expect(e.offendingSegment).toBe("vault-config");
+        }
     });
 
     it("throws for case-fold variants (.Obsidian/, .OBSIDIAN.BAK/)", () => {

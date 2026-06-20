@@ -62,6 +62,7 @@ import type {
     WriteActionExecuteHooks,
 } from "../ai-services/write-action-framework";
 import { pageletT, type PageletLocale } from "../locales/pagelet";
+import { getVaultConfigDir } from "../obsidian-paths";
 import {
     normalizeReviewsFolder as normalizeConfiguredReviewsFolder,
     type PageletSettings,
@@ -175,6 +176,7 @@ export type PageletReviewToolSettings = PageletReviewFileIOSettings;
  */
 export interface PageletReviewToolVaultLike {
     adapter: PageletReviewIOAdapter;
+    configDir?: string;
 }
 
 /**
@@ -349,8 +351,8 @@ function computeTargetPath(
     });
 }
 
-function resolveAllowedReviewsFolder(settings: PageletReviewToolSettings): string {
-    return normalizeConfiguredReviewsFolder(settings.reviewsFolder).value;
+function resolveAllowedReviewsFolder(settings: PageletReviewToolSettings, configDir: string): string {
+    return normalizeConfiguredReviewsFolder(settings.reviewsFolder, { configDir }).value;
 }
 
 /**
@@ -362,25 +364,31 @@ function resolveAllowedReviewsFolder(settings: PageletReviewToolSettings): strin
  * NOT also include `.pagelet/` as a fallback because that would silently
  * allow writes outside the user's intended folder.
  */
-function buildConfinement(settings: PageletReviewToolSettings): {
+function buildConfinement(
+    settings: PageletReviewToolSettings,
+    vault: PageletReviewToolVaultLike,
+): {
     allowedRoots: string[];
     allowedExtensions: string[];
     maxPathLength: number;
     allowMissingParent: true;
+    forbiddenRoots: string[];
 } {
-    const folder = resolveAllowedReviewsFolder(settings);
+    const configDir = getVaultConfigDir(vault);
+    const folder = resolveAllowedReviewsFolder(settings, configDir);
     const allowedRoots = [`${folder}/`];
     // Issue #358 AC #1: construction-time defense-in-depth assert. Throws
     // ConfinementConfigError if a forbidden top-level dotfolder slipped past
     // the settings-layer scrub. The allowlist itself is derived from the same
     // fail-closed validator used at load time so a compromised caller cannot
     // widen Pagelet confinement by bypassing `mergePageletSettings`.
-    validateAllowedRoots(allowedRoots);
+    validateAllowedRoots(allowedRoots, { forbiddenRoots: [configDir] });
     return {
         allowedRoots,
         allowedExtensions: [".md"],
         maxPathLength: PAGELET_MAX_PATH_LENGTH,
         allowMissingParent: true,
+        forbiddenRoots: [configDir],
     };
 }
 
@@ -541,7 +549,8 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
         get targetConfinement() {
             // Derive on every read so a settings change (reviewsFolder) is
             // picked up without re-instantiating the capability.
-            return buildConfinement(ctxOf().settings);
+            const ctx = ctxOf();
+            return buildConfinement(ctx.settings, ctx.vault);
         },
 
         toProviderSchema: () => ({
@@ -613,7 +622,7 @@ function buildCapability(opts: CreatePaReviewToolProviderOptions): WriteActionCa
                     hooks.markSelfWrite(path);
                     ctx.externalMarkSelfWrite?.(path);
                 }
-                : hooks.markSelfWrite;
+                : (path: string) => hooks.markSelfWrite(path);
             const writeResult = parsed.kind === "generated"
                 ? await writeGeneratedReviewNote({
                     note: parsed.generatedNote,

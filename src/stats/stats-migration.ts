@@ -233,7 +233,7 @@ function isObject(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseJson(content: string, path: string, errors: StatsStoreError[]): unknown | undefined {
+function parseJson(content: string, path: string, errors: StatsStoreError[]): unknown {
     try {
         return JSON.parse(content);
     } catch (error) {

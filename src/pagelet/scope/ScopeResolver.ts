@@ -2,6 +2,7 @@
 
 import type { App, CachedMetadata, TFile } from "obsidian";
 
+import { getVaultConfigDir, isVaultPathInConfigDir } from "../../obsidian-paths";
 import type { ExclusionReason, ScopeCandidate, ScopeConfig, ScopeResult } from "./types";
 
 const DEFAULT_MAX_FILE_SIZE_BYTES = 100 * 1024;
@@ -62,7 +63,8 @@ export class ScopeResolver {
 
         if (hasHiddenSegment(path)) return "hidden-folder";
 
-        if (path.startsWith(".obsidian/") || path.startsWith("node_modules/")) {
+        const configDir = getVaultConfigDir(this.app.vault);
+        if (isVaultPathInConfigDir(path, configDir) || path.startsWith("node_modules/")) {
             return "plugin-generated";
         }
 

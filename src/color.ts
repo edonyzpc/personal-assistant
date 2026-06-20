@@ -93,9 +93,9 @@ export function toHSV(color: RGB | RGBA | HSV | HSVA): HSV | HSVA {
     const s = cmax === 0 ? 0 : (delta / cmax) * 100;
     const v = cmax * 100;
 
-    const hsv: HSV | HSVA = { h, s, v };
+    const hsv: HSV = { h, s, v };
     if ('a' in color) {
-        (hsv as HSVA).a = (((color as RGBA | HSVA).a as number) / 255) * 100;
+        return { ...hsv, a: (color.a / 255) * 100 };
     }
 
     return hsv;

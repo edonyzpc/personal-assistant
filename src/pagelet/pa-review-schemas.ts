@@ -550,7 +550,7 @@ export function truncateOverlongFields(payload: unknown): TruncationResult {
     const root = { ...payload } as Record<string, unknown>;
     if (Array.isArray(root.suggestions)) {
         root.suggestions = root.suggestions.map((s: unknown) =>
-            s && typeof s === "object" ? { ...s as object } : s,
+            s && typeof s === "object" ? { ...s } : s,
         );
     }
     let truncated = false;

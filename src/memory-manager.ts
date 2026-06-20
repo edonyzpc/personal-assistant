@@ -761,9 +761,9 @@ function createMemoryProgressNotice(title: string): { notice: Notice } {
     header.createSpan({ text: title, attr: { class: "pa-notice__text" } });
     wrapper.createDiv({ cls: "pa-notice__body" });
     const notice = new Notice(fragment, 0);
-    notice.noticeEl.addClass("pa-notice-shell");
-    notice.noticeEl.parentElement?.addClass("pa-notice-shell");
-    notice.noticeEl.setCssStyles({
+    notice.messageEl.addClass("pa-notice-shell");
+    notice.messageEl.parentElement?.addClass("pa-notice-shell");
+    notice.messageEl.setCssStyles({
         background: "transparent",
         boxShadow: "none",
         border: "none",
@@ -773,7 +773,7 @@ function createMemoryProgressNotice(title: string): { notice: Notice } {
 }
 
 function setMemoryProgressStep(notice: Notice, text: string): void {
-    const body = notice.noticeEl.querySelector(".pa-notice__body") as HTMLElement | null;
+    const body = notice.messageEl.querySelector<HTMLElement>(".pa-notice__body");
     if (!body) return;
     body.empty();
     body.createEl("div", {

@@ -2102,7 +2102,7 @@ body.is-mobile .llm-buttons button.pa-chat-icon-button svg {
 	.pa-pagelet-anim-pulse-1,
 	.pa-pagelet-anim-pulse-2,
 	.pa-pagelet-anim-pulse-3 {
-		animation: none !important;
+		animation: none;
 	}
 }
 
@@ -3063,10 +3063,10 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 }
 
 .pa-pagelet-bubble.pa-pagelet-bubble--mobile {
-	left: 8px!important;
-	right: 8px!important;
-	bottom: calc(80px + env(safe-area-inset-bottom,0px))!important;
-	top: auto!important;
+	left: 8px;
+	right: 8px;
+	bottom: calc(80px + env(safe-area-inset-bottom,0px));
+	top: auto;
 	width: auto;
 	max-height: min(70vh,calc(100vh - 120px - env(safe-area-inset-top,0px) - env(safe-area-inset-bottom,0px)));
 	overflow-y: auto;
@@ -3130,8 +3130,8 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
 	top: 0;
 	right: 0;
 	width: 380px;
-	height: 100vh;
-	height: 100dvh;
+	--pa-pagelet-panel-height: 100vh;
+	height: var(--pa-pagelet-panel-height);
 	padding-top: env(safe-area-inset-top,0px);
 	padding-bottom: env(safe-area-inset-bottom,0px);
 	background: var(--background-primary,#222);
@@ -3145,6 +3145,12 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
 	font-family: var(--font-interface,inherit);
 	color: var(--text-normal,#dcddde);
 	box-sizing: border-box;
+}
+
+@supports (height: 100dvh) {
+	.pa-pagelet-panel {
+		--pa-pagelet-panel-height: 100dvh;
+	}
 }
 
 .pa-pagelet-panel[data-state=visible] {
@@ -3776,8 +3782,6 @@ body > .tooltip {
 
 body.is-mobile .pa-pagelet-panel {
 	width: 100%;
-	height: 100vh;
-	height: 100dvh;
 	top: 0;
 	left: 0;
 	right: 0;
@@ -4282,8 +4286,9 @@ body.is-mobile .pa-pagelet-pet[data-corner=bottom-left] {
 	opacity: .16;
 }
 
-.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg circle,.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg path {
-	stroke: #ff6b6b!important;
+.pa-pagelet-pet.pa-pagelet-pet--error[data-state=error] .pa-pagelet-pet-svg-wrap svg circle,
+.pa-pagelet-pet.pa-pagelet-pet--error[data-state=error] .pa-pagelet-pet-svg-wrap svg path {
+	stroke: #ff6b6b;
 	fill: none;
 }
 
@@ -4492,14 +4497,6 @@ body.is-mobile .pa-pagelet-tab-body {
  *    sees the announcement. The clip + clip-path pattern is the WCAG-
  *    recommended way to hide content visually but keep it announceable.
  * ────────────────────────────────────────────────────────────────────── */
-.pa-pagelet-mascot--reduce-motion *,
-.pa-pagelet-mascot--reduce-motion *::before,
-.pa-pagelet-mascot--reduce-motion *::after {
-	animation-duration: 0s !important;
-	animation-iteration-count: 1 !important;
-	transition: none !important;
-}
-
 .pa-pagelet-mascot__live {
 	position: absolute;
 	width: 1px;
@@ -4575,6 +4572,23 @@ body.is-mobile .pa-pagelet-tab-body {
 	animation: pa-pagelet-mascot-pulse 1.4s infinite;
 	animation-delay: 0.4s;
 }
+
+@media (prefers-reduced-motion: reduce) {
+	.pa-pagelet-anim-blink,
+	.pa-pagelet-anim-pulse-1,
+	.pa-pagelet-anim-pulse-2,
+	.pa-pagelet-anim-pulse-3 {
+		animation: none;
+	}
+}
+
+.pa-pagelet-mascot--reduce-motion *,
+.pa-pagelet-mascot--reduce-motion *::before,
+.pa-pagelet-mascot--reduce-motion *::after {
+	animation: none;
+	transition: none;
+}
+
 .pa-write-action-modal__section-body--multiline {
 	white-space: pre-line;
 }

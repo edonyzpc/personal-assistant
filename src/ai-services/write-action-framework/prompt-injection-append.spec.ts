@@ -1,6 +1,6 @@
 import { describe, expect, it } from "@jest/globals";
 
-import type { TFile } from "obsidian";
+import { TFile } from "obsidian";
 
 import {
     buildAppendPreview,
@@ -14,7 +14,8 @@ import { validateAppendConfinement } from "./target-confinement";
 // ─────────────────────────────────────────────────────────────────────────────
 
 function makeActiveFile(path: string): TFile {
-    return { path } as TFile;
+    const FileCtor = TFile as unknown as { new(path: string): TFile };
+    return new FileCtor(path);
 }
 
 function makeInput(overrides: Partial<AppendActionInput> = {}): AppendActionInput {

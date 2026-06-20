@@ -1,20 +1,46 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
-jest.mock("obsidian", () => ({
-    Notice: jest.fn(),
-    normalizePath: (path: string) => path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/g, ""),
-}));
+jest.mock("obsidian", () => {
+    class MockTFile {
+        path: string;
+        basename: string;
+        extension: string;
+        stat: { size: number; mtime: number; ctime: number };
+
+        constructor(path: string, stat: { size?: number; mtime?: number; ctime?: number } = {}) {
+            this.path = path;
+            const name = path.split("/").pop() ?? path;
+            this.extension = name.includes(".") ? name.slice(name.lastIndexOf(".") + 1) : "";
+            this.basename = this.extension ? name.slice(0, -this.extension.length - 1) : name;
+            this.stat = {
+                size: stat.size ?? 100,
+                mtime: stat.mtime ?? Date.now(),
+                ctime: stat.ctime ?? Date.now(),
+            };
+        }
+    }
+
+    return {
+        Notice: jest.fn(),
+        TFile: MockTFile,
+        normalizePath: (path: string) => path.replace(/\\/g, "/").replace(/\/+/g, "/").replace(/\/$/g, ""),
+    };
+});
+
+import { TFile } from "obsidian";
 
 import { PageletOrchestrator, type PageletHost } from "../src/pagelet/orchestrator";
 import type { PageletDetailPayload } from "../src/pagelet/tab/types";
 
-function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
-    const activeFile = {
-        path: "notes/current.md",
-        basename: "current",
-        extension: "md",
-        stat: { size: 100, mtime: Date.now() },
+function makeTFile(path: string, stat: { size?: number; mtime?: number; ctime?: number } = {}): TFile {
+    const FileCtor = TFile as unknown as {
+        new(path: string, stat?: { size?: number; mtime?: number; ctime?: number }): TFile;
     };
+    return new FileCtor(path, stat);
+}
+
+function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
+    const activeFile = makeTFile("notes/current.md", { size: 100, mtime: Date.now() });
     const host: PageletHost = {
         app: {
             workspace: {
@@ -115,18 +141,8 @@ describe("PageletOrchestrator foreground review concurrency", () => {
     });
 
     it("restores the pet state when a current-note review becomes stale", async () => {
-        const activeFile = {
-            path: "notes/current.md",
-            basename: "current",
-            extension: "md",
-            stat: { size: 100, mtime: Date.now() },
-        };
-        const otherFile = {
-            path: "notes/other.md",
-            basename: "other",
-            extension: "md",
-            stat: { size: 100, mtime: Date.now() },
-        };
+        const activeFile = makeTFile("notes/current.md", { size: 100, mtime: Date.now() });
+        const otherFile = makeTFile("notes/other.md", { size: 100, mtime: Date.now() });
         let currentActive = activeFile;
         const foregroundAnalyze = jest.fn(async () => {
             currentActive = otherFile;
@@ -553,24 +569,9 @@ describe("PageletOrchestrator review panel scope flow", () => {
 
     it("keeps explicit multi-note selected review results after active note changes", async () => {
         const now = Date.now();
-        const activeFile = {
-            path: "notes/current.md",
-            basename: "current",
-            extension: "md",
-            stat: { size: 100, mtime: now },
-        };
-        const recentFile = {
-            path: "notes/recent.md",
-            basename: "recent",
-            extension: "md",
-            stat: { size: 100, mtime: now - 86_400_000 },
-        };
-        const otherFile = {
-            path: "notes/other.md",
-            basename: "other",
-            extension: "md",
-            stat: { size: 100, mtime: now - 10 * 86_400_000 },
-        };
+        const activeFile = makeTFile("notes/current.md", { size: 100, mtime: now });
+        const recentFile = makeTFile("notes/recent.md", { size: 100, mtime: now - 86_400_000 });
+        const otherFile = makeTFile("notes/other.md", { size: 100, mtime: now - 10 * 86_400_000 });
         let currentActive = activeFile;
         const panelView = { open: jest.fn() };
         const foregroundAnalyze = jest.fn(async () => {

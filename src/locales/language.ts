@@ -1,22 +1,23 @@
 /* Copyright 2023 edonyzpc */
 
+import { getOptionalPlatformWindow } from "../platform-dom";
+
 export const SUPPORTED_UI_LOCALES = ["en", "zh"] as const;
 export type UiLocale = (typeof SUPPORTED_UI_LOCALES)[number];
 
-export function getObsidianUiLanguage(): UiLocale {
-    if (typeof globalThis === "undefined") return "en";
-    const g = globalThis as unknown as {
-        window?: { i18next?: { language?: unknown }; moment?: { locale?: () => unknown } };
-        moment?: { locale?: () => unknown };
-        i18next?: { language?: unknown };
-    };
+type ObsidianLocaleWindow = Window & {
+    i18next?: { language?: unknown };
+    moment?: { locale?: () => unknown };
+};
 
-    const i18nLang = normalizeUiLanguage(g.window?.i18next?.language ?? g.i18next?.language);
+export function getObsidianUiLanguage(): UiLocale {
+    const win = getOptionalPlatformWindow() as ObsidianLocaleWindow | undefined;
+    if (!win) return "en";
+
+    const i18nLang = normalizeUiLanguage(win.i18next?.language);
     if (i18nLang) return i18nLang;
 
-    const momentLocale =
-        normalizeUiLanguage(safeCallLocale(g.window?.moment))
-        ?? normalizeUiLanguage(safeCallLocale(g.moment));
+    const momentLocale = normalizeUiLanguage(safeCallLocale(win.moment));
     if (momentLocale) return momentLocale;
 
     return "en";

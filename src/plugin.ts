@@ -27,7 +27,7 @@ import { normalizeStatisticsView } from './stats/stats-store';
 import type { EditorPluginHost } from './stats/EditorPluginHost';
 import type { StatsHost } from './stats/StatsHost';
 import { MemoryManager } from './memory-manager';
-import { getVaultConfigDir, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
+import { getVaultConfigDir, getVaultConfigDirStorageScope, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
 import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
 import { createChatHistoryStore, type ChatHistoryStore } from './chat/chat-history-store';
@@ -277,7 +277,7 @@ export class PluginManager extends Plugin {
         return (this._localGraph ??= new LocalGraph(this.app, this));
     }
 
-    private t(key: PluginMessageKey | string, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
+    private t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
         return pluginT(key, getPluginUiLanguage(), params, fallback);
     }
 
@@ -605,7 +605,9 @@ export class PluginManager extends Plugin {
                         this.resizeDebounceTimer = setPluginTimeout(() => {
                             this.resizeDebounceTimer = null;
                             if (!this.hoverPopoverObserver) return;
-                            this.localGraph.resize();
+                            void this.localGraph.resize().catch((error) => {
+                                this.log("Failed to resize hover local graph", error);
+                            });
                         }, 150);
                         return;
                     }
@@ -1191,7 +1193,7 @@ export class PluginManager extends Plugin {
         return [
             PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX,
             encodeURIComponent(vaultName),
-            encodeURIComponent(this.app.vault.configDir || ".obsidian"),
+            encodeURIComponent(getVaultConfigDirStorageScope(this.app.vault)),
         ].join(":");
     }
 
@@ -1435,7 +1437,13 @@ export class PluginManager extends Plugin {
         return getPageletUiLanguage();
     }
 
-    async onunload() {
+    onunload(): void {
+        void this.unloadAsync().catch((error) => {
+            this.log("Error during plugin unload:", error);
+        });
+    }
+
+    private async unloadAsync(): Promise<void> {
         this.unloading = true;
         if (this.phase3Handle !== null) {
             clearPlatformTimeout(this.phase3Handle);
@@ -1508,8 +1516,8 @@ export class PluginManager extends Plugin {
             this.settings.aiProvider = "";
         }
         // Detect when a pre-existing `pagelet.reviewsFolder` was just coerced
-        // by the now-stricter validator (e.g. an early-beta user stored
-        // ".obsidian/plugins/personal-assistant/reviews" or "C:\\notes"). The
+        // by the now-stricter validator (e.g. an early-beta user stored a path
+        // under the Obsidian config dir or "C:\\notes"). The
         // merged value has already failed-closed to ".pagelet", but the user
         // deserves to know — their old reviews on disk are now orphaned. We
         // surface a Notice once via `onload`; the flag persists in localStorage
@@ -1521,7 +1529,9 @@ export class PluginManager extends Plugin {
             ? (rawPagelet as Record<string, unknown>).reviewsFolder
             : undefined;
         if (typeof rawReviewsFolder === "string" && rawReviewsFolder.trim().length > 0) {
-            const inspection = normalizeReviewsFolder(rawReviewsFolder);
+            const inspection = normalizeReviewsFolder(rawReviewsFolder, {
+                configDir: getVaultConfigDir(this.app.vault),
+            });
             if (inspection.error && !readPageletMigrationFlag()) {
                 this.pendingPageletReviewsFolderMigration = {
                     input: inspection.input ?? rawReviewsFolder,
@@ -1586,7 +1596,7 @@ export class PluginManager extends Plugin {
         }
     }
 
-    private async waitForEnabledPluginInstance(pluginId: string, timeoutMs: number): Promise<unknown | undefined> {
+    private async waitForEnabledPluginInstance(pluginId: string, timeoutMs: number): Promise<unknown> {
         const pluginRegistry = (this.app as unknown as { plugins?: ObsidianPluginRegistry }).plugins;
         if (!pluginRegistry?.enabledPlugins?.has(pluginId)) {
             return undefined;
@@ -1701,11 +1711,11 @@ export class PluginManager extends Plugin {
                 // update metadata
                 const meta = this.app.metadataCache.getCache(filterPath);
                 if (meta && meta.frontmatter) {
-                    this.app.fileManager.processFrontMatter(file, (frontmatter) => {
+                    void this.app.fileManager.processFrontMatter(file, (frontmatter) => {
                         for (const key of Object.getOwnPropertyNames(frontmatter)) {
                             for (const metaConfig of this.settings.metadatas) {
                                 if (key === metaConfig.key) {
-                                    this.log((frontmatter as any)[key]); // eslint-disable-line @typescript-eslint/no-explicit-any
+                                    this.log(frontmatter[key]);
                                     let valut2Change: string;
                                     switch (metaConfig.t) {
                                         case 'moment':
@@ -1718,13 +1728,15 @@ export class PluginManager extends Plugin {
                                             valut2Change = metaConfig.value;
                                             break;
                                     }
-                                    (frontmatter as any)[key] = valut2Change; // eslint-disable-line @typescript-eslint/no-explicit-any
+                                    frontmatter[key] = valut2Change;
                                 }
                             }
                         }
                         setPluginTimeout(() => {
                             this.updateDebouncer.cancel();
                         }, 100);
+                    }).catch((error) => {
+                        this.log("Failed to update metadata frontmatter", error);
                     });
                 }
             }
@@ -1806,7 +1818,7 @@ export class PluginManager extends Plugin {
         }
 
         if (leaf) {
-            workspace.revealLeaf(leaf);
+            await workspace.revealLeaf(leaf);
         }
 
         return leaf?.view instanceof LLMView ? leaf.view : null;
@@ -2112,9 +2124,9 @@ export class PluginManager extends Plugin {
     }
 
     private tuneStructuredNoticeShell(notice: Notice): void {
-        notice.noticeEl.addClass("pa-notice-shell");
-        notice.noticeEl.parentElement?.addClass("pa-notice-shell");
-        notice.noticeEl.setCssStyles({
+        notice.messageEl.addClass("pa-notice-shell");
+        notice.messageEl.parentElement?.addClass("pa-notice-shell");
+        notice.messageEl.setCssStyles({
             background: "transparent",
             boxShadow: "none",
             border: "none",
@@ -2194,6 +2206,7 @@ export class PluginManager extends Plugin {
         const title = this.t("plugin.insightsViewer.title");
         const emptyText = this.t("plugin.insightsViewer.noInsights");
         const app = this.app;
+        const logRenderError = (message: string, error: unknown) => this.log(message, error);
         const modal = new class extends Modal {
             private renderHost = new Component();
 
@@ -2213,11 +2226,15 @@ export class PluginManager extends Plugin {
 
                 if (context.userProfile) {
                     const section = this.contentEl.createDiv({ cls: "pa-insights-viewer__section" });
-                    MarkdownRenderer.render(app, context.userProfile, section, "", this.renderHost);
+                    void Promise.resolve(MarkdownRenderer.render(app, context.userProfile, section, "", this.renderHost)).catch((error) => {
+                        logRenderError("Failed to render user profile insights", error);
+                    });
                 }
                 if (context.vaultInsights) {
                     const section = this.contentEl.createDiv({ cls: "pa-insights-viewer__section" });
-                    MarkdownRenderer.render(app, context.vaultInsights, section, "", this.renderHost);
+                    void Promise.resolve(MarkdownRenderer.render(app, context.vaultInsights, section, "", this.renderHost)).catch((error) => {
+                        logRenderError("Failed to render vault insights", error);
+                    });
                 }
             }
 
@@ -2378,6 +2395,22 @@ export class PluginManager extends Plugin {
             const vault = (this as { app?: { vault?: Parameters<typeof getVaultConfigDir>[0] } }).app?.vault;
             if (vault) {
                 const configDir = getVaultConfigDir(vault);
+                if (this.settings.pagelet) {
+                    const pageletFolder = normalizeReviewsFolder(this.settings.pagelet.reviewsFolder, { configDir });
+                    if (pageletFolder.error) {
+                        if (!readPageletMigrationFlag()) {
+                            this.pendingPageletReviewsFolderMigration = {
+                                input: pageletFolder.input ?? this.settings.pagelet.reviewsFolder,
+                                error: pageletFolder.error,
+                            };
+                        }
+                        this.settings.pagelet.reviewsFolder = pageletFolder.value;
+                        changed = true;
+                    } else if (this.settings.pagelet.reviewsFolder !== pageletFolder.value) {
+                        this.settings.pagelet.reviewsFolder = pageletFolder.value;
+                        changed = true;
+                    }
+                }
                 const defaultStatsPath = joinVaultConfigPath(configDir, "stats.json");
                 if (!this.settings.statsPath || this.settings.statsPath === joinVaultConfigPath(LEGACY_CONFIG_DIR, "stats.json")) {
                     if (this.settings.statsPath !== defaultStatsPath) {

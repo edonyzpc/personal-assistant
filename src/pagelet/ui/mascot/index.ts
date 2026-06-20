@@ -20,7 +20,6 @@ export {
     type MascotRenderer,
     type MascotRendererOptions,
     type MascotSetStateOptions,
-    type MascotState,
     type MascotTranslator,
 } from "./types";
 

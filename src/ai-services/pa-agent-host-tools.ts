@@ -10,7 +10,6 @@ import type {
     ChatAgentSource,
     ChatContextUsedItem,
     ChatToolResult,
-    MemorySearchResult,
     SourceRecord,
 } from "./chat-types";
 import type {
@@ -221,7 +220,7 @@ export function chatToolResultToPaAgentToolExecutionResult(
 
 function getToolResultControlMetadata(result: ChatToolResult<unknown>): Record<string, unknown> {
     if (result.tool !== "search_memory" || !isSearchMemoryResult(result.content)) return {};
-    const memory = result.content as MemorySearchResult;
+    const memory = result.content;
     const documentCount = memory.documents.length;
     const candidateCount = memory.candidates?.length ?? 0;
     const hasAnswerableContent = memory.hasAnswerableContent ?? (memory.usedMemory && documentCount > 0);

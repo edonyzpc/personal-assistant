@@ -186,7 +186,7 @@ export class TabView {
         if (options.layoutType === "discover" && !isTabSections(content)) {
             renderDiscoveryLayout(
                 this.bodyEl,
-                content as PanelFinding[],
+                content,
                 options.extra?.connections,
                 this.locale,
                 {
@@ -206,7 +206,7 @@ export class TabView {
         if (isTabSections(content)) {
             this.renderTabSections(content);
         } else {
-            this.renderFromFindings(content as PanelFinding[]);
+            this.renderFromFindings(content);
         }
     }
 
@@ -385,27 +385,40 @@ export class TabView {
 
         const actions = el("div", "pa-pagelet-tab-summary-actions");
         const saveBtn = el("button", "pa-pagelet-tab-summary-save", pageletT("pagelet.panel.save", this.locale));
-        saveBtn.addEventListener("click", async (event) => {
+        saveBtn.addEventListener("click", (event) => {
             event.preventDefault();
-            if (saveBtn.disabled) return;
-            saveBtn.disabled = true;
-            saveBtn.setAttribute("aria-busy", "true");
-            saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.locale);
-
-            const result = await this.options.onSaveSummaryNote?.(summarySaveNote);
-            saveBtn.removeAttribute("aria-busy");
-            if (result?.success) {
-                saveBtn.textContent = pageletT("pagelet.tab.summarySaved", this.locale);
-                saveBtn.setAttribute("aria-disabled", "true");
-                return;
-            }
-
-            saveBtn.disabled = false;
-            saveBtn.setAttribute("aria-disabled", "false");
-            saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
+            void this.handleSummarySaveClick(saveBtn, summarySaveNote).catch((error) => {
+                console.error("Pagelet summary save failed", error);
+                saveBtn.removeAttribute("aria-busy");
+                saveBtn.disabled = false;
+                saveBtn.setAttribute("aria-disabled", "false");
+                saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
+            });
         });
         actions.appendChild(saveBtn);
         this.bodyEl.appendChild(actions);
+    }
+
+    private async handleSummarySaveClick(
+        saveBtn: HTMLButtonElement,
+        summarySaveNote: GeneratedReviewNote,
+    ): Promise<void> {
+        if (saveBtn.disabled) return;
+        saveBtn.disabled = true;
+        saveBtn.setAttribute("aria-busy", "true");
+        saveBtn.textContent = pageletT("pagelet.panel.status.saving", this.locale);
+
+        const result = await this.options.onSaveSummaryNote?.(summarySaveNote);
+        saveBtn.removeAttribute("aria-busy");
+        if (result?.success) {
+            saveBtn.textContent = pageletT("pagelet.tab.summarySaved", this.locale);
+            saveBtn.setAttribute("aria-disabled", "true");
+            return;
+        }
+
+        saveBtn.disabled = false;
+        saveBtn.setAttribute("aria-disabled", "false");
+        saveBtn.textContent = pageletT("pagelet.panel.save", this.locale);
     }
 
     private unloadRenderComponent(): void {
@@ -425,6 +438,6 @@ function isTabSections(
     return (
         content.length > 0 &&
         "cards" in content[0] &&
-        Array.isArray((content[0] as TabSection).cards)
+        Array.isArray(content[0].cards)
     );
 }

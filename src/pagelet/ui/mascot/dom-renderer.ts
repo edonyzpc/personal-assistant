@@ -36,6 +36,7 @@ import {
     pageletT,
     type PageletLocale,
 } from "../../../locales/pagelet";
+import type { PetState } from "../../pet/types";
 import {
     buildMascotMarkup,
     MASCOT_STATE_I18N_KEY,
@@ -49,7 +50,6 @@ import {
     type MascotRenderer,
     type MascotRendererOptions,
     type MascotSetStateOptions,
-    type MascotState,
     type MascotTranslator,
 } from "./types";
 import { getOptionalPlatformWindow, getPlatformDocument } from "../../../platform-dom";
@@ -218,7 +218,7 @@ export function createMascotRendererWithHost(
     const ariaLabelOverride = options.ariaLabel;
     const prefersReducedMotion = options.prefersReducedMotion ?? defaultPrefersReducedMotion;
     const announceLiveRegion = options.announceLiveRegion;
-    let currentState: MascotState = options.initialState ?? "idle";
+    let currentState: PetState = options.initialState ?? "idle";
     // Lifecycle guard: once `destroy()` runs, every subsequent `setState` /
     // announcement must be a no-op. Without this, a late status broadcast
     // (e.g. from an in-flight review that finished after the view closed)
@@ -237,12 +237,12 @@ export function createMascotRendererWithHost(
             reducedMotion: initialReducedMotion,
         }),
     });
-    // Mount-time announcement: if the initial state is one of the
-    // announcing states (rare but possible — e.g. a host restoring
-    // mascot from a saved "error" state), emit immediately.
+    // Mount-time announcement: if the initial state announces (rare but
+    // possible — e.g. a host restoring mascot from a saved "nudge" state),
+    // emit immediately.
     emitAnnouncement(currentState, translator, mounted, announceLiveRegion);
 
-    function applyState(newState: MascotState, opts?: MascotSetStateOptions): void {
+    function applyState(newState: PetState, opts?: MascotSetStateOptions): void {
         // Guard 0: post-destroy calls are silently dropped. The renderer
         // is unusable after destroy() — surfacing a noisy error would
         // turn benign late-callbacks into user-visible failures.
@@ -274,7 +274,7 @@ export function createMascotRendererWithHost(
     }
 
     return {
-        get state(): MascotState {
+        get state(): PetState {
             return currentState;
         },
         setState: applyState,
@@ -355,8 +355,8 @@ function applyMarkup(
     mounted.messageEl.setText(markup.message);
 
     // Rebuild the SVG children (cheap — 4-6 nodes max). Replacing the
-    // whole tree avoids state-leak bugs where e.g. the error state's
-    // mouth lingers after switching back to idle.
+    // whole tree avoids state-leak bugs where e.g. the nudge state's
+    // chevrons linger after switching back to idle.
     rebuildSvgChildren(mounted.svg, markup, host);
 }
 
@@ -455,10 +455,9 @@ function defaultTranslator(locale: PageletLocale): MascotTranslator {
  */
 function defaultPrefersReducedMotion(): boolean {
     const win = getOptionalPlatformWindow();
-    const mm = win?.matchMedia;
-    if (typeof mm !== "function") return false;
+    if (typeof win?.matchMedia !== "function") return false;
     try {
-        return mm.call(win, "(prefers-reduced-motion: reduce)").matches === true;
+        return win.matchMedia("(prefers-reduced-motion: reduce)").matches === true;
     } catch {
         return false;
     }
@@ -483,7 +482,7 @@ function safeProbeReducedMotion(probe: () => boolean): boolean {
  * routing.
  */
 function emitAnnouncement(
-    state: MascotState,
+    state: PetState,
     translator: MascotTranslator,
     mounted: MountedNodes,
     announceLiveRegion: ((announcement: MascotLiveAnnouncement) => void) | undefined,

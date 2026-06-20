@@ -639,14 +639,17 @@ describe("Pagelet panel and tab view regressions", () => {
         panel.open("review", []);
         const runButton = container.querySelector(".pa-pagelet-panel-save-btn");
 
-        const clickPromise = runButton?.click();
+        runButton?.click();
 
         expect(container.textContent).toContain("Reviewing current note...");
         expect(runButton?.disabled).toBe(true);
         expect(runButton?.getAttribute("aria-busy")).toBe("true");
 
         resolveReview();
-        await clickPromise;
+        await reviewPromise;
+        await Promise.resolve();
+        await Promise.resolve();
+        await Promise.resolve();
 
         expect(runButton?.disabled).toBe(false);
         expect(runButton?.getAttribute("aria-busy")).toBeNull();

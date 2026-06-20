@@ -71,6 +71,43 @@ export class ConfinementConfigError extends Error {
     }
 }
 
+function normalizeVaultRelativePathForConfinement(path: string): string {
+    let normalized = path
+        .replace(/\\/g, "/")
+        .replace(/^\.\//, "")
+        .replace(/\/+/g, "/");
+    if (normalized.endsWith("/") && normalized.length > 1) {
+        normalized = normalized.slice(0, -1);
+    }
+    return normalized;
+}
+
+function foldNormalizedVaultPath(path: string): string {
+    return path
+        .split("/")
+        .map((segment) => foldForDotfolderCheck(segment))
+        .join("/");
+}
+
+function findForbiddenRootMatch(
+    normalizedPath: string,
+    forbiddenRoots: readonly string[] | undefined,
+): string | undefined {
+    if (!forbiddenRoots || forbiddenRoots.length === 0) return undefined;
+
+    const foldedPath = foldNormalizedVaultPath(normalizedPath);
+    for (const root of forbiddenRoots) {
+        if (typeof root !== "string" || root.trim().length === 0) continue;
+        const normalizedRoot = normalizeVaultRelativePathForConfinement(root.trim());
+        if (normalizedRoot.length === 0) continue;
+        const foldedRoot = foldNormalizedVaultPath(normalizedRoot);
+        if (foldedPath === foldedRoot || foldedPath.startsWith(`${foldedRoot}/`)) {
+            return normalizedRoot;
+        }
+    }
+    return undefined;
+}
+
 /**
  * Construction-time validation of `allowedRoots` (framework SDD §2.2 / issue
  * #358 AC #1). Throws {@link ConfinementConfigError} when any root's
@@ -84,7 +121,10 @@ export class ConfinementConfigError extends Error {
  * track SDD §2.2's 1–13 sync sequence (steps 14–15 are async folder/collision
  * probes that only the {@link validateTargetConfinement} wrapper runs).
  */
-export function validateAllowedRoots(allowedRoots: readonly string[]): void {
+export function validateAllowedRoots(
+    allowedRoots: readonly string[],
+    options: { forbiddenRoots?: readonly string[] } = {},
+): void {
     for (const root of allowedRoots) {
         if (typeof root !== "string" || root.length === 0) continue;
 
@@ -122,10 +162,7 @@ export function validateAllowedRoots(allowedRoots: readonly string[]): void {
         // is load-bearing — without it `notes//foo/` splits to
         // `["notes", "", "foo", ""]` and a future segment check that forgets to
         // skip empties would either misreport or silently let bad input through.
-        const normalized = root
-            .replace(/\\/g, "/")
-            .replace(/^\.\//, "")
-            .replace(/\/+/g, "/");
+        const normalized = normalizeVaultRelativePathForConfinement(root);
         const segments = normalized.split("/");
 
         // Mirror sync step 7: parent traversal. Any literal `..` segment
@@ -151,6 +188,10 @@ export function validateAllowedRoots(allowedRoots: readonly string[]): void {
         const folded = foldForDotfolderCheck(firstSegment);
         if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(folded)) {
             throw new ConfinementConfigError("forbidden_dotfolder", root, firstSegment);
+        }
+        const forbiddenRoot = findForbiddenRootMatch(normalized, options.forbiddenRoots);
+        if (forbiddenRoot) {
+            throw new ConfinementConfigError("forbidden_dotfolder", root, forbiddenRoot);
         }
     }
 }
@@ -218,11 +259,7 @@ export function validateTargetConfinementSync(
 
     // 6. Normalize: convert backslashes to forward slashes (Obsidian uses POSIX
     // separators), strip leading "./", collapse repeated "//".
-    let normalized = candidate.replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
-    // Strip a trailing slash so extension check has a real filename to inspect.
-    if (normalized.endsWith("/") && normalized.length > 1) {
-        normalized = normalized.slice(0, -1);
-    }
+    const normalized = normalizeVaultRelativePathForConfinement(candidate);
 
     // 7. Parent traversal: any segment equal to ".." (covers "../x", "a/../b", "a/..").
     const segments = normalized.split("/");
@@ -253,6 +290,10 @@ export function validateTargetConfinementSync(
     const firstSegmentFolded = foldForDotfolderCheck(segments[0] ?? "");
     if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
         return { ok: false, reason: "forbidden_dotfolder", detail: segments[0] };
+    }
+    const forbiddenRoot = findForbiddenRootMatch(normalized, config.forbiddenRoots);
+    if (forbiddenRoot) {
+        return { ok: false, reason: "forbidden_dotfolder", detail: forbiddenRoot };
     }
 
     // 10. Length cap.

@@ -345,9 +345,9 @@ export function resolveReviewsFolderPath(value: unknown): string {
 
 /**
  * @deprecated Use {@link resolveReviewsFolderPath} — kept as an alias so the
- * locked `pa-review-tool-provider.ts` import (`normalizeReviewsFolder as
- * normalizePageletReviewsFolder`) continues to compile while callers migrate
- * to the new name. Will be removed once the locked file is editable again.
+ * locked `pa-review-tool-provider.ts` import continues to compile while
+ * callers migrate to the new name. Will be removed once the locked file is
+ * editable again.
  */
 export const normalizeReviewsFolder = resolveReviewsFolderPath;
 

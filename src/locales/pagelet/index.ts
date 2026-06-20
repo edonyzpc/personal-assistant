@@ -58,6 +58,7 @@ export type PageletMessages = Readonly<Record<string, string>>;
 
 /** Key set is whatever's in EN (the canonical source). */
 export type PageletMessageKey = keyof typeof enMessagesRaw;
+export type PageletLookupKey = PageletMessageKey | (string & Record<never, never>);
 
 // ---------------------------------------------------------------------------
 // Resource table
@@ -95,17 +96,17 @@ export const PAGELET_LOCALE_RESOURCES: Readonly<Record<PageletLocale, PageletMes
  * smuggle locale-specific grammar into the dictionary keys.
  */
 export function pageletT(
-    key: PageletMessageKey | string,
+    key: PageletLookupKey,
     locale: PageletLocale = "en",
     params?: Readonly<Record<string, string | number>>,
     fallback?: string,
 ): string {
     const dict = PAGELET_LOCALE_RESOURCES[locale] ?? PAGELET_LOCALE_RESOURCES.en;
     const raw =
-        dict[key as string]
-        ?? PAGELET_LOCALE_RESOURCES.en[key as string]
+        dict[key]
+        ?? PAGELET_LOCALE_RESOURCES.en[key]
         ?? fallback
-        ?? (key as string);
+        ?? key;
     if (!params) return raw;
     return interpolate(raw, params);
 }
@@ -116,7 +117,7 @@ export function pageletT(
  * AND keeps the locale lookup at the call site so tests can swap it.
  */
 export function makePageletTranslator(locale: PageletLocale): (
-    key: PageletMessageKey | string,
+    key: PageletLookupKey,
     params?: Readonly<Record<string, string | number>>,
     fallback?: string,
 ) => string {

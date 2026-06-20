@@ -92,10 +92,9 @@ export class ToolExecutionDispatcher {
         if (requested === "parallel") return "parallel";
         // hybrid: per-tool dispatch — any tool reporting "sequential" forces the whole batch serial.
         const executor = this.config.toolExecutor;
-        const getMode = executor?.getExecutionMode;
-        if (!executor || !getMode) return "parallel";
+        if (!executor?.getExecutionMode) return "parallel";
         for (const toolCall of parsedToolCalls) {
-            if (getMode.call(executor, toolCall.name) === "sequential") {
+            if (executor.getExecutionMode(toolCall.name) === "sequential") {
                 return "sequential";
             }
         }

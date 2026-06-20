@@ -46,7 +46,7 @@ export function createMemoryHost(
         log: () => undefined,
         registerEvent: (_ref: EventRef) => undefined,
         saveSettings: async () => undefined,
-        getVSSFiles: () => [] as TFile[],
+        getVSSFiles: (): TFile[] => [],
         getAPIToken: async () => "test-token",
         notifyStatusChanged: () => undefined,
         updateMemorySetting: (key, value) => {

@@ -60,7 +60,7 @@ export class ResearchManager {
         try {
             const chatLeaf = await this.findOrCreateChatLeaf();
             if (chatLeaf) {
-                this.app.workspace.revealLeaf(chatLeaf);
+                await this.app.workspace.revealLeaf(chatLeaf);
                 const populated = this.populateChatWithPrompt(chatLeaf, prompt);
                 if (populated) {
                     new Notice(this.t("pagelet.panel.status.researchReady"), 4000);

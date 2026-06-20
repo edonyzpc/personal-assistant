@@ -4,7 +4,6 @@ import { toError } from "../error-utils";
 import {
     cancelPlatformAnimationFrame,
     clearPlatformTimeout,
-    getOptionalPlatformDocument,
     requestPlatformAnimationFrame,
     setPlatformTimeout,
     type PlatformAnimationFrameHandle,
@@ -77,9 +76,7 @@ export class MermaidPreviewModal extends Modal {
             viewport,
             this.renderOwner,
         ).then(() => {
-            const diagrams = Array.from(
-                viewport.querySelectorAll('.mermaid, .block-language-mermaid'),
-            ) as HTMLElement[];
+            const diagrams = viewport.findAll('.mermaid, .block-language-mermaid');
             for (const diagram of diagrams) {
                 diagram.classList.add('pa-chat-mermaid-modal-diagram');
             }
@@ -230,17 +227,16 @@ export function hasAncestorMermaidDiagramCandidate(element: HTMLElement, root: H
 }
 
 export function getTopLevelMermaidDiagramCandidates(root: HTMLElement): HTMLElement[] {
-    return (Array.from(
-        root.querySelectorAll('.mermaid, .block-language-mermaid'),
-    ) as HTMLElement[]).filter((diagram) => !hasAncestorMermaidDiagramCandidate(diagram, root));
+    return root
+        .findAll('.mermaid, .block-language-mermaid')
+        .filter((diagram) => !hasAncestorMermaidDiagramCandidate(diagram, root));
 }
 
 export function nodeContainsMermaidDiagramCandidate(node: Node): boolean {
     const element = node as HTMLElement;
     if (!element?.classList) return false;
     if (isMermaidDiagramCandidate(element)) return true;
-    return typeof element.querySelectorAll === 'function'
-        && element.querySelectorAll('.mermaid, .block-language-mermaid').length > 0;
+    return element.findAll('.mermaid, .block-language-mermaid').length > 0;
 }
 
 export function mutationMayAffectMermaidDiagrams(records: MutationRecord[]): boolean {
@@ -253,12 +249,6 @@ export function mutationMayAffectMermaidDiagrams(records: MutationRecord[]): boo
     });
 }
 
-export function createElement<K extends keyof HTMLElementTagNameMap>(tagName: K): HTMLElementTagNameMap[K] | null {
-    const doc = getOptionalPlatformDocument();
-    if (typeof doc?.createElement !== 'function') return null;
-    return doc.createElement(tagName);
-}
-
 export function renderMermaidSourceWarning(buffer: HTMLElement) {
     buffer.createDiv({
         cls: 'pa-chat-render-warning',
@@ -267,9 +257,6 @@ export function renderMermaidSourceWarning(buffer: HTMLElement) {
 }
 
 export function enhanceMermaidDiagrams(root: HTMLElement, host: ChatRenderHost, mermaidSources: string[]): boolean {
-    const doc = getOptionalPlatformDocument();
-    if (typeof doc?.createElement !== 'function') return true;
-
     const diagrams = getTopLevelMermaidDiagramCandidates(root);
     const expectedCount = mermaidSources.filter((source) => source.trim()).length;
     if (expectedCount > 1 && diagrams.length < expectedCount) {
@@ -285,12 +272,13 @@ export function enhanceMermaidDiagrams(root: HTMLElement, host: ChatRenderHost, 
         if (!diagram.parentElement || hasAncestorWithClass(diagram, 'pa-chat-mermaid-shell')) return;
         if (!mermaidSource?.trim()) return;
 
-        const shell = createElement('div');
-        const toolbar = createElement('div');
-        const viewport = createElement('div');
-        const button = createElement('button');
-        const label = createElement('span');
-        if (!shell || !toolbar || !viewport || !button || !label) return;
+        const parent = diagram.parentElement;
+        const shell = parent.createDiv();
+        parent.insertBefore(shell, diagram);
+        const toolbar = shell.createDiv();
+        const viewport = shell.createDiv();
+        const button = toolbar.createEl('button');
+        const label = button.createSpan();
 
         shell.classList.add('pa-chat-mermaid-shell');
         toolbar.classList.add('pa-chat-mermaid-toolbar');
@@ -302,20 +290,15 @@ export function enhanceMermaidDiagrams(root: HTMLElement, host: ChatRenderHost, 
         setIcon(button, 'zoom-in');
         label.classList.add('pa-sr-only');
         label.textContent = mermaidT('plugin.mermaid.open');
-        button.appendChild(label);
         button.onclick = () => {
             new MermaidPreviewModal(host, mermaidSource).open();
         };
 
-        diagram.parentElement.insertBefore(shell, diagram);
         viewport.appendChild(diagram);
-        toolbar.appendChild(button);
-        shell.appendChild(toolbar);
-        shell.appendChild(viewport);
     });
 
     return expectedCount === 0
-        || root.querySelectorAll('.pa-chat-mermaid-shell').length >= expectedCount;
+        || root.findAll('.pa-chat-mermaid-shell').length >= expectedCount;
 }
 
 export function scheduleMermaidEnhancement(

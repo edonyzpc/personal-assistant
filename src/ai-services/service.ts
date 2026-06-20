@@ -299,10 +299,10 @@ export class AIService {
             const { content } = this.aiUtils.getDocumentContent(markdown);
 
             // 生成图片描述
-            const body = notice.noticeEl.querySelector(".pa-notice__body") as HTMLElement | null;
+            const body = notice.messageEl.querySelector<HTMLElement>(".pa-notice__body");
             const progress1Div = this.createProgressStep(
                 body,
-                notice.noticeEl,
+                notice.messageEl,
                 "ai-featured-image-progress-1",
                 this.t("plugin.ai.progress.prompt"),
             );
@@ -317,7 +317,7 @@ export class AIService {
             // 生成图片
             const progress2Div = this.createProgressStep(
                 body,
-                notice.noticeEl,
+                notice.messageEl,
                 "ai-featured-image-progress-2",
                 this.t("plugin.ai.progress.images"),
             );
@@ -331,7 +331,7 @@ export class AIService {
             // 下载图片
             const progress3Div = this.createProgressStep(
                 body,
-                notice.noticeEl,
+                notice.messageEl,
                 "ai-featured-image-progress-3",
                 this.t("plugin.ai.progress.downloading"),
             );
@@ -387,7 +387,7 @@ export class AIService {
             })
             this.createProgressStep(
                 body,
-                notice.noticeEl,
+                notice.messageEl,
                 "ai-featured-image-progress-4",
                 this.t("plugin.ai.progress.done"),
                 "done",

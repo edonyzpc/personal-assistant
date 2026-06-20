@@ -479,6 +479,22 @@ describe("normalizeReviewsFolder (settings-layer validator)", () => {
         }
     });
 
+    it("rejects paths inside the current Vault#configDir", () => {
+        for (const bad of [
+            "vault-config",
+            "vault-config/plugins",
+            "./vault-config/plugins/personal-assistant",
+            "Vault-Config/plugins",
+        ]) {
+            const r = normalizeReviewsFolder(bad, { configDir: "vault-config" });
+            expect(r.value).toBe(PAGELET_DEFAULTS.reviewsFolder);
+            expect(r.error).toBe("obsidian_config");
+        }
+
+        expect(normalizeReviewsFolder("vault-configured/reviews", { configDir: "vault-config" }))
+            .toEqual({ value: "vault-configured/reviews" });
+    });
+
     it("rejects control characters (NUL, TAB, BEL, …) with error: control_chars", () => {
         for (const bad of ["notes\u0000evil", "notes\u0007bell", "notes\ttab"]) {
             const r = normalizeReviewsFolder(bad);

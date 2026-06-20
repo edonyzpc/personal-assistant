@@ -60,7 +60,7 @@ export function isPageletEligibleView(view: PageletObsidianViewProbe | null | un
     if (typeof probe.getViewType !== "function") return false;
     let viewType: unknown;
     try {
-        viewType = (view as PageletObsidianViewProbe).getViewType();
+        viewType = view.getViewType();
     } catch {
         // A third-party view extension's getViewType() should never throw,
         // but our gating decision must stay safe even when it does.

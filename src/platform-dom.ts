@@ -173,7 +173,7 @@ export function setPlatformTimeout(callback: TimerHandler, ms: number): Platform
     return getRuntimeTimerScope().setTimeout(callback, ms) as PlatformTimeoutHandle;
 }
 
-export function clearPlatformTimeout(timeoutId: number | PlatformTimeoutHandle): void {
+export function clearPlatformTimeout(timeoutId: PlatformTimeoutHandle): void {
     getRuntimeTimerScope().clearTimeout(timeoutId);
 }
 
@@ -181,7 +181,7 @@ export function setPlatformInterval(callback: TimerHandler, ms: number): Platfor
     return getRuntimeTimerScope().setInterval(callback, ms) as PlatformIntervalHandle;
 }
 
-export function clearPlatformInterval(intervalId: number | PlatformIntervalHandle): void {
+export function clearPlatformInterval(intervalId: PlatformIntervalHandle): void {
     getRuntimeTimerScope().clearInterval(intervalId);
 }
 

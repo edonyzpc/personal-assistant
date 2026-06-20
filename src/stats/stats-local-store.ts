@@ -222,7 +222,7 @@ export class IndexedDbStatsLocalStore implements StatsLocalStore {
             const request = this.indexedDb.open(this.dbName, STATS_LOCAL_DB_VERSION);
             request.onupgradeneeded = (event) => {
                 const db = request.result;
-                const oldVersion = (event as IDBVersionChangeEvent).oldVersion ?? 0;
+                const oldVersion = event.oldVersion ?? 0;
                 try {
                     if (oldVersion < 2) {
                         if (!db.objectStoreNames.contains(DAILY_RECORDS_STORE)) {

@@ -31,7 +31,8 @@
  *    markup.
  */
 
-import type { MascotState, MascotTranslator } from "./types";
+import type { PetState } from "../../pet/types";
+import type { MascotTranslator } from "./types";
 
 // ---------------------------------------------------------------------------
 // Static design tokens (no defaults dynamic at module load — D012 says the
@@ -43,11 +44,11 @@ import type { MascotState, MascotTranslator } from "./types";
  * Using `var()` (not hex) lets a theme override the color without
  * recompiling TS. The token names mirror `pagelet-visual-spec.html`.
  */
-export const MASCOT_STATE_STROKE_VAR: Readonly<Record<MascotState, string>> = Object.freeze({
+export const MASCOT_STATE_STROKE_VAR: Readonly<Record<PetState, string>> = Object.freeze({
+    resting: "--pa-pagelet-color-neutral",
     idle: "--pa-pagelet-color-neutral",
-    thinking: "--pa-pagelet-color-thinking",
-    done: "--pa-pagelet-color-done",
-    error: "--pa-pagelet-color-error",
+    working: "--pa-pagelet-color-thinking",
+    nudge: "--pa-pagelet-color-done",
 });
 
 /**
@@ -55,11 +56,11 @@ export const MASCOT_STATE_STROKE_VAR: Readonly<Record<MascotState, string>> = Ob
  * B-task that wants a custom key-mapping (e.g. "deeper" mode messages)
  * can patch this single table instead of editing every call site.
  */
-export const MASCOT_STATE_I18N_KEY: Readonly<Record<MascotState, string>> = Object.freeze({
-    idle: "pagelet.mascot.idle",
-    thinking: "pagelet.mascot.thinking",
-    done: "pagelet.mascot.done",
-    error: "pagelet.mascot.error",
+export const MASCOT_STATE_I18N_KEY: Readonly<Record<PetState, string>> = Object.freeze({
+    resting: "pagelet.pet.resting",
+    idle: "pagelet.pet.idle",
+    working: "pagelet.pet.working",
+    nudge: "pagelet.pet.nudge",
 });
 
 /**
@@ -68,11 +69,11 @@ export const MASCOT_STATE_I18N_KEY: Readonly<Record<MascotState, string>> = Obje
  * registered in en.json so the spec stays self-contained even when
  * the dictionary import fails in an edge environment.
  */
-const MASCOT_STATE_DEFAULT_TEXT: Readonly<Record<MascotState, string>> = Object.freeze({
+const MASCOT_STATE_DEFAULT_TEXT: Readonly<Record<PetState, string>> = Object.freeze({
+    resting: "(resting)",
     idle: "Pagelet is watching.",
-    thinking: "Let me take a look…",
-    done: "Done — see what I noticed.",
-    error: "Something went wrong. Try again or send feedback.",
+    working: "Preparing…",
+    nudge: "(insights ready)",
 });
 
 /** Shared SVG viewBox per visual-spec convention (44×44 source, scaled by CSS). */
@@ -95,7 +96,7 @@ export interface MascotSvgCircle {
     cx: number;
     cy: number;
     r: number;
-    /** Optional CSS animation class — pulse for the thinking dots. */
+    /** Optional CSS animation class — pulse for the working dots. */
     animClass?: string;
 }
 
@@ -111,7 +112,7 @@ export interface MascotSvgShapes {
  * each `setState` call.
  */
 export interface MascotMarkup {
-    state: MascotState;
+    state: PetState;
     /** CSS classes to apply on the root element. */
     rootClassList: string[];
     /** Resolved message text (post-i18n, post-override). */
@@ -176,7 +177,7 @@ export interface BuildMascotMarkupOptions {
  * `pageletT`, which we detect by exact-key match).
  */
 export function buildMascotMarkup(
-    state: MascotState,
+    state: PetState,
     options: BuildMascotMarkupOptions,
 ): MascotMarkup {
     const i18nKey = MASCOT_STATE_I18N_KEY[state];
@@ -252,7 +253,15 @@ function stripAnimClasses(shapes: MascotSvgShapes): MascotSvgShapes {
 const NOTEPAD_BODY_D = "M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z";
 const NOTEPAD_FOLD_D = "M30 8.1 L29.9 14.2 L36 14";
 
-const SVG_SHAPES_BY_STATE: Readonly<Record<MascotState, MascotSvgShapes>> = Object.freeze({
+const SVG_SHAPES_BY_STATE: Readonly<Record<PetState, MascotSvgShapes>> = Object.freeze({
+    resting: {
+        paths: [
+            { d: NOTEPAD_BODY_D, strokeWidth: 1.6 },
+            { d: NOTEPAD_FOLD_D, strokeWidth: 1.6 },
+            { d: "M16.8 22.1 Q19 22.9 21.2 21.8", strokeWidth: 1.4 },
+            { d: "M24.8 22 Q27 23 29.1 21.9", strokeWidth: 1.4 },
+        ],
+    },
     idle: {
         paths: [
             { d: NOTEPAD_BODY_D, strokeWidth: 1.6 },
@@ -262,7 +271,7 @@ const SVG_SHAPES_BY_STATE: Readonly<Record<MascotState, MascotSvgShapes>> = Obje
             { d: "M24.8 22 Q27 23 29.1 21.9", strokeWidth: 1.4, animClass: "pa-pagelet-anim-blink" },
         ],
     },
-    thinking: {
+    working: {
         paths: [
             { d: NOTEPAD_BODY_D, strokeWidth: 1.6 },
             { d: NOTEPAD_FOLD_D, strokeWidth: 1.6 },
@@ -274,23 +283,13 @@ const SVG_SHAPES_BY_STATE: Readonly<Record<MascotState, MascotSvgShapes>> = Obje
             { cx: 28, cy: 24, r: 1.2, animClass: "pa-pagelet-anim-pulse-3" },
         ],
     },
-    done: {
+    nudge: {
         paths: [
             { d: NOTEPAD_BODY_D, strokeWidth: 1.6 },
             { d: NOTEPAD_FOLD_D, strokeWidth: 1.6 },
             // "^^" eyes — happy / approving
             { d: "M16 21.2 L19.1 24 L22 21", strokeWidth: 1.4 },
             { d: "M24 21 L27 24 L30 21.2", strokeWidth: 1.4 },
-        ],
-    },
-    error: {
-        paths: [
-            { d: NOTEPAD_BODY_D, strokeWidth: 1.6 },
-            { d: NOTEPAD_FOLD_D, strokeWidth: 1.6 },
-            // "x x" eyes — failure, then a frown mouth
-            { d: "M16 21.1 L20 25 M20 21 L16 25.1", strokeWidth: 1.4 },
-            { d: "M25 21 L29 25 M29 21.1 L25 25", strokeWidth: 1.4 },
-            { d: "M18 31 Q22 28 26 31", strokeWidth: 1.4 },
         ],
     },
 });

@@ -74,7 +74,7 @@ describe("ConsoleDebugObserver (framework SDD §2.4)", () => {
         obs.emit(buildEvent("gate.target-confinement.reject", {
             errorCategory: "rejected_at_confinement",
         }));
-        const firstCall = logger.mock.calls[0] as unknown[];
+        const firstCall = logger.mock.calls[0];
         expect(firstCall[0]).toBe("[write-action-framework] gate.target-confinement.reject pagelet.write_review_output");
         expect(firstCall[1]).toMatchObject({
             type: "gate.target-confinement.reject",
@@ -87,7 +87,7 @@ describe("ConsoleDebugObserver (framework SDD §2.4)", () => {
         const logger = jest.fn();
         const obs = new ConsoleDebugObserver(logger, "[pagelet-runtime]");
         obs.emit(buildEvent("execute.ok"));
-        const firstCall = logger.mock.calls[0] as unknown[];
+        const firstCall = logger.mock.calls[0];
         expect(firstCall[0]).toMatch(/^\[pagelet-runtime\]/);
     });
 

@@ -35,6 +35,11 @@
 
 import type { App } from "obsidian";
 
+import {
+    getVaultConfigDir,
+    isVaultPathInConfigDir,
+    normalizeVaultConfigDir,
+} from "../../obsidian-paths";
 import type { PetCorner } from "../../pagelet/pet/types";
 import {
     makePageletTranslator,
@@ -54,8 +59,8 @@ import {
 /** Output language preference, mirrors D015 (Auto = follow detection). */
 export type PageletOutputLanguageSetting = "auto" | "zh" | "en";
 
-/** @deprecated Pagelet no longer registers a ribbon icon; kept for data.json compatibility. */
-export type PageletRibbonPosition = "default" | "hidden";
+/** Legacy Pagelet ribbon setting value kept for data.json compatibility. */
+type LegacyRibbonSettingValue = "default" | "hidden";
 
 /**
  * 7 persisted Pagelet settings.
@@ -79,7 +84,7 @@ export interface PageletSettings {
     /** Output language preference (D015). */
     outputLanguage: PageletOutputLanguageSetting;
     /** @deprecated Pagelet no longer registers a ribbon icon. */
-    ribbonPosition: PageletRibbonPosition;
+    ribbonPosition: LegacyRibbonSettingValue;
     /** Model temperature 0.0-0.5; default 0.2 (SDD §2.2). */
     temperature: number;
     /** Per-review input cap; default 8000, hard max 32000 (D018). */
@@ -140,12 +145,14 @@ export interface PageletSettings {
 // Defaults + constraints
 // ---------------------------------------------------------------------------
 
+const LEGACY_RIBBON_SETTING_DEFAULT: LegacyRibbonSettingValue = "default";
+
 export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     enabled: true,
     petVisible: true,
     reviewsFolder: ".pagelet",
     outputLanguage: "auto",
-    ribbonPosition: "default",
+    ribbonPosition: LEGACY_RIBBON_SETTING_DEFAULT,
     temperature: 0.2,
     maxInputTokens: 8000,
     maxOutputTokens: 2000,
@@ -260,6 +267,11 @@ export interface PageletReviewsFolderValidation {
     input?: string;
 }
 
+export interface NormalizeReviewsFolderOptions {
+    /** Current Obsidian config directory, read from Vault#configDir when available. */
+    configDir?: string;
+}
+
 // ---------------------------------------------------------------------------
 // Merge / normalize
 // ---------------------------------------------------------------------------
@@ -329,7 +341,7 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
  *
  * This is the **fail-closed settings boundary** that backs `PaReviewToolProvider`'s
  * `targetConfinement.allowedRoots`. A misconfigured folder (e.g.
- * `.obsidian/`, `/`, `..`, `C:\…`) would otherwise let the Write Action
+ * an Obsidian config-dir path, `/`, `..`, `C:\…`) would otherwise let the Write Action
  * Framework's Gate 1 accept paths that escape Pagelet's intended sandbox.
  * We block those classes here, **before** the value persists to data.json.
  *
@@ -343,7 +355,12 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
  * scrubbed at load time, but direct tests or future callers may hand the
  * capability an unsanitized object.
  */
-export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderValidation {
+export function normalizeReviewsFolder(
+    value: unknown,
+    options: NormalizeReviewsFolderOptions = {},
+): PageletReviewsFolderValidation {
+    const configDir = normalizeVaultConfigDir(options.configDir);
+
     if (typeof value !== "string") {
         // Missing / wrong-type values are coerced silently — they originate
         // from corrupt data.json shapes, not a typed user action, so an
@@ -353,8 +370,8 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     }
 
     // Normalize Windows-style backslashes to forward slashes BEFORE any
-    // segment-aware check runs. Without this, `.obsidian\plugins` is one
-    // opaque segment that bypasses the `.obsidian` guard below, `foo\..\bar`
+    // segment-aware check runs. Without this, a config-dir backslash path is
+    // one opaque segment that bypasses the config-dir guard below, `foo\..\bar`
     // bypasses the parent-traversal guard, and `\\server\share` looks like
     // a single non-absolute segment. Obsidian's vault APIs only speak POSIX
     // paths, so coercing here is both safe and semantically correct.
@@ -383,8 +400,8 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     // Invisible format characters (Cf category subset commonly used to spoof
     // identifiers): ZWSP/ZWNJ/ZWJ, WJ, BOM/ZWNBSP, LRM/RLM, bidi-isolates.
     // These survive String.prototype.trim and would otherwise let an attacker
-    // craft a name like `\u200b.obsidian` that visually reads as `.obsidian`
-    // but bypasses the strict segment-equality check below. Rejecting
+    // craft a name that visually reads as the config directory but bypasses
+    // the strict segment-equality check below. Rejecting
     // outright is simpler and safer than NFKC-folding; a legitimate folder
     // name never needs a zero-width joiner.
     if (INVISIBLE_CHARS_RE.test(trimmed)) {
@@ -425,39 +442,29 @@ export function normalizeReviewsFolder(value: unknown): PageletReviewsFolderVali
     }
 
     // Trailing dot or whitespace in any segment — NTFS silently strips these
-    // at the OS layer, so a path like `.obsidian./plugins` would dispatch into
-    // the real `.obsidian/plugins` despite the strict `=== ".obsidian"` guard
-    // below failing on the literal string `.obsidian.`. Same class of bypass
-    // for `.obsidian /plugins` (trailing space). We reject the input before
-    // the case-fold comparison gets the chance to mismatch.
+    // at the OS layer, so a config-dir segment with a trailing dot or space
+    // can dispatch into the real config directory despite a literal segment
+    // guard seeing a different string. We reject the input before the
+    // case-fold comparison gets the chance to mismatch.
     if (segments.some((seg) => TRAILING_DOT_OR_SPACE_RE.test(seg))) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "trailing_dot_or_space", input: trimmed };
     }
 
     // Obsidian config directory — the framework would otherwise happily
-    // write into `.obsidian/plugins/personal-assistant/` if the user (mis)set
-    // their folder there. This is the PR #356 B2 production-gap fixture.
-    // Checking only `segments[0]` is intentional: a nested folder literally
-    // named `.obsidian` (e.g. `notes/.obsidian-cheatsheet`) is harmless; only
-    // a top-level `.obsidian` segment collides with Obsidian's config root.
-    // Case-fold + NFC the first segment before comparing so `.Obsidian` and
-    // `.OBSIDIAN` also trip — default macOS APFS and Windows NTFS are
-    // case-insensitive, so a non-folded compare would let those inputs through
-    // and the OS would still dispatch the write into the real `.obsidian/`.
+    // write into the plugin area if the user (mis)set their folder there.
+    // This is the PR #356 B2 production-gap fixture. A nested folder with a
+    // similar name is harmless; only the current config root collides with
+    // Obsidian's config directory. Case-fold + NFC before comparing so
+    // case variants also trip on case-insensitive filesystems.
     const firstSegmentFolded = foldForDotfolderCheck(segments[0]);
-    if (firstSegmentFolded === ".obsidian") {
+    if (isVaultPathInConfigDir(stripped, configDir)) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "obsidian_config", input: trimmed };
     }
 
     // Other top-level dotfolders that must never be written into. Same
-    // case-fold + NFC rationale as the `.obsidian` check above. Kept in
-    // a separate guard so the error message can be specific (".git" /
-    // ".trash" / ".obsidian.bak" don't share the "Obsidian config" framing).
-    //
-    // NOTE: `.obsidian` is included in `FORBIDDEN_DOTFOLDER_SEGMENTS` (the
-    // shared set) for the framework layer's benefit, but is unreachable HERE
-    // because the `obsidian_config` check above already returns for any
-    // input whose folded first segment equals `.obsidian`.
+    // case-fold + NFC rationale as the config-dir check above. Kept in a
+    // separate guard so the error message can be specific; VCS/trash and
+    // backup folders don't share the "Obsidian config" framing.
     if (FORBIDDEN_DOTFOLDER_SEGMENTS.has(firstSegmentFolded)) {
         return { value: PAGELET_DEFAULTS.reviewsFolder, error: "forbidden_dotfolder", input: trimmed };
     }
@@ -470,9 +477,9 @@ function normalizeOutputLanguage(value: unknown): PageletOutputLanguageSetting {
     return PAGELET_DEFAULTS.outputLanguage;
 }
 
-function normalizeRibbonPosition(value: unknown): PageletRibbonPosition {
+function normalizeRibbonPosition(value: unknown): LegacyRibbonSettingValue {
     if (value === "default" || value === "hidden") return value;
-    return PAGELET_DEFAULTS.ribbonPosition;
+    return LEGACY_RIBBON_SETTING_DEFAULT;
 }
 
 function normalizeBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -641,6 +648,7 @@ export function renderPageletSection(
 ): void {
     const t = makePageletTranslator(locale);
     const settings = host.settings.pagelet;
+    const configDir = getVaultConfigDir((host.app as { vault?: { configDir?: string } } | undefined)?.vault);
     const saveOnChange = async (mutator: () => void) => {
         mutator();
         await host.saveSettings();
@@ -696,7 +704,7 @@ export function renderPageletSection(
                 .setPlaceholder(PAGELET_DEFAULTS.reviewsFolder)
                 .setValue(settings.reviewsFolder)
                 .onChange((value) => saveOnChange(() => {
-                    const result = normalizeReviewsFolder(value);
+                    const result = normalizeReviewsFolder(value, { configDir });
                     if (result.error) {
                         // Fail-closed: keep the previously valid folder so the
                         // capability's `allowedRoots` (derived from this value)

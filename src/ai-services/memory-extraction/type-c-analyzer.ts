@@ -1,6 +1,7 @@
 import type { App, TFile } from "obsidian";
 import { normalizePath } from "obsidian";
 import { pluginT, getPluginUiLanguage } from "../../locales/plugin";
+import { setPlatformTimeout } from "../../platform-dom";
 
 export interface VaultMetacognitionSnapshot {
     generatedAt: string;
@@ -22,7 +23,7 @@ export interface VaultMetacognitionSnapshot {
 }
 
 async function yieldToEventLoop(): Promise<void> {
-    return new Promise(resolve => setTimeout(resolve, 0));
+    return new Promise(resolve => setPlatformTimeout(resolve, 0));
 }
 
 export type SemanticClusterProvider = (maxClusters: number) => Promise<Array<{ clusterId: number; label: string; paths: string[] }> | null>;

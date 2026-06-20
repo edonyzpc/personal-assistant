@@ -1,6 +1,6 @@
 import { describe, expect, it, jest } from "@jest/globals";
 
-import type { App, TFile, Vault } from "obsidian";
+import { TFile, type App, type Vault } from "obsidian";
 
 import {
     APPEND_CONTENT_MAX_CHARS,
@@ -17,13 +17,18 @@ import {
 // ─────────────────────────────────────────────────────────────────────────────
 
 function makeActiveFile(path: string): TFile {
-    return { path } as TFile;
+    const FileCtor = TFile as unknown as { new(path: string): TFile };
+    return new FileCtor(path);
 }
+
+type AppendTestApp = App & {
+    _modifyCalls: Array<{ file: TFile; content: string }>;
+};
 
 function makeApp(options: {
     existingContent?: string;
     fileExists?: boolean;
-} = {}): App {
+} = {}): AppendTestApp {
     const {
         existingContent = "# Existing Note\n\nSome content here.",
         fileExists = true,
@@ -38,14 +43,14 @@ function makeApp(options: {
         }) as Vault["modify"],
         getAbstractFileByPath: jest.fn((path: string) => {
             if (!fileExists) return null;
-            return { path } as TFile;
+            return makeActiveFile(path);
         }) as Vault["getAbstractFileByPath"],
     };
 
     return {
         vault,
         _modifyCalls: modifyCalls,
-    } as unknown as App & { _modifyCalls: typeof modifyCalls };
+    } as unknown as AppendTestApp;
 }
 
 function makeInput(overrides: Partial<AppendActionInput> = {}): AppendActionInput {
@@ -198,7 +203,7 @@ describe("executeAppendWrite", () => {
         );
 
         // Verify vault.modify was NOT called
-        expect((app.vault.modify as jest.Mock)).not.toHaveBeenCalled();
+        expect(app._modifyCalls).toHaveLength(0);
 
         // Verify skipWriteRollback is set
         try {
@@ -225,10 +230,10 @@ describe("rollbackAppend", () => {
 
         await rollbackAppend(result, app);
 
-        expect((app.vault.modify as jest.Mock)).toHaveBeenCalledTimes(1);
-        const call = (app.vault.modify as jest.Mock).mock.calls[0];
-        expect((call[0] as TFile).path).toBe("notes/daily/2026-06-17.md");
-        expect(call[1]).toBe("# Original\n\nOriginal content.");
+        expect(app._modifyCalls).toHaveLength(1);
+        const call = app._modifyCalls[0];
+        expect(call.file.path).toBe("notes/daily/2026-06-17.md");
+        expect(call.content).toBe("# Original\n\nOriginal content.");
     });
 
     it("silently succeeds when file no longer exists", async () => {
@@ -244,6 +249,6 @@ describe("rollbackAppend", () => {
         await rollbackAppend(result, app);
 
         // vault.modify should NOT be called
-        expect((app.vault.modify as jest.Mock)).not.toHaveBeenCalled();
+        expect(app._modifyCalls).toHaveLength(0);
     });
 });

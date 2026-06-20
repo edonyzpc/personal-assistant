@@ -300,6 +300,10 @@ class MockElement {
         return [] as MockElement[];
     }
 
+    findAll(selector: string) {
+        return this.querySelectorAll(selector);
+    }
+
     scrollTo(options: { top?: number; behavior?: ScrollBehavior }) {
         this.scrollToCalls.push(options);
         this.scrollTop = options.top ?? this.scrollTop;

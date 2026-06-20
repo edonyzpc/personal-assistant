@@ -2353,7 +2353,7 @@ export class LLMView extends ItemView {
             }
 
             if (targetLeaf && targetLeaf.view instanceof MarkdownView && content) {
-                await this.app.workspace.setActiveLeaf(targetLeaf, { focus: true });
+                this.app.workspace.setActiveLeaf(targetLeaf, { focus: true });
                 const editor = targetLeaf.view.editor;
                 const cursor = editor.getCursor();
                 editor.replaceRange(content, cursor);
@@ -2629,7 +2629,7 @@ export class LLMView extends ItemView {
 
     private markChatDrawerHost(containerEl: HTMLElement) {
         this.clearChatDrawerHost();
-        const drawerHost = containerEl.closest('.workspace-drawer-inner') as HTMLElement | null;
+        const drawerHost = containerEl.closest<HTMLElement>('.workspace-drawer-inner');
         if (!drawerHost) return;
         drawerHost.classList.add(CHAT_DRAWER_HOST_CLASS);
         this.chatDrawerHost = drawerHost;
@@ -2715,7 +2715,7 @@ export class LLMView extends ItemView {
             const element = value as HTMLElement | null;
             if (!element || typeof element !== 'object') return false;
             return elementIsStatusBarOrChild(element)
-                || Boolean(typeof element.querySelector === 'function' && element.querySelector('.status-bar'));
+                || Boolean(typeof element.find === 'function' && element.find('.status-bar'));
         };
         const mutationTouchesStatusBar = (mutations: MutationRecord[]): boolean => mutations.some((mutation) => {
             if (elementIsStatusBarOrChild(mutation.target)) return true;
@@ -2940,7 +2940,7 @@ export class LLMView extends ItemView {
         const sourcePath = this.getMarkdownRenderSourcePath();
 
         if (!openInNewLeaf && markdownLeaf) {
-            await workspace.setActiveLeaf(markdownLeaf, { focus: true });
+            workspace.setActiveLeaf(markdownLeaf, { focus: true });
             await workspace.openLinkText(noteHref, sourcePath, false);
             return;
         }

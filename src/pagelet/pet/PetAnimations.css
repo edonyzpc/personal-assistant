@@ -295,9 +295,9 @@
 
 /* ---------- Error flash ---------- */
 
-.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg path,
-.pa-pagelet-pet--error .pa-pagelet-pet-svg-wrap svg circle {
-    stroke: #ff6b6b !important;
+.pa-pagelet-pet.pa-pagelet-pet--error[data-state="error"] .pa-pagelet-pet-svg-wrap svg path,
+.pa-pagelet-pet.pa-pagelet-pet--error[data-state="error"] .pa-pagelet-pet-svg-wrap svg circle {
+    stroke: #ff6b6b;
     fill: none;
 }
 

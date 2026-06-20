@@ -12,8 +12,9 @@ export const PLUGIN_SUPPORTED_LOCALES = SUPPORTED_UI_LOCALES;
 export type PluginLocale = UiLocale;
 export type PluginMessages = Readonly<Record<string, string>>;
 export type PluginMessageKey = keyof typeof enMessagesRaw;
+export type PluginLookupKey = PluginMessageKey | (string & Record<never, never>);
 export type PluginTranslator = (
-    key: PluginMessageKey | string,
+    key: PluginLookupKey,
     params?: Readonly<Record<string, string | number>>,
     fallback?: string,
 ) => string;
@@ -28,17 +29,17 @@ export function getPluginUiLanguage(): PluginLocale {
 }
 
 export function pluginT(
-    key: PluginMessageKey | string,
+    key: PluginLookupKey,
     locale: PluginLocale = "en",
     params?: Readonly<Record<string, string | number>>,
     fallback?: string,
 ): string {
     const dict = PLUGIN_LOCALE_RESOURCES[locale] ?? PLUGIN_LOCALE_RESOURCES.en;
     const raw =
-        dict[key as string]
-        ?? PLUGIN_LOCALE_RESOURCES.en[key as string]
+        dict[key]
+        ?? PLUGIN_LOCALE_RESOURCES.en[key]
         ?? fallback
-        ?? (key as string);
+        ?? key;
     if (!params) return raw;
     return interpolate(raw, params);
 }

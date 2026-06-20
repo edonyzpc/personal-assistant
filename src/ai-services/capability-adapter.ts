@@ -317,11 +317,20 @@ export function createChatToolCapability<Input, Output>(
  * via `CoreToolProvider`. Direct entry point used by PaAgentRuntime in Phase B,
  * and the canonical replacement after `core-tool-provider.ts` is removed in Phase C.
  *
- * The `factories` argument accepts `ChatToolDefinition<any, any>` because each
- * core factory carries its own concrete Input/Output generics; `unknown` would
- * be invariant-incompatible with the per-factory specific types.
+ * The `factories` argument erases each core factory's concrete Input/Output
+ * generics at the bundle boundary. Each wrapped tool still validates raw
+ * model input through its own `validateInput` implementation before execution.
  */
-type AnyChatToolDefinition = ChatToolDefinition<any, any>;
+type BivariantInputMethod<Return> = {
+    bivarianceHack(input: unknown): Return;
+}["bivarianceHack"];
+type BivariantExecuteMethod = {
+    bivarianceHack(input: unknown, context: ChatToolContext): Promise<ChatToolResult<unknown>>;
+}["bivarianceHack"];
+type AnyChatToolDefinition = Omit<ChatToolDefinition<unknown, unknown>, "statusMessage" | "execute"> & {
+    statusMessage: BivariantInputMethod<string>;
+    execute: BivariantExecuteMethod;
+};
 
 export function createCoreToolCapabilities(
     factories: readonly AnyChatToolDefinition[],

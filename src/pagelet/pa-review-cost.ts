@@ -285,7 +285,7 @@ const UNKNOWN_PRICING: PageletPricingEntry = Object.freeze({ inputPerKToken: 0, 
  * match the pricing-table prefix.
  */
 const PROVIDER_ID_ALIASES: Readonly<Record<string, readonly string[]>> = Object.freeze({
-    qwen: Object.freeze(["dashscope", "bailian"]) as readonly string[],
+    qwen: Object.freeze(["dashscope", "bailian"]),
 });
 
 /**

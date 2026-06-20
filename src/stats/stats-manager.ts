@@ -890,7 +890,7 @@ function isMarkdownPath(path: string): boolean {
 }
 
 function isTFileLike(file: unknown): file is TFile {
-    if (typeof TFile === "function") return file instanceof TFile;
+    if (typeof TFile === "function" && file instanceof TFile) return true;
     return Boolean(
         file
         && typeof file === "object"

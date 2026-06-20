@@ -76,7 +76,11 @@ export class PluginControlModal extends SuggestModal<Plugin> {
     }
 
     // Perform action on the selected suggestion.
-    async onChooseSuggestion(plugin: Plugin, evt: MouseEvent | KeyboardEvent) {
+    onChooseSuggestion(plugin: Plugin, _evt: MouseEvent | KeyboardEvent): void {
+        void this.choosePlugin(plugin);
+    }
+
+    private async choosePlugin(plugin: Plugin): Promise<void> {
         const action = modalT(
             plugin.enbaled
                 ? "plugin.modal.pluginAction.disable"

@@ -200,7 +200,7 @@ export class AIUtils {
         const noticeEl = this.buildNoticeContent(this.t("plugin.ai.notice.generatingFeaturedImages"));
         const notice = new Notice(noticeEl, 0);
         this.tuneNoticeShell(notice);
-        notice.noticeEl.createEl("hr", {
+        notice.messageEl.createEl("hr", {
             cls: "pa-ai-featured-image-progress-rule",
             attr: { id: "ai-featured-image-progress-hr" },
         });
@@ -208,9 +208,9 @@ export class AIUtils {
     }
 
     private tuneNoticeShell(notice: Notice) {
-        notice.noticeEl.addClass("pa-notice-shell");
-        notice.noticeEl.parentElement?.addClass("pa-notice-shell");
-        notice.noticeEl.setCssStyles({
+        notice.messageEl.addClass("pa-notice-shell");
+        notice.messageEl.parentElement?.addClass("pa-notice-shell");
+        notice.messageEl.setCssStyles({
             background: "transparent",
             boxShadow: "none",
             border: "none",

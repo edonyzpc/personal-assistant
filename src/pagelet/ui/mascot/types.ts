@@ -6,7 +6,7 @@
  * Spec source: `docs/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html`.
  *
  * What this file declares (and ONLY this):
- *   - The 4-state enum every Mascot consumer reasons about.
+ *   - The 4 Pet states every Mascot consumer reasons about.
  *   - The renderer's external contract (`MascotRenderer`) so callers
  *     can swap implementations (real DOM renderer in production, a
  *     recording stub in tests) without depending on the concrete class.
@@ -24,24 +24,18 @@
  */
 
 import type { PageletLocale } from "../../../locales/pagelet";
+import type { PetState } from "../../pet/types";
 
-/**
- * Mascot state machine values (SDD §10.1). The 4 states map 1:1 to the
- * 4 SVG renderings in the visual spec (`pagelet-visual-spec.html` §①).
- *
- * @deprecated Use PetState from src/pagelet/pet/types instead. Will be removed before 2.3.0 stable.
- */
-export type MascotState = "idle" | "thinking" | "done" | "error";
-
-export const MASCOT_STATES: readonly MascotState[] = [
+/** Pet state machine values supported by the legacy Mascot renderer. */
+export const MASCOT_STATES: readonly PetState[] = [
+    "resting",
     "idle",
-    "thinking",
-    "done",
-    "error",
+    "working",
+    "nudge",
 ] as const;
 
 /**
- * Options the public `setMascotState(state, options?)` API accepts.
+ * Options the public `setState(state, options?)` API accepts.
  * Per the B2 task brief: support an abort signal and an optional
  * message override. Anything more elaborate (icon swap, custom
  * animation) belongs in a future iteration, not part of the current baseline.
@@ -51,7 +45,7 @@ export interface MascotSetStateOptions {
      * Override the default i18n message for this state. Use when the
      * caller already has a more specific status string (e.g. "Reviewing
      * notes/foo.md…"). When omitted, the renderer looks up the canonical
-     * `pagelet.mascot.<state>` key.
+     * `pagelet.pet.<state>` key.
      */
     message?: string;
     /**
@@ -78,7 +72,7 @@ export interface MascotRendererOptions {
      * Initial state. Defaults to "idle" so the mascot is non-obtrusive
      * until the host explicitly starts a review.
      */
-    initialState?: MascotState;
+    initialState?: PetState;
     /**
      * Pluggable translator. Defaults to `pageletT` from
      * src/locales/pagelet. Tests pass a stub to assert which keys are
@@ -122,9 +116,8 @@ export interface MascotRendererOptions {
      * `aria-live` region attached to the mascot's root. Tests stub it
      * to assert announcement timing without inspecting the DOM tree.
      *
-     * Only fires when the state transitions to one of the announcing
-     * states (`done` → polite, `error` → assertive). `idle` /
-     * `thinking` clear the region (empty string + `"off"`).
+     * Emits a polite announcement for `nudge`. `resting`, `idle`, and
+     * `working` clear the region (empty string + `"off"`).
      */
     announceLiveRegion?: (announcement: MascotLiveAnnouncement) => void;
 }
@@ -137,10 +130,10 @@ export interface MascotRendererOptions {
  * - `message`: short, already-translated; empty string means "clear the
  *   region" so subsequent same-state re-entry can re-announce.
  * - `level`: maps to the `aria-live` attribute. `off` means do not
- *   announce; `polite` for `done`; `assertive` for `error`.
+ *   announce; `polite` is used for `nudge`.
  */
 export interface MascotLiveAnnouncement {
-    state: MascotState;
+    state: PetState;
     message: string;
     level: MascotLiveLevel;
 }
@@ -152,27 +145,26 @@ export type MascotLiveLevel = "off" | "polite" | "assertive";
  * State → aria-live level mapping. Frozen so callers can rely on
  * referential stability when comparing.
  *
- * - `done` → polite: a non-interrupting confirmation suffices.
- * - `error` → assertive: failures should override pending speech.
- * - `idle` / `thinking` → off: no announcement (the visual change is
- *   enough; assertive thinking would be noise).
+ * - `nudge` → polite: a non-interrupting confirmation suffices.
+ * - `resting` / `idle` / `working` → off: no announcement (the visual
+ *   change is enough; announcing work-in-progress would be noise).
  */
-export const MASCOT_STATE_LIVE_LEVEL: Readonly<Record<MascotState, MascotLiveLevel>> = Object.freeze({
+export const MASCOT_STATE_LIVE_LEVEL: Readonly<Record<PetState, MascotLiveLevel>> = Object.freeze({
+    resting: "off",
     idle: "off",
-    thinking: "off",
-    done: "polite",
-    error: "assertive",
+    working: "off",
+    nudge: "polite",
 });
 
 /**
- * State → i18n key for the announcement message. `idle` / `thinking`
- * are intentionally absent — we never read these (level === "off").
+ * State → i18n key for the announcement message. Silent states are
+ * intentionally absent — we never read these (level === "off").
  */
-export const MASCOT_STATE_ANNOUNCE_I18N_KEY: Readonly<Record<MascotState, string | null>> = Object.freeze({
+export const MASCOT_STATE_ANNOUNCE_I18N_KEY: Readonly<Record<PetState, string | null>> = Object.freeze({
+    resting: null,
     idle: null,
-    thinking: null,
-    done: "pagelet.a11y.announce.done",
-    error: "pagelet.a11y.announce.error",
+    working: null,
+    nudge: "pagelet.a11y.announce.done",
 });
 
 /**
@@ -194,9 +186,9 @@ export type MascotTranslator = (key: string, fallback?: string) => string;
  */
 export interface MascotRenderer {
     /** Current applied state. Reflects the latest `setState` call. */
-    readonly state: MascotState;
+    readonly state: PetState;
     /** Apply a new state. No-op when state == current state or signal aborted. */
-    setState(state: MascotState, options?: MascotSetStateOptions): void;
+    setState(state: PetState, options?: MascotSetStateOptions): void;
     /**
      * Detach the rendered root from the parent and release any
      * listeners. Idempotent; safe to call from `Component.onunload`.

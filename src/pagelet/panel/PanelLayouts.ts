@@ -815,13 +815,16 @@ export function renderSummaryPreview(
 
     if (app && component) {
         // Use Obsidian's native markdown renderer
-        MarkdownRenderer.render(
+        void Promise.resolve(MarkdownRenderer.render(
             app,
             markdown,
             preview,
             sourcePath ?? "",
             component,
-        );
+        )).catch(() => {
+            clearChildren(preview);
+            renderSimpleMarkdownPreview(preview, markdown);
+        });
     } else {
         // Fallback for environments without App/Component (tests)
         renderSimpleMarkdownPreview(preview, markdown);
