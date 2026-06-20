@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.7.1](https://github.com/edonyzpc/personal-assistant/compare/2.7.0...2.7.1) (2026-06-20)
+
+### Fix
+- pagelet: restore detail payload from in-memory sessions
+- memory: split profile sentences without lookbehind regex
+
 ## [2.7.0](https://github.com/edonyzpc/personal-assistant/compare/2.1.2...2.7.0) (2026-06-19)
 
 ### Features
