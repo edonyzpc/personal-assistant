@@ -21,7 +21,46 @@ import type {
 
 export const PAGELET_DETAIL_VIEW_TYPE = "pa-pagelet-detail-view";
 export const PAGELET_DETAIL_ICON = "pa-pagelet";
-const PAGELET_DETAIL_STATE_VERSION = 3;
+const PAGELET_DETAIL_STATE_VERSION = 4;
+const PAGELET_DETAIL_SESSION_CACHE_LIMIT = 12;
+
+const pageletDetailSessionCache = new Map<string, PageletDetailPayload>();
+let pageletDetailSessionCounter = 0;
+
+function createPageletDetailSessionId(): string {
+    if (typeof globalThis.crypto?.randomUUID === "function") {
+        return globalThis.crypto.randomUUID();
+    }
+    pageletDetailSessionCounter += 1;
+    return `pagelet-detail-${Date.now().toString(36)}-${pageletDetailSessionCounter.toString(36)}`;
+}
+
+function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetailPayload {
+    const copy: PageletDetailPayload = {
+        title: payload.title,
+        content: [...payload.content] as PageletDetailContent,
+        locale: payload.locale,
+    };
+    if (payload.layoutType) copy.layoutType = payload.layoutType;
+    if (payload.extra) {
+        copy.extra = {};
+        if (payload.extra.connections) copy.extra.connections = [...payload.extra.connections];
+        if (typeof payload.extra.markdown === "string") copy.extra.markdown = payload.extra.markdown;
+    }
+    if (payload.sourcePath) copy.sourcePath = payload.sourcePath;
+    if (payload.summarySaveNote) copy.summarySaveNote = payload.summarySaveNote;
+    return copy;
+}
+
+function rememberPageletDetailPayload(sessionId: string, payload: PageletDetailPayload): void {
+    pageletDetailSessionCache.delete(sessionId);
+    pageletDetailSessionCache.set(sessionId, clonePageletDetailPayload(payload));
+    while (pageletDetailSessionCache.size > PAGELET_DETAIL_SESSION_CACHE_LIMIT) {
+        const oldest = pageletDetailSessionCache.keys().next().value;
+        if (!oldest) break;
+        pageletDetailSessionCache.delete(oldest);
+    }
+}
 
 function buildPageletDetailIconSvg(): string {
     const markup = buildMascotMarkup("idle", {
@@ -58,6 +97,7 @@ export class PageletDetailView extends ItemView {
     private title: string;
     private content: PageletDetailContent = [];
     private locale: PageletLocale;
+    private sessionId: string;
     private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState"> = {};
 
     constructor(
@@ -70,6 +110,7 @@ export class PageletDetailView extends ItemView {
         this.onSaveSummaryNote = onSaveSummaryNote;
         this.locale = getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
+        this.sessionId = createPageletDetailSessionId();
         registerPageletDetailIcon();
     }
 
@@ -115,6 +156,7 @@ export class PageletDetailView extends ItemView {
         const payload: Record<string, unknown> = {
             title: this.title,
             locale: this.locale,
+            sessionId: this.sessionId,
             restoredFromState: true,
         };
         if (this.payloadOptions.layoutType) {
@@ -132,7 +174,8 @@ export class PageletDetailView extends ItemView {
     async setState(state: unknown, _result: ViewStateResult): Promise<void> {
         const restored = readPageletDetailState(state, this.getLocale());
         if (restored) {
-            this.applyPayload(restored);
+            this.sessionId = restored.sessionId;
+            this.applyPayload(restored.payload);
         } else {
             this.resetPayload();
         }
@@ -150,6 +193,9 @@ export class PageletDetailView extends ItemView {
             summarySaveNote: payload.summarySaveNote,
             restoredFromState: payload.restoredFromState,
         };
+        if (!payload.restoredFromState) {
+            this.cacheCurrentPayload();
+        }
     }
 
     private resetPayload(): void {
@@ -157,6 +203,7 @@ export class PageletDetailView extends ItemView {
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.content = [];
         this.payloadOptions = {};
+        this.sessionId = createPageletDetailSessionId();
     }
 
     private renderPayload(): void {
@@ -173,6 +220,19 @@ export class PageletDetailView extends ItemView {
             || Boolean(this.payloadOptions.restoredFromState);
     }
 
+    private cacheCurrentPayload(): void {
+        if (!this.hasPayload()) return;
+        rememberPageletDetailPayload(this.sessionId, {
+            title: this.title,
+            content: this.content,
+            locale: this.locale,
+            layoutType: this.payloadOptions.layoutType,
+            extra: this.payloadOptions.extra,
+            sourcePath: this.payloadOptions.sourcePath,
+            summarySaveNote: this.payloadOptions.summarySaveNote,
+        });
+    }
+
     private async saveSummaryNote(note: GeneratedReviewNote): Promise<WriteResult> {
         if (!this.onSaveSummaryNote) {
             return { success: false, error: pageletT("pagelet.panel.status.error", this.locale) };
@@ -182,6 +242,7 @@ export class PageletDetailView extends ItemView {
             const result = await this.onSaveSummaryNote(note);
             if (result.success) {
                 this.payloadOptions.summarySaveNote = undefined;
+                this.cacheCurrentPayload();
                 new Notice(pageletT("pagelet.reviewNote.created", this.locale, { path: result.filePath ?? "" }), 5000);
             } else {
                 new Notice(pageletT("pagelet.reviewNote.createFailed", this.locale, { error: result.error ?? "" }), 5000);
@@ -215,10 +276,21 @@ export class PageletDetailView extends ItemView {
 function readPageletDetailState(
     state: unknown,
     fallbackLocale: PageletLocale,
-): PageletDetailPayload | null {
+): { sessionId: string; payload: PageletDetailPayload } | null {
     if (!isRecord(state)) return null;
     const payload = state.payload;
     if (!isRecord(payload)) return null;
+    const sessionId = typeof payload.sessionId === "string" && payload.sessionId.trim().length > 0
+        ? payload.sessionId
+        : createPageletDetailSessionId();
+
+    const cachedPayload = pageletDetailSessionCache.get(sessionId);
+    if (cachedPayload) {
+        return {
+            sessionId,
+            payload: clonePageletDetailPayload(cachedPayload),
+        };
+    }
 
     const locale = normalizePageletLocale(payload.locale) ?? fallbackLocale;
     const title = typeof payload.title === "string" && payload.title.trim().length > 0
@@ -234,7 +306,7 @@ function readPageletDetailState(
     const layoutType = normalizePageletDetailLayoutType(payload.layoutType);
     if (layoutType) result.layoutType = layoutType;
     if (typeof payload.sourcePath === "string") result.sourcePath = payload.sourcePath;
-    return result;
+    return { sessionId, payload: result };
 }
 
 function normalizePageletLocale(value: unknown): PageletLocale | null {

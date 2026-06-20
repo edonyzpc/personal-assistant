@@ -455,7 +455,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect((view.getState() as { payload?: { summarySaveNote?: unknown } }).payload?.summarySaveNote).toBeUndefined();
     });
 
-    it("does not restore unsaved summary markdown from native view state history", async () => {
+    it("restores unsaved summary markdown from the in-memory native detail session", async () => {
         const markdown = "# Periodic Summary\n\nA concise periodic summary.";
         const summarySaveNote = {
             fileName: "pagelet-weekly-review.md",
@@ -489,13 +489,12 @@ describe("Pagelet panel and tab view regressions", () => {
         await restored.setState(state, {} as never);
 
         const contentEl = restored.contentEl as unknown as FakeElement;
-        expect(contentEl.textContent).toContain("Result no longer available");
-        expect(contentEl.textContent).toContain("open a saved review or summary note");
-        expect(contentEl.textContent).not.toContain("A concise periodic summary.");
-        expect(contentEl.querySelector(".pa-pagelet-tab-summary-save")).toBeNull();
+        expect(contentEl.textContent).toContain("Periodic Summary Preview");
+        expect(contentEl.textContent).toContain("A concise periodic summary.");
+        expect(contentEl.textContent).not.toContain("Result no longer available");
     });
 
-    it("does not restore discovery payloads from native view state history", async () => {
+    it("restores discovery payloads from the in-memory native detail session", async () => {
         const view = new PageletDetailView({} as never, () => "en");
 
         await view.onOpen();
@@ -533,11 +532,50 @@ describe("Pagelet panel and tab view regressions", () => {
         await restored.setState(serializedState, {} as never);
 
         const contentEl = restored.contentEl as unknown as FakeElement;
+        expect(contentEl.textContent).not.toContain("Result no longer available");
+        expect(contentEl.textContent).toContain("Connection Map");
+        expect(contentEl.textContent).toContain("Discovered Connections");
+        expect(contentEl.textContent).toContain("Test-2023-04-08");
+        expect(contentEl.textContent).toContain("Diary-2023-04-03");
+        expect(contentEl.querySelector(".pa-pagelet-panel-connection-graph")).not.toBeNull();
+    });
+
+    it("shows the unavailable state when the native detail session is not in memory", async () => {
+        const view = new PageletDetailView({} as never, () => "en");
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "discover",
+            content: [{
+                title: "Diary thread",
+                description: "Shared diary thread",
+                insightText: "Shared concepts: current note links to a related diary note.",
+                sourceFile: "Diary-2023-04-03.md",
+                sourceTitle: "Diary-2023-04-03",
+            }],
+            extra: {
+                connections: [{
+                    fromNote: "2.fleeting/Test-2023-04-08.md",
+                    toNote: "Diary-2023-04-03.md",
+                    strength: "medium",
+                    sharedConcepts: ["diary thread"],
+                }],
+            },
+        });
+
+        const serializedState = JSON.parse(JSON.stringify(view.getState()));
+        serializedState.payload.sessionId = "missing-session";
+
+        const restored = new PageletDetailView({} as never, () => "en");
+        await restored.onOpen();
+        await restored.setState(serializedState, {} as never);
+
+        const contentEl = restored.contentEl as unknown as FakeElement;
         expect(contentEl.textContent).toContain("Result no longer available");
+        expect(contentEl.textContent).toContain("open a saved review or summary note");
         expect(contentEl.textContent).not.toContain("Connection Map");
-        expect(contentEl.textContent).not.toContain("Discovered Connections");
-        expect(contentEl.textContent).not.toContain("Test-2023-04-08");
-        expect(contentEl.textContent).not.toContain("Diary-2023-04-03");
         expect(contentEl.querySelector(".pa-pagelet-panel-connection-graph")).toBeNull();
     });
 
