@@ -1,0 +1,4 @@
+interface:
+  display_name: "Obsidian iOS Smoke"
+  short_description: "USB iPhone smoke workflow for Obsidian"
+  default_prompt: "Use $obsidian-ios-real-device-smoke to validate this Obsidian plugin change on a USB-connected iPhone."
