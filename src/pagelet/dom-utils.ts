@@ -14,6 +14,19 @@ export function createHtmlElement<K extends keyof HTMLElementTagNameMap>(tag: K)
     return getPlatformDocument().createElement(tag);
 }
 
+export function appendIconButtonLabel(button: HTMLButtonElement, iconText: string, labelText: string): HTMLSpanElement {
+    const icon = createHtmlElement("span");
+    icon.setAttribute("aria-hidden", "true");
+    icon.textContent = iconText;
+    button.appendChild(icon);
+
+    const label = createHtmlElement("span");
+    label.className = "pa-sr-only";
+    label.textContent = labelText;
+    button.appendChild(label);
+    return label;
+}
+
 export function el<K extends keyof HTMLElementTagNameMap>(
     tag: K,
     className?: string,

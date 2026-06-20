@@ -1,6 +1,7 @@
 /* Copyright 2023 edonyzpc */
 
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
+import { readFileSync } from "fs";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
 import type { PetEvent } from "../src/pagelet/pet/PetStateMachine";
@@ -9,6 +10,15 @@ import { getPetAriaLabel, PetView } from "../src/pagelet/pet/PetView";
 afterEach(() => {
     jest.useRealTimers();
 });
+
+function escapeRegex(value: string): string {
+    return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function getCssRuleBlock(css: string, selector: string): string {
+    const match = new RegExp(`${escapeRegex(selector)}\\s*\\{([\\s\\S]*?)\\}`, "m").exec(css);
+    return match?.[1] ?? "";
+}
 
 describe("PetStateMachine", () => {
     describe("initial state", () => {
@@ -217,6 +227,19 @@ describe("PetView task kind", () => {
     });
 });
 
+describe("Pet SVG visual weight", () => {
+    it("uses lighter desktop strokes with mobile-specific stroke classes", () => {
+        const svgSource = readFileSync("src/pagelet/pet/PetSvg.ts", "utf8");
+
+        expect(svgSource).toContain("const DESKTOP_OUTLINE_STROKE_WIDTH = 1.6;");
+        expect(svgSource).toContain("const DESKTOP_DETAIL_STROKE_WIDTH = 1.4;");
+        expect(svgSource).toContain('const OUTLINE_STROKE_CLASS = "pa-pagelet-pet-stroke-outline";');
+        expect(svgSource).toContain('const DETAIL_STROKE_CLASS = "pa-pagelet-pet-stroke-detail";');
+        expect(svgSource).toContain('idle: "#1f2328"');
+        expect(svgSource).toContain('resting: "#2f3437"');
+    });
+});
+
 describe("PetView touch suppression", () => {
     type PetViewInternals = {
         _handleTouchend: (e: Pick<TouchEvent, "preventDefault">) => void;
@@ -260,5 +283,92 @@ describe("PetView touch suppression", () => {
         view.destroy();
 
         expect(jest.getTimerCount()).toBe(0);
+    });
+});
+
+describe("PetView mobile chrome layer mounting", () => {
+    it("mounts phone-sized mobile pets into document.body instead of the markdown content container", () => {
+        const source = readFileSync("src/pagelet/pet/PetView.ts", "utf8");
+
+        expect(source).toContain("function shouldMountPetInMobileChromeLayer()");
+        expect(source).toContain("doc.body.classList.contains(\"is-mobile\") && viewportWidth <= 600");
+        expect(source).toContain("const mountEl = shouldMountPetInMobileChromeLayer() ? getPlatformDocument().body : containerEl;");
+        expect(source).toContain("mountEl.appendChild(root);");
+    });
+});
+
+describe("PetView mobile positioning styles", () => {
+    it("keeps bottom-corner pets above the Obsidian mobile toolbar", () => {
+        const css = readFileSync("src/custom.pcss", "utf8");
+        const mobileBottomCornerBlock = getCssRuleBlock(css, [
+            "body.is-mobile .pa-pagelet-pet[data-corner=bottom-right],",
+            "body.is-mobile .pa-pagelet-pet[data-corner=bottom-left]",
+        ].join("\n"));
+
+        expect(mobileBottomCornerBlock).toContain(
+            "--pa-pagelet-mobile-pet-bottom-clearance: max(96px, calc(env(safe-area-inset-bottom, 0px) + 72px));",
+        );
+        expect(mobileBottomCornerBlock).toContain(
+            "bottom: var(--pa-pagelet-mobile-pet-bottom-clearance);",
+        );
+    });
+
+    it("pins the pet beside the top-left mobile chrome on phone-sized screens", () => {
+        const css = readFileSync("src/custom.pcss", "utf8");
+        const phoneMediaStart = css.indexOf("@media (max-width:600px)");
+        expect(phoneMediaStart).toBeGreaterThan(-1);
+
+        const phoneCss = css.slice(phoneMediaStart);
+        const mobileTopbarBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet");
+        const mobileCornerOverrideBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet[data-corner]");
+        const mobileWrapperBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-wrapper");
+        const mobileSvgBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-svg-wrap svg");
+        const mobileOutlineStrokeBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-stroke-outline");
+        const mobileDetailStrokeBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-stroke-detail");
+        const mobileRestingBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet[data-state=resting]");
+        const mobileRestingSvgWrapBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet[data-state=resting] .pa-pagelet-pet-svg-wrap");
+
+        expect(mobileTopbarBlock).toContain("--pa-pagelet-mobile-topbar-pet-top: 59px;");
+        expect(mobileTopbarBlock).toContain("--pa-pagelet-mobile-topbar-pet-left: calc(env(safe-area-inset-left, 0px) + 60px);");
+        expect(mobileTopbarBlock).toContain("position: fixed;");
+        expect(mobileTopbarBlock).toContain("top: var(--pa-pagelet-mobile-topbar-pet-top);");
+        expect(mobileTopbarBlock).toContain("left: var(--pa-pagelet-mobile-topbar-pet-left);");
+        expect(mobileTopbarBlock).toContain("width: 44px;");
+        expect(mobileTopbarBlock).toContain("height: 44px;");
+        expect(mobileTopbarBlock).toContain("display: flex;");
+        expect(mobileTopbarBlock).toContain("align-items: center;");
+        expect(mobileTopbarBlock).toContain("justify-content: center;");
+        expect(mobileTopbarBlock).toContain("right: auto;");
+        expect(mobileTopbarBlock).toContain("bottom: auto;");
+        expect(mobileTopbarBlock).toContain("z-index: 1002;");
+        expect(mobileCornerOverrideBlock).toContain("right: auto;");
+        expect(mobileCornerOverrideBlock).toContain("bottom: auto;");
+        expect(mobileWrapperBlock).toContain("width: 44px;");
+        expect(mobileWrapperBlock).toContain("height: 44px;");
+        expect(mobileWrapperBlock).toContain("min-width: 44px;");
+        expect(mobileWrapperBlock).toContain("min-height: 44px;");
+        expect(mobileWrapperBlock).toContain("transform: none;");
+        expect(mobileWrapperBlock).toContain("border-radius: 999px;");
+        expect(mobileSvgBlock).toContain("width: 28px;");
+        expect(mobileSvgBlock).toContain("height: 28px;");
+        expect(mobileOutlineStrokeBlock).toContain("stroke-width: 2.8px;");
+        expect(mobileDetailStrokeBlock).toContain("stroke-width: 2.35px;");
+        expect(mobileRestingBlock).toContain("opacity: 1;");
+        expect(mobileRestingBlock).toContain("filter: none;");
+        expect(mobileRestingSvgWrapBlock).toContain("filter: none;");
+    });
+
+    it("does not change Pagelet motion behavior via prefers-reduced-motion", () => {
+        const css = readFileSync("src/custom.pcss", "utf8");
+        const pageletMotionStart = css.indexOf("body.is-mobile .pa-pagelet-tab-body");
+        const pageletMascotStart = css.indexOf("Pagelet (Review Assistant) — mascot", pageletMotionStart);
+        expect(pageletMotionStart).toBeGreaterThan(-1);
+        expect(pageletMascotStart).toBeGreaterThan(pageletMotionStart);
+
+        const pageletMotionCss = css.slice(pageletMotionStart, pageletMascotStart);
+
+        expect(pageletMotionCss).not.toContain("prefers-reduced-motion");
+        expect(pageletMotionCss).not.toContain("transition-duration: .01s!important");
+        expect(pageletMotionCss).not.toContain("animation: none!important");
     });
 });

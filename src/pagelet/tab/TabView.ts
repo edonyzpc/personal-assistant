@@ -32,6 +32,7 @@ interface TabViewOptions {
 }
 
 type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState">;
+let tabLabelSequence = 0;
 
 // ---------------------------------------------------------------------------
 // TabView
@@ -51,6 +52,7 @@ export class TabView {
     private locale: PageletLocale;
     private rootEl: HTMLDivElement | null = null;
     private bodyEl: HTMLDivElement | null = null;
+    private labelEl: HTMLSpanElement | null = null;
     private containerEl: HTMLElement | null = null;
     private _isOpen = false;
     private readonly options: TabViewOptions;
@@ -87,7 +89,7 @@ export class TabView {
     /**
      * Open the tab with a title and content.
      *
-     * @param title   - used as the content region aria-label
+     * @param title   - used as the content region's accessible name
      * @param content - findings to display, or TabSection[] for structured content
      */
     open(
@@ -98,7 +100,9 @@ export class TabView {
         this.ensureMounted();
         if (!this.rootEl || !this.bodyEl) return;
 
-        this.rootEl.setAttribute("aria-label", title);
+        if (this.labelEl) {
+            this.labelEl.textContent = title;
+        }
         this.renderContent(content, options);
         this._isOpen = true;
     }
@@ -121,6 +125,7 @@ export class TabView {
             this.rootEl = null;
         }
         this.bodyEl = null;
+        this.labelEl = null;
         this.containerEl = null;
         this._isOpen = false;
     }
@@ -133,8 +138,12 @@ export class TabView {
         const root = el("div");
         root.className = "pa-pagelet-tab";
         root.setAttribute("role", "region");
-        root.setAttribute("aria-label",
-            pageletT("pagelet.tab.ariaLabel", this.locale));
+
+        const label = el("span", "pa-sr-only", pageletT("pagelet.tab.ariaLabel", this.locale));
+        label.setAttribute("id", `pa-pagelet-tab-label-${++tabLabelSequence}`);
+        this.labelEl = label;
+        root.setAttribute("aria-labelledby", label.getAttribute("id") ?? "");
+        root.appendChild(label);
 
         // Body
         const body = el("div", "pa-pagelet-tab-body");

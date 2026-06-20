@@ -38,7 +38,7 @@ import {
     setPlatformTimeout,
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
-import { clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
+import { appendIconButtonLabel, clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
 
 /** Detect mobile context using the Obsidian convention or viewport width. */
 function isMobile(): boolean {
@@ -62,6 +62,7 @@ const MIN_TOP_SPACE = 16;
 const EDGE_MARGIN = 16;
 /** Desktop bubble width used by CSS and measurement fallbacks. */
 const DESKTOP_BUBBLE_WIDTH = 380;
+let bubbleLabelSequence = 0;
 
 // calculatePlacement logic is inlined in applyDesktopLayout to account
 // for container-relative positioning (position:fixed inside a
@@ -77,6 +78,11 @@ interface VisibleBounds {
 
 interface BubbleCloseOptions {
     restoreFocus?: boolean;
+}
+
+interface TouchPoint {
+    x: number;
+    y: number;
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -183,6 +189,10 @@ export class BubbleView {
     private readonly getLocale: NonNullable<BubbleViewOptions["getLocale"]>;
     /** Fallback timeout (ms) for transitionend in reduced-motion / hidden tabs. */
     private static readonly UNMOUNT_FALLBACK_MS = 350;
+    /** Maximum movement still treated as an action-button tap on touch devices. */
+    private static readonly ACTION_TAP_THRESHOLD = 12;
+    /** Suppress synthetic clicks after a touch action has already fired. */
+    private static readonly TOUCH_CLICK_SUPPRESS_MS = 500;
 
     constructor(options: BubbleViewOptions) {
         this.options = options;
@@ -342,7 +352,12 @@ export class BubbleView {
         root.setAttribute("data-state", "hidden");
         root.setAttribute("role", "dialog");
         const locale = this.getLocale();
-        root.setAttribute("aria-label", pageletT("pagelet.bubble.ariaLabel", locale));
+        const label = createHtmlElement("span");
+        label.className = "pa-sr-only";
+        label.setAttribute("id", `pa-pagelet-bubble-label-${++bubbleLabelSequence}`);
+        label.textContent = pageletT("pagelet.bubble.ariaLabel", locale);
+        root.setAttribute("aria-labelledby", label.getAttribute("id") ?? "");
+        root.appendChild(label);
 
         // Tail
         const tail = createHtmlElement("div");
@@ -357,8 +372,7 @@ export class BubbleView {
         closeBtn.className = "pa-pagelet-bubble-close";
         const closeText = pageletT("pagelet.bubble.close", locale);
         closeBtn.setAttribute("title", closeText);
-        closeBtn.setAttribute("aria-label", closeText);
-        closeBtn.textContent = "×";
+        appendIconButtonLabel(closeBtn, "×", closeText);
         closeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.close();
@@ -443,7 +457,6 @@ export class BubbleView {
                 }
                 if (action.description) {
                     btn.setAttribute("title", `${action.label}: ${action.description}`);
-                    btn.setAttribute("aria-label", `${action.label}: ${action.description}`);
                 }
                 if (action.icon) {
                     const icon = createHtmlElement("span");
@@ -469,13 +482,60 @@ export class BubbleView {
                 }
 
                 btn.appendChild(copy);
-                btn.addEventListener("click", (e) => {
-                    e.stopPropagation();
-                    action.callback();
-                });
+                this.attachActionActivation(btn, action.callback);
                 actionsEl.appendChild(btn);
             }
         }
+    }
+
+    private attachActionActivation(btn: HTMLButtonElement, callback: () => void): void {
+        let touchStart: TouchPoint | null = null;
+        let lastTouchActivation = 0;
+
+        const activate = (e: Event): void => {
+            e.stopPropagation();
+            callback();
+        };
+
+        btn.addEventListener("click", (e) => {
+            const now = Date.now();
+            if (now - lastTouchActivation < BubbleView.TOUCH_CLICK_SUPPRESS_MS) {
+                e.stopPropagation();
+                return;
+            }
+            activate(e);
+        });
+
+        btn.addEventListener("touchstart", (e) => {
+            if (e.touches.length !== 1) {
+                touchStart = null;
+                return;
+            }
+            const touch = e.touches[0];
+            touchStart = { x: touch.clientX, y: touch.clientY };
+        }, { passive: true });
+
+        btn.addEventListener("touchend", (e) => {
+            const start = touchStart;
+            touchStart = null;
+            if (!start) return;
+
+            const touch = e.changedTouches[0];
+            if (!touch) return;
+            const dx = Math.abs(touch.clientX - start.x);
+            const dy = Math.abs(touch.clientY - start.y);
+            if (dx > BubbleView.ACTION_TAP_THRESHOLD || dy > BubbleView.ACTION_TAP_THRESHOLD) {
+                return;
+            }
+
+            e.preventDefault();
+            lastTouchActivation = Date.now();
+            activate(e);
+        }, { passive: false });
+
+        btn.addEventListener("touchcancel", () => {
+            touchStart = null;
+        }, { passive: true });
     }
 
     // -----------------------------------------------------------------------

@@ -20,6 +20,8 @@ type Listener = (event: {
     stopPropagation(): void;
     preventDefault(): void;
     target?: unknown;
+    touches?: Array<{ clientX: number; clientY: number }>;
+    changedTouches?: Array<{ clientX: number; clientY: number }>;
 }) => void | Promise<void>;
 
 interface FakeRect {
@@ -191,6 +193,12 @@ class FakeElement {
         }
     }
 
+    async dispatch(type: string, event: Parameters<Listener>[0]): Promise<void> {
+        for (const listener of this.listeners.get(type) ?? []) {
+            await listener(event);
+        }
+    }
+
     focus(options?: unknown): void {
         this.focusCalls += 1;
         this.lastFocusOptions = options ?? null;
@@ -352,8 +360,11 @@ describe("Pagelet BubbleView", () => {
         const bubble = container.querySelector(".pa-pagelet-bubble");
         const actions = bubble?.querySelector(".pa-pagelet-bubble-actions");
         const buttons = actions?.querySelectorAll(".pa-pagelet-bubble-btn") ?? [];
+        const bubbleLabel = bubble?.querySelector(".pa-sr-only");
 
         expect(bubble?.getAttribute("data-content-type")).toBe("empty");
+        expect(bubble?.getAttribute("aria-label")).toBeNull();
+        expect(bubble?.getAttribute("aria-labelledby")).toBe(bubbleLabel?.getAttribute("id"));
         expect(actions?.classList.contains("pa-pagelet-bubble-actions--rich")).toBe(true);
         expect(buttons).toHaveLength(2);
         expect(buttons[0].getAttribute("type")).toBe("button");
@@ -361,7 +372,92 @@ describe("Pagelet BubbleView", () => {
         expect(buttons[0].querySelector(".pa-pagelet-bubble-btn-icon")?.getAttribute("data-icon")).toBe("search");
         expect(buttons[0].querySelector(".pa-pagelet-bubble-btn-label")?.textContent).toBe("Review current note");
         expect(buttons[0].querySelector(".pa-pagelet-bubble-btn-description")?.textContent).toBe("Scan the active note now");
-        expect(buttons[0].getAttribute("aria-label")).toBe("Review current note: Scan the active note now");
+        expect(buttons[0].getAttribute("title")).toBe("Review current note: Scan the active note now");
+        expect(buttons[0].getAttribute("aria-label")).toBeNull();
+
+        view.destroy();
+    });
+
+    it("keeps the close icon accessible without creating an Obsidian aria-label tooltip", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        anchor.isConnected = true;
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "empty",
+            findings: [{ text: "No new findings yet." }],
+            actions: [],
+        }, anchor as unknown as HTMLElement);
+
+        const close = container.querySelector(".pa-pagelet-bubble-close");
+
+        expect(close?.getAttribute("title")).toBe("Close");
+        expect(close?.getAttribute("aria-label")).toBeNull();
+        expect(close?.querySelector(".pa-sr-only")?.textContent).toBe("Close");
+
+        view.destroy();
+    });
+
+    it("activates rich actions from touchend without double-firing the synthetic click", async () => {
+        const onReview = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "empty",
+            findings: [{ text: "No new findings yet." }],
+            actions: [{
+                label: "Review current note",
+                description: "Scan the active note now",
+                icon: "search",
+                primary: true,
+                callback: onReview,
+            }],
+        }, anchor as unknown as HTMLElement);
+
+        const primary = container.querySelector(".pa-pagelet-bubble-btn");
+        const stopPropagation = jest.fn();
+        const preventDefault = jest.fn();
+
+        await primary?.dispatch("touchstart", {
+            stopPropagation: (): void => undefined,
+            preventDefault: (): void => undefined,
+            target: primary,
+            touches: [{ clientX: 24, clientY: 32 }],
+            changedTouches: [],
+        });
+        await primary?.dispatch("touchend", {
+            stopPropagation,
+            preventDefault,
+            target: primary,
+            touches: [],
+            changedTouches: [{ clientX: 25, clientY: 34 }],
+        });
+        await primary?.click();
+
+        expect(onReview).toHaveBeenCalledTimes(1);
+        expect(stopPropagation).toHaveBeenCalledTimes(1);
+        expect(preventDefault).toHaveBeenCalledTimes(1);
 
         view.destroy();
     });

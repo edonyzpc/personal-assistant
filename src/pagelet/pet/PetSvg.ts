@@ -21,6 +21,11 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 const BODY_D = "M10.2 8.3 L30 8 L36.1 14.2 L36 37.8 L10 38.1 Z";
 const FOLD_D = "M30 8.1 L29.9 14.2 L36 14";
 
+const DESKTOP_OUTLINE_STROKE_WIDTH = 1.6;
+const DESKTOP_DETAIL_STROKE_WIDTH = 1.4;
+const OUTLINE_STROKE_CLASS = "pa-pagelet-pet-stroke-outline";
+const DETAIL_STROKE_CLASS = "pa-pagelet-pet-stroke-detail";
+
 const EYE_LEFT_D = "M16.8 22.1 Q19 22.9 21.2 21.8";
 const EYE_RIGHT_D = "M24.8 22 Q27 23 29.1 21.9";
 
@@ -40,15 +45,15 @@ const DOTS = [
 // ---------------------------------------------------------------------------
 
 const DARK_STROKE: Readonly<Record<PetState, string>> = {
-    resting: "#d0d0d0",
-    idle: "#e8e8e8",
+    resting: "#d8d8d8",
+    idle: "#f2f2f2",
     working: "#7c9eff",
     nudge: "#5dd39e",
 };
 
 const LIGHT_STROKE: Readonly<Record<PetState, string>> = {
-    resting: "#a0a0a0",
-    idle: "#666666",
+    resting: "#2f3437",
+    idle: "#1f2328",
     working: "#5a7de6",
     nudge: "#3dba82",
 };
@@ -73,7 +78,7 @@ function createSvgElement<K extends keyof SVGElementTagNameMap>(
     return getPlatformDocument().createElementNS(SVG_NS, tag);
 }
 
-function createPath(d: string, sw: number, color: string): SVGPathElement {
+function createPath(d: string, sw: number, color: string, cls?: string): SVGPathElement {
     const path = createSvgElement("path");
     path.setAttribute("d", d);
     path.setAttribute("fill", "none");
@@ -81,6 +86,9 @@ function createPath(d: string, sw: number, color: string): SVGPathElement {
     path.setAttribute("stroke-width", String(sw));
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-linejoin", "round");
+    if (cls) {
+        path.setAttribute("class", cls);
+    }
     return path;
 }
 
@@ -138,14 +146,14 @@ export function createPetSvgElement(state: PetState, taskKind: PetTaskKind = "re
 
 function buildInnerNodes(state: PetState, color: string): SVGElement[] {
     const parts: SVGElement[] = [
-        createPath(BODY_D, 1.6, color),
-        createPath(FOLD_D, 1.6, color),
+        createPath(BODY_D, DESKTOP_OUTLINE_STROKE_WIDTH, color, OUTLINE_STROKE_CLASS),
+        createPath(FOLD_D, DESKTOP_OUTLINE_STROKE_WIDTH, color, OUTLINE_STROKE_CLASS),
     ];
 
     switch (state) {
         case "resting": {
-            parts.push(createPath(SLEEP_EYE_LEFT_D, 1.4, color));
-            parts.push(createPath(SLEEP_EYE_RIGHT_D, 1.4, color));
+            parts.push(createPath(SLEEP_EYE_LEFT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
+            parts.push(createPath(SLEEP_EYE_RIGHT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
 
             const zzz = createSvgElement("g");
             zzz.setAttribute("class", "pa-pagelet-pet-sleep-zzz");
@@ -158,19 +166,19 @@ function buildInnerNodes(state: PetState, color: string): SVGElement[] {
         case "idle": {
             const left = createSvgElement("g");
             left.setAttribute("class", "pa-pagelet-pet-blink-group");
-            left.appendChild(createPath(EYE_LEFT_D, 1.4, color));
+            left.appendChild(createPath(EYE_LEFT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
             parts.push(left);
 
             const right = createSvgElement("g");
             right.setAttribute("class", "pa-pagelet-pet-blink-group");
-            right.appendChild(createPath(EYE_RIGHT_D, 1.4, color));
+            right.appendChild(createPath(EYE_RIGHT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
             parts.push(right);
             break;
         }
 
         case "working": {
-            parts.push(createPath(EYE_LEFT_D, 1.4, color));
-            parts.push(createPath(EYE_RIGHT_D, 1.4, color));
+            parts.push(createPath(EYE_LEFT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
+            parts.push(createPath(EYE_RIGHT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
 
             const dots = createSvgElement("g");
             dots.setAttribute("class", "pa-pagelet-pet-think-dots");
@@ -184,14 +192,14 @@ function buildInnerNodes(state: PetState, color: string): SVGElement[] {
         case "nudge": {
             const left = createSvgElement("g");
             left.setAttribute("class", "pa-pagelet-pet-blink-group");
-            left.appendChild(createPath(EYE_LEFT_D, 1.4, color));
+            left.appendChild(createPath(EYE_LEFT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
             parts.push(left);
 
             const right = createSvgElement("g");
             right.setAttribute("class", "pa-pagelet-pet-blink-group");
-            right.appendChild(createPath(EYE_RIGHT_D, 1.4, color));
+            right.appendChild(createPath(EYE_RIGHT_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
             parts.push(right);
-            parts.push(createPath(MOUTH_D, 1.4, color));
+            parts.push(createPath(MOUTH_D, DESKTOP_DETAIL_STROKE_WIDTH, color, DETAIL_STROKE_CLASS));
             break;
         }
     }

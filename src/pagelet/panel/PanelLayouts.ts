@@ -309,6 +309,7 @@ const CONNECTION_GRAPH_WIDTH = 360;
 const CONNECTION_GRAPH_HEIGHT = 220;
 const CONNECTION_GRAPH_SVG_NS = "http://www.w3.org/2000/svg";
 const CONNECTION_GRAPH_CLICK_SUPPRESS_MS = 250;
+let connectionGraphTitleSequence = 0;
 
 interface ConnectionGraphNode {
     name: string;
@@ -403,6 +404,7 @@ function renderInteractiveConnectionGraph(
 ): void {
     const doc = getPlatformDocument();
     const { nodes, edges } = buildConnectionGraphModel(nodeNames, connections);
+    const titleIdPrefix = `pa-pagelet-connection-node-title-${++connectionGraphTitleSequence}`;
     const svg = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "svg");
     svg.setAttribute("class", "pa-pagelet-panel-connection-graph");
     svg.setAttribute("viewBox", `0 0 ${CONNECTION_GRAPH_WIDTH} ${CONNECTION_GRAPH_HEIGHT}`);
@@ -460,13 +462,12 @@ function renderInteractiveConnectionGraph(
         group.setAttribute("data-note-path", node.name);
         group.setAttribute("role", "button");
         group.setAttribute("tabindex", "0");
-        group.setAttribute("aria-label", pageletT("pagelet.panel.discovery.openNoteAriaLabel", locale, {
-            note: node.name,
-        }));
 
         const title = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "title");
+        title.setAttribute("id", `${titleIdPrefix}-${index}`);
         title.textContent = node.name;
         group.appendChild(title);
+        group.setAttribute("aria-labelledby", title.getAttribute("id") ?? "");
 
         const hit = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "circle");
         hit.setAttribute("class", "pa-pagelet-panel-connection-node-hit");

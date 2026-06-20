@@ -47,7 +47,7 @@ import {
     setPlatformTimeout,
     type PlatformTimeoutHandle,
 } from "../../platform-dom";
-import { clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
+import { appendIconButtonLabel, clearChildren, createHtmlElement, isObsidianModalOpen } from "../dom-utils";
 import type { SuggestionCardRenderer } from "../ui";
 import type { PageletSuggestion } from "../pa-review-schemas";
 import type { PageletReviewRange } from "../scope";
@@ -115,6 +115,7 @@ const LAYOUT_TITLE_KEYS: Record<PanelLayoutType, string> = {
     discover: "pagelet.panel.layout.discover",
     summary: "pagelet.panel.layout.summary",
 };
+let panelTitleSequence = 0;
 
 // ---------------------------------------------------------------------------
 // PanelView
@@ -732,8 +733,6 @@ export class PanelView {
         root.className = "pa-pagelet-panel";
         root.setAttribute("data-state", "hidden");
         root.setAttribute("role", "complementary");
-        root.setAttribute("aria-label",
-            pageletT("pagelet.panel.ariaLabel", this.getLocale()));
 
         // Header
         const header = createHtmlElement("div");
@@ -741,8 +740,10 @@ export class PanelView {
 
         const title = createHtmlElement("h3");
         title.className = "pa-pagelet-panel-title";
+        title.setAttribute("id", `pa-pagelet-panel-title-${++panelTitleSequence}`);
         title.textContent = pageletT("pagelet.panel.title", this.getLocale());
         this.titleEl = title;
+        root.setAttribute("aria-labelledby", title.getAttribute("id") ?? "");
         header.appendChild(title);
 
         const actions = createHtmlElement("div");
@@ -751,12 +752,10 @@ export class PanelView {
         // Hints toggle button
         const hintsBtn = createHtmlElement("button");
         hintsBtn.className = "pa-pagelet-panel-icon-btn";
-        hintsBtn.setAttribute("title",
-            pageletT("pagelet.panel.hintsToggle.off", this.getLocale()));
-        hintsBtn.setAttribute("aria-label",
-            pageletT("pagelet.panel.hintsToggle.off", this.getLocale()));
+        const hintsOffLabel = pageletT("pagelet.panel.hintsToggle.off", this.getLocale());
+        hintsBtn.setAttribute("title", hintsOffLabel);
         hintsBtn.setAttribute("aria-pressed", "false");
-        hintsBtn.textContent = "\u{1F515}"; // bell with slash
+        const hintsSrLabel = appendIconButtonLabel(hintsBtn, "\u{1F515}", hintsOffLabel);
         hintsBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.options.callbacks.onToggleHints?.();
@@ -768,18 +767,16 @@ export class PanelView {
                 this.getLocale(),
             );
             hintsBtn.setAttribute("title", label);
-            hintsBtn.setAttribute("aria-label", label);
+            hintsSrLabel.textContent = label;
         });
         actions.appendChild(hintsBtn);
 
         // Expand to tab button
         const expandBtn = createHtmlElement("button");
         expandBtn.className = "pa-pagelet-panel-icon-btn pa-pagelet-panel-header-expand-btn";
-        expandBtn.setAttribute("title",
-            pageletT("pagelet.panel.expand", this.getLocale()));
-        expandBtn.setAttribute("aria-label",
-            pageletT("pagelet.panel.expand", this.getLocale()));
-        expandBtn.textContent = "↗"; // ↗
+        const expandLabel = pageletT("pagelet.panel.expand", this.getLocale());
+        expandBtn.setAttribute("title", expandLabel);
+        appendIconButtonLabel(expandBtn, "↗", expandLabel);
         expandBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.options.callbacks.onExpandToTab();
@@ -789,11 +786,9 @@ export class PanelView {
         // Close button
         const closeBtn = createHtmlElement("button");
         closeBtn.className = "pa-pagelet-panel-icon-btn";
-        closeBtn.setAttribute("title",
-            pageletT("pagelet.panel.close", this.getLocale()));
-        closeBtn.setAttribute("aria-label",
-            pageletT("pagelet.panel.close", this.getLocale()));
-        closeBtn.textContent = "×"; // ×
+        const closeLabel = pageletT("pagelet.panel.close", this.getLocale());
+        closeBtn.setAttribute("title", closeLabel);
+        appendIconButtonLabel(closeBtn, "×", closeLabel);
         closeBtn.addEventListener("click", (e) => {
             e.stopPropagation();
             this.close();

@@ -10,7 +10,13 @@
 
 import type { PetCallbacks, PetCorner, PetRenderer, PetRendererOptions, PetState, PetTaskKind } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
-import { clearPlatformTimeout, getPlatformDocument, setPlatformTimeout, type PlatformTimeoutHandle } from "../../platform-dom";
+import {
+    clearPlatformTimeout,
+    getOptionalPlatformWindow,
+    getPlatformDocument,
+    setPlatformTimeout,
+    type PlatformTimeoutHandle,
+} from "../../platform-dom";
 import { createHtmlElement } from "../dom-utils";
 import { createPetSvgElement, updatePetSvgState } from "./PetSvg";
 import { PetStateMachine } from "./PetStateMachine";
@@ -21,6 +27,13 @@ export function getPetAriaLabel(locale: PageletLocale, state?: PetState, taskKin
         return `${base}: ${pageletT(`pagelet.pet.task.${taskKind}`, locale)}`;
     }
     return state ? `${base}: ${pageletT(`pagelet.pet.${state}`, locale)}` : base;
+}
+
+function shouldMountPetInMobileChromeLayer(): boolean {
+    const doc = getPlatformDocument();
+    const win = getOptionalPlatformWindow();
+    const viewportWidth = win?.innerWidth ?? doc.documentElement.clientWidth;
+    return doc.body.classList.contains("is-mobile") && viewportWidth <= 600;
 }
 
 export class PetView implements PetRenderer {
@@ -89,7 +102,8 @@ export class PetView implements PetRenderer {
         if (this._destroyed) return;
         if (this._rootEl) return; // already mounted
 
-        this._containerEl = containerEl;
+        const mountEl = shouldMountPetInMobileChromeLayer() ? getPlatformDocument().body : containerEl;
+        this._containerEl = mountEl;
 
         // Build DOM structure
         const root = createHtmlElement("div");
@@ -123,7 +137,7 @@ export class PetView implements PetRenderer {
         root.addEventListener("keydown", this._handleKeydown);
         root.addEventListener("touchend", this._handleTouchend, { passive: false });
 
-        containerEl.appendChild(root);
+        mountEl.appendChild(root);
 
         this._rootEl = root;
         this._svgWrapEl = svgWrap;

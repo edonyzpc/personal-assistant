@@ -298,6 +298,12 @@ describe("Pagelet panel and tab view regressions", () => {
         tab.mount(container as unknown as HTMLElement);
         tab.open("Pagelet — Detail View", []);
 
+        const root = container.querySelector(".pa-pagelet-tab");
+        const label = root?.querySelector(".pa-sr-only");
+
+        expect(root?.getAttribute("aria-label")).toBeNull();
+        expect(root?.getAttribute("aria-labelledby")).toBe(label?.getAttribute("id"));
+        expect(label?.textContent).toBe("Pagelet — Detail View");
         expect(container.textContent).toContain("No findings yet");
         expect(container.textContent).toContain("Detail results are temporary");
     });
@@ -648,6 +654,55 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).not.toContain("Reviewing current note...");
     });
 
+    it("keeps panel header icon tooltips on title while sr-only text provides names", async () => {
+        const toggleHints = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onToggleHints: toggleHints,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("review", []);
+
+        const root = container.querySelector(".pa-pagelet-panel");
+        const title = container.querySelector(".pa-pagelet-panel-title");
+        const buttons = container.querySelectorAll(".pa-pagelet-panel-icon-btn");
+
+        expect(root?.getAttribute("aria-label")).toBeNull();
+        expect(root?.getAttribute("aria-labelledby")).toBe(title?.getAttribute("id"));
+        expect(buttons).toHaveLength(3);
+        expect(buttons.map((button) => button.getAttribute("title"))).toEqual([
+            "Hints: Off",
+            "Expand to tab",
+            "Close",
+        ]);
+        expect(buttons.map((button) => button.getAttribute("aria-label"))).toEqual([
+            null,
+            null,
+            null,
+        ]);
+        expect(buttons.map((button) => button.querySelector(".pa-sr-only")?.textContent)).toEqual([
+            "Hints: Off",
+            "Expand to tab",
+            "Close",
+        ]);
+
+        await buttons[0]?.click();
+
+        expect(toggleHints).toHaveBeenCalledTimes(1);
+        expect(buttons[0]?.getAttribute("title")).toBe("Hints: On");
+        expect(buttons[0]?.querySelector(".pa-sr-only")?.textContent).toBe("Hints: On");
+    });
+
     it("wires review scope controls to Review selected and candidate callbacks", async () => {
         const runSelected = jest.fn(async () => undefined);
         const rangeChange = jest.fn();
@@ -866,7 +921,10 @@ describe("Pagelet panel and tab view regressions", () => {
             "PA-Memory/vault-insights.md",
         ]);
         expect(nodes[0]?.getAttribute("role")).toBe("button");
-        expect(nodes[0]?.getAttribute("aria-label")).toBe("Open note 2.fleeting/Test-2023-04-08.md");
+        expect(nodes[0]?.getAttribute("aria-label")).toBeNull();
+        const firstNodeTitle = nodes[0]?.querySelector("title");
+        expect(firstNodeTitle?.textContent).toBe("2.fleeting/Test-2023-04-08.md");
+        expect(nodes[0]?.getAttribute("aria-labelledby")).toBe(firstNodeTitle?.getAttribute("id"));
         expect(edges.map((edge) => edge.getAttribute("data-strength"))).toEqual(["medium", "strong"]);
         expect(container.textContent).toContain("Test-2023-04-08");
         expect(container.textContent).toContain("Diary-2023-04-03");
