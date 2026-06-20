@@ -1,0 +1,190 @@
+---
+name: personal-assistant-review
+description: Review uncommitted or PR diffs in the personal-assistant Obsidian plugin with project-specific risk lanes, severity discipline, subagent review routing, and validation boundaries. Use when the user asks for code review, agent team review, multi-angle review, review-first analysis, release-readiness review, or comparison of review quality in this repository.
+---
+
+# Personal Assistant Review
+
+Use this skill for review-only or review-first work in
+`/Users/edonyzpc/code/personal-assistant`.
+
+Default to high-signal review. Find correctness, product-contract, state,
+privacy, concurrency, docs/tests consistency, and release-blocking risks before
+polish. Do not invent findings to satisfy a role or lane.
+
+## Start
+
+1. Treat the task as review-only unless the user explicitly asks to fix.
+2. Bound the current surface:
+   - `git status --short --branch`
+   - `git diff --stat`
+   - `git diff --name-only`
+3. Read targeted diffs and nearby code before judging.
+4. Lead the final answer with findings ordered by severity.
+5. State validation run and validation not run.
+
+## Mode Selection
+
+Use **gate mode** by default. This matches prompts such as:
+
+```text
+启动agent team对代码修改进行review
+review current diff
+release-readiness review
+```
+
+Gate mode optimizes for accurate P0/P1/P2 findings and direct fixability.
+
+Use **exploration mode** when the user explicitly asks for many perspectives,
+for example:
+
+```text
+从程序员、架构师、产品经理、UI/UX、性能、desktop&mobile多端支持等角度评审
+多角度体检
+全面扫描产品、架构、UI 和性能
+```
+
+Exploration mode may include P3 design debt and polish, but still must not
+force a finding per role.
+
+Use **hybrid mode** for broad diffs when unsure: run gate mode first, then add
+optional exploration findings under a separate `Optional Polish` section.
+
+## Subagent Lanes
+
+If multi-agent tools are available and the user asks for agent team,
+subagents, or broad review, split review into independent lanes. If subagents
+are unavailable, perform the same lanes locally.
+
+### Gate Mode Lanes
+
+1. **Functional state and concurrency**
+   - Inspect Pagelet orchestration, foreground run guards, stale result
+     handling, save state, panel/tab routing, command aliases, and tests.
+   - Focus files: `src/pagelet/orchestrator.ts`,
+     `src/pagelet/AnalysisSessionManager.ts`, `src/pagelet/ReviewNoteSaveFlow.ts`,
+     `src/pagelet/BubbleCoordinator.ts`, `src/pagelet/commands.ts`,
+     `src/pagelet/panel/PanelView.ts`, `src/pagelet/tab/*`,
+     touched Pagelet tests.
+
+2. **Spec, docs, tests, i18n, product contract**
+   - Compare runtime behavior against changed docs and SDD/plans.
+   - Inspect docs that changed plus relevant contract docs, especially
+     Pagelet async-result, write-action, release, Memory/VSS, and tracker docs.
+   - Check whether tests encode a behavior that contradicts a product/privacy
+     non-goal.
+
+3. **Obsidian/community compatibility and lifecycle**
+   - Scan for runtime DOM injection blockers:
+     `createElement('style')`, `innerHTML =`, `outerHTML =`.
+   - Inspect timers, listeners, observers, root unmount, CSS scope, public
+     exports, packaging/deploy impact, and compatibility-sensitive APIs.
+
+4. **UI/UX/accessibility/mobile**
+   - Inspect focus management, keyboard behavior, ARIA, mobile overflow,
+     touch gestures, text clipping, theme variables, and ordinary-user copy.
+   - Keep UI findings concrete: include the visible symptom or user flow.
+
+### Exploration Mode Lanes
+
+Use the gate lanes, then add perspectives only where relevant:
+
+- programmer/correctness
+- architect/module boundaries
+- product manager/workflow and value
+- UI/UX/accessibility
+- performance/rendering
+- desktop/mobile support
+
+Do not let these labels create coverage pressure. If a lane has no actionable
+issue, say so.
+
+## Project Risk Checklist
+
+Use this checklist to guide search, not to manufacture findings.
+
+Pagelet:
+
+- `sourcePath` vs `primarySourcePath` vs `saveFlow.pending.targetPath`
+- `currentPanelLayout` and discovery/summary/review routing
+- `PanelView.close()` / `onClose` clearing state unexpectedly
+- stale foreground review results and pet/panel state transitions
+- `beginForegroundReviewRun()` consistency across review, discovery, summary,
+  and other provider-backed foreground work
+- pending generated markdown or provider output persisted in Obsidian view
+  state, workspace state, settings, or vault files without explicit approval
+- `resolveRelatedMarkdownNote` / `getFirstLinkpathDest` source-path context
+- bubble quick actions that start AI/provider work before clear data/cost/scope
+  disclosure
+- keyboard focus restoration from bubble, panel, and native detail tab
+- SVG graph keyboard/touch behavior and label clipping
+- legacy command aliases and command labels
+
+Memory/VSS:
+
+- durable vs fallback behavior
+- VSS operation queue / exclusive lock for mutating operations
+- dirty state, background reconcile, retry/backoff, and chat non-blocking paths
+- user-facing copy should say Memory, not VSS/RAG/SQLite/OPFS/vector
+
+Community/release:
+
+- no runtime `<style>` injection
+- no `innerHTML` / `outerHTML` assignment in plugin DOM code
+- generated `styles.css` matches Tailwind source for CSS changes
+- release docs and links point to existing files or clearly future assets
+- package/deploy paths include any new runtime assets
+
+## Severity Rules
+
+Use severity to reflect user impact and release risk.
+
+- **P0**: data loss, source-note corruption, security/privacy breach, plugin
+  unusable on common path.
+- **P1**: release-blocking correctness or product-contract violation, especially
+  privacy/data persistence, explicit SDD non-goal violation, broken write guard,
+  or community review `Error`.
+- **P2**: must-fix before merge/release for likely user-visible failure,
+  state/concurrency bug, wrong file write/open, broken docs link in release
+  material, serious accessibility/focus problem.
+- **P3**: optional polish, maintainability debt, visual refinement, performance
+  concern without clear user-visible failure.
+
+If a finding depends on a design decision rather than a definite bug, label it
+as `needs decision` or `optional polish`.
+
+## Validation
+
+Run the smallest useful checks for the changed surface. For broad Pagelet or
+shared-runtime diffs, prefer:
+
+```bash
+npm test -- --runInBand <focused Pagelet/VSS/Memory suites>
+npx tsc -noEmit -skipLibCheck
+npm run lint
+git diff --check
+rg -n "createElement\\([\"']style[\"']\\)|\\.innerHTML\\s*=|\\.outerHTML\\s*=" src
+```
+
+For UI/runtime changes, do not claim Obsidian behavior was validated unless
+`make deploy` and real test-vault smoke actually ran. If not run, state it.
+
+## Final Output
+
+Use this structure:
+
+```markdown
+**Findings**
+- P1/P2/P3 [file](/absolute/path:line): concise issue.
+  Impact/trigger. Suggested fix.
+
+**Validation**
+- checks run
+- checks not run / residual risk
+
+**Notes**
+- optional polish or needs-decision items, only when useful
+```
+
+Keep summaries secondary. If there are no actionable findings, say that clearly
+and list remaining validation gaps.
