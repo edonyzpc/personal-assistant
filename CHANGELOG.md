@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.7.2](https://github.com/edonyzpc/personal-assistant/compare/2.7.1...2.7.2) (2026-06-20)
+
+### Fix
+- pagelet: improve mobile pet panel and bubble accessibility
+- chat: recheck status bar clearance after initial layout
+
+### Docs
+- skills: add obsidian iOS real-device smoke workflow
+
 ## [2.7.1](https://github.com/edonyzpc/personal-assistant/compare/2.7.0...2.7.1) (2026-06-20)
 
 ### Fix
