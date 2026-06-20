@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.7.3](https://github.com/edonyzpc/personal-assistant/compare/2.7.2...2.7.3) (2026-06-20)
+
+### Fix
+- address warning scan issues and update related tests
+
 ## [2.7.2](https://github.com/edonyzpc/personal-assistant/compare/2.7.1...2.7.2) (2026-06-20)
 
 ### Fix
