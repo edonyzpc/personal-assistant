@@ -206,6 +206,20 @@ const PREVIEW_LIMITS_MAX = 100;
 const LOCAL_GRAPH_DEPTH_MAX = 6;
 const LOCAL_GRAPH_DIMENSION_MAX = 2000;
 const FEATURED_IMAGE_COUNT_MAX = 4;
+const PA_LEGAL_REPO_URL = "https://github.com/edonyzpc/personal-assistant";
+
+export function buildPaLegalLinks(releaseTag: string) {
+    const tag = releaseTag.trim() || "master";
+    return Object.freeze({
+        source: `${PA_LEGAL_REPO_URL}/tree/${tag}`,
+        sourceArchive: `${PA_LEGAL_REPO_URL}/archive/refs/tags/${tag}.zip`,
+        license: `${PA_LEGAL_REPO_URL}/blob/${tag}/LICENSE`,
+        notice: `${PA_LEGAL_REPO_URL}/blob/${tag}/NOTICE`,
+        thirdPartyNotices: `${PA_LEGAL_REPO_URL}/blob/${tag}/THIRD_PARTY_NOTICES.md`,
+        networkPrivacyEn: `${PA_LEGAL_REPO_URL}/blob/${tag}/README.md#network-and-privacy-note`,
+        networkPrivacyZh: `${PA_LEGAL_REPO_URL}/blob/${tag}/README-CN.md#网络与隐私说明`,
+    });
+}
 
 function formatGraphColorHex(rgb: number): string {
     const normalized = Number.isFinite(rgb) ? rgb : DEFAULT_GRAPH_COLOR.color.rgb;
@@ -534,6 +548,7 @@ export class SettingTab extends PluginSettingTab {
         this.renderMetadataSection(containerEl);
         this.renderFeaturedImageSection(containerEl);
         this.renderAdvancedSection(containerEl);
+        this.renderLegalSection(containerEl);
         this.markFormControlSettings(containerEl);
         this.startSecretPickerObserver();
     }
@@ -1716,6 +1731,76 @@ export class SettingTab extends PluginSettingTab {
                     .onChange(async (value) => {
                         plugin.settings.shareAnonymousCapabilityUsage = value;
                         await plugin.saveSettings();
+                    });
+            });
+    }
+
+    private renderLegalSection(parentEl: HTMLElement): void {
+        const releaseTag = this.plugin.manifest.version;
+        const legalLinks = buildPaLegalLinks(releaseTag);
+        parentEl.createEl('h2', { text: this.t("plugin.settings.legal.title") });
+        parentEl.createEl("p", {
+            text: this.t("plugin.settings.legal.desc", { version: releaseTag }),
+            cls: "pa-settings-section-desc",
+        });
+
+        const locale = getPluginUiLanguage();
+        const networkPrivacyUrl = locale === "zh"
+            ? legalLinks.networkPrivacyZh
+            : legalLinks.networkPrivacyEn;
+
+        this.addLegalLink(
+            parentEl,
+            "plugin.settings.legal.source.name",
+            "plugin.settings.legal.source.desc",
+            legalLinks.source,
+        );
+        this.addLegalLink(
+            parentEl,
+            "plugin.settings.legal.sourceArchive.name",
+            "plugin.settings.legal.sourceArchive.desc",
+            legalLinks.sourceArchive,
+        );
+        this.addLegalLink(
+            parentEl,
+            "plugin.settings.legal.license.name",
+            "plugin.settings.legal.license.desc",
+            legalLinks.license,
+        );
+        this.addLegalLink(
+            parentEl,
+            "plugin.settings.legal.notice.name",
+            "plugin.settings.legal.notice.desc",
+            legalLinks.notice,
+        );
+        this.addLegalLink(
+            parentEl,
+            "plugin.settings.legal.thirdPartyNotices.name",
+            "plugin.settings.legal.thirdPartyNotices.desc",
+            legalLinks.thirdPartyNotices,
+        );
+        this.addLegalLink(
+            parentEl,
+            "plugin.settings.legal.networkPrivacy.name",
+            "plugin.settings.legal.networkPrivacy.desc",
+            networkPrivacyUrl,
+        );
+    }
+
+    private addLegalLink(
+        parentEl: HTMLElement,
+        nameKey: PluginMessageKey,
+        descKey: PluginMessageKey,
+        url: string,
+    ): void {
+        new Setting(parentEl)
+            .setName(this.t(nameKey))
+            .setDesc(this.t(descKey))
+            .addButton((button) => {
+                button
+                    .setButtonText(this.t("plugin.settings.legal.open"))
+                    .onClick(() => {
+                        window.open(url, "_blank", "noopener,noreferrer");
                     });
             });
     }

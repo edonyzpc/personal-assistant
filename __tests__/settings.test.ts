@@ -308,6 +308,7 @@ import {
     PROVIDER_PRESETS,
     STATISTICS_SYNC_SETTING_DESC,
     SettingTab,
+    buildPaLegalLinks,
     deriveDisplayPreset,
     isFreshInstall,
     isLegacyV1Install,
@@ -501,6 +502,9 @@ function makeMockApp() {
 
 function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
     return {
+        manifest: {
+            version: '2.8.0',
+        },
         settings: {
             ...DEFAULT_SETTINGS,
             localGraph: {
@@ -1228,6 +1232,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             // No heading between Metadata and Advanced — that gap is the
             // Featured Image section, asserted via Setting records below.
             'h2:Advanced',
+            'h2:Legal / About',
         ]);
 
         // Featured Image lives between Metadata Management and Advanced. With
@@ -1248,6 +1253,76 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const featuredSetting = getMockSettingRecords()[featuredIdx];
         expect(featuredSetting.desc).toContain('AI featured image helper');
         expect(featuredSetting.texts[0].placeholder).toBe('attachments/ai-images');
+    });
+
+    it('renders Legal links from the plugin version without terms placeholders', () => {
+        const globalWithWindow = globalThis as unknown as {
+            window?: Pick<Window, 'open'>;
+        };
+        const originalWindow = globalWithWindow.window;
+        const openMock = jest.fn((
+            _url?: string | URL,
+            _target?: string,
+            _features?: string,
+        ): Window | null => null);
+        Object.defineProperty(globalThis, 'window', {
+            configurable: true,
+            writable: true,
+            value: { open: openMock },
+        });
+        const plugin = makePlugin();
+        plugin.manifest.version = '9.9.9-test.1';
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        try {
+            tab.display();
+
+            const legalLinks = buildPaLegalLinks(plugin.manifest.version);
+            for (const url of Object.values(legalLinks)) {
+                expect(url).toContain('9.9.9-test.1');
+                expect(url).not.toContain('2.8.0');
+            }
+
+            const records = getMockSettingRecords();
+            const names = records.map((record) => record.name);
+            expect(names).toEqual(expect.arrayContaining([
+                'Source code',
+                'Source archive',
+                'License',
+                'Notices',
+                'Third-party notices',
+                'Network and privacy disclosure',
+            ]));
+            expect(names).not.toContain('Terms');
+            expect(names).not.toContain('Privacy Policy');
+
+            const expectedLinks = new Map([
+                ['Source code', legalLinks.source],
+                ['Source archive', legalLinks.sourceArchive],
+                ['License', legalLinks.license],
+                ['Notices', legalLinks.notice],
+                ['Third-party notices', legalLinks.thirdPartyNotices],
+                ['Network and privacy disclosure', legalLinks.networkPrivacyEn],
+            ]);
+
+            for (const [name, expectedUrl] of expectedLinks) {
+                const button = records.find((record) => record.name === name)?.buttons[0];
+                expect(button?.text).toBe('Open');
+                button?.onClick?.();
+                expect(openMock).toHaveBeenLastCalledWith(expectedUrl, '_blank', 'noopener,noreferrer');
+            }
+            expect(openMock).toHaveBeenCalledTimes(expectedLinks.size);
+        } finally {
+            if (originalWindow) {
+                Object.defineProperty(globalThis, 'window', {
+                    configurable: true,
+                    writable: true,
+                    value: originalWindow,
+                });
+            } else {
+                Reflect.deleteProperty(globalWithWindow, 'window');
+            }
+        }
     });
 
     it('hides Featured Image settings when Qwen uses a non-DashScope custom endpoint', () => {
