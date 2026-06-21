@@ -57,7 +57,7 @@ The memorable UI line:
 
 ## Differentiation
 
-Pagelet differentiates against same-category AI plugins (Smart Connections, Copilot for Obsidian, Text Generator, Notion AI) through three axes (D006):
+Pagelet differentiates against same-category AI plugins and writing assistants through three axes (D006):
 
 | Axis | Statement |
 | --- | --- |
@@ -1000,8 +1000,8 @@ Pagelet is engineered to coexist with mainstream Obsidian plugins. Full risk mat
 
 | Plugin | Coexistence note |
 | --- | --- |
-| Copilot for Obsidian | `.pagelet/` vs `.copilot/` are distinct; no overlap |
-| Smart Connections | Pagelet's mascot color uses neutral gray to avoid SC's purple |
+| External AI assistant plugins | `.pagelet/` is distinct from third-party plugin folders; no overlap |
+| Other AI assistant plugins | Pagelet's mascot color uses neutral gray to avoid visual overlap |
 | Templater | Pagelet review files include `pagelet: true` frontmatter so Templater rules can skip them |
 | Linter | Pagelet writes via `vault.adapter.write` (bypass `modify`); README recommends Linter exclude `.pagelet/` |
 | Dataview | Pagelet's `file-open` listener uses 300ms debounce |

@@ -24,7 +24,7 @@ Current docs live one level up in [docs/index.md](../index.md). If an archived d
 - `v2-comprehensive-code-review.md`
 - `community-scan-remediation-plan.md`
 - `mobile-network-optimization-plan.md`
-- `obsidian-copilot-comparison.md`
+- `external-ai-assistant-research-redacted.md`
 - `review-assistant-design-review.md`
 - `chat-timeline-identicon-tech-selection.md`
 

@@ -220,8 +220,8 @@ describe("resolveReviewsFolderPath", () => {
 
 describe("resolveReviewNotePath", () => {
     it("produces the SDD §5.1 layout for the default folder", () => {
-        // The exact byte-pattern is the contract Templater / Smart Connections
-        // ignore-rules will likely match against. Document it via assertion.
+        // The exact byte-pattern is the contract external ignore-rules will
+        // likely match against. Document it via assertion.
         const path = resolveReviewNotePath({
             sourcePath: "notes/thoughts.md",
             settings: defaultSettings(),
@@ -376,8 +376,8 @@ describe("serializeFrontmatter", () => {
     });
 
     it("emits pagelet: true as a bare boolean", () => {
-        // Smart Connections / Copilot etc. detect via `pagelet: true`. If
-        // we ever quoted it the consumer regex would skip our notes.
+        // External consumers detect via `pagelet: true`. If we ever quoted it
+        // the consumer regex would skip our notes.
         const out = serializeFrontmatter(envelopeFor());
         expect(out).toContain("pagelet: true");
     });

@@ -719,8 +719,8 @@ interface PageletSettings {
 
 | Plugin | Coexistence rule |
 | --- | --- |
-| Copilot for Obsidian | `.pagelet/` vs `.copilot/` are distinct |
-| Smart Connections | Pet uses neutral gray (not purple) |
+| External AI assistant plugins | `.pagelet/` is distinct from third-party plugin folders |
+| Other AI assistant plugins | Pet uses neutral gray to avoid visual overlap |
 | Templater | Review files have `pagelet: true` frontmatter so Templater can skip |
 | Linter | Pagelet writes via `vault.adapter.write` (bypass `modify`); recommend Linter exclude `.pagelet/` |
 | Dataview | `file-open` listener uses 300ms debounce |

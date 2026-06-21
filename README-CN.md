@@ -103,6 +103,14 @@ Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statist
 
 本地 VSS SQLite 后端使用官方 `@sqlite.org/sqlite-wasm` 包，固定版本为 `3.53.0-build1`。发布包含该后端的版本前，需要复核上游包的许可证和发布条款是否符合分发场景。
 
+### License 与商业化边界
+
+从 `2.8.0` 开始，Personal Assistant 客户端源码使用 `AGPL-3.0-only`。历史版本不会被追溯重新授权；旧 tag 和旧发布包继续保留当时发布时的 license notices 与 metadata。查看当前版本的源码和法律信息时，请以对应 GitHub tag、source archive、`LICENSE`、`NOTICE` 和 `THIRD_PARTY_NOTICES.md` 为准。
+
+`2.8.0` 是 license 与合规迁移版本，不引入账号系统、license key、checkout 流程、功能锁、托管商业服务或付费 entitlement 校验。未来托管服务、支持、质保、隐私或商标条款可以单独制定，但不得限制 AGPL 赋予用户对客户端进行使用、修改和再分发的权利。
+
+`Personal Assistant` 名称、`personal-assistant` 插件 ID、图标、logo 和市场身份不随 AGPL 客户端许可证授权给 fork 使用。详见 [TRADEMARKS.md](./TRADEMARKS.md)、[NOTICE](./NOTICE) 和 [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)。
+
 ### Mobile VSS 验证说明
 
 本地 VSS SQLite/WASM 后端已经在 Obsidian Desktop 和 Obsidian iOS 的测试 vault 上完成 smoke test，覆盖重建、刷新、重载后持久化、聊天和 Memory references 展示。由于当前没有 Android 实机测试设备，Android 尚未完成完整实机验证，因此 Android VSS 支持应视为待验证状态。

@@ -130,6 +130,14 @@ Personal Assistant does not include telemetry or analytics. By default, Statisti
 
 The local VSS SQLite backend uses the official `@sqlite.org/sqlite-wasm` package pinned to `3.53.0-build1`. Before publishing a release with this backend, review the upstream package license and release terms for your distribution scenario.
 
+### License and commercial boundary
+
+Starting with version `2.8.0`, the Personal Assistant client source is licensed under `AGPL-3.0-only`. Historical releases are not relicensed retroactively; previous tags and artifacts retain the license notices and metadata published with those releases. For the current release, use the exact GitHub tag, source archive, `LICENSE`, `NOTICE`, and `THIRD_PARTY_NOTICES.md` files as the source and legal reference.
+
+Version `2.8.0` is a license and compliance migration release. It does not introduce an account system, license key, checkout flow, feature lock, hosted commercial service, or paid entitlement check. Future hosted services, support, warranty, privacy, or trademark terms may be separate, but they must not restrict AGPL rights to use, modify, and redistribute the client.
+
+The `Personal Assistant` name, `personal-assistant` plugin ID, icons, logos, and marketplace identity are not licensed to forks by the AGPL client license. See [TRADEMARKS.md](./TRADEMARKS.md), [NOTICE](./NOTICE), and [THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md).
+
 ### Mobile VSS validation note
 
 The local VSS SQLite/WASM backend has been smoke-tested on Obsidian Desktop and Obsidian iOS with the test vault, including rebuild, refresh, reload persistence, chat, and Memory references. Android has not been fully validated on a physical device yet because no Android test device is currently available, so Android VSS support should be treated as pending verification.

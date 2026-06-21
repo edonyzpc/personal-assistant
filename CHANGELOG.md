@@ -350,7 +350,7 @@ All notable changes to this project will be documented in this file. See [standa
 - chat: stabilize Mermaid previews
 
 ### Docs
-- obsidian: add copilot comparison notes
+- obsidian: add external AI assistant comparison notes
 - obsidian: add operations agent spec
 - obsidian: record operations spec closeout
 

@@ -61,7 +61,7 @@
   - D 像素艺术（8-bit 风）
 - **拍板理由**：
   - Obsidian 生态信号一致——高 DAU 插件几乎无角色化 mascot
-  - AI 工具型产品行业共识是非角色化（Cursor / Copilot / Notion AI / Claude / ChatGPT 均无）
+  - AI 工具型产品行业共识是非角色化（主流编辑器助手、知识管理助手和聊天助手通常不使用角色化头像）
   - AI 出错时角色化会放大反差挫败感（uncanny valley of competence）
   - 独立开发者维护成本结构 A 更优（乐高式延展）
   - 可逆性 A→B 友好，B→A 困难
@@ -100,7 +100,7 @@
   - **A · Review-first**：别人是写作时帮你写，Pagelet 是写完后帮你审视（主 slogan）
   - **B · 非侵入式建议**：所有建议是 card 形式可拒绝，不动笔记
   - **D · 基于 vault 上下文**：建议会引用过去笔记/标签/链接
-- **上下文**：避免被用户对标 Smart Connections / Copilot for Obsidian
+- **上下文**：避免被用户对标为普通 vault QA 类 AI 插件
 - **替代方案**：C 低噪音定位 / E 隐私优先定位
 - **拍板理由**：
   - A 在赛道里没人做（差异化最强）
@@ -113,7 +113,7 @@
   - ZH: `拾页 — 笔记写完后的安静审视者`
 - **当前落地触点**：manifest description / settings 顶部 callout / README 第一段
 - **Future**：首次启动 inline tip 可在后续补充，但不属于当前 beta 实现。
-- **不做**：README 中**不直接点名**对比 Smart Connections / Copilot
+- **不做**：README 中**不直接点名**对比外部商业产品
 
 ---
 
@@ -195,7 +195,7 @@
   - **④ 首次激活 inline tip**：未实现，保留为 future。
 - **被推翻方案**：正式 onboarding 流程（违反 Obsidian 插件惯例，过度教育用户）
 - **拍板理由**：
-  - Obsidian 主流插件几乎无 onboarding（Dataview / Templater / Smart Connections 全无）
+  - Obsidian 主流插件几乎无 onboarding（包括数据视图、模板和 AI 辅助类插件）
   - Obsidian 用户是自筛选高级用户，被引导页拦住会反感
   - Inline tip 在使用瞬间出现，比 onboarding 轻 10 倍
 - **替代承载**：Community plugins 描述 + README callout + Settings callout；first-use inline tip 是 future。
@@ -510,7 +510,7 @@
 
 - **状态**：Open
 - **日期**：2026-06-01
-- **背景**：F29 报告关注了静态冲突，但 Smart Connections / Copilot 同时运行的资源/事件叠加影响未量化
+- **背景**：F29 报告关注了静态冲突，但与同类 AI 插件同时运行的资源/事件叠加影响未量化
 - **待办**：Beta 发布后收集 issue 反馈，必要时做实测
 
 ---

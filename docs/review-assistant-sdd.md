@@ -368,7 +368,7 @@ pagelet_cost_usd: 0.003
 ---
 ```
 
-`pagelet: true` 让其他插件可识别忽略（Smart Connections / Copilot 等）。
+`pagelet: true` 让其他插件可识别忽略（例如同类 AI 插件）。
 
 ### 5.4 自定义路径（D010）
 
@@ -758,7 +758,7 @@ Pagelet
 - [ ] Canvas / Excalidraw / Kanban 视图打开时 mascot **不** 挂载（R1）
 - [ ] 快速切换文件 5 次（< 1.5s）只触发 1 次 review prefetch（R2）
 - [ ] 写入 `.pagelet/*.md` 不触发 Templater / Linter（R3）
-- [ ] 与 Smart Connections + Copilot 共存装载，无 hotkey/ribbon 冲突
+- [ ] 与同类 AI 插件共存装载，无 hotkey/ribbon 冲突
 - [ ] `prefers-reduced-motion` 开启时 mascot 不抖动但仍变色
 - [ ] 中文笔记 → 中文建议；英文笔记 → 英文建议；混合笔记 → 走 settings 兜底
 - [ ] 每小时 11 次连续调用 → 第 11 次弹"强制再来一次"

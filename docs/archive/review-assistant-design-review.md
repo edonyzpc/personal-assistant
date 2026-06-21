@@ -48,7 +48,7 @@
 | F29 | 兼容性 | 🟠 | Pet 浮层与 Hover Editor / Periodic Notes / Tasks / Popout / Mobile 的冲突未评估 | L322-L327, L278 |
 | F30 | UX/视觉 | 🟡 | Mascot 视觉方向只有排除式描述，无正向 reference，设计师会跑偏 | L232-L252 |
 | F31 | UX/a11y | 🟡 | 仅 mascot 提了 reduced-motion，collection / panel 展开未提；键盘 map 缺失 | L266, L411 |
-| F32 | 产品/差异化 | 🟡 | 与 Obsidian Copilot 等 vault-QA 类竞品的差异化未点名 | 全篇 |
+| F32 | 产品/差异化 | 🟡 | 与 vault-QA 类竞品的差异化未点名 | 全篇 |
 | F33 | 产品/命名 | 🟡 | "Review Assistant" 太通用，搜索易被淹没 | L120-L135 |
 | F34 | 产品/Decision Record | 🟡 | 有冗余条目（#1/#6/#11；#16/#50）和关键缺失（配额耗尽、provider 不可用、空 vault） | L1053-L1108 |
 
@@ -292,7 +292,7 @@ L450 假定能识别 daily/periodic note，但跨插件高度分裂。**建议 V
 
 - **F30 Mascot 视觉 reference**：钉 2-3 个具体参考（Things 3 logo 感 / Linear 克制感 / 具体 dribbble shot）+ size/帧数/色彩 spec
 - **F31 a11y 与键盘**：补充 keyboard map（`A` add / `I` ignore / `E` expand / `/` focus custom input / `Cmd+Enter` 创建 / `Esc` 收起）；reduced-motion 覆盖到 collection 动画和 panel 展开
-- **F32 与 Copilot 的差异化**：补 2-3 行「Why this is not vault QA」对照（胜点：结构化输出 + 证据强制 + 受控写入 + 清单式草稿）
+- **F32 与 vault-QA 类产品的差异化**：补 2-3 行「Why this is not vault QA」对照（胜点：结构化输出 + 证据强制 + 受控写入 + 清单式草稿）
 - **F33 命名**：考虑 `Pagelet — note review companion for Obsidian` 作为出海命名，对 C 端更易记易搜（与 F1 方案 B 配合）
 - **F34 Decision Record 去冗**：合并 #1/#6/#11；合并 #16/#50；补充缺失决策（配额耗尽中段行为、provider 不可用时纯收集模式、空 vault/range、reduced-motion 之外的 a11y）
 

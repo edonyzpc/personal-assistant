@@ -71,7 +71,7 @@ PA Agent v1 fully owns the default ChatService path; no rollback flag remains.
 | Policy strictness | Practical safety, not hostile UX | Builtin web search should feel usable by default while protecting endpoints, keys, budgets, and source boundaries. |
 | v1 telemetry | opt-in usage events through `CapabilityRegistry` | settings 默认关闭、不上传内容；事件覆盖 capability invoked / failed / skipped；为后续 Operations Agent 决策提供数据。 |
 | Operations Agent 时间表 | v1 ship 后立刻启动 | v1 期间不做 write action 设计，但 ship 同周开始 `docs/operations-agent-plan.md`。 |
-| Skill 内容方向 | Obsidian 运维向 + 减负向 | v1 ship 7 个 skill：3 个从 kepano/obsidian-skills 改写（read-only 措辞）+ 4 个 PA 独有运维向；不做与 Copilot Custom Commands 重叠的通用写作 skill。 |
+| Skill 内容方向 | Obsidian 运维向 + 减负向 | v1 ship 7 个 skill：3 个参考 kepano/obsidian-skills 的 Obsidian 主题范围、但按 PA read-only runtime 独立编写 + 4 个 PA 独有运维向；不做与同类 AI 插件通用写作命令重叠的 skill。 |
 | Skill 格式 | 采用 agentskills.io 规范 | SKILL.md (YAML frontmatter + Markdown body) + `references/` 子目录；与 Claude Code / Codex CLI 兼容；可直接消费 kepano 仓库 skill。 |
 | Source UI 呈现 | 引用列表 + 折叠详情 | 3 个 source bucket 在数据层保留；UI 主区只展示 Citations (Memory refs + Web sources)，Context Used 默认折叠到二级面板。 |
 | PA Agent runtime 拆分 | 内改 + feature flag | 先在 `ChatAgentRuntime` 内加 feature flag 路径；先抽 `PromptBuilder` / `AgentEventEmitter` / `TurnExecutionDeadline` 为独立类（行为不变）；SPEC-03 落地后再 rename 为 `PaAgentRuntime`。 |

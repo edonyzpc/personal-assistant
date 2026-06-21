@@ -1,0 +1,65 @@
+Personal Assistant
+Copyright (C) 2023-2026 edonyzpc and contributors.
+
+Official source:
+https://github.com/edonyzpc/personal-assistant
+
+License
+-------
+
+Starting with version 2.8.0, the Personal Assistant client source is
+licensed under AGPL-3.0-only. See LICENSE for the full GNU Affero General
+Public License version 3 text.
+
+This notice is prospective. Historical releases, tags, and distributed
+artifacts are not relicensed retroactively by the 2.8.0 migration. Previous
+releases retain the license notices and metadata published with those
+releases.
+
+Source Availability
+-------------------
+
+For version 2.8.0, the exact corresponding source is available from the
+release tag:
+
+https://github.com/edonyzpc/personal-assistant/tree/2.8.0
+
+Source archives for the same tag are available at:
+
+https://github.com/edonyzpc/personal-assistant/archive/refs/tags/2.8.0.zip
+https://github.com/edonyzpc/personal-assistant/archive/refs/tags/2.8.0.tar.gz
+
+Formal GitHub Release assets include main.js, manifest.json, styles.css,
+LICENSE, NOTICE, and THIRD_PARTY_NOTICES.md. Obsidian installs only the
+three runtime plugin files, so the legal documents are also available through
+durable release-tag links in Settings and in the release page.
+
+Commercial Boundary
+-------------------
+
+Version 2.8.0 is a license and compliance migration release. It does not
+introduce an account system, license key, checkout flow, feature lock, hosted
+commercial service, or paid entitlement check.
+
+Future hosted services, support, warranties, privacy commitments, or trademark
+permissions may be governed by separate terms. Those future terms must not
+restrict the rights granted for the AGPL-licensed client source, including the
+rights to use, modify, and redistribute the client under AGPL-3.0-only.
+
+Brand Reservation
+-----------------
+
+The AGPL-3.0-only client license does not grant trademark or brand rights.
+The Personal Assistant name, plugin ID, plugin name, icons, logos, release
+identity, marketplace presentation, and related marks are reserved. See
+the exact-tag trademark policy for fork and redistribution requirements:
+
+https://github.com/edonyzpc/personal-assistant/blob/2.8.0/TRADEMARKS.md
+
+Third-Party Notices
+-------------------
+
+Bundled and runtime production dependency notices are recorded in
+THIRD_PARTY_NOTICES.md. Dependency notices must be checked when changing
+runtime dependencies, build inlining, worker/WASM assets, or release
+packaging.
