@@ -4,14 +4,14 @@
 
 This document is the contract source of truth for adding Obsidian operations knowledge and read-only Obsidian context tools to Personal Assistant Chat.
 
-Implementation status is tracked in [Obsidian Operations SPEC-Driven Development](./obsidian-operations-spec-driven-development.md). Do not treat this document as an implementation progress ledger.
+Implementation status is tracked in [Obsidian Operations SPEC-Driven Development](./archive/obsidian-operations-spec-driven-development.md). Do not treat this document as an implementation progress ledger.
 
 | Field | Value |
 | --- | --- |
 | Status | SPEC-06 v1A implementation, post-review hardening, automated verification, deploy, and post-fix targeted Obsidian smoke are complete; SPEC-05 CLI adapter remains future/deferred and unimplemented |
 | Current implementation | SPEC-01 catalog artifact, SPEC-02 ToolRegistry/chokepoint scaffolding, SPEC-03 v1A App API read tools, SPEC-04 Context Used/source-boundary UX, and SPEC-06 v1A closeout/hardening are implemented. The latest post-finding hardening covers malformed note inputs, tag metadata, unavailable context status, fallback intent detection, unsupported snippet scopes, fenced-code structure parsing, and duplicate read-only tool skip presentation; post-fix targeted live Obsidian smoke passed for note-structure/context UX plus missing, unsupported, unsafe, and unsupported-scope validation paths. CLI adapter work remains design-only and unimplemented in SPEC-05. |
 | Contract owner | Obsidian Operations Agent feature family |
-| Execution tracker | `docs/obsidian-operations-spec-driven-development.md` |
+| Execution tracker | `docs/archive/obsidian-operations-spec-driven-development.md` |
 
 This follows the Ralpha docs split: this plan is the stable product/architecture contract, while the SPEC tracker is the mutable execution ledger.
 
@@ -22,7 +22,7 @@ SPEC-00 request-changes findings and the explicit post-closeout subagent review 
 | Document | Role | Conflict Rule |
 | --- | --- | --- |
 | `docs/obsidian-operations-agent-plan.md` | Product and architecture contract for Obsidian operations knowledge, v1A read-only tools, v1B CLI adapter, source boundaries, and safety model. | This wins for this feature family. |
-| `docs/obsidian-operations-spec-driven-development.md` | SPEC tracker for task slicing, status, review records, verification evidence, and smoke closeout. | If it drifts from this plan, update both docs in the same reviewed change before implementation continues. |
+| `docs/archive/obsidian-operations-spec-driven-development.md` | Historical SPEC tracker for task slicing, status, review records, verification evidence, and smoke closeout. | If future v1B work resumes, start from the archived tracker and update this plan in the same reviewed change. |
 | `docs/write-action-design-handoff.md` | Future write-action boundary for preview, confirmation, and audit. | This wins for future writes and command execution. This plan must not weaken it. |
 | `docs/pa-agent-architecture-plan.md` + `docs/pa-agent-runtime-lifecycle-plan.md` | Current PA Agent runtime + native tool loop reference (replaced the historical Ralpha plan in v2.0.0). | These win for existing runtime behavior until an approved Obsidian Operations SPEC changes it. |
 | External Obsidian skills and CLI docs | Research inputs for distilled local rules. | Never load remote content at runtime; copy only reviewed, repo-local distilled rules into this feature. |

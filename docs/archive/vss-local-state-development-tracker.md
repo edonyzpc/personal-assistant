@@ -1,6 +1,6 @@
 # VSS Local State Development Tracker
 
-This tracker records implementation status for [VSS Local State Plan](./vss-local-state-plan.md). If runtime behavior changes, update the plan and tracker together.
+This tracker records implementation status for [VSS Local State Plan](../vss-local-state-plan.md). If runtime behavior changes, update the plan and tracker together.
 
 ## Status
 

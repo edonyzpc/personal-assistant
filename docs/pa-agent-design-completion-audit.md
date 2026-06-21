@@ -6,7 +6,7 @@
 - **覆盖方案文档**：
   - [`pa-agent-architecture-plan.md`](./pa-agent-architecture-plan.md)（v1 产品/架构/能力/skill/source/平台/迁移合同）
   - [`pa-agent-runtime-lifecycle-plan.md`](./pa-agent-runtime-lifecycle-plan.md)（canonical lifecycle / event identity / HostPolicy / budget）
-  - [`pa-agent-answer-completion-policy-plan.md`](./pa-agent-answer-completion-policy-plan.md)（AnswerCompletionController + finalization-only turn mode）
+  - [`pa-agent-answer-completion-policy-plan.md`](./archive/pa-agent-answer-completion-policy-plan.md)（AnswerCompletionController + finalization-only turn mode）
 - **关联**：v2.0.0 ship 前的 post-1.11.0 review / execution plan / cleanup review 文档已于 2026-05-27 精简归档；关键变更已写入 [`CHANGELOG.md`](../CHANGELOG.md)。
 
 ---

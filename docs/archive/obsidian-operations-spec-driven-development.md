@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document drives SPEC-first implementation of [Obsidian Operations Agent Plan](./obsidian-operations-agent-plan.md).
+This document drives SPEC-first implementation of [Obsidian Operations Agent Plan](../obsidian-operations-agent-plan.md).
 
 Use the plan as the product, architecture, safety, and source-boundary contract. Use this SPEC tracker to split the contract into implementable slices, record approvals, track phase status, capture review findings, and close each phase with verification evidence.
 

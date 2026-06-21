@@ -1,7 +1,7 @@
 # SDD: Settings UI Refactor
 
 > Version: 1.0 | Date: 2026-05-29 | Status: Partially implemented; historical design record
-> Upstream: [settings-ui-review.md](./settings-ui-review.md) — 30 issues (5 P0 + 13 P1 + 12 P2)
+> Upstream: [settings-ui-review.md](../settings-ui-review.md) — 30 issues (5 P0 + 13 P1 + 12 P2)
 
 ---
 
@@ -17,7 +17,7 @@ The full Settings IA simplification and complete componentization are not done. 
 
 ### 1.1 Problem
 
-设计时 Settings UI (`src/settings.ts`, 1013 行) 存在数据损坏路径、信息架构不合理、770 行单体 `display()` 方法、12 处全量重渲染等系统性问题。详见 [settings-ui-review.md](./settings-ui-review.md)。当前代码已经修复高风险数据和部分 UX 问题，但完整 IA/组件化简化仍未完成。
+设计时 Settings UI (`src/settings.ts`, 1013 行) 存在数据损坏路径、信息架构不合理、770 行单体 `display()` 方法、12 处全量重渲染等系统性问题。详见 [settings-ui-review.md](../settings-ui-review.md)。当前代码已经修复高风险数据和部分 UX 问题，但完整 IA/组件化简化仍未完成。
 
 ### 1.2 Scope
 

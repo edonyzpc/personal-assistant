@@ -4,9 +4,9 @@
 
 Drafted: 2026-06-07
 
-Implementation SDD: [SDD: PA Agent Control Policy](./pa-agent-control-policy-sdd.md)
+Implementation SDD: [SDD: PA Agent Control Policy](./archive/pa-agent-control-policy-sdd.md)
 
-Development tracker: [PA Agent Control Policy Development Tracker](./pa-agent-control-policy-development-tracker.md)
+Development tracker: [PA Agent Control Policy Development Tracker](./archive/pa-agent-control-policy-development-tracker.md)
 
 Scope: PA Agent control-policy and perceived-latency optimization after the Pagelet timing pass. This plan uses the recent timing samples as diagnostic evidence, but does not include Pagelet or VSS retrieval optimization work.
 

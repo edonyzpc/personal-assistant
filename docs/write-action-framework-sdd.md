@@ -3,7 +3,7 @@
 > PA-level **写路径基础设施层**的实现化设计文档。合并并实现化 `docs/write-action-design-handoff.md`（候选 action 家族 + 7 gates + Preview/Audit Contract）和 `docs/operations-agent-plan.md`（5 子模块边界）两份边界文档，给出 PolicyEngine 参数化方案，并以 Pagelet 的 `pagelet.write_review_output` 为首个真实 caller 走通端到端。
 >
 > - **What lives here**：4 子模块契约、Action Capability 类型定义、PolicyEngine 改造、Runtime 集成钩子、Self-Write Suppression、首 caller 集成 walkthrough、测试与发布顺序。
-> - **What does NOT live here**：未来 Operations Agent mode 的 action 编排逻辑（→ 后续 `docs/operations-agent-mode-sdd.md`）、其他 action 家族（append / replace / multi-file / command）的家族级实现细节、Pagelet 自身的 review 算法（→ `docs/review-assistant-sdd.md`）、production audit / 写历史 UI / 跨 caller telemetry（v1 仅提供 debug 观测 hook，production audit 推迟到 Operations Agent mode，见 §10）。
+> - **What does NOT live here**：未来 Operations Agent mode 的 action 编排逻辑（→ 后续 `docs/operations-agent-mode-sdd.md`）、其他 action 家族（append / replace / multi-file / command）的家族级实现细节、Pagelet 自身的 review 算法（→ `docs/archive/review-assistant-sdd.md`）、production audit / 写历史 UI / 跨 caller telemetry（v1 仅提供 debug 观测 hook，production audit 推迟到 Operations Agent mode，见 §10）。
 > - **Traceability**：每个章节脚注引用 PA 仓库的 `D{xxx}` 决策号或边界文档章节号。
 
 ---
@@ -13,9 +13,9 @@
 | 字段 | 值 |
 |----|----|
 | Spec version | 0.1 (Draft for implementation) |
-| Implementation Status | **v1 implemented in PRs #354/#355/#356, released as `v2.2.0-beta.1`** (2026-06-03). Pagelet [[OQ001]] hard blocker resolved per `docs/review-assistant-decisions.md` D031. |
+| Implementation Status | **v1 implemented in PRs #354/#355/#356, released as `v2.2.0-beta.1`** (2026-06-03). Pagelet [[OQ001]] hard blocker resolved per `docs/archive/review-assistant-decisions.md` D031. |
 | 对应版本 | PA `v2.2.0-beta.1`（D013，沿用 Pagelet beta 通道） |
-| 决策依据 | `docs/review-assistant-decisions.md` **D025 + D030**（来源）；本 SDD 不引入新决策号（命名层级、scope 已在 D030 锁定） |
+| 决策依据 | `docs/archive/review-assistant-decisions.md` **D025 + D030**（来源）；本 SDD 不引入新决策号（命名层级、scope 已在 D030 锁定） |
 | 边界文档来源 | `docs/write-action-design-handoff.md`（7 gates + Audit Contract） + `docs/operations-agent-plan.md`（5 子模块 + Target Confinement + Rollback） |
 | 二层命名层级 | `Operations Agent (mode, future, v2+)` ⟶ **Write Action Framework v1 (本 SDD)** ⟶ `Pagelet v1（首 caller）` |
 | 首个真实 caller | `pagelet.write_review_output`（创建 review note 于 `.pagelet/`） |
@@ -1007,4 +1007,4 @@ Obsidian 真实 vault smoke：
 
 ---
 
-> 文档结束。落地后需同步更新 `docs/review-assistant-decisions.md`（OQ001 状态 Hard Blocker → Resolved + 新增 D031 记录 framework 实现完成）与 `docs/review-assistant-sdd.md`（§0 / §2.4 / §3 / §7 / §14.1 去 stub 化）。
+> 文档结束。历史落地记录保存在 `docs/archive/review-assistant-decisions.md` 与 `docs/archive/review-assistant-sdd.md`；未来恢复相关工作时应从当前 `docs/write-action-design-handoff.md` 和 `docs/development-roadmap.md` 重新确认状态。

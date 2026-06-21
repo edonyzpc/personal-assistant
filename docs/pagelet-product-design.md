@@ -13,9 +13,9 @@
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
 | Write boundary | Review note creation and periodic summary save both run through the **Write Action Framework**; Pagelet creates independent review notes only |
 | Background preparation engine | Optional timed polling with rate-limited background review preparation (D032); disabled by default and enabled explicitly by the user |
-| Historical reference | [review-assistant-product-design.md](./review-assistant-product-design.md) |
-| Decisions record | See [review-assistant-decisions.md](./review-assistant-decisions.md) (D001-D031 active; D032+ proposed in this document) |
-| Technical design | See [pagelet-sdd-guide.md](./pagelet-sdd-guide.md); [review-assistant-sdd.md](./review-assistant-sdd.md) is preserved as historical implementation context |
+| Historical reference | [review-assistant-product-design.md](./archive/review-assistant-product-design.md) |
+| Decisions record | See [review-assistant-decisions.md](./archive/review-assistant-decisions.md) (D001-D031 active; D032+ proposed in this document) |
+| Technical design | See [pagelet-sdd-guide.md](./pagelet-sdd-guide.md); [review-assistant-sdd.md](./archive/review-assistant-sdd.md) is preserved as historical implementation context |
 
 This document defines the current **Pagelet** product and UX contract. Historical Review Assistant/Pagelet drafts are preserved only as reference. Sections marked as future work describe the intended direction, not current shipped behavior.
 
@@ -367,12 +367,13 @@ Tab (main window tab, full-size workspace)
 
 **Current beta flow**:
 1. User uses command palette `Pagelet: Discover connections`.
-2. Pagelet runs the current-note review path and opens the discovery Panel layout with those findings.
-3. User can optionally save findings as a review note.
+2. Pagelet reads the current note and builds related-note context from prepared Memory search when available plus explicit wikilinks / embeds found in the current note.
+3. Pagelet sends the current note and selected related-note context through the normal foreground AI provider path, then opens the discovery Panel layout with connections and gaps.
+4. User can optionally save findings as a review note.
 
 **Future direction**:
 - Show a Bubble preview such as "Found 5 related notes and 2 potential themes."
-- Build a dedicated related-note discovery pipeline with relevance explanations, cross-note themes, and potential research gaps.
+- Continue improving relevance explanations, cross-note themes, and potential research gaps.
 
 **Key property**: Results shown in Panel (not just Bubble). This is the deep-analysis path.
 
@@ -1142,7 +1143,7 @@ Pagelet considered successful if:
 | **D038** | Proactive hints (主动提示) design | Opt-in feature, OFF by default. When ON, Pet enters `nudge` state when prepared insights are ready. Cooldown, no sound, no modal, no focus steal. Respects "quiet reviewer" positioning. |
 | **D039** | Proactive hints control placement | Settings (full config) + Panel header (quick toggle) + Command Palette + keyboard shortcut. No right-click menu, no long-press context menu. |
 
-These decisions should be formally recorded in `review-assistant-decisions.md` when implementation begins.
+These proposed decisions should be carried forward from `docs/archive/review-assistant-decisions.md` if implementation resumes.
 
 ---
 
@@ -1206,4 +1207,4 @@ These are not Pagelet behaviors. Do NOT promote any future write or automation b
 
 ---
 
-> Document ends. Subsequent revisions must synchronize with `review-assistant-decisions.md` (new decisions recorded with corresponding D### IDs) and `review-assistant-sdd.md` (implementation-level changes).
+> Document ends. Subsequent revisions must synchronize with `docs/archive/review-assistant-decisions.md` (new decisions recorded with corresponding D### IDs if implementation resumes) and the current Pagelet technical guide.

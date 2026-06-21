@@ -3,7 +3,7 @@
 > PA-level **Operations Agent mode** 的实现化设计文档。定义从只读 PA Agent 到读写操作的渐进演进路径，以 v2.4 SPEC-C1 `append-to-current-note` action family 为首个实现目标。
 >
 > - **What lives here**: Operations Agent mode 的范围边界、`append-to-current-note` action family 的 4-gate 流程设计、PolicyEngine 写 tier 扩展、Stale Re-read mode B、Prompt injection 防护、移动端 UX 策略、安全模型、验收标准。
-> - **What does NOT live here**: Write Action Framework v1 的基础设施实现细节（→ `docs/write-action-framework-sdd.md`）、其他未来 action 家族（replace-section / multi-file / command / shell）的实现设计、Pagelet review note 创建流程（→ `docs/review-assistant-sdd.md`）、Skill 系统扩展（→ SPEC-C2）。
+> - **What does NOT live here**: Write Action Framework v1 的基础设施实现细节（→ `docs/write-action-framework-sdd.md`）、其他未来 action 家族（replace-section / multi-file / command / shell）的实现设计、Pagelet review note 创建流程（→ `docs/archive/review-assistant-sdd.md`）、Skill 系统扩展（→ SPEC-C2）。
 > - **Traceability**: 每个章节脚注引用边界文档或决策号。
 
 ---
@@ -13,12 +13,12 @@
 | 字段 | 值 |
 |----|----|
 | Spec version | 0.2 (Reviewed) |
-| Implementation Status | **[A] Approved for implementation** |
-| 对应版本 | PA `v2.4`（SPEC-C1） |
-| 决策依据 | `docs/write-action-design-handoff.md`（候选 action 家族 + 7 gates）；`docs/operations-agent-plan.md`（scope + confinement + rollback + audit）；`docs/write-action-framework-sdd.md`（v1 基础设施层）；`docs/development-roadmap.md` v2.4 section |
+| Implementation Status | **Implementation exists behind disabled runtime flag; not exposed in the shipped product** |
+| 对应版本 | SPEC-C1; current `2.8.0` baseline keeps runtime disabled |
+| 决策依据 | `docs/write-action-design-handoff.md`（候选 action 家族 + 7 gates）；`docs/operations-agent-plan.md`（scope + confinement + rollback + audit）；`docs/write-action-framework-sdd.md`（v1 基础设施层）；`docs/archive/v2-post-release-spec-driven-development.md` SPEC-C1；current prioritization in `docs/development-roadmap.md` / `docs/todo.md` |
 | 二层命名层级 | `Operations Agent mode (本 SDD)` ⟶ `Write Action Framework v1 (基础设施层)` ⟶ `append-to-current-note (首个 mode-level action family)` |
 | 前置条件 | Write Action Framework v1 至少 8 周实战验证且无 security issue；Orchestrator 分解完成（SPEC-B5）；Operations Agent mode SDD 审查通过 |
-| 阻塞下游 | SPEC-C1 不能进入实现阶段，直到本 SDD 审查通过并标记 `[A] Approved for implementation` |
+| 阻塞下游 | Runtime 不能暴露给用户，直到完整 action runtime、prompt split、Settings 语义和 Obsidian smoke 完成 |
 | 主作者 | PA core |
 | 上次更新 | 2026-06-16 |
 | Review 日期 | 2026-06-16 |
@@ -86,7 +86,7 @@ PA Agent v1 (read-only)
   ↓ Phase 3+ (command execution, deferred)
 ```
 
-> **来源**：`docs/operations-agent-plan.md` §Scope、`docs/write-action-design-handoff.md` §Candidate Action Families、`docs/development-roadmap.md` v2.4 section。
+> **来源**：`docs/operations-agent-plan.md` §Scope、`docs/write-action-design-handoff.md` §Candidate Action Families、`docs/archive/v2-post-release-spec-driven-development.md` SPEC-C1，以及当前 `docs/development-roadmap.md` / `docs/todo.md`。
 
 ---
 
@@ -844,10 +844,10 @@ type StaleRereadMode = "target-snapshot" | "content-hash";
 | `docs/write-action-framework-sdd.md` §4 PolicyEngine | §3.3 |
 | `docs/write-action-framework-sdd.md` §5.3 Self-Write Set | §7.2 |
 | `docs/write-action-framework-sdd.md` §10 Open Decisions | §3.2.5、§9 |
-| `docs/development-roadmap.md` v2.4 SPEC-C1 | §0、§2、§8 |
+| `docs/archive/v2-post-release-spec-driven-development.md` SPEC-C1; current `docs/development-roadmap.md` / `docs/todo.md` | §0、§2、§8 |
 | `docs/todo.md` §Future Milestones (write action gate) | §0 |
 | Memory `project_action_mode_roadmap` | §0（命名层级）、§3.3（PolicyEngine 扩展方向） |
 
 ---
 
-> 文档结束。SPEC-C1 进入 `[A] Approved for implementation` 后开始实现。实现完成后需同步更新 `docs/v2-post-release-spec-driven-development.md`（SPEC-C1 ledger）和 `docs/development-roadmap.md`（v2.4 section 实施详情）。
+> 文档结束。SPEC-C1 的 append-to-current-note 基础实现已存在，但当前 `2.8.0` 仍通过 `OPERATIONS_AGENT_RUNTIME_ENABLED=false` 禁止暴露；后续恢复产品化时需同步更新当前 `docs/todo.md`、`docs/development-roadmap.md`，并在需要追溯历史 ledger 时参考 `docs/archive/v2-post-release-spec-driven-development.md`。

@@ -1,6 +1,6 @@
 # Personal Assistant — 项目架构全景
 
-> **版本**: v2.2.0-beta.1 (HEAD) · **日期**: 2026-06-15 · **作者**: edony
+> **版本**: v2.8.0 current-doc refresh · **日期**: 2026-06-21 · **作者**: edony
 >
 > 本文档面向项目负责人，提供**技术状态**与**产品定义**的全局视图，辅助下一步规划决策。
 
@@ -912,8 +912,8 @@ graph TB
 ```
 
 **双通道发布**:
-- `manifest.json` → 稳定版 (当前 v2.1.2)，Obsidian 社区插件市场
-- `manifest-beta.json` → 测试版 (当前 v2.2.0-beta.1)，BRAT 插件分发
+- `manifest.json` → 稳定版 (当前 v2.8.0)，Obsidian 社区插件市场
+- `manifest-beta.json` → 测试版通道 (当前 v2.8.0)，BRAT 插件分发
 
 ### 8.3 部署快捷方式
 
@@ -956,55 +956,39 @@ make deploy-icloud  # 构建 → iCloud Obsidian vault (移动端测试)
 
 ---
 
-## 10. 版本路线图与关键决策
+## 10. 版本状态与关键决策
 
-### 10.1 版本规划
+Current release status and future prioritization are maintained in
+[`development-roadmap.md`](./development-roadmap.md) and
+[`todo.md`](./todo.md). This section is only a concise architecture-facing
+summary.
 
-```mermaid
-gantt
-    title 版本路线图 (里程碑驱动)
-    dateFormat YYYY-MM-DD
-    axisFormat %Y-%m
+### 10.1 当前基线
 
-    section 已发布
-    v2.0.0 Breaking          :done, v20, 2026-05-25, 1d
-    v2.1.2 稳定化             :done, v21, 2026-05-31, 1d
-    v2.2.0-beta.1 Pagelet    :done, v22b, 2026-06-03, 1d
+| Field | Value |
+|------|------|
+| Current version | `2.8.0` |
+| Current release theme | License and compliance migration |
+| Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools |
+| Hidden / disabled major runtime | Operations Agent append mode remains disabled by `OPERATIONS_AGENT_RUNTIME_ENABLED=false` |
 
-    section 计划中
-    v2.2 Pagelet 毕业 + P0     :active, v22, 2026-06-15, 30d
-    v2.3 SQLite 供应商迁移     :v23, after v22, 30d
-    v2.4 Action Mode / Skill  :v24, after v23, 30d
-    v2.5 apiToken 迁移清理     :v25, 2026-11-29, 1d
-```
+### 10.2 已完成发布线
 
-### 10.2 各版本关键内容
+| Line | Status | Current authority |
+|------|--------|-------------------|
+| v2.0-v2.1 | PA Agent and stability foundation | Release history and archived reviews |
+| v2.2-v2.7 | Pagelet, Memory/VSS, AI Insight, context, and write-action infrastructure train | [`archive/v2-post-release-spec-driven-development.md`](./archive/v2-post-release-spec-driven-development.md) |
+| v2.8.0 | License and compliance migration | [`license-migration-2.8.0.md`](./license-migration-2.8.0.md) |
 
-| 版本 | 主题 | 关键交付 |
-|------|------|---------|
-| **v2.2** | Pagelet 毕业 + P0 | 8 个 P0 项 + deprecated 标记清理 + Pagelet beta → stable |
-| **v2.3** | SQLite 供应商解耦 | `@sqliteai` → `@sqlite.org/sqlite-wasm` + JS brute-force 向量 |
-| **v2.4** | 灵活 | Action Mode 早期 / Skill 扩展 / 其他 P1 |
-| **v2.5** | 清理 | 删除 apiToken 迁移代码 (≥ 5 minor 且 ≥ 2026-11-29) |
+### 10.3 后续候选主题
 
-### 10.3 已确认优化项
-
-**性能**:
-- [ ] `calcSnapshot` 增量化
-- [ ] WASM 懒加载 ✅ (v2.1 已实现)
-- [ ] LLM 调用并行化
-
-**Prompt 改进**:
-- [ ] 语言匹配 (回答语言 = 笔记语言)
-- [ ] 引用指令 (cite source notes)
-- [ ] "我不知道" 指令 (承认知识边界)
-- [ ] 工具定义去重
-- [ ] 聊天历史沙箱 + 限长
-
-**架构**:
-- [ ] RequiredCapabilityClassification 简化
-- [ ] ToolRegistry 层级坍缩 (3 层 → 2 层，~-500 LOC)
-- [ ] Skill 系统扩展 (更多内置 / 用户自定义)
+| Theme | Current guardrail |
+|------|-------------------|
+| Operations Agent productization | Start with append-to-current-note only; keep runtime disabled until the action runtime, prompt split, settings semantics, and Obsidian smoke are complete. |
+| User custom Skills | Requires product design and allowed-tools policy before implementation. |
+| Pagelet async result UX | Use source-bound in-memory results first; do not persist full provider output silently. |
+| Architecture quality pass | Behavior-preserving extraction first, with focused tests and Obsidian smoke for runtime/UI surfaces. |
+| Android VSS validation | Requires physical Android evidence before claiming parity. |
 
 ### 10.4 已锁定决策
 
@@ -1015,9 +999,9 @@ gantt
 | 双线产品定位 | **不拆分** | 管理 + AI，优先 AI Chat |
 | Ollama | **不支持** | v2.0 已移除，不在主线 |
 | Bundle size | **非决策驱动力** | 只有真实用户痛点才驱动决策 |
-| Write Action Framework | **Pagelet 硬阻塞** | 不允许临时写入捷径 |
+| Write Action Framework | **所有写入路径必须经过框架** | 不允许临时写入捷径 |
 
-### 10.5 Pagelet v2 Review 决策 (2026-06-15)
+### 10.5 Pagelet v2 Review 历史决策 (2026-06-15)
 
 从最近的 review 中已拍板:
 
@@ -1026,7 +1010,7 @@ gantt
 | Bubble 关闭行为 | 点击外部关闭 + Escape 关闭 |
 | Orchestrator 拆分 | 已提取 `AnalysisSessionManager` + `ReviewNoteSaveFlow` |
 | 轻量引导 | Onboarding bubble content 已实现 |
-| 发布策略 | 先内测 (BRAT beta)，再 stable |
+| 发布策略 | 已按 beta 到 stable 的历史路径完成；当前用户入口见 Pagelet user guide |
 
 ---
 
@@ -1050,12 +1034,8 @@ gantt
 | 构建配置 | `esbuild.config.mjs` |
 | 发布脚本 | `scripts/release.mjs` |
 | 产品设计文档 | `docs/pagelet-product-design.md` |
-| 历史决策 | `docs/review-assistant-decisions.md` |
+| 历史决策 | `docs/archive/review-assistant-decisions.md` |
 
 ---
 
-> **下一步**: 结合本文档的架构全景和路线图，可以评估:
-> 1. v2.2 P0 项的优先级排序和估时
-> 2. Pagelet beta → stable 的毕业标准是否满足
-> 3. v2.3 SQLite 供应商迁移的 spike 时机
-> 4. Action Mode / Skill 扩展的启动条件
+> **下一步**: 结合本文档的架构全景、[`development-roadmap.md`](./development-roadmap.md) 和 [`todo.md`](./todo.md)，评估 Operations Agent productization、User custom Skills、Pagelet async result UX、架构质量 pass、Android VSS 实机验证的优先级。

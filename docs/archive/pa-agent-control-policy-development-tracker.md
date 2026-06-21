@@ -4,7 +4,7 @@
 
 This tracker records SPEC-driven implementation status for [SDD: PA Agent Control Policy](./pa-agent-control-policy-sdd.md).
 
-The architecture/product source of truth is [PA Agent Control Policy And Latency Optimization Plan](./pa-agent-latency-optimization-plan.md). The SDD is the implementation contract. This tracker is the execution record. If they drift, update all affected docs before continuing runtime work.
+The architecture/product source of truth is [PA Agent Control Policy And Latency Optimization Plan](../pa-agent-latency-optimization-plan.md). The SDD is the implementation contract. This tracker is the execution record. If they drift, update all affected docs before continuing runtime work.
 
 ## Status Legend
 

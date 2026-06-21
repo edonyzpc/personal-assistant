@@ -321,11 +321,11 @@ flowchart TD
 
 The current code already has useful building blocks:
 
-- `PaAgentLoop` owns the in-run transcript and sends it to the model input on every turn: [`src/ai-services/pa-agent-loop.ts`](../src/ai-services/pa-agent-loop.ts).
+- `PaAgentLoop` owns the in-run transcript and sends it to the model input on every turn: [`src/ai-services/pa-agent-loop.ts`](../../src/ai-services/pa-agent-loop.ts).
 - Tool results have `includeInNextPrompt`, `promptText`, `sourceRecords`, `contextUsed`, and a global observation character budget.
-- `AgentControlSnapshot` models tool exposure, source scope, budget state, and final-answer-only transitions: [`src/ai-services/pa-agent-control-policy.ts`](../src/ai-services/pa-agent-control-policy.ts).
-- `createPaAgentPersistedTurn()` preserves canonical turn messages and aggregates sources/context used: [`src/ai-services/pa-agent-history.ts`](../src/ai-services/pa-agent-history.ts).
-- Runtime currently trims chat history by `MAX_CHAT_HISTORY_TURNS = 20` and read-only tool context by character limits: [`src/ai-services/pa-agent-runtime.ts`](../src/ai-services/pa-agent-runtime.ts).
+- `AgentControlSnapshot` models tool exposure, source scope, budget state, and final-answer-only transitions: [`src/ai-services/pa-agent-control-policy.ts`](../../src/ai-services/pa-agent-control-policy.ts).
+- `createPaAgentPersistedTurn()` preserves canonical turn messages and aggregates sources/context used: [`src/ai-services/pa-agent-history.ts`](../../src/ai-services/pa-agent-history.ts).
+- Runtime currently trims chat history by `MAX_CHAT_HISTORY_TURNS = 20` and read-only tool context by character limits: [`src/ai-services/pa-agent-runtime.ts`](../../src/ai-services/pa-agent-runtime.ts).
 
 ### Gaps Compared With The Studied Projects
 

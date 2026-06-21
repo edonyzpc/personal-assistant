@@ -1,138 +1,42 @@
 # Project TODO
 
-## Active Release Gates
+This file is the current short-form status board. Older release-gate details were
+archived to [project-todo-pre-2.8.0.md](./archive/project-todo-pre-2.8.0.md).
 
-- [x] Close Pagelet beta workbench completion before release planning.
-  - Context: Pagelet is now defined as the note's quiet reviewer with Pet/Bubble/Panel/Tab progressive disclosure. The old workbench draft-collection path is historical and no longer a release target.
-  - Result: Pagelet opens through the final command registrar; review-note and periodic-summary saves create independent `.pagelet/*.md` notes through the Write Action Framework; source notes, daily notes, tasks, and frontmatter are not modified by the default Pagelet flow.
-  - Evidence: `docs/pagelet-smoke-checklist.md`; focused Pagelet tests including `__tests__/pagelet-commands.test.ts`, `__tests__/e2e-pagelet-write.spec.ts`, and `__tests__/pagelet-settings.test.ts`; desktop test-vault Smoke 1-5 passed; provider matrix follow-up passed; mobile smoke passed; VoiceOver smoke passed; AI-plugin coexistence smoke passed.
-  - Follow-ups: run a dedicated mobile smoke pass for the final panel Save / expand-to-tab path. This closeout does not start release/publish flow.
-  - Exit criteria: Pagelet docs match actual behavior, and no release/publish flow starts until Pagelet beta functionality is complete.
+## Current Release State
 
-- [x] Close Pagelet release verification for the v2.7 consolidated release.
-  - Context: v2.2.0-beta.1 review (2026-06-15) identified 5 blocking fixes (C-2 PetSvg, H-1 RateLimiter, H-3 PreloadEngine, H-6 platform-dom, iOS Panel dvh) plus Orchestrator split, Bubble close behavior change, and Onboarding. Graduation requires commit + GUI smoke + provider re-test.
-  - Source: [`development-roadmap.md`](./development-roadmap.md) v2.2 section, SPEC-B1/B2 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
-  - Worktree strategy: 3 parallel worktrees (pagelet-review-fixes ∥ deprecated-cleanup ∥ command-palette), merge sequentially, then smoke.
-  - Latest smoke: 2026-06-19 post-fix v2.7 smoke passed `make deploy`, Obsidian plugin reload, `dev:errors`, AI Insights viewer, Discovery panel, Pagelet runner 20 PASS / 0 bugs, Qwen `qwen-plus` Pagelet output on English and Chinese fixtures, DashScope-compatible `deepseek-v4-flash` Pagelet output, and iOS real-device Pagelet/Chat/AI Insights basics. Provider OQ002 is accepted because DeepSeek is expected to run through the Bailian / DashScope-compatible platform in this project. Bubble click-through uses earlier checklist evidence plus the latest runner pet/panel mount evidence.
-  - Exit criteria: all fixes committed, `pagelet-smoke-checklist.md` re-passed, OQ002 ≥ 2 providers passed, then included in the v2.7 consolidated release instead of publishing a separate v2.2 stable.
+- Current shipped baseline in this worktree: `2.8.0`.
+- `package.json`, `manifest.json`, and the local `2.8.0` tag are aligned.
+- v2.2 through v2.7 implementation trackers are historical; use archived
+  records only for evidence and provenance.
 
-- [x] Close AI Insight Foundation D-series implementation gate.
-  - Context: AI Insight D1-D8 now covers heading-aware Memory chunks, Pagelet VSS related notes, temporal Memory search, wider Memory windows, Context Projector/Hygiene, Compactor/Budget, Type A user profile extraction, and Type C vault insights.
-  - Source: [`sdd-ai-insight-foundation.md`](./sdd-ai-insight-foundation.md), [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md), [`ai-insight-improvement-analysis.md`](./ai-insight-improvement-analysis.md).
-  - Result: D1-D8 code, focused tests, broad checks, deploy, and Obsidian test-vault smoke are recorded in the SDD tracker. The follow-on E-series activation runtime smoke is also recorded in the v2 tracker with a Computer Use click-through caveat.
-  - Exit criteria: D-series implementation gate is closed; publish-ready release work still follows the normal release process and explicit publish confirmation.
+## Active Product / Engineering Follow-Ups
 
-- [x] Defer v2 review follow-up stabilization outside the v2.7 release gate.
-  - Context: 2026-05-30 code-led status reconciliation shows the original v2 review plan was only partially implemented. Current code instead prioritized Settings/Keychain safety, API Token UX, Chat history modal cleanup, and VSS/Memory OPFS-lock recovery.
-  - Completed so far: API token migration clears `data.json`; scoped/legacy keychain fallback is in place; API Token editor/clear confirmation works; provider switching confirms preset replacement; Settings data-safety fixes are covered by tests; chat history modal overflow/duplicate preview issues are fixed; chat history persistence exists in IndexedDB-backed store/manager code; chat-tools split, statistics incremental snapshot cache, WASM lazy load, and RequiredCapability refactor are implemented; foreground OPFS marker recovery is removed and manual technical recovery is bounded.
-  - Evidence so far: focused VSS/SQLite tests passed; full serialized Jest passed 51 suites / 864 tests; `npm run lint`; `npm run build`; `git diff --check`; `make deploy`; Obsidian test-vault `Update memory now` smoke completed with Memory diagnostics Ready and notes unchanged.
-  - Remaining decisions: open original v2 Phase 1-2 items (`prompt` lines, `getVSSFiles()` optimization, strict mode, coverage threshold, rerank excerpt length, prompt token de-dup, chat-history sandbox, catalog simplification, rewrite+embedding parallelization) and the full Settings IA/componentization follow-up are accepted as post-v2.7 follow-ups, not v2.7 release blockers.
-  - High-risk smoke completed in the 2026-05-30 conversation after explicit confirmation: `Update plugins`, `Update themes`, AI Featured Images, and actual Memory reset/delete-old-cache execution.
-  - Exit criteria: status docs stay aligned with code, and open v2 items are explicitly deferred outside the v2.7 release gate.
+| Area | Status | Next decision or action | Evidence |
+| --- | --- | --- | --- |
+| Operations Agent append mode | Deferred / not exposed | Keep `OPERATIONS_AGENT_RUNTIME_ENABLED=false` until the full action runtime, prompt split, setting semantics, and Obsidian smoke are complete. | `src/operations-agent-flags.ts`; [architecture refactor tracker](./archive/architecture-refactor-development-tracker.md) |
+| Operations Agent Phase 2 | Future | Scope replace-section, multi-file edits, command execution, batch-confirm UX, and production audit only after separate product/security review. | [Operations Agent plan](./operations-agent-plan.md); [Operations Agent mode SDD](./operations-agent-mode-sdd.md) |
+| User custom Skills (SPEC-C2) | Deferred | Decide the product value and UX before drafting the SDD for allowed tools, Settings UI, and optional vault-side discovery. | [v2 post-release tracker](./archive/v2-post-release-spec-driven-development.md) |
+| Obsidian Operations CLI adapter (v1B) | Deferred | Start SPEC-05 only if desktop CLI reads become valuable enough to justify probe, allowlist, timeout, and vault confinement work. | [Obsidian Operations plan](./obsidian-operations-agent-plan.md); [tracker](./archive/obsidian-operations-spec-driven-development.md) |
+| Pagelet source-bound async results | Planned | Implement the typed result outcome, in-memory result store, and Pet/Bubble ready-state UX. | [Pagelet async result plan](./pagelet-async-result-plan.md) |
+| PA Agent telemetry baseline | Future milestone | Collect at least seven days of opt-in aggregate capability usage before using telemetry to prioritize Operations Agent work. | [Telemetry runbook](./pa-agent-telemetry-baseline.md) |
+| PA Agent latency levers | Deferred | Run a focused perf pass for read-only batch audit, compact final-answer experiment, p50/p95 samples, and direct-route go/no-go. | [Latency plan](./pa-agent-latency-optimization-plan.md); [control policy tracker](./archive/pa-agent-control-policy-development-tracker.md) |
+| Architecture quality pass | Deferred | Improve prompt/classifier builders, Chat conversation lifecycle extraction, VSS method-body extraction, and plain `tsc --noEmit` DOM/WebWorker tsconfig split. | [architecture refactor tracker](./archive/architecture-refactor-development-tracker.md) |
+| Settings IA/componentization | Partially open | Finish broader Settings IA, remaining componentization, Statistics hidden fields, text-input save churn audit, and narrow-screen Metadata UX. | [Settings UI review](./settings-ui-review.md); [Settings SDD](./archive/settings-ui-sdd.md) |
+| Android VSS real-device validation | Pending verification | Validate the SQLite/WASM VSS backend on a physical Android device before claiming full Android parity. | [README](../README.md#mobile-vss-validation-note) |
 
-- [x] Fix structured vault tool argument extraction exposed by broad PA Agent desktop smoke.
-  - Context: 2026-05-24 Computer Use smoke in the Obsidian `test` vault passed core PA Agent paths but found that several structured read tools can be selected while required model-provided arguments are lost before execution.
-  - Result: host tool normalization now repairs omitted `query` / `path` inputs for `search_vault_snippets`, `search_vault_metadata`, `read_note_outline`, `read_canvas_summary`, and path-specific `inspect_obsidian_note`; successful `inspect_obsidian_note` also satisfies current-note required-capability policy to avoid the false warning.
-  - Evidence: focused host/policy tests passed 34 tests; adjacent runtime/operation tests passed 98 tests; `npx tsc -noEmit -skipLibCheck`; `npm run lint`; `make deploy` passed 44 suites / 723 tests plus lint/build and copied assets into the local `test` vault. Targeted Computer Use smoke in Obsidian passed snippets, metadata, outline, canvas, path-specific note inspection, and current-note warning re-check.
-  - Source docs: `docs/pa-agent-design-completion-audit.md`.
-  - Exit criteria: schema-aware argument extraction/repair coverage exists for required string tool fields, live path/query propagation is fixed, and targeted Obsidian smoke passed for snippets, metadata, outline, canvas, path-specific note inspection, and current-note inspect warning.
+## Triggered Evaluations
 
-- [x] Close PA Agent v1 development release gates.
-  - Context: the runtime lifecycle tracker is complete, and the broader PA Agent development tracker owns mobile platform evidence, independent review, and telemetry baseline closeout.
-  - Result: desktop Obsidian smoke evidence is complete for direct answer, current-note tool, Memory, builtin WebSearch, unsupported warning UI, bundled skills, cancel/recovery, and DevTools console no-error inspection. Desktop Obsidian mobile-emulation smoke is complete for PA Chat load, direct answer, and the historical mobile WebSearch-unavailable warning path. Real iPhone smoke recorded a cold-start sample plus core chat/direct answer, current-note retry success, current-note-only full-context exact token lookup, historical mobile WebSearch-unavailable behavior, mobile WebSearch success after API-key entitlement fix, mobile WebSearch no-memory warning re-smoke, mobile WebSearch ordinary recovery, mobile WebSearch cancel/recovery, and general cancel/recovery. The iPhone-found false WebSearch-required warning, non-current-note tool drift, insufficient current-note context, duplicate-tool empty-answer, mobile WebSearch 403 diagnostic, and no-memory false-warning issues now have code-level regression coverage and passed real-device re-smoke where applicable. Builtin WebSearch is now enabled on mobile behind the existing DashScope/settings gates, with focused provider/ChatService tests, answer-stream runtime platform-policy tests, full serialized Jest, typecheck, lint, build, and whitespace checks passing. The later structured vault tool argument extraction gate above is fixed and smoke-clean for snippets, metadata, outline, canvas, path-specific note inspection, and current-note warning re-check.
-  - Release scope: desktop mobile-emulation smoke is claimed; real iPhone core/current-note smoke is claimed for the covered paths; positive mobile WebSearch `requestUrl` auth evidence and cancel/recovery evidence are claimed after the API-key entitlement fix. `requestUrl` hard timeout/deadline behavior remains covered by adapter automated tests rather than a separate real-device timeout smoke. The telemetry baseline gate is closed as instrumentation/runbook readiness only; real post-ship aggregate collection remains future work because v1 has local/default-off events and no upload pipeline.
-  - Source docs: `docs/pa-agent-design-completion-audit.md`; `docs/pa-agent-architecture-plan.md`; `docs/pa-agent-product-safety-review.md`; `docs/pa-agent-runtime-lifecycle-plan.md`; `docs/pa-agent-telemetry-baseline.md`.
-  - Exit criteria: PA Agent development tracker SPEC-03/05/07/08 are completed or explicitly re-scoped, risk register has no open v1 blocker, verification log contains final evidence, and release readiness is not inferred from desktop-only smoke.
+| Evaluation | Trigger | Source |
+| --- | --- | --- |
+| React to Preact | A new component depends on React-only features, or a third-party library is incompatible with `preact/compat`. | [SDD placeholder](./sdd-react-preact-evaluation.md) |
+| SQLite/WASM inline strategy | Mobile cold start >= 5s, OOM in three independent reports, or passive load P95 >= 5s. | [v2 decisions](./archive/v2.1.2-decisions.md) |
+| Write-action production audit | User reports unexplained writes, a visible write-history UI is needed, or compliance review requires durable audit records. | [Write Action Framework SDD](./write-action-framework-sdd.md) |
 
-## Future Milestones
+## Documentation Hygiene
 
-- [ ] Review and scope write action / command execution product and security design.
-  - Context: the archived vault-native refactor track closed through Phase 6 with Chat still read-only. Write Action Framework v1 shipped with v2.2.0-beta.1 (Pagelet `create-file` family). Action Mode Phase 1 (`append-to-current-note`) confirmed for v2.5 window (originally v2.4, deferred to prioritize AI Insight Foundation in v2.4).
-  - Source docs: `docs/operations-agent-plan.md`; `docs/write-action-design-handoff.md`; [`development-roadmap.md`](./development-roadmap.md) v2.5 section; SPEC-C1 in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
-  - Entry criteria: Framework v1 ≥ 8 weeks validation (no security issue), Orchestrator decomposition complete (SPEC-B5), Operations Agent mode SDD drafted and reviewed.
-  - Exit criteria: product/security review explicitly approves an implementation plan, creates a separate development tracker, and keeps direct note writes, arbitrary filesystem edits, shell/bash, and automatic Obsidian command execution out of scope unless separately approved.
-
-- [ ] Collect post-ship PA Agent v1 telemetry baseline before using usage data for Operations Agent prioritization.
-  - Context: PA Agent v1 telemetry is local/default-off and content-free; the current release gate only proves instrumentation and the collection runbook.
-  - Source docs: `docs/pa-agent-telemetry-baseline.md`; `docs/pa-agent-design-completion-audit.md`.
-  - Entry criteria: release candidate or released build with opt-in testers and at least seven days of aggregate capability usage events.
-  - Exit criteria: aggregate counts, status distribution, and p50/p95 duration summaries are recorded without raw prompts, note text, observations, source snippets, URLs, vault paths, or file paths.
-
-- [x] Complete real iPhone mobile WebSearch cancellation/recovery validation after enabling mobile export.
-  - Context: PA Agent v1 desktop smoke and desktop mobile-emulation smoke passed. 2026-05-24 real iPhone smoke recorded a cold-start sample and validated PA Chat load, direct answer, current-note answer after retry, current-note-only full-context exact token lookup, historical mobile WebSearch-unavailable behavior, mobile WebSearch success after API-key entitlement fix, no-memory warning suppression, ordinary recovery after WebSearch, WebSearch cancel/recovery, and general cancel/recovery. The false WebSearch-required warning, non-current-note tool drift, exact-token lookup failure caused by bounded nearby current-note context, duplicate current-note tool-call empty-answer, mobile WebSearch 403 diagnostic, and no-memory false-warning issues were fixed with regression coverage.
-  - Source docs: `docs/pa-agent-design-completion-audit.md`; `docs/pa-agent-architecture-plan.md`.
-  - Entry criteria: mobile device or mobile runtime emulator with the Obsidian test vault and the deployed plugin assets.
-  - Exit criteria: platform-unsupported capabilities remain unavailable, mobile WebSearch returns real web sources on iPhone when auth succeeds, no-memory prompts do not raise Memory warnings, and cancel recovery remains recoverable without provider-search fallback. Hard timeout/deadline handling stays covered by adapter automated tests unless a separate manual timeout fixture is introduced.
-
-## Completed Priority Items
-
-- [x] Complete RAG Phase 3: Query Rewrite + LLM Reranker.
-  - Context: Phase 2 (FTS5 Hybrid Retrieval + RRF) was complete; Phase 3 adds LLM-based query rewriting for better FTS keywords and LLM reranking for improved relevance ordering.
-  - Result: `query-rewriter.ts` extracts 2-6 keywords from user query via `policyModelName` LLM; `pa-agent-runtime.ts` integrates serial rewrite→searchHybrid→rerank pipeline with graceful degradation (short query skip, timeout fallback, candidates ≤1 skip).
-  - Evidence: `__tests__/query-rewriter.test.ts` (136 lines); `__tests__/pa-agent-runtime-memory.test.ts` (150 lines); `npm test` passing.
-  - Source docs: `docs/rag-hybrid-retrieval-plan.md`.
-
-- [x] Implement generic PA Agent answer-completion controller.
-  - Context: mobile and desktop smoke exposed repeated `Answer incomplete` paths caused by the same runtime gap: tool execution outcomes, required-capability policy, duplicate/no-op results, and empty assistant turns did not share one answer-readiness contract.
-  - Result: `pa-agent-answer-completion-policy.ts` now derives turn facts, tracks a run evidence ledger, and returns generic finalization decisions. Required-capability HostPolicy uses that controller for failed required tools, duplicate/no-op tool results, and empty assistant turns after observations. `PaAgentLoop` carries `toolMode: final_answer_only`, and PA answer-stream finalization turns export no tool schemas while keeping existing observations available to the model.
-  - Evidence: focused answer-completion/runtime tests passed 4 suites / 106 tests, including schema-invalid and missing-required-tool-input finalization coverage; `npx tsc -noEmit -skipLibCheck`; `npm run lint`; `npm run build`; `git diff --check`; `make deploy` passed 44 suites / 721 tests plus lint/build and copied assets into the local `test/` vault.
-  - In-app validation: user-provided real iPhone smoke covers direct answer, current-note-only full-context exact token lookup, WebSearch success/unavailable handling, no-memory warning suppression, ordinary WebSearch recovery, WebSearch cancel/recovery, and general cancel/recovery. Desktop Obsidian policy re-smoke was rerun with Computer Use in the local `test` vault after `make deploy`: direct answer, current-note-only, and WebSearch success paths completed without visible `Answer incomplete`.
-
-- [x] Close PA Agent v1 runtime lifecycle external verification gates.
-  - Context: PA Agent v1 runtime lifecycle closeout required stricter evidence than older desktop smoke and could not infer live gates from app-log scans or automated tests alone.
-  - Result: 2026-05-24 lifecycle tracker SPEC-01 through SPEC-08 are complete. The canonical audit/query identity contract is documented around mandatory `runId + turnId` on every event and exact `runId + turnId + seq` record lookup. Obsidian test-vault smoke evidence is recorded for direct answer, current-note tool, Memory, builtin WebSearch, unsupported warning UI, all 7 bundled-skill prompts, cancel/recovery, and direct DevTools console no-error inspection.
-  - Evidence: `docs/pa-agent-runtime-lifecycle-plan.md`; `docs/pa-agent-design-completion-audit.md`; final closeout checks `npm test -- --runInBand`, `npm run lint`, `npm run build`, and `git diff --check`.
-
-- [x] Run Obsidian smoke for Thinking status and streaming scroll regression.
-  - Context: latest Chat UI renders one collapsible `Thinking` status block and pauses auto-scroll when the user expands details or scrolls up during streaming.
-  - Result: 2026-05-10 Obsidian test vault smoke verified `Thinking` expands during active streaming. A 220-line streamed response continued while the Chat viewport was moved away from the bottom with `PageUp`, and the viewport was not forced back to the latest chunk. Returning to the bottom with `End` showed the final rendered response and normal action-button state.
-  - Evidence: `make deploy`; Obsidian 1.12.7 test vault smoke.
-
-- [x] Disconnect the global `MutationObserver` in `src/plugin.ts` during plugin unload.
-  - Context: `src/plugin.ts` creates a `MutationObserver` for `.popover.hover-popover.hover-editor` changes and observes `document.body`.
-  - Result: the observer is now stored on the plugin instance, disconnected in `onunload()`, and cleared after unload so repeated plugin reloads do not keep stale observers alive.
-  - Evidence: `npx tsc -noEmit -skipLibCheck`; `npm run lint`; `git diff --check`.
-
-## Completed Historical Follow-ups
-
-- [x] Extract shared Chat Agent types before adding more tools.
-  - Result: shared public types live in `src/ai-services/chat-types.ts`; `chat-agent.ts` and `chat-tools.ts` import from that module, while `chat-tools.ts` preserves type re-exports for compatibility.
-  - Evidence: `npx tsc -noEmit -skipLibCheck`.
-
-- [x] Consolidate duplicate abort helpers in Chat Agent modules.
-  - Result: Chat Agent modules share `src/ai-services/chat-utils.ts`, and cancellation races normalize to canonical `AbortError` when the signal is already aborted.
-  - Evidence: `throws canonical abort errors when a tool failure races with cancellation`.
-
-- [x] Preserve safe current-note context during planner fallback.
-  - Result: current-note context is preserved only after it has passed the read-only tool boundary and is wrapped as untrusted context in the final prompt.
-  - Evidence: `keeps current note context when planner fallback runs after a tool observation`.
-
-- [x] Re-evaluate ToolRegistry generic casting as tool complexity grows.
-  - Result: Phase 2D added more read-only tools while keeping the registry shape stable; runtime validators still gate every execution.
-  - Evidence: `does not execute unregistered tools`; `does not execute get_current_note_context when input mode is invalid`; `executes search_vault_metadata as read-only tool context`.
-
-- [x] Add a generic prompt path for non-Memory read-only tool context.
-  - Result: metadata search, recent notes, and note outline use `tool-note` / `<tool_context>` with per-tool, metadata, and total context budgets.
-  - Evidence: `executes search_vault_metadata as read-only tool context`; `keeps read-only tool paths out of memory references when memory is also used`; `truncates oversized metadata tool context to the hard budget`; `executes list_recent_notes sorted by modified time`; `executes read_note_outline for a known Markdown path`.
-
-- [x] Bound current-note outline scanning for very large notes.
-  - Result: `extractHeadingsFromEditor` caps outline scanning at 5000 editor lines and reports truncation metadata.
-  - Evidence: `bounds current note outline scanning for very large notes`; `keeps current note context JSON valid when context budget truncates outline content`.
-
-## Archived Observations
-
-These items are intentionally not tracked as active TODOs. Reopen one only when new bug reports, repeated smoke-test evidence, or a release gate makes it necessary.
-
-### Chat Agent
-
-- Generic abort utility for transport helpers: `src/ai-services/obsidian-fetch.ts` still owns local abort helpers. Current behavior is correct, and this is only low-risk duplication.
-- Raw-prompt Memory presearch relevance: keep observing natural prompts before adding query cleanup or a rewrite step.
-- Planner observation budgets: current tests cover hard budget truncation; tune only if real mixed-tool prompts show poor output or excess latency.
-- Final assistant message rendering after streaming: current remove/re-render path is correct; optimize only if users notice visible flicker.
-- Planner fallback frequency: collect evidence first; add retry or repair logic only if fallback becomes common.
-- Configurable retrieval depth: keep the default capped behavior until multi-hop user feedback justifies a setting.
-- Perceived planning latency: monitor simple prompts versus retrieval prompts before changing status timing, delay, or caching.
-
-### Build / Deploy
-
-- Obsolete SQLite asset cleanup in `Makefile`: the cleanup lines are harmless historical noise because worker/WASM assets are now inlined into `main.js`.
+- Keep root `docs/` for current contracts, user guides, and active future plans.
+- Move completed implementation plans, frozen reviews, and superseded trackers to
+  [archive/](./archive/).
+- When archiving a current entry point, preserve the old file and add a short
+  replacement or index link so no decision/evidence is lost.

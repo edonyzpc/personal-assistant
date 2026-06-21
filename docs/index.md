@@ -1,31 +1,29 @@
 # Documentation Index
 
-This directory is split into current product/runtime contracts and archived historical records.
+This directory is split into current product/runtime contracts and archived
+historical records. Root-level docs should remain short, current, and useful for
+active work. Completed implementation plans, frozen reviews, and superseded
+trackers belong in [archive/](./archive/).
 
 ## Current Entry Points
 
 | Area | Current docs |
 | --- | --- |
 | User workflows | [v2.7 user guide (English)](./v2.7-user-guide-en.md), [v2.7 用户指南](./v2.7-user-guide.md), [Pagelet user guide](./pagelet-user-guide.md), [Pagelet smoke checklist](./pagelet-smoke-checklist.md) |
-| Project gates | [Project TODO](./todo.md), [Release process](./release-process.md), [Reusable refactor workflow](./refactor-workflow.md) |
-| PA Agent | [Architecture plan](./pa-agent-architecture-plan.md), [Runtime lifecycle plan](./pa-agent-runtime-lifecycle-plan.md), [Context management research](./agent-context-management-research.md), [Control policy SDD](./pa-agent-control-policy-sdd.md), [Control policy tracker](./pa-agent-control-policy-development-tracker.md) |
-| v2 follow-up | [v2 post-release tracker](./v2-post-release-spec-driven-development.md), [v2.1.2 decisions](./v2.1.2-decisions.md), [v2.1.2 review snapshot](./v2.1.2-comprehensive-review.md), [v2 fix plan](./v2-fix-plan.md), [AI insight improvement analysis](./ai-insight-improvement-analysis.md) |
-| Memory / VSS | [SQLite/WASM architecture](./vss-sqlite-wasm-architecture.md), [Embedding refresh](./vss-embedding-refresh.md), [Local state plan](./vss-local-state-plan.md), [Local state tracker](./vss-local-state-development-tracker.md) |
-| Pagelet / Review Assistant | [Pagelet product design](./pagelet-product-design.md), [Async result plan](./pagelet-async-result-plan.md), [Pagelet SDD guide](./pagelet-sdd-guide.md), [Historical decisions](./review-assistant-decisions.md), [Visual spec](./pagelet-visual-spec.html), [Write action framework](./write-action-framework-sdd.md) |
-| Architecture & Roadmap | [Architecture overview](./architecture-overview.md), [Development roadmap](./development-roadmap.md) |
-| Future work | [Operations Agent boundary](./operations-agent-plan.md), [Obsidian Operations plan](./obsidian-operations-agent-plan.md), [Obsidian Operations tracker](./obsidian-operations-spec-driven-development.md), [Write action handoff](./write-action-design-handoff.md) |
+| Current status | [Project TODO](./todo.md), [Development roadmap](./development-roadmap.md), [Release process](./release-process.md), [Reusable refactor workflow](./refactor-workflow.md) |
+| Architecture | [Architecture overview](./architecture-overview.md), [PA Agent architecture](./pa-agent-architecture-plan.md), [Runtime lifecycle](./pa-agent-runtime-lifecycle-plan.md), [Design completion audit](./pa-agent-design-completion-audit.md) |
+| PA Agent planning | [Latency optimization plan](./pa-agent-latency-optimization-plan.md), [Telemetry baseline](./pa-agent-telemetry-baseline.md), [MCP adapter decision](./pa-agent-mcp-adapter-decision.md), [Product safety review](./pa-agent-product-safety-review.md) |
+| Memory / VSS / Statistics | [SQLite/WASM architecture](./vss-sqlite-wasm-architecture.md), [Embedding refresh](./vss-embedding-refresh.md), [Local state plan](./vss-local-state-plan.md), [Statistics v3 plan](./statistics-v3-plan.md) |
+| Settings | [Settings UI review](./settings-ui-review.md) |
+| Pagelet | [Pagelet product design](./pagelet-product-design.md), [Async result plan](./pagelet-async-result-plan.md), [Pagelet SDD guide](./pagelet-sdd-guide.md), [Visual spec](./pagelet-visual-spec.html), [Prototype](./pagelet-prototype.html) |
+| Write / Operations | [Write action handoff](./write-action-design-handoff.md), [Write Action Framework](./write-action-framework-sdd.md), [Operations Agent boundary](./operations-agent-plan.md), [Operations Agent mode SDD](./operations-agent-mode-sdd.md), [Obsidian Operations plan](./obsidian-operations-agent-plan.md) |
+| Commercial / legal | [2.8.0 license migration](./license-migration-2.8.0.md) |
 
 ## Active SDDs
 
 These documents may still drive runtime work or future release gates:
 
-- [Command palette cleanup](./sdd-command-palette-cleanup.md)
-- [Dependency pruning](./sdd-dependency-pruning.md)
-- [SQLite WASM supplier migration](./sdd-sqliteai-supplier-migration.md)
-- [SQLite WASM spike report](./sqlite-wasm-spike-report.md)
-- [API token cleanup](./sdd-apitoken-cleanup.md)
 - [React to Preact evaluation placeholder](./sdd-react-preact-evaluation.md)
-- [SDD rollout plan](./sdd-rollout-plan.md)
 
 ## Archive
 

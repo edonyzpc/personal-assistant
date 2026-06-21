@@ -1,8 +1,12 @@
 # Note RAG 检索增强 — 中长期方案
 
+> Archived historical plan. Phase 2/3 have been implemented; current runtime
+> uses hybrid search, query rewrite, and reranking through `searchHybrid`.
+> Preserved here for design provenance.
+
 ## Context
 
-短期优化已完成（代码块保留进索引 + 0.30 分数阈值过滤）。当前检索是纯语义单路，核心不足：
+短期优化已完成（代码块保留进索引 + 0.30 分数阈值过滤）。本方案写作时检索仍是纯语义单路，核心不足：
 
 1. **无关键词精确匹配** — 函数名、错误码、专有名词等在 embedding 空间区分度低
 
