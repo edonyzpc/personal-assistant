@@ -1,0 +1,4 @@
+interface:
+  display_name: "PA Linear Product Manager"
+  short_description: "用 Linear 管理 PA 规划"
+  default_prompt: "Use $pa-linear-product-manager to 记录一个 PA idea 并按 SOP 路由到 Linear。"

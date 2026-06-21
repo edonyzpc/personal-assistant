@@ -1,6 +1,6 @@
 ---
 name: personal-assistant-review
-description: Review uncommitted or PR diffs in the personal-assistant Obsidian plugin with project-specific risk lanes, severity discipline, subagent review routing, and validation boundaries. Use when the user asks for code review, agent team review, multi-angle review, review-first analysis, release-readiness review, or comparison of review quality in this repository.
+description: Review uncommitted or PR diffs in the personal-assistant Obsidian plugin with project-specific risk lanes, second-layer future-risk checks, severity discipline, subagent review routing, and validation boundaries. Use when the user asks for code review, agent team review, multi-angle review, review-first analysis, release-readiness review, hidden side effects, compatibility risk, edge cases, security/performance risk, test gaps, maintenance cost, or comparison of review quality in this repository.
 ---
 
 # Personal Assistant Review
@@ -10,7 +10,8 @@ Use this skill for review-only or review-first work in
 
 Default to high-signal review. Find correctness, product-contract, state,
 privacy, concurrency, docs/tests consistency, and release-blocking risks before
-polish. Do not invent findings to satisfy a role or lane.
+polish. Treat green checks and working happy paths as supporting evidence, not
+closure. Do not invent findings to satisfy a role or lane.
 
 ## Start
 
@@ -60,7 +61,8 @@ are unavailable, perform the same lanes locally.
 
 1. **Functional state and concurrency**
    - Inspect Pagelet orchestration, foreground run guards, stale result
-     handling, save state, panel/tab routing, command aliases, and tests.
+     handling, save state, panel/tab routing, command aliases, hidden side
+     effects on old state, and tests.
    - Focus files: `src/pagelet/orchestrator.ts`,
      `src/pagelet/AnalysisSessionManager.ts`, `src/pagelet/ReviewNoteSaveFlow.ts`,
      `src/pagelet/BubbleCoordinator.ts`, `src/pagelet/commands.ts`,
@@ -73,17 +75,28 @@ are unavailable, perform the same lanes locally.
      Pagelet async-result, write-action, release, Memory/VSS, and tracker docs.
    - Check whether tests encode a behavior that contradicts a product/privacy
      non-goal.
+   - Check whether tests cover failure, compatibility, stale-state, and
+     concurrency edges, not only the easiest success path.
 
 3. **Obsidian/community compatibility and lifecycle**
    - Scan for runtime DOM injection blockers:
      `createElement('style')`, `innerHTML =`, `outerHTML =`.
    - Inspect timers, listeners, observers, root unmount, CSS scope, public
-     exports, packaging/deploy impact, and compatibility-sensitive APIs.
+     exports, old settings, command ids, storage scopes, generated assets,
+     packaging/deploy impact, and compatibility-sensitive APIs.
 
 4. **UI/UX/accessibility/mobile**
    - Inspect focus management, keyboard behavior, ARIA, mobile overflow,
      touch gestures, text clipping, theme variables, and ordinary-user copy.
    - Keep UI findings concrete: include the visible symptom or user flow.
+
+5. **Performance, safety, and maintainability**
+   - Inspect repeated scans, render loops, large-vault behavior, sync waits,
+     background work, unnecessary provider calls, and teardown/unload behavior.
+   - Inspect note text exposure, provider output persistence, file writes,
+     external links, and command-triggered AI work for security/privacy risk.
+   - Inspect misleading names, helper boundaries, and abstractions that could
+     cause future callers to use an API incorrectly.
 
 ### Exploration Mode Lanes
 
@@ -95,9 +108,37 @@ Use the gate lanes, then add perspectives only where relevant:
 - UI/UX/accessibility
 - performance/rendering
 - desktop/mobile support
+- security/privacy
+- naming/maintenance cost
 
 Do not let these labels create coverage pressure. If a lane has no actionable
 issue, say so.
+
+## Second-Layer Risk Lens
+
+After the normal gate pass, assume the changed code compiles and the happy path
+works. Before closing the review, ask what could still become a future bug:
+
+- hidden side effects on old state, existing commands, settings, persisted data,
+  generated assets, or unrelated views
+- compatibility breaks across Obsidian versions, mobile/desktop, old plugin
+  settings, storage scopes, command ids, public exports, and release packaging
+- edge cases not covered by tests: failure paths, retries, empty data, stale
+  async results, concurrent runs, teardown/unload, degraded providers, and large
+  vaults
+- performance risks from repeated scans, render loops, sync waits, background
+  work, unnecessary provider calls, or memory growth
+- security/privacy risks around note text, provider output, persisted state,
+  file writes, external links, and command-triggered AI work
+- misleading names, helper boundaries, or abstractions that make future callers
+  likely to use the API incorrectly
+- tests that only prove the easiest success path and do not pin product,
+  privacy, compatibility, or lifecycle behavior
+
+Every second-layer finding still needs a concrete trigger path, code reference,
+or verifiable assumption. If the concern is plausible but not proven, label it
+as `P3`, `needs decision`, or `optional polish` instead of presenting it as a
+blocker.
 
 ## Project Risk Checklist
 
@@ -151,7 +192,9 @@ Use severity to reflect user impact and release risk.
   concern without clear user-visible failure.
 
 If a finding depends on a design decision rather than a definite bug, label it
-as `needs decision` or `optional polish`.
+as `needs decision` or `optional polish`. Do not escalate vague future risk to a
+blocker unless there is a likely user-visible, privacy, data-safety,
+compatibility, or release impact.
 
 ## Validation
 
@@ -183,7 +226,8 @@ Use this structure:
 - checks not run / residual risk
 
 **Notes**
-- optional polish or needs-decision items, only when useful
+- optional polish, second-layer risks, test gaps, or needs-decision items, only
+  when useful
 ```
 
 Keep summaries secondary. If there are no actionable findings, say that clearly
