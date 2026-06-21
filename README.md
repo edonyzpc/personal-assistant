@@ -18,6 +18,22 @@
 
 > ***v2.7 guide***: Before trying the release, read the [v2.7 user guide](./docs/v2.7-user-guide-en.md). It explains AI Insights, Memory, Pagelet, Research, safe save flows, best practices, and a short release-video script from a user workflow perspective. Chinese version: [v2.7 用户指南](./docs/v2.7-user-guide.md).
 
+## Personal Assistant demos
+
+> ***macOS demo***: AI Chat with Memory, note understanding, visual relationships, and Pagelet review workflows.
+<div align="center">
+
+https://github.com/user-attachments/assets/5420fb9a-209c-44c8-b32e-cafb8f2820a7
+
+</div>
+
+> ***iOS demo***: Mobile Chat, Mermaid rendering, featured images, and connection discovery.
+<div align="center">
+
+https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
+
+</div>
+
 ## AI Chat in 60 seconds
 
 Three steps to get talking to your notes:

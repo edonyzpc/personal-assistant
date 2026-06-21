@@ -14,6 +14,23 @@
 > ***号外***: 新特性来啦！Personal Assistant 的聊天助手可以读取来自你笔记的 Memory；准备 Memory 前会说明数据流、AI 服务商调用和可能成本，并先征求你的确认。
 
 > ***v2.7 用户指南***: 发布前建议先阅读 [v2.7 用户指南：AI Insights、Memory 与 Pagelet 最佳实践](./docs/v2.7-user-guide.md)。它从用户工作流出发，说明 AI Insights、Memory、Pagelet、Research 和安全保存应该怎么搭配使用，也包含可录制发布视频的脚本。海外用户可查看 [English v2.7 user guide](./docs/v2.7-user-guide-en.md)。
+
+## Personal Assistant 演示
+
+> ***macOS 演示***: 展示 AI Chat 使用 Memory、理解当前笔记、生成可视化关联，以及 Pagelet 审阅工作流。
+<div align="center">
+
+https://github.com/user-attachments/assets/5420fb9a-209c-44c8-b32e-cafb8f2820a7
+
+</div>
+
+> ***iOS 演示***: 展示移动端 Chat、Mermaid 渲染、Featured Images 和关联发现。
+<div align="center">
+
+https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
+
+</div>
+
 <div align="center">
 <video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
 </div>
