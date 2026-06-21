@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.8.0](https://github.com/edonyzpc/personal-assistant/compare/2.7.3...2.8.0) (2026-06-21)
+
+### Features
+- settings: add legal about links
+
+### Improvements
+- license: migrate client source to AGPL
+- release: publish legal release assets
+
+### Docs
+- agents: update PA planning workflows
+
+### License
+- Starting with version 2.8.0, the client source is licensed under AGPL-3.0-only.
+- Historical releases are not relicensed retroactively.
+- This release introduces no account system, license key, checkout flow, feature lock, hosted commercial service, or paid entitlement check.
+
 ## [2.7.3](https://github.com/edonyzpc/personal-assistant/compare/2.7.2...2.7.3) (2026-06-20)
 
 ### Fix
