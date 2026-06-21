@@ -41,6 +41,36 @@ describe("Pagelet related note resolution", () => {
         expect(app.metadataCache.getFirstLinkpathDest).not.toHaveBeenCalled();
     });
 
+    it("prefers source-aware Obsidian resolution for bare wikilinks", () => {
+        const rootProject = makeMarkdownFile("Project.md");
+        const sourceProject = makeMarkdownFile("Areas/Project.md");
+        const app = {
+            vault: {
+                getAbstractFileByPath: jest.fn((path: string) => (
+                    path === "Project.md" ? rootProject : null
+                )),
+            },
+            metadataCache: {
+                getFirstLinkpathDest: jest.fn((linkpath: string, sourcePath: string) => (
+                    linkpath === "Project" && sourcePath === "Areas/Current.md"
+                        ? sourceProject
+                        : null
+                )),
+            },
+        };
+
+        expect(resolveRelatedMarkdownNote(
+            app as never,
+            "[[Project]]",
+            "Areas/Current.md",
+        )).toBe(sourceProject);
+        expect(app.metadataCache.getFirstLinkpathDest).toHaveBeenCalledWith(
+            "Project",
+            "Areas/Current.md",
+        );
+        expect(app.vault.getAbstractFileByPath).not.toHaveBeenCalledWith("Project.md");
+    });
+
     it("uses the source path when resolving Obsidian linkpaths", () => {
         const resolved = makeMarkdownFile("Projects/Note.md");
         const app = {

@@ -3,7 +3,7 @@
 /**
  * Pagelet — view-type gating (Track B · B5 / R1).
  *
- * Spec source: `docs/review-assistant-sdd.md` §6.1 R1.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §6.1 R1.
  *
  * Rule: a Pagelet review may only fire when the currently active leaf
  * is a Markdown view. Canvas / Excalidraw / Kanban / PDF / DB Folder /

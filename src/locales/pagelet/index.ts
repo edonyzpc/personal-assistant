@@ -3,7 +3,7 @@
 /**
  * Pagelet — i18n loader.
  *
- * Spec source: `docs/review-assistant-sdd.md` §8 (D014 / D017).
+ * Spec source: `docs/archive/review-assistant-sdd.md` §8 (D014 / D017).
  *
  * What this module owns:
  *  - The flat dictionary shape (`pagelet.<group>.<name>` keys).

@@ -3,7 +3,7 @@
 /**
  * Pagelet — structured output orchestration.
  *
- * Spec source: `docs/review-assistant-sdd.md` §2.2 + §4 + D026.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §2.2 + §4 + D026.
  *
  * Responsibilities:
  *  - Take a `PageletReviewInput`, run the LLM, return a `PageletReviewOutcome`.

@@ -3,7 +3,7 @@
 /**
  * Pagelet — debounce + idempotency (Track B · B5 / R2).
  *
- * Spec source: `docs/review-assistant-sdd.md` §6.1 R2.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §6.1 R2.
  *
  * Two concerns, one module — because in practice they're inseparable:
  *  1. **Debounce** (300ms per SDD) — rapid same-key triggers (user

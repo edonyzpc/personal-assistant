@@ -3,8 +3,8 @@
 /**
  * Pagelet — structured output schemas.
  *
- * Spec source: `docs/review-assistant-sdd.md` §4 + D026 in
- * `docs/review-assistant-decisions.md`.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §4 + D026 in
+ * `docs/archive/review-assistant-decisions.md`.
  *
  * What lives here:
  *  - zod schemas describing the LLM-facing review output contract

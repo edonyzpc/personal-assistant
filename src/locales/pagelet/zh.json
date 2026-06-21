@@ -334,6 +334,7 @@
     "pagelet.panel.discovery.sharedConcepts": "共享概念",
     "pagelet.panel.discovery.connectionMeta": "{count} 处关联 · {strength}",
     "pagelet.panel.discovery.sharedConceptsList": "共享概念：{concepts}",
+    "pagelet.panel.discovery.explicitWikilink": "已有 wikilink",
     "pagelet.panel.discovery.strength.strong": "强关联",
     "pagelet.panel.discovery.strength.medium": "中关联",
     "pagelet.panel.discovery.strength.weak": "弱关联",

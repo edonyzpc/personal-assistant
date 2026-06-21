@@ -5,7 +5,7 @@ import { getObsidianUiLanguage, type UiLocale } from "../language";
 /**
  * Pagelet — note language detection.
  *
- * Spec source: `docs/review-assistant-sdd.md` §8.1 + D015.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §8.1 + D015.
  *
  * The detector exists for two reasons:
  *  1. Stamp `detected_language` on every review input so the structured

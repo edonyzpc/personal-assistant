@@ -3,7 +3,7 @@
 /**
  * Pagelet — SuggestionCard markup builder (pure).
  *
- * Spec source: `docs/review-assistant-sdd.md` §10.2 + `docs/pagelet-visual-spec.html` §③.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §10.2 + `docs/pagelet-visual-spec.html` §③.
  *
  * Same testing rationale as `mascot/markup.ts`: keep all data shaping
  * in a pure builder so unit tests don't need jsdom, and the DOM

@@ -4,8 +4,8 @@
  * Pagelet — cost ceiling + accounting.
  *
  * Spec source:
- *  - `docs/review-assistant-sdd.md` §7 (Cost Ceiling)
- *  - `docs/review-assistant-decisions.md` D018 (token caps), D022 (cost display)
+ *  - `docs/archive/review-assistant-sdd.md` §7 (Cost Ceiling)
+ *  - `docs/archive/review-assistant-decisions.md` D018 (token caps), D022 (cost display)
  *
  * Responsibilities:
  *  - Token estimation (input-size pre-flight + output post-mortem).

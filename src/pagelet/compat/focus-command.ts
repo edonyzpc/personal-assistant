@@ -4,7 +4,7 @@
  * Pagelet — Cmd+/ focus jump-in (Track B · B5).
  *
  * Spec source:
- *  - `docs/review-assistant-sdd.md` §6.2 + §9.1 (focus management)
+ *  - `docs/archive/review-assistant-sdd.md` §6.2 + §9.1 (focus management)
  *  - i18n key `pagelet.a11y.focusLatestCommand` (B3)
  *
  * Goal: a global Obsidian command — bound to `Mod+/` by default — that

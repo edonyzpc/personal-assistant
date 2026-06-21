@@ -117,6 +117,7 @@ class MockElement {
     hidden = false;
     scrollHeight = 120;
     scrollTop = 0;
+    scrollLeft = 0;
     clientWidth = 600;
     clientHeight = 80;
     boundingRect: MockRect | null = null;
@@ -862,6 +863,79 @@ describe('LLMView turn lifecycle', () => {
         expect(allText(containerEl)).not.toContain('Deciding what context to use');
     });
 
+    it('keeps auto-scroll enabled for layout-only scroll events', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'write while layout changes';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1000;
+        responseDiv.clientHeight = 300;
+        responseDiv.scrollTop = 0;
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallCountBeforeStatus = responseDiv.scrollToCalls.length;
+
+        streamCalls[0].options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
+        runAnimationFrames();
+
+        expect(responseDiv.scrollToCalls.slice(scrollCallCountBeforeStatus)).toContainEqual({
+            top: 700,
+            behavior: 'smooth',
+        });
+    });
+
+    it('pauses auto-scroll after explicit touch scrolling', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'write while user scrolls';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1000;
+        responseDiv.clientHeight = 300;
+        responseDiv.scrollTop = 0;
+        responseDiv.dispatchEvent('touchstart');
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallCountBeforeStatus = responseDiv.scrollToCalls.length;
+
+        streamCalls[0].options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
+        runAnimationFrames();
+
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallCountBeforeStatus);
+        await view.onClose();
+    });
+
+    it('pauses auto-scroll after keyboard scrolling', async () => {
+        const { view, containerEl } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'write while keyboard scrolls';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        runAnimationFrames(true);
+
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1000;
+        responseDiv.clientHeight = 300;
+        responseDiv.scrollTop = 0;
+        responseDiv.dispatchEvent('keydown', { key: 'PageUp' });
+        responseDiv.dispatchEvent('scroll');
+        const scrollCallCountBeforeStatus = responseDiv.scrollToCalls.length;
+
+        streamCalls[0].options.onStatus?.({ type: 'thinking' } as ChatAgentStatus);
+        runAnimationFrames();
+
+        expect(responseDiv.scrollToCalls).toHaveLength(scrollCallCountBeforeStatus);
+        await view.onClose();
+    });
+
     it('keeps the cancelled message but ignores stale chunks after cancel', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -1182,12 +1256,21 @@ describe('LLMView turn lifecycle', () => {
     it('wraps Mermaid containers that appear after the rendered buffer is attached', async () => {
         const mermaidBuffer: { current: MockElement | null } = { current: null };
         const mutationCallbacks: MutationCallback[] = [];
+        const resizeCallbacks: ResizeObserverCallback[] = [];
         class MockMutationObserver {
             readonly observe = jest.fn();
             readonly disconnect = jest.fn();
 
             constructor(callback: MutationCallback) {
                 mutationCallbacks.push(callback);
+            }
+        }
+        class MockResizeObserver {
+            readonly observe = jest.fn();
+            readonly disconnect = jest.fn();
+
+            constructor(callback: ResizeObserverCallback) {
+                resizeCallbacks.push(callback);
             }
         }
         Object.defineProperty(globalThis, 'document', {
@@ -1199,6 +1282,10 @@ describe('LLMView turn lifecycle', () => {
         Object.defineProperty(globalThis, 'MutationObserver', {
             configurable: true,
             value: MockMutationObserver,
+        });
+        Object.defineProperty(globalThis, 'ResizeObserver', {
+            configurable: true,
+            value: MockResizeObserver,
         });
         (MarkdownRenderer.render as unknown as jest.Mock<(app: unknown, markdown: string, el: MockElement) => void | Promise<void>>).mockImplementation((_app: unknown, markdown: string, el: MockElement) => {
             el.setText(markdown);
@@ -1229,6 +1316,11 @@ describe('LLMView turn lifecycle', () => {
         expect(mermaidBuffer.current).not.toBeNull();
         const attachedMermaidBuffer = mermaidBuffer.current;
         if (!attachedMermaidBuffer) throw new Error('Mermaid buffer was not captured');
+        const responseDiv = getResponseDiv(view);
+        responseDiv.scrollHeight = 1200;
+        responseDiv.clientHeight = 320;
+        responseDiv.scrollLeft = 64;
+        const scrollCallCountBeforeEnhancement = responseDiv.scrollToCalls.length;
         const mermaidDiagram = attachedMermaidBuffer.createDiv({ cls: 'block-language-mermaid' });
         mutationCallbacks[0]([
             {
@@ -1244,6 +1336,26 @@ describe('LLMView turn lifecycle', () => {
 
         expect(getElementsByClass(containerEl, 'pa-chat-mermaid-shell')).toHaveLength(1);
         expect(getButtonsByClass(containerEl, 'pa-chat-mermaid-open-button')).toHaveLength(1);
+        expect(responseDiv.scrollLeft).toBe(0);
+        runAnimationFrames();
+        await flushPromises();
+        expect(responseDiv.scrollToCalls.length).toBeGreaterThan(scrollCallCountBeforeEnhancement);
+        const enhancementScrollCalls = responseDiv.scrollToCalls.slice(scrollCallCountBeforeEnhancement);
+        expect(enhancementScrollCalls).toContainEqual({ top: 880, behavior: 'auto' });
+        expect(enhancementScrollCalls).not.toContainEqual({ top: 1200, behavior: 'auto' });
+        expect(resizeCallbacks.length).toBeGreaterThan(0);
+        responseDiv.scrollHeight = 1600;
+        responseDiv.clientHeight = 320;
+        const scrollCallCountBeforeResize = responseDiv.scrollToCalls.length;
+        resizeCallbacks.forEach((callback) => {
+            callback([], {} as ResizeObserver);
+        });
+        runAnimationFrames();
+        await flushPromises();
+        expect(responseDiv.scrollToCalls.slice(scrollCallCountBeforeResize)).toContainEqual({
+            top: 1280,
+            behavior: 'auto',
+        });
         expect(view.chatHistory).toEqual([
             { role: 'user', content: 'draw a graph' },
             { role: 'assistant', content: '```mermaid\ngraph TD\nA --> B\n```' },
@@ -3196,6 +3308,8 @@ describe('LLMView turn lifecycle', () => {
         expect(mobileDrawerInnerBlock).toContain('padding-top: var(--pa-chat-drawer-top-clearance);');
         expect(mobileViewBlock).toContain('padding-bottom: 0;');
         expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;/);
+        expect(css).toMatch(/\.llm-chat-container\s*{[\s\S]*?display:\s*flex;[\s\S]*?flex-direction:\s*column;/);
+        expect(css).toMatch(/\.llm-chat-container::before\s*{[\s\S]*?content:\s*"";[\s\S]*?flex:\s*1 1 auto;[\s\S]*?min-height:\s*0;[\s\S]*?pointer-events:\s*none;/);
         expect(css).not.toMatch(/\.llm-chat-container\s*{[^}]*transition:\s*padding-bottom/);
         expect(css).toMatch(/\.llm-view\.is-keyboard-open\s+\.llm-chat-container\s*{[\s\S]*?padding-bottom:\s*calc\(14px \+ var\(--pa-chat-composer-height,\s*0px\)\);/);
         expect(css).toMatch(/\.pa-chat-empty-state\s*{[\s\S]*?box-sizing:\s*border-box;[\s\S]*?min-height:\s*100%;/);
@@ -3288,8 +3402,43 @@ describe('LLMView turn lifecycle', () => {
 
     it('keeps Mermaid preview controls usable on narrow mobile panes', () => {
         const css = readFileSync('src/custom.pcss', 'utf8');
+        const chatContainerBlock = getCssRuleBlock(css, '.llm-chat-container');
+        const messageBlock = getCssRuleBlock(css, '.llm-message');
+        const messageContentBlock = getCssRuleBlock(css, '.llm-view .message-content');
+        const renderBufferBlock = getCssRuleBlock(css, '.llm-view .message-render-buffer');
+        const shellBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-shell');
+        const viewportBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-viewport');
+        const diagramBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-viewport > .mermaid,\n.llm-view .pa-chat-mermaid-viewport > .block-language-mermaid');
+        const svgBlock = getCssRuleBlock(css, '.llm-view .pa-chat-mermaid-viewport svg');
 
+        expect(chatContainerBlock).toContain('box-sizing: border-box;');
+        expect(chatContainerBlock).toContain('display: flex;');
+        expect(chatContainerBlock).toContain('flex-direction: column;');
+        expect(chatContainerBlock).toContain('min-width: 0;');
+        expect(chatContainerBlock).toContain('width: 100%;');
+        expect(chatContainerBlock).toContain('overflow-x: hidden;');
+        expect(chatContainerBlock).toContain('overscroll-behavior-x: none;');
+        expect(chatContainerBlock).toContain('overscroll-behavior-y: contain;');
+        expect(messageBlock).toContain('min-width: 0;');
+        expect(messageContentBlock).toContain('box-sizing: border-box;');
+        expect(messageContentBlock).toContain('overflow-x: hidden;');
+        expect(renderBufferBlock).toContain('box-sizing: border-box;');
+        expect(renderBufferBlock).toContain('width: 100%;');
+        expect(renderBufferBlock).toContain('overflow-x: hidden;');
+        expect(shellBlock).toContain('box-sizing: border-box;');
+        expect(shellBlock).toContain('min-width: 0;');
+        expect(shellBlock).toContain('width: 100%;');
+        expect(viewportBlock).toContain('box-sizing: border-box;');
+        expect(viewportBlock).toContain('min-width: 0;');
+        expect(viewportBlock).toContain('width: 100%;');
+        expect(viewportBlock).toContain('overflow-x: auto;');
+        expect(viewportBlock).toContain('overflow-y: auto;');
+        expect(viewportBlock).toContain('touch-action: pan-x pan-y;');
+        expect(diagramBlock).toContain('display: block;');
+        expect(diagramBlock).toContain('width: max-content;');
+        expect(svgBlock).toContain('min-width: 100%;');
         expect(css).toMatch(/\.llm-view\s+\.pa-chat-mermaid-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
+        expect(css).toMatch(/body\.is-mobile\s+\.llm-view\s+\.pa-chat-mermaid-shell,\s*\nbody\.is-mobile\s+\.llm-view\s+\.pa-chat-mermaid-viewport\s*{[\s\S]*?max-width:\s*100%;/);
         expect(css).toMatch(/\.llm-view\.is-narrow\s+\.pa-chat-mermaid-open-button\s*{[\s\S]*?width:\s*40px;[\s\S]*?height:\s*40px;[\s\S]*?min-width:\s*40px;[\s\S]*?min-height:\s*40px;/);
         expect(css).toMatch(/\.pa-chat-mermaid-modal-viewport\s*{[\s\S]*?-webkit-overflow-scrolling:\s*touch;[\s\S]*?overscroll-behavior:\s*contain;/);
     });

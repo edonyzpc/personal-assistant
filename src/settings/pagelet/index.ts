@@ -4,7 +4,7 @@
  * Pagelet — settings module.
  *
  * Spec source:
- *  - `docs/review-assistant-sdd.md` §10.3 (Settings UI layout)
+ *  - `docs/archive/review-assistant-sdd.md` §10.3 (Settings UI layout)
  *  - D008-D010 (storage path), D013 (beta default on), D015 (output lang),
  *    D018 (token caps), D020 (call limits — read-only display only),
  *    background preparation opt-in)

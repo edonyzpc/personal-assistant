@@ -3,7 +3,7 @@
 /**
  * Pagelet — Mascot UI types.
  *
- * Spec source: `docs/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html`.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html`.
  *
  * What this file declares (and ONLY this):
  *   - The 4 Pet states every Mascot consumer reasons about.

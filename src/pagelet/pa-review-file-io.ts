@@ -4,14 +4,14 @@
  * Pagelet — file IO + frontmatter (Track B · B6).
  *
  * Spec source:
- *  - `docs/review-assistant-sdd.md` §5.1 (directory layout)
- *  - `docs/review-assistant-sdd.md` §5.2 (write via `vault.adapter.write` — R3)
- *  - `docs/review-assistant-sdd.md` §5.3 (frontmatter shape, D029 naming)
- *  - `docs/review-assistant-sdd.md` §5.4 (custom path via settings — D010)
- *  - `docs/review-assistant-decisions.md` D008 (`.pagelet/` dotfolder + collision rule)
- *  - `docs/review-assistant-decisions.md` D009 (filename pattern)
- *  - `docs/review-assistant-decisions.md` D010 (user-configurable path)
- *  - `docs/review-assistant-decisions.md` D025 / D030 (write framework wiring; C1 task)
+ *  - `docs/archive/review-assistant-sdd.md` §5.1 (directory layout)
+ *  - `docs/archive/review-assistant-sdd.md` §5.2 (write via `vault.adapter.write` — R3)
+ *  - `docs/archive/review-assistant-sdd.md` §5.3 (frontmatter shape, D029 naming)
+ *  - `docs/archive/review-assistant-sdd.md` §5.4 (custom path via settings — D010)
+ *  - `docs/archive/review-assistant-decisions.md` D008 (`.pagelet/` dotfolder + collision rule)
+ *  - `docs/archive/review-assistant-decisions.md` D009 (filename pattern)
+ *  - `docs/archive/review-assistant-decisions.md` D010 (user-configurable path)
+ *  - `docs/archive/review-assistant-decisions.md` D025 / D030 (write framework wiring; C1 task)
  *
  * Scope (B6, non-write tracker):
  *  - Resolve a target review-note path given source note + settings + date

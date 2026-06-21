@@ -648,6 +648,214 @@ describe("PageletOrchestrator connection discovery", () => {
         );
     });
 
+    it("uses explicit wikilinks as Discovery connections when Memory related-note search is unavailable", async () => {
+        const currentFile = makeTFile("notes/current.md");
+        const linkedFile = makeTFile("notes/linked.md");
+        const panelView = { open: jest.fn() };
+        const findRelatedNotes = jest.fn<PageletHost["findRelatedNotes"]>(async () => []);
+        const discoverConnections = jest.fn<PageletHost["discoverConnections"]>(async () => null);
+        const host = makeHost({
+            app: {
+                workspace: {
+                    getActiveFile: jest.fn(() => currentFile),
+                },
+                vault: {
+                    getMarkdownFiles: jest.fn(() => [currentFile, linkedFile]),
+                    cachedRead: jest.fn(async (file: TFile) => (
+                        file.path === linkedFile.path
+                            ? "Linked note body"
+                            : "Current note body with [[linked]]"
+                    )),
+                    getAbstractFileByPath: jest.fn((path: string) => (
+                        [currentFile, linkedFile].find((file) => file.path === path) ?? null
+                    )),
+                },
+                metadataCache: {
+                    getFileCache: jest.fn((file: TFile) => (
+                        file.path === currentFile.path
+                            ? { links: [{ link: "linked", original: "[[linked]]" }] }
+                            : null
+                    )),
+                    getFirstLinkpathDest: jest.fn((linkpath: string, sourcePath: string) => (
+                        linkpath === "linked" && sourcePath === currentFile.path
+                            ? linkedFile
+                            : null
+                    )),
+                },
+            } as unknown as PageletHost["app"],
+            findRelatedNotes,
+            isMemoryReadyForPageletDiscovery: async () => false,
+            discoverConnections,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+
+        expect(findRelatedNotes).toHaveBeenCalledWith(
+            "notes/current.md",
+            [{ path: "notes/current.md", content: "Current note body with [[linked]]" }],
+            ["notes/current.md", "notes/linked.md"],
+        );
+        expect(discoverConnections).toHaveBeenCalledWith(
+            { path: "notes/current.md", content: "Current note body with [[linked]]" },
+            [{ path: "notes/linked.md", content: "Linked note body" }],
+        );
+        expect(discoverConnections.mock.invocationCallOrder[0]).toBeLessThan(
+            panelView.open.mock.invocationCallOrder[0],
+        );
+        expect(panelView.open).toHaveBeenCalledWith(
+            "discover",
+            [expect.objectContaining({
+                title: "Existing wikilink",
+                sourceFile: "notes/linked.md",
+                sourceTitle: "linked",
+            })],
+            expect.objectContaining({
+                connections: [expect.objectContaining({
+                    fromNote: "notes/current.md",
+                    toNote: "notes/linked.md",
+                    strength: "strong",
+                    sharedConcepts: ["Existing wikilink"],
+                })],
+                sourcePath: "notes/current.md",
+            }),
+        );
+    });
+
+    it("keeps explicit wikilink Discovery visible when AI enrichment fails", async () => {
+        const currentFile = makeTFile("notes/current.md");
+        const linkedFile = makeTFile("notes/linked.md");
+        const panelView = { open: jest.fn() };
+        const log = jest.fn();
+        const discoverConnections = jest.fn<PageletHost["discoverConnections"]>(async () => {
+            throw new Error("provider unavailable");
+        });
+        const host = makeHost({
+            app: {
+                workspace: {
+                    getActiveFile: jest.fn(() => currentFile),
+                },
+                vault: {
+                    getMarkdownFiles: jest.fn(() => [currentFile, linkedFile]),
+                    cachedRead: jest.fn(async (file: TFile) => (
+                        file.path === linkedFile.path
+                            ? "Linked note body"
+                            : "Current note body with [[linked]]"
+                    )),
+                    getAbstractFileByPath: jest.fn((path: string) => (
+                        [currentFile, linkedFile].find((file) => file.path === path) ?? null
+                    )),
+                },
+                metadataCache: {
+                    getFileCache: jest.fn((file: TFile) => (
+                        file.path === currentFile.path
+                            ? { links: [{ link: "linked", original: "[[linked]]" }] }
+                            : null
+                    )),
+                    getFirstLinkpathDest: jest.fn((linkpath: string, sourcePath: string) => (
+                        linkpath === "linked" && sourcePath === currentFile.path
+                            ? linkedFile
+                            : null
+                    )),
+                },
+            } as unknown as PageletHost["app"],
+            findRelatedNotes: async () => [],
+            log,
+            discoverConnections,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await expect(
+            (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections(),
+        ).resolves.toBeUndefined();
+
+        expect(discoverConnections).toHaveBeenCalledTimes(1);
+        expect(discoverConnections.mock.invocationCallOrder[0]).toBeLessThan(
+            panelView.open.mock.invocationCallOrder[0],
+        );
+        expect(panelView.open).toHaveBeenCalledTimes(1);
+        expect(panelView.open).toHaveBeenCalledWith(
+            "discover",
+            [expect.objectContaining({
+                title: "Existing wikilink",
+                sourceFile: "notes/linked.md",
+                sourceTitle: "linked",
+            })],
+            expect.objectContaining({
+                connections: [expect.objectContaining({
+                    fromNote: "notes/current.md",
+                    toNote: "notes/linked.md",
+                    sharedConcepts: ["Existing wikilink"],
+                })],
+                sourcePath: "notes/current.md",
+            }),
+        );
+        expect(log).toHaveBeenCalledWith("Discovery AI analysis failed; showing explicit wikilinks", expect.any(Error));
+    });
+
+    it("does not read explicit wikilink targets excluded by Pagelet scope", async () => {
+        const currentFile = makeTFile("notes/current.md");
+        const linkedFile = makeTFile("private/linked.md");
+        const panelView = { open: jest.fn() };
+        const cachedRead = jest.fn(async (file: TFile) => (
+            file.path === linkedFile.path
+                ? "Private linked note body"
+                : "Current note body with [[linked]]"
+        ));
+        const discoverConnections = jest.fn<PageletHost["discoverConnections"]>(async () => null);
+        const host = makeHost({
+            app: {
+                workspace: {
+                    getActiveFile: jest.fn(() => currentFile),
+                },
+                vault: {
+                    getMarkdownFiles: jest.fn(() => [currentFile, linkedFile]),
+                    cachedRead,
+                    getAbstractFileByPath: jest.fn((path: string) => (
+                        [currentFile, linkedFile].find((file) => file.path === path) ?? null
+                    )),
+                },
+                metadataCache: {
+                    getFileCache: jest.fn((file: TFile) => {
+                        if (file.path === currentFile.path) {
+                            return { links: [{ link: "linked", original: "[[linked]]" }] };
+                        }
+                        if (file.path === linkedFile.path) {
+                            return { tags: [{ tag: "#no-ai" }] };
+                        }
+                        return null;
+                    }),
+                    getFirstLinkpathDest: jest.fn((linkpath: string, sourcePath: string) => (
+                        linkpath === "linked" && sourcePath === currentFile.path
+                            ? linkedFile
+                            : null
+                    )),
+                },
+            } as unknown as PageletHost["app"],
+            findRelatedNotes: async () => [],
+            isMemoryReadyForPageletDiscovery: async () => false,
+            discoverConnections,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+
+        expect(discoverConnections).not.toHaveBeenCalled();
+        expect(cachedRead).toHaveBeenCalledTimes(1);
+        expect(cachedRead).toHaveBeenCalledWith(currentFile);
+        expect(panelView.open).toHaveBeenCalledWith(
+            "discover",
+            [expect.objectContaining({
+                title: "Enable Memory to Discover Connections",
+                sourceFile: "",
+            })],
+            { sourcePath: "notes/current.md" },
+        );
+    });
+
     it("maps connection findings to the related note opened by Source", async () => {
         const panelView = { open: jest.fn() };
         const host = makeHost({

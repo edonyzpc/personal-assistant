@@ -334,6 +334,7 @@
     "pagelet.panel.discovery.sharedConcepts": "Shared concepts",
     "pagelet.panel.discovery.connectionMeta": "{count} connections · {strength}",
     "pagelet.panel.discovery.sharedConceptsList": "Shared concepts: {concepts}",
+    "pagelet.panel.discovery.explicitWikilink": "Existing wikilink",
     "pagelet.panel.discovery.strength.strong": "Strong",
     "pagelet.panel.discovery.strength.medium": "Medium",
     "pagelet.panel.discovery.strength.weak": "Weak",

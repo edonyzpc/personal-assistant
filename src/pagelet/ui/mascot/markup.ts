@@ -3,7 +3,7 @@
 /**
  * Pagelet — Mascot markup builder (pure).
  *
- * Spec source: `docs/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html` §①.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html` §①.
  *
  * Why a pure builder (separate from the DOM renderer):
  *  - Without jsdom in the test setup, exercising real DOM calls

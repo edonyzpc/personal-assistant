@@ -307,10 +307,12 @@ export function scheduleMermaidEnhancement(
     mermaidSources: string[],
     isCurrent: () => boolean,
     owner?: Component,
+    onEnhanced?: () => void,
 ) {
     if (mermaidSources.length === 0) return;
 
     let stopped = false;
+    let notified = false;
     let observer: MutationObserver | null = null;
     let fallbackFrameCount = 0;
     let fallbackFrameId: PlatformAnimationFrameHandle | null = null;
@@ -344,7 +346,13 @@ export function scheduleMermaidEnhancement(
             return true;
         }
         const complete = enhanceMermaidDiagrams(root, host, mermaidSources);
-        if (complete) stop();
+        if (complete) {
+            stop();
+            if (!notified) {
+                notified = true;
+                onEnhanced?.();
+            }
+        }
         return complete;
     };
 

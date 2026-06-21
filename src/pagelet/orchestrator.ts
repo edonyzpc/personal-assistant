@@ -11,7 +11,7 @@
  * {@link PeriodicSummaryFlow}.
  */
 
-import { Notice } from "obsidian";
+import { Notice, normalizePath } from "obsidian";
 import type { MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
@@ -25,7 +25,7 @@ import { isObsidianModalOpen } from "./dom-utils";
 
 import { BubbleView } from "./bubble/BubbleView";
 import { PanelView } from "./panel/PanelView";
-import type { PanelFinding, PanelLayoutType, PanelOpenExtra } from "./panel/types";
+import type { DiscoveryResult, NoteConnection, PanelFinding, PanelLayoutType, PanelOpenExtra } from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
 import { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetCorner, PetTaskKind } from "./pet/types";
@@ -529,9 +529,17 @@ export class PageletOrchestrator {
             const currentNote = { path: activeFile.path, content };
             const noteContents = [{ path: activeFile.path, content }];
 
-            const relatedNotes = await this.host.findRelatedNotes(
-                activeFile.path, noteContents, [activeFile.path],
-            );
+            const explicitRelatedNotes = await this.findExplicitLinkedNotes(activeFile, [activeFile.path]);
+            const relatedNotes = [
+                ...explicitRelatedNotes,
+                ...await this.host.findRelatedNotes(
+                    activeFile.path,
+                    noteContents,
+                    [activeFile.path, ...explicitRelatedNotes.map((note) => note.path)],
+                ),
+            ];
+
+            const explicitConnections = this.buildExplicitLinkConnections(activeFile.path, explicitRelatedNotes);
 
             if (relatedNotes.length === 0) {
                 const locale = getPageletUiLanguage();
@@ -553,35 +561,26 @@ export class PageletOrchestrator {
                 return;
             }
 
-            const result = await this.host.discoverConnections(currentNote, relatedNotes);
+            let result: DiscoveryResult | null = null;
+            try {
+                result = await this.host.discoverConnections(currentNote, relatedNotes);
+            } catch (error) {
+                if (explicitConnections.length === 0) throw error;
+                finishPet();
+                this.host.log("Discovery AI analysis failed; showing explicit wikilinks", error);
+                this.openDiscoveryResult(activeFile.path, explicitConnections);
+                return;
+            }
             finishPet();
 
-            if (!result) {
+            const connections = mergeDiscoveryConnections(explicitConnections, result?.connections ?? []);
+
+            if (!result && connections.length === 0) {
                 this.handleExpandPanel("discover");
                 return;
             }
 
-            const findings: PanelFinding[] = [
-                ...result.connections.map((c) => ({
-                    title: c.sharedConcepts[0] ?? "",
-                    description: c.sharedConcepts.join("; "),
-                    insightText: c.sharedConcepts.join("; "),
-                    sourceFile: c.toNote,
-                    sourceTitle: noteTitleFromPath(c.toNote),
-                })),
-                ...result.gaps.map((g) => ({
-                    title: g.topic,
-                    description: g.description,
-                    insightText: g.description,
-                    sourceFile: activeFile.path,
-                    sourceTitle: g.topic,
-                })),
-            ];
-
-            this.openDiscoveryPanel(findings, {
-                connections: result.connections,
-                sourcePath: activeFile.path,
-            });
+            this.openDiscoveryResult(activeFile.path, connections, result?.gaps ?? []);
         } catch (error) {
             finishPet();
             this.petView?.flashError();
@@ -590,6 +589,87 @@ export class PageletOrchestrator {
         } finally {
             this.sessionManager.finishForegroundReviewRun();
         }
+    }
+
+    private openDiscoveryResult(
+        sourcePath: string,
+        connections: readonly NoteConnection[],
+        gaps: DiscoveryResult["gaps"] = [],
+    ): void {
+        const findings: PanelFinding[] = [
+            ...connections.map((c) => ({
+                title: c.sharedConcepts[0] ?? "",
+                description: c.sharedConcepts.join("; "),
+                insightText: c.sharedConcepts.join("; "),
+                sourceFile: c.toNote,
+                sourceTitle: noteTitleFromPath(c.toNote),
+            })),
+            ...gaps.map((g) => ({
+                title: g.topic,
+                description: g.description,
+                insightText: g.description,
+                sourceFile: sourcePath,
+                sourceTitle: g.topic,
+            })),
+        ];
+
+        this.openDiscoveryPanel(findings, {
+            connections: [...connections],
+            sourcePath,
+        });
+    }
+
+    private async findExplicitLinkedNotes(
+        sourceFile: TFile,
+        excludedPaths: readonly string[],
+    ): Promise<Array<{ path: string; content: string }>> {
+        const cache = this.host.app.metadataCache.getFileCache?.(sourceFile);
+        const links = [
+            ...((cache as { links?: Array<{ link?: string }> } | null | undefined)?.links ?? []),
+            ...((cache as { embeds?: Array<{ link?: string }> } | null | undefined)?.embeds ?? []),
+        ];
+        if (links.length === 0) return [];
+
+        const excluded = new Set(excludedPaths.map((path) => normalizePath(path)));
+        const seen = new Set<string>();
+        const related: Array<{ path: string; content: string }> = [];
+
+        for (const link of links) {
+            if (typeof link.link !== "string" || !link.link.trim()) continue;
+            const file = resolveRelatedMarkdownNote(this.host.app, link.link, sourceFile.path);
+            if (!file) continue;
+            const path = normalizePath(file.path);
+            if (excluded.has(path) || seen.has(path)) continue;
+            const scopeResult = this.scopeResolver.resolveCurrentNote(file);
+            if (scopeResult.included.length === 0) continue;
+            seen.add(path);
+
+            try {
+                related.push({
+                    path,
+                    content: (await this.host.app.vault.cachedRead(file)).slice(0, 1200),
+                });
+            } catch (error) {
+                this.host.log("Pagelet explicit related-note read skipped", { path, error });
+            }
+            if (related.length >= 6) break;
+        }
+
+        return related;
+    }
+
+    private buildExplicitLinkConnections(
+        sourcePath: string,
+        relatedNotes: ReadonlyArray<{ path: string }>,
+    ): NoteConnection[] {
+        if (relatedNotes.length === 0) return [];
+        const locale = getPageletUiLanguage();
+        return relatedNotes.map((note) => ({
+            fromNote: sourcePath,
+            toNote: note.path,
+            strength: "strong" as const,
+            sharedConcepts: [pageletT("pagelet.panel.discovery.explicitWikilink", locale)],
+        }));
     }
 
     private async analyzeFiles(
@@ -934,4 +1014,60 @@ function noteTitleFromPath(path: string): string {
     const normalized = path.trim();
     if (!normalized) return "";
     return normalized.split("/").pop()?.replace(/\.md$/i, "") ?? normalized;
+}
+
+function mergeDiscoveryConnections(
+    preferred: readonly NoteConnection[],
+    discovered: readonly NoteConnection[],
+): NoteConnection[] {
+    const merged: NoteConnection[] = [];
+    const indexes = new Map<string, number>();
+    const add = (connection: NoteConnection): void => {
+        const from = normalizePath(connection.fromNote);
+        const to = normalizePath(connection.toNote);
+        const key = [from, to].sort().join("\0");
+        if (!from || !to || from === to) return;
+        const existingIndex = indexes.get(key);
+        if (existingIndex !== undefined) {
+            const existing = merged[existingIndex];
+            existing.strength = strongestDiscoveryStrength(existing.strength, connection.strength);
+            existing.sharedConcepts = mergeDiscoveryConcepts(existing.sharedConcepts, connection.sharedConcepts);
+            return;
+        }
+        indexes.set(key, merged.length);
+        merged.push({
+            ...connection,
+            fromNote: from,
+            toNote: to,
+            sharedConcepts: mergeDiscoveryConcepts(connection.sharedConcepts),
+        });
+    };
+
+    preferred.forEach(add);
+    discovered.forEach(add);
+    return merged;
+}
+
+function mergeDiscoveryConcepts(...conceptGroups: readonly string[][]): string[] {
+    const seen = new Set<string>();
+    const merged: string[] = [];
+    for (const concept of conceptGroups.flat()) {
+        const normalized = concept.trim();
+        if (!normalized || seen.has(normalized)) continue;
+        seen.add(normalized);
+        merged.push(normalized);
+    }
+    return merged;
+}
+
+function strongestDiscoveryStrength(
+    first: NoteConnection["strength"],
+    second: NoteConnection["strength"],
+): NoteConnection["strength"] {
+    const ranks: Record<NoteConnection["strength"], number> = {
+        weak: 0,
+        medium: 1,
+        strong: 2,
+    };
+    return ranks[second] > ranks[first] ? second : first;
 }

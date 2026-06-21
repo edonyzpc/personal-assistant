@@ -3,7 +3,7 @@
 /**
  * Pagelet — SuggestionCard UI types.
  *
- * Spec source: `docs/review-assistant-sdd.md` §10.2 + `docs/pagelet-visual-spec.html` §③.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §10.2 + `docs/pagelet-visual-spec.html` §③.
  *
  * The 5 區塊 / 5 sections the card renders (per B2 task brief):
  *   1. Header — Mascot icon + kind badge + diagnostics badges

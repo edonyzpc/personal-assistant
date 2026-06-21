@@ -4,8 +4,8 @@
  * Pagelet — call-rate gating.
  *
  * Spec source:
- *  - `docs/review-assistant-sdd.md` §7.2 (Call counting)
- *  - `docs/review-assistant-decisions.md` D019 / D020 / D021
+ *  - `docs/archive/review-assistant-sdd.md` §7.2 (Call counting)
+ *  - `docs/archive/review-assistant-decisions.md` D019 / D020 / D021
  *
  * Window strategy (per SDD §7.2 reference impl):
  *  - Hourly cap: **sliding 1-hour window**. We keep timestamps of recent

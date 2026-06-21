@@ -379,12 +379,21 @@ export class LLMView extends ItemView {
         this.responseDiv = chatContainer;
 
         const AUTO_SCROLL_THRESHOLD_PX = 80;
+        const USER_SCROLL_INTENT_WINDOW_MS = 500;
+        const MERMAID_LAYOUT_STABILIZE_FRAME_COUNT = 90;
+        const MERMAID_LAYOUT_STABILIZE_TIMEOUT_MS = 4000;
+        const USER_SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ', 'Spacebar']);
         let shouldAutoScroll = true;
+        let userScrollIntent = false;
+        let userScrollIntentTimer: PlatformTimeoutHandle | null = null;
+
+        const getScrollBottom = () => Math.max(
+            0,
+            this.responseDiv.scrollHeight - this.responseDiv.clientHeight,
+        );
 
         const isNearBottom = () => {
-            const distanceFromBottom = this.responseDiv.scrollHeight
-                - this.responseDiv.scrollTop
-                - this.responseDiv.clientHeight;
+            const distanceFromBottom = getScrollBottom() - this.responseDiv.scrollTop;
             return distanceFromBottom <= AUTO_SCROLL_THRESHOLD_PX;
         };
 
@@ -406,15 +415,56 @@ export class LLMView extends ItemView {
                 if (frameId === null) return;
                 if (this.scheduledScrollFrame !== frameId) return;
                 this.scheduledScrollFrame = null;
+                this.responseDiv.scrollLeft = 0;
                 this.responseDiv.scrollTo({
-                    top: this.responseDiv.scrollHeight,
+                    top: getScrollBottom(),
                     behavior,
                 });
             });
             this.scheduledScrollFrame = frameId;
         };
+        const stabilizeChatViewport = (
+            { force = false, behavior = 'auto' }: { force?: boolean; behavior?: ScrollBehavior } = {},
+        ) => {
+            this.responseDiv.scrollLeft = 0;
+            scrollToBottom({ force, behavior });
+        };
+        const clearUserScrollIntent = () => {
+            userScrollIntent = false;
+            if (userScrollIntentTimer !== null) {
+                clearPlatformTimeout(userScrollIntentTimer);
+                userScrollIntentTimer = null;
+            }
+        };
+        const markUserScrollIntent = () => {
+            userScrollIntent = true;
+            if (userScrollIntentTimer !== null) {
+                clearPlatformTimeout(userScrollIntentTimer);
+            }
+            userScrollIntentTimer = setPlatformTimeout(() => {
+                userScrollIntent = false;
+                userScrollIntentTimer = null;
+            }, USER_SCROLL_INTENT_WINDOW_MS);
+            (userScrollIntentTimer as unknown as { unref?: () => void }).unref?.();
+        };
+        const markKeyboardScrollIntent = (event: KeyboardEvent) => {
+            if (USER_SCROLL_KEYS.has(event.key)) {
+                markUserScrollIntent();
+            }
+        };
+        this.responseDiv.addEventListener('wheel', markUserScrollIntent, { passive: true });
+        this.responseDiv.addEventListener('touchstart', markUserScrollIntent, { passive: true });
+        this.responseDiv.addEventListener('pointerdown', markUserScrollIntent, { passive: true });
+        this.responseDiv.addEventListener('keydown', markKeyboardScrollIntent);
+        this.registerViewTeardown(() => {
+            this.responseDiv.removeEventListener('wheel', markUserScrollIntent);
+            this.responseDiv.removeEventListener('touchstart', markUserScrollIntent);
+            this.responseDiv.removeEventListener('pointerdown', markUserScrollIntent);
+            this.responseDiv.removeEventListener('keydown', markKeyboardScrollIntent);
+            clearUserScrollIntent();
+        });
         this.mobileInputAdapter.observeKeyboardClearance(containerEl, inputDiv, () => {
-            scrollToBottom({ behavior: 'auto' });
+            stabilizeChatViewport({ behavior: 'auto' });
         });
 
         const pauseAutoScroll = () => {
@@ -422,9 +472,13 @@ export class LLMView extends ItemView {
         };
 
         this.responseDiv.addEventListener('scroll', () => {
-            // Resume auto-scroll whenever the viewport returns to the bottom,
-            // regardless of whether the user used wheel, keyboard, touch, or the scrollbar.
-            shouldAutoScroll = isNearBottom();
+            if (isNearBottom()) {
+                shouldAutoScroll = true;
+                return;
+            }
+            if (userScrollIntent) {
+                shouldAutoScroll = false;
+            }
         });
 
 
@@ -950,6 +1004,78 @@ export class LLMView extends ItemView {
             return getOptionalPlatformDocument()?.createElement('div')
                 ?? this.responseDiv.createDiv({ cls: 'message-render-buffer-detached-fallback' }) as HTMLElement;
         };
+        const stabilizeMermaidMessageLayout = (
+            rendered: RenderedMessage,
+            renderToken: number,
+            renderOwner: Component,
+            { force = false }: { force?: boolean } = {},
+        ) => {
+            let stopped = false;
+            let observer: ResizeObserver | null = null;
+            let observerFrameId: PlatformAnimationFrameHandle | null = null;
+            let settleFrameId: PlatformAnimationFrameHandle | null = null;
+            let timeoutId: PlatformTimeoutHandle | null = null;
+            let settleFrameCount = 0;
+
+            const stop = () => {
+                stopped = true;
+                observer?.disconnect();
+                observer = null;
+                if (observerFrameId !== null) {
+                    cancelPlatformAnimationFrame(observerFrameId);
+                    observerFrameId = null;
+                }
+                if (settleFrameId !== null) {
+                    cancelPlatformAnimationFrame(settleFrameId);
+                    settleFrameId = null;
+                }
+                if (timeoutId !== null) {
+                    clearPlatformTimeout(timeoutId);
+                    timeoutId = null;
+                }
+            };
+            const isStillCurrent = () => !stopped
+                && rendered.renderToken === renderToken
+                && isCurrentSession()
+                && rendered.messageDiv.parentElement === this.responseDiv;
+            const stabilize = () => {
+                if (!isStillCurrent()) {
+                    stop();
+                    return;
+                }
+                stabilizeChatViewport({ force, behavior: 'auto' });
+            };
+            const scheduleObservedStabilize = () => {
+                if (stopped || observerFrameId !== null) return;
+                observerFrameId = requestPlatformAnimationFrame(() => {
+                    observerFrameId = null;
+                    stabilize();
+                });
+            };
+            const settleNextFrame = () => {
+                settleFrameId = null;
+                if (!isStillCurrent()) {
+                    stop();
+                    return;
+                }
+                stabilize();
+                settleFrameCount += 1;
+                if (settleFrameCount >= MERMAID_LAYOUT_STABILIZE_FRAME_COUNT) return;
+                settleFrameId = requestPlatformAnimationFrame(settleNextFrame);
+            };
+
+            renderOwner.register(stop);
+
+            if (typeof ResizeObserver !== 'undefined') {
+                observer = new ResizeObserver(scheduleObservedStabilize);
+                observer.observe(rendered.messageDiv);
+                observer.observe(rendered.contentDiv);
+            }
+
+            settleFrameId = requestPlatformAnimationFrame(settleNextFrame);
+            timeoutId = setPlatformTimeout(stop, MERMAID_LAYOUT_STABILIZE_TIMEOUT_MS);
+            (timeoutId as unknown as { unref?: () => void }).unref?.();
+        };
         const renderMarkdownInto = (
             rendered: RenderedMessage,
             content: string,
@@ -967,8 +1093,9 @@ export class LLMView extends ItemView {
                 : { markdown: content, deferred: false, sources: getMermaidFenceSources(content) };
             const renderOwner = this.createMarkdownRenderOwner();
             const sourcePath = rendered.sourcePath;
+            const hasMermaidSources = mermaidTransform.sources.some((source) => source.trim().length > 0);
             const renderInAttachedBuffer = !options.deferMermaid
-                && mermaidTransform.sources.some((source) => source.trim().length > 0)
+                && hasMermaidSources
                 && rendered.contentDiv.parentElement !== null;
 
             if (renderInAttachedBuffer) {
@@ -1008,6 +1135,14 @@ export class LLMView extends ItemView {
                     rendered.renderedContentMode = mermaidTransform.deferred ? 'deferred-mermaid' : 'full';
                     this.updateClickableLink(buffer);
                     if (!options.deferMermaid) {
+                        if (hasMermaidSources && (options.forceScroll || isGenerating() || isFinalizing)) {
+                            stabilizeMermaidMessageLayout(
+                                rendered,
+                                renderToken,
+                                renderOwner,
+                                { force: Boolean(options.forceScroll) },
+                            );
+                        }
                         scheduleMermaidEnhancement(
                             buffer,
                             this.host,
@@ -1015,6 +1150,10 @@ export class LLMView extends ItemView {
                             () => rendered.renderToken === renderToken
                                 && buffer.parentElement === rendered.contentDiv,
                             renderOwner,
+                            () => stabilizeChatViewport({
+                                force: options.forceScroll,
+                                behavior: 'auto',
+                            }),
                         );
                     }
                     scrollToBottom({

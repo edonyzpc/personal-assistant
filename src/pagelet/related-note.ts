@@ -22,11 +22,17 @@ export function resolveRelatedMarkdownNote(
     const normalized = normalizeRelatedNoteName(noteName);
     if (!normalized) return null;
 
+    const linkpath = normalized.replace(/\.md$/i, "");
+    const hasExplicitPath = linkpath.includes("/");
+    if (sourcePath && !hasExplicitPath) {
+        const sourceAware = app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
+        if (isMarkdownFile(sourceAware)) return sourceAware;
+    }
+
     const directPath = normalized.endsWith(".md") ? normalized : `${normalized}.md`;
     const direct = app.vault.getAbstractFileByPath(directPath);
     if (isMarkdownFile(direct)) return direct;
 
-    const linkpath = directPath.replace(/\.md$/i, "");
     const sourceAware = app.metadataCache.getFirstLinkpathDest(linkpath, sourcePath);
     if (isMarkdownFile(sourceAware)) return sourceAware;
 
