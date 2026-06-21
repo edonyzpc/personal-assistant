@@ -23,6 +23,8 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Check third-party notices
+        run: npm run check:third-party-notices
       - name: Test
         run: npm test -- --runInBand --coverage
       - name: Lint
@@ -37,6 +39,9 @@ jobs:
           cp dist/main.js release-assets/main.js
           cp dist/manifest.json release-assets/manifest.json
           cp dist/styles.css release-assets/styles.css
+          cp LICENSE release-assets/LICENSE
+          cp NOTICE release-assets/NOTICE
+          cp THIRD_PARTY_NOTICES.md release-assets/THIRD_PARTY_NOTICES.md
       - name: Generate artifact attestations
         uses: actions/attest@v4
         with:
@@ -44,6 +49,9 @@ jobs:
             release-assets/main.js
             release-assets/manifest.json
             release-assets/styles.css
+            release-assets/LICENSE
+            release-assets/NOTICE
+            release-assets/THIRD_PARTY_NOTICES.md
       - name: Create GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -54,4 +62,7 @@ jobs:
             --verify-tag \
             ./release-assets/main.js \
             ./release-assets/manifest.json \
-            ./release-assets/styles.css
+            ./release-assets/styles.css \
+            ./release-assets/LICENSE \
+            ./release-assets/NOTICE \
+            ./release-assets/THIRD_PARTY_NOTICES.md

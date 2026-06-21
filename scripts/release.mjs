@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import console from "node:console";
+import { readFileSync, writeFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import process, { stdin as input, stdout as output } from "node:process";
 import { createInterface } from "node:readline/promises";
@@ -16,7 +17,10 @@ const releaseFiles = [
   "manifest-beta.json",
   "versions.json",
   "CHANGELOG.md",
+  "NOTICE",
 ];
+
+const versionPattern = "\\d+\\.\\d+\\.\\d+(?:[-+][0-9A-Za-z.-]+)?";
 
 function run(command, args, options = {}) {
   const label = [command, ...args].join(" ");
@@ -107,6 +111,9 @@ function validateVersion(targetVersion, currentVersion) {
   if (!targetVersion) {
     throw new Error("A new semantic version is required.");
   }
+  if (targetVersion.startsWith("v")) {
+    throw new Error(`Use a bare semantic version without a leading v, for example ${targetVersion.slice(1)}.`);
+  }
   if (!semver.valid(targetVersion)) {
     throw new Error(`Invalid semantic version: ${targetVersion}`);
   }
@@ -117,6 +124,7 @@ function validateVersion(targetVersion, currentVersion) {
 
 function runChecks() {
   run("git", ["diff", "--check"]);
+  run("npm", ["run", "check:third-party-notices"]);
   run("npm", ["test", "--", "--runInBand", "--coverage"]);
   run("npm", ["run", "lint"]);
   run("npm", ["run", "build"]);
@@ -124,7 +132,40 @@ function runChecks() {
   assertCleanWorktree("after validation checks");
 }
 
-function printDryRunPlan({ currentVersion, targetVersion, changelog }) {
+function licenseComplianceBulletsFor(targetVersion) {
+  if (targetVersion !== "2.8.0") return [];
+  return [
+    "Starting with version 2.8.0, the client source is licensed under AGPL-3.0-only.",
+    "Historical releases are not relicensed retroactively.",
+    "This release introduces no account system, license key, checkout flow, feature lock, hosted commercial service, or paid entitlement check.",
+  ];
+}
+
+function changelogSectionForRelease(targetVersion, section) {
+  const bullets = licenseComplianceBulletsFor(targetVersion);
+  if (bullets.length === 0) return section;
+  return `${section.trimEnd()}\n\n### License\n${bullets.map((bullet) => `- ${bullet}`).join("\n")}\n`;
+}
+
+function updateNoticeForRelease(targetVersion) {
+  const noticePath = "NOTICE";
+  const content = readFileSync(noticePath, "utf8");
+  const updated = content
+    .replace(new RegExp(`For version ${versionPattern}`, "g"), `For version ${targetVersion}`)
+    .replace(new RegExp(`personal-assistant/tree/${versionPattern}`, "g"), `personal-assistant/tree/${targetVersion}`)
+    .replace(new RegExp(`personal-assistant/archive/refs/tags/${versionPattern}\\.zip`, "g"), `personal-assistant/archive/refs/tags/${targetVersion}.zip`)
+    .replace(new RegExp(`personal-assistant/archive/refs/tags/${versionPattern}\\.tar\\.gz`, "g"), `personal-assistant/archive/refs/tags/${targetVersion}.tar.gz`)
+    .replace(new RegExp(`personal-assistant/blob/${versionPattern}/TRADEMARKS\\.md`, "g"), `personal-assistant/blob/${targetVersion}/TRADEMARKS.md`);
+  if (updated !== content) {
+    writeFileSync(noticePath, updated);
+  }
+}
+
+function buildTagMessage({ releaseMessage, releaseSection }) {
+  return [releaseMessage, releaseSection.trimEnd()].join("\n\n");
+}
+
+function printDryRunPlan({ currentVersion, targetVersion, changelog, releaseSection }) {
   console.log("");
   console.log("Release dry run");
   console.log("----------------");
@@ -138,7 +179,7 @@ function printDryRunPlan({ currentVersion, targetVersion, changelog }) {
   }
   console.log("");
   console.log("Generated changelog section:");
-  console.log(changelog.section.trimEnd());
+  console.log(releaseSection.trimEnd());
   console.log("");
   console.log("No files were changed.");
 }
@@ -155,9 +196,10 @@ async function main() {
   assertCurrentVersionTagged(currentVersion);
 
   const changelog = generateChangelog({ targetVersion, targetRef: "HEAD" });
+  const releaseSection = changelogSectionForRelease(targetVersion, changelog.section);
 
   if (options.dryRun) {
-    printDryRunPlan({ currentVersion, targetVersion, changelog });
+    printDryRunPlan({ currentVersion, targetVersion, changelog, releaseSection });
     return;
   }
 
@@ -165,14 +207,15 @@ async function main() {
     runChecks();
   }
 
-  upsertChangelogSection("CHANGELOG.md", targetVersion, changelog.section);
+  upsertChangelogSection("CHANGELOG.md", targetVersion, releaseSection);
   run("npm", ["version", targetVersion, "--no-git-tag-version"]);
+  updateNoticeForRelease(targetVersion);
   run("git", ["diff", "--check"]);
   run("git", ["add", ...releaseFiles]);
 
   const releaseMessage = `[release] v${targetVersion}, check the CHANGELOG.md for details`;
-  run("git", ["commit", "-m", releaseMessage]);
-  run("git", ["tag", "-a", targetVersion, "-m", releaseMessage]);
+  run("git", ["commit", "-s", "-m", releaseMessage]);
+  run("git", ["tag", "-a", targetVersion, "-m", buildTagMessage({ releaseMessage, releaseSection })]);
 }
 
 main().catch((error) => {

@@ -30,12 +30,29 @@ make publish VERSION=1.6.6
 2. Verifies the target version is valid, greater than `package.json`, and not already tagged.
 3. Verifies the current `package.json` version already has a local release tag, so the new changelog starts from the previous release instead of duplicating older entries.
 4. Generates the `CHANGELOG.md` section from the latest semantic tag through `HEAD`.
-5. Runs `git diff --check`, `npm test -- --runInBand --coverage`, `npm run lint`, `npm run build`, and `npm run audit:bundle`.
-6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, and `CHANGELOG.md`.
+5. Runs `git diff --check`, `npm run check:third-party-notices`, `npm test -- --runInBand --coverage`, `npm run lint`, `npm run build`, and `npm run audit:bundle`.
+6. Updates `package.json`, `package-lock.json`, `manifest.json`, `manifest-beta.json`, `versions.json`, `CHANGELOG.md`, and release-tag references in `NOTICE`.
 7. Creates `[release] vx.y.z, check the CHANGELOG.md for details`.
 8. Creates annotated tag `x.y.z`.
 
 Set `SKIP_CHECKS=1` or pass `--skip-checks` only when checks have already been run in the same workspace and no files changed afterward.
+
+## Release Gate Levels
+
+Routine open-source client releases should stay lightweight. Every release
+keeps the automated package/license, notice, test, lint, build, and bundle audit
+checks green. Dependency changes also require regenerating third-party notices
+with `npm run generate:third-party-notices`.
+
+The 2.8.0 AGPL migration has extra one-time checks for prospective licensing,
+historical tag non-relicensing, contributor/template provenance, and the
+explicit no-paid-behavior boundary. Those checks are migration-specific and are
+not expected to repeat in full for every later open-source client release.
+
+Future paid hosted services or commercial backends need their own service
+launch gate for Terms, Privacy, billing, support/warranty, security, data
+retention, entitlement systems, and commercial license terms. Do not mix that
+future service gate into ordinary plugin release preparation.
 
 ## Changelog
 
@@ -63,8 +80,17 @@ The GitHub workflow builds from the pushed tag and creates a GitHub Release with
 - `main.js`
 - `manifest.json`
 - `styles.css`
+- `LICENSE`
+- `NOTICE`
+- `THIRD_PARTY_NOTICES.md`
 
-The release workflow installs the Node version declared in `package.json`, builds and audits the bundle before staging those three files in `release-assets/`, generates GitHub artifact attestations for the same staged files, then uploads that exact asset set. `manifest-beta.json` may still be copied by local or beta deployment flows, but it is not a supported asset in the formal GitHub Release.
+The release workflow installs the Node version declared in `package.json`, checks runtime dependency and bundled resource notices, builds and audits the bundle before staging those six files in `release-assets/`, generates GitHub artifact attestations for the same staged files, then uploads that exact asset set. `manifest-beta.json` may still be copied by local or beta deployment flows, but it is not a supported asset in the formal GitHub Release.
+
+`THIRD_PARTY_NOTICES.md` covers both npm runtime dependencies and bundled `skills/**` Markdown resources that are inlined into `main.js`. When runtime dependencies change, run `npm run generate:third-party-notices` and then `npm run check:third-party-notices`. When adding, removing, or adapting bundled skills, update that notice table and keep `npm run check:third-party-notices` green.
+
+Obsidian's community plugin installer and updater install only the standard runtime files: `main.js`, `manifest.json`, and `styles.css`. Legal documents are therefore distributed as GitHub Release assets and exact-tag source files, and the plugin Settings Legal section links to the exact release tag for source, license, and notices. `TRADEMARKS.md` is available through the exact release tag and is linked from `NOTICE`, but it is not part of the formal release asset set.
+
+Starting with version `2.8.0`, release notes for license and compliance releases must state that the client source is `AGPL-3.0-only` starting with that version, that historical releases are not relicensed retroactively, and that the release does not introduce an account system, license key, checkout flow, feature lock, hosted commercial service, or paid entitlement check unless a future release explicitly says otherwise. `scripts/release.mjs` includes this statement in the generated `2.8.0` changelog section and annotated tag body, and the GitHub workflow publishes the tag body through `--notes-from-tag`.
 
 ## Recovery
 
