@@ -2,6 +2,15 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.8.1](https://github.com/edonyzpc/personal-assistant/compare/2.8.0...2.8.1) (2026-06-21)
+
+### Fix
+- pagelet: stabilize discovery and chat rendering
+
+### Docs
+- archive superseded planning records
+- readme: add platform demo videos
+
 ## [2.8.0](https://github.com/edonyzpc/personal-assistant/compare/2.7.3...2.8.0) (2026-06-21)
 
 ### Features
