@@ -27,7 +27,7 @@ jest.mock("obsidian", () => {
     };
 });
 
-import { TFile } from "obsidian";
+import { Notice, TFile } from "obsidian";
 
 import { PageletOrchestrator, type PageletHost } from "../src/pagelet/orchestrator";
 import type { PageletDetailPayload } from "../src/pagelet/tab/types";
@@ -530,6 +530,20 @@ describe("PageletOrchestrator detail expansion", () => {
 });
 
 describe("PageletOrchestrator review panel scope flow", () => {
+    it("does not open an empty prepared-findings panel", () => {
+        const host = makeHost();
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = { open: jest.fn() };
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        (orchestrator as unknown as {
+            handleExpandPanel(type?: string): void;
+        }).handleExpandPanel("prepared");
+
+        expect(panelView.open).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith("No background suggestions are available yet.", 4000);
+    });
+
     it("opens the review panel without treating preload findings as saveable review output", () => {
         const host = makeHost();
         const orchestrator = new PageletOrchestrator(host);
