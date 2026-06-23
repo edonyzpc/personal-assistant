@@ -214,6 +214,7 @@ export class PreloadEngine {
         nextCycleAt: number | null;
         budgetRemaining: { hourly: number; daily: number };
         cacheHasResults: boolean;
+        cachedFindingCount: number;
         consecutiveErrors: number;
         adaptiveIntervalMs: number;
     } {
@@ -225,7 +226,8 @@ export class PreloadEngine {
                 ? (this.lastCycleAt ?? this.startedAt ?? Date.now()) + effectiveInterval
                 : null,
             budgetRemaining: this.budget.remaining(),
-            cacheHasResults: this.cache.has(),
+            cacheHasResults: this.cache.hasFindings(),
+            cachedFindingCount: this.cache.getFindings().length,
             consecutiveErrors: this.consecutiveErrors,
             adaptiveIntervalMs: effectiveInterval,
         };

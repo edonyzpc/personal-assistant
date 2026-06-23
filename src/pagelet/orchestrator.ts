@@ -849,6 +849,7 @@ export class PageletOrchestrator {
             hourly: status.budgetRemaining.hourly,
             daily: status.budgetRemaining.daily,
             cache: this.t(status.cacheHasResults ? "pagelet.preload.status.cacheYes" : "pagelet.preload.status.cacheNo"),
+            findings: status.cachedFindingCount,
         }), 8000);
     }
 
@@ -876,6 +877,11 @@ export class PageletOrchestrator {
         // Prepared findings come from the background cache and may not belong
         // to the active note. Keep them in the generic review layout rather
         // than presenting them as current-note analysis.
+        if (usePreparedFindings && this.preloadCache.getFindings().length === 0) {
+            new Notice(this.t("pagelet.preload.status.noCachedFindings"), 4000);
+            return;
+        }
+
         let panelFindings = usePreparedFindings
             ? []
             : this.sessionManager.currentAnalysisFindings();

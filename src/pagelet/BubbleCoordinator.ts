@@ -164,6 +164,11 @@ export class BubbleCoordinator {
 
         const locale = getPageletUiLanguage();
         const cachedFindings = this.preloadCache.getFindings();
+        if (cachedFindings.length === 0) {
+            const content = buildEmptyContent(this.buildQuickAccessCallbacks(bubbleView), locale);
+            bubbleView.show(content, anchorEl);
+            return;
+        }
         const findings: BubbleFinding[] = cachedFindings.map((f) => ({
             text: f.text,
             sourceLink: f.sourceFile,
