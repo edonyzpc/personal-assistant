@@ -482,6 +482,38 @@ describe('MemoryManager command decisions', () => {
         ]);
     });
 
+    it('ignores repeated manual prepare clicks while a command is already in flight', async () => {
+        let releasePlan!: () => void;
+        const planGate = new Promise<void>((resolve) => {
+            releasePlan = resolve;
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        plugin.vss.getMemoryReadiness.mockImplementation(async () => {
+            await planGate;
+            return createPlan({
+                reason: 'first-use',
+                action: 'rebuild',
+                requiresApproval: true,
+            });
+        });
+        const manager = createManager(plugin);
+        (manager as any).requestApproval = jest.fn(async () => 'answer-now'); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const first = manager.prepareFromCommand();
+        await Promise.resolve();
+        await manager.prepareFromCommand();
+
+        expect(mockNoticeMessages).toEqual(['A Memory action is already running.']);
+        expect(plugin.vss.getMemoryReadiness).toHaveBeenCalledTimes(1);
+
+        releasePlan();
+        await first;
+    });
+
     it('updates one progress notice from rebuild progress events', async () => {
         let now = 0;
         const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => {

@@ -51,6 +51,24 @@ jest.mock('obsidian', () => ({
         containerEl = { empty: jest.fn() };
         constructor(app: unknown, _plugin: unknown) { this.app = app; }
     },
+    Modal: class {
+        app: unknown;
+        contentEl: HTMLElement;
+        constructor(app: unknown) {
+            this.app = app;
+            this.contentEl = document.createElement('div');
+        }
+        open() {
+            const globalObj = globalThis as typeof globalThis & { __paModalInstances?: unknown[] };
+            globalObj.__paModalInstances = globalObj.__paModalInstances ?? [];
+            globalObj.__paModalInstances.push(this);
+            (this as unknown as { onOpen?: () => void }).onOpen?.();
+            return this;
+        }
+        close() {
+            (this as unknown as { onClose?: () => void }).onClose?.();
+        }
+    },
     Setting: class {
         record: {
             name?: string;
@@ -97,6 +115,10 @@ jest.mock('obsidian', () => ({
             return this;
         }
 
+        setHeading() {
+            return this;
+        }
+
         addToggle(callback: (toggle: {
             setValue: (value: boolean) => unknown;
             setDisabled: (disabled: boolean) => unknown;
@@ -127,6 +149,7 @@ jest.mock('obsidian', () => ({
         }
 
         addText(callback: (text: {
+            inputEl: HTMLInputElement & { addClass: (cls: string) => unknown };
             setPlaceholder: (value: string) => unknown;
             setValue: (value: unknown) => unknown;
             onChange: (onChange: (value: string) => unknown) => unknown;
@@ -138,13 +161,24 @@ jest.mock('obsidian', () => ({
                 setValueCalls: unknown[];
             } = { setValueCalls: [] };
             this.record.texts.push(text);
+            const inputEl = {
+                readOnly: false,
+                type: 'text',
+                value: '',
+                addClass: jest.fn(),
+                dispatchEvent: jest.fn(),
+                focus: jest.fn(),
+                select: jest.fn(),
+            } as unknown as HTMLInputElement & { addClass: (cls: string) => unknown };
             const textComponent = {
+                inputEl,
                 setPlaceholder: (value: string) => {
                     text.placeholder = value;
                     return textComponent;
                 },
                 setValue: (value: unknown) => {
                     text.value = value;
+                    inputEl.value = String(value ?? '');
                     text.setValueCalls.push(value);
                     return textComponent;
                 },
@@ -294,6 +328,7 @@ jest.mock('../src/confirm', () => {
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 jest.mock('../src/utils', () => ({
+    KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
     getVaultScopedSecret: (
         secretStorage: { getSecret: (id: string) => string | null },
         scopedId: string,
@@ -356,6 +391,11 @@ class MockDomNode {
 
     setAttr(name: string, value: string) {
         this.attrs[name] = value;
+        return this;
+    }
+
+    addClass(cls: string) {
+        this.classes.push(cls);
         return this;
     }
 
@@ -528,6 +568,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             scheduleAutoFlush: jest.fn(),
         },
         updateMemoryStatusBar: jest.fn(async () => undefined),
+        runManualMemoryAction: jest.fn(async (action: () => Promise<void>) => { await action(); }),
         vss: {
             resetLocalIndex: jest.fn(async () => undefined),
             cleanLegacyJsonCache: jest.fn(async () => undefined),
@@ -536,6 +577,8 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
         canShowAiInsights: jest.fn(() => true),
         showAiInsights: jest.fn(),
         getAPITokenSecretId: jest.fn(() => 'pa-api-token-vault-test'),
+        getConfiguredAPITokenSecret: jest.fn<() => string | null>(() => null),
+        setAPITokenSecret: jest.fn(),
         statsManager: {
             setStatisticsSyncEnabled: jest.fn(async () => undefined),
         },
@@ -1556,6 +1599,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         expect(confirmUserAction).not.toHaveBeenCalled();
         expect(app.secretStorage.setSecret).not.toHaveBeenCalled();
+        expect(plugin.setAPITokenSecret).not.toHaveBeenCalled();
         expect(plugin.clearTokenCache).not.toHaveBeenCalled();
     });
 
@@ -1563,9 +1607,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         setMockConfirmDecision(false);
         const plugin = makePlugin({ aiProvider: 'qwen' });
         const app = makeMockApp();
-        app.secretStorage.getSecret.mockImplementation((id: string) => (
-            id === 'pa-api-token-vault-test' ? 'sk-existing-token' : null
-        ));
+        plugin.getConfiguredAPITokenSecret.mockReturnValue('sk-existing-token');
         const tab = new SettingTab(app as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
@@ -1577,17 +1619,16 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         expect(confirmUserAction).toHaveBeenCalledTimes(1);
         expect(app.secretStorage.setSecret).not.toHaveBeenCalled();
+        expect(plugin.setAPITokenSecret).not.toHaveBeenCalled();
         expect(secret.value).toBe('sk-existing-token');
         expect(plugin.clearTokenCache).not.toHaveBeenCalled();
     });
 
-    it('clears scoped API token id after confirmation', async () => {
+    it('clears API token through the plugin secret helper after confirmation', async () => {
         setMockConfirmDecision(true);
         const plugin = makePlugin({ aiProvider: 'qwen' });
         const app = makeMockApp();
-        app.secretStorage.getSecret.mockImplementation((id: string) => (
-            id === 'pa-api-token-vault-test' ? 'sk-existing-token' : null
-        ));
+        plugin.getConfiguredAPITokenSecret.mockReturnValue('sk-existing-token');
         const tab = new SettingTab(app as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
@@ -1596,8 +1637,43 @@ describe('Phase 3 IA reorder + provider UX', () => {
 
         await secret.onChange!('');
 
-        expect(app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token-vault-test', '');
-        expect(plugin.clearTokenCache).toHaveBeenCalled();
+        expect(plugin.setAPITokenSecret).toHaveBeenCalledWith('');
+    });
+
+    it('refreshes the visible token row after saving through the custom API token modal', async () => {
+        let storedToken: string | null = null;
+        const plugin = makePlugin({ aiProvider: 'qwen' });
+        const app = makeMockApp();
+        plugin.getConfiguredAPITokenSecret.mockImplementation(() => storedToken);
+        plugin.setAPITokenSecret.mockImplementation((value: unknown) => {
+            const token = String(value);
+            storedToken = token === '' ? null : token;
+        });
+        const tab = new SettingTab(app as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+
+        expect(getMockSecretRecords()).toHaveLength(1);
+        expect(getMockSecretRecords()[0].value).toBeUndefined();
+
+        (tab as unknown as { openApiTokenSecretEditor(): void }).openApiTokenSecretEditor();
+        const modalSecretInput = getMockSettingRecords()
+            .flatMap((record) => record.texts)
+            .find((text) => text.placeholder === 'sk-...');
+        expect(modalSecretInput?.onChange).toBeDefined();
+        modalSecretInput!.onChange!('sk-modal-token');
+
+        const saveButton = [...getMockSettingRecords()]
+            .reverse()
+            .flatMap((record) => record.buttons)
+            .find((button) => button.text === 'Save');
+        expect(saveButton?.onClick).toBeDefined();
+        await saveButton!.onClick!();
+
+        expect(plugin.setAPITokenSecret).toHaveBeenCalledWith('sk-modal-token');
+        const secretRecords = getMockSecretRecords();
+        expect(secretRecords).toHaveLength(2);
+        expect(secretRecords[1].value).toBe('sk-modal-token');
     });
 });
 
@@ -1970,6 +2046,36 @@ describe('Phase 4 P1 UX', () => {
 
             expect(confirmUserAction).not.toHaveBeenCalled();
             expect(plugin.settings.memoryApprovalPolicy).toBe('always');
+        });
+
+        it('routes manual advanced Memory buttons through the shared action guard', async () => {
+            (confirmUserAction as jest.Mock).mockClear();
+            setMockConfirmDecision(true);
+            const plugin = makePlugin({ showAdvancedMemoryControls: true });
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const clickMemoryButton = async (name: string) => {
+                const button = getMockSettingRecords()
+                    .find((r) => r.name === name)?.buttons[0];
+                expect(button?.onClick).toBeDefined();
+                await button!.onClick!();
+            };
+
+            await clickMemoryButton('Update memory now');
+            await clickMemoryButton('Rebuild memory on this device');
+            await clickMemoryButton('Reset local memory copy');
+            await clickMemoryButton('Delete old Memory cache files');
+            await clickMemoryButton('Show technical memory status');
+
+            expect(plugin.runManualMemoryAction).toHaveBeenCalledTimes(5);
+            expect(plugin.memoryManager.updateFromCommand).toHaveBeenCalledTimes(1);
+            expect(plugin.memoryManager.prepareFromCommand).toHaveBeenCalledTimes(1);
+            expect(plugin.vss.resetLocalIndex).toHaveBeenCalledTimes(1);
+            expect(plugin.vss.cleanLegacyJsonCache).toHaveBeenCalledTimes(1);
+            expect(plugin.showTechnicalMemoryStatus).toHaveBeenCalledTimes(1);
+            expect(confirmUserAction).toHaveBeenCalledTimes(1);
         });
     });
 

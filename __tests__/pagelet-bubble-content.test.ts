@@ -95,4 +95,16 @@ describe("Pagelet Bubble quick access content", () => {
 
         expect(callbacks.onExpandPanel).toHaveBeenCalledWith("prepared");
     });
+
+    it("does not offer prepared suggestions when a nudge has no findings", () => {
+        const callbacks = makeCallbacks();
+        const content = buildNudgeContent([], callbacks, "en");
+
+        expect(content.actions.map((action) => action.label)).toEqual(["Later"]);
+
+        content.actions[0].callback();
+
+        expect(callbacks.onExpandPanel).not.toHaveBeenCalled();
+        expect(callbacks.onDismiss).toHaveBeenCalledTimes(1);
+    });
 });

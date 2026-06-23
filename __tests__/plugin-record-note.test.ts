@@ -143,6 +143,7 @@ jest.mock('../src/settings', () => ({
 }));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
+    KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
     getVaultApiTokenId: (vaultId?: string) => vaultId ? `pa-api-token-${vaultId}` : 'pa-api-token',
     hasSecretValue: (value: string | null) => value !== null && value !== '',
     icons: {},
@@ -696,6 +697,134 @@ describe('Pagelet detail workspace leaf', () => {
             type: 'pa-pagelet-detail-view',
             active: true,
         });
+    });
+});
+
+describe('manual Memory action guard', () => {
+    it('prevents a second manual Memory action while the first one is still running', async () => {
+        mockNoticeMessages.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.t = jest.fn((key: string) => (
+            key === 'plugin.memory.notice.actionAlreadyRunning'
+                ? 'A Memory action is already running.'
+                : key
+        ));
+
+        let releaseFirstAction!: () => void;
+        const firstActionDone = new Promise<void>((resolve) => {
+            releaseFirstAction = resolve;
+        });
+        const firstAction = jest.fn(async () => {
+            await firstActionDone;
+        });
+        const secondAction = jest.fn(async () => undefined);
+
+        const firstRun = plugin.runManualMemoryAction(firstAction);
+        expect(firstAction).toHaveBeenCalledTimes(1);
+
+        await plugin.runManualMemoryAction(secondAction);
+
+        expect(secondAction).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual(['A Memory action is already running.']);
+
+        releaseFirstAction();
+        await firstRun;
+        await plugin.runManualMemoryAction(secondAction);
+
+        expect(secondAction).toHaveBeenCalledTimes(1);
+    });
+
+    it('shares the manual Memory guard with Chat memory actions', async () => {
+        mockNoticeMessages.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = {};
+        plugin.settings = {};
+        plugin.chatHistoryManager = {};
+        plugin.log = jest.fn();
+        plugin.t = jest.fn((key: string) => (
+            key === 'plugin.memory.notice.actionAlreadyRunning'
+                ? 'A Memory action is already running.'
+                : key
+        ));
+        plugin.getAISetupIssue = jest.fn(() => null);
+        plugin.showTechnicalMemoryStatus = jest.fn(async () => undefined);
+        plugin.onMemoryStatusChanged = jest.fn(() => jest.fn());
+        plugin.onSettingsChanged = jest.fn(() => jest.fn());
+        plugin.scheduleMemoryExtractionAfterChatTurn = jest.fn();
+        plugin.createAiServiceHost = jest.fn(() => ({}));
+
+        let releaseChatAction!: () => void;
+        const chatActionDone = new Promise<void>((resolve) => {
+            releaseChatAction = resolve;
+        });
+        plugin.memoryManager = {
+            getMaintenancePlan: jest.fn(async () => ({
+                reason: 'ready',
+                action: 'none',
+                notesToCheck: 0,
+                requiresApproval: false,
+                canAnswerNow: true,
+            })),
+            updateFromCommand: jest.fn(async () => {
+                await chatActionDone;
+            }),
+            prepareFromCommand: jest.fn(async () => undefined),
+        };
+
+        const host = plugin.createChatHost();
+        const chatRun = host.memoryStatus.updateFromCommand();
+        expect(plugin.memoryManager.updateFromCommand).toHaveBeenCalledTimes(1);
+
+        const settingsAction = jest.fn(async () => undefined);
+        await plugin.runManualMemoryAction(settingsAction);
+
+        expect(settingsAction).not.toHaveBeenCalled();
+        expect(mockNoticeMessages).toEqual(['A Memory action is already running.']);
+
+        releaseChatAction();
+        await chatRun;
+    });
+});
+
+describe('API token secret compatibility', () => {
+    it('reads a legacy keychain token without mutating secret storage', () => {
+        const secrets = new Map<string, string>([
+            ['pa-api-token', 'sk-legacy-token'],
+        ]);
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { statisticsVaultId: 'vault-id' };
+        plugin.app = {
+            secretStorage: {
+                getSecret: jest.fn((id: string) => secrets.get(id) ?? null),
+                setSecret: jest.fn((id: string, value: string) => {
+                    secrets.set(id, value);
+                }),
+            },
+        };
+        plugin.log = jest.fn();
+
+        expect(plugin.getConfiguredAPITokenSecret()).toBe('sk-legacy-token');
+
+        expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalled();
+        expect(secrets.has('pa-api-token-vault-id')).toBe(false);
+        expect(plugin.log).not.toHaveBeenCalled();
+    });
+
+    it('clears current and legacy API token secret ids together', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { statisticsVaultId: 'vault-id' };
+        plugin.app = {
+            secretStorage: {
+                getSecret: jest.fn(() => null),
+                setSecret: jest.fn(),
+            },
+        };
+
+        plugin.setAPITokenSecret('');
+
+        expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token-vault-id', '');
+        expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token-default-vault', '');
+        expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token', '');
     });
 });
 
