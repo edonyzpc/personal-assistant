@@ -329,12 +329,6 @@ jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview' }));
 jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: string) => view }));
 jest.mock('../src/utils', () => ({
     KEYCHAIN_API_TOKEN_ID: 'pa-api-token',
-    getVaultScopedSecret: (
-        secretStorage: { getSecret: (id: string) => string | null },
-        scopedId: string,
-    ) => {
-        return secretStorage.getSecret(scopedId);
-    },
     hasSecretValue: (secret: string | null) => secret !== null && secret !== '',
 }));
 
@@ -588,6 +582,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
 beforeEach(() => {
     getMockSettingRecords().length = 0;
     getMockDebounceRecords().length = 0;
+    delete (globalThis as typeof globalThis & { __paModalInstances?: unknown[] }).__paModalInstances;
     installMockDocument();
 });
 
@@ -2069,7 +2064,7 @@ describe('Phase 4 P1 UX', () => {
             await clickMemoryButton('Delete old Memory cache files');
             await clickMemoryButton('Show technical memory status');
 
-            expect(plugin.runManualMemoryAction).toHaveBeenCalledTimes(5);
+            expect(plugin.runManualMemoryAction).toHaveBeenCalledTimes(4);
             expect(plugin.memoryManager.updateFromCommand).toHaveBeenCalledTimes(1);
             expect(plugin.memoryManager.prepareFromCommand).toHaveBeenCalledTimes(1);
             expect(plugin.vss.resetLocalIndex).toHaveBeenCalledTimes(1);

@@ -2121,9 +2121,7 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.technicalStatus.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.technicalStatus.button")).onClick(async () => {
-                    await plugin.runManualMemoryAction(async () => {
-                        await plugin.showTechnicalMemoryStatus();
-                    });
+                    await plugin.showTechnicalMemoryStatus();
                 });
             });
 

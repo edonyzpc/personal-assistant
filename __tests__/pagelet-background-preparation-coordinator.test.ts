@@ -46,6 +46,24 @@ describe("BackgroundPreparationCoordinator", () => {
         expect(callbacks.onPetTransition).not.toHaveBeenCalledWith("insights-ready");
     });
 
+    it("falls back to analysis-done when findings exist but onInsightsReady returns false", () => {
+        const { callbacks, internals } = makeCoordinator();
+        callbacks.onInsightsReady.mockReturnValue(false);
+
+        internals.handleEvent({
+            type: "cycle-complete",
+            result: preloadResult([{
+                text: "Suppressed finding",
+                sourceFile: "notes/current.md",
+                sourceTitle: "current",
+            }]),
+        });
+
+        expect(callbacks.onInsightsReady).toHaveBeenCalledTimes(1);
+        expect(callbacks.onPetTransition).toHaveBeenCalledWith("analysis-done");
+        expect(callbacks.onPetTransition).not.toHaveBeenCalledWith("insights-ready");
+    });
+
     it("enters insights-ready only when findings exist and proactive hints accept them", () => {
         const { callbacks, internals } = makeCoordinator();
 
