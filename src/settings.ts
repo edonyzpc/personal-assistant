@@ -8,7 +8,7 @@ import { getDashScopeImageSynthesisUrl, isDashScopeCompatibleBaseURL } from "./a
 import { STAT_PREVIEW_TYPE } from './stats-view'
 import { normalizeStatisticsView } from './stats/stats-store'
 import { confirmUserAction } from "./confirm";
-import { getVaultScopedSecret, hasSecretValue } from "./utils";
+import { hasSecretValue } from "./utils";
 import {
     PAGELET_DEFAULTS,
     mergePageletSettings,
@@ -816,8 +816,9 @@ export class SettingTab extends PluginSettingTab {
         const plugin = this.plugin;
         const app = this.app;
         const secretId = plugin.getAPITokenSecretId();
-        const existing = getVaultScopedSecret(app.secretStorage, secretId) ?? "";
+        const existing = plugin.getConfiguredAPITokenSecret() ?? "";
         const translate = this.t.bind(this);
+        const rebuildProviderConfig = () => this.rebuildProviderConfig();
 
         class ApiTokenSecretModal extends Modal {
             onOpen(): void {
@@ -894,13 +895,13 @@ export class SettingTab extends PluginSettingTab {
                                     if (!confirmed) {
                                         return;
                                     }
-                                    app.secretStorage.setSecret(secretId, "");
-                                    plugin.clearTokenCache();
+                                    plugin.setAPITokenSecret("");
+                                    rebuildProviderConfig();
                                     this.close();
                                     return;
                                 }
-                                app.secretStorage.setSecret(secretId, value);
-                                plugin.clearTokenCache();
+                                plugin.setAPITokenSecret(value);
+                                rebuildProviderConfig();
                                 this.close();
                                 new Notice(translate("plugin.settings.apiToken.modal.saved"), 3000);
                             });
@@ -1568,15 +1569,14 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.ai.apiToken.desc"))
             .addComponent((el) => {
                 const secret = new SecretComponent(this.app, el);
-                const secretId = plugin.getAPITokenSecretId();
-                const existing = getVaultScopedSecret(this.app.secretStorage, secretId);
+                const existing = plugin.getConfiguredAPITokenSecret();
                 if (hasSecretValue(existing)) {
                     secret.setValue(existing);
                 }
                 this.renameSecretComponentLinkButton(el);
                 secret.onChange(async (value: string) => {
                     if (value === "") {
-                        const stored = getVaultScopedSecret(this.app.secretStorage, secretId);
+                        const stored = plugin.getConfiguredAPITokenSecret();
                         if (!hasSecretValue(stored)) {
                             return;
                         }
@@ -1592,12 +1592,10 @@ export class SettingTab extends PluginSettingTab {
                         }
                         // SecretStorage exposes only setSecret — writing "" is
                         // the equivalent of clearing the token.
-                        this.app.secretStorage.setSecret(secretId, "");
-                        plugin.clearTokenCache();
+                        plugin.setAPITokenSecret("");
                         return;
                     }
-                    this.app.secretStorage.setSecret(secretId, value);
-                    plugin.clearTokenCache();
+                    plugin.setAPITokenSecret(value);
                 });
                 return secret;
             });
@@ -2062,10 +2060,12 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.update.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.update.button")).onClick(async () => {
-                    const memoryManager = getMemoryManager();
-                    if (!memoryManager) return;
-                    await memoryManager.updateFromCommand();
-                    await plugin.updateMemoryStatusBar();
+                    await plugin.runManualMemoryAction(async () => {
+                        const memoryManager = getMemoryManager();
+                        if (!memoryManager) return;
+                        await memoryManager.updateFromCommand();
+                        await plugin.updateMemoryStatusBar();
+                    });
                 });
             });
 
@@ -2074,9 +2074,11 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.rebuild.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.rebuild.button")).onClick(async () => {
-                    const memoryManager = getMemoryManager();
-                    if (!memoryManager) return;
-                    await memoryManager.prepareFromCommand();
+                    await plugin.runManualMemoryAction(async () => {
+                        const memoryManager = getMemoryManager();
+                        if (!memoryManager) return;
+                        await memoryManager.prepareFromCommand();
+                    });
                 });
             });
 
@@ -2085,16 +2087,18 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.reset.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.reset.button")).onClick(async () => {
-                    const confirmed = await confirmUserAction(this.app, {
-                        title: this.t("plugin.memory.confirm.reset.title"),
-                        message: this.t("plugin.memory.confirm.reset.message"),
-                        confirmText: this.t("plugin.memory.confirm.reset.confirm"),
+                    await plugin.runManualMemoryAction(async () => {
+                        const confirmed = await confirmUserAction(this.app, {
+                            title: this.t("plugin.memory.confirm.reset.title"),
+                            message: this.t("plugin.memory.confirm.reset.message"),
+                            confirmText: this.t("plugin.memory.confirm.reset.confirm"),
+                        });
+                        if (!confirmed) return;
+                        const vss = getVss();
+                        if (!vss) return;
+                        await vss.resetLocalIndex();
+                        await plugin.updateMemoryStatusBar();
                     });
-                    if (!confirmed) return;
-                    const vss = getVss();
-                    if (!vss) return;
-                    await vss.resetLocalIndex();
-                    await plugin.updateMemoryStatusBar();
                 });
             });
 
@@ -2103,10 +2107,12 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.deleteCache.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.deleteCache.button")).onClick(async () => {
-                    const vss = getVss();
-                    if (!vss) return;
-                    await vss.cleanLegacyJsonCache();
-                    await plugin.updateMemoryStatusBar();
+                    await plugin.runManualMemoryAction(async () => {
+                        const vss = getVss();
+                        if (!vss) return;
+                        await vss.cleanLegacyJsonCache();
+                        await plugin.updateMemoryStatusBar();
+                    });
                 });
             });
 
@@ -2115,7 +2121,9 @@ export class SettingTab extends PluginSettingTab {
             .setDesc(this.t("plugin.settings.memory.technicalStatus.desc"))
             .addButton((button) => {
                 button.setButtonText(this.t("plugin.settings.memory.technicalStatus.button")).onClick(async () => {
-                    await plugin.showTechnicalMemoryStatus();
+                    await plugin.runManualMemoryAction(async () => {
+                        await plugin.showTechnicalMemoryStatus();
+                    });
                 });
             });
 
