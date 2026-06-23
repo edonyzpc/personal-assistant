@@ -2,6 +2,24 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.8.2](https://github.com/edonyzpc/personal-assistant/compare/2.8.1...2.8.2) (2026-06-23)
+
+### Features
+- memory: add guarded manual Memory actions and token compatibility
+
+### Fix
+- pagelet: suppress empty prepared findings and show cache diagnostics
+- PR review findings — dead code removal, semantics restore, test coverage
+
+### Improvements
+- settings: route memory controls through shared action guard
+
+### Docs
+- add v2.8.1 feedback fix plan
+
+### Tests
+- add regression coverage for memory actions and prepared-findings flow
+
 ## [2.8.1](https://github.com/edonyzpc/personal-assistant/compare/2.8.0...2.8.1) (2026-06-21)
 
 ### Fix
