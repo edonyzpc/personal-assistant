@@ -309,7 +309,8 @@
     "pagelet.preload.status.never": "never",
     "pagelet.preload.status.cacheYes": "yes",
     "pagelet.preload.status.cacheNo": "no",
-    "pagelet.preload.status.notice": "Background preparation: {state}\nLast: {last}\nBudget: {hourly}h / {daily}d\nCache: {cache}",
+    "pagelet.preload.status.notice": "Background preparation: {state}\nLast: {last}\nBudget: {hourly}h / {daily}d\nCache: {cache}\nFindings: {findings}",
+    "pagelet.preload.status.noCachedFindings": "No background suggestions are available yet.",
 
     "pagelet.periodicSummary.generating": "Generating summary…",
     "pagelet.periodicSummary.generatingForNotes": "Generating summary for {count} notes…",

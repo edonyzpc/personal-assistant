@@ -309,7 +309,8 @@
     "pagelet.preload.status.never": "从未",
     "pagelet.preload.status.cacheYes": "有",
     "pagelet.preload.status.cacheNo": "无",
-    "pagelet.preload.status.notice": "后台审阅准备：{state}\n上次：{last}\n预算：{hourly}h / {daily}d\n缓存：{cache}",
+    "pagelet.preload.status.notice": "后台审阅准备：{state}\n上次：{last}\n预算：{hourly}h / {daily}d\n缓存：{cache}\n发现：{findings}",
+    "pagelet.preload.status.noCachedFindings": "还没有可查看的后台建议。",
 
     "pagelet.periodicSummary.generating": "正在生成整理…",
     "pagelet.periodicSummary.generatingForNotes": "正在为 {count} 篇笔记生成整理…",

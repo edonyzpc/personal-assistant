@@ -137,7 +137,7 @@ export class BackgroundPreparationCoordinator {
                 break;
 
             case "cycle-complete":
-                if (this.callbacks.onInsightsReady()) {
+                if (event.result.findings.length > 0 && this.callbacks.onInsightsReady()) {
                     this.callbacks.onPetTransition("insights-ready");
                 } else {
                     this.callbacks.onPetTransition("analysis-done");

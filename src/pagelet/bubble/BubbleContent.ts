@@ -124,17 +124,25 @@ export function buildNudgeContent(
     callbacks: BubbleCallbacks,
     locale: PageletLocale = "en",
 ): BubbleContent {
-    const actions: BubbleAction[] = [
-        {
-            label: pageletT("pagelet.bubble.viewSuggestions", locale),
-            primary: true,
-            callback: () => callbacks.onExpandPanel("prepared"),
-        },
-        {
-            label: pageletT("pagelet.bubble.later", locale),
-            callback: () => callbacks.onDismiss(),
-        },
-    ];
+    const actions: BubbleAction[] = findings.length > 0
+        ? [
+            {
+                label: pageletT("pagelet.bubble.viewSuggestions", locale),
+                primary: true,
+                callback: () => callbacks.onExpandPanel("prepared"),
+            },
+            {
+                label: pageletT("pagelet.bubble.later", locale),
+                callback: () => callbacks.onDismiss(),
+            },
+        ]
+        : [
+            {
+                label: pageletT("pagelet.bubble.later", locale),
+                primary: true,
+                callback: () => callbacks.onDismiss(),
+            },
+        ];
 
     return {
         type: "nudge",
