@@ -14,7 +14,7 @@ import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnab
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
-import { getVaultApiTokenId, hasSecretValue, icons } from './utils';
+import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, hasSecretValue, icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
 import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
@@ -229,6 +229,7 @@ export class PluginManager extends Plugin {
     statsManager: StatsManager | undefined;
     vss: VSS | null = null;
     memoryManager: MemoryManager | null = null;
+    private manualMemoryActionInFlight = false;
     chatHistoryStore: ChatHistoryStore | undefined;
     chatHistoryManager: ChatHistoryManager | undefined;
     private memoryExtractionScheduler: MemoryExtractionScheduler | null = null;
@@ -1138,8 +1139,12 @@ export class PluginManager extends Plugin {
                     requiresApproval: false,
                     canAnswerNow: true,
                 }),
-                prepareFromCommand: () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
-                updateFromCommand: () => this.memoryManager?.updateFromCommand() ?? Promise.resolve(),
+                prepareFromCommand: () => this.runManualMemoryAction(
+                    () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
+                ),
+                updateFromCommand: () => this.runManualMemoryAction(
+                    () => this.memoryManager?.updateFromCommand() ?? Promise.resolve(),
+                ),
                 showTechnicalStatus: () => void this.showTechnicalMemoryStatus(),
                 onStatusChanged: (listener) => this.onMemoryStatusChanged(listener),
             },
@@ -1993,6 +1998,19 @@ export class PluginManager extends Plugin {
         this.showTechnicalMemoryNotice(this.buildTechnicalMemoryStatusModel(stats, maintenance), 7000);
     }
 
+    async runManualMemoryAction(action: () => Promise<void>): Promise<void> {
+        if (this.manualMemoryActionInFlight) {
+            new Notice(this.t("plugin.memory.notice.actionAlreadyRunning"), 4000);
+            return;
+        }
+        this.manualMemoryActionInFlight = true;
+        try {
+            await action();
+        } finally {
+            this.manualMemoryActionInFlight = false;
+        }
+    }
+
     private getVssPerformanceNotice(chunkCount: number): string {
         if (chunkCount > 100_000) {
             return this.t("plugin.memory.diagnostics.performance100k");
@@ -2267,7 +2285,7 @@ export class PluginManager extends Plugin {
         if (!this.vss || !this.memoryManager) return false;
         if (this.getAISetupIssue() !== null) return false;
         if (!checking) {
-            void action().catch((error) => {
+            void this.runManualMemoryAction(action).catch((error) => {
                 this.log("Memory command failed", error);
                 new Notice(this.t("plugin.notice.memoryActionFailed"), 5000);
             });
@@ -2470,8 +2488,43 @@ export class PluginManager extends Plugin {
         return getVaultApiTokenId(this.settings.statisticsVaultId || "default-vault");
     }
 
+    private getAPITokenSecretCandidateIds(): string[] {
+        const currentId = this.getAPITokenSecretId();
+        const defaultScopedId = getVaultApiTokenId("default-vault");
+        return [currentId, defaultScopedId, KEYCHAIN_API_TOKEN_ID]
+            .filter((id, index, ids) => ids.indexOf(id) === index);
+    }
+
+    getConfiguredAPITokenSecret(): string | null {
+        const currentId = this.getAPITokenSecretId();
+        const currentToken = this.app.secretStorage.getSecret(currentId);
+        if (hasSecretValue(currentToken)) return currentToken;
+
+        for (const legacyId of this.getAPITokenSecretCandidateIds()) {
+            if (legacyId === currentId) continue;
+            const legacyToken = this.app.secretStorage.getSecret(legacyId);
+            if (!hasSecretValue(legacyToken)) continue;
+            return legacyToken;
+        }
+
+        return null;
+    }
+
+    setAPITokenSecret(value: string): void {
+        const currentId = this.getAPITokenSecretId();
+        this.app.secretStorage.setSecret(currentId, value);
+        if (value === "") {
+            for (const legacyId of this.getAPITokenSecretCandidateIds()) {
+                if (legacyId !== currentId) {
+                    this.app.secretStorage.setSecret(legacyId, "");
+                }
+            }
+        }
+        this.clearTokenCache();
+    }
+
     hasConfiguredAPIToken(): boolean {
-        return hasSecretValue(this.app.secretStorage.getSecret(this.getAPITokenSecretId()));
+        return hasSecretValue(this.getConfiguredAPITokenSecret());
     }
 
     getAISetupIssue(): string | null {
@@ -2491,7 +2544,7 @@ export class PluginManager extends Plugin {
         if (this.token !== "") {
             return this.token;
         }
-        const token = this.app.secretStorage.getSecret(this.getAPITokenSecretId());
+        const token = this.getConfiguredAPITokenSecret();
         if (!hasSecretValue(token)) {
             new Notice(this.t("plugin.notice.apiTokenNotConfigured"), 5000);
             return "";

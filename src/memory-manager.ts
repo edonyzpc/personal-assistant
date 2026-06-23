@@ -174,6 +174,7 @@ export class MemoryManager {
     private readonly cleanupListeners: Array<() => void> = [];
     private lifecycleVersion = 0;
     private shuttingDown = false;
+    private manualCommandInFlight = false;
 
     constructor(host: MemoryHost, vss: VSS) {
         this.host = host;
@@ -429,22 +430,39 @@ export class MemoryManager {
     }
 
     async prepareFromCommand(): Promise<void> {
-        const plan = await this.getMaintenancePlan();
-        await this.runApprovedCommandPlan(plan);
+        await this.runManualCommand(async () => {
+            const plan = await this.getMaintenancePlan();
+            await this.runApprovedCommandPlan(plan);
+        });
     }
 
     async updateFromCommand(): Promise<void> {
-        const plan = await this.getMaintenancePlan();
-        const actionPlan: MemoryMaintenancePlan = plan.reason === "ready"
-            ? {
-                ...plan,
-                reason: "changed-notes",
-                action: "refresh",
-                notesLikelyToUpdate: plan.notesToCheck,
-                requiresApproval: true,
-            }
-            : plan;
-        await this.runApprovedCommandPlan(actionPlan);
+        await this.runManualCommand(async () => {
+            const plan = await this.getMaintenancePlan();
+            const actionPlan: MemoryMaintenancePlan = plan.reason === "ready"
+                ? {
+                    ...plan,
+                    reason: "changed-notes",
+                    action: "refresh",
+                    notesLikelyToUpdate: plan.notesToCheck,
+                    requiresApproval: true,
+                }
+                : plan;
+            await this.runApprovedCommandPlan(actionPlan);
+        });
+    }
+
+    private async runManualCommand(command: () => Promise<void>): Promise<void> {
+        if (this.manualCommandInFlight) {
+            new Notice(memoryT("plugin.memory.notice.actionAlreadyRunning"), 4000);
+            return;
+        }
+        this.manualCommandInFlight = true;
+        try {
+            await command();
+        } finally {
+            this.manualCommandInFlight = false;
+        }
     }
 
     private async runApprovedCommandPlan(plan: MemoryMaintenancePlan): Promise<void> {
