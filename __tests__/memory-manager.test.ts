@@ -514,6 +514,29 @@ describe('MemoryManager command decisions', () => {
         await first;
     });
 
+    it('resets the manual command guard when the wrapped command throws', async () => {
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        plugin.vss.getMemoryReadiness.mockRejectedValueOnce(new Error('boom'));
+        const manager = createManager(plugin);
+
+        await expect(manager.prepareFromCommand()).rejects.toThrow('boom');
+        mockNoticeMessages.length = 0;
+
+        plugin.vss.getMemoryReadiness.mockResolvedValueOnce(createPlan({
+            reason: 'ready',
+            action: 'none',
+            requiresApproval: false,
+            canAnswerNow: true,
+        }));
+        await manager.prepareFromCommand();
+
+        expect(mockNoticeMessages).not.toContain('A Memory action is already running.');
+    });
+
     it('updates one progress notice from rebuild progress events', async () => {
         let now = 0;
         const nowSpy = jest.spyOn(Date, 'now').mockImplementation(() => {

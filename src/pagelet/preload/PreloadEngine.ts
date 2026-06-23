@@ -226,7 +226,7 @@ export class PreloadEngine {
                 ? (this.lastCycleAt ?? this.startedAt ?? Date.now()) + effectiveInterval
                 : null,
             budgetRemaining: this.budget.remaining(),
-            cacheHasResults: this.cache.hasFindings(),
+            cacheHasResults: this.cache.has(),
             cachedFindingCount: this.cache.getFindings().length,
             consecutiveErrors: this.consecutiveErrors,
             adaptiveIntervalMs: effectiveInterval,

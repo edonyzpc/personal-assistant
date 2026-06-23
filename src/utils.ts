@@ -135,10 +135,6 @@ export const extractFile = async (zipBytes: ArrayBuffer, fileName: string) => {
 export const KEYCHAIN_API_TOKEN_ID = "pa-api-token";
 const SECRET_STORAGE_ID_MAX_LENGTH = 64;
 
-export interface SecretReader {
-    getSecret(id: string): string | null;
-}
-
 function hashSecretScope(value: string): string {
     let hash = 2166136261;
     for (let i = 0; i < value.length; i += 1) {
@@ -165,13 +161,6 @@ export function getVaultApiTokenId(vaultId?: string): string {
     const suffix = `-${hash}`;
     const head = scope.slice(0, maxScopeLength - suffix.length).replace(/-+$/g, "");
     return `${prefix}${head}${suffix}`;
-}
-
-export function getVaultScopedSecret(
-    secretStorage: SecretReader,
-    scopedId: string,
-): string | null {
-    return secretStorage.getSecret(scopedId);
 }
 
 export function hasSecretValue(secret: string | null): secret is string {

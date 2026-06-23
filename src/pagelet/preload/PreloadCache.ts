@@ -17,10 +17,6 @@ export class PreloadCache {
         return this.entry !== null;
     }
 
-    hasFindings(): boolean {
-        return this.getFindings().length > 0;
-    }
-
     clear(): void {
         this.entry = null;
     }

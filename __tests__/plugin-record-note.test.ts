@@ -734,6 +734,27 @@ describe('manual Memory action guard', () => {
         expect(secondAction).toHaveBeenCalledTimes(1);
     });
 
+    it('releases the guard when the action rejects', async () => {
+        mockNoticeMessages.length = 0;
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.t = jest.fn((key: string) => (
+            key === 'plugin.memory.notice.actionAlreadyRunning'
+                ? 'A Memory action is already running.'
+                : key
+        ));
+
+        const failingAction = jest.fn(async () => {
+            throw new Error('boom');
+        });
+        await expect(plugin.runManualMemoryAction(failingAction)).rejects.toThrow('boom');
+
+        const followUp = jest.fn(async () => undefined);
+        await plugin.runManualMemoryAction(followUp);
+
+        expect(followUp).toHaveBeenCalledTimes(1);
+        expect(mockNoticeMessages).toEqual([]);
+    });
+
     it('shares the manual Memory guard with Chat memory actions', async () => {
         mockNoticeMessages.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -808,6 +829,58 @@ describe('API token secret compatibility', () => {
         expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalled();
         expect(secrets.has('pa-api-token-vault-id')).toBe(false);
         expect(plugin.log).not.toHaveBeenCalled();
+    });
+
+    it('falls back to the default-vault scoped token when the current scoped id is empty', () => {
+        const secrets = new Map<string, string>([
+            ['pa-api-token-default-vault', 'sk-default-vault-token'],
+        ]);
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { statisticsVaultId: 'vault-id' };
+        plugin.app = {
+            secretStorage: {
+                getSecret: jest.fn((id: string) => secrets.get(id) ?? null),
+                setSecret: jest.fn(),
+            },
+        };
+        plugin.log = jest.fn();
+
+        expect(plugin.getConfiguredAPITokenSecret()).toBe('sk-default-vault-token');
+
+        expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalled();
+    });
+
+    it('returns null when all candidate secret ids are empty', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { statisticsVaultId: 'vault-id' };
+        plugin.app = {
+            secretStorage: {
+                getSecret: jest.fn(() => null),
+                setSecret: jest.fn(),
+            },
+        };
+        plugin.log = jest.fn();
+
+        expect(plugin.getConfiguredAPITokenSecret()).toBeNull();
+        expect(plugin.app.secretStorage.setSecret).not.toHaveBeenCalled();
+    });
+
+    it('writes only the current scoped id when setting a non-empty token', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = { statisticsVaultId: 'vault-id' };
+        plugin.token = 'cached';
+        plugin.app = {
+            secretStorage: {
+                getSecret: jest.fn(() => null),
+                setSecret: jest.fn(),
+            },
+        };
+
+        plugin.setAPITokenSecret('sk-new-token');
+
+        expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledTimes(1);
+        expect(plugin.app.secretStorage.setSecret).toHaveBeenCalledWith('pa-api-token-vault-id', 'sk-new-token');
+        expect(plugin.token).toBe('');
     });
 
     it('clears current and legacy API token secret ids together', () => {
