@@ -193,6 +193,8 @@
     "plugin.memory.notice.readyNotesUnchanged": "Memory 已就绪。你的笔记未被修改。",
     "plugin.memory.notice.unavailableAskNormally": "Memory 不可用。你仍然可以正常提问。",
     "plugin.memory.notice.notReadyPrepareFirst": "Memory 尚未就绪。请先准备 Memory。",
+    "plugin.memory.notice.prepareAlreadyRunning": "Memory 正在准备中。",
+    "plugin.memory.notice.actionAlreadyRunning": "Memory 操作正在进行中。",
     "plugin.memory.notice.localCopyReset": "本地 Memory 副本已重置。",
     "plugin.memory.notice.needsPrepareAgain": "此设备需要重新准备 Memory。",
     "plugin.memory.message.prepareFailedAnswerNow": "这次无法准备 Memory，所以我已正常回答。",

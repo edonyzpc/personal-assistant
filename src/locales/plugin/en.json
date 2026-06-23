@@ -193,6 +193,8 @@
     "plugin.memory.notice.readyNotesUnchanged": "Memory is ready. Your notes were not changed.",
     "plugin.memory.notice.unavailableAskNormally": "Memory is unavailable. You can still ask normally.",
     "plugin.memory.notice.notReadyPrepareFirst": "Memory is not ready. Prepare memory first.",
+    "plugin.memory.notice.prepareAlreadyRunning": "Memory preparation is already running.",
+    "plugin.memory.notice.actionAlreadyRunning": "A Memory action is already running.",
     "plugin.memory.notice.localCopyReset": "Local memory copy reset.",
     "plugin.memory.notice.needsPrepareAgain": "Memory needs to be prepared again on this device.",
     "plugin.memory.message.prepareFailedAnswerNow": "I could not prepare memory this time, so I answered normally.",
