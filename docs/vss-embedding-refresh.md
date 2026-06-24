@@ -9,7 +9,7 @@
 
 ## 当前关键机制
 
-- **事件改造**：`vault.create` / `vault.modify` 标记脏文件，`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
+- **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 与 metadata 已匹配的事件会被忽略，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
 - **首次授权后的自动维护**：用户确认并成功 prepare/update Memory 后，`memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 在 durable SQLite/WASM ready 时由后台 reconcile/verify/refresh 维护，Chat 不再等待 refresh。
 - **本地静默状态**：后台自动维护只写设备本地 SQLite/WASM OPFS Memory index，并把 marker 与 dirty journal 写入本地 IndexedDB state store；默认不在 vault 中创建 `vss-index-state/`、`manifest.json` 或 `vss-cache/dirty.json`。如果 IndexedDB 暂时打不开，VSS 先把 marker/dirty state 保留在进程内，后续 update/status 路径重试并落盘。
 - **静默窗口 + 最长延迟**：后台 refresh 保留 `quietWindow=30s` 和 `maxDelay=10min`，避免用户连续编辑时反复计算。
@@ -111,7 +111,7 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 
 ## 触发流程
 
-1. **发现变化**：`create` / `modify` 标 dirty，`rename` 删除旧 path 并标 dirty，新旧设备同步差异由 reconcile 扫描补齐。
+1. **发现变化**：`create` / `modify` 先走 observation gate；启动期旧 mtime replay 与 metadata match 不进入 dirty，metadata mismatch 进入 verify queue，missing record 标 dirty；`rename` 删除旧 path 并标 dirty，新旧设备同步差异由 reconcile 扫描补齐。
 2. **触发维护**：Chat auto policy、vault event quiet window、启动/prepare/resume/周期 reconcile，或手动 Update。
 3. **reconcile metadata**：批量读取 indexed records，与 vault 文件列表对比；missing indexed path 删除，新文件标 dirty，metadata mismatch / rolling candidate 进入 verify queue。
 4. **verify queue**：按桌面/移动端预算读取少量文件计算 hash；hash 相同只同步 `vss_files` metadata，hash 变化才标 dirty。
@@ -137,5 +137,6 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 - auto policy + durable ready + changed notes 时 Chat 不弹确认、不等待 refresh，会调度后台 reconcile/verify/flush。
 - 非 durable 或不可用状态下不会执行自动写入，并会提示后台更新不可用。
 - reconcile 能发现新增、deleted indexed path，并把 durable ready 下的 metadata mismatch/rolling candidate 放入 verify queue。verify 只有在 hash 真实变化时才标 dirty。metadata-only 漂移不会让 Memory 进入 needs update，也不会把聊天入口的 brain 状态变成 changed-notes。
+- vault event observation 能过滤启动期旧 mtime replay 和 metadata 已匹配的 `create`/`modify` 事件；只有 missing indexed record 或 hash-confirmed 变化会写入 dirty journal。
 - 大 vault reconcile 的 `hasMore` 能在多轮扫描后收敛，避免持续每秒扫描。
 - verify budget 能限制单轮读取文件数、读取字节估算和主线程占用；dirty 清理使用 epoch/stamp 防止 verify 误清除更新的 modify 事件。
