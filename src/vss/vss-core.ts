@@ -98,6 +98,10 @@ function vssT(key: string, params?: Readonly<Record<string, string | number>>, f
 }
 
 export type VSSRefreshStatus = 'updated' | 'unchanged' | 'metadata-synced' | 'removed' | 'skipped';
+export type VSSChangeObservation =
+    | { kind: "ignored"; path?: string; reason?: string }
+    | { kind: "verify-candidate"; path: string; reason: string }
+    | { kind: "confirmed-dirty"; path: string; reason: string };
 
 export type {
     VSSFlushOptions,
@@ -435,29 +439,50 @@ export class VSS {
         return changed;
     }
 
-    async markDirtyIfIndexedMetadataChanged(file: TFile | null): Promise<boolean> {
-        if (this.disposed) return false;
-        if (!(file instanceof TFile)) return false;
-        if (!this.isEligible(file)) return false;
+    async observeChangedFile(
+        file: TAbstractFile | null,
+        reason = "vault-event",
+        verifyReason: VerifyReason = "metadata-drift",
+    ): Promise<VSSChangeObservation> {
+        if (this.disposed) return { kind: "ignored", reason: "disposed" };
+        if (!(file instanceof TFile)) return { kind: "ignored", reason: "not-file" };
+        if (!this.isEligible(file)) return { kind: "ignored", path: file.path, reason: "ineligible" };
         await this.initialize();
-        if (!this.index || this.status !== "ready") {
-            return false;
+        if (!this.index || !await this.isDurableReady()) {
+            return { kind: "ignored", path: file.path, reason: "not-ready" };
         }
 
         const record = await this.index.getFileRecord(file.path);
-        if (record && record.mtime === file.stat.mtime && record.size === file.stat.size) {
-            return false;
-        }
-
         if (!record) {
             const changed = this.markDirtyPath(file.path);
             if (changed) {
                 await this.persistDirtyJournal();
             }
-            return changed;
+            return { kind: "confirmed-dirty", path: file.path, reason: "missing-index-record" };
         }
 
-        return this.enqueueVerifyPath(file, record, "file-open");
+        if (record.mtime === file.stat.mtime && record.size === file.stat.size) {
+            this.verifyQueue.delete(file.path);
+            if (this.clearStaleDirtyForSyncedRecord(file.path, record)) {
+                await this.persistDirtyJournal();
+            }
+            if (this.dirty.has(file.path)) {
+                return { kind: "confirmed-dirty", path: file.path, reason: "already-dirty" };
+            }
+            return { kind: "ignored", path: file.path, reason: "metadata-match" };
+        }
+
+        if (this.dirty.has(file.path)) {
+            return { kind: "confirmed-dirty", path: file.path, reason: "already-dirty" };
+        }
+
+        this.enqueueVerifyPath(file, record, verifyReason);
+        return { kind: "verify-candidate", path: file.path, reason };
+    }
+
+    async markDirtyIfIndexedMetadataChanged(file: TFile | null): Promise<boolean> {
+        const observation = await this.observeChangedFile(file, "file-open", "file-open");
+        return observation.kind !== "ignored";
     }
 
     async handleDelete(file: TFile): Promise<void> {
@@ -1009,6 +1034,9 @@ export class VSS {
                         summary.verificationQueued++;
                     }
                 } else {
+                    if (this.clearStaleDirtyForSyncedRecord(file.path, record)) {
+                        dirtyChanged = true;
+                    }
                     summary.unchanged++;
                 }
                 await maybeYield();
@@ -1808,6 +1836,14 @@ export class VSS {
         if (!dirty) return false;
         const currentStamp = dirty.epoch ?? dirty.last;
         if (stamp === undefined || currentStamp !== stamp) return false;
+        return this.dirty.delete(path);
+    }
+
+    private clearStaleDirtyForSyncedRecord(path: string, record: VSSFileRecord): boolean {
+        const dirty = this.dirty.get(path);
+        if (!dirty) return false;
+        const lastDirtyAt = dirty.last ?? dirty.first ?? 0;
+        if (lastDirtyAt > record.updatedAt) return false;
         return this.dirty.delete(path);
     }
 

@@ -88,6 +88,8 @@ import type { ChatHost } from './chat/ChatHost';
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
+const MEMORY_STARTUP_EVENT_REPLAY_WINDOW_MS = 90_000;
+const MEMORY_STARTUP_EVENT_MTIME_GRACE_MS = 5_000;
 interface TechnicalMemoryDetail {
     label: string;
     value: string;
@@ -270,6 +272,7 @@ export class PluginManager extends Plugin {
     private resizeDebounceTimer: TimeoutHandle | null = null;
     private phase3Handle: PlatformTimeoutHandle | null = null;
     private unloading = false;
+    private memoryEventGateStartedAt = Date.now();
     private debouncedStatusBarUpdate = debounce(() => {
         void this.updateMemoryStatusBar();
     }, 300, true);
@@ -283,6 +286,7 @@ export class PluginManager extends Plugin {
     }
 
     async onload() {
+        this.memoryEventGateStartedAt = Date.now();
         await this.loadSettings();
 
         // 迁移旧版本设置
@@ -651,7 +655,7 @@ export class PluginManager extends Plugin {
     }
 
     private registerVaultEventDispatch(): void {
-        // VSS lifecycle events mark local state dirty; approved Memory can then maintain itself in the background.
+        // VSS lifecycle events observe possible local changes; approved Memory can then maintain itself in the background.
         this.registerEvent(
             this.app.vault.on("create", async (file) => {
                 if (file instanceof TFile) {
@@ -664,10 +668,7 @@ export class PluginManager extends Plugin {
                         return;
                     }
                     this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-create");
-                    if (await this.vss?.markDirtyIfEligible(file)) {
-                        this.memoryManager?.scheduleAutoFlush("vault-create");
-                        this.debouncedStatusBarUpdate();
-                    }
+                    await this.handleMemoryVaultChange(file, "vault-create");
                 }
             })
         );
@@ -683,10 +684,7 @@ export class PluginManager extends Plugin {
                         return;
                     }
                     this.memoryExtractionScheduler?.handleVaultEvent(file, "vault-modify");
-                    if (await this.vss?.markDirtyIfEligible(file)) {
-                        this.memoryManager?.scheduleAutoFlush("vault-modify");
-                        this.debouncedStatusBarUpdate();
-                    }
+                    await this.handleMemoryVaultChange(file, "vault-modify");
                 }
             })
         );
@@ -728,6 +726,33 @@ export class PluginManager extends Plugin {
                 }
             })
         );
+    }
+
+    private async handleMemoryVaultChange(file: TFile, reason: "vault-create" | "vault-modify"): Promise<void> {
+        if (this.isLikelyStartupReplayMemoryEvent(file)) {
+            return;
+        }
+
+        const observation = await this.vss?.observeChangedFile(file, reason);
+        if (!observation) return;
+        if (observation.kind === "confirmed-dirty") {
+            this.memoryManager?.scheduleAutoFlush(reason);
+            this.debouncedStatusBarUpdate();
+        } else if (observation.kind === "verify-candidate") {
+            this.memoryManager?.scheduleVerify(reason);
+        }
+    }
+
+    private isLikelyStartupReplayMemoryEvent(file: TFile): boolean {
+        if (typeof this.memoryEventGateStartedAt !== "number" || !Number.isFinite(this.memoryEventGateStartedAt)) {
+            this.memoryEventGateStartedAt = Date.now();
+        }
+        if (Date.now() - this.memoryEventGateStartedAt > MEMORY_STARTUP_EVENT_REPLAY_WINDOW_MS) {
+            return false;
+        }
+        const mtime = file.stat?.mtime;
+        return typeof mtime === "number"
+            && mtime < this.memoryEventGateStartedAt - MEMORY_STARTUP_EVENT_MTIME_GRACE_MS;
     }
 
     private syncPageletRuntime(): void {
