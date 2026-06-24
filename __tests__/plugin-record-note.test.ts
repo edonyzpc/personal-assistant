@@ -123,6 +123,7 @@ jest.mock('../src/memory-manager', () => ({
     MemoryManager: class {
         startAutoMaintenance() { }
         scheduleAutoFlush() { }
+        scheduleVerify() { }
         prepareFromCommand() { }
     },
 }));
@@ -187,6 +188,54 @@ import { PageletDetailView } from '../src/pagelet/tab';
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
     return new FileCtor(path);
+};
+
+const createTFileWithStat = (path: string, stat: { mtime: number; size: number; ctime?: number }): TFile => {
+    const file = createTFile(path) as TFile & { stat: { mtime: number; size: number; ctime: number } };
+    file.stat = {
+        ctime: stat.mtime,
+        ...stat,
+    };
+    return file;
+};
+
+const createVaultEventDispatchHarness = () => {
+    const vaultHandlers = new Map<string, (...args: unknown[]) => Promise<void>>();
+    const workspaceHandlers = new Map<string, (...args: unknown[]) => Promise<void>>();
+    const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+    plugin.registerEvent = jest.fn();
+    plugin.app = {
+        vault: {
+            on: jest.fn((name: string, callback: (...args: unknown[]) => Promise<void>) => {
+                vaultHandlers.set(name, callback);
+                return { name, callback };
+            }),
+        },
+        workspace: {
+            on: jest.fn((name: string, callback: (...args: unknown[]) => Promise<void>) => {
+                workspaceHandlers.set(name, callback);
+                return { name, callback };
+            }),
+        },
+    };
+    plugin.pageletRuntime = null;
+    plugin.memoryExtractionScheduler = { handleVaultEvent: jest.fn() };
+    plugin.vss = {
+        observeChangedFile: jest.fn(async () => ({ kind: 'ignored' })),
+        handleRename: jest.fn(async () => true),
+        handleDelete: jest.fn(async () => undefined),
+        handleActiveLeafChange: jest.fn(async () => undefined),
+        handleFileOpen: jest.fn(async () => false),
+        getMaintenanceState: jest.fn(() => ({ dirtyCount: 0, verificationPending: 0 })),
+    };
+    plugin.memoryManager = {
+        scheduleAutoFlush: jest.fn(),
+        scheduleVerify: jest.fn(),
+    };
+    plugin.debouncedStatusBarUpdate = jest.fn();
+    plugin.memoryEventGateStartedAt = 1_000_000;
+    (plugin as { registerVaultEventDispatch: () => void }).registerVaultEventDispatch();
+    return { plugin, vaultHandlers, workspaceHandlers };
 };
 
 const collectModalTexts = (node: MockModalContentRecord): string[] => [
@@ -310,6 +359,91 @@ const createPluginHarness = ({
 
     return { plugin, vault, openFile, createdFiles, secretStorage };
 };
+
+describe('Memory vault event dispatch', () => {
+    it('ignores startup replay modify bursts with old mtimes before observing Memory changes', async () => {
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_010_000);
+        try {
+            const { plugin, vaultHandlers } = createVaultEventDispatchHarness();
+            const modify = vaultHandlers.get('modify');
+            expect(modify).toBeDefined();
+
+            for (let index = 0; index < 1000; index++) {
+                const file = createTFileWithStat(`old-${index}.md`, { mtime: 900_000, size: index + 1 });
+                await modify?.(file);
+            }
+
+            expect(plugin.memoryExtractionScheduler.handleVaultEvent).toHaveBeenCalledTimes(1000);
+            expect(plugin.vss.observeChangedFile).not.toHaveBeenCalled();
+            expect(plugin.memoryManager.scheduleAutoFlush).not.toHaveBeenCalled();
+            expect(plugin.memoryManager.scheduleVerify).not.toHaveBeenCalled();
+            expect(plugin.debouncedStatusBarUpdate).not.toHaveBeenCalled();
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('observes fresh startup-window edits and schedules verification candidates', async () => {
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_010_000);
+        try {
+            const { plugin, vaultHandlers } = createVaultEventDispatchHarness();
+            plugin.vss.observeChangedFile.mockResolvedValueOnce({
+                kind: 'verify-candidate',
+                path: 'fresh.md',
+                reason: 'vault-modify',
+            });
+            const file = createTFileWithStat('fresh.md', { mtime: 1_010_000, size: 42 });
+
+            await vaultHandlers.get('modify')?.(file);
+
+            expect(plugin.vss.observeChangedFile).toHaveBeenCalledWith(file, 'vault-modify');
+            expect(plugin.memoryManager.scheduleVerify).toHaveBeenCalledWith('vault-modify');
+            expect(plugin.memoryManager.scheduleAutoFlush).not.toHaveBeenCalled();
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('schedules auto flush only for confirmed dirty observations', async () => {
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_010_000);
+        try {
+            const { plugin, vaultHandlers } = createVaultEventDispatchHarness();
+            plugin.vss.observeChangedFile.mockResolvedValueOnce({
+                kind: 'confirmed-dirty',
+                path: 'created.md',
+                reason: 'missing-index-record',
+            });
+            const file = createTFileWithStat('created.md', { mtime: 1_010_000, size: 42 });
+
+            await vaultHandlers.get('create')?.(file);
+
+            expect(plugin.vss.observeChangedFile).toHaveBeenCalledWith(file, 'vault-create');
+            expect(plugin.memoryManager.scheduleAutoFlush).toHaveBeenCalledWith('vault-create');
+            expect(plugin.debouncedStatusBarUpdate).toHaveBeenCalled();
+            expect(plugin.memoryManager.scheduleVerify).not.toHaveBeenCalled();
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+
+    it('keeps rename and delete handling outside the startup replay gate', async () => {
+        const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_010_000);
+        try {
+            const { plugin, vaultHandlers } = createVaultEventDispatchHarness();
+            const file = createTFileWithStat('renamed.md', { mtime: 900_000, size: 42 });
+
+            await vaultHandlers.get('rename')?.(file, 'old.md');
+            await vaultHandlers.get('delete')?.(file);
+
+            expect(plugin.vss.handleRename).toHaveBeenCalledWith(file, 'old.md');
+            expect(plugin.memoryManager.scheduleAutoFlush).toHaveBeenCalledWith('vault-rename');
+            expect(plugin.vss.handleDelete).toHaveBeenCalledWith(file);
+            expect(plugin.debouncedStatusBarUpdate).toHaveBeenCalledTimes(2);
+        } finally {
+            nowSpy.mockRestore();
+        }
+    });
+});
 
 describe('record note creation', () => {
     it('creates root-level record notes without trying to create the vault root folder', async () => {
