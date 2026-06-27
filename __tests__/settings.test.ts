@@ -1230,7 +1230,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         // Walk every top-level child of containerEl in render order. Heading
         // tags (h1/h2/h3) are kept by their textContent; the Featured Image
         // section emits its content under a div sub-container with no heading,
-        // so we mark it via the "AI Featured Image Path" Setting record's
+        // so we mark it via the "Featured image folder" Setting record's
         // index in the Setting render queue and reconstruct ordering by
         // scanning for the matching div.
         const children = (tab.containerEl as unknown as { children: { tagName: string; textContent?: string; children?: unknown[] }[] }).children;
@@ -1276,12 +1276,12 @@ describe('Phase 3 IA reorder + provider UX', () => {
         ]);
 
         // Featured Image lives between Metadata Management and Advanced. With
-        // aiProvider='qwen' it renders a single "AI Featured Image Path" Setting.
+        // aiProvider='qwen' it renders a single "Featured image folder" Setting.
         // Use the Setting record list to confirm it falls in that gap, between
         // the metadata section's only default-rendered Setting ("Enable
         // Updating Metadata") and Advanced's Debug toggle.
         const settingNames = getMockSettingRecords().map((r) => r.name);
-        const featuredIdx = settingNames.indexOf('AI Featured Image Path');
+        const featuredIdx = settingNames.indexOf('Featured image folder');
         const metadataIdx = settingNames.indexOf('Enable Updating Metadata');
         const debugIdx = settingNames.indexOf('Debug');
         expect(featuredIdx).toBeGreaterThan(-1);
@@ -1291,7 +1291,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(featuredIdx).toBeLessThan(debugIdx);
 
         const featuredSetting = getMockSettingRecords()[featuredIdx];
-        expect(featuredSetting.desc).toContain('AI featured image helper');
+        expect(featuredSetting.desc).toContain('saved in your vault');
         expect(featuredSetting.texts[0].placeholder).toBe('attachments/ai-images');
     });
 
@@ -1375,8 +1375,8 @@ describe('Phase 3 IA reorder + provider UX', () => {
         tab.display();
 
         const settingNames = getMockSettingRecords().map((r) => r.name);
-        expect(settingNames).not.toContain('AI Featured Image Path');
-        expect(settingNames).not.toContain('AI Featured Images Generating Number');
+        expect(settingNames).not.toContain('Featured image folder');
+        expect(settingNames).not.toContain('Images per run');
     });
 
     it('Debug toggle moves out of the header into the Advanced section', () => {
@@ -2238,6 +2238,17 @@ describe('Phase 4 P1 UX', () => {
             expect(settings.numFeaturedImages).toBe(3);
         });
 
+        it.each([
+            [undefined, 1],
+            [0, 1],
+            ['99', 4],
+            ['2.8', 2],
+            ['not-a-number', 1],
+        ])('normalizes loaded featured image count %p to %p', (input, expected) => {
+            const settings = mergeLoadedSettings({ numFeaturedImages: input });
+            expect(settings.numFeaturedImages).toBe(expected);
+        });
+
         it('fills missing featured image model when old data is merged with defaults', () => {
             const settings = mergeLoadedSettings({});
             expect(settings.featuredImageModel).toBe('wan2.7-image');
@@ -2266,7 +2277,7 @@ describe('Phase 4 P1 UX', () => {
             await modelRow?.dropdowns[0].onChange?.('wanx2.1-t2i-plus');
             expect(plugin.settings.featuredImageModel).toBe('wan2.7-image');
 
-            const countRow = records.find((row) => row.name === 'AI Featured Images Generating Number');
+            const countRow = records.find((row) => row.name === 'Images per run');
             expect(countRow?.texts[0].placeholder).toBe('1');
             expect(countRow?.texts[0].value).toBe('4');
 

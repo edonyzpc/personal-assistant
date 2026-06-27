@@ -11,12 +11,39 @@ import type { PluginManager } from '../plugin'
 import { normalizeFeaturedImageCount, normalizeFeaturedImageModel } from '../settings';
 import { isPluginEnabled, getVaultTags } from '../obsidian-internals';
 import { getPluginUiLanguage, pluginT } from '../locales/plugin';
+import { clearPlatformTimeout, setPlatformTimeout, type PlatformTimeoutHandle } from '../platform-dom';
 
 const isOkStatus = (status: number): boolean => status >= 200 && status < 300;
+const FEATURED_IMAGE_GENERATION_TIMEOUT_MS = 300000;
 const redactProviderMessage = (message: unknown): string | undefined => {
     return typeof message === "string" && message.trim().length > 0
         ? "[provider message omitted]"
         : undefined;
+};
+
+class FeaturedImageGenerationTimeoutError extends Error {
+    constructor(readonly timeoutMs: number) {
+        super(`Featured image generation timed out after ${timeoutMs}ms.`);
+        this.name = "FeaturedImageGenerationTimeoutError";
+    }
+}
+
+const withFeaturedImageTimeout = async <T>(promise: Promise<T>, timeoutMs: number): Promise<T> => {
+    let timeoutId: PlatformTimeoutHandle | null = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise<never>((_, reject) => {
+                timeoutId = setPlatformTimeout(() => {
+                    reject(new FeaturedImageGenerationTimeoutError(timeoutMs));
+                }, timeoutMs);
+            }),
+        ]);
+    } finally {
+        if (timeoutId !== null) {
+            clearPlatformTimeout(timeoutId);
+        }
+    }
 };
 
 interface SummaryResponse {
@@ -171,7 +198,7 @@ interface FeaturedImageGenerationResponse {
                     image?: string;
                 }>;
             };
-        }>;
+        } | null | undefined>;
     };
 }
 
@@ -316,7 +343,6 @@ export class AIService {
             );
             const imageUrls = await this.generateFeaturedImageUrls(imageDesc);
             if (!imageUrls || imageUrls.length === 0) {
-                new Notice(this.t("plugin.ai.notice.featuredFailed"));
                 return;
             }
             this.completeProgressStep(progress2Div, this.t("plugin.ai.progress.imagesDone"));
@@ -346,7 +372,8 @@ export class AIService {
             const { frontmatterInfo: latestFrontmatterInfo } = this.aiUtils.getDocumentContent(latestMarkdown);
             const insertionOffset = latestFrontmatterInfo.exists ? latestFrontmatterInfo.contentStart : 0;
             const line = editorView.state.doc.lineAt(Math.min(insertionOffset, editorView.state.doc.length));
-            let imagesCallout = "";
+            const downloadedImages: string[] = [];
+            let failedDownloadCount = 0;
             const featuredImagePath = this.plugin.settings.featuredImagePath;
             let calloutImageSuffix = "";
             if (isPluginEnabled(this.plugin.app, "image-converter")) {
@@ -355,14 +382,35 @@ export class AIService {
             }
             for (let i = 0; i < imageUrls.length; i++) {
                 const imageUrlStr = imageUrls[i].url;
-                const response = await this.downloadImageToVault(this.plugin.app, imageUrlStr, featuredImagePath);
-                if (response) {
-                    imagesCallout += `![[${response}${calloutImageSuffix}]]\n> `;
+                try {
+                    const response = await this.downloadImageToVault(this.plugin.app, imageUrlStr, featuredImagePath);
+                    if (response) {
+                        downloadedImages.push(`![[${response}${calloutImageSuffix}]]`);
+                    }
+                } catch (downloadError) {
+                    failedDownloadCount += 1;
+                    this.plugin.log("Failed to download featured image", {
+                        imageIndex: i,
+                        errorName: downloadError instanceof Error ? downloadError.name : typeof downloadError,
+                    });
                 }
+            }
+            if (downloadedImages.length === 0) {
+                this.plugin.log("No featured images were downloaded", {
+                    requestedImageCount: imageUrls.length,
+                    failedDownloadCount,
+                });
+                return;
+            }
+            if (failedDownloadCount > 0) {
+                this.plugin.log("Featured image generation completed with download failures", {
+                    downloadedImageCount: downloadedImages.length,
+                    failedDownloadCount,
+                });
             }
             this.completeProgressStep(progress3Div, this.t("plugin.ai.progress.downloadDone"));
             // append line breaks
-            imagesCallout += "\n\n";
+            const imagesCallout = `${downloadedImages.map((image) => `${image}\n> `).join("")}\n\n`;
             editorView.dispatch({
                 changes: [
                     {
@@ -541,7 +589,7 @@ export class AIService {
         let resp: RequestUrlResponse;
         try {
             const token = await this.plugin.getAPIToken();
-            resp = await requestUrl({
+            resp = await withFeaturedImageTimeout(requestUrl({
                 url: endpoint,
                 method: "POST",
                 contentType: "application/json",
@@ -566,14 +614,19 @@ export class AIService {
                     },
                 }),
                 throw: false,
-            });
+            }), FEATURED_IMAGE_GENERATION_TIMEOUT_MS);
         } catch (error) {
-            this.plugin.log("Image generation request failed before provider response", {
+            const timedOut = error instanceof FeaturedImageGenerationTimeoutError;
+            this.plugin.log(timedOut
+                ? "Image generation request timed out"
+                : "Image generation request failed before provider response", {
                 model,
                 endpointRegion,
                 errorName: error instanceof Error ? error.name : typeof error,
             });
-            new Notice(this.t("plugin.ai.notice.featuredFailed"), 5000);
+            new Notice(this.t(timedOut
+                ? "plugin.ai.notice.featuredTimeout"
+                : "plugin.ai.notice.featuredFailed"), 5000);
             return null;
         }
 
@@ -607,8 +660,8 @@ export class AIService {
         }
 
         const hasIncompleteChoice = choices.some((choice) => {
-            if (choice.finished === false) return true;
-            if (choice.finish_reason === undefined) return false;
+            if (choice?.finished === false) return true;
+            if (choice?.finish_reason === undefined) return false;
             return choice.finish_reason !== "stop";
         });
         if (hasIncompleteChoice) {
@@ -617,7 +670,7 @@ export class AIService {
             return null;
         }
 
-        const imageUrls = choices.flatMap((choice) => choice.message?.content ?? [])
+        const imageUrls = choices.flatMap((choice) => choice?.message?.content ?? [])
             .map((content) => content.image)
             .filter((image): image is string => typeof image === "string" && image.trim().length > 0)
             .map((url) => ({ url }));

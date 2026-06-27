@@ -10,7 +10,7 @@ import { ChatService } from "./ai-services/chat-service";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount } from './settings'
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
@@ -2373,6 +2373,11 @@ export class PluginManager extends Plugin {
             const normalizedFeaturedImageModel = normalizeFeaturedImageModel(this.settings.featuredImageModel);
             if (this.settings.featuredImageModel !== normalizedFeaturedImageModel) {
                 this.settings.featuredImageModel = normalizedFeaturedImageModel;
+                changed = true;
+            }
+            const normalizedNumFeaturedImages = normalizeFeaturedImageCount(this.settings.numFeaturedImages);
+            if (this.settings.numFeaturedImages !== normalizedNumFeaturedImages) {
+                this.settings.numFeaturedImages = normalizedNumFeaturedImages;
                 changed = true;
             }
             if ("qwenWebSearchEnabled" in this.settings) {

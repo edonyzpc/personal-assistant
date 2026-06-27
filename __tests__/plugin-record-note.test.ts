@@ -144,6 +144,15 @@ jest.mock('../src/settings', () => ({
     normalizeFeaturedImageModel: (value: unknown) => (
         value === 'wan2.7-image' || value === 'wan2.7-image-pro' ? value : 'wan2.7-image'
     ),
+    normalizeFeaturedImageCount: (value: unknown) => {
+        const numericValue = typeof value === 'number'
+            ? value
+            : typeof value === 'string' && value.trim() !== ''
+                ? Number(value)
+                : Number.NaN;
+        if (!Number.isFinite(numericValue)) return 1;
+        return Math.min(Math.max(Math.floor(numericValue), 1), 4);
+    },
 }));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
@@ -258,6 +267,7 @@ const memorySettings = {
     webSearchEnabled: false,
     policyModelName: '',
     featuredImageModel: 'wan2.7-image',
+    numFeaturedImages: 1,
     shareAnonymousCapabilityUsage: false,
     skillContextEnabled: true,
     enabledSkillIds: mockBundledSkillIds,
@@ -1049,6 +1059,7 @@ describe('settings migration', () => {
             webSearchEnabled: false,
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
+            numFeaturedImages: 1,
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
@@ -1081,6 +1092,7 @@ describe('settings migration', () => {
             webSearchEnabled: false,
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
+            numFeaturedImages: 1,
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
@@ -1111,6 +1123,7 @@ describe('settings migration', () => {
             webSearchEnabled: false,
             policyModelName: '',
             featuredImageModel: 'wan2.7-image',
+            numFeaturedImages: 1,
             shareAnonymousCapabilityUsage: false,
             skillContextEnabled: true,
             enabledSkillIds: mockBundledSkillIds,
@@ -1125,6 +1138,37 @@ describe('settings migration', () => {
 
         expect(plugin.settings.vssCacheExcludePath).toEqual([]);
         expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('normalizes invalid featured image count during migration', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.app = createMigrationApp();
+        plugin.settings = {
+            aiProvider: 'openai',
+            embeddingModelName: 'custom-embedding-model',
+            embeddingV4MigrationNoticeDismissed: true,
+            statisticsType: 'overview',
+            memoryEnabled: true,
+            memoryAutoCheckBeforeChat: true,
+            memoryApprovalPolicy: 'always',
+            showAdvancedMemoryControls: false,
+            qwenThinkingEnabled: false,
+            webSearchEnabled: false,
+            policyModelName: '',
+            featuredImageModel: 'wan2.7-image',
+            numFeaturedImages: 99,
+            shareAnonymousCapabilityUsage: false,
+            skillContextEnabled: true,
+            enabledSkillIds: mockBundledSkillIds,
+            statisticsVaultId: 'vault-id',
+        };
+        plugin.saveSettings = jest.fn();
+        plugin.log = jest.fn();
+
+        await plugin.migrateSettings();
+
+        expect(plugin.settings.numFeaturedImages).toBe(4);
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
     });
 });
 

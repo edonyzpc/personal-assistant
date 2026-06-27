@@ -58,6 +58,18 @@ jest.mock('../src/settings', () => ({
     SettingTab: class { },
     DEFAULT_SETTINGS: { chatModelName: 'qwen3.6-plus', enabledSkillIds: mockBundledSkillIds },
     normalizeEnabledSkillIds: (value: unknown) => (Array.isArray(value) ? value : [...mockBundledSkillIds]),
+    normalizeFeaturedImageModel: (value: unknown) => (
+        value === 'wan2.7-image' || value === 'wan2.7-image-pro' ? value : 'wan2.7-image'
+    ),
+    normalizeFeaturedImageCount: (value: unknown) => {
+        const numericValue = typeof value === 'number'
+            ? value
+            : typeof value === 'string' && value.trim() !== ''
+                ? Number(value)
+                : Number.NaN;
+        if (!Number.isFinite(numericValue)) return 1;
+        return Math.min(Math.max(Math.floor(numericValue), 1), 4);
+    },
 }));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
