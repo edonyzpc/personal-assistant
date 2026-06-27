@@ -367,9 +367,9 @@ flowchart LR
 
 发现变化的来源：
 
-1. Vault events：`create` / `modify` 先走 observation gate；启动期旧 mtime replay 与 metadata 已匹配的事件保持 clean，metadata mismatch 只加入 verify queue，缺失 indexed record 才进入 confirmed dirty。`rename` 删除旧 path 并标记新 path，`delete` 直接删除 indexed row。
+1. Vault events：`create` / `modify` 先走 observation gate；启动期旧 mtime replay 仍会轻量观察，只有 metadata 已匹配的 replay 保持 clean，metadata mismatch 只加入 verify queue，缺失 indexed record 才进入 confirmed dirty。普通 `vault.modify` 即使 metadata 已匹配也会进入 verify queue，避免真实写入信号在 reload 前丢失。`rename` 删除旧 path 并标记新 path，`delete` 直接删除 indexed row。
 2. Reconcile scan：启动后 60s、prepare 后 5s、focus/visibility 恢复后 30s、每 60min 扫描一次 vault 当前文件和 indexed records；durable ready 下的 metadata mismatch 只加入 verify queue，不触发 Memory update。
-3. Verify queue：file-open、metadata mismatch 和 rolling candidate 会按预算读取文件计算 hash；hash 相同只同步 `vss_files` metadata，hash 变化才标 dirty。verify queue 是 VSS ready 之上的内存态 overlay，不是 `VectorIndexStatus`。
+3. Verify queue：vault modify、file-open、metadata mismatch 和 rolling candidate 会按预算读取文件计算 hash；hash 相同只同步 `vss_files` metadata，hash 变化才标 dirty。verify queue 是 VSS ready 之上的内存态 overlay，不是 `VectorIndexStatus`；vault-event verify 可以在默认确认策略下执行，因为它只做本地 hash/metadata 检查，不调用 embedding provider。
 4. Rolling hash verify：周期 reconcile 每小时最多把 50 个 metadata 未变化文件加入 verify queue，按游标轮转，用于发现跨设备同步中 mtime/size 未变化但内容变化的情况。
 
 预算控制：

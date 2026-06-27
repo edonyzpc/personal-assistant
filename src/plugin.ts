@@ -729,11 +729,10 @@ export class PluginManager extends Plugin {
     }
 
     private async handleMemoryVaultChange(file: TFile, reason: "vault-create" | "vault-modify"): Promise<void> {
-        if (this.isLikelyStartupReplayMemoryEvent(file)) {
-            return;
-        }
-
-        const observation = await this.vss?.observeChangedFile(file, reason);
+        const isStartupReplay = this.isLikelyStartupReplayMemoryEvent(file);
+        const observation = await this.vss?.observeChangedFile(file, reason, "metadata-drift", {
+            verifyMatchingMetadata: reason === "vault-modify" && !isStartupReplay,
+        });
         if (!observation) return;
         if (observation.kind === "confirmed-dirty") {
             this.memoryManager?.scheduleAutoFlush(reason);

@@ -421,6 +421,34 @@ describe('MemoryManager chat decisions', () => {
             jest.useRealTimers();
         }
     });
+
+    it('runs local verification under the default approval policy without auto flushing', async () => {
+        const plugin = createPlugin(createPlan());
+        plugin.vss.verifyPendingChanges.mockResolvedValue({
+            ...createOperationSummary({
+                dirtyConfirmed: 1,
+                verificationChecked: 1,
+            }),
+            markedDirty: 1,
+            hasMore: false,
+            bytesReadEstimate: 128,
+        });
+        plugin.vss.hasDirtyChanges.mockReturnValue(true);
+        const manager = createManager(plugin);
+        manager.startAutoMaintenance();
+        const flushSpy = jest.spyOn(manager, 'scheduleAutoFlush');
+
+        try {
+            await (manager as any).runBackgroundTask('verify', 'unit'); // eslint-disable-line @typescript-eslint/no-explicit-any
+
+            expect(plugin.vss.verifyPendingChanges).toHaveBeenCalledWith({ reason: 'unit' });
+            expect(plugin.notifyStatusChanged).toHaveBeenCalled();
+            expect(flushSpy).toHaveBeenCalledWith('verify', 0);
+            expect(plugin.vss.flush).not.toHaveBeenCalled();
+        } finally {
+            manager.stopAutoMaintenance();
+        }
+    });
 });
 
 describe('MemoryManager command decisions', () => {

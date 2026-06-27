@@ -346,7 +346,7 @@ const createPluginHarness = ({
 };
 
 describe('Memory vault event dispatch', () => {
-    it('ignores startup replay modify bursts with old mtimes before observing Memory changes', async () => {
+    it('observes startup replay modify bursts without scheduling metadata-match maintenance', async () => {
         const nowSpy = jest.spyOn(Date, 'now').mockReturnValue(1_010_000);
         try {
             const { plugin, vaultHandlers } = createVaultEventDispatchHarness();
@@ -359,7 +359,10 @@ describe('Memory vault event dispatch', () => {
             }
 
             expect(plugin.memoryExtractionScheduler.handleVaultEvent).toHaveBeenCalledTimes(1000);
-            expect(plugin.vss.observeChangedFile).not.toHaveBeenCalled();
+            expect(plugin.vss.observeChangedFile).toHaveBeenCalledTimes(1000);
+            expect(plugin.vss.observeChangedFile).toHaveBeenLastCalledWith(expect.any(TFile), 'vault-modify', 'metadata-drift', {
+                verifyMatchingMetadata: false,
+            });
             expect(plugin.memoryManager.scheduleAutoFlush).not.toHaveBeenCalled();
             expect(plugin.memoryManager.scheduleVerify).not.toHaveBeenCalled();
             expect(plugin.debouncedStatusBarUpdate).not.toHaveBeenCalled();
@@ -381,7 +384,9 @@ describe('Memory vault event dispatch', () => {
 
             await vaultHandlers.get('modify')?.(file);
 
-            expect(plugin.vss.observeChangedFile).toHaveBeenCalledWith(file, 'vault-modify');
+            expect(plugin.vss.observeChangedFile).toHaveBeenCalledWith(file, 'vault-modify', 'metadata-drift', {
+                verifyMatchingMetadata: true,
+            });
             expect(plugin.memoryManager.scheduleVerify).toHaveBeenCalledWith('vault-modify');
             expect(plugin.memoryManager.scheduleAutoFlush).not.toHaveBeenCalled();
         } finally {
@@ -402,7 +407,9 @@ describe('Memory vault event dispatch', () => {
 
             await vaultHandlers.get('create')?.(file);
 
-            expect(plugin.vss.observeChangedFile).toHaveBeenCalledWith(file, 'vault-create');
+            expect(plugin.vss.observeChangedFile).toHaveBeenCalledWith(file, 'vault-create', 'metadata-drift', {
+                verifyMatchingMetadata: false,
+            });
             expect(plugin.memoryManager.scheduleAutoFlush).toHaveBeenCalledWith('vault-create');
             expect(plugin.debouncedStatusBarUpdate).toHaveBeenCalled();
             expect(plugin.memoryManager.scheduleVerify).not.toHaveBeenCalled();

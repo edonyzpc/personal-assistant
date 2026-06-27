@@ -252,7 +252,7 @@ export class MemoryManager {
 
     scheduleVerify(reason: string, delayMs = this.getVerifyDelayMs()): void {
         if (!this.started) return;
-        if (!this.isAutoPolicyEnabled()) return;
+        if (!this.isMemoryEnabled()) return;
         if (this.verifyTimer) {
             clearPlatformTimeout(this.verifyTimer);
         }
@@ -498,7 +498,12 @@ export class MemoryManager {
         const lifecycleToken = this.lifecycleVersion;
         try {
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
-            if (!await this.canRunAutoMaintenance()) return;
+            if (kind === "verify") {
+                if (!this.isMemoryEnabled()) return;
+                if (!await this.canRunLocalMaintenance()) return;
+            } else if (!await this.canRunAutoMaintenance()) {
+                return;
+            }
             if (!this.isLifecycleCurrent(lifecycleToken)) return;
             if (kind === "flush") {
                 const summary = await this.vss.flush({
@@ -612,8 +617,12 @@ export class MemoryManager {
     }
 
     private isAutoPolicyEnabled(): boolean {
-        return this.host.settings.memoryEnabled
+        return this.isMemoryEnabled()
             && this.host.settings.memoryApprovalPolicy === AUTO_MEMORY_POLICY;
+    }
+
+    private isMemoryEnabled(): boolean {
+        return this.host.settings.memoryEnabled;
     }
 
     private isLifecycleCurrent(token: number): boolean {
