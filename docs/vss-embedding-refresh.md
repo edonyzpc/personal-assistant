@@ -9,7 +9,7 @@
 
 ## 当前关键机制
 
-- **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 与 metadata 已匹配的事件会被忽略，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
+- **事件改造**：`vault.create` / `vault.modify` 先观察本地索引 metadata：启动期旧 mtime replay 仍会经过轻量 observation，只有 metadata 已匹配的 replay 被忽略；普通 `vault.modify` 即使 metadata 匹配也会进入 verify queue，metadata drift 进入 verify queue，缺失 indexed record 才标记 dirty；`vault.rename` 删除旧 path 并标记新 path，`vault.delete` 删除本地索引记录；事件本身不直接计算 embedding。
 - **首次授权后的自动维护**：用户确认并成功 prepare/update Memory 后，`memoryApprovalPolicy` 升级为 `auto-refresh-after-prepare`；后续 changed notes 在 durable SQLite/WASM ready 时由后台 reconcile/verify/refresh 维护，Chat 不再等待 refresh。
 - **本地静默状态**：后台自动维护只写设备本地 SQLite/WASM OPFS Memory index，并把 marker 与 dirty journal 写入本地 IndexedDB state store；默认不在 vault 中创建 `vss-index-state/`、`manifest.json` 或 `vss-cache/dirty.json`。如果 IndexedDB 暂时打不开，VSS 先把 marker/dirty state 保留在进程内，后续 update/status 路径重试并落盘。
 - **静默窗口 + 最长延迟**：后台 refresh 保留 `quietWindow=30s` 和 `maxDelay=10min`，避免用户连续编辑时反复计算。
@@ -26,7 +26,7 @@
 
 ## Reconcile 与后台调度
 
-`MemoryManager.startAutoMaintenance()` 在插件加载后启动轻量调度器，并在 unload 时清理 timers 和 window/document listeners。自动任务只在 `memoryApprovalPolicy === "auto-refresh-after-prepare"` 且 VSS durable backend ready 时运行。
+`MemoryManager.startAutoMaintenance()` 在插件加载后启动轻量调度器，并在 unload 时清理 timers 和 window/document listeners。自动 reconcile/refresh 只在 `memoryApprovalPolicy === "auto-refresh-after-prepare"` 且 VSS durable backend ready 时运行；verify 是本地 hash/metadata 检查，可在默认确认策略下运行，确认 dirty 后仍走既有确认/自动刷新策略。
 
 `stopAutoMaintenance()` 会让 in-flight background task 和 prepare flow 进入 shutdown-aware 模式：已经返回的长任务不会再 schedule retry/reconcile、刷新 Memory status bar 或弹出成功/失败 Notice。这样插件升级或热重载时，不会由旧实例继续触发 UI 更新或新的 embedding 工作。
 
@@ -36,7 +36,7 @@
 - 首次成功 prepare/update 后 5 秒。
 - window focus 或 `visibilitychange` 恢复 visible 后 30 秒。
 - 每 60 分钟一次周期 reconcile。
-- Chat 遇到 `changed-notes` 且 auto policy 可用时立即排队 reconcile、verify 和 auto flush；如果只是 pending verification，聊天前最多做一个小预算 fast verify，移动端使用更小的 1-file 预算。
+- Chat 遇到 `changed-notes` 且 auto policy 可用时立即排队 reconcile、verify 和 auto flush；如果只是 pending verification，聊天前最多做一个小预算 fast verify，移动端使用更小的 1-file 预算。Vault-event verify 也可在后台做同类本地检查，以免进程内候选在 reload 前丢失。
 
 `reconcileLocalFiles()` 优先用 `VectorIndex.listFileRecords()` 批量读取 indexed metadata，减少逐文件 worker round-trip。单轮最多处理 2000 个 metadata 项，每批 250 个文件后 `sleep(0)` 让出主线程；未完成时通过 `hasMore` 继续排队。metadata mismatch 不在 reconcile 内读文件 hash，而是进入 verify queue，所以文件只是 mtime/size 漂移时不会把 Memory status 变成 changed-notes。周期 reconcile 还会按游标把最多 50 个 metadata 未变化文件加入 verify queue，用于发现跨设备同步中 mtime/size 未变化但内容变化的少数情况。
 
@@ -111,7 +111,7 @@ DOM 更新节流到约 350ms，`retrying` 和 `ready` 会立即显示。
 
 ## 触发流程
 
-1. **发现变化**：`create` / `modify` 先走 observation gate；启动期旧 mtime replay 与 metadata match 不进入 dirty，metadata mismatch 进入 verify queue，missing record 标 dirty；`rename` 删除旧 path 并标 dirty，新旧设备同步差异由 reconcile 扫描补齐。
+1. **发现变化**：`create` / `modify` 先走 observation gate；启动期旧 mtime replay 只在 metadata match 时忽略，metadata mismatch 进入 verify queue，missing record 标 dirty；普通 `vault.modify` 即使 metadata match 也进入 verify queue；`rename` 删除旧 path 并标 dirty，新旧设备同步差异由 reconcile 扫描补齐。
 2. **触发维护**：Chat auto policy、vault event quiet window、启动/prepare/resume/周期 reconcile，或手动 Update。
 3. **reconcile metadata**：批量读取 indexed records，与 vault 文件列表对比；missing indexed path 删除，新文件标 dirty，metadata mismatch / rolling candidate 进入 verify queue。
 4. **verify queue**：按桌面/移动端预算读取少量文件计算 hash；hash 相同只同步 `vss_files` metadata，hash 变化才标 dirty。

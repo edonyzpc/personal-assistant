@@ -1175,7 +1175,7 @@ describe('VSS SQLite/WASM lifecycle', () => {
         });
     });
 
-    it('ignores matching vault change observations and clears stale dirty journal entries', async () => {
+    it('ignores matching startup-replay observations and clears stale dirty journal entries', async () => {
         const now = Date.now();
         const file = createTFile('same.md', { size: 10, mtime: now, ctime: now }, 'md', 'same.md');
         const { plugin, vssStateStore } = createPlugin({
@@ -1196,10 +1196,43 @@ describe('VSS SQLite/WASM lifecycle', () => {
         dirtyMap.set('same.md', { first: now - 60_000, last: now - 60_000 });
         await vssStateStore.setDirtyJournal(new Map(dirtyMap));
 
-        const observation = await vss.observeChangedFile(file, 'vault-modify');
+        const observation = await vss.observeChangedFile(file, 'vault-modify', 'metadata-drift', {
+            verifyMatchingMetadata: false,
+        });
 
         expect(observation).toEqual({ kind: 'ignored', path: 'same.md', reason: 'metadata-match' });
         expect(dirtyMap.has('same.md')).toBe(false);
+        expect(await vssStateStore.getDirtyJournal()).toEqual(new Map());
+        expect(index.upsertFile).not.toHaveBeenCalled();
+    });
+
+    it('queues matching vault modify observations for verification without dirty journal persistence', async () => {
+        const now = Date.now();
+        const file = createTFile('same.md', { size: 10, mtime: now, ctime: now }, 'md', 'same.md');
+        const { plugin, vssStateStore } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        index.records.set('same.md', {
+            path: 'same.md',
+            contentHash: 'same-hash',
+            mtime: now,
+            size: 10,
+            status: 'ready',
+            updatedAt: now,
+        });
+
+        const observation = await vss.observeChangedFile(file, 'vault-modify', 'metadata-drift', {
+            verifyMatchingMetadata: true,
+        });
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const verifyQueue = (vss as any).verifyQueue as Map<string, unknown>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(observation).toEqual({ kind: 'verify-candidate', path: 'same.md', reason: 'vault-modify' });
+        expect(dirtyMap.has('same.md')).toBe(false);
+        expect(verifyQueue.has('same.md')).toBe(true);
         expect(await vssStateStore.getDirtyJournal()).toEqual(new Map());
         expect(index.upsertFile).not.toHaveBeenCalled();
     });
@@ -1305,7 +1338,9 @@ describe('VSS SQLite/WASM lifecycle', () => {
         const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
 
         for (const file of files) {
-            await vss.observeChangedFile(file, 'vault-modify');
+            await vss.observeChangedFile(file, 'vault-modify', 'metadata-drift', {
+                verifyMatchingMetadata: false,
+            });
         }
 
         const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any

@@ -103,6 +103,10 @@ export type VSSChangeObservation =
     | { kind: "verify-candidate"; path: string; reason: string }
     | { kind: "confirmed-dirty"; path: string; reason: string };
 
+interface VSSChangeObservationOptions {
+    verifyMatchingMetadata?: boolean;
+}
+
 export type {
     VSSFlushOptions,
     VSSOperationOptions,
@@ -443,6 +447,7 @@ export class VSS {
         file: TAbstractFile | null,
         reason = "vault-event",
         verifyReason: VerifyReason = "metadata-drift",
+        options: VSSChangeObservationOptions = {},
     ): Promise<VSSChangeObservation> {
         if (this.disposed) return { kind: "ignored", reason: "disposed" };
         if (!(file instanceof TFile)) return { kind: "ignored", reason: "not-file" };
@@ -453,6 +458,7 @@ export class VSS {
         }
 
         const record = await this.index.getFileRecord(file.path);
+        const verifyMatchingMetadata = options.verifyMatchingMetadata ?? reason === "vault-modify";
         if (!record) {
             const changed = this.markDirtyPath(file.path);
             if (changed) {
@@ -462,13 +468,17 @@ export class VSS {
         }
 
         if (record.mtime === file.stat.mtime && record.size === file.stat.size) {
-            this.verifyQueue.delete(file.path);
             if (this.clearStaleDirtyForSyncedRecord(file.path, record)) {
                 await this.persistDirtyJournal();
             }
             if (this.dirty.has(file.path)) {
                 return { kind: "confirmed-dirty", path: file.path, reason: "already-dirty" };
             }
+            if (verifyMatchingMetadata) {
+                this.enqueueVerifyPath(file, record, verifyReason);
+                return { kind: "verify-candidate", path: file.path, reason };
+            }
+            this.verifyQueue.delete(file.path);
             return { kind: "ignored", path: file.path, reason: "metadata-match" };
         }
 
