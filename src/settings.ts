@@ -305,6 +305,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
     merged.featuredImageModel = normalizeFeaturedImageModel(loadedObject.featuredImageModel);
+    merged.numFeaturedImages = normalizeFeaturedImageCount(loadedObject.numFeaturedImages);
     // Current builds use a mock paid entitlement so all paid-capability
     // architecture stays enabled until a real authorization source is wired in.
     // Do not trust persisted data.json for this field.

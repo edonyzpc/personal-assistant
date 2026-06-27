@@ -22,12 +22,18 @@ jest.mock('../src/settings', () => ({
     },
 }));
 
-const { requestUrl: rawRequestUrl } = require('obsidian') as { requestUrl: unknown };
+const { requestUrl: rawRequestUrl, Notice: MockNotice } = require('obsidian') as {
+    requestUrl: unknown;
+    Notice: { messages: Array<{ message?: unknown; timeout?: number }> };
+};
 const requestUrl = rawRequestUrl as jest.MockedFunction<(options: unknown) => Promise<unknown>>;
+const noticeMessages = MockNotice.messages;
 const { AIService, mergeFrontmatterTags, parseSummaryResponse } = require('../src/ai-services/service') as typeof import('../src/ai-services/service');
 
 beforeEach(() => {
+    jest.useRealTimers();
     requestUrl.mockReset();
+    noticeMessages.length = 0;
 });
 
 function createFeaturedImageService(settings: {
@@ -42,6 +48,12 @@ function createFeaturedImageService(settings: {
             featuredImageModel: settings.featuredImageModel ?? 'wan2.7-image',
             numFeaturedImages: settings.numFeaturedImages ?? 1,
         },
+        app: {
+            plugins: {
+                manifests: {},
+                enabledPlugins: new Set<string>(),
+            },
+        },
         getAPIToken: jest.fn(async () => 'test-token'),
         log: jest.fn(),
     };
@@ -49,6 +61,19 @@ function createFeaturedImageService(settings: {
         generateFeaturedImageUrls: (prompt: string) => Promise<Array<{ url: string }> | null>;
     };
     return { plugin, service };
+}
+
+function createMockNoticeElement(): {
+    querySelector: jest.MockedFunction<() => null>;
+    createDiv: jest.MockedFunction<() => { createSpan: jest.MockedFunction<() => void>; empty: jest.MockedFunction<() => void> }>;
+} {
+    return {
+        querySelector: jest.fn(() => null),
+        createDiv: jest.fn(() => ({
+            createSpan: jest.fn(),
+            empty: jest.fn(),
+        })),
+    };
 }
 
 describe('AI summary response parsing', () => {
@@ -275,6 +300,14 @@ describe('AI featured image generation', () => {
             message: '[provider message omitted]',
             model: 'wan2.7-image',
         }));
+        const serializedLogs = JSON.stringify(plugin.log.mock.calls);
+        const serializedNotices = JSON.stringify(noticeMessages);
+        expect(serializedLogs).not.toContain('provider detail that may include user prompt text');
+        expect(serializedLogs).not.toContain('private prompt');
+        expect(serializedLogs).not.toContain('test-token');
+        expect(serializedNotices).not.toContain('provider detail that may include user prompt text');
+        expect(serializedNotices).not.toContain('private prompt');
+        expect(serializedNotices).not.toContain('test-token');
     });
 
     it('rejects body-level errors and empty image responses', async () => {
@@ -295,10 +328,143 @@ describe('AI featured image generation', () => {
 
         requestUrl.mockResolvedValueOnce({
             status: 200,
-            json: { output: { choices: [{ message: { content: [] } }] } },
+            json: { output: { choices: [null, { message: { content: [] } }] } },
         });
         const empty = createFeaturedImageService();
         await expect(empty.service.generateFeaturedImageUrls('prompt')).resolves.toBeNull();
         expect(empty.plugin.log).toHaveBeenCalledWith('Image generation response did not include image URLs', expect.any(Object));
+    });
+
+    it('times out stalled image generation requests', async () => {
+        jest.useFakeTimers();
+        requestUrl.mockImplementationOnce(() => new Promise(() => { }));
+        const { plugin, service } = createFeaturedImageService();
+
+        const generation = service.generateFeaturedImageUrls('private prompt');
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(requestUrl).toHaveBeenCalledTimes(1);
+
+        jest.advanceTimersByTime(300000);
+
+        await expect(generation).resolves.toBeNull();
+        expect(plugin.log).toHaveBeenCalledWith('Image generation request timed out', expect.objectContaining({
+            errorName: 'FeaturedImageGenerationTimeoutError',
+            model: 'wan2.7-image',
+        }));
+        expect(noticeMessages.map(({ message }) => message)).toContain(
+            'AI featured image generation timed out. Try again with fewer images or the balanced model.',
+        );
+    });
+
+    it('does not duplicate failure notices when public featured image generation fails', async () => {
+        requestUrl.mockResolvedValueOnce({
+            status: 400,
+            json: {
+                request_id: 'req-fail',
+                code: 'InvalidParameter',
+                message: 'provider detail that may include private prompt and test-token',
+            },
+        });
+        const { plugin, service } = createFeaturedImageService();
+        const noticeElement = createMockNoticeElement();
+        (service as unknown as {
+            aiUtils: {
+                createAIFeaturedImageNotice: () => { notice: { messageEl: typeof noticeElement; hide: () => void } };
+                getDocumentContent: (markdown: string) => { content: string; frontmatterInfo: { exists: boolean; contentStart: number } };
+            };
+            callLLM: () => Promise<string>;
+        }).aiUtils = {
+            createAIFeaturedImageNotice: () => ({ notice: { messageEl: noticeElement, hide: jest.fn() } }),
+            getDocumentContent: (markdown: string) => ({
+                content: markdown,
+                frontmatterInfo: { exists: false, contentStart: 0 },
+            }),
+        };
+        (service as unknown as { callLLM: () => Promise<string> }).callLLM = jest.fn(async () => 'private prompt');
+
+        await (service as unknown as {
+            generateFeaturedImage: (editor: unknown, view: unknown) => Promise<void>;
+        }).generateFeaturedImage(
+            { getValue: () => 'note body' },
+            { editor: { cm: {} } },
+        );
+
+        expect(noticeMessages
+            .map(({ message }) => message)
+            .filter((message) => message === 'AI featured image generation failed.')).toHaveLength(1);
+        const serializedLogs = JSON.stringify(plugin.log.mock.calls);
+        const serializedNotices = JSON.stringify(noticeMessages);
+        expect(serializedLogs).not.toContain('provider detail that may include private prompt and test-token');
+        expect(serializedNotices).not.toContain('private prompt');
+        expect(serializedNotices).not.toContain('test-token');
+    });
+
+    it('inserts successfully downloaded featured images when one download fails', async () => {
+        const { plugin, service } = createFeaturedImageService();
+        const noticeElement = createMockNoticeElement();
+        const dispatch = jest.fn();
+        const lineAt = jest.fn(() => ({ from: 0, to: 0 }));
+
+        (service as unknown as {
+            aiUtils: {
+                createAIFeaturedImageNotice: () => { notice: { messageEl: typeof noticeElement; hide: () => void } };
+                getDocumentContent: (markdown: string) => { content: string; frontmatterInfo: { exists: boolean; contentStart: number } };
+            };
+            callLLM: () => Promise<string>;
+            generateFeaturedImageUrls: () => Promise<Array<{ url: string }>>;
+            downloadImageToVault: (_app: unknown, url: string) => Promise<string>;
+        }).aiUtils = {
+            createAIFeaturedImageNotice: () => ({ notice: { messageEl: noticeElement, hide: jest.fn() } }),
+            getDocumentContent: (markdown: string) => ({
+                content: markdown,
+                frontmatterInfo: { exists: false, contentStart: 0 },
+            }),
+        };
+        Object.assign(service as object, {
+            callLLM: jest.fn(async () => 'generated prompt'),
+            generateFeaturedImageUrls: jest.fn(async () => [
+                { url: 'https://example.com/ok-1.png' },
+                { url: 'https://example.com/fail.png' },
+                { url: 'https://example.com/ok-2.png' },
+            ]),
+            downloadImageToVault: jest.fn(async (_app: unknown, url: string) => {
+                if (url.includes('fail')) throw new Error('download failed');
+                return url.includes('ok-1') ? '9.src/ok-1.png' : '9.src/ok-2.png';
+            }),
+        });
+
+        await (service as unknown as {
+            generateFeaturedImage: (editor: unknown, view: unknown) => Promise<void>;
+        }).generateFeaturedImage(
+            { getValue: () => 'note body' },
+            {
+                editor: {
+                    cm: {
+                        state: {
+                            doc: {
+                                length: 9,
+                                lineAt,
+                            },
+                        },
+                        dispatch,
+                    },
+                },
+            },
+        );
+
+        expect(dispatch).toHaveBeenCalledTimes(1);
+        const dispatchArg = dispatch.mock.calls[0][0] as { changes: Array<{ insert: string }> };
+        expect(dispatchArg.changes[0].insert).toContain('![[9.src/ok-1.png]]');
+        expect(dispatchArg.changes[0].insert).toContain('![[9.src/ok-2.png]]');
+        expect(dispatchArg.changes[0].insert).not.toContain('fail.png');
+        expect(plugin.log).toHaveBeenCalledWith('Failed to download featured image', expect.objectContaining({
+            imageIndex: 1,
+            errorName: 'Error',
+        }));
+        expect(plugin.log).toHaveBeenCalledWith('Featured image generation completed with download failures', {
+            downloadedImageCount: 2,
+            failedDownloadCount: 1,
+        });
     });
 });
