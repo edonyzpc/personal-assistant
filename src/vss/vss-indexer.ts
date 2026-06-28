@@ -21,11 +21,17 @@ export interface EmbeddingBatchPolicy {
 
 export interface RebuildFileState {
     file: TFile;
+    path: string;
+    capturedAt: number;
     contentHash: string;
+    ctime: number;
+    mtime: number;
+    size: number;
     chunks: VSSChunk[];
     embeddings: number[][];
     remaining: number;
     failed: boolean;
+    skipped?: boolean;
 }
 
 export interface RebuildChunkWorkItem {

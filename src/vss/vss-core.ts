@@ -107,6 +107,21 @@ interface VSSChangeObservationOptions {
     verifyMatchingMetadata?: boolean;
 }
 
+interface VSSFileMetadataSnapshot {
+    path: string;
+    capturedAt: number;
+    ctime: number;
+    mtime: number;
+    size: number;
+}
+
+interface VSSFileContentSnapshot extends VSSFileMetadataSnapshot {
+    cleanedContent: string;
+    contentHash: string | null;
+    tooLarge: boolean;
+    changedDuringCapture: boolean;
+}
+
 export type {
     VSSFlushOptions,
     VSSOperationOptions,
@@ -743,10 +758,10 @@ export class VSS {
 
         const finalizeReadyFiles = async (states: Iterable<RebuildFileState>) => {
             const readyStates = Array.from(new Set(states))
-                .filter(state => state.remaining === 0 && pendingFiles.has(state.file.path));
+                .filter(state => state.remaining === 0 && pendingFiles.has(state.path));
 
             for (const state of readyStates) {
-                pendingFiles.delete(state.file.path);
+                pendingFiles.delete(state.path);
                 emitProgress("writing", { currentFile: getProgressFileName(state.file) });
                 if (state.failed) {
                     summary.failed++;
@@ -755,14 +770,34 @@ export class VSS {
                     emitProgress("writing", { currentFile: getProgressFileName(state.file) });
                     continue;
                 }
+                if (state.skipped) {
+                    summary.skipped++;
+                    filesFinalized++;
+                    this.host.log("Skipped rebuilding Memory file because it changed before embedding", { path: state.file.path });
+                    emitProgress("writing", { currentFile: getProgressFileName(state.file) });
+                    continue;
+                }
 
                 try {
+                    if (!this.isFileSnapshotCurrent(state.file, state)) {
+                        if (this.markDirtyPath(state.file.path)) {
+                            this.host.log("Skipped rebuilding Memory file because it changed before index write", { path: state.path, currentPath: state.file.path });
+                        }
+                        summary.skipped++;
+                        filesFinalized++;
+                        emitProgress("writing", { currentFile: getProgressFileName(state.file) });
+                        continue;
+                    }
+
                     await index.upsertFile({
-                        path: state.file.path,
+                        path: state.path,
                         contentHash: state.contentHash,
-                        mtime: state.file.stat.mtime,
-                        size: state.file.stat.size,
+                        mtime: state.mtime,
+                        size: state.size,
                     }, state.chunks, state.embeddings);
+                    if (this.markDirtyIfSnapshotChanged(state.file, state)) {
+                        this.host.log("Marked Memory file dirty after rebuild because it changed during index write", { path: state.path, currentPath: state.file.path });
+                    }
                     summary.updated++;
                     filesUpdated++;
                 } catch (error) {
@@ -781,24 +816,43 @@ export class VSS {
             currentBatch = [];
             const currentFile = getProgressFileName(batch[0].state.file);
             emitProgress("embedding", { currentFile });
+            const skippedStates = new Set<RebuildFileState>();
+            const activeBatch = batch.filter((item) => {
+                if (this.isFileSnapshotCurrent(item.state.file, item.state)) return true;
+                skippedStates.add(item.state);
+                return false;
+            });
+            for (const state of skippedStates) {
+                if (!pendingFiles.has(state.path)) continue;
+                if (this.markDirtyPath(state.file.path)) {
+                    this.host.log("Skipped rebuilding Memory file because it changed before embedding", { path: state.path, currentPath: state.file.path });
+                }
+                state.skipped = true;
+                state.remaining = 0;
+            }
+            if (activeBatch.length === 0) {
+                await finalizeReadyFiles(skippedStates);
+                emitProgress("embedding", { currentFile });
+                return;
+            }
             try {
                 const embeddings = await this.embedDocumentsWithRetry(
-                    batch.map(item => item.text),
+                    activeBatch.map(item => item.text),
                     getEmbeddingsModel,
                     embeddingPolicy,
                     (retryDelayMs) => emitProgress("retrying", { currentFile, retryDelayMs }),
                 );
-                if (embeddings.length !== batch.length) {
-                    throw new Error(`Embedding count ${embeddings.length} does not match batch size ${batch.length}.`);
+                if (embeddings.length !== activeBatch.length) {
+                    throw new Error(`Embedding count ${embeddings.length} does not match batch size ${activeBatch.length}.`);
                 }
-                for (let index = 0; index < batch.length; index++) {
-                    const item = batch[index];
+                for (let index = 0; index < activeBatch.length; index++) {
+                    const item = activeBatch[index];
                     item.state.embeddings[item.chunkIndex] = embeddings[index];
                     item.state.remaining--;
                 }
                 chunksEmbedded += embeddings.length;
             } catch (error) {
-                const affectedStates = Array.from(new Set(batch.map(item => item.state)));
+                const affectedStates = Array.from(new Set(activeBatch.map(item => item.state)));
                 const affectedFiles = affectedStates.map(state => state.file.path);
                 this.host.log("Failed to embed rebuilt VSS batch", { paths: affectedFiles, error });
                 for (const state of affectedStates) {
@@ -806,7 +860,10 @@ export class VSS {
                     state.remaining = 0;
                 }
             }
-            await finalizeReadyFiles(batch.map(item => item.state));
+            await finalizeReadyFiles([
+                ...activeBatch.map(item => item.state),
+                ...skippedStates,
+            ]);
             emitProgress("embedding", { currentFile });
         };
 
@@ -816,10 +873,25 @@ export class VSS {
             filesScanned++;
             emitProgress("scanning", { currentFile: getProgressFileName(file) });
             try {
-                const fileState = await this.computeFileHash(file);
+                const snapshot = await this.readFileContentSnapshot(file);
 
-                if (fileState.tooLarge) {
-                    await index.deleteFile(file.path);
+                if (snapshot.changedDuringCapture) {
+                    if (this.markDirtyPath(file.path)) {
+                        this.host.log("Skipped rebuilding Memory file because it changed while being read", { path: file.path });
+                    }
+                    summary.skipped++;
+                    filesFinalized++;
+                    emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                    continue;
+                }
+
+                if (snapshot.tooLarge) {
+                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-large-file")) {
+                        summary.skipped++;
+                        filesFinalized++;
+                        emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                        continue;
+                    }
                     summary.skipped++;
                     filesFinalized++;
                     this.host.log(`Skipped VSS index for large file ${file.path}`);
@@ -827,17 +899,27 @@ export class VSS {
                     continue;
                 }
 
-                if (!fileState.hash) {
-                    await index.deleteFile(file.path);
+                if (!snapshot.contentHash) {
+                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-empty-file")) {
+                        summary.skipped++;
+                        filesFinalized++;
+                        emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                        continue;
+                    }
                     summary.removed++;
                     filesFinalized++;
                     emitProgress("scanning", { currentFile: getProgressFileName(file) });
                     continue;
                 }
 
-                const chunks = await this.prepareFileChunks(file, fileState.hash);
+                const chunks = await this.prepareFileChunks(file, snapshot.contentHash, snapshot.cleanedContent, snapshot);
                 if (chunks.length === 0) {
-                    await index.deleteFile(file.path);
+                    if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "rebuild-empty-chunks")) {
+                        summary.skipped++;
+                        filesFinalized++;
+                        emitProgress("scanning", { currentFile: getProgressFileName(file) });
+                        continue;
+                    }
                     summary.removed++;
                     filesFinalized++;
                     emitProgress("scanning", { currentFile: getProgressFileName(file) });
@@ -846,20 +928,25 @@ export class VSS {
 
                 const state: RebuildFileState = {
                     file,
-                    contentHash: fileState.hash,
+                    path: snapshot.path,
+                    capturedAt: snapshot.capturedAt,
+                    contentHash: snapshot.contentHash,
+                    ctime: snapshot.ctime,
+                    mtime: snapshot.mtime,
+                    size: snapshot.size,
                     chunks,
                     embeddings: new Array(chunks.length) as number[][],
                     remaining: chunks.length,
                     failed: false,
                 };
-                pendingFiles.set(file.path, state);
+                pendingFiles.set(snapshot.path, state);
                 chunksTotal += chunks.length;
                 for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
-                    if (state.failed || !pendingFiles.has(file.path)) break;
+                    if (state.failed || state.skipped || !pendingFiles.has(state.path)) break;
                     currentBatch.push({ state, chunkIndex, text: chunks[chunkIndex].content });
                     if (currentBatch.length >= embeddingPolicy.maxBatchItems) {
                         await processBatch();
-                        if (state.failed || !pendingFiles.has(file.path)) break;
+                        if (state.failed || state.skipped || !pendingFiles.has(state.path)) break;
                     }
                 }
             } catch (error) {
@@ -1017,13 +1104,18 @@ export class VSS {
                 const record = recordByPath.get(file.path);
                 if (!record) {
                     try {
-                        const fileState = await this.computeFileHash(file);
-                        if (fileState.tooLarge || !fileState.hash) {
-                            this.verifyQueue.delete(file.path);
+                        const snapshot = await this.readFileContentSnapshot(file);
+                        if (snapshot.changedDuringCapture || !this.isFileSnapshotCurrent(file, snapshot)) {
+                            if (this.markDirtyPath(file.path)) {
+                                dirtyChanged = true;
+                                summary.markedDirty++;
+                            }
+                        } else if (snapshot.tooLarge || !snapshot.contentHash) {
+                            this.clearVerifyRecordIfNotNewerThanSnapshot(file.path, snapshot);
                             if (this.dirty.delete(file.path)) {
                                 dirtyChanged = true;
                             }
-                            if (fileState.tooLarge) {
+                            if (snapshot.tooLarge) {
                                 summary.skipped++;
                             } else {
                                 summary.removed++;
@@ -1172,37 +1264,17 @@ export class VSS {
             summary.bytesReadEstimate += estimatedBytes;
 
             const dirtyStamp = this.getDirtyStamp(candidate.path);
-            let fileState: { hash: string | null; tooLarge: boolean };
+            let snapshot: VSSFileContentSnapshot;
             summary.verificationChecked++;
             try {
-                fileState = await this.computeFileHash(file);
+                snapshot = await this.readFileContentSnapshot(file);
             } catch (error) {
                 summary.failed++;
                 this.host.log("Could not verify Memory file hash", { path: candidate.path, error });
                 continue;
             }
 
-            if (fileState.tooLarge || !fileState.hash) {
-                await this.runExclusive(async () => {
-                    if (!this.isCurrentVerifyRecord(candidate)) return;
-                    this.verifyQueue.delete(candidate.path);
-                    if (this.index) {
-                        await this.index.deleteFile(candidate.path);
-                        await this.writeLocalIndexState();
-                    }
-                    if (this.clearDirtyIfStampMatches(candidate.path, dirtyStamp)) {
-                        await this.persistDirtyJournal();
-                    }
-                });
-                if (fileState.tooLarge) {
-                    summary.skipped++;
-                } else {
-                    summary.removed++;
-                }
-                continue;
-            }
-
-            if (fileState.hash !== candidate.contentHash) {
+            if (snapshot.changedDuringCapture) {
                 await this.runExclusive(async () => {
                     if (!this.isCurrentVerifyRecord(candidate)) return;
                     if (this.markDirtyPath(candidate.path)) {
@@ -1214,16 +1286,69 @@ export class VSS {
                 continue;
             }
 
-            const verifiedHash = fileState.hash;
+            if (snapshot.tooLarge || !snapshot.contentHash) {
+                let deleted = false;
+                await this.runExclusive(async () => {
+                    if (!this.isCurrentVerifyRecord(candidate)) return;
+                    if (!this.isFileSnapshotCurrent(file, snapshot)) {
+                        if (this.markDirtyPath(candidate.path)) {
+                            summary.dirtyConfirmed++;
+                            summary.markedDirty++;
+                            await this.persistDirtyJournal();
+                        }
+                        return;
+                    }
+                    this.verifyQueue.delete(candidate.path);
+                    if (this.index) {
+                        await this.index.deleteFile(candidate.path);
+                        await this.writeLocalIndexState();
+                        deleted = true;
+                    }
+                    if (this.clearDirtyIfStampMatches(candidate.path, dirtyStamp)) {
+                        await this.persistDirtyJournal();
+                    }
+                });
+                if (deleted) {
+                    if (snapshot.tooLarge) {
+                        summary.skipped++;
+                    } else {
+                        summary.removed++;
+                    }
+                }
+                continue;
+            }
+
+            if (snapshot.contentHash !== candidate.contentHash) {
+                await this.runExclusive(async () => {
+                    if (!this.isCurrentVerifyRecord(candidate)) return;
+                    if (this.markDirtyPath(candidate.path)) {
+                        summary.dirtyConfirmed++;
+                        summary.markedDirty++;
+                        await this.persistDirtyJournal();
+                    }
+                });
+                continue;
+            }
+
+            const verifiedHash = snapshot.contentHash;
             await this.runExclusive(async () => {
                 if (!this.isCurrentVerifyRecord(candidate)) return;
                 if (!this.index) return;
+                if (!this.isVerifyCandidateMetadataCurrent(file, candidate)) {
+                    if (this.markDirtyPath(candidate.path)) {
+                        summary.dirtyConfirmed++;
+                        summary.markedDirty++;
+                        await this.persistDirtyJournal();
+                    }
+                    return;
+                }
                 await this.index.updateFileMetadata({
                     path: file.path,
                     contentHash: verifiedHash,
-                    mtime: file.stat.mtime,
-                    size: file.stat.size,
+                    mtime: candidate.observedMtime,
+                    size: candidate.observedSize,
                 });
+                if (!this.isCurrentVerifyRecord(candidate)) return;
                 this.verifyQueue.delete(candidate.path);
                 if (this.clearDirtyIfStampMatches(candidate.path, dirtyStamp)) {
                     await this.persistDirtyJournal();
@@ -1347,51 +1472,76 @@ export class VSS {
             throw new Error("VSS index is unavailable.");
         }
 
-        const fileState = await this.computeFileHash(file);
+        const snapshot = await this.readFileContentSnapshot(file);
 
-        if (fileState.tooLarge) {
-            await this.index.deleteFile(file.path);
-            this.verifyQueue.delete(file.path);
+        if (snapshot.changedDuringCapture) {
+            await this.deferSnapshotRefresh(file, snapshot, "read");
+            return 'skipped';
+        }
+
+        if (snapshot.tooLarge) {
+            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "large-file")) {
+                return 'skipped';
+            }
             this.host.log(`Skipped VSS index for large file ${file.path}`);
             return 'skipped';
         }
 
-        if (!fileState.hash) {
-            await this.index.deleteFile(file.path);
-            this.verifyQueue.delete(file.path);
+        if (!snapshot.contentHash) {
+            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "empty-file")) {
+                return 'skipped';
+            }
             return 'removed';
         }
 
         const cached = await this.index.getFileRecord(file.path);
-        if (cached && cached.contentHash === fileState.hash) {
-            if (cached.mtime !== file.stat.mtime || cached.size !== file.stat.size) {
+        if (cached && cached.contentHash === snapshot.contentHash) {
+            if (cached.mtime !== snapshot.mtime || cached.size !== snapshot.size) {
+                if (await this.deferSnapshotRefresh(file, snapshot, "metadata-sync")) {
+                    return 'skipped';
+                }
                 await this.index.updateFileMetadata({
                     path: file.path,
-                    contentHash: fileState.hash,
-                    mtime: file.stat.mtime,
-                    size: file.stat.size,
+                    contentHash: snapshot.contentHash,
+                    mtime: snapshot.mtime,
+                    size: snapshot.size,
                 });
-                this.verifyQueue.delete(file.path);
+                await this.markDirtyIfSnapshotChangedAndPersist(file, snapshot, "metadata-sync");
+                this.clearVerifyRecordIfNotNewerThanSnapshot(file.path, snapshot);
                 return 'metadata-synced';
             }
-            this.verifyQueue.delete(file.path);
+            if (await this.deferSnapshotRefresh(file, snapshot, "unchanged")) {
+                return 'skipped';
+            }
+            this.clearVerifyRecordIfNotNewerThanSnapshot(file.path, snapshot);
             return 'unchanged';
         }
 
-        const prepared = await this.prepareFileVectors(file, fileState.hash, getEmbeddingsModel);
+        if (await this.deferSnapshotRefresh(file, snapshot, "pre-embeddings")) {
+            return 'skipped';
+        }
+        const prepared = await this.prepareFileVectors(file, snapshot, getEmbeddingsModel);
+        if (prepared.deferred) {
+            return 'skipped';
+        }
         if (prepared.chunks.length === 0) {
-            await this.index.deleteFile(file.path);
-            this.verifyQueue.delete(file.path);
+            if (!await this.deleteSnapshotFileFromIndex(file, snapshot, "empty-chunks")) {
+                return 'skipped';
+            }
             return 'removed';
         }
 
+        if (await this.deferSnapshotRefresh(file, snapshot, "vector-upsert")) {
+            return 'skipped';
+        }
         await this.index.upsertFile({
             path: file.path,
-            contentHash: fileState.hash,
-            mtime: file.stat.mtime,
-            size: file.stat.size,
+            contentHash: snapshot.contentHash,
+            mtime: snapshot.mtime,
+            size: snapshot.size,
         }, prepared.chunks, prepared.embeddings);
-        this.verifyQueue.delete(file.path);
+        await this.markDirtyIfSnapshotChangedAndPersist(file, snapshot, "vector-upsert");
+        this.clearVerifyRecordIfNotNewerThanSnapshot(file.path, snapshot);
         return 'updated';
     }
 
@@ -2090,33 +2240,43 @@ export class VSS {
 
     private async prepareFileVectors(
         file: TFile,
-        contentHash: string,
+        snapshot: VSSFileContentSnapshot,
         getEmbeddingsModel?: EmbeddingsModelProvider,
-    ): Promise<{ chunks: VSSChunk[]; embeddings: number[][] }> {
+    ): Promise<{ chunks: VSSChunk[]; embeddings: number[][]; deferred: boolean }> {
         this.assertActive();
-        const chunks = await this.prepareFileChunks(file, contentHash);
+        const chunks = await this.prepareFileChunks(file, snapshot.contentHash ?? "", snapshot.cleanedContent, snapshot);
+        if (chunks.length === 0) {
+            return { chunks, embeddings: [], deferred: false };
+        }
+        if (await this.deferSnapshotRefresh(file, snapshot, "pre-embedding-request")) {
+            return { chunks, embeddings: [], deferred: true };
+        }
         const embeddings = await this.embedTexts(
             chunks.map(chunk => chunk.content),
             getEmbeddingsModel,
         );
-        return { chunks, embeddings };
+        return { chunks, embeddings, deferred: false };
     }
 
-    private async prepareFileChunks(file: TFile, contentHash: string): Promise<VSSChunk[]> {
+    private async prepareFileChunks(
+        file: TFile,
+        contentHash: string,
+        cleanedContent?: string,
+        metadata?: VSSFileMetadataSnapshot,
+    ): Promise<VSSChunk[]> {
         this.assertActive();
-        const markdown = await this.host.app.vault.adapter.read(file.path);
-        const cleanedContent = this.aiUtils.cleanMarkdownContent(markdown);
+        const content = cleanedContent ?? this.aiUtils.cleanMarkdownContent(await this.readVaultFile(file));
 
-        if (cleanedContent.trim().length === 0) {
+        if (content.trim().length === 0) {
             return [];
         }
 
         return createHeadingAwareMarkdownChunks({
             path: file.path,
-            markdown: cleanedContent,
+            markdown: content,
             contentHash,
-            created: file.stat.ctime,
-            lastModified: file.stat.mtime,
+            created: metadata?.ctime ?? file.stat.ctime,
+            lastModified: metadata?.mtime ?? file.stat.mtime,
         });
     }
 
@@ -2228,14 +2388,109 @@ export class VSS {
     }
 
     private async computeFileHash(file: TFile): Promise<{ hash: string | null; tooLarge: boolean }> {
+        const snapshot = await this.readFileContentSnapshot(file);
+        return { hash: snapshot.contentHash, tooLarge: snapshot.tooLarge };
+    }
+
+    private async readFileContentSnapshot(file: TFile): Promise<VSSFileContentSnapshot> {
         this.assertActive();
-        if (file.stat.size > VSS_PARAMS.largeFileThreshold) {
-            return { hash: null, tooLarge: true };
+        const metadata = this.captureFileMetadata(file);
+        if (metadata.size > VSS_PARAMS.largeFileThreshold) {
+            return {
+                ...metadata,
+                cleanedContent: "",
+                contentHash: null,
+                tooLarge: true,
+                changedDuringCapture: !this.isFileSnapshotCurrent(file, metadata),
+            };
         }
-        const markdown = await this.host.app.vault.adapter.read(file.path);
+        const markdown = await this.readVaultFile(file);
         const cleanedContent = this.aiUtils.cleanMarkdownContent(markdown);
-        if (!cleanedContent.trim()) return { hash: null, tooLarge: false };
-        return { hash: await computeContentHash(cleanedContent), tooLarge: false };
+        const contentHash = cleanedContent.trim()
+            ? await computeContentHash(cleanedContent)
+            : null;
+        return {
+            ...metadata,
+            cleanedContent,
+            contentHash,
+            tooLarge: false,
+            changedDuringCapture: !this.isFileSnapshotCurrent(file, metadata),
+        };
+    }
+
+    private captureFileMetadata(file: TFile): VSSFileMetadataSnapshot {
+        return {
+            path: file.path,
+            capturedAt: Date.now(),
+            ctime: file.stat.ctime,
+            mtime: file.stat.mtime,
+            size: file.stat.size,
+        };
+    }
+
+    private isFileSnapshotCurrent(file: TFile, snapshot: VSSFileMetadataSnapshot): boolean {
+        return file.path === snapshot.path
+            && file.stat.mtime === snapshot.mtime
+            && file.stat.size === snapshot.size;
+    }
+
+    private isVerifyCandidateMetadataCurrent(file: TFile, candidate: VerifyRecord): boolean {
+        return file.path === candidate.path
+            && file.stat.mtime === candidate.observedMtime
+            && file.stat.size === candidate.observedSize;
+    }
+
+    private isVerifyRecordNewerThanSnapshot(record: VerifyRecord, snapshot: VSSFileMetadataSnapshot): boolean {
+        return record.last > snapshot.capturedAt
+            || record.observedMtime > snapshot.mtime;
+    }
+
+    private clearVerifyRecordIfNotNewerThanSnapshot(path: string, snapshot: VSSFileMetadataSnapshot): boolean {
+        const current = this.verifyQueue.get(path);
+        if (!current || this.isVerifyRecordNewerThanSnapshot(current, snapshot)) return false;
+        return this.verifyQueue.delete(path);
+    }
+
+    private async deferSnapshotRefresh(file: TFile, snapshot: VSSFileMetadataSnapshot, phase: string): Promise<boolean> {
+        if (this.isFileSnapshotCurrent(file, snapshot)) return false;
+        if (this.markDirtyPath(snapshot.path)) {
+            await this.persistDirtyJournal();
+        }
+        this.host.log("Deferred Memory index write because the note changed during refresh", {
+            path: snapshot.path,
+            phase,
+        });
+        return true;
+    }
+
+    private async deleteSnapshotFileFromIndex(file: TFile, snapshot: VSSFileMetadataSnapshot, phase: string): Promise<boolean> {
+        if (!this.index) return false;
+        if (await this.deferSnapshotRefresh(file, snapshot, `${phase}-delete`)) return false;
+        await this.index.deleteFile(snapshot.path);
+        if (this.isFileSnapshotCurrent(file, snapshot)) {
+            this.clearVerifyRecordIfNotNewerThanSnapshot(snapshot.path, snapshot);
+            return true;
+        }
+        await this.markDirtyIfSnapshotChangedAndPersist(file, snapshot, `${phase}-deleted`);
+        return true;
+    }
+
+    private async readVaultFile(file: TFile): Promise<string> {
+        return this.host.app.vault.read(file);
+    }
+
+    private markDirtyIfSnapshotChanged(file: TFile, snapshot: VSSFileMetadataSnapshot): boolean {
+        if (this.isFileSnapshotCurrent(file, snapshot)) return false;
+        return this.markDirtyPath(snapshot.path);
+    }
+
+    private async markDirtyIfSnapshotChangedAndPersist(file: TFile, snapshot: VSSFileMetadataSnapshot, phase: string): Promise<void> {
+        if (!this.markDirtyIfSnapshotChanged(file, snapshot)) return;
+        await this.persistDirtyJournal();
+        this.host.log("Marked Memory file dirty because the note changed during index write", {
+            path: snapshot.path,
+            phase,
+        });
     }
 
     private async loadDirtyJournal() {
