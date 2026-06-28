@@ -2,6 +2,23 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.8.3](https://github.com/edonyzpc/personal-assistant/compare/2.8.2...2.8.3) (2026-06-28)
+
+### Features
+- featured-image: upgrade generation to Wan 2.7
+- vss: add startup event replay gate and observation-based dirty tracking
+
+### Fix
+- featured-image: harden Wan 2.7 generation flow
+- vss: preserve vault event verification
+
+### Docs
+- featured-image: add Wan 2.7 upgrade spec
+- vss: update architecture docs for observation-based dirty tracking
+
+### Tests
+- vss: add coverage for startup replay gate and observation logic
+
 ## [2.8.2](https://github.com/edonyzpc/personal-assistant/compare/2.8.1...2.8.2) (2026-06-23)
 
 ### Features
