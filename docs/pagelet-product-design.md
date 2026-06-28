@@ -757,13 +757,24 @@ Pagelet persists the same data as historical design, plus background preparation
 
 Persist locally per vault:
 
-- Pending review result. **[PRESERVED]**
-- Selected draft blocks (for Panel interactions that use draft). **[PRESERVED]**
-- User edits to pending draft. **[PRESERVED]**
+- Pending review result metadata and source identity. **[CHANGED]**
+- Selected draft blocks that the user explicitly keeps in the Panel. **[CHANGED]**
+- User edits to a visible pending draft. **[PRESERVED]**
 - Basic state needed to restore the Panel. **[PRESERVED]**
 - Pet corner position preference. **[NEW]**
 - 主动提示 (proactive hints) on/off preference. **[NEW]**
 - Background preparation cache (in-memory only, not persisted to disk). **[NEW]**
+
+Persistence boundary:
+
+- Full provider output is session-only unless the user saves it as a visible
+  Markdown artifact.
+- Hidden persistence of full review/summary output is not allowed.
+- A pending draft may persist only when it is visible as a user-editable draft,
+  source-labeled, discardable, and scoped to the same vault/source identity.
+- Restored draft views must show their source and provide discard/regenerate
+  controls.
+- Dismiss/delete of a pending draft clears its local draft payload and metadata.
 
 Clear:
 
@@ -1184,6 +1195,8 @@ These proposed decisions should be carried forward from `docs/archive/review-ass
 - Multi-vault awareness.
 
 These are not Pagelet behaviors. Do NOT promote any future write or automation behavior into Pagelet without a separate product definition, updated Write Action Framework boundary (D025, D030), and an explicit decision record.
+
+Future product definition: [Pagelet Maintenance Review Product Spec](./pagelet-maintenance-review-product-spec.md) defines the proposed Pagelet-owned maintenance review surface. It does not change current shipped behavior until the write boundary and implementation SDD are explicitly updated.
 
 ---
 

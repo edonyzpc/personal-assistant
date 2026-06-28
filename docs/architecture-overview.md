@@ -1,6 +1,6 @@
 # Personal Assistant — 项目架构全景
 
-> **版本**: v2.8.0 current-doc refresh · **日期**: 2026-06-21 · **作者**: edony
+> **版本**: v2.8.4 current-doc refresh · **日期**: 2026-06-28 · **作者**: edony
 >
 > 本文档面向项目负责人，提供**技术状态**与**产品定义**的全局视图，辅助下一步规划决策。
 
@@ -912,8 +912,8 @@ graph TB
 ```
 
 **双通道发布**:
-- `manifest.json` → 稳定版 (当前 v2.8.0)，Obsidian 社区插件市场
-- `manifest-beta.json` → 测试版通道 (当前 v2.8.0)，BRAT 插件分发
+- `manifest.json` → 稳定版 (当前 v2.8.4)，Obsidian 社区插件市场
+- `manifest-beta.json` → 测试版通道 (当前 v2.8.4)，BRAT 插件分发
 
 ### 8.3 部署快捷方式
 
@@ -967,8 +967,8 @@ summary.
 
 | Field | Value |
 |------|------|
-| Current version | `2.8.0` |
-| Current release theme | License and compliance migration |
+| Current version | `2.8.4` |
+| Current release theme | Post-2.8 license/compliance patch line; PA Agent/Pagelet product specs are future implementation input |
 | Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools |
 | Hidden / disabled major runtime | Operations Agent append mode remains disabled by `OPERATIONS_AGENT_RUNTIME_ENABLED=false` |
 
@@ -979,6 +979,7 @@ summary.
 | v2.0-v2.1 | PA Agent and stability foundation | Release history and archived reviews |
 | v2.2-v2.7 | Pagelet, Memory/VSS, AI Insight, context, and write-action infrastructure train | [`archive/v2-post-release-spec-driven-development.md`](./archive/v2-post-release-spec-driven-development.md) |
 | v2.8.0 | License and compliance migration | [`license-migration-2.8.0.md`](./license-migration-2.8.0.md) |
+| v2.8.1-v2.8.4 | Current post-migration patch line | [`CHANGELOG.md`](../CHANGELOG.md) and release metadata |
 
 ### 10.3 后续候选主题
 

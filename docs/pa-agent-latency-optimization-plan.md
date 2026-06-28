@@ -535,6 +535,12 @@ For `看一下杭州今天的天气`, this would remove the first 5-second model
 
 Recommendation: do not implement direct-route first. Use Phase 0-3 to measure whether tool exposure, answer-ready guidance, and guardrails are enough.
 
+Blocking prerequisite:
+
+> Direct-route cannot be implemented as a runtime shortcut until the PA Agent
+> lifecycle/event ownership docs are updated to define synthetic tool calls,
+> status events, cancellation, source records, telemetry, and turn accounting.
+
 If direct-route is later implemented, it must preserve PA Agent runtime contracts instead of becoming a side channel:
 
 - create a synthetic tool-call/tool-result transcript entry that can be rendered through the normal `tool_observations` path;

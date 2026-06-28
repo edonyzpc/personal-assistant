@@ -1,15 +1,15 @@
 # Development Roadmap
 
-> Last updated: 2026-06-21. The previous v2.7 release-prep roadmap is archived
+> Last updated: 2026-06-28. The previous v2.7 release-prep roadmap is archived
 > at [development-roadmap-v2.7.md](./archive/development-roadmap-v2.7.md).
 
 ## Current Baseline
 
 | Field | Value |
 | --- | --- |
-| Current version in this worktree | `2.8.0` |
-| Release tag | `2.8.0` |
-| Current release theme | License and compliance migration |
+| Current version in this worktree | `2.8.4` |
+| Release tag | `2.8.4` |
+| Current release theme | Post-2.8 license/compliance patch line; PA Agent/Pagelet product specs are future implementation input |
 | Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools |
 | Hidden / disabled major runtime | Operations Agent append mode remains disabled by `OPERATIONS_AGENT_RUNTIME_ENABLED=false` |
 
@@ -19,7 +19,8 @@
 | --- | --- | --- |
 | v2.2-v2.7 implementation train | Complete, historical | [v2 post-release tracker](./archive/v2-post-release-spec-driven-development.md) |
 | v2.7 consolidated feature release | Complete, historical | [archived roadmap](./archive/development-roadmap-v2.7.md) and release tags |
-| v2.8.0 license migration | Complete in current tree | [license migration sign-off](./license-migration-2.8.0.md) |
+| v2.8.0 license migration | Complete, historical one-time migration | [license migration sign-off](./license-migration-2.8.0.md) |
+| v2.8.1-v2.8.4 patch line | Current shipped baseline | [changelog](../CHANGELOG.md) and release metadata |
 
 ## Next Candidate Themes
 

@@ -1,11 +1,25 @@
-# 2.8.0 License Migration Sign-Off
+# 2.8.0 License Migration Sign-Off (Historical)
 
-This document records the release-blocking checks for the Personal Assistant
-2.8.0 migration to AGPL-3.0-only.
+This document records the one-time release-blocking checks for the Personal
+Assistant 2.8.0 migration to AGPL-3.0-only.
+
+## Current Status
+
+| Field | Value |
+| --- | --- |
+| Status | Historical one-time migration record |
+| Migration release | `2.8.0`, published 2026-06-21 |
+| Current repo baseline at last doc refresh | `2.8.4` |
+| Current release gate | [Release process](./release-process.md) |
+| Future commercial gate | Separate Terms, privacy, billing, entitlement, hosted-service security, and counsel review before any paid hosted service or commercial relicensing |
+
+This file is not the current release checklist. Use the release process for
+normal releases. Use this document only for evidence and boundary decisions from
+the 2.8.0 license migration.
 
 ## Scope
 
-- 2.8.0 is a prospective license migration for the client source.
+- 2.8.0 was the prospective license migration for the client source.
 - Historical releases, tags, and distributed artifacts are not relicensed
   retroactively.
 - Public docs must say "starting with version 2.8.0" and must not make global
@@ -14,32 +28,33 @@ This document records the release-blocking checks for the Personal Assistant
 - 2.8.0 does not introduce an account system, license key, checkout flow,
   feature lock, hosted commercial service, or paid entitlement check.
 
-## Maintainer Sign-Off Checklist
+## Historical Maintainer Sign-Off Outcome
 
-Before publishing 2.8.0, the maintainer must confirm the one-time migration
-items below. These are not intended to become a heavy gate for every future
-open-source client release.
+The items below were one-time migration gates for publishing 2.8.0. Because
+2.8.0 and later patch releases have shipped, `[x]` here means the gate was
+accepted for the historical migration or explicitly carried into the future
+commercial-service gate. This 2026-06-28 doc refresh did not re-run legal review
+or regenerate release artifacts.
 
-- [ ] Root `LICENSE`, `package.json`, `package-lock.json`, README files,
+- [x] Root `LICENSE`, `package.json`, `package-lock.json`, README files,
       release docs, NOTICE, Settings links, and release notes consistently say
       AGPL-3.0-only starting with version 2.8.0.
-- [ ] `NOTICE`, `TRADEMARKS.md`, `THIRD_PARTY_NOTICES.md`, `CONTRIBUTING.md`,
+- [x] `NOTICE`, `TRADEMARKS.md`, `THIRD_PARTY_NOTICES.md`, `CONTRIBUTING.md`,
       and `CLA.md` have been reviewed.
-- [ ] Contributor provenance, CLA terms, trademark language, and future
+- [x] Contributor provenance, CLA terms, trademark language, and future
       commercial Terms assumptions have maintainer sign-off. Formal counsel
-      review is recommended for 2.8.0 and should be treated as required before
-      launching paid hosted services, commercial support, or commercial
-      relicensing.
-- [ ] Third-party runtime dependency notices have been regenerated with
+      review remains required before launching paid hosted services,
+      commercial support, or commercial relicensing.
+- [x] Third-party runtime dependency notices have been regenerated with
       `npm run generate:third-party-notices` and pass
       `npm run check:third-party-notices`.
-- [ ] Bundled `skills/**` Markdown resources have provenance rows in
+- [x] Bundled `skills/**` Markdown resources have provenance rows in
       `THIRD_PARTY_NOTICES.md`, including the reference note for skill
       resources whose topic areas were informed by `kepano/obsidian-skills`.
-- [ ] GitHub Release assets and attestations include `main.js`,
+- [x] GitHub Release assets and attestations include `main.js`,
       `manifest.json`, `styles.css`, `LICENSE`, `NOTICE`, and
       `THIRD_PARTY_NOTICES.md`.
-- [ ] Release notes state that Obsidian installs only `main.js`,
+- [x] Release notes state that Obsidian installs only `main.js`,
       `manifest.json`, and `styles.css`; legal docs are available through the
       exact release tag and release assets.
 

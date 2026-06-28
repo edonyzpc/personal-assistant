@@ -51,7 +51,11 @@ flowchart TD
 - `vault.create` and `vault.modify` call `VSS.observeChangedFile()` instead of marking dirty directly.
 - During the first 90 seconds after plugin load, `create`/`modify` events whose file `mtime` is more than 5 seconds older than plugin load are treated as startup replay, but they still pass through lightweight observation so missing indexed records and metadata drift are not lost. Metadata-matching startup replay events are ignored for Memory maintenance.
 - Startup replay filtering does not apply to `rename` or `delete`.
-- Memory extraction still receives vault events unless the existing Pagelet self-write guard returns early.
+- Memory extraction receives only events that pass the extraction event gate.
+  The gate runs before candidate creation or provider-backed refresh and drops:
+  excluded folders/tags, generated-note paths excluded by policy, Pagelet/PA
+  self-writes, startup replay metadata matches, and any path blocked by the
+  shared Data Boundary.
 - `verifyQueue` remains process-local and is reconstructed by startup/resume/periodic reconcile. Vault-event verification may run under the default approval policy because it only performs local hash/metadata checks; provider-backed refresh still requires confirmed dirty state and the existing approval/auto-refresh policy.
 - The dirty journal persists only confirmed dirty paths.
 - Reconcile clears stale dirty entries when indexed metadata already matches the current vault file.
@@ -68,6 +72,14 @@ flowchart TD
 - Startup replay bursts with old mtimes call VSS change observation but do not schedule maintenance for metadata matches or auto flush until a missing record or real content drift is confirmed.
 - Fresh edits inside the startup window still enter the normal observation path.
 - Rename/delete continue to use the existing maintenance paths.
+- Excluded folder/tag events do not create Memory Candidates and do not call
+  provider-backed extraction.
+- Generated-note events excluded by policy do not create Memory Candidates and
+  do not call provider-backed extraction.
+- Pagelet/PA self-write events do not create Memory Candidates and do not call
+  provider-backed extraction.
+- A path allowed for local hash verification is not automatically allowed for
+  provider-backed extraction.
 
 ## Validation
 
