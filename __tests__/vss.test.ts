@@ -297,6 +297,7 @@ const createPlugin = (overrides: Record<string, unknown> = {}) => {
         getName: jest.fn(() => 'Test Vault'),
         getAbstractFileByPath: jest.fn<(path: string) => TFile | null>(),
         getMarkdownFiles: jest.fn(() => []),
+        read: jest.fn<(file: TFile) => Promise<string>>(async (file) => mockAdapter.read(file.path)),
     };
 
     const plugin: any = { // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -830,6 +831,80 @@ describe('VSS SQLite/WASM lifecycle', () => {
         vss.dispose();
     });
 
+    it('skips stale rebuild batch items before requesting embeddings', async () => {
+        const now = Date.now();
+        const staleFile = createTFile('stale-rebuild.md', { size: 19, mtime: now, ctime: now }, 'md', 'stale-rebuild.md');
+        const freshFile = createTFile('fresh-rebuild.md', { size: 19, mtime: now, ctime: now }, 'md', 'fresh-rebuild.md');
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        plugin.getVSSFiles.mockReturnValue([staleFile, freshFile]);
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'stale-rebuild.md') return 'stale memory note';
+            if (path === 'fresh-rebuild.md') {
+                staleFile.stat.mtime = now + 1_000;
+                staleFile.stat.size = 30;
+                return 'fresh memory note';
+            }
+            throw createMissingFileError();
+        });
+        const embedDocuments = jest.fn(async (texts: string[]) => texts.map((_, index) => [index, 1]));
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        const summary = await vss.rebuildLocalIndex({ silent: true });
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(summary.updated).toBe(1);
+        expect(summary.skipped).toBe(1);
+        expect(dirtyMap.has('stale-rebuild.md')).toBe(true);
+        expect(embedDocuments).toHaveBeenCalledTimes(1);
+        expect(embedDocuments).toHaveBeenCalledWith(['fresh memory note']);
+        expect(index.upsertFile).toHaveBeenCalledTimes(1);
+        expect(index.upsertFile.mock.calls[0][0].path).toBe('fresh-rebuild.md');
+        vss.dispose();
+    });
+
+    it('finalizes renamed rebuild items by snapshot path', async () => {
+        const now = Date.now();
+        const renamedFile = createTFile('rename-source.md', { size: 19, mtime: now, ctime: now }, 'md', 'rename-source.md');
+        const freshFile = createTFile('fresh-after-rename.md', { size: 24, mtime: now, ctime: now }, 'md', 'fresh-after-rename.md');
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        plugin.getVSSFiles.mockReturnValue([renamedFile, freshFile]);
+        (vss as any).waitForEmbeddingThrottle = jest.fn(async () => undefined); // eslint-disable-line @typescript-eslint/no-explicit-any
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'rename-source.md') return 'rename source memory';
+            if (path === 'fresh-after-rename.md') {
+                renamedFile.path = 'renamed-target.md';
+                renamedFile.name = 'renamed-target.md';
+                renamedFile.stat.mtime = now + 1_000;
+                renamedFile.stat.size = 30;
+                return 'fresh memory note';
+            }
+            throw createMissingFileError();
+        });
+        const embedDocuments = jest.fn(async (texts: string[]) => texts.map((_, index) => [index, 1]));
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        const summary = await vss.rebuildLocalIndex({ silent: true });
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(summary.updated).toBe(1);
+        expect(summary.skipped).toBe(1);
+        expect(dirtyMap.has('renamed-target.md')).toBe(true);
+        expect(embedDocuments).toHaveBeenCalledTimes(1);
+        expect(embedDocuments).toHaveBeenCalledWith(['fresh memory note']);
+        expect(index.upsertFile).toHaveBeenCalledTimes(1);
+        expect(index.upsertFile.mock.calls[0][0].path).toBe('fresh-after-rename.md');
+        vss.dispose();
+    });
+
     it('does not report ready memory while a rebuild is still writing the local index', async () => {
         const file = createTFile('note.md', { size: 18, mtime: 1, ctime: 1 }, 'md', 'note.md');
         const { plugin, mockAdapter } = createPlugin({
@@ -1108,6 +1183,136 @@ describe('VSS SQLite/WASM lifecycle', () => {
 
         expect(status).toBe('removed');
         expect(index.deleteFile).toHaveBeenCalledWith('empty.md');
+    });
+
+    it('keeps a note dirty when a removal write races with newer content', async () => {
+        const now = Date.now();
+        const file = createTFile('empty-race.md', { size: 2, mtime: now, ctime: now }, 'md', 'empty-race.md');
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        index.records.set('empty-race.md', {
+            path: 'empty-race.md',
+            contentHash: 'old-hash',
+            mtime: now - 1_000,
+            size: 10,
+            status: 'ready',
+            updatedAt: now - 1_000,
+        });
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'empty-race.md') return '\n\n';
+            throw createMissingFileError();
+        });
+        index.deleteFile.mockImplementationOnce(async (path) => {
+            index.records.delete(path);
+            file.stat.mtime = now + 1_000;
+            file.stat.size = 24;
+        });
+
+        const status = await vss.refreshFileCache(file);
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(status).toBe('removed');
+        expect(dirtyMap.has('empty-race.md')).toBe(true);
+        expect(index.deleteFile).toHaveBeenCalledWith('empty-race.md');
+    });
+
+    it('defers refresh writes when a note changes while its content snapshot is being read', async () => {
+        const now = Date.now();
+        const file = createTFile('race-refresh.md', { size: 12, mtime: now, ctime: now }, 'md', 'race-refresh.md');
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path !== 'race-refresh.md') throw createMissingFileError();
+            file.stat.mtime = now + 1_000;
+            file.stat.size = 24;
+            return 'old memory';
+        });
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const status = await vss.refreshFileCache(file);
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(status).toBe('skipped');
+        expect(dirtyMap.has('race-refresh.md')).toBe(true);
+        expect(index.upsertFile).not.toHaveBeenCalled();
+        expect(index.updateFileMetadata).not.toHaveBeenCalled();
+        expect(createEmbeddings).not.toHaveBeenCalled();
+    });
+
+    it('skips embeddings when a note changes before vectors are prepared', async () => {
+        const now = Date.now();
+        const content = 'stable memory content';
+        const file = createTFile('pre-embed-race.md', { size: content.length, mtime: now, ctime: now }, 'md', 'pre-embed-race.md');
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'pre-embed-race.md') return content;
+            throw createMissingFileError();
+        });
+        (vss as any).prepareFileChunks = jest.fn(async (): Promise<VSSChunk[]> => { // eslint-disable-line @typescript-eslint/no-explicit-any
+            file.stat.mtime = now + 1_000;
+            file.stat.size = content.length + 5;
+            return [{
+                path: file.path,
+                chunkIndex: 0,
+                content,
+                contentHash: await computeContentHash(content),
+                created: file.stat.ctime,
+                lastModified: now,
+                metadata: {
+                    path: file.path,
+                    created: file.stat.ctime,
+                    lastModified: now,
+                    contentHash: await computeContentHash(content),
+                    chunkIndex: 0,
+                },
+            }];
+        });
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const status = await vss.refreshFileCache(file);
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(status).toBe('skipped');
+        expect(dirtyMap.has('pre-embed-race.md')).toBe(true);
+        expect(createEmbeddings).not.toHaveBeenCalled();
+        expect(index.upsertFile).not.toHaveBeenCalled();
+    });
+
+    it('defers vector upsert when a note changes after embeddings are prepared', async () => {
+        const now = Date.now();
+        const content = 'stable memory content';
+        const file = createTFile('race-upsert.md', { size: content.length, mtime: now, ctime: now }, 'md', 'race-upsert.md');
+        const { plugin, mockAdapter } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path === 'race-upsert.md') return content;
+            throw createMissingFileError();
+        });
+        const embedDocuments = jest.fn(async (texts: string[]) => {
+            file.stat.mtime = now + 1_000;
+            file.stat.size = content.length + 5;
+            return texts.map((_, index) => [index, 1]);
+        });
+        const createEmbeddings = (vss as any).aiUtils.createEmbeddings as jest.MockedFunction<(...args: unknown[]) => Promise<unknown>>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        createEmbeddings.mockResolvedValue({ embedDocuments, embedQuery: jest.fn() });
+
+        const status = await vss.refreshFileCache(file);
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(status).toBe('skipped');
+        expect(embedDocuments).toHaveBeenCalled();
+        expect(dirtyMap.has('race-upsert.md')).toBe(true);
+        expect(index.upsertFile).not.toHaveBeenCalled();
+        expect(index.updateFileMetadata).not.toHaveBeenCalled();
     });
 
     it('does not treat blank exclude paths as matching every file', async () => {
@@ -1448,6 +1653,33 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(persistedDirty.has('empty.md')).toBe(false);
     });
 
+    it('keeps a missing record dirty when blank reconcile reads race with newer content', async () => {
+        const now = Date.now();
+        const file = createTFile('empty-reconcile-race.md', { size: 2, mtime: now, ctime: now }, 'md', 'empty-reconcile-race.md');
+        const { plugin, mockAdapter, vssStateStore } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path !== 'empty-reconcile-race.md') throw createMissingFileError();
+            file.stat.mtime = now + 1_000;
+            file.stat.size = 26;
+            return '\n\n';
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+
+        const summary = await vss.reconcileLocalFiles({ verifyHashLimit: 0 });
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        const persistedDirty = await vssStateStore.getDirtyJournal();
+        expect(summary.markedDirty).toBe(1);
+        expect(summary.removed).toBe(0);
+        expect(dirtyMap.has('empty-reconcile-race.md')).toBe(true);
+        expect(persistedDirty.has('empty-reconcile-race.md')).toBe(true);
+        expect(index.deleteFile).not.toHaveBeenCalled();
+    });
+
     it('does not mark metadata-only reconcile drift dirty when content is unchanged', async () => {
         jest.useRealTimers();
         const now = Date.now();
@@ -1736,8 +1968,9 @@ describe('VSS SQLite/WASM lifecycle', () => {
         jest.useRealTimers();
         const now = Date.now();
         const file = createTFile('race.md', { size: 88, mtime: now + 5, ctime: now }, 'md', 'race.md');
-        const contentHash = await computeContentHash('same content');
-        const { plugin, mockVault } = createPlugin({
+        const content = 'same content';
+        const contentHash = await computeContentHash(content);
+        const { plugin, mockAdapter, mockVault } = createPlugin({
             getVSSFiles: jest.fn(() => [file]),
         });
         mockVault.getAbstractFileByPath.mockReturnValue(file);
@@ -1753,9 +1986,10 @@ describe('VSS SQLite/WASM lifecycle', () => {
             updatedAt: now,
         });
         await vss.handleFileOpen(file);
-        (vss as any).computeFileHash = jest.fn(async () => { // eslint-disable-line @typescript-eslint/no-explicit-any
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path !== 'race.md') throw createMissingFileError();
             (vss as any).markDirtyPath('race.md', now + 100); // eslint-disable-line @typescript-eslint/no-explicit-any
-            return { hash: contentHash, tooLarge: false };
+            return content;
         });
 
         const summary = await vss.verifyPendingChanges();
@@ -1764,6 +1998,137 @@ describe('VSS SQLite/WASM lifecycle', () => {
         expect(summary.metadataSynced).toBe(0);
         expect(dirtyMap.has('race.md')).toBe(true);
         expect(index.updateFileMetadata).not.toHaveBeenCalled();
+    });
+
+    it('does not bind an old verified hash to newer file metadata', async () => {
+        jest.useRealTimers();
+        const now = Date.now();
+        const content = 'same content';
+        const contentHash = await computeContentHash(content);
+        const file = createTFile('metadata-race.md', { size: 88, mtime: now + 5, ctime: now }, 'md', 'metadata-race.md');
+        const { plugin, mockAdapter, mockVault } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        mockVault.getAbstractFileByPath.mockReturnValue(file);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path !== 'metadata-race.md') throw createMissingFileError();
+            file.stat.mtime = now + 10_000;
+            file.stat.size = 120;
+            return content;
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        index.records.set('metadata-race.md', {
+            path: 'metadata-race.md',
+            contentHash,
+            mtime: now,
+            size: 10,
+            status: 'ready',
+            updatedAt: now,
+        });
+        await vss.handleFileOpen(file);
+
+        const summary = await vss.verifyPendingChanges();
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(summary.metadataSynced).toBe(0);
+        expect(summary.dirtyConfirmed).toBe(1);
+        expect(dirtyMap.has('metadata-race.md')).toBe(true);
+        expect(index.updateFileMetadata).not.toHaveBeenCalled();
+        expect(index.records.get('metadata-race.md')).toMatchObject({
+            contentHash,
+            mtime: now,
+            size: 10,
+        });
+    });
+
+    it('keeps a verify candidate dirty when blank verification reads race with newer content', async () => {
+        jest.useRealTimers();
+        const now = Date.now();
+        const file = createTFile('verify-empty-race.md', { size: 2, mtime: now + 5, ctime: now }, 'md', 'verify-empty-race.md');
+        const { plugin, mockAdapter, mockVault } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        mockVault.getAbstractFileByPath.mockReturnValue(file);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path !== 'verify-empty-race.md') throw createMissingFileError();
+            file.stat.mtime = now + 10_000;
+            file.stat.size = 30;
+            return '\n\n';
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        index.records.set('verify-empty-race.md', {
+            path: 'verify-empty-race.md',
+            contentHash: 'old-hash',
+            mtime: now,
+            size: 10,
+            status: 'ready',
+            updatedAt: now,
+        });
+        await vss.handleFileOpen(file);
+
+        const summary = await vss.verifyPendingChanges();
+
+        const dirtyMap = (vss as any).dirty as Map<string, DirtyTimestamps>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(summary.removed).toBe(0);
+        expect(summary.dirtyConfirmed).toBe(1);
+        expect(dirtyMap.has('verify-empty-race.md')).toBe(true);
+        expect(index.deleteFile).not.toHaveBeenCalled();
+    });
+
+    it('preserves a newer verify record created during metadata sync writes', async () => {
+        jest.useRealTimers();
+        const now = Date.now();
+        const content = 'same content';
+        const contentHash = await computeContentHash(content);
+        const file = createTFile('verify-write-race.md', { size: content.length, mtime: now + 5, ctime: now }, 'md', 'verify-write-race.md');
+        const { plugin, mockAdapter, mockVault } = createPlugin({
+            getVSSFiles: jest.fn(() => [file]),
+        });
+        mockVault.getAbstractFileByPath.mockReturnValue(file);
+        mockAdapter.read.mockImplementation(async (path) => {
+            if (path !== 'verify-write-race.md') throw createMissingFileError();
+            return content;
+        });
+        const vss = new VSS(plugin, 'cache');
+        const index = new FakeVectorIndex();
+        attachReadyIndex(vss, index);
+        index.records.set('verify-write-race.md', {
+            path: 'verify-write-race.md',
+            contentHash,
+            mtime: now,
+            size: 1,
+            status: 'ready',
+            updatedAt: now,
+        });
+        await vss.handleFileOpen(file);
+        index.updateFileMetadata.mockImplementationOnce(async (fileState) => {
+            index.records.set(fileState.path, {
+                path: fileState.path,
+                contentHash: fileState.contentHash,
+                mtime: fileState.mtime,
+                size: fileState.size,
+                status: 'ready',
+                updatedAt: now,
+            });
+            file.stat.mtime = now + 10_000;
+            file.stat.size = content.length + 5;
+            await vss.observeChangedFile(file, 'vault-modify', 'metadata-drift');
+        });
+
+        const summary = await vss.verifyPendingChanges();
+
+        const verifyQueue = (vss as any).verifyQueue as Map<string, { observedMtime: number; observedSize: number }>; // eslint-disable-line @typescript-eslint/no-explicit-any
+        expect(summary.metadataSynced).toBe(0);
+        expect(summary.hasMore).toBe(true);
+        expect(verifyQueue.get('verify-write-race.md')).toMatchObject({
+            observedMtime: now + 10_000,
+            observedSize: content.length + 5,
+        });
+        expect(index.updateFileMetadata).toHaveBeenCalledTimes(1);
     });
 
     it('uses rolling hash verification to catch synced content changes without metadata changes', async () => {
