@@ -688,6 +688,9 @@ describe('MemoryManager command decisions', () => {
             await preparing;
 
             expect(manager.getActivePreparationStatus()).toBeNull();
+
+            onProgress?.({ phase: 'writing', filesDone: 26, filesTotal: 1846, failed: 0 });
+            expect(manager.getActivePreparationStatus()).toBeNull();
         } finally {
             if (originalDocument) {
                 Object.defineProperty(globalThis, 'document', originalDocument);
@@ -763,6 +766,122 @@ describe('MemoryManager command decisions', () => {
         }
     });
 
+    it('does not reuse an active refresh run for a rebuild request', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'changed-notes',
+            action: 'refresh',
+            requiresApproval: true,
+        }));
+        let resolveRefresh: (summary: Awaited<ReturnType<typeof plugin.vss.refreshLocalIndex>>) => void = () => undefined;
+        const refreshSummary = createOperationSummary({ updated: 1 });
+        plugin.vss.refreshLocalIndex.mockImplementation(async () => new Promise((resolve) => {
+            resolveRefresh = resolve;
+        }));
+        const manager = createManager(plugin);
+
+        try {
+            const refresh = manager.prepareMemory(createPlan({ reason: 'changed-notes', action: 'refresh' }));
+            await Promise.resolve();
+
+            const rebuild = manager.prepareMemory(createPlan({ reason: 'settings-changed', action: 'rebuild' }));
+
+            await expect(rebuild).resolves.toMatchObject({
+                ok: false,
+                partial: false,
+                message: 'A Memory action is already running.',
+            });
+            expect(plugin.vss.refreshLocalIndex).toHaveBeenCalledTimes(1);
+            expect(plugin.vss.rebuildLocalIndex).not.toHaveBeenCalled();
+
+            resolveRefresh(refreshSummary);
+            await expect(refresh).resolves.toMatchObject({ ok: true, partial: false, summary: refreshSummary });
+            expect(manager.getActivePreparationStatus()).toBeNull();
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
+    it('does not reuse a stopped lifecycle preparation after auto maintenance restarts', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+                addEventListener: jest.fn(),
+                removeEventListener: jest.fn(),
+            },
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'changed-notes',
+            action: 'refresh',
+            requiresApproval: true,
+        }));
+        let resolveFirstRefresh: (summary: Awaited<ReturnType<typeof plugin.vss.refreshLocalIndex>>) => void = () => undefined;
+        let resolveSecondRefresh: (summary: Awaited<ReturnType<typeof plugin.vss.refreshLocalIndex>>) => void = () => undefined;
+        const secondSummary = createOperationSummary({ updated: 2 });
+        plugin.vss.refreshLocalIndex
+            .mockImplementationOnce(async () => new Promise((resolve) => {
+                resolveFirstRefresh = resolve;
+            }))
+            .mockImplementationOnce(async () => new Promise((resolve) => {
+                resolveSecondRefresh = resolve;
+            }));
+        const manager = createManager(plugin);
+
+        try {
+            manager.startAutoMaintenance();
+            const first = manager.prepareMemory(createPlan({ reason: 'changed-notes', action: 'refresh' }));
+            await Promise.resolve();
+
+            expect(manager.getActivePreparationStatus()).toMatchObject({
+                action: 'refresh',
+                message: 'Checking notes',
+            });
+
+            manager.stopAutoMaintenance();
+            expect(manager.getActivePreparationStatus()).toBeNull();
+
+            manager.startAutoMaintenance();
+            const second = manager.prepareMemory(createPlan({ reason: 'changed-notes', action: 'refresh' }));
+            await Promise.resolve();
+
+            expect(plugin.vss.refreshLocalIndex).toHaveBeenCalledTimes(2);
+            expect(manager.getActivePreparationStatus()).toMatchObject({
+                action: 'refresh',
+                message: 'Checking notes',
+            });
+
+            resolveFirstRefresh(createOperationSummary({ updated: 1 }));
+            await expect(first).resolves.toMatchObject({ ok: false, partial: false });
+            expect(manager.getActivePreparationStatus()).toMatchObject({
+                action: 'refresh',
+                message: 'Checking notes',
+            });
+
+            resolveSecondRefresh(secondSummary);
+            await expect(second).resolves.toMatchObject({ ok: true, partial: false, summary: secondSummary });
+            expect(manager.getActivePreparationStatus()).toBeNull();
+        } finally {
+            manager.stopAutoMaintenance();
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
     it('does not show completion UI or schedule follow-up work after stop during prepare', async () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
@@ -786,6 +905,7 @@ describe('MemoryManager command decisions', () => {
             const preparing = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
             await Promise.resolve();
             manager.stopAutoMaintenance();
+            expect(manager.getActivePreparationStatus()).toBeNull();
             resolveRebuild(createOperationSummary({
                 updated: 1,
             }));
