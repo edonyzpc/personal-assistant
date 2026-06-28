@@ -1,0 +1,4 @@
+interface:
+  display_name: "PA Review Follow-up"
+  short_description: "Triage, fix, and validate PA review findings."
+  default_prompt: "Use $personal-assistant-review-followup to triage review findings, decide what must be fixed, and implement validated fixes only when requested."
