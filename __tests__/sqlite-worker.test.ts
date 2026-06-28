@@ -170,6 +170,94 @@ describe('sqlite worker OPFS lifecycle', () => {
         expect(pauseVfs).toHaveBeenCalledTimes(1);
         expect(close.mock.invocationCallOrder[0]).toBeLessThan(pauseVfs.mock.invocationCallOrder[0]);
     });
+
+    it('disables unused async OPFS VFSes without disabling the SAH pool', async () => {
+        const warnSpy = jest.spyOn(console, 'warn').mockImplementation(() => undefined);
+        try {
+            const db = {
+                close: jest.fn(),
+                exec: jest.fn((request: unknown) => {
+                    if (isExecRowsRequest(request) && request.rowMode === 'array') {
+                        request.resultRows.push([isPragmaTableInfoQuery(request) ? 1 : 0]);
+                    }
+                }),
+            };
+            class MockDb {
+                constructor() {
+                    return db;
+                }
+            }
+            const installOpfsSAHPoolVfs = jest.fn(async (_options: Record<string, unknown>) => ({
+                OpfsSAHPoolDb: MockDb,
+                pauseVfs: jest.fn(),
+                isPaused: jest.fn(() => false),
+            }));
+            let capturedConfig: {
+                warn?: (...args: unknown[]) => void;
+                disable?: { vfs?: Record<string, boolean> };
+            } | undefined;
+            const sqlite3InitModule = jest.fn(async () => {
+                capturedConfig = (globalThis.self as {
+                    sqlite3ApiConfig?: typeof capturedConfig;
+                }).sqlite3ApiConfig;
+                capturedConfig?.warn?.(
+                    "Ignoring inability to install 'opfs' sqlite3_vfs:",
+                    new TypeError("Failed to construct 'URL': Invalid URL"),
+                );
+                capturedConfig?.warn?.(
+                    "Ignoring inability to install the opfs-wl sqlite3_vfs:",
+                    new TypeError("Failed to construct 'URL': Invalid URL"),
+                );
+                return {
+                    installOpfsSAHPoolVfs,
+                };
+            });
+            const workerScope: MockWorkerScope = {
+                postMessage: jest.fn(),
+            };
+            Object.defineProperty(globalThis, 'self', {
+                configurable: true,
+                value: workerScope,
+            });
+            jest.doMock('@sqlite.org/sqlite-wasm', () => ({
+                __esModule: true,
+                default: sqlite3InitModule,
+            }));
+            await import('../src/vss/sqlite-worker');
+
+            const response = await send(workerScope, {
+                id: 1,
+                type: 'initialize',
+                payload: {
+                    profile: {
+                        provider: 'openai',
+                        baseURL: '',
+                        model: 'model',
+                        dimensions: 1024,
+                        distanceMetric: 'COSINE',
+                    },
+                    databaseName: 'personal-assistant-vss-test.sqlite3',
+                    opfsDirectory: '/personal-assistant-vss-v2/test',
+                    legacyOpfsDirectory: '/personal-assistant-vss',
+                    opfsVfsName: 'opfs-sahpool-test',
+                    wasmUrl: 'blob:sqlite-wasm',
+                },
+            });
+
+            expect(response.ok).toBe(true);
+            expect(capturedConfig?.disable?.vfs).toEqual(expect.objectContaining({
+                opfs: true,
+                'opfs-wl': true,
+            }));
+            expect(capturedConfig?.disable?.vfs?.['opfs-sahpool']).not.toBe(true);
+            expect(installOpfsSAHPoolVfs).toHaveBeenCalledWith(expect.objectContaining({
+                name: 'opfs-sahpool-test',
+            }));
+            expect(warnSpy).not.toHaveBeenCalled();
+        } finally {
+            warnSpy.mockRestore();
+        }
+    });
 });
 
 async function send(scope: MockWorkerScope, request: SqliteWorkerRequest): Promise<SqliteWorkerResponse> {

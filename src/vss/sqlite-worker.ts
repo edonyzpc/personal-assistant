@@ -47,6 +47,10 @@ type SqliteApiConfig = {
     error?: (...args: unknown[]) => void;
     log?: (...args: unknown[]) => void;
     debug?: (...args: unknown[]) => void;
+    disable?: {
+        vfs?: Record<string, boolean>;
+        [key: string]: unknown;
+    };
 };
 type SqliteWorkerGlobalScope = DedicatedWorkerGlobalScope & {
     sqlite3ApiConfig?: SqliteApiConfig;
@@ -276,8 +280,24 @@ async function openOpfsDatabase(
 
 function configureSqliteLogging(): void {
     const globalScope = ctx as unknown as SqliteWorkerGlobalScope;
+    const existingConfig = globalScope.sqlite3ApiConfig ?? {};
+    const existingDisable = existingConfig.disable ?? {};
     globalScope.sqlite3ApiConfig = {
-        ...(globalScope.sqlite3ApiConfig ?? {}),
+        ...existingConfig,
+        disable: {
+            ...existingDisable,
+            vfs: {
+                ...(existingDisable.vfs ?? {}),
+                // The plugin uses sqlite-wasm's OPFS SAH pool VFS explicitly via
+                // installOpfsSAHPoolVfs(). The auto-installed async OPFS VFSes
+                // require an external proxy worker script, which is unavailable
+                // in our inlined Obsidian bundle and only creates console noise.
+                // Do not disable "opfs-vfs" here: sqlite3.opfs utility setup is
+                // still shared by opfs-sahpool in the upstream bootstrap.
+                opfs: true,
+                "opfs-wl": true,
+            },
+        },
         warn: (...args: unknown[]) => {
             if (!isExpectedUnusedOpfsVfsWarning(args)) {
                 console.warn(...args);
@@ -295,7 +315,14 @@ function configureSqliteLogging(): void {
 
 function isExpectedUnusedOpfsVfsWarning(args: unknown[]): boolean {
     const message = args.map((arg) => String(arg)).join(" ");
-    return message.includes("Ignoring inability to install OPFS sqlite3_vfs") && message.includes("Invalid URL");
+    return message.includes("Invalid URL")
+        && message.includes("Ignoring inability to install")
+        && message.includes("sqlite3_vfs")
+        && (
+            message.includes("'opfs'")
+            || message.includes("opfs-wl")
+            || message.includes("OPFS sqlite3_vfs")
+        );
 }
 
 function isExpectedOpfsCleanupBusyWarning(args: unknown[]): boolean {
