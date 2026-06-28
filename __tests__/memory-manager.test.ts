@@ -631,6 +631,138 @@ describe('MemoryManager command decisions', () => {
         }
     });
 
+    it('exposes active preparation progress while rebuild is running', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        let onProgress: ((event: {
+            phase: 'scanning' | 'embedding' | 'writing' | 'retrying' | 'ready';
+            filesDone?: number;
+            filesTotal?: number;
+            chunksEmbedded?: number;
+            chunksTotal?: number;
+            failed?: number;
+        }) => void) | undefined;
+        let resolveRebuild: (summary: Awaited<ReturnType<typeof plugin.vss.rebuildLocalIndex>>) => void = () => undefined;
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: {
+            silent?: boolean;
+            onProgress?: typeof onProgress;
+        }) => {
+            onProgress = options?.onProgress;
+            return new Promise((resolve) => {
+                resolveRebuild = resolve;
+            });
+        });
+        const manager = createManager(plugin);
+
+        try {
+            const preparing = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await Promise.resolve();
+
+            expect(manager.getActivePreparationStatus()).toMatchObject({
+                action: 'rebuild',
+                message: 'Checking notes',
+            });
+
+            onProgress?.({ phase: 'writing', filesDone: 25, filesTotal: 1846, failed: 0 });
+
+            expect(manager.getActivePreparationStatus()).toMatchObject({
+                action: 'rebuild',
+                phase: 'writing',
+                message: 'Saving memory 25/1846',
+                filesDone: 25,
+                filesTotal: 1846,
+                failed: 0,
+            });
+
+            resolveRebuild(createOperationSummary({ updated: 25 }));
+            await preparing;
+
+            expect(manager.getActivePreparationStatus()).toBeNull();
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
+    it('reuses the active preparation run instead of starting overlapping work', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        let onProgress: ((event: {
+            phase: 'scanning' | 'embedding' | 'writing' | 'retrying' | 'ready';
+            filesDone?: number;
+            filesTotal?: number;
+        }) => void) | undefined;
+        let resolveRebuild: (summary: Awaited<ReturnType<typeof plugin.vss.rebuildLocalIndex>>) => void = () => undefined;
+        const summary = createOperationSummary({ updated: 2 });
+        plugin.vss.rebuildLocalIndex.mockImplementation(async (options?: {
+            silent?: boolean;
+            onProgress?: typeof onProgress;
+        }) => {
+            onProgress = options?.onProgress;
+            return new Promise((resolve) => {
+                resolveRebuild = resolve;
+            });
+        });
+        const manager = createManager(plugin);
+
+        try {
+            const first = manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            await Promise.resolve();
+
+            const second = manager.prepareMemory(createPlan({ reason: 'changed-notes', action: 'refresh' }));
+            await Promise.resolve();
+
+            expect(plugin.vss.rebuildLocalIndex).toHaveBeenCalledTimes(1);
+            expect(plugin.vss.refreshLocalIndex).not.toHaveBeenCalled();
+            expect(manager.getActivePreparationStatus()).toMatchObject({
+                action: 'rebuild',
+                message: 'Checking notes',
+            });
+
+            onProgress?.({ phase: 'writing', filesDone: 1, filesTotal: 2 });
+
+            expect(manager.getActivePreparationStatus()).toMatchObject({
+                action: 'rebuild',
+                phase: 'writing',
+                message: 'Saving memory 1/2',
+            });
+
+            resolveRebuild(summary);
+            await expect(first).resolves.toMatchObject({ ok: true, partial: false, summary });
+            await expect(second).resolves.toMatchObject({ ok: true, partial: false, summary });
+            expect(manager.getActivePreparationStatus()).toBeNull();
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
+
     it('does not show completion UI or schedule follow-up work after stop during prepare', async () => {
         const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
         Object.defineProperty(globalThis, 'document', {
