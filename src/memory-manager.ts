@@ -80,6 +80,15 @@ const DESKTOP_VERIFY_DELAY_MS = 1_000;
 const MOBILE_VERIFY_DELAY_MS = 5_000;
 type MemoryApprovalContext = "chat" | "command";
 type BackgroundTaskKind = "flush" | "reconcile" | "verify";
+type MemoryPreparationAction = Exclude<MemoryMaintenancePlan["action"], "none">;
+interface ActivePreparationIdentity {
+    id: number;
+    action: MemoryPreparationAction;
+    lifecycleVersion: number;
+}
+interface ActivePreparationRun extends ActivePreparationIdentity {
+    promise: Promise<MemoryPrepareResult>;
+}
 
 export const MEMORY_USER_FORBIDDEN_TERMS = [
     "VSS",
@@ -187,8 +196,8 @@ export class MemoryManager {
     private lifecycleVersion = 0;
     private shuttingDown = false;
     private manualCommandInFlight = false;
-    private activePreparationStatus: (MemoryPreparationStatus & { id: number }) | null = null;
-    private activePreparationPromise: Promise<MemoryPrepareResult> | null = null;
+    private activePreparationStatus: (MemoryPreparationStatus & { id: number; lifecycleVersion: number }) | null = null;
+    private activePreparationRun: ActivePreparationRun | null = null;
     private nextPreparationId = 1;
 
     constructor(host: MemoryHost, vss: VSS) {
@@ -202,6 +211,9 @@ export class MemoryManager {
 
     getActivePreparationStatus(): MemoryPreparationStatus | null {
         if (!this.activePreparationStatus) return null;
+        if (!this.activePreparationRun) return null;
+        if (!this.isSamePreparation(this.activePreparationStatus, this.activePreparationRun)) return null;
+        if (!this.isLifecycleCurrent(this.activePreparationStatus.lifecycleVersion)) return null;
         return {
             action: this.activePreparationStatus.action,
             message: this.activePreparationStatus.message,
@@ -247,6 +259,8 @@ export class MemoryManager {
         this.started = false;
         this.shuttingDown = true;
         this.lifecycleVersion++;
+        this.activePreparationRun = null;
+        this.activePreparationStatus = null;
         if (this.autoFlushTimer) {
             clearPlatformTimeout(this.autoFlushTimer);
             this.autoFlushTimer = null;
@@ -399,29 +413,44 @@ export class MemoryManager {
     }
 
     async prepareMemory(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
-        if (this.activePreparationPromise) {
-            return this.activePreparationPromise;
+        const requestedAction = this.getPreparationAction(plan);
+        const activePreparation = this.activePreparationRun;
+        if (activePreparation) {
+            if (this.canReuseActivePreparation(activePreparation, requestedAction)) {
+                return activePreparation.promise;
+            }
+            if (this.isActivePreparationCurrent(activePreparation)) {
+                return {
+                    ok: false,
+                    partial: false,
+                    message: memoryT("plugin.memory.notice.actionAlreadyRunning"),
+                };
+            }
         }
 
-        const run = this.runPreparation(plan);
-        this.activePreparationPromise = run;
+        const activeIdentity: ActivePreparationIdentity = {
+            id: this.nextPreparationId++,
+            action: requestedAction,
+            lifecycleVersion: this.lifecycleVersion,
+        };
+        const run = Promise.resolve().then(() => this.runPreparation(plan, activeIdentity));
+        this.activePreparationRun = { ...activeIdentity, promise: run };
         try {
             return await run;
         } finally {
-            if (this.activePreparationPromise === run) {
-                this.activePreparationPromise = null;
-            }
+            this.clearActivePreparation(activeIdentity);
         }
     }
 
-    private async runPreparation(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
-        const lifecycleToken = this.lifecycleVersion;
-        const preparationId = this.nextPreparationId++;
-        const action: Exclude<MemoryMaintenancePlan["action"], "none"> = plan.action === "refresh" ? "refresh" : "rebuild";
+    private async runPreparation(plan: MemoryMaintenancePlan, activePreparation: ActivePreparationIdentity): Promise<MemoryPrepareResult> {
+        const lifecycleToken = activePreparation.lifecycleVersion;
+        const action = activePreparation.action;
         const startedAt = Date.now();
         const setActiveStatus = (message: string, event?: VSSProgressEvent) => {
+            if (!this.isActivePreparationCurrent(activePreparation)) return;
             this.activePreparationStatus = {
-                id: preparationId,
+                id: activePreparation.id,
+                lifecycleVersion: activePreparation.lifecycleVersion,
                 action,
                 message,
                 phase: event?.phase,
@@ -433,6 +462,13 @@ export class MemoryManager {
                 startedAt,
             };
         };
+        if (!this.isLifecycleCurrent(lifecycleToken)) {
+            return {
+                ok: false,
+                partial: false,
+                message: memoryT("plugin.memory.message.prepareFailedAnswerNow"),
+            };
+        }
         const progress = createMemoryProgressNotice(memoryT("plugin.memory.progress.preparing"));
         setActiveStatus(memoryT("plugin.memory.progress.preparing"));
         const updateProgress = createMemoryProgressUpdater(progress.notice, () => !this.isLifecycleCurrent(lifecycleToken));
@@ -498,9 +534,7 @@ export class MemoryManager {
                 message: getMemoryPrepareFailureMessage(error),
             };
         } finally {
-            if (this.activePreparationStatus?.id === preparationId) {
-                this.activePreparationStatus = null;
-            }
+            this.clearActivePreparationStatus(activePreparation);
             progress.notice.hide();
         }
     }
@@ -703,6 +737,41 @@ export class MemoryManager {
 
     private isLifecycleCurrent(token: number): boolean {
         return !this.shuttingDown && token === this.lifecycleVersion;
+    }
+
+    private getPreparationAction(plan: MemoryMaintenancePlan): MemoryPreparationAction {
+        return plan.action === "refresh" ? "refresh" : "rebuild";
+    }
+
+    private canReuseActivePreparation(activePreparation: ActivePreparationRun, requestedAction: MemoryPreparationAction): boolean {
+        if (!this.isActivePreparationCurrent(activePreparation)) return false;
+        return activePreparation.action === requestedAction
+            || activePreparation.action === "rebuild" && requestedAction === "refresh";
+    }
+
+    private isActivePreparationCurrent(activePreparation: ActivePreparationIdentity): boolean {
+        return Boolean(
+            this.activePreparationRun
+            && this.isSamePreparation(this.activePreparationRun, activePreparation)
+            && this.isLifecycleCurrent(activePreparation.lifecycleVersion),
+        );
+    }
+
+    private isSamePreparation(left: ActivePreparationIdentity, right: ActivePreparationIdentity): boolean {
+        return left.id === right.id && left.lifecycleVersion === right.lifecycleVersion;
+    }
+
+    private clearActivePreparation(activePreparation: ActivePreparationIdentity): void {
+        if (this.activePreparationRun && this.isSamePreparation(this.activePreparationRun, activePreparation)) {
+            this.activePreparationRun = null;
+        }
+        this.clearActivePreparationStatus(activePreparation);
+    }
+
+    private clearActivePreparationStatus(activePreparation: ActivePreparationIdentity): void {
+        if (this.activePreparationStatus && this.isSamePreparation(this.activePreparationStatus, activePreparation)) {
+            this.activePreparationStatus = null;
+        }
     }
 
     private async canRunAutoMaintenance(): Promise<boolean> {
