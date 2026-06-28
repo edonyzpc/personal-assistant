@@ -44,6 +44,18 @@ export interface MemoryPrepareResult {
     message?: string;
 }
 
+export interface MemoryPreparationStatus {
+    action: Exclude<MemoryMaintenancePlan["action"], "none">;
+    message: string;
+    phase?: VSSProgressEvent["phase"];
+    filesDone?: number;
+    filesTotal?: number;
+    chunksEmbedded?: number;
+    chunksTotal?: number;
+    failed?: number;
+    startedAt: number;
+}
+
 export interface MemoryDecisionResult {
     decision: MemoryDecision;
     message?: string;
@@ -175,6 +187,9 @@ export class MemoryManager {
     private lifecycleVersion = 0;
     private shuttingDown = false;
     private manualCommandInFlight = false;
+    private activePreparationStatus: (MemoryPreparationStatus & { id: number }) | null = null;
+    private activePreparationPromise: Promise<MemoryPrepareResult> | null = null;
+    private nextPreparationId = 1;
 
     constructor(host: MemoryHost, vss: VSS) {
         this.host = host;
@@ -183,6 +198,21 @@ export class MemoryManager {
 
     async getMaintenancePlan(): Promise<MemoryMaintenancePlan> {
         return this.vss.getMemoryReadiness();
+    }
+
+    getActivePreparationStatus(): MemoryPreparationStatus | null {
+        if (!this.activePreparationStatus) return null;
+        return {
+            action: this.activePreparationStatus.action,
+            message: this.activePreparationStatus.message,
+            phase: this.activePreparationStatus.phase,
+            filesDone: this.activePreparationStatus.filesDone,
+            filesTotal: this.activePreparationStatus.filesTotal,
+            chunksEmbedded: this.activePreparationStatus.chunksEmbedded,
+            chunksTotal: this.activePreparationStatus.chunksTotal,
+            failed: this.activePreparationStatus.failed,
+            startedAt: this.activePreparationStatus.startedAt,
+        };
     }
 
     startAutoMaintenance(): void {
@@ -369,14 +399,56 @@ export class MemoryManager {
     }
 
     async prepareMemory(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
+        if (this.activePreparationPromise) {
+            return this.activePreparationPromise;
+        }
+
+        const run = this.runPreparation(plan);
+        this.activePreparationPromise = run;
+        try {
+            return await run;
+        } finally {
+            if (this.activePreparationPromise === run) {
+                this.activePreparationPromise = null;
+            }
+        }
+    }
+
+    private async runPreparation(plan: MemoryMaintenancePlan): Promise<MemoryPrepareResult> {
         const lifecycleToken = this.lifecycleVersion;
+        const preparationId = this.nextPreparationId++;
+        const action: Exclude<MemoryMaintenancePlan["action"], "none"> = plan.action === "refresh" ? "refresh" : "rebuild";
+        const startedAt = Date.now();
+        const setActiveStatus = (message: string, event?: VSSProgressEvent) => {
+            this.activePreparationStatus = {
+                id: preparationId,
+                action,
+                message,
+                phase: event?.phase,
+                filesDone: event?.filesDone,
+                filesTotal: event?.filesTotal,
+                chunksEmbedded: event?.chunksEmbedded,
+                chunksTotal: event?.chunksTotal,
+                failed: event?.failed,
+                startedAt,
+            };
+        };
         const progress = createMemoryProgressNotice(memoryT("plugin.memory.progress.preparing"));
+        setActiveStatus(memoryT("plugin.memory.progress.preparing"));
         const updateProgress = createMemoryProgressUpdater(progress.notice, () => !this.isLifecycleCurrent(lifecycleToken));
+        const updateProgressAndStatus = (event: VSSProgressEvent) => {
+            updateProgress(event);
+            const text = formatMemoryProgressEvent(event);
+            if (text) {
+                setActiveStatus(text, event);
+            }
+        };
         try {
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.checking"));
+            setActiveStatus(memoryT("plugin.memory.progress.checking"));
             const summary = plan.action === "refresh"
-                ? await this.vss.refreshLocalIndex({ silent: true, onProgress: updateProgress })
-                : await this.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgress });
+                ? await this.vss.refreshLocalIndex({ silent: true, onProgress: updateProgressAndStatus })
+                : await this.vss.rebuildLocalIndex({ silent: true, onProgress: updateProgressAndStatus });
             if (!this.isLifecycleCurrent(lifecycleToken)) {
                 return {
                     ok: false,
@@ -395,6 +467,7 @@ export class MemoryManager {
             }
 
             setMemoryProgressStep(progress.notice, memoryT("plugin.memory.progress.ready"));
+            setActiveStatus(memoryT("plugin.memory.progress.ready"));
             const partial = summary.failed > 0;
             if (partial) {
                 new Notice(memoryT("plugin.memory.notice.updatedPartial"), 5000);
@@ -425,6 +498,9 @@ export class MemoryManager {
                 message: getMemoryPrepareFailureMessage(error),
             };
         } finally {
+            if (this.activePreparationStatus?.id === preparationId) {
+                this.activePreparationStatus = null;
+            }
             progress.notice.hide();
         }
     }

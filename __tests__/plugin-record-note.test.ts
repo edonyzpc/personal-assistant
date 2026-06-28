@@ -1381,4 +1381,66 @@ describe('VSS status performance notices', () => {
         expect(model.notes).toHaveLength(1);
         expect(model.notes[0]).toContain('above 50k chunks');
     });
+
+    it('formats in-progress Memory diagnostics without SQLite stats', () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+        const model = plugin.buildTechnicalMemoryInProgressModel({
+            action: 'rebuild',
+            message: 'Saving memory 25/1846',
+            phase: 'writing',
+            filesDone: 25,
+            filesTotal: 1846,
+            startedAt: 123,
+        }, {
+            dirtyCount: 2,
+            verificationPending: 1,
+        });
+
+        expect(model).toEqual({
+            title: 'Memory diagnostics',
+            summary: 'Memory action in progress',
+            summaryTone: 'warning',
+            details: [
+                { label: 'Active operation', value: 'Prepare memory', tone: 'warning' },
+                { label: 'Progress', value: 'Saving memory 25/1846', tone: 'warning' },
+                { label: 'Maintenance', value: '2 dirty, 1 verification pending', tone: 'warning' },
+            ],
+            notes: ['Full diagnostics will be available when the current Memory action finishes.'],
+        });
+    });
+
+    it('shows active Memory preparation status immediately', async () => {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.memoryManager = {
+            getActivePreparationStatus: jest.fn(() => ({
+                action: 'rebuild',
+                message: 'Saving memory 25/1846',
+                phase: 'writing',
+                filesDone: 25,
+                filesTotal: 1846,
+                startedAt: 123,
+            })),
+        };
+        plugin.vss = {
+            getStats: jest.fn(async () => {
+                throw new Error('stats should not be read while Memory is preparing');
+            }),
+            getMaintenanceState: jest.fn(() => ({
+                dirtyCount: 0,
+                verificationPending: 0,
+            })),
+        };
+        plugin.showTechnicalMemoryNotice = jest.fn();
+
+        await plugin.showTechnicalMemoryStatus();
+
+        expect(plugin.vss.getStats).not.toHaveBeenCalled();
+        expect(plugin.showTechnicalMemoryNotice).toHaveBeenCalledWith(expect.objectContaining({
+            summary: 'Memory action in progress',
+            details: expect.arrayContaining([
+                { label: 'Progress', value: 'Saving memory 25/1846', tone: 'warning' },
+            ]),
+        }), 5000);
+    });
 });

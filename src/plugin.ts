@@ -26,7 +26,7 @@ import { pluginField, statusBarEditorPlugin, sectionWordCountEditorPlugin } from
 import { normalizeStatisticsView } from './stats/stats-store';
 import type { EditorPluginHost } from './stats/EditorPluginHost';
 import type { StatsHost } from './stats/StatsHost';
-import { MemoryManager } from './memory-manager';
+import { MemoryManager, type MemoryPreparationStatus } from './memory-manager';
 import { getVaultConfigDir, getVaultConfigDirStorageScope, joinVaultConfigPath, LEGACY_CONFIG_DIR, uniqueNormalizedPaths } from './obsidian-paths';
 import { confirmUserAction } from './confirm';
 import { createVSSIndexStateStore, type VSSIndexStateStore } from './vss/local-state-store';
@@ -2017,6 +2017,15 @@ export class PluginManager extends Plugin {
             return;
         }
 
+        const activePreparation = this.memoryManager?.getActivePreparationStatus() ?? null;
+        if (activePreparation) {
+            this.showTechnicalMemoryNotice(
+                this.buildTechnicalMemoryInProgressModel(activePreparation, this.vss.getMaintenanceState()),
+                5000,
+            );
+            return;
+        }
+
         const stats = await this.vss.getStats({ mode: "manual" });
         const maintenance = this.vss.getMaintenanceState();
         this.showTechnicalMemoryNotice(this.buildTechnicalMemoryStatusModel(stats, maintenance), 7000);
@@ -2093,6 +2102,40 @@ export class PluginManager extends Plugin {
             summaryTone: status.tone,
             details,
             notes: performanceText ? [performanceText] : [],
+        };
+    }
+
+    private buildTechnicalMemoryInProgressModel(
+        activePreparation: MemoryPreparationStatus,
+        maintenance: TechnicalMemoryMaintenance,
+    ): TechnicalMemoryNoticeModel {
+        const maintenanceText = this.formatTechnicalMaintenanceState(maintenance);
+        const details: TechnicalMemoryDetail[] = [
+            {
+                label: this.t("plugin.memory.diagnostics.activeOperation"),
+                value: activePreparation.action === "refresh"
+                    ? this.t("plugin.memory.diagnostics.operation.update")
+                    : this.t("plugin.memory.diagnostics.operation.prepare"),
+                tone: "warning",
+            },
+            {
+                label: this.t("plugin.memory.diagnostics.progress"),
+                value: activePreparation.message,
+                tone: "warning",
+            },
+            {
+                label: this.t("plugin.memory.diagnostics.maintenance"),
+                value: maintenanceText,
+                tone: maintenanceText === this.t("plugin.memory.diagnostics.maintenance.upToDate") ? undefined : "warning",
+            },
+        ];
+
+        return {
+            title: this.t("plugin.memory.diagnostics.title"),
+            summary: this.t("plugin.memory.diagnostics.status.inProgress"),
+            summaryTone: "warning",
+            details,
+            notes: [this.t("plugin.memory.diagnostics.inProgressNote")],
         };
     }
 
