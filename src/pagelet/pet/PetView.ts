@@ -36,6 +36,8 @@ function shouldMountPetInMobileChromeLayer(): boolean {
     return doc.body.classList.contains("is-mobile") && viewportWidth <= 600;
 }
 
+const QUICK_CAPTURE_HOLD_MS = 520;
+
 export class PetView implements PetRenderer {
     private _state: PetState;
     private _taskKind: PetTaskKind;
@@ -49,14 +51,20 @@ export class PetView implements PetRenderer {
     private _containerEl: HTMLElement | null = null;
     private _destroyed = false;
     private _recentTouch = false;
+    private _quickCaptureHoldTriggered = false;
     private _touchSuppressTimer: PlatformTimeoutHandle | null = null;
     private _errorTimer: PlatformTimeoutHandle | null = null;
+    private _quickCaptureHoldTimer: PlatformTimeoutHandle | null = null;
     private _themeObserver: MutationObserver | null = null;
     private readonly _getLocale: () => PageletLocale;
 
     // Bound handlers for clean removal
     private readonly _handleClick: (e: MouseEvent) => void;
     private readonly _handleKeydown: (e: KeyboardEvent) => void;
+    private readonly _handleMouseDown: (e: MouseEvent) => void;
+    private readonly _handleMouseUp: () => void;
+    private readonly _handleMouseLeave: () => void;
+    private readonly _handleTouchstart: (e: TouchEvent) => void;
     private readonly _handleTouchend: (e: TouchEvent) => void;
 
     constructor(options: PetRendererOptions) {
@@ -76,23 +84,46 @@ export class PetView implements PetRenderer {
 
         this._handleClick = () => {
             if (this._recentTouch) return;
+            if (this.consumeQuickCaptureHold()) return;
             this._callbacks.onToggleBubble();
         };
         this._handleKeydown = (e: KeyboardEvent) => {
+            if (e.shiftKey && e.key === "Enter") {
+                e.preventDefault();
+                this.openQuickCapture();
+                return;
+            }
             if (e.key === "Enter" || e.key === " ") {
                 e.preventDefault();
                 this._callbacks.onToggleBubble();
             }
         };
+        this._handleMouseDown = (e: MouseEvent) => {
+            if (e.button !== 0) return;
+            this.startQuickCaptureHold();
+        };
+        this._handleMouseUp = () => {
+            this.clearQuickCaptureHoldTimer();
+        };
+        this._handleMouseLeave = () => {
+            this.clearQuickCaptureHoldTimer();
+            this._quickCaptureHoldTriggered = false;
+            this._rootEl?.removeAttribute("data-capture-hold");
+        };
+        this._handleTouchstart = () => {
+            this.startQuickCaptureHold();
+        };
         this._handleTouchend = (e: TouchEvent) => {
             e.preventDefault();
             this._recentTouch = true;
+            const holdTriggered = this.consumeQuickCaptureHold();
             this.clearTouchSuppression();
             this._touchSuppressTimer = setPlatformTimeout(() => {
                 this._touchSuppressTimer = null;
                 if (this._destroyed) return;
                 this._recentTouch = false;
             }, 400);
+            if (holdTriggered) return;
             this._callbacks.onToggleBubble();
         };
     }
@@ -132,9 +163,17 @@ export class PetView implements PetRenderer {
         wrapper.appendChild(svgWrap);
         root.appendChild(wrapper);
 
+        if (this._callbacks.onQuickCaptureOpen) {
+            root.setAttribute("aria-keyshortcuts", "Shift+Enter");
+        }
+
         // Event listeners
         root.addEventListener("click", this._handleClick);
         root.addEventListener("keydown", this._handleKeydown);
+        root.addEventListener("mousedown", this._handleMouseDown);
+        root.addEventListener("mouseup", this._handleMouseUp);
+        root.addEventListener("mouseleave", this._handleMouseLeave);
+        root.addEventListener("touchstart", this._handleTouchstart, { passive: true });
         root.addEventListener("touchend", this._handleTouchend, { passive: false });
 
         mountEl.appendChild(root);
@@ -168,8 +207,11 @@ export class PetView implements PetRenderer {
 
         this._rootEl.removeEventListener("click", this._handleClick);
         this._rootEl.removeEventListener("keydown", this._handleKeydown);
+        this._rootEl.removeEventListener("mousedown", this._handleMouseDown);
+        this._rootEl.removeEventListener("mouseup", this._handleMouseUp);
+        this._rootEl.removeEventListener("mouseleave", this._handleMouseLeave);
+        this._rootEl.removeEventListener("touchstart", this._handleTouchstart);
         this._rootEl.removeEventListener("touchend", this._handleTouchend);
-
         this._rootEl.remove();
         this._rootEl = null;
         this._svgWrapEl = null;
@@ -253,6 +295,8 @@ export class PetView implements PetRenderer {
             this._errorTimer = null;
         }
         this.clearTouchSuppression();
+        this.clearQuickCaptureHoldTimer();
+        this._quickCaptureHoldTriggered = false;
         this._recentTouch = false;
         this.unmount();
     }
@@ -274,6 +318,45 @@ export class PetView implements PetRenderer {
             clearPlatformTimeout(this._touchSuppressTimer);
             this._touchSuppressTimer = null;
         }
+    }
+
+    private clearQuickCaptureHoldTimer(): void {
+        if (this._quickCaptureHoldTimer !== null) {
+            clearPlatformTimeout(this._quickCaptureHoldTimer);
+            this._quickCaptureHoldTimer = null;
+        }
+        this._rootEl?.removeAttribute("data-capture-hold");
+    }
+
+    private startQuickCaptureHold(): void {
+        if (
+            this._destroyed
+            || !this._callbacks.onQuickCaptureOpen
+        ) {
+            return;
+        }
+        this.clearQuickCaptureHoldTimer();
+        this._quickCaptureHoldTriggered = false;
+        this._rootEl?.setAttribute("data-capture-hold", "true");
+        this._quickCaptureHoldTimer = setPlatformTimeout(() => {
+            this._quickCaptureHoldTimer = null;
+            if (this._destroyed) return;
+            this._quickCaptureHoldTriggered = true;
+            this._rootEl?.removeAttribute("data-capture-hold");
+            this.openQuickCapture();
+        }, QUICK_CAPTURE_HOLD_MS);
+    }
+
+    private consumeQuickCaptureHold(): boolean {
+        this.clearQuickCaptureHoldTimer();
+        const triggered = this._quickCaptureHoldTriggered;
+        this._quickCaptureHoldTriggered = false;
+        return triggered;
+    }
+
+    private openQuickCapture(): void {
+        if (this._destroyed) return;
+        this._callbacks.onQuickCaptureOpen?.();
     }
 
     private applyThemeColors(): void {

@@ -22,6 +22,39 @@ import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LEGACY_CONFIG_DIR } from "./obsidian-paths";
 import { getPlatformDocument, setPlatformTimeout } from "./platform-dom";
 import { MOCK_LICENSE_TIER, type AgentCapabilityTier } from "./ai-services/capability-types";
+import {
+    QUICK_CAPTURE_DEFAULTS,
+    mergeQuickCaptureSettings,
+    normalizeQuickCaptureDestination,
+    normalizeQuickCaptureInboxPath,
+    type QuickCaptureSettings,
+} from "./quick-capture";
+import { normalizeReviewQueueState, type ReviewQueueItem } from "./pa/review-queue-store";
+import {
+    normalizeMemoryGovernanceState,
+    type ConfirmedMemoryRecord,
+} from "./pa/memory-governance-store";
+import {
+    normalizeMaintenanceMoveActionLog,
+    type MaintenanceMoveActionLogEntry,
+} from "./pa/maintenance-review-apply";
+import {
+    normalizeSavedInsightState,
+    type SavedInsight,
+} from "./pa/saved-insight-store";
+import {
+    normalizeRetrievalHabitProfileSettings,
+    RETRIEVAL_HABIT_PROFILE_DEFAULTS,
+    type RetrievalHabitProfileSettings,
+} from "./pa/retrieval-habit-profile";
+import {
+    DATA_CLEANUP_GROUPS,
+    DEFAULT_DATA_BOUNDARY_POLICY,
+    PROVIDER_DISCLOSURE_REASONS,
+    type DataCleanupGroup,
+    type GeneratedNotePolicy,
+    type ProviderDisclosureReason,
+} from "./pa/contracts";
 
 export interface ResizeStyle {
     width: number,
@@ -35,6 +68,117 @@ const FEATURED_IMAGE_MODELS: readonly FeaturedImageModel[] = [
     "wan2.7-image-pro",
 ];
 const FEATURED_IMAGE_COUNT_MAX = 4;
+
+export interface DataBoundarySettings {
+    excludedFolders: string[];
+    excludedTags: string[];
+    generatedNotePolicy: GeneratedNotePolicy;
+    providerDisclosureReasons: ProviderDisclosureReason[];
+    cleanupGroups: DataCleanupGroup[];
+}
+
+export interface ReviewQueueSettings {
+    enabled: boolean;
+    items: ReviewQueueItem[];
+}
+
+export const REVIEW_QUEUE_DEFAULTS: Readonly<ReviewQueueSettings> = Object.freeze({
+    enabled: true,
+    items: [],
+});
+
+export interface ContextPagerSettings {
+    enabled: boolean;
+}
+
+export const CONTEXT_PAGER_DEFAULTS: Readonly<ContextPagerSettings> = Object.freeze({
+    enabled: true,
+});
+
+export interface SavedInsightSettings {
+    items: SavedInsight[];
+}
+
+export const SAVED_INSIGHT_DEFAULTS: Readonly<SavedInsightSettings> = Object.freeze({
+    items: [],
+});
+
+export interface MemoryGovernanceSettings {
+    records: ConfirmedMemoryRecord[];
+}
+
+export const MEMORY_GOVERNANCE_DEFAULTS: Readonly<MemoryGovernanceSettings> = Object.freeze({
+    records: [],
+});
+
+export interface MaintenanceReviewSettings {
+    weeklyScanEnabled: boolean;
+    actionLog: MaintenanceMoveActionLogEntry[];
+}
+
+export const MAINTENANCE_REVIEW_DEFAULTS: Readonly<MaintenanceReviewSettings> = Object.freeze({
+    weeklyScanEnabled: false,
+    actionLog: [],
+});
+
+export interface WeeklyReviewSettings {
+    enabled: boolean;
+    preparedReviewEnabled: boolean;
+}
+
+export const WEEKLY_REVIEW_DEFAULTS: Readonly<WeeklyReviewSettings> = Object.freeze({
+    enabled: true,
+    preparedReviewEnabled: false,
+});
+
+export interface QuietRecallSettings {
+    enabled: boolean;
+    bubbleNudgesEnabled: boolean;
+}
+
+export const QUIET_RECALL_DEFAULTS: Readonly<QuietRecallSettings> = Object.freeze({
+    enabled: true,
+    bubbleNudgesEnabled: false,
+});
+
+export const DATA_BOUNDARY_DEFAULTS: Readonly<DataBoundarySettings> = Object.freeze({
+    excludedFolders: [...DEFAULT_DATA_BOUNDARY_POLICY.excludedFolders],
+    excludedTags: [...DEFAULT_DATA_BOUNDARY_POLICY.excludedTags],
+    generatedNotePolicy: DEFAULT_DATA_BOUNDARY_POLICY.generatedNotePolicy,
+    providerDisclosureReasons: [...PROVIDER_DISCLOSURE_REASONS],
+    cleanupGroups: [...DATA_CLEANUP_GROUPS],
+});
+
+export interface MemoryExtractionConsentSettings {
+    state: "unconfirmed" | "confirmed" | "paused";
+    version: 1;
+    confirmedAt?: string;
+}
+
+export const MEMORY_EXTRACTION_CONSENT_VERSION = 1;
+
+export const MEMORY_EXTRACTION_CONSENT_DEFAULTS: Readonly<MemoryExtractionConsentSettings> = Object.freeze({
+    state: "unconfirmed",
+    version: MEMORY_EXTRACTION_CONSENT_VERSION,
+});
+
+const DATA_BOUNDARY_CLEANUP_LABEL_KEYS: Record<DataCleanupGroup, PluginMessageKey> = {
+    cache: "plugin.settings.dataBoundary.cleanup.cache.name",
+    queue: "plugin.settings.dataBoundary.cleanup.queue.name",
+    replay: "plugin.settings.dataBoundary.cleanup.replay.name",
+    candidates: "plugin.settings.dataBoundary.cleanup.candidates.name",
+    confirmed_memory: "plugin.settings.dataBoundary.cleanup.confirmedMemory.name",
+    tombstones: "plugin.settings.dataBoundary.cleanup.tombstones.name",
+};
+
+const DATA_BOUNDARY_CLEANUP_DESC_KEYS: Record<DataCleanupGroup, PluginMessageKey> = {
+    cache: "plugin.settings.dataBoundary.cleanup.cache.desc",
+    queue: "plugin.settings.dataBoundary.cleanup.queue.desc",
+    replay: "plugin.settings.dataBoundary.cleanup.replay.desc",
+    candidates: "plugin.settings.dataBoundary.cleanup.candidates.desc",
+    confirmed_memory: "plugin.settings.dataBoundary.cleanup.confirmedMemory.desc",
+    tombstones: "plugin.settings.dataBoundary.cleanup.tombstones.desc",
+};
 
 export function normalizeFeaturedImageModel(value: unknown): FeaturedImageModel {
     return FEATURED_IMAGE_MODELS.includes(value as FeaturedImageModel)
@@ -117,9 +261,30 @@ export interface PluginManagerSettings {
     memoryExtractionEnabled: boolean;
     memoryExtractionNoticeDismissed: boolean;
     memoryExtractionIncludeVaultInsights: boolean;
+    memoryExtractionConsent: MemoryExtractionConsentSettings;
     vssCacheExcludePath: string[];
     /** Operations Agent mode (Beta): enable AI to append content to the active note. */
     operationsAgentEnabled: boolean;
+    /** Low-friction raw note capture. AI post-processing stays disabled until its slice is complete. */
+    quickCapture: QuickCaptureSettings;
+    /** Shared Data Boundary policy for source selection and provider disclosure. */
+    dataBoundary: DataBoundarySettings;
+    /** Local shared Review Queue state. Stored in plugin data, never Markdown. */
+    reviewQueue: ReviewQueueSettings;
+    /** User-readable read-only trace of sources and memories used for a run. */
+    contextPager: ContextPagerSettings;
+    /** Local Saved Insight ledger state. */
+    savedInsights: SavedInsightSettings;
+    /** Local Confirmed Memory governance shell state. */
+    memoryGovernance: MemoryGovernanceSettings;
+    /** Pagelet Maintenance Review preview shell. Weekly scans remain disabled until approved. */
+    maintenanceReview: MaintenanceReviewSettings;
+    /** Manual Weekly Review loop. Prepared weekly review remains opt-in. */
+    weeklyReview: WeeklyReviewSettings;
+    /** Quiet Recall surfaces. Bubble nudges remain disabled until the later slice. */
+    quietRecall: QuietRecallSettings;
+    /** Opt-in local aggregate recall feedback profile. */
+    retrievalHabitProfile: RetrievalHabitProfileSettings;
     /**
      * Pagelet (Review Assistant) namespace. Owned by `src/settings/pagelet/`;
      * merged + rendered through the helpers exported from that module so
@@ -196,15 +361,47 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     featuredImagePath: "",
     featuredImageModel: "wan2.7-image",
     numFeaturedImages: 1,
-    memoryExtractionEnabled: true,
+    memoryExtractionEnabled: false,
     memoryExtractionNoticeDismissed: false,
-    memoryExtractionIncludeVaultInsights: true,
+    memoryExtractionIncludeVaultInsights: false,
+    memoryExtractionConsent: { ...MEMORY_EXTRACTION_CONSENT_DEFAULTS },
     // Generic default — the prior list ("8.template", "9.src", "a.subjects",
     // "b.notion") was the original developer's vault layout and made no sense
     // as a fresh-install default. mergeLoadedSettings preserves any persisted
     // value, so existing users keep their configured exclusions.
     vssCacheExcludePath: [LEGACY_CONFIG_DIR],
     operationsAgentEnabled: false,
+    quickCapture: { ...QUICK_CAPTURE_DEFAULTS },
+    dataBoundary: {
+        excludedFolders: [...DATA_BOUNDARY_DEFAULTS.excludedFolders],
+        excludedTags: [...DATA_BOUNDARY_DEFAULTS.excludedTags],
+        generatedNotePolicy: DATA_BOUNDARY_DEFAULTS.generatedNotePolicy,
+        providerDisclosureReasons: [...DATA_BOUNDARY_DEFAULTS.providerDisclosureReasons],
+        cleanupGroups: [...DATA_BOUNDARY_DEFAULTS.cleanupGroups],
+    },
+    reviewQueue: {
+        enabled: REVIEW_QUEUE_DEFAULTS.enabled,
+        items: [],
+    },
+    contextPager: {
+        enabled: CONTEXT_PAGER_DEFAULTS.enabled,
+    },
+    savedInsights: {
+        items: [],
+    },
+    memoryGovernance: {
+        records: [],
+    },
+    maintenanceReview: {
+        weeklyScanEnabled: MAINTENANCE_REVIEW_DEFAULTS.weeklyScanEnabled,
+        actionLog: [],
+    },
+    weeklyReview: { ...WEEKLY_REVIEW_DEFAULTS },
+    quietRecall: { ...QUIET_RECALL_DEFAULTS },
+    retrievalHabitProfile: {
+        enabled: RETRIEVAL_HABIT_PROFILE_DEFAULTS.enabled,
+        state: { aggregates: [] },
+    },
     // Pagelet defaults live next to the Pagelet settings module so adding a
     // field there does not require a parallel edit here.
     pagelet: { ...PAGELET_DEFAULTS },
@@ -315,6 +512,28 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     // Delegating keeps the legacy merge focused on settings that predate
     // Pagelet and avoids polluting this file with Pagelet-specific bounds.
     merged.pagelet = mergePageletSettings(loadedObject.pagelet);
+    merged.quickCapture = mergeQuickCaptureSettings(loadedObject.quickCapture);
+    merged.dataBoundary = mergeDataBoundarySettings(loadedObject.dataBoundary);
+    merged.reviewQueue = mergeReviewQueueSettings(loadedObject.reviewQueue);
+    merged.contextPager = mergeContextPagerSettings(loadedObject.contextPager);
+    merged.savedInsights = mergeSavedInsightSettings(loadedObject.savedInsights);
+    merged.memoryGovernance = mergeMemoryGovernanceSettings(loadedObject.memoryGovernance);
+    merged.maintenanceReview = mergeMaintenanceReviewSettings(loadedObject.maintenanceReview);
+    merged.weeklyReview = mergeWeeklyReviewSettings(loadedObject.weeklyReview);
+    merged.quietRecall = mergeQuietRecallSettings(loadedObject.quietRecall);
+    merged.retrievalHabitProfile = mergeRetrievalHabitProfileSettings(loadedObject.retrievalHabitProfile);
+    merged.memoryExtractionConsent = mergeMemoryExtractionConsentSettings(loadedObject.memoryExtractionConsent);
+    if (!isMemoryExtractionConsentConfirmed(merged.memoryExtractionConsent)) {
+        merged.memoryExtractionEnabled = false;
+        merged.memoryExtractionIncludeVaultInsights = false;
+    } else {
+        merged.memoryExtractionEnabled = typeof loadedObject.memoryExtractionEnabled === "boolean"
+            ? loadedObject.memoryExtractionEnabled
+            : DEFAULT_SETTINGS.memoryExtractionEnabled;
+        merged.memoryExtractionIncludeVaultInsights = typeof loadedObject.memoryExtractionIncludeVaultInsights === "boolean"
+            ? loadedObject.memoryExtractionIncludeVaultInsights
+            : DEFAULT_SETTINGS.memoryExtractionIncludeVaultInsights;
+    }
     return merged;
 }
 
@@ -424,19 +643,154 @@ export function isLegacyV1Install(loaded: unknown): boolean {
 export function normalizeEnabledSkillIds(value: unknown): string[] {
     const knownSkillIds = new Set(BUNDLED_SKILL_IDS);
     if (!Array.isArray(value)) return [...BUNDLED_SKILL_IDS];
-    const normalized = value
+    const normalized = new Set(value
         .filter((entry): entry is string => typeof entry === "string")
-        .filter((entry) => knownSkillIds.has(entry));
-    return [...new Set(normalized)];
+        .filter((entry) => knownSkillIds.has(entry)));
+    return BUNDLED_SKILL_IDS.filter((id) => normalized.has(id));
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function normalizeTrimmedStringArray(value: unknown, fallback: string[]): string[] {
+    if (!Array.isArray(value)) return [...fallback];
+    return [...new Set(value
+        .filter((entry): entry is string => typeof entry === "string")
+        .map((entry) => entry.trim())
+        .filter(Boolean))];
+}
+
 function normalizeStringArray(value: unknown, fallback: string[]): string[] {
     if (!Array.isArray(value)) return [...fallback];
     return value.filter((entry): entry is string => typeof entry === "string");
+}
+
+function normalizeDataBoundaryGeneratedNotePolicy(value: unknown): GeneratedNotePolicy {
+    return value === "exclude-generated" || value === "include-generated"
+        ? value as GeneratedNotePolicy
+        : DATA_BOUNDARY_DEFAULTS.generatedNotePolicy;
+}
+
+function normalizeEnumStringArray<T extends readonly string[]>(
+    value: unknown,
+    allowed: T,
+    fallback: readonly T[number][],
+): T[number][] {
+    if (!Array.isArray(value)) return [...fallback];
+    const allowedSet = new Set<string>(allowed);
+    const normalized = value
+        .filter((entry): entry is string => typeof entry === "string" && allowedSet.has(entry));
+    return [...new Set(normalized)] as T[number][];
+}
+
+export function mergeDataBoundarySettings(loaded: unknown): DataBoundarySettings {
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    return {
+        excludedFolders: normalizeTrimmedStringArray(loadedObject.excludedFolders, DATA_BOUNDARY_DEFAULTS.excludedFolders),
+        excludedTags: normalizeTrimmedStringArray(loadedObject.excludedTags, DATA_BOUNDARY_DEFAULTS.excludedTags),
+        generatedNotePolicy: normalizeDataBoundaryGeneratedNotePolicy(loadedObject.generatedNotePolicy),
+        providerDisclosureReasons: normalizeEnumStringArray(
+            loadedObject.providerDisclosureReasons,
+            PROVIDER_DISCLOSURE_REASONS,
+            DATA_BOUNDARY_DEFAULTS.providerDisclosureReasons,
+        ),
+        cleanupGroups: normalizeEnumStringArray(
+            loadedObject.cleanupGroups,
+            DATA_CLEANUP_GROUPS,
+            DATA_BOUNDARY_DEFAULTS.cleanupGroups,
+        ),
+    };
+}
+
+export function mergeReviewQueueSettings(loaded: unknown): ReviewQueueSettings {
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    return {
+        enabled: typeof loadedObject.enabled === "boolean"
+            ? loadedObject.enabled
+            : REVIEW_QUEUE_DEFAULTS.enabled,
+        items: normalizeReviewQueueState(loadedObject).items,
+    };
+}
+
+export function mergeContextPagerSettings(loaded: unknown): ContextPagerSettings {
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    return {
+        enabled: typeof loadedObject.enabled === "boolean"
+            ? loadedObject.enabled
+            : CONTEXT_PAGER_DEFAULTS.enabled,
+    };
+}
+
+export function mergeSavedInsightSettings(loaded: unknown): SavedInsightSettings {
+    return {
+        items: normalizeSavedInsightState(loaded).items,
+    };
+}
+
+export function mergeMemoryGovernanceSettings(loaded: unknown): MemoryGovernanceSettings {
+    return {
+        records: normalizeMemoryGovernanceState(loaded).records,
+    };
+}
+
+export function mergeMaintenanceReviewSettings(loaded: unknown): MaintenanceReviewSettings {
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    return {
+        weeklyScanEnabled: typeof loadedObject.weeklyScanEnabled === "boolean"
+            ? loadedObject.weeklyScanEnabled
+            : MAINTENANCE_REVIEW_DEFAULTS.weeklyScanEnabled,
+        actionLog: normalizeMaintenanceMoveActionLog(loadedObject.actionLog),
+    };
+}
+
+export function mergeWeeklyReviewSettings(loaded: unknown): WeeklyReviewSettings {
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    return {
+        enabled: typeof loadedObject.enabled === "boolean"
+            ? loadedObject.enabled
+            : WEEKLY_REVIEW_DEFAULTS.enabled,
+        preparedReviewEnabled: typeof loadedObject.preparedReviewEnabled === "boolean"
+            ? loadedObject.preparedReviewEnabled
+            : WEEKLY_REVIEW_DEFAULTS.preparedReviewEnabled,
+    };
+}
+
+export function mergeQuietRecallSettings(loaded: unknown): QuietRecallSettings {
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    return {
+        enabled: typeof loadedObject.enabled === "boolean"
+            ? loadedObject.enabled
+            : QUIET_RECALL_DEFAULTS.enabled,
+        bubbleNudgesEnabled: typeof loadedObject.bubbleNudgesEnabled === "boolean"
+            ? loadedObject.bubbleNudgesEnabled
+            : QUIET_RECALL_DEFAULTS.bubbleNudgesEnabled,
+    };
+}
+
+export function mergeRetrievalHabitProfileSettings(loaded: unknown): RetrievalHabitProfileSettings {
+    return normalizeRetrievalHabitProfileSettings(loaded);
+}
+
+export function mergeMemoryExtractionConsentSettings(loaded: unknown): MemoryExtractionConsentSettings {
+    const loadedObject = isRecord(loaded) ? loaded : {};
+    const state = loadedObject.state === "confirmed" || loadedObject.state === "paused"
+        ? loadedObject.state
+        : "unconfirmed";
+    const consent: MemoryExtractionConsentSettings = {
+        state,
+        version: MEMORY_EXTRACTION_CONSENT_VERSION,
+    };
+    if (state === "confirmed" && typeof loadedObject.confirmedAt === "string" && loadedObject.confirmedAt.trim()) {
+        consent.confirmedAt = loadedObject.confirmedAt.trim();
+    }
+    return consent;
+}
+
+export function isMemoryExtractionConsentConfirmed(consent: unknown): consent is MemoryExtractionConsentSettings & { state: "confirmed" } {
+    return isRecord(consent)
+        && consent.state === "confirmed"
+        && consent.version === MEMORY_EXTRACTION_CONSENT_VERSION;
 }
 
 function normalizeGraphColorArray(value: unknown, fallback: PluginManagerSettings["colorGroups"]): PluginManagerSettings["colorGroups"] {
@@ -570,8 +924,10 @@ export class SettingTab extends PluginSettingTab {
         this.renderAISection(containerEl);
         this.renderSkillsSection(containerEl);
         this.renderMemorySection(containerEl);
+        this.renderDataBoundarySection(containerEl);
         this.renderOperationsAgentSection(containerEl);
         this.renderPageletSection(containerEl);
+        this.renderQuickCaptureSection(containerEl);
         this.renderStatisticsSection(containerEl);
         this.renderRecordSection(containerEl);
         this.renderGraphSection(containerEl);
@@ -1079,6 +1435,167 @@ export class SettingTab extends PluginSettingTab {
                         this.debouncedSave();
                     })
             });
+    }
+
+    private renderQuickCaptureSection(parentEl: HTMLElement): void {
+        const plugin = this.plugin;
+        parentEl.createEl("h2", { text: this.t("plugin.settings.quickCapture.title") });
+        parentEl.createEl("p", {
+            text: this.t("plugin.settings.quickCapture.desc"),
+            cls: "pa-settings-section-desc-sm",
+        });
+
+        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.enabled.name"))
+            .setDesc(this.t("plugin.settings.quickCapture.enabled.desc"))
+            .addToggle(toggle => toggle
+                .setValue(plugin.settings.quickCapture.enabled)
+                .onChange((value) => {
+                    plugin.settings.quickCapture.enabled = value;
+                    void plugin.saveSettings();
+                }));
+
+        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.destination.name"))
+            .setDesc(this.t("plugin.settings.quickCapture.destination.desc"))
+            .addDropdown(dropdown => dropdown
+                .addOption("daily", this.t("plugin.settings.quickCapture.destination.daily"))
+                .addOption("inbox", this.t("plugin.settings.quickCapture.destination.inbox"))
+                .addOption("current-file", this.t("plugin.settings.quickCapture.destination.currentFile"))
+                .setValue(plugin.settings.quickCapture.destination)
+                .onChange((value) => {
+                    plugin.settings.quickCapture.destination = normalizeQuickCaptureDestination(value);
+                    void plugin.saveSettings();
+                }));
+
+        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.inboxPath.name"))
+            .setDesc(this.t("plugin.settings.quickCapture.inboxPath.desc"))
+            .addText(text => text
+                .setPlaceholder(QUICK_CAPTURE_DEFAULTS.inboxPath)
+                .setValue(plugin.settings.quickCapture.inboxPath)
+                .onChange((value) => {
+                    plugin.settings.quickCapture.inboxPath = normalizeQuickCaptureInboxPath(value);
+                    this.debouncedSave();
+                }));
+
+        new Setting(parentEl).setName(this.t("plugin.settings.quickCapture.postProcessing.name"))
+            .setDesc(this.t("plugin.settings.quickCapture.postProcessing.desc"))
+            .addToggle(toggle => toggle
+                .setValue(plugin.settings.quickCapture.postProcessingEnabled)
+                .onChange((value) => {
+                    plugin.settings.quickCapture.postProcessingEnabled = value;
+                    void plugin.saveSettings();
+                }));
+    }
+
+    private renderDataBoundarySection(parentEl: HTMLElement): void {
+        const plugin = this.plugin;
+        parentEl.createEl("h2", { text: this.t("plugin.settings.dataBoundary.title") });
+        parentEl.createEl("p", {
+            text: this.t("plugin.settings.dataBoundary.desc"),
+            cls: "pa-settings-section-desc-sm",
+        });
+
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.dataBoundary.excludedFolders.name"))
+            .setDesc(this.t("plugin.settings.dataBoundary.excludedFolders.desc"))
+            .addText(text => text
+                .setPlaceholder("private, archive/sensitive")
+                .setValue(plugin.settings.dataBoundary.excludedFolders.join(", "))
+                .onChange((value) => {
+                    plugin.settings.dataBoundary.excludedFolders = normalizeTrimmedStringArray(value.split(","), []);
+                    this.debouncedSave();
+                }));
+
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.dataBoundary.excludedTags.name"))
+            .setDesc(this.t("plugin.settings.dataBoundary.excludedTags.desc"))
+            .addText(text => text
+                .setPlaceholder("private, sensitive")
+                .setValue(plugin.settings.dataBoundary.excludedTags.join(", "))
+                .onChange((value) => {
+                    plugin.settings.dataBoundary.excludedTags = normalizeTrimmedStringArray(value.split(","), [])
+                        .map((tag) => tag.replace(/^#/, ""))
+                        .filter(Boolean);
+                    this.debouncedSave();
+                }));
+
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.dataBoundary.generatedNotes.name"))
+            .setDesc(this.t("plugin.settings.dataBoundary.generatedNotes.desc"))
+            .addDropdown(dropdown => dropdown
+                .addOption("exclude-generated", this.t("plugin.settings.dataBoundary.generatedNotes.exclude"))
+                .addOption("include-generated", this.t("plugin.settings.dataBoundary.generatedNotes.include"))
+                .setValue(plugin.settings.dataBoundary.generatedNotePolicy)
+                .onChange((value) => {
+                    plugin.settings.dataBoundary.generatedNotePolicy = normalizeDataBoundaryGeneratedNotePolicy(value);
+                    void plugin.saveSettings();
+                }));
+
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.dataBoundary.providerDisclosure.name"))
+            .setDesc(this.t("plugin.settings.dataBoundary.providerDisclosure.desc"));
+
+        parentEl.createEl("h3", { text: this.t("plugin.settings.retrievalHabit.title") });
+        parentEl.createEl("p", {
+            text: this.t("plugin.settings.retrievalHabit.desc"),
+            cls: "pa-settings-section-desc-sm",
+        });
+
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.retrievalHabit.enabled.name"))
+            .setDesc(this.t("plugin.settings.retrievalHabit.enabled.desc"))
+            .addToggle(toggle => toggle
+                .setValue(plugin.settings.retrievalHabitProfile.enabled)
+                .onChange(async (value) => {
+                    if (value && !plugin.settings.retrievalHabitProfile.enabled) {
+                        const confirmed = await confirmUserAction(this.app, {
+                            title: this.t("plugin.settings.retrievalHabit.enableConfirm.title"),
+                            message: this.t("plugin.settings.retrievalHabit.enableConfirm.message"),
+                            confirmText: this.t("plugin.settings.retrievalHabit.enableConfirm.confirm"),
+                        });
+                        if (!confirmed) {
+                            toggle.setValue(false);
+                            return;
+                        }
+                    }
+                    plugin.settings.retrievalHabitProfile.enabled = value;
+                    await plugin.saveSettings();
+                }));
+
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.retrievalHabit.clear.name"))
+            .setDesc(this.t("plugin.settings.retrievalHabit.clear.desc"))
+            .addButton(button => button
+                .setButtonText(this.t("plugin.settings.retrievalHabit.clear.button"))
+                .setDisabled(plugin.settings.retrievalHabitProfile.state.aggregates.length === 0)
+                .onClick(async () => {
+                    const confirmed = await confirmUserAction(this.app, {
+                        title: this.t("plugin.settings.retrievalHabit.clearConfirm.title"),
+                        message: this.t("plugin.settings.retrievalHabit.clearConfirm.message"),
+                        confirmText: this.t("plugin.settings.retrievalHabit.clearConfirm.confirm"),
+                    });
+                    if (!confirmed) return;
+                    plugin.settings.retrievalHabitProfile.state = {
+                        aggregates: [],
+                        clearedAt: new Date().toISOString(),
+                    };
+                    await plugin.saveSettings();
+                    new Notice(this.t("plugin.settings.retrievalHabit.clear.done"), 4000);
+                    this.display();
+                }));
+
+        parentEl.createEl("h3", { text: this.t("plugin.settings.dataBoundary.cleanup.title") });
+        parentEl.createEl("p", {
+            text: this.t("plugin.settings.dataBoundary.cleanup.desc"),
+            cls: "pa-settings-section-desc-sm",
+        });
+        for (const group of DATA_CLEANUP_GROUPS) {
+            new Setting(parentEl)
+                .setName(this.t(DATA_BOUNDARY_CLEANUP_LABEL_KEYS[group]))
+                .setDesc(this.t(DATA_BOUNDARY_CLEANUP_DESC_KEYS[group]))
+                .addButton(button => button
+                    .setButtonText(this.t("plugin.settings.dataBoundary.cleanup.unavailable"))
+                    .setDisabled(true));
+        }
     }
 
     private renderGraphSection(parentEl: HTMLElement): void {
@@ -1852,56 +2369,131 @@ export class SettingTab extends PluginSettingTab {
     }
 
     private renderSkillsSection(parentEl: HTMLElement): void {
-        const plugin = this.plugin;
         parentEl.createEl('h3', { text: this.t("plugin.settings.skills.title") });
         parentEl.createEl("p", {
             text: this.t("plugin.settings.skills.desc"),
             cls: "pa-settings-section-desc-sm",
         });
 
-        new Setting(parentEl)
-            .setName(this.t("plugin.settings.skills.enabled.name"))
-            .setDesc(this.t("plugin.settings.skills.enabled.desc"))
-            .addToggle((toggle) => {
-                toggle
-                    .setValue(plugin.settings.skillContextEnabled)
-                    .onChange(async (value) => {
-                        plugin.settings.skillContextEnabled = value;
-                        await plugin.saveSettings();
-                        this.rebuildSkillToggles();
-                    });
-            });
-
-        this.skillTogglesContainer = parentEl.createDiv();
+        this.skillTogglesContainer = parentEl.createDiv({ cls: "pa-settings-skill-picker-host" });
         this.rebuildSkillToggles();
     }
 
-    private rebuildSkillToggles(): void {
+    private rebuildSkillToggles(options: {
+        open?: boolean;
+        focusSkillId?: string;
+        focusMaster?: boolean;
+    } = {}): void {
         if (!this.skillTogglesContainer) return;
         this.skillTogglesContainer.empty();
         const plugin = this.plugin;
         const container = this.skillTogglesContainer;
         const enabledSkillIds = new Set(plugin.settings.enabledSkillIds);
+        const enabledCount = BUNDLED_SKILL_CATALOG.filter((skill) => enabledSkillIds.has(skill.id)).length;
+        const summary = this.formatSkillSelectionSummary(plugin.settings.skillContextEnabled, enabledCount);
+
+        const pickerSetting = new Setting(container)
+            .setName(this.t("plugin.settings.skills.selector.name"))
+            .setDesc(this.t("plugin.settings.skills.selector.desc", { summary }));
+        const componentEl = pickerSetting.controlEl.createDiv({ cls: "pa-settings-skill-picker" });
+        const details = componentEl.createEl("details", {
+            cls: "pa-settings-skill-picker__details",
+        });
+        details.open = options.open ?? false;
+        const summaryEl = details.createEl("summary", {
+            cls: "pa-settings-skill-picker__summary",
+        });
+        summaryEl.createSpan({
+            cls: "pa-settings-skill-picker__summary-text",
+            text: summary,
+        });
+
+        const panel = details.createDiv({ cls: "pa-settings-skill-picker__panel" });
+        const masterLabel = panel.createEl("label", {
+            cls: [
+                "pa-settings-skill-picker__option",
+                "pa-settings-skill-picker__option--master",
+            ],
+        });
+        const masterInput = masterLabel.createEl("input", {
+            attr: {
+                type: "checkbox",
+            },
+        }) as HTMLInputElement;
+        let focusTarget: HTMLInputElement | null = options.focusMaster ? masterInput : null;
+        masterInput.dataset.paSkillToggle = "master";
+        masterInput.checked = plugin.settings.skillContextEnabled;
+        masterInput.addEventListener("change", async () => {
+            const wasOpen = details.open;
+            plugin.settings.skillContextEnabled = masterInput.checked;
+            await plugin.saveSettings();
+            this.rebuildSkillToggles({ open: wasOpen, focusMaster: true });
+        });
+        masterLabel.createSpan({
+            cls: "pa-settings-skill-picker__option-text",
+            text: this.t("plugin.settings.skills.enabled.name"),
+        });
+
+        const list = panel.createDiv({ cls: "pa-settings-skill-picker__list" });
         for (const skill of BUNDLED_SKILL_CATALOG) {
-            new Setting(container)
-                .setName(skill.label)
-                .setDesc(skill.description)
-                .addToggle((toggle) => {
-                    toggle
-                        .setValue(plugin.settings.skillContextEnabled && enabledSkillIds.has(skill.id))
-                        .setDisabled(!plugin.settings.skillContextEnabled)
-                        .onChange(async (value) => {
-                            const nextEnabledSkillIds = new Set(plugin.settings.enabledSkillIds);
-                            if (value) {
-                                nextEnabledSkillIds.add(skill.id);
-                            } else {
-                                nextEnabledSkillIds.delete(skill.id);
-                            }
-                            plugin.settings.enabledSkillIds = normalizeEnabledSkillIds([...nextEnabledSkillIds]);
-                            await plugin.saveSettings();
-                        });
-                });
+            const label = list.createEl("label", {
+                cls: "pa-settings-skill-picker__option",
+            });
+            if (!plugin.settings.skillContextEnabled) {
+                label.addClass("is-disabled");
+            }
+            const input = label.createEl("input", {
+                attr: {
+                    type: "checkbox",
+                },
+            }) as HTMLInputElement;
+            input.dataset.paSkillToggle = skill.id;
+            if (options.focusSkillId === skill.id) {
+                focusTarget = input;
+            }
+            input.checked = enabledSkillIds.has(skill.id);
+            input.disabled = !plugin.settings.skillContextEnabled;
+            input.addEventListener("change", async () => {
+                const wasOpen = details.open;
+                const nextEnabledSkillIds = new Set(plugin.settings.enabledSkillIds);
+                if (input.checked) {
+                    nextEnabledSkillIds.add(skill.id);
+                } else {
+                    nextEnabledSkillIds.delete(skill.id);
+                }
+                plugin.settings.enabledSkillIds = normalizeEnabledSkillIds([...nextEnabledSkillIds]);
+                await plugin.saveSettings();
+                this.rebuildSkillToggles({ open: wasOpen, focusSkillId: skill.id });
+            });
+
+            const text = label.createSpan({ cls: "pa-settings-skill-picker__option-body" });
+            text.createSpan({
+                cls: "pa-settings-skill-picker__option-title",
+                text: skill.label,
+            });
+            text.createSpan({
+                cls: "pa-settings-skill-picker__option-desc",
+                text: skill.description,
+            });
         }
+        focusTarget?.focus();
+    }
+
+    private formatSkillSelectionSummary(enabled: boolean, enabledCount: number): string {
+        const total = BUNDLED_SKILL_CATALOG.length;
+        if (!enabled) {
+            return this.t("plugin.settings.skills.summary.off");
+        }
+        if (enabledCount === total) {
+            return this.t("plugin.settings.skills.summary.all");
+        }
+        if (enabledCount === 0) {
+            return this.t("plugin.settings.skills.summary.none");
+        }
+        return this.t("plugin.settings.skills.summary.some", {
+            count: enabledCount,
+            total,
+        });
     }
 
     private renderMemorySection(parentEl: HTMLElement): void {
@@ -1985,6 +2577,19 @@ export class SettingTab extends PluginSettingTab {
                                 toggle.setValue(false);
                                 return;
                             }
+                            plugin.settings.memoryExtractionConsent = {
+                                state: "confirmed",
+                                version: MEMORY_EXTRACTION_CONSENT_VERSION,
+                                confirmedAt: new Date().toISOString(),
+                            };
+                        }
+                        if (!value) {
+                            plugin.settings.memoryExtractionConsent = {
+                                state: "paused",
+                                version: MEMORY_EXTRACTION_CONSENT_VERSION,
+                                confirmedAt: plugin.settings.memoryExtractionConsent.confirmedAt,
+                            };
+                            plugin.settings.memoryExtractionIncludeVaultInsights = false;
                         }
                         plugin.settings.memoryExtractionEnabled = value;
                         await plugin.saveSettings();

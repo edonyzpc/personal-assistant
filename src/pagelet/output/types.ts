@@ -49,6 +49,12 @@ export interface GeneratedReviewNote {
     sources: string[];
     /** Token cost of generation. */
     tokenCost: { input: number; output: number };
+    /** Optional confirmation prompt required before writing this generated note. */
+    confirmationPrompt?: {
+        title: string;
+        message: string;
+        confirmText: string;
+    };
 }
 
 // ---------------------------------------------------------------------------

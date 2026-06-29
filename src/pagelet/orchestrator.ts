@@ -37,6 +37,7 @@ import { ScopeResolver } from "./scope/ScopeResolver";
 import {
     selectPageletScope,
     type PageletReviewRange,
+    type PageletScopeSkippedReason,
 } from "./scope";
 import { getPageletOverlayRoot } from "./overlay-root";
 import { ResearchManager } from "./research";
@@ -49,6 +50,19 @@ import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
 import { resolveRelatedMarkdownNote } from "./related-note";
 import type { PageletDetailPayload } from "./tab/types";
+import {
+    createContextPagerStateFromRetrievalOutcome,
+    quietRecallCandidateToBubbleNudge,
+    reviewQueueItemHasUserIntentOrDurableConsequence,
+    buildScopeRecapMarkdown,
+    toReplaySourceRef,
+    type ContextDropReason,
+    type PersistedSourceRef,
+    type QuietRecallBubbleNudge,
+    type QuietRecallCandidate,
+    type RetrievalHabitFeedbackKind,
+    type RetrievalOutcome,
+} from "../pa";
 
 // Re-export so existing `import { PageletHost } from "./orchestrator"` keeps working.
 export type { PageletHost } from "./PageletHost";
@@ -87,6 +101,12 @@ export class PageletOrchestrator {
     // ---- State ------------------------------------------------------------
     private idleTimer: PlatformTimeoutHandle | null = null;
     private activityDebounceTimer: PlatformTimeoutHandle | null = null;
+    private quietRecallNudgeCandidate: QuietRecallCandidate | null = null;
+    private quietRecallBubbleNudge: QuietRecallBubbleNudge | null = null;
+    private quietRecallNudgeRunId = 0;
+    private readonly quietRecallDismissedCandidateIds = new Set<string>();
+    private readonly quietRecallSnoozedCandidateIds = new Map<string, number>();
+    private foregroundRouteToken = 0;
     private destroyed = false;
 
     // ---- Constants --------------------------------------------------------
@@ -94,6 +114,8 @@ export class PageletOrchestrator {
     private static readonly IDLE_TIMEOUT_MS = 10 * 60 * 1000;
     /** 5 s debounce for note-activity detection (vault modify events). */
     private static readonly ACTIVITY_DEBOUNCE_MS = 5_000;
+    /** Local UI snooze for the same Quiet Recall Bubble candidate. */
+    private static readonly QUIET_RECALL_LATER_SNOOZE_MS = 24 * 60 * 60 * 1000;
 
     constructor(private readonly host: PageletHost) {
         const s = host.settings.pagelet;
@@ -154,6 +176,10 @@ export class PageletOrchestrator {
             onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
             onDiscoverConnections: () => { void this.discoverConnections(); },
             onPeriodicSummary: () => { void this.runPeriodicSummary(); },
+            getQuietRecallNudge: () => this.quietRecallBubbleNudge,
+            onQuietRecallView: (candidate) => { void this.handleQuietRecallBubbleView(candidate); },
+            onQuietRecallDismiss: (candidate) => { void this.handleQuietRecallBubbleDismiss(candidate); },
+            onQuietRecallLater: (candidate) => { void this.handleQuietRecallBubbleLater(candidate); },
         });
 
         // Delegate: periodic summary flow
@@ -231,6 +257,7 @@ export class PageletOrchestrator {
                 },
                 onSourceClick: (link) => this.handleSourceClick(link),
                 onSaveAsReviewNote: (findings) => { void this.saveFindingsAsReviewNote(findings); },
+                onReviewQueueItemDismiss: (id) => { void this.dismissReviewQueueItem(id); },
                 onRunReview: () => this.reviewCurrentNote({ preferPanel: true }),
                 onRunSelectedReview: () => this.reviewSelectedScope(),
                 onScopeRangeChange: (range) => {
@@ -345,6 +372,9 @@ export class PageletOrchestrator {
             cooldownMinutes: s.proactiveHintsCooldown,
             quietHours: s.proactiveHintsQuietHours,
         });
+        if (!this.canPrepareQuietRecallBubbleNudge()) {
+            this.clearQuietRecallBubbleNudge();
+        }
         if (this.petView) {
             this.petView.stateMachine.proactiveHintsEnabled = s.proactiveHints;
             this.petView.setCorner(s.petCorner);
@@ -368,6 +398,21 @@ export class PageletOrchestrator {
             },
             onPeriodicSummary: () => {
                 void this.runPeriodicSummary();
+            },
+            onMaintenanceReview: () => {
+                void this.runMaintenanceReview();
+            },
+            onWeeklyReview: () => {
+                void this.runWeeklyReview();
+            },
+            onQuietRecall: () => {
+                void this.runQuietRecall();
+            },
+            onGraphDiscovery: () => {
+                void this.runGraphDiscovery();
+            },
+            onScopeRecap: () => {
+                void this.runScopeRecap();
             },
             onToggleProactiveHints: () => this.toggleProactiveHints(),
             onShowBackgroundPreparationStatus: () => {
@@ -398,8 +443,158 @@ export class PageletOrchestrator {
         await this.analyzeCurrentNote(options);
     }
 
+    async runMaintenanceReview(): Promise<void> {
+        const routeToken = this.beginForegroundRoute("review", "review");
+        try {
+            const maintenanceReview = await this.host.runMaintenanceReview({ enqueueProposals: false });
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            const locale = getPageletUiLanguage();
+            const extra = this.withGlobalLedgerExtra(
+                this.withGlobalReviewQueueExtra({ maintenanceReview }),
+            );
+            const payload: PageletDetailPayload = {
+                title: pageletT("pagelet.tab.maintenance.title", locale),
+                content: [],
+                locale,
+                layoutType: "review",
+            };
+            const detailExtra = this.detailExtraForTab(extra);
+            if (detailExtra) payload.extra = detailExtra;
+            await Promise.resolve(this.host.openPageletDetailView(payload));
+        } catch (error) {
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Pagelet maintenance review failed", error);
+            new Notice(this.t("pagelet.panel.status.error"), 4000);
+        }
+    }
+
+    async runWeeklyReview(): Promise<void> {
+        const routeToken = this.beginForegroundRoute("review", "review");
+        try {
+            const weeklyReview = await this.host.runWeeklyReview();
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            const locale = getPageletUiLanguage();
+            const extra = this.withGlobalLedgerExtra(
+                this.withGlobalReviewQueueExtra({ weeklyReview }),
+            );
+            const payload: PageletDetailPayload = {
+                title: pageletT("pagelet.tab.weekly.title", locale),
+                content: [],
+                locale,
+                layoutType: "review",
+            };
+            const detailExtra = this.detailExtraForTab(extra);
+            if (detailExtra) payload.extra = detailExtra;
+            await Promise.resolve(this.host.openPageletDetailView(payload));
+        } catch (error) {
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Pagelet weekly review failed", error);
+            new Notice(this.t("pagelet.panel.status.error"), 4000);
+        }
+    }
+
+    async runQuietRecall(): Promise<void> {
+        const routeToken = this.beginForegroundRoute("current", "review");
+        try {
+            const quietRecall = await this.host.runQuietRecall();
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            const locale = getPageletUiLanguage();
+            const payload: PageletDetailPayload = {
+                title: pageletT("pagelet.tab.recall.title", locale),
+                content: [],
+                locale,
+                layoutType: "current",
+                extra: { quietRecall },
+            };
+            if (quietRecall.currentPath) payload.sourcePath = quietRecall.currentPath;
+            await Promise.resolve(this.host.openPageletDetailView(payload));
+        } catch (error) {
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Pagelet quiet recall failed", error);
+            new Notice(this.t("pagelet.panel.status.error"), 4000);
+        }
+    }
+
+    async runGraphDiscovery(): Promise<void> {
+        const routeToken = this.beginForegroundRoute("review", "connection");
+        try {
+            const graphDiscovery = await this.host.runGraphDiscovery({ enqueueItems: false });
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            const locale = getPageletUiLanguage();
+            const extra = this.withGlobalLedgerExtra(
+                this.withGlobalReviewQueueExtra({ graphDiscovery }),
+            );
+            const payload: PageletDetailPayload = {
+                title: pageletT("pagelet.tab.graphDiscovery.title", locale),
+                content: [],
+                locale,
+                layoutType: "review",
+            };
+            const detailExtra = this.detailExtraForTab(extra);
+            if (detailExtra) payload.extra = detailExtra;
+            await Promise.resolve(this.host.openPageletDetailView(payload));
+            if (graphDiscovery.totalCount === 0) {
+                new Notice(pageletT("pagelet.graphDiscovery.none", locale), 4000);
+            }
+        } catch (error) {
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Pagelet graph discovery failed", error);
+            new Notice(this.t("pagelet.panel.status.error"), 4000);
+        }
+    }
+
+    async runScopeRecap(): Promise<void> {
+        const routeToken = this.beginForegroundRoute("summary", "review");
+        try {
+            const recap = await this.host.runScopeRecap();
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            const markdown = buildScopeRecapMarkdown(recap, [recap.summary.id]);
+            const locale = getPageletUiLanguage();
+            const payload: PageletDetailPayload = {
+                title: pageletT("pagelet.tab.scopeRecap.title", locale),
+                content: [],
+                locale,
+                layoutType: "summary",
+                extra: { markdown },
+                sourcePath: recap.scope.paths?.[0],
+            };
+            await Promise.resolve(this.host.openPageletDetailView(payload));
+        } catch (error) {
+            if (!this.isCurrentForegroundRoute(routeToken)) return;
+            this.transitionPet("analysis-done");
+            this.petView?.flashError();
+            this.host.log("Pagelet scope recap failed", error);
+            new Notice(this.t("pagelet.panel.status.error"), 4000);
+        }
+    }
+
     private setPetTaskKind(taskKind: PetTaskKind): void {
         this.petView?.setTaskKind?.(taskKind);
+    }
+
+    private beginForegroundRoute(layout: "summary" | "discover" | "current" | "review", taskKind: PetTaskKind): number {
+        const routeToken = ++this.foregroundRouteToken;
+        this.currentPanelLayout = layout;
+        this.saveFlow.clearPending();
+        this.transitionPet("analysis-start", taskKind);
+        return routeToken;
+    }
+
+    private isCurrentForegroundRoute(routeToken: number): boolean {
+        return !this.destroyed && routeToken === this.foregroundRouteToken;
     }
 
     private transitionPet(event: "analysis-start" | "analysis-done" | "insights-ready", taskKind?: PetTaskKind): void {
@@ -439,8 +634,134 @@ export class PageletOrchestrator {
         this.panelView?.open(
             "review",
             this.sessionManager.defaultReviewPanelFindings(this.currentPanelLayout),
-            this.sessionManager.panelExtraForLayout("review"),
+            this.panelExtraForLayout("review"),
         );
+    }
+
+    private panelExtraForLayout(layoutType: PanelLayoutType): PanelOpenExtra | undefined {
+        return this.withReviewQueueExtra(
+            this.withContextPagerExtra(this.sessionManager.panelExtraForLayout(layoutType), layoutType),
+        );
+    }
+
+    private withContextPagerExtra(extra: PanelOpenExtra | undefined, layoutType: PanelLayoutType): PanelOpenExtra | undefined {
+        if (!this.host.settings.contextPager.enabled) return extra;
+        if (extra?.contextPager) return extra;
+        const outcome = this.contextPagerOutcomeForPanel(extra, layoutType);
+        if (!outcome) return extra;
+        return {
+            ...(extra ?? {}),
+            contextPager: createContextPagerStateFromRetrievalOutcome(outcome, {
+                runId: `pagelet-${layoutType}-${outcome.id}`,
+                skippedScopes: outcome.missingScopeHints ?? [],
+            }),
+        };
+    }
+
+    private contextPagerOutcomeForPanel(
+        extra: PanelOpenExtra | undefined,
+        layoutType: PanelLayoutType,
+    ): RetrievalOutcome | null {
+        const used = new Map<string, PersistedSourceRef>();
+        const skipped = new Map<string, RetrievalOutcome["skippedSources"][number]>();
+
+        const addUsedPath = (path: string, whyShown: string[]): void => {
+            const normalized = normalizePath(path);
+            if (!normalized || used.has(normalized)) return;
+            used.set(normalized, toReplaySourceRef({ path: normalized, whyShown }));
+        };
+        const addSkippedPath = (path: string, reason: ContextDropReason): void => {
+            const normalized = normalizePath(path);
+            if (!normalized || skipped.has(normalized)) return;
+            skipped.set(normalized, {
+                ...toReplaySourceRef({ path: normalized, whyShown: [reason] }),
+                skippedReason: reason,
+                boundaryReason: reason === "privacy excluded" ? "data_boundary" : undefined,
+            });
+        };
+
+        for (const candidate of extra?.scope?.candidates ?? []) {
+            if (candidate.included) {
+                addUsedPath(candidate.path, [
+                    pageletT(`pagelet.panel.scope.reason.${candidate.reason}`, getPageletUiLanguage()),
+                ]);
+            } else {
+                addSkippedPath(candidate.path, contextDropReasonForScopeSkip(candidate.skippedReason));
+            }
+        }
+
+        if (extra?.sourcePath) addUsedPath(extra.sourcePath, ["Current Pagelet source"]);
+        for (const connection of extra?.connections ?? []) {
+            addUsedPath(connection.fromNote, ["Connection discovery source"]);
+            addUsedPath(connection.toNote, ["Related source"]);
+        }
+        if (used.size === 0 && layoutType === "current") {
+            const activePath = this.host.app.workspace.getActiveFile?.()?.path;
+            if (activePath) addUsedPath(activePath, ["Current note"]);
+        }
+        if (used.size === 0 && skipped.size === 0) return null;
+
+        const skippedSources = [...skipped.values()];
+        return {
+            id: `${Date.now().toString(36)}-${layoutType}`,
+            status: used.size > 0
+                ? skippedSources.length > 0 ? "partial_evidence" : "evidence_found"
+                : "blocked_by_privacy",
+            taskKind: `pagelet_${layoutType}`,
+            scope: extra?.scope?.range ?? layoutType,
+            sources: [...used.values()],
+            skippedSources,
+            missingScopeHints: extra?.scope && extra.scope.skippedCount > 0
+                ? [`${extra.scope.skippedCount} notes skipped by current scope`]
+                : undefined,
+            whyShown: ["Pagelet selected visible sources for this review"],
+            dataBoundarySnapshotId: "current-policy",
+            lanes: ["source", "activity"],
+        };
+    }
+
+    private withReviewQueueExtra(extra: PanelOpenExtra | undefined): PanelOpenExtra | undefined {
+        const scopePaths = this.reviewQueueScopePaths(extra);
+        if (scopePaths.length === 0) return extra;
+        const items = this.host.listReviewQueueItems({
+            scopePaths,
+            statuses: ["suggested", "accepted", "edited", "snoozed", "failed"],
+        }).filter(reviewQueueItemHasUserIntentOrDurableConsequence);
+        if (items.length === 0) return extra;
+        return {
+            ...(extra ?? {}),
+            reviewQueue: {
+                items,
+                totalCount: items.length,
+            },
+        };
+    }
+
+    private reviewQueueScopePaths(extra: PanelOpenExtra | undefined): string[] {
+        const paths = new Set<string>();
+        for (const candidate of extra?.scope?.candidates ?? []) {
+            if (candidate.included) paths.add(normalizePath(candidate.path));
+        }
+        if (extra?.sourcePath) paths.add(normalizePath(extra.sourcePath));
+        const activePath = this.host.app.workspace.getActiveFile?.()?.path;
+        if (activePath) paths.add(normalizePath(activePath));
+        return [...paths];
+    }
+
+    private async dismissReviewQueueItem(id: string): Promise<void> {
+        const result = await this.host.dismissReviewQueueItem(id);
+        if (!result.ok) {
+            this.host.log("Failed to dismiss Review Queue item", result.reason);
+            return;
+        }
+        if (this.panelView?.isOpen) {
+            const layoutType = this.panelView.currentLayoutType ?? this.currentPanelLayout ?? "review";
+            this.panelView.open(
+                layoutType,
+                this.panelView.currentVisibleFindings,
+                this.panelExtraForLayout(layoutType),
+            );
+        }
     }
 
     // ======================================================================
@@ -478,6 +799,7 @@ export class PageletOrchestrator {
                 getLocale: getPageletUiLanguage,
                 callbacks: {
                     onToggleBubble: () => this.handlePetClick(),
+                    onQuickCaptureOpen: () => this.host.openQuickCapture(),
                 },
             });
             // Sync proactive-hints flag into state machine
@@ -502,6 +824,7 @@ export class PageletOrchestrator {
     private async analyzeCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
+        ++this.foregroundRouteToken;
 
         await this.analyzeFiles([activeFile], {
             preferPanel: options.preferPanel,
@@ -514,7 +837,9 @@ export class PageletOrchestrator {
     private async discoverConnections(): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
+        const expectedActivePath = activeFile.path;
         if (!this.sessionManager.beginForegroundReviewRun()) return;
+        const routeToken = ++this.foregroundRouteToken;
 
         let petFinished = false;
         const finishPet = (): void => {
@@ -544,7 +869,9 @@ export class PageletOrchestrator {
             if (relatedNotes.length === 0) {
                 const locale = getPageletUiLanguage();
                 finishPet();
+                if (!this.activePathStillMatches(expectedActivePath, routeToken)) return;
                 const isMemoryReady = await this.host.isMemoryReadyForPageletDiscovery();
+                if (!this.activePathStillMatches(expectedActivePath, routeToken)) return;
                 const titleKey = isMemoryReady
                     ? "pagelet.discover.noResults.title"
                     : "pagelet.discover.vssNotReady.title";
@@ -567,6 +894,7 @@ export class PageletOrchestrator {
             } catch (error) {
                 if (explicitConnections.length === 0) throw error;
                 finishPet();
+                if (!this.activePathStillMatches(expectedActivePath, routeToken)) return;
                 this.host.log("Discovery AI analysis failed; showing explicit wikilinks", error);
                 this.openDiscoveryResult(activeFile.path, explicitConnections);
                 return;
@@ -580,6 +908,7 @@ export class PageletOrchestrator {
                 return;
             }
 
+            if (!this.activePathStillMatches(expectedActivePath, routeToken)) return;
             this.openDiscoveryResult(activeFile.path, connections, result?.gaps ?? []);
         } catch (error) {
             finishPet();
@@ -589,6 +918,11 @@ export class PageletOrchestrator {
         } finally {
             this.sessionManager.finishForegroundReviewRun();
         }
+    }
+
+    private activePathStillMatches(expectedPath: string, routeToken: number): boolean {
+        if (!this.isCurrentForegroundRoute(routeToken)) return false;
+        return this.host.app.workspace.getActiveFile?.()?.path === expectedPath;
     }
 
     private openDiscoveryResult(
@@ -709,7 +1043,7 @@ export class PageletOrchestrator {
                 this.panelView?.open(
                     options.panelLayout,
                     result.findings,
-                    this.sessionManager.panelExtraForLayout(options.panelLayout),
+                    this.panelExtraForLayout(options.panelLayout),
                 );
                 return;
             }
@@ -761,6 +1095,7 @@ export class PageletOrchestrator {
             this.activityDebounceTimer = null;
             this.petView?.stateMachine.transition("note-activity");
             this.backgroundPrep.noteActivity();
+            void this.prepareQuietRecallBubbleNudge();
             this.resetIdleTimer();
         }, PageletOrchestrator.ACTIVITY_DEBOUNCE_MS);
     }
@@ -857,6 +1192,98 @@ export class PageletOrchestrator {
     // Bubble / Panel callbacks
     // ======================================================================
 
+    private canPrepareQuietRecallBubbleNudge(): boolean {
+        return this.host.settings.pagelet.enabled
+            && this.host.settings.pagelet.petVisible
+            && this.host.settings.pagelet.proactiveHints
+            && this.host.settings.quietRecall.enabled
+            && this.host.settings.quietRecall.bubbleNudgesEnabled;
+    }
+
+    private clearQuietRecallBubbleNudge(): void {
+        this.quietRecallNudgeCandidate = null;
+        this.quietRecallBubbleNudge = null;
+    }
+
+    private isQuietRecallCandidateSuppressed(candidateId: string, now = Date.now()): boolean {
+        if (this.quietRecallDismissedCandidateIds.has(candidateId)) return true;
+        const snoozedUntil = this.quietRecallSnoozedCandidateIds.get(candidateId);
+        if (snoozedUntil === undefined) return false;
+        if (snoozedUntil > now) return true;
+        this.quietRecallSnoozedCandidateIds.delete(candidateId);
+        return false;
+    }
+
+    private async prepareQuietRecallBubbleNudge(): Promise<void> {
+        if (!this.canPrepareQuietRecallBubbleNudge()) {
+            this.clearQuietRecallBubbleNudge();
+            return;
+        }
+        const runId = ++this.quietRecallNudgeRunId;
+        try {
+            const recall = await this.host.runQuietRecall();
+            if (runId !== this.quietRecallNudgeRunId || this.destroyed) return;
+            const now = Date.now();
+            const candidate = recall.candidates.find((item) => !this.isQuietRecallCandidateSuppressed(item.id, now));
+            if (!candidate) {
+                this.clearQuietRecallBubbleNudge();
+                return;
+            }
+            this.quietRecallNudgeCandidate = candidate;
+            this.quietRecallBubbleNudge = quietRecallCandidateToBubbleNudge(candidate);
+            if (this.proactiveHints.onInsightsReady()) {
+                this.petView?.stateMachine.forceState("nudge");
+            }
+        } catch (error) {
+            if (runId === this.quietRecallNudgeRunId) {
+                this.clearQuietRecallBubbleNudge();
+            }
+            this.host.log("Quiet Recall Bubble nudge skipped", error);
+        }
+    }
+
+    private quietRecallCandidateForNudge(nudge: QuietRecallBubbleNudge): QuietRecallCandidate | null {
+        const candidate = this.quietRecallNudgeCandidate;
+        return candidate && candidate.id === nudge.candidateId ? candidate : null;
+    }
+
+    private recordQuietRecallFeedback(
+        candidate: QuietRecallCandidate | null,
+        feedback: RetrievalHabitFeedbackKind,
+    ): void {
+        if (!candidate) return;
+        void this.host.recordQuietRecallFeedback(candidate, feedback).catch((error) => {
+            this.host.log("Quiet Recall feedback skipped", error);
+        });
+    }
+
+    private async handleQuietRecallBubbleView(nudge: QuietRecallBubbleNudge): Promise<void> {
+        const candidate = this.quietRecallCandidateForNudge(nudge);
+        this.clearQuietRecallBubbleNudge();
+        this.bubbleView?.close();
+        this.recordQuietRecallFeedback(candidate, "view");
+        await this.runQuietRecall();
+    }
+
+    private handleQuietRecallBubbleDismiss(nudge: QuietRecallBubbleNudge): void {
+        const candidate = this.quietRecallCandidateForNudge(nudge);
+        this.quietRecallDismissedCandidateIds.add(nudge.candidateId);
+        this.clearQuietRecallBubbleNudge();
+        this.bubbleView?.close();
+        this.recordQuietRecallFeedback(candidate, "dismiss");
+    }
+
+    private handleQuietRecallBubbleLater(nudge: QuietRecallBubbleNudge): void {
+        const candidate = this.quietRecallCandidateForNudge(nudge);
+        this.quietRecallSnoozedCandidateIds.set(
+            nudge.candidateId,
+            Date.now() + PageletOrchestrator.QUIET_RECALL_LATER_SNOOZE_MS,
+        );
+        this.clearQuietRecallBubbleNudge();
+        this.bubbleView?.close();
+        this.recordQuietRecallFeedback(candidate, "later");
+    }
+
     /** Expand Bubble -> Panel. */
     private handleExpandPanel(type?: string): void {
         this.bubbleView?.close();
@@ -892,7 +1319,7 @@ export class PageletOrchestrator {
         this.panelView?.open(
             layoutType,
             panelFindings,
-            usePreparedFindings ? undefined : this.sessionManager.panelExtraForLayout(layoutType),
+            usePreparedFindings ? undefined : this.panelExtraForLayout(layoutType),
         );
     }
 
@@ -907,6 +1334,9 @@ export class PageletOrchestrator {
         const sourcePath = layoutType === "summary"
             ? summarySaveNote?.targetPath
             : panelExtra?.sourcePath;
+        const tabExtra = this.withGlobalLedgerExtra(
+            this.withGlobalReviewQueueExtra(panelExtra ?? this.panelExtraForLayout(layoutType)),
+        );
         this.preservePanelSessionOnClose = true;
         try {
             this.panelView?.close();
@@ -916,8 +1346,16 @@ export class PageletOrchestrator {
         const locale = getPageletUiLanguage();
         const title = pageletT("pagelet.tab.title", locale);
         const hasPanelContent = panelFindings.length > 0
-            || Boolean(panelExtra?.connections && panelExtra.connections.length > 0)
-            || Boolean(panelExtra?.markdown);
+            || Boolean(tabExtra?.connections && tabExtra.connections.length > 0)
+            || Boolean(tabExtra?.markdown)
+            || Boolean(tabExtra?.reviewQueue && tabExtra.reviewQueue.items.length > 0)
+            || Boolean(tabExtra?.contextPager)
+            || Boolean(tabExtra?.savedInsights && tabExtra.savedInsights.items.length > 0)
+            || Boolean(tabExtra?.memoryGovernance && tabExtra.memoryGovernance.records.length > 0)
+            || Boolean(tabExtra?.maintenanceReview)
+            || Boolean(tabExtra?.graphDiscovery)
+            || Boolean(tabExtra?.weeklyReview)
+            || Boolean(tabExtra?.quietRecall);
         let findings = panelFindings;
         if (!hasPanelContent) {
             const currentFindings = this.sessionManager.currentAnalysisFindings();
@@ -925,7 +1363,7 @@ export class PageletOrchestrator {
                 ? currentFindings
                 : this.sessionManager.toPanelFindings(this.preloadCache.getFindings());
         }
-        const detailExtra = this.detailExtraForTab(panelExtra ?? this.sessionManager.panelExtraForLayout(layoutType));
+        const detailExtra = this.detailExtraForTab(tabExtra);
         const payload: PageletDetailPayload = {
             title,
             content: findings,
@@ -947,6 +1385,41 @@ export class PageletOrchestrator {
         });
     }
 
+    private withGlobalReviewQueueExtra(extra: PanelOpenExtra | undefined): PanelOpenExtra | undefined {
+        const items = this.host.listReviewQueueItems({
+            statuses: ["suggested", "accepted", "edited", "snoozed", "applied", "dismissed", "expired", "failed", "undone"],
+        });
+        if (items.length === 0) return extra;
+        return {
+            ...(extra ?? {}),
+            reviewQueue: {
+                items,
+                totalCount: items.length,
+            },
+        };
+    }
+
+    private withGlobalLedgerExtra(extra: PanelOpenExtra | undefined): PanelOpenExtra | undefined {
+        const savedInsights = this.host.listSavedInsights();
+        const memories = this.host.listConfirmedMemories();
+        if (savedInsights.length === 0 && memories.length === 0) return extra;
+        return {
+            ...(extra ?? {}),
+            ...(savedInsights.length > 0 ? {
+                savedInsights: {
+                    items: savedInsights,
+                    totalCount: savedInsights.length,
+                },
+            } : {}),
+            ...(memories.length > 0 ? {
+                memoryGovernance: {
+                    records: memories,
+                    totalCount: memories.length,
+                },
+            } : {}),
+        };
+    }
+
     private detailExtraForTab(extra: PanelOpenExtra | undefined): PageletDetailPayload["extra"] | undefined {
         if (!extra) return undefined;
         const detailExtra: PageletDetailPayload["extra"] = {};
@@ -956,7 +1429,31 @@ export class PageletOrchestrator {
         if (typeof extra.markdown === "string") {
             detailExtra.markdown = extra.markdown;
         }
-        return detailExtra.connections || detailExtra.markdown !== undefined
+        if (extra.reviewQueue) {
+            detailExtra.reviewQueue = extra.reviewQueue;
+        }
+        if (extra.contextPager) {
+            detailExtra.contextPager = extra.contextPager;
+        }
+        if (extra.savedInsights) {
+            detailExtra.savedInsights = extra.savedInsights;
+        }
+        if (extra.memoryGovernance) {
+            detailExtra.memoryGovernance = extra.memoryGovernance;
+        }
+        if (extra.maintenanceReview) {
+            detailExtra.maintenanceReview = extra.maintenanceReview;
+        }
+        if (extra.graphDiscovery) {
+            detailExtra.graphDiscovery = extra.graphDiscovery;
+        }
+        if (extra.weeklyReview) {
+            detailExtra.weeklyReview = extra.weeklyReview;
+        }
+        if (extra.quietRecall) {
+            detailExtra.quietRecall = extra.quietRecall;
+        }
+        return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.reviewQueue || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.weeklyReview || detailExtra.quietRecall
             ? detailExtra
             : undefined;
     }
@@ -969,7 +1466,7 @@ export class PageletOrchestrator {
     private openDiscoveryPanel(findings: PanelFinding[], extra: PanelOpenExtra = {}): void {
         this.currentPanelLayout = "discover";
         this.saveFlow.clearPending();
-        this.panelView?.open("discover", findings, extra);
+        this.panelView?.open("discover", findings, this.withContextPagerExtra(extra, "discover"));
     }
 
     private clearPanelSession(): void {
@@ -1020,6 +1517,27 @@ function noteTitleFromPath(path: string): string {
     const normalized = path.trim();
     if (!normalized) return "";
     return normalized.split("/").pop()?.replace(/\.md$/i, "") ?? normalized;
+}
+
+function contextDropReasonForScopeSkip(reason: PageletScopeSkippedReason | undefined): ContextDropReason {
+    switch (reason) {
+        case "excluded-folder":
+        case "excluded-frontmatter":
+        case "excluded-tag":
+        case "excluded-pattern":
+        case "hidden-folder":
+            return "privacy excluded";
+        case "overflow":
+            return "budget limit";
+        case "unchecked":
+            return "user excluded";
+        case "outside-range":
+            return "scope mismatch";
+        case "missing-file":
+        case "empty-note":
+        default:
+            return "not relevant";
+    }
 }
 
 function mergeDiscoveryConnections(

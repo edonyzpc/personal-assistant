@@ -16,6 +16,7 @@ import type {
     BubbleQuickAccessCallbacks,
 } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
+import type { QuietRecallBubbleNudge } from "../../pa";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -25,6 +26,29 @@ import { pageletT, type PageletLocale } from "../../locales/pagelet";
 const MAX_FINDINGS = 3;
 /** Maximum findings shown in the nudge bubble */
 const MAX_NUDGE_FINDINGS = 2;
+
+export interface WeeklyReviewNudgeOptions {
+    pageletEnabled: boolean;
+    preparedReviewEnabled: boolean;
+    proactiveHints: boolean;
+    quietHoursActive?: boolean;
+    count: number;
+}
+
+export interface QuietRecallNudgeOptions {
+    pageletEnabled: boolean;
+    quietRecallEnabled: boolean;
+    bubbleNudgesEnabled: boolean;
+    proactiveHints: boolean;
+    quietHoursActive?: boolean;
+    candidate: QuietRecallBubbleNudge | null;
+}
+
+export interface QuietRecallNudgeCallbacks {
+    onView(candidate: QuietRecallBubbleNudge): void;
+    onDismiss(candidate: QuietRecallBubbleNudge): void;
+    onLater(candidate: QuietRecallBubbleNudge): void;
+}
 
 function buildPageletQuickAccessActions(
     callbacks: BubbleQuickAccessCallbacks,
@@ -51,6 +75,25 @@ function buildPageletQuickAccessActions(
             icon: "calendar",
             callback: callbacks.onPeriodicSummary,
         },
+    ];
+}
+
+function laterAction(callbacks: BubbleCallbacks, locale: PageletLocale): BubbleAction {
+    return {
+        label: pageletT("pagelet.bubble.later", locale),
+        variant: "compact",
+        callback: () => callbacks.onDismiss(),
+    };
+}
+
+function appendQuickAccessActions(
+    actions: BubbleAction[],
+    callbacks: BubbleQuickAccessCallbacks,
+    locale: PageletLocale,
+): BubbleAction[] {
+    return [
+        ...actions,
+        ...buildPageletQuickAccessActions(callbacks, locale, { primaryReview: false }),
     ];
 }
 
@@ -133,12 +176,14 @@ export function buildNudgeContent(
             },
             {
                 label: pageletT("pagelet.bubble.later", locale),
+                variant: "compact",
                 callback: () => callbacks.onDismiss(),
             },
         ]
         : [
             {
                 label: pageletT("pagelet.bubble.later", locale),
+                variant: "compact",
                 primary: true,
                 callback: () => callbacks.onDismiss(),
             },
@@ -148,6 +193,111 @@ export function buildNudgeContent(
         type: "nudge",
         findings: findings.slice(0, MAX_NUDGE_FINDINGS),
         actions,
+    };
+}
+
+/** Build a lightweight reminder for items the user already kept for later. */
+export function buildReviewQueueNudgeContent(
+    count: number,
+    callbacks: BubbleQuickAccessCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "nudge",
+        findings: [{
+            text: pageletT("pagelet.bubble.reviewQueue.count", locale, { count }),
+        }],
+        actions: appendQuickAccessActions([
+            {
+                label: pageletT("pagelet.bubble.reviewQueue.open", locale),
+                description: pageletT("pagelet.bubble.reviewQueue.openDescription", locale),
+                icon: "bookmark-check",
+                primary: true,
+                callback: () => callbacks.onExpandPanel("review"),
+            },
+            laterAction(callbacks, locale),
+        ], callbacks, locale),
+    };
+}
+
+/** Build a quiet Weekly Review hint. Full review sections stay in Panel/Tab. */
+export function buildWeeklyReviewNudgeContent(
+    options: WeeklyReviewNudgeOptions,
+    callbacks: BubbleQuickAccessCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent | null {
+    if (!options.pageletEnabled || !options.preparedReviewEnabled || !options.proactiveHints || options.quietHoursActive) {
+        return null;
+    }
+    return {
+        type: "nudge",
+        findings: [{
+            text: pageletT("pagelet.bubble.weeklyReview.ready", locale, { count: options.count }),
+        }],
+        actions: appendQuickAccessActions([
+            {
+                label: pageletT("pagelet.bubble.weeklyReview.open", locale),
+                description: pageletT("pagelet.bubble.weeklyReview.openDescription", locale),
+                icon: "calendar-check",
+                primary: true,
+                callback: () => {
+                    if (callbacks.onWeeklyReview) callbacks.onWeeklyReview();
+                    else callbacks.onExpandPanel("review");
+                },
+            },
+            laterAction(callbacks, locale),
+        ], callbacks, locale),
+    };
+}
+
+/** Build a restrained Quiet Recall nudge. Full evidence/actions stay in the Quiet Recall Tab. */
+export function buildQuietRecallNudgeContent(
+    options: QuietRecallNudgeOptions,
+    callbacks: QuietRecallNudgeCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent | null {
+    const candidate = options.candidate;
+    if (
+        !candidate
+        || !options.pageletEnabled
+        || !options.quietRecallEnabled
+        || !options.bubbleNudgesEnabled
+        || !options.proactiveHints
+        || options.quietHoursActive
+    ) {
+        return null;
+    }
+
+    const textKey = candidate.relation === "current"
+        ? "pagelet.bubble.quietRecall.current"
+        : candidate.relation === "related"
+            ? "pagelet.bubble.quietRecall.related"
+            : "pagelet.bubble.quietRecall.far";
+
+    return {
+        type: "nudge",
+        findings: [{
+            text: pageletT(textKey, locale),
+        }],
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.quietRecall.view", locale),
+                description: pageletT("pagelet.bubble.quietRecall.viewDescription", locale),
+                icon: "panel-right-open",
+                primary: true,
+                callback: () => callbacks.onView(candidate),
+            },
+            {
+                label: pageletT("pagelet.bubble.quietRecall.dismiss", locale),
+                variant: "compact",
+                callback: () => callbacks.onDismiss(candidate),
+            },
+            {
+                label: pageletT("pagelet.bubble.later", locale),
+                variant: "compact",
+                callback: () => callbacks.onLater(candidate),
+            },
+        ],
     };
 }
 
