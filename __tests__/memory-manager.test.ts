@@ -922,6 +922,45 @@ describe('MemoryManager command decisions', () => {
             }
         }
     });
+
+    it('allows a new preparation after a previous one threw an error', async () => {
+        const originalDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
+        Object.defineProperty(globalThis, 'document', {
+            configurable: true,
+            value: {
+                createDocumentFragment: jest.fn(() => createMockDomElement()),
+            },
+        });
+        const plugin = createPlugin(createPlan({
+            reason: 'first-use',
+            action: 'rebuild',
+            requiresApproval: true,
+        }));
+        let callCount = 0;
+        plugin.vss.rebuildLocalIndex.mockImplementation(async () => {
+            callCount += 1;
+            if (callCount === 1) throw new Error('transient embedding failure');
+            return createOperationSummary({ updated: 5 });
+        });
+        const manager = createManager(plugin);
+
+        try {
+            const firstResult = await manager.prepareMemory(createPlan({ reason: 'first-use', action: 'rebuild' }));
+            expect(firstResult.ok).toBe(false);
+            expect(manager.getActivePreparationStatus()).toBeNull();
+
+            const secondResult = await manager.prepareMemory(createPlan({ reason: 'changed-notes', action: 'rebuild' }));
+            expect(secondResult.ok).toBe(true);
+            expect(plugin.vss.rebuildLocalIndex).toHaveBeenCalledTimes(2);
+            expect(manager.getActivePreparationStatus()).toBeNull();
+        } finally {
+            if (originalDocument) {
+                Object.defineProperty(globalThis, 'document', originalDocument);
+            } else {
+                delete (globalThis as { document?: Document }).document;
+            }
+        }
+    });
 });
 
 describe('MemoryApprovalModal', () => {
