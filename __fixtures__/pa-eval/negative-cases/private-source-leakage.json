@@ -1,0 +1,20 @@
+{
+  "id": "private-source-leakage",
+  "title": "Private source leakage should fail",
+  "category": "retrieval",
+  "actual": {
+    "sourceRefs": [
+      {
+        "path": "private/secret.md"
+      }
+    ]
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "must_not_include_source",
+        "path": "private/secret.md"
+      }
+    ]
+  }
+}

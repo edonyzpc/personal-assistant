@@ -48,4 +48,7 @@ export interface AiServiceHost {
 
     /** Return Obsidian resolved links for graph-aware tools. */
     getResolvedLinks(): Record<string, Record<string, number>> | undefined;
+
+    /** Whether a vault path may be used as Memory evidence under current privacy settings. */
+    isDataBoundaryAllowedPath?(path: string): boolean;
 }

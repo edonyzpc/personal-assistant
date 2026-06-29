@@ -1,0 +1,49 @@
+{
+  "id": "review-queue-pass",
+  "title": "Review Queue canonical types and shared fields",
+  "category": "review_queue",
+  "actual": {
+    "queueItems": [
+      {
+        "id": "rq-1",
+        "type": "evidence_insight",
+        "scope": {
+          "kind": "current_note",
+          "paths": ["projects/pa-agent/source.md"]
+        },
+        "sourceRefs": [
+          {
+            "path": "projects/pa-agent/source.md",
+            "contentHash": "content-1",
+            "excerptHash": "excerpt-1",
+            "whyShown": ["direct evidence"],
+            "evidenceStrength": "strong"
+          }
+        ],
+        "originSurface": "pagelet",
+        "priority": "normal",
+        "status": "suggested",
+        "createdAt": "2026-06-28T00:00:00.000Z",
+        "updatedAt": "2026-06-28T00:00:00.000Z",
+        "whyShown": ["Needs review"],
+        "dataBoundarySnapshotId": "boundary-1"
+      }
+    ]
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "queue_type_allowed",
+        "itemType": "evidence_insight"
+      },
+      {
+        "type": "queue_type_rejected",
+        "itemType": "scope_state"
+      },
+      {
+        "type": "queue_required_fields_present",
+        "itemId": "rq-1"
+      }
+    ]
+  }
+}

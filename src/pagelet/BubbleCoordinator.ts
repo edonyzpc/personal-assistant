@@ -15,12 +15,19 @@ import { getPageletUiLanguage } from "../locales/pagelet";
 
 import type { BubbleContent, BubbleFinding, BubbleQuickAccessCallbacks } from "./bubble/types";
 import type { BubbleView } from "./bubble/BubbleView";
-import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildQuickReviewContent, buildWritingAssistContent } from "./bubble/BubbleContent";
+import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildQuickReviewContent, buildQuietRecallNudgeContent, buildReviewQueueNudgeContent, buildWritingAssistContent } from "./bubble/BubbleContent";
 import type { PreloadCache } from "./preload/PreloadCache";
 import type { PreloadFinding } from "./preload/types";
 import type { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetView } from "./pet/PetView";
 import type { PageletHost } from "./PageletHost";
+import { isReviewQueueBubbleReminderEligible, type QuietRecallBubbleNudge, type ReviewQueueStatus } from "../pa";
+
+const REVIEW_QUEUE_BUBBLE_REMINDER_STATUSES = [
+    "accepted",
+    "edited",
+    "snoozed",
+] as const satisfies readonly ReviewQueueStatus[];
 
 // ---------------------------------------------------------------------------
 // Callbacks the coordinator fires back at the orchestrator
@@ -39,6 +46,14 @@ export interface BubbleCoordinatorCallbacks {
     onDiscoverConnections(): void;
     /** Generate a periodic summary. */
     onPeriodicSummary(): void;
+    /** Return the current local Quiet Recall Bubble nudge candidate, if one is pending. */
+    getQuietRecallNudge(): QuietRecallBubbleNudge | null;
+    /** Open the existing Quiet Recall detail surface from the Bubble nudge. */
+    onQuietRecallView(candidate: QuietRecallBubbleNudge): void;
+    /** Suppress this Quiet Recall nudge candidate for the local session. */
+    onQuietRecallDismiss(candidate: QuietRecallBubbleNudge): void;
+    /** Snooze this Quiet Recall nudge candidate without saving or enqueuing it. */
+    onQuietRecallLater(candidate: QuietRecallBubbleNudge): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -93,7 +108,10 @@ export class BubbleCoordinator {
         return {
             onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
             onSourceClick: (link) => this.callbacks.onSourceClick(link),
-            onDismiss: () => this.callbacks.onDismiss(),
+            onDismiss: () => {
+                bubbleView.close();
+                this.callbacks.onDismiss();
+            },
             onReviewCurrentNote: () => {
                 bubbleView.close();
                 this.callbacks.onReviewCurrentNote();
@@ -146,10 +164,62 @@ export class BubbleCoordinator {
             }));
             content = buildQuickReviewContent(findings, quickAccessCallbacks, locale);
         } else {
-            content = buildEmptyContent(quickAccessCallbacks, locale);
+            const queueCount = this.keptReviewQueueItemCount();
+            content = queueCount > 0
+                ? buildReviewQueueNudgeContent(queueCount, quickAccessCallbacks, locale)
+                : buildEmptyContent(quickAccessCallbacks, locale);
         }
 
         bubbleView.show(content, anchorEl);
+    }
+
+    private buildReviewQueueAwareNudge(
+        cachedFindings: PreloadFinding[],
+        callbacks: ReturnType<BubbleCoordinator["buildQuickAccessCallbacks"]>,
+        locale: ReturnType<typeof getPageletUiLanguage>,
+    ): BubbleContent {
+        if (cachedFindings.length > 0) {
+            const findings: BubbleFinding[] = cachedFindings.map((f) => ({
+                text: f.text,
+                sourceLink: f.sourceFile,
+                sourceTitle: f.sourceTitle,
+            }));
+            return buildNudgeContent(findings, callbacks, locale);
+        }
+        const queueCount = this.keptReviewQueueItemCount();
+        if (queueCount > 0) {
+            return buildReviewQueueNudgeContent(queueCount, callbacks, locale);
+        }
+
+        const quietRecallContent = buildQuietRecallNudgeContent({
+            pageletEnabled: this.host.settings.pagelet.enabled,
+            quietRecallEnabled: this.host.settings.quietRecall.enabled,
+            bubbleNudgesEnabled: this.host.settings.quietRecall.bubbleNudgesEnabled,
+            proactiveHints: this.host.settings.pagelet.proactiveHints,
+            quietHoursActive: this.proactiveHints.quietHoursActive,
+            candidate: this.callbacks.getQuietRecallNudge(),
+        }, {
+            onView: (candidate) => {
+                callbacks.onDismiss();
+                this.callbacks.onQuietRecallView(candidate);
+            },
+            onDismiss: (candidate) => {
+                callbacks.onDismiss();
+                this.callbacks.onQuietRecallDismiss(candidate);
+            },
+            onLater: (candidate) => {
+                callbacks.onDismiss();
+                this.callbacks.onQuietRecallLater(candidate);
+            },
+        }, locale);
+
+        return quietRecallContent ?? buildEmptyContent(callbacks, locale);
+    }
+
+    private keptReviewQueueItemCount(): number {
+        return this.host.listReviewQueueItems({
+            statuses: REVIEW_QUEUE_BUBBLE_REMINDER_STATUSES,
+        }).filter(isReviewQueueBubbleReminderEligible).length;
     }
 
     /**
@@ -163,9 +233,10 @@ export class BubbleCoordinator {
         if (!bubbleView || !anchorEl) return;
 
         const locale = getPageletUiLanguage();
+        const quickAccessCallbacks = this.buildQuickAccessCallbacks(bubbleView);
         const cachedFindings = this.preloadCache.getFindings();
         if (cachedFindings.length === 0) {
-            const content = buildEmptyContent(this.buildQuickAccessCallbacks(bubbleView), locale);
+            const content = this.buildReviewQueueAwareNudge(cachedFindings, quickAccessCallbacks, locale);
             bubbleView.show(content, anchorEl);
             return;
         }
@@ -175,11 +246,7 @@ export class BubbleCoordinator {
             sourceTitle: f.sourceTitle,
         }));
 
-        const content = buildNudgeContent(findings, {
-            onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
-            onSourceClick: (link) => this.callbacks.onSourceClick(link),
-            onDismiss: () => this.callbacks.onDismiss(),
-        }, locale);
+        const content = buildNudgeContent(findings, quickAccessCallbacks, locale);
 
         bubbleView.show(content, anchorEl);
     }
@@ -208,7 +275,10 @@ export class BubbleCoordinator {
             const content = buildWritingAssistContent(findings, {
                 onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
                 onSourceClick: (link) => this.callbacks.onSourceClick(link),
-                onDismiss: () => this.callbacks.onDismiss(),
+                onDismiss: () => {
+                    bubbleView.close();
+                    this.callbacks.onDismiss();
+                },
             }, locale);
             bubbleView.show(content, anchorEl);
         } else {

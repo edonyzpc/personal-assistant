@@ -116,7 +116,7 @@ export class AnalysisSessionManager {
             new Notice(this.t("pagelet.notice.alreadyReviewing"), 4000);
             return false;
         }
-        if (!this.reserveForegroundReviewCall()) return false;
+        if (!this.reserveForegroundCall()) return false;
         this.foregroundRunInProgress = true;
         return true;
     }
@@ -320,7 +320,7 @@ export class AnalysisSessionManager {
         return pageletT(key, getPageletUiLanguage(), params);
     }
 
-    private reserveForegroundReviewCall(): boolean {
+    reserveForegroundCall(): boolean {
         const s = this.host.settings.pagelet;
         this.foregroundBudget.updateLimits(s.foregroundPerHourCap, s.foregroundPerDayCap);
         if (!this.foregroundBudget.canRun()) {

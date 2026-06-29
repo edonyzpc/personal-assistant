@@ -1,0 +1,50 @@
+{
+  "id": "context-pager-pass",
+  "title": "Context Pager counts match persisted trace",
+  "category": "context_pager",
+  "actual": {
+    "contextTrace": {
+      "runId": "context-run-1",
+      "usedSourceRefs": [
+        {
+          "path": "projects/pa-agent/source.md",
+          "excerptHash": "excerpt-1"
+        }
+      ],
+      "skippedSourceRefs": [
+        {
+          "path": "private/secret.md",
+          "excerptHash": "secret-hash",
+          "reason": "privacy excluded"
+        }
+      ],
+      "usedMemoryRefs": [
+        {
+          "id": "memory/profile.md",
+          "contentHash": "memory-hash"
+        }
+      ],
+      "droppedMemoryRefs": [],
+      "skippedScopeCount": 1,
+      "usedSourceCount": 1,
+      "skippedSourceCount": 1,
+      "usedMemoryCount": 1,
+      "droppedMemoryCount": 0
+    }
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "context_counts_match",
+        "usedSources": 1,
+        "skippedSources": 1,
+        "usedMemories": 1,
+        "droppedMemories": 0,
+        "skippedScopes": 1
+      },
+      {
+        "type": "context_trace_has_no_private_text"
+      }
+    ]
+  }
+}

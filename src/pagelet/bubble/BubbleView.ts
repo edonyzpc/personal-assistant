@@ -459,6 +459,9 @@ export class BubbleView {
                 if (action.primary) {
                     btn.classList.add("primary");
                 }
+                if (action.variant) {
+                    btn.classList.add(`pa-pagelet-bubble-btn--${action.variant}`);
+                }
                 if (action.description) {
                     btn.setAttribute("title", `${action.label}: ${action.description}`);
                 }

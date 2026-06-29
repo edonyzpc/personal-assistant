@@ -8,7 +8,7 @@
 | Internal codename | Review Assistant |
 | Document type | Pagelet Product Design |
 | Status | Core beta implementation complete — full blueprint gaps tracked as future work |
-| Last revised | 2026-06-11 |
+| Last revised | 2026-06-29 |
 | Primary surface | Fixed-corner floating Pet entry + progressive disclosure (Bubble / Panel / Tab) |
 | Runtime relationship | Pagelet shares PA's unified Agent Runtime via RunKindAdapter (D024), extended with `runKind="background"` background preparation (D032) |
 | Write boundary | Review note creation and periodic summary save both run through the **Write Action Framework**; Pagelet creates independent review notes only |
@@ -16,6 +16,7 @@
 | Historical reference | [review-assistant-product-design.md](./archive/review-assistant-product-design.md) |
 | Decisions record | See [review-assistant-decisions.md](./archive/review-assistant-decisions.md) (D001-D031 active; D032+ proposed in this document) |
 | Technical design | See [pagelet-sdd-guide.md](./pagelet-sdd-guide.md); [review-assistant-sdd.md](./archive/review-assistant-sdd.md) is preserved as historical implementation context |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This document defines the current **Pagelet** product and UX contract. Historical Review Assistant/Pagelet drafts are preserved only as reference. Sections marked as future work describe the intended direction, not current shipped behavior.
 
@@ -31,12 +32,19 @@ The core promise is preserved from historical design. Pagelet expands the delive
 
 Pagelet helps users revisit recent notes, discover connections, receive instant review insights, and optionally turn findings into review notes.
 
+Pagelet's deeper value is that the user's own thoughts can return at the right
+moment without creating another thing to manage. A Pagelet hint is allowed to be
+read and ignored. A review session is allowed to end without saved output.
+Durable output or vault changes happen only when the user chooses them.
+
 The promise stays intentionally narrow:
 
 - It reviews recent notes, not the whole vault by default. **[PRESERVED]**
 - It produces evidence-backed findings, not free-form inspiration. **[PRESERVED]**
 - The user decides when to view, when to go deeper, and when to produce output. **[CHANGED — replaces "the user selects what matters, not the model"]**
 - It creates review notes only after explicit confirmation. **[PRESERVED]**
+- It treats read-only findings as ignorable by default; only durable saves,
+  Memory updates, or vault changes require confirmation. **[NEW]**
 - The Pet is a memorable, always-present entry and context-aware companion, not the product's core value. **[CHANGED — from "mascot is a memorable entry"]**
 - Background review preparation ensures insights are ready the instant the user asks — a performance optimization, not a behavior change. **[NEW]**
 
@@ -126,6 +134,9 @@ Non-target for Pagelet:
 Preserved from historical design:
 
 - **Review cost is high.** Manually scanning yesterday, the last three days, or the last week is tedious.
+- **Review itself can become burden.** If Pagelet turns every AI finding into a
+  pending item, it recreates the knowledge-management work it is supposed to
+  reduce.
 - **Ideas and follow-ups get buried.** Notes contain "look this up later", "maybe turn this into...", TODOs, partial insights, unresolved questions that never become next steps.
 - **Blank-prompt friction is real.** A structured review starts from recent notes rather than a blank chat box.
 - **Insight-to-note handoff is weak.** A good AI answer is not enough if the user must manually copy, edit, cite, and organize it.
@@ -156,17 +167,23 @@ Pagelet does NOT try to solve (preserved from historical design):
    - English: "The quiet reviewer, instant response. Background review preparation ensures insights are ready when the user asks. The reviewer stays quiet until called — background preparation is a performance optimization, not a behavior change."
    - Proposed decision: **D032**
 
-3. **Evidence over fluency.** Every suggestion must point back to source evidence. Suggestions without sources should be discarded, downgraded, or shown as "needs review". **[PRESERVED]**
+3. **Evidence over fluency.** Every suggestion must point back to source evidence. Suggestions without sources should be discarded, downgraded, or shown as "needs confirmation". **[PRESERVED]**
 
 4. **Output is optional, and when chosen, minimal-friction.** For quick review and writing assistance, no output artifact is created. For periodic summary, one-click generation replaces the collect-then-write pipeline. For knowledge discovery, the Panel presents findings the user may optionally save. **[CHANGED — supersedes historical design "Collect, then write." Proposed decision: D035]**
 
-5. **Fewer better findings.** Pagelet may output only a few findings or none. It should not pad all categories for completeness. **[PRESERVED]**
+5. **Review should feel like recognition, not administration.** A user can read
+   a Bubble, close it, and owe Pagelet nothing. Findings do not become queue
+   items merely because PA generated them. Confirmation is for durable
+   consequence: saving an insight, writing a review note, creating or updating
+   Memory, or applying maintenance. **[NEW]**
 
-6. **Vault-local and transparent.** Settings, pending review drafts, and feedback state are scoped to the current vault. Included and skipped notes should be inspectable. **[PRESERVED]**
+6. **Fewer better findings.** Pagelet may output only a few findings or none. It should not pad all categories for completeness. **[PRESERVED]**
 
-7. **Narrow write boundary.** Pagelet creates only independent review notes after explicit confirmation, under the **Write Action Framework** contract (D025, D030). It must not modify source notes, append to daily notes, change tasks, or update frontmatter. Broader action orchestration belongs to the future **Operations Agent mode**. **[PRESERVED]**
+7. **Vault-local and transparent.** Settings, pending review drafts, and feedback state are scoped to the current vault. Included and skipped notes should be inspectable. **[PRESERVED]**
 
-8. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. The Pet never pops up a modal, plays a sound, or demands attention. **[PRESERVED]**
+8. **Narrow write boundary.** Pagelet creates only independent review notes after explicit confirmation, under the **Write Action Framework** contract (D025, D030). It must not modify source notes, append to daily notes, change tasks, or update frontmatter. Broader action orchestration belongs to the future **Operations Agent mode**. **[PRESERVED]**
+
+9. **Quiet and non-intrusive.** Pagelet's voice and presence prioritise calm. No urgency, no interruption, no claim of being indispensable. The Pet never pops up a modal, plays a sound, or demands attention. **[PRESERVED]**
 
 ---
 

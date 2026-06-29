@@ -35,21 +35,8 @@ export interface PeriodicSummaryInput {
 // Generator output
 // ---------------------------------------------------------------------------
 
-/** Generated review note content (before write). */
-export interface GeneratedReviewNote {
-    /** Complete markdown content (frontmatter + body). */
-    markdown: string;
-    /** Suggested file name (e.g., "pagelet-weekly-review-2026-06-10.md"). */
-    fileName: string;
-    /** Target folder path (e.g., ".pagelet"). */
-    targetFolder: string;
-    /** Full target path (folder/fileName). */
-    targetPath: string;
-    /** Wikilink-style source references (e.g., ["[[note-1]]", "[[note-2]]"]). */
-    sources: string[];
-    /** Token cost of generation. */
-    tokenCost: { input: number; output: number };
-}
+/** Re-exported from contracts for backward compatibility. */
+export type { GeneratedReviewNote } from "../../pa/contracts/generated-review-note";
 
 // ---------------------------------------------------------------------------
 // AI callback

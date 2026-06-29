@@ -9,6 +9,7 @@ import type {
     TurnEndStatus,
 } from "./chat-types";
 import { PA_AGENT_CANONICAL_TURN_SCHEMA_VERSION } from "./chat-types";
+import { createContextPagerStateFromChatContextUsed } from "../pa";
 
 export interface CreatePaAgentPersistedTurnInput {
     runId: string;
@@ -49,7 +50,7 @@ export function readChatHistoryTurnMetadata(
 }
 
 export function extractCanonicalTurnMetadata(
-    turn: Pick<PaAgentPersistedTurn, "messages"> & Partial<Pick<PaAgentPersistedTurn, "sourceRecords" | "contextUsed">>,
+    turn: Pick<PaAgentPersistedTurn, "messages"> & Partial<Pick<PaAgentPersistedTurn, "runId" | "turnId" | "sourceRecords" | "contextUsed">>,
 ): ChatTurnMemoryMetadata {
     const sourceRecords = dedupeSourceRecords([
         ...(turn.sourceRecords ?? []).map(cloneSourceRecord),
@@ -70,6 +71,14 @@ export function extractCanonicalTurnMetadata(
         allowedMemorySourcePaths,
         ...(contextUsed.length > 0 ? { contextUsed } : {}),
         ...(sourceRecords.length > 0 ? { sourceRecords } : {}),
+        ...(contextUsed.length > 0
+            ? {
+                contextTrace: createContextPagerStateFromChatContextUsed(
+                    turn.runId ?? turn.turnId ?? "chat-turn",
+                    contextUsed,
+                ).persistedTrace,
+            }
+            : {}),
     };
 }
 
@@ -146,6 +155,23 @@ function cloneTurnMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMeta
         allowedMemorySourcePaths: [...metadata.allowedMemorySourcePaths],
         ...(metadata.contextUsed ? { contextUsed: metadata.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(metadata.sourceRecords ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) } : {}),
+        ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
+    };
+}
+
+function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {
+    return {
+        ...trace,
+        usedSourceRefs: trace.usedSourceRefs.map((ref) => ({
+            ...ref,
+            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+        })),
+        skippedSourceRefs: trace.skippedSourceRefs.map((ref) => ({
+            ...ref,
+            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+        })),
+        usedMemoryRefs: trace.usedMemoryRefs.map((ref) => ({ ...ref })),
+        droppedMemoryRefs: trace.droppedMemoryRefs.map((ref) => ({ ...ref })),
     };
 }
 

@@ -1,6 +1,6 @@
 # Pagelet Maintenance Review Product Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -14,6 +14,7 @@ Updated: 2026-06-28
 | Related retrieval substrate | [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [Pagelet async result plan](./pagelet-async-result-plan.md), [Pagelet user guide](./pagelet-user-guide.md) |
 | Related write boundary | [Write Action Framework SDD](./write-action-framework-sdd.md), [Write action handoff](./write-action-design-handoff.md), [Operations Agent boundary](./operations-agent-plan.md), [Operations Agent mode SDD](./operations-agent-mode-sdd.md) |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This spec defines how Pagelet should grow from a quiet review surface into a
 global maintenance review surface for an Obsidian vault.
@@ -43,6 +44,10 @@ Global Maintenance Review answers:
 - Which notes should be renamed, moved, archived, linked, merged, or updated?
 - Which proposals are ready to apply, which need review, and which should be ignored?
 - What did PA change recently, and how can I undo or recover it?
+
+It should not answer "what new cleanup homework did PA create for me this
+week?" Maintenance Review exists to reduce vault upkeep burden, not to add a
+second operational inbox.
 
 Scope-bound execution answers:
 
@@ -138,16 +143,16 @@ The product should move from review-first to scoped autonomy:
 | Stage | Experience | Purpose |
 | --- | --- | --- |
 | V1 Review-first | PA generates proposals; user reviews and applies selected changes | Build trust and collect preference signals |
-| V2 Policy-assisted | PA asks for scope-level authorization after repeated accepted plans | Reduce repeated confirmation |
+| V2 Policy-assisted | PA asks for scope-level authorization after repeated confirmed plans | Reduce repeated confirmation |
 | V3 Execute-first with digest | PA applies high-confidence allowed actions inside authorized scopes and reports them | Become a real assistant |
 | V4 Exception-only | User mainly reviews conflicts, low-confidence proposals, or meaning-changing edits | Long-term knowledge steward |
 
 Rule:
 
-> Autonomy grows from repeated accepted plans.
+> Autonomy grows from repeated confirmed plans.
 
 PA should not begin with broad autonomy. It should earn autonomy when the user
-repeatedly accepts similar proposals with low edit and undo rates.
+repeatedly confirms similar proposals with low edit and undo rates.
 
 Current boundary:
 
@@ -180,7 +185,8 @@ MVP trigger model:
 
 - Manual scan is the default.
 - Weekly automatic scan is opt-in.
-- Weekly scan prepares a review queue. It does not auto-apply changes.
+- Weekly scan prepares a compact overview and only creates queue state for
+  user-kept or durable proposals. It does not auto-apply changes.
 - Execute-first behavior appears only after scope-level authorization.
 
 Preferred user-facing language:
@@ -195,6 +201,23 @@ Avoid:
 - `Auto organize my vault`
 - `AI clean up automatically`
 - wording that implies silent source-note modification
+
+### 2.6 No Maintenance Debt By Default
+
+Maintenance proposals are not todos. A weak signal should not become a pending
+item just because PA detected it.
+
+Product rules:
+
+- Show category overviews before proposal cards.
+- Generate note-level proposal cards only inside an intentional scope.
+- Let users ignore a category without creating queue debt.
+- Use `Keep`, `Later`, or `Apply selected` to create durable queue/action state.
+- Let expired or low-confidence candidates disappear.
+- Reserve badges, counts, and unresolved states for user-kept proposals or
+  applied actions that need follow-up.
+
+This keeps Maintenance Review from becoming an always-growing chore list.
 
 ## 3. Pagelet Information Architecture
 
@@ -234,7 +257,7 @@ Global Maintenance Review
   Note cards
     - grouped proposals
     - diffs/previews
-    - accept/edit/dismiss/snooze
+    - keep/edit/dismiss/snooze
   Apply selected
   Activity / undo
 ```
@@ -247,7 +270,7 @@ Maintenance Review
 Inbox cleanup
 12 notes ready
 High confidence: 8
-Needs review: 4
+Needs confirmation: 4
 
 Better titles
 7 notes with weak titles
@@ -312,7 +335,7 @@ Queue states:
 | State | Meaning |
 | --- | --- |
 | `suggested` | PA generated the proposal |
-| `accepted` | user accepted but not necessarily applied |
+| `accepted` | internal status for a user-kept or confirmed item that has not necessarily been applied |
 | `edited` | user changed the proposal |
 | `applied` | change executed successfully |
 | `dismissed` | user rejected the proposal |
@@ -417,7 +440,7 @@ Recommended flow:
 
 ```text
 Manual scan
--> user accepts/edits/dismisses proposal batches
+-> user keeps/edits/dismisses proposal batches
 -> PA learns scope/action preferences
 -> PA detects high acceptance + low edit + low undo pattern
 -> PA asks for scope-level authorization
@@ -429,7 +452,7 @@ Autonomy upgrade prompt example:
 
 ```text
 PA has prepared Inbox cleanup 4 times.
-You accepted 31 of 35 rename/move/link suggestions and undid none.
+You confirmed 31 of 35 rename/move/link suggestions and undid none.
 
 Allow PA to handle similar Inbox cleanup automatically and show a weekly digest?
 ```
@@ -449,7 +472,7 @@ The overview should answer:
 
 - how many proposals exist
 - which categories matter now
-- what is high-confidence vs needs review
+- what is high-confidence vs needs confirmation
 - when the scan last ran
 - whether weekly scan is enabled
 - whether any previous action can be undone
@@ -608,7 +631,7 @@ Status: this document.
 
 ### Phase 5: Scoped Autonomy
 
-- Learn repeated accepted plans.
+- Learn repeated confirmed plans.
 - Prompt scope-level autonomy upgrades.
 - Execute high-confidence allowed actions inside authorized scopes.
 - Show digest and exception review.
@@ -647,6 +670,6 @@ The intended product shape is:
 - manual scan by default
 - weekly prepared review by opt-in
 - action log and undo for every write
-- autonomy earned from repeated accepted plans
+- autonomy earned from repeated confirmed plans
 
 This gives PA "hands" while preserving the user's ownership of the vault.

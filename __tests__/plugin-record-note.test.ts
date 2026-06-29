@@ -154,6 +154,12 @@ jest.mock('../src/settings', () => ({
         if (!Number.isFinite(numericValue)) return 1;
         return Math.min(Math.max(Math.floor(numericValue), 1), 4);
     },
+    isMemoryExtractionConsentConfirmed: (consent: unknown) => (
+        typeof consent === 'object'
+        && consent !== null
+        && (consent as { state?: unknown }).state === 'confirmed'
+        && (consent as { version?: unknown }).version === 1
+    ),
 }));
 jest.mock('../src/local-graph', () => ({ LocalGraph: class { } }));
 jest.mock('../src/utils', () => ({
@@ -587,6 +593,7 @@ describe('AI Insights command and viewer', () => {
         plugin.settings = {
             memoryEnabled: true,
             memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
             showAdvancedMemoryControls: false,
         };
         plugin.getAISetupIssue = jest.fn(() => null);
@@ -606,6 +613,7 @@ describe('AI Insights command and viewer', () => {
         plugin.settings = {
             memoryEnabled: true,
             memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
             showAdvancedMemoryControls: false,
         };
         plugin.getAISetupIssue = jest.fn(() => 'Choose your AI provider');
@@ -618,8 +626,9 @@ describe('AI Insights command and viewer', () => {
     });
 
     it.each([
-        { memoryEnabled: false, memoryExtractionEnabled: true },
-        { memoryEnabled: true, memoryExtractionEnabled: false },
+        { memoryEnabled: false, memoryExtractionEnabled: true, memoryExtractionConsent: { state: 'confirmed', version: 1 } },
+        { memoryEnabled: true, memoryExtractionEnabled: false, memoryExtractionConsent: { state: 'confirmed', version: 1 } },
+        { memoryEnabled: true, memoryExtractionEnabled: true, memoryExtractionConsent: { state: 'unconfirmed', version: 1 } },
     ])('hides show-ai-insights when memory gates are disabled: %j', (settings) => {
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.settings = {
@@ -639,6 +648,12 @@ describe('AI Insights command and viewer', () => {
         mockOpenedModals.length = 0;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.app = {};
+        plugin.settings = {
+            memoryEnabled: true,
+            memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
+        };
+        plugin.getAISetupIssue = jest.fn(() => null);
         plugin.memoryExtractionScheduler = null;
 
         plugin.showAiInsights();
@@ -657,6 +672,12 @@ describe('AI Insights command and viewer', () => {
         const app = {} as App;
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
         plugin.app = app;
+        plugin.settings = {
+            memoryEnabled: true,
+            memoryExtractionEnabled: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
+        };
+        plugin.getAISetupIssue = jest.fn(() => null);
         plugin.getMemoryExtractionPromptContext = jest.fn(() => ({
             userProfile: '# Prompt Profile',
             vaultInsights: '# Prompt Summary',
@@ -699,7 +720,10 @@ describe('Vault Insights onboarding notice', () => {
         mockNoticeMessages.length = 0;
         const { storage, restore } = installMockWindowLocalStorage();
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        plugin.settings = { memoryExtractionIncludeVaultInsights: true };
+        plugin.settings = {
+            memoryExtractionIncludeVaultInsights: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
+        };
         plugin.log = jest.fn();
 
         try {
@@ -717,7 +741,10 @@ describe('Vault Insights onboarding notice', () => {
         mockNoticeMessages.length = 0;
         const { storage, restore } = installMockWindowLocalStorage();
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        plugin.settings = { memoryExtractionIncludeVaultInsights: true };
+        plugin.settings = {
+            memoryExtractionIncludeVaultInsights: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
+        };
         plugin.log = jest.fn();
 
         try {
@@ -737,7 +764,30 @@ describe('Vault Insights onboarding notice', () => {
             [VAULT_INSIGHTS_NOTICE_KEY]: '1',
         });
         const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
-        plugin.settings = { memoryExtractionIncludeVaultInsights: true };
+        plugin.settings = {
+            memoryExtractionIncludeVaultInsights: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
+        };
+        plugin.log = jest.fn();
+
+        try {
+            plugin.surfaceVaultInsightsInjectionNotice();
+
+            expect(mockNoticeMessages).toEqual([]);
+            expect(storage.setItem).not.toHaveBeenCalled();
+        } finally {
+            restore();
+        }
+    });
+
+    it('does not fire before Memory Extraction first-use confirmation', () => {
+        mockNoticeMessages.length = 0;
+        const { storage, restore } = installMockWindowLocalStorage();
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            memoryExtractionIncludeVaultInsights: true,
+            memoryExtractionConsent: { state: 'unconfirmed', version: 1 },
+        };
         plugin.log = jest.fn();
 
         try {
@@ -768,6 +818,7 @@ describe('Vault Insights onboarding notice', () => {
             memoryExtractionEnabled: true,
             memoryExtractionIncludeVaultInsights: true,
             memoryExtractionNoticeDismissed: true,
+            memoryExtractionConsent: { state: 'confirmed', version: 1 },
         };
         plugin.chatHistoryManager = {
             findConversation: jest.fn(),

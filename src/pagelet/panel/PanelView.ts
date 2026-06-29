@@ -301,6 +301,15 @@ export class PanelView {
         if (layoutType === "review" && this.currentExtra?.scope) {
             body.appendChild(this.renderScopeControls(this.currentExtra.scope));
         }
+        if (this.currentExtra?.contextPager) {
+            body.appendChild(this.renderContextPagerSection(this.currentExtra.contextPager));
+        }
+        if ((layoutType === "review" || layoutType === "current") && this.currentExtra?.reviewQueue?.items.length) {
+            body.appendChild(this.renderReviewQueueSection(this.currentExtra.reviewQueue.items));
+        }
+        if ((layoutType === "review" || layoutType === "current") && this.currentExtra?.quietRecall) {
+            body.appendChild(this.renderQuietRecallSection(this.currentExtra.quietRecall));
+        }
 
         const contentEl = createHtmlElement("div");
         contentEl.className = "pa-pagelet-panel-content-region";
@@ -574,6 +583,217 @@ export class PanelView {
         return chip;
     }
 
+    private renderContextPagerSection(contextPager: NonNullable<PanelOpenExtra["contextPager"]>): HTMLElement {
+        const details = createHtmlElement("details");
+        details.className = "pa-pagelet-panel-context-pager";
+
+        const skipped = contextPager.summary.skippedSourceCount
+            + contextPager.summary.droppedMemoryCount
+            + contextPager.summary.skippedScopeCount;
+        const summary = createHtmlElement("summary");
+        summary.className = "pa-pagelet-panel-context-pager-summary";
+        summary.textContent = pageletT("pagelet.panel.contextPager.summary", this.getLocale(), {
+            sources: contextPager.summary.usedSourceCount,
+            memories: contextPager.summary.usedMemoryCount,
+            skipped,
+        });
+        details.appendChild(summary);
+
+        const body = createHtmlElement("div");
+        body.className = "pa-pagelet-panel-context-pager-body";
+        if (contextPager.usedSources.length > 0) {
+            body.appendChild(this.renderContextPagerList(
+                pageletT("pagelet.panel.contextPager.usedSources", this.getLocale()),
+                contextPager.usedSources.map((item) => item.label ?? item.path),
+            ));
+        }
+        if (contextPager.usedMemories.length > 0) {
+            body.appendChild(this.renderContextPagerList(
+                pageletT("pagelet.panel.contextPager.usedMemories", this.getLocale()),
+                contextPager.usedMemories.map((item) => item.label ?? item.id),
+            ));
+        }
+        if (contextPager.skippedSources.length > 0) {
+            body.appendChild(this.renderContextPagerList(
+                pageletT("pagelet.panel.contextPager.skippedSources", this.getLocale()),
+                contextPager.skippedSources.map((item) =>
+                    `${item.label ?? item.path} · ${item.reason ?? pageletT("pagelet.panel.contextPager.reason.notUsed", this.getLocale())}`),
+            ));
+        }
+        if (contextPager.droppedMemories.length > 0) {
+            body.appendChild(this.renderContextPagerList(
+                pageletT("pagelet.panel.contextPager.droppedMemories", this.getLocale()),
+                contextPager.droppedMemories.map((item) =>
+                    `${item.label ?? item.id} · ${item.reason ?? pageletT("pagelet.panel.contextPager.reason.notUsed", this.getLocale())}`),
+            ));
+        }
+        if (contextPager.summary.skippedScopeCount > 0) {
+            body.appendChild(this.renderContextPagerList(
+                pageletT("pagelet.panel.contextPager.skippedScopes", this.getLocale()),
+                [pageletT("pagelet.panel.contextPager.skippedScopeCount", this.getLocale(), {
+                    count: contextPager.summary.skippedScopeCount,
+                })],
+            ));
+        }
+        details.appendChild(body);
+        return details;
+    }
+
+    private renderContextPagerList(label: string, items: string[]): HTMLElement {
+        const group = createHtmlElement("div");
+        group.className = "pa-pagelet-panel-context-pager-group";
+        const title = createHtmlElement("div");
+        title.className = "pa-pagelet-panel-context-pager-group-title";
+        title.textContent = label;
+        group.appendChild(title);
+        const list = createHtmlElement("ul");
+        list.className = "pa-pagelet-panel-context-pager-list";
+        for (const item of items) {
+            const row = createHtmlElement("li");
+            row.textContent = item;
+            list.appendChild(row);
+        }
+        group.appendChild(list);
+        return group;
+    }
+
+    private renderReviewQueueSection(items: NonNullable<PanelOpenExtra["reviewQueue"]>["items"]): HTMLElement {
+        const section = createHtmlElement("section");
+        section.className = "pa-pagelet-panel-review-queue";
+        section.setAttribute("aria-label", pageletT("pagelet.panel.reviewQueue.title", this.getLocale()));
+
+        const header = createHtmlElement("div");
+        header.className = "pa-pagelet-panel-review-queue-header";
+        const title = createHtmlElement("div");
+        title.className = "pa-pagelet-panel-review-queue-title";
+        title.textContent = pageletT("pagelet.panel.reviewQueue.title", this.getLocale());
+        header.appendChild(title);
+        const count = createHtmlElement("div");
+        count.className = "pa-pagelet-panel-review-queue-count";
+        count.textContent = pageletT("pagelet.panel.reviewQueue.count", this.getLocale(), { count: items.length });
+        header.appendChild(count);
+        section.appendChild(header);
+
+        const list = createHtmlElement("div");
+        list.className = "pa-pagelet-panel-review-queue-list";
+        for (const item of items.slice(0, 5)) {
+            const card = createHtmlElement("article");
+            card.className = "pa-pagelet-panel-review-queue-card";
+            const isAiCallout = item.metadata?.renderStyle === "ai_callout";
+            if (isAiCallout) {
+                card.className += " pa-pagelet-panel-review-queue-card--ai-callout";
+            }
+            card.setAttribute("data-status", item.status);
+            card.setAttribute("data-type", item.type);
+
+            const cardTitle = createHtmlElement("div");
+            cardTitle.className = "pa-pagelet-panel-review-queue-card-title";
+            cardTitle.textContent = item.title;
+            card.appendChild(cardTitle);
+
+            const claim = createHtmlElement("div");
+            claim.className = "pa-pagelet-panel-review-queue-card-claim";
+            if (isAiCallout) {
+                const label = createHtmlElement("div");
+                label.className = "pa-pagelet-panel-review-queue-callout-label";
+                label.textContent = pageletT("pagelet.panel.reviewQueue.aiGenerated", this.getLocale());
+                claim.appendChild(label);
+                const body = createHtmlElement("div");
+                body.textContent = item.claim;
+                claim.appendChild(body);
+            } else {
+                claim.textContent = item.claim;
+            }
+            card.appendChild(claim);
+
+            const meta = createHtmlElement("div");
+            meta.className = "pa-pagelet-panel-review-queue-card-meta";
+            meta.textContent = item.whyShown.length > 0
+                ? item.whyShown.join(" · ")
+                : pageletT("pagelet.panel.reviewQueue.sourceBacked", this.getLocale());
+            card.appendChild(meta);
+
+            const source = item.sourceRefs[0];
+            const actions = createHtmlElement("div");
+            actions.className = "pa-pagelet-panel-review-queue-card-actions";
+            if (source?.path) {
+                const sourceBtn = createHtmlElement("button");
+                sourceBtn.className = "pa-pagelet-panel-review-queue-action";
+                sourceBtn.setAttribute("type", "button");
+                sourceBtn.textContent = pageletT("pagelet.panel.reviewQueue.openSource", this.getLocale());
+                sourceBtn.addEventListener("click", (event) => {
+                    event.stopPropagation();
+                    this.options.callbacks.onSourceClick(source.path);
+                });
+                actions.appendChild(sourceBtn);
+            }
+            const dismissBtn = createHtmlElement("button");
+            dismissBtn.className = "pa-pagelet-panel-review-queue-action";
+            dismissBtn.setAttribute("type", "button");
+            dismissBtn.textContent = pageletT("pagelet.panel.reviewQueue.dismiss", this.getLocale());
+            dismissBtn.addEventListener("click", (event) => {
+                event.stopPropagation();
+                void this.options.callbacks.onReviewQueueItemDismiss?.(item.id);
+            });
+            actions.appendChild(dismissBtn);
+            card.appendChild(actions);
+            list.appendChild(card);
+        }
+        section.appendChild(list);
+        return section;
+    }
+
+    private renderQuietRecallSection(quietRecall: NonNullable<PanelOpenExtra["quietRecall"]>): HTMLElement {
+        const section = createHtmlElement("section");
+        section.className = "pa-pagelet-panel-quiet-recall";
+        section.setAttribute("aria-label", pageletT("pagelet.tab.recall.title", this.getLocale()));
+
+        const title = createHtmlElement("h4");
+        title.className = "pa-pagelet-panel-review-queue-title";
+        title.textContent = pageletT("pagelet.tab.recall.title", this.getLocale());
+        section.appendChild(title);
+
+        const count = createHtmlElement("div");
+        count.className = "pa-pagelet-panel-review-queue-count";
+        count.textContent = pageletT("pagelet.tab.recall.summary", this.getLocale(), { count: quietRecall.totalCount });
+        section.appendChild(count);
+
+        if (quietRecall.candidates.length === 0) {
+            const empty = createHtmlElement("div");
+            empty.className = "pa-pagelet-panel-review-queue-card";
+            empty.textContent = pageletT("pagelet.tab.recall.empty", this.getLocale());
+            section.appendChild(empty);
+            return section;
+        }
+
+        for (const candidate of quietRecall.candidates.slice(0, 3)) {
+            const card = createHtmlElement("div");
+            card.className = "pa-pagelet-panel-review-queue-card pa-pagelet-panel-recall-card";
+
+            const cardTitle = createHtmlElement("div");
+            cardTitle.className = "pa-pagelet-panel-review-queue-card-title";
+            cardTitle.textContent = candidate.title;
+            card.appendChild(cardTitle);
+
+            const claim = createHtmlElement("div");
+            claim.className = "pa-pagelet-panel-review-queue-card-claim";
+            claim.textContent = candidate.summary;
+            card.appendChild(claim);
+
+            const meta = createHtmlElement("div");
+            meta.className = "pa-pagelet-panel-review-queue-card-meta";
+            meta.textContent = [
+                pageletT(`pagelet.tab.recall.relation.${candidate.relation}`, this.getLocale()),
+                candidate.sourceRefs[0]?.path,
+            ].filter(Boolean).join(" · ");
+            card.appendChild(meta);
+
+            section.appendChild(card);
+        }
+
+        return section;
+    }
+
     private renderScopeCandidateGroup(label: string, candidates: PanelScopeCandidate[]): HTMLElement {
         const group = createHtmlElement("div");
         group.className = "pa-pagelet-panel-scope-group";
@@ -705,7 +925,7 @@ export class PanelView {
         };
         const handler = (e: TransitionEvent) => {
             if (e.target !== root) return;
-            if (e.propertyName !== "transform") return;
+            if (e.propertyName !== "right" && e.propertyName !== "transform") return;
             finalize();
         };
         this.unmountTransitionHandler = handler;
