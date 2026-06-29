@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, jest } from "@jest/globals";
+import { TFile } from "obsidian";
 
 import {
     MemoryExtractionScheduler,
@@ -615,6 +616,54 @@ describe("MemoryExtractionScheduler lifecycle", () => {
         scheduler.dispose();
     });
 
+    it("does not schedule Vault Insights refresh for Data Boundary denied vault events", () => {
+        const makeFile = (path: string) => {
+            const file = new TFile();
+            Object.assign(file, {
+                path,
+                name: path.split("/").pop() ?? path,
+                extension: "md",
+            });
+            return file;
+        };
+        const getMarkdownFiles = jest.fn(() => []);
+        const app = {
+            vault: {
+                getMarkdownFiles,
+                adapter: {
+                    exists: jest.fn(async () => false),
+                    mkdir: jest.fn(async () => undefined),
+                    write: jest.fn(),
+                },
+            },
+            metadataCache: {
+                getFileCache: jest.fn(),
+                resolvedLinks: {},
+                unresolvedLinks: {},
+            },
+        };
+        const scheduler = new MemoryExtractionScheduler({
+            app: app as any,
+            chatHistoryManager: {
+                findConversation: jest.fn(),
+                getTurns: jest.fn(),
+            } as any,
+            userProfileStore: new MemoryUserProfileStore(),
+            includeVaultInsightsInPrompt: true,
+            shouldHandleVaultEvent: (file) => !file.path.startsWith("private/"),
+            now: () => new Date("2026-06-16T08:00:00.000Z"),
+        });
+
+        scheduler.handleVaultEvent(makeFile("private/secret.md"), "vault-modify");
+        jest.advanceTimersByTime(5 * 60_000);
+        expect(getMarkdownFiles).not.toHaveBeenCalled();
+
+        scheduler.handleVaultEvent(makeFile("notes/public.md"), "vault-modify");
+        jest.advanceTimersByTime(5 * 60_000);
+        expect(getMarkdownFiles).toHaveBeenCalledTimes(1);
+        scheduler.dispose();
+    });
+
     it("dispose() can be called safely without prior start()", () => {
         const scheduler = new MemoryExtractionScheduler({
             app: { vault: { getMarkdownFiles: () => [] }, metadataCache: {} } as any,
@@ -739,5 +788,56 @@ describe("TypeCVaultMetacognitionAnalyzer", () => {
         expect(trendLabels).toContain("Active");
         // "Archive" folder has only the old file (60 days ago, beyond 30-day cutoff)
         expect(trendLabels).not.toContain("Archive");
+    });
+
+    it("applies Data Boundary filtering before analyzing Vault Insights", async () => {
+        const now = new Date("2026-06-16T08:00:00.000Z").getTime();
+        const files = [
+            { path: "Projects/Allowed.md", stat: { mtime: now, ctime: now, size: 600 } },
+            { path: "Private/Secret.md", stat: { mtime: now, ctime: now, size: 1200 } },
+        ];
+        const app = {
+            vault: { getMarkdownFiles: () => files },
+            metadataCache: {
+                getFileCache: (file: { path: string }) => {
+                    if (file.path === "Private/Secret.md") {
+                        return { tags: [{ tag: "#secret" }], frontmatter: { tags: ["private"] } };
+                    }
+                    return { tags: [{ tag: "#public" }], frontmatter: {} };
+                },
+                resolvedLinks: {
+                    "Private/Secret.md": { "Projects/Allowed.md": 3 },
+                    "Projects/Allowed.md": { "Private/Secret.md": 1 },
+                },
+                unresolvedLinks: {
+                    "Private/Secret.md": { "Secret Gap": 2 },
+                    "Projects/Allowed.md": { "Allowed Gap": 2 },
+                },
+            },
+        };
+        const analyzer = new TypeCVaultMetacognitionAnalyzer(app as any, {
+            shouldIncludeFile: (file) => !file.path.startsWith("Private/"),
+        });
+        analyzer.setSemanticClusterProvider(async () => [
+            { clusterId: 1, label: "Private", paths: ["Projects/Allowed.md", "Private/Secret.md"] },
+        ]);
+
+        const snapshot = await analyzer.analyze(new Date(now));
+        const markdown = analyzer.renderMarkdown(snapshot);
+
+        expect(snapshot.fileCount).toBe(1);
+        expect(snapshot.folderThemes).toEqual([{ folder: "Projects", count: 1 }]);
+        expect(snapshot.tagTaxonomy).toEqual([{ tag: "#public", count: 1 }]);
+        expect(snapshot.linkTopology.hubNotes[0]).toMatchObject({
+            path: "Projects/Allowed.md",
+            inbound: 0,
+            outbound: 0,
+        });
+        expect(snapshot.knowledgeGaps.map((gap) => gap.label)).toEqual(["Allowed Gap"]);
+        expect(snapshot.topicClusters).toEqual([{ label: "Projects", paths: ["Projects/Allowed.md"] }]);
+        expect(markdown).not.toContain("Private/Secret.md");
+        expect(markdown).not.toContain("Private:");
+        expect(markdown).not.toContain("#secret");
+        expect(markdown).not.toContain("Secret Gap");
     });
 });

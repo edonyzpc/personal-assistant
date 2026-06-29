@@ -4,6 +4,17 @@ import { readFileSync } from 'node:fs';
 jest.mock('obsidian', () => ({
     App: class { },
     Notice: class { },
+    TFile: class {
+        path: string;
+        constructor(path: string) { this.path = path; }
+    },
+    normalizePath: (path: string) => {
+        const normalized = path
+            .replace(/\\/g, '/')
+            .replace(/\/+/g, '/')
+            .replace(/\/$/g, '');
+        return normalized === '' ? '.' : normalized;
+    },
     Platform: { isDesktop: true, isMobile: false },
     // Tests record every debounce wrapper that is created so they can assert
     // *which* callback was deferred (vs. fired synchronously). The wrapper
@@ -69,9 +80,11 @@ jest.mock('obsidian', () => ({
             (this as unknown as { onClose?: () => void }).onClose?.();
         }
     },
-    Setting: class {
-        record: {
-            name?: string;
+	    Setting: class {
+	        containerEl: unknown;
+	        controlEl: HTMLElement;
+	        record: {
+	            name?: string;
             desc?: string;
             toggles: Array<{ value?: boolean; disabled?: boolean; onChange?: (value: boolean) => unknown }>;
             dropdowns: Array<{
@@ -84,8 +97,11 @@ jest.mock('obsidian', () => ({
             colorPickers: Array<{ value?: string; onChange?: (value: string) => unknown; setValueCalls: unknown[] }>;
         };
 
-        constructor(_containerEl: unknown) {
-            this.record = { toggles: [], dropdowns: [], buttons: [], texts: [], colorPickers: [] };
+	        constructor(containerEl: unknown) {
+	            this.containerEl = containerEl;
+	            this.controlEl = document.createElement('div');
+	            (containerEl as { appendChild?: (child: unknown) => unknown })?.appendChild?.(this.controlEl);
+	            this.record = { toggles: [], dropdowns: [], buttons: [], texts: [], colorPickers: [] };
             const globalObj = globalThis as typeof globalThis & {
                 __paSettingRecords?: Array<{
                     name?: string;
@@ -292,10 +308,12 @@ jest.mock('obsidian', () => ({
             return this;
         }
 
-        addComponent(callback: (el: HTMLElement) => unknown) {
-            callback(document.createElement('div'));
-            return this;
-        }
+	        addComponent(callback: (el: HTMLElement) => unknown) {
+	            const el = document.createElement('div');
+	            callback(el);
+	            (this.controlEl as { appendChild?: (child: unknown) => unknown })?.appendChild?.(el);
+	            return this;
+	        }
     },
     SecretComponent: class {
         constructor(_app: unknown, _el: unknown) {
@@ -333,6 +351,8 @@ jest.mock('../src/utils', () => ({
 }));
 
 import {
+    CONTEXT_PAGER_DEFAULTS,
+    DATA_BOUNDARY_DEFAULTS,
     DEFAULT_SETTINGS,
     PROVIDER_PRESETS,
     STATISTICS_SYNC_SETTING_DESC,
@@ -341,10 +361,15 @@ import {
     deriveDisplayPreset,
     isFreshInstall,
     isLegacyV1Install,
+    mergeContextPagerSettings,
+    mergeDataBoundarySettings,
     mergeLoadedSettings,
+    mergeMaintenanceReviewSettings,
+    mergeMemoryGovernanceSettings,
     normalizeEnabledSkillIds,
     normalizeFeaturedImageCount,
     normalizeFeaturedImageModel,
+    mergeSavedInsightSettings,
     safeParseInt,
     updateQwenResponseOptionAvailability,
 } from '../src/settings';
@@ -371,11 +396,19 @@ type MockElOptions = {
 
 class MockDomNode {
     children: MockDomNode[] = [];
+    checked = false;
+    disabled = false;
+    open = false;
     href = '';
     innerText = '';
     textContent = '';
+    type = '';
+    value = '';
+    dataset: Record<string, string> = {};
     classes: string[] = [];
     attrs: Record<string, string> = {};
+    focus = jest.fn();
+    private eventListeners: Record<string, Array<(event: unknown) => unknown>> = {};
 
     constructor(readonly tagName: string) { }
 
@@ -387,6 +420,8 @@ class MockDomNode {
 
     setAttr(name: string, value: string) {
         this.attrs[name] = value;
+        if (name === 'type') this.type = value;
+        if (name === 'value') this.value = value;
         return this;
     }
 
@@ -417,6 +452,19 @@ class MockDomNode {
     appendText(text: string) {
         this.innerText += text;
         this.textContent += text;
+    }
+
+    addEventListener(type: string, callback: (event: unknown) => unknown) {
+        this.eventListeners[type] = this.eventListeners[type] ?? [];
+        this.eventListeners[type].push(callback);
+    }
+
+    dispatchEvent(event: { type: string } | string) {
+        const eventObject = typeof event === 'string' ? { type: event } : event;
+        for (const callback of this.eventListeners[eventObject.type] ?? []) {
+            callback(eventObject);
+        }
+        return true;
     }
 
     createEl(tagName: string, options?: MockElOptions | undefined, callback?: (element: MockDomNode) => void) {
@@ -552,6 +600,67 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
                 color: { ...group.color },
             })),
             metadatas: DEFAULT_SETTINGS.metadatas.map((metadata) => ({ ...metadata })),
+            quickCapture: { ...DEFAULT_SETTINGS.quickCapture },
+            dataBoundary: {
+                excludedFolders: [...DEFAULT_SETTINGS.dataBoundary.excludedFolders],
+                excludedTags: [...DEFAULT_SETTINGS.dataBoundary.excludedTags],
+                generatedNotePolicy: DEFAULT_SETTINGS.dataBoundary.generatedNotePolicy,
+                providerDisclosureReasons: [...DEFAULT_SETTINGS.dataBoundary.providerDisclosureReasons],
+                cleanupGroups: [...DEFAULT_SETTINGS.dataBoundary.cleanupGroups],
+            },
+            reviewQueue: {
+                enabled: DEFAULT_SETTINGS.reviewQueue.enabled,
+                items: DEFAULT_SETTINGS.reviewQueue.items.map((item) => ({ ...item })),
+            },
+            contextPager: { ...DEFAULT_SETTINGS.contextPager },
+            savedInsights: {
+                items: DEFAULT_SETTINGS.savedInsights.items.map((item) => ({
+                    ...item,
+                    sourceRefs: item.sourceRefs.map((ref) => ({ ...ref })),
+                    whyShown: [...item.whyShown],
+                    scope: {
+                        ...item.scope,
+                        paths: item.scope.paths ? [...item.scope.paths] : undefined,
+                        tags: item.scope.tags ? [...item.scope.tags] : undefined,
+                    },
+                })),
+            },
+            memoryGovernance: {
+                records: DEFAULT_SETTINGS.memoryGovernance.records.map((record) => ({
+                    ...record,
+                    scope: {
+                        ...record.scope,
+                        paths: record.scope.paths ? [...record.scope.paths] : undefined,
+                        tags: record.scope.tags ? [...record.scope.tags] : undefined,
+                    },
+                    sourceRefs: record.sourceRefs.map((ref) => ({ ...ref })),
+                })),
+            },
+            maintenanceReview: {
+                ...DEFAULT_SETTINGS.maintenanceReview,
+                actionLog: DEFAULT_SETTINGS.maintenanceReview.actionLog.map((entry) => ({
+                    ...entry,
+                    sourceRefs: entry.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                })),
+            },
+            weeklyReview: { ...DEFAULT_SETTINGS.weeklyReview },
+            quietRecall: { ...DEFAULT_SETTINGS.quietRecall },
+            memoryExtractionConsent: { ...DEFAULT_SETTINGS.memoryExtractionConsent },
+            retrievalHabitProfile: {
+                enabled: DEFAULT_SETTINGS.retrievalHabitProfile.enabled,
+                state: {
+                    aggregates: DEFAULT_SETTINGS.retrievalHabitProfile.state.aggregates.map((aggregate) => ({
+                        ...aggregate,
+                        counts: { ...aggregate.counts },
+                    })),
+                    ...(DEFAULT_SETTINGS.retrievalHabitProfile.state.clearedAt
+                        ? { clearedAt: DEFAULT_SETTINGS.retrievalHabitProfile.state.clearedAt }
+                        : {}),
+                },
+            },
             ...overrides,
         },
         saveSettings: jest.fn(async () => undefined),
@@ -779,45 +888,79 @@ describe('PA Agent skill settings', () => {
         expect(normalizeEnabledSkillIds(['obsidian-markdown', 'unknown', 'obsidian-markdown'])).toEqual([
             'obsidian-markdown',
         ]);
+        expect(normalizeEnabledSkillIds(['json-canvas', 'obsidian-markdown', 'json-canvas'])).toEqual([
+            'obsidian-markdown',
+            'json-canvas',
+        ]);
         expect(normalizeEnabledSkillIds(undefined)).toEqual(DEFAULT_SETTINGS.enabledSkillIds);
     });
 
-    it('renders global and bundled skill guide toggles in settings', () => {
+    it('renders bundled skill guides as a compact checkbox picker in settings', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        tab.containerEl = new MockContainerEl('div') as never;
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
 
         tab.display();
 
         const records = getMockSettingRecords();
-        const globalToggle = records.find((record) => record.name === 'Use skill guides')?.toggles[0];
-        expect(globalToggle).toMatchObject({ value: true, disabled: false });
+        const pickerRecord = records.find((record) => record.name === 'Enabled skill guides');
+        expect(pickerRecord?.desc).toBe('Choose which guides the assistant may use. Current: All guides enabled.');
+        expect(records.some((record) => BUNDLED_SKILL_CATALOG.some((skill) => skill.label === record.name))).toBe(false);
 
-        const skillToggleStates = BUNDLED_SKILL_CATALOG.map((skill) => {
-            const record = records.find((entry) => entry.name === skill.label);
-            return record?.toggles[0];
-        });
-        expect(skillToggleStates).toHaveLength(BUNDLED_SKILL_CATALOG.length);
-        expect(skillToggleStates).toEqual(
-            BUNDLED_SKILL_CATALOG.map(() => expect.objectContaining({ value: true, disabled: false })),
+        const summary = containerEl.findAll('.pa-settings-skill-picker__summary-text')[0];
+        expect(summary?.textContent).toBe('All guides enabled');
+
+        const checkboxes = containerEl.findAll('input');
+        expect(checkboxes).toHaveLength(BUNDLED_SKILL_CATALOG.length + 1);
+        expect(checkboxes[0]).toMatchObject({ type: 'checkbox', checked: true, disabled: false });
+        expect(checkboxes.slice(1)).toEqual(
+            BUNDLED_SKILL_CATALOG.map(() => expect.objectContaining({ checked: true, disabled: false })),
         );
-        expect(skillToggleStates.every(Boolean)).toBe(true);
     });
 
-    it('disables bundled skill guide toggles when the global switch is off', () => {
+    it('updates skill guide settings from the checkbox picker', async () => {
+        const firstSkill = BUNDLED_SKILL_CATALOG[0];
         const plugin = makePlugin({ skillContextEnabled: false });
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
-        tab.containerEl = new MockContainerEl('div') as never;
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
 
         tab.display();
 
-        const records = getMockSettingRecords();
-        for (const skill of BUNDLED_SKILL_CATALOG) {
-            expect(records.find((entry) => entry.name === skill.label)?.toggles[0]).toMatchObject({
-                value: false,
-                disabled: true,
-            });
-        }
+        let checkboxes = containerEl.findAll('input');
+        let details = containerEl.findAll('details')[0];
+        expect(containerEl.findAll('.pa-settings-skill-picker__summary-text')[0]?.textContent).toBe('Off');
+        expect(checkboxes[0]).toMatchObject({ checked: false, disabled: false });
+        expect(checkboxes.slice(1)).toEqual(
+            BUNDLED_SKILL_CATALOG.map(() => expect.objectContaining({ checked: true, disabled: true })),
+        );
+
+        details.open = true;
+        checkboxes[0].checked = true;
+        checkboxes[0].dispatchEvent({ type: 'change' });
+        await Promise.resolve();
+
+        expect(plugin.settings.skillContextEnabled).toBe(true);
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
+        expect(containerEl.findAll('.pa-settings-skill-picker__summary-text')[0]?.textContent).toBe('All guides enabled');
+        expect(containerEl.findAll('details')[0]?.open).toBe(true);
+        expect(containerEl.findAll('input')[0]?.focus).toHaveBeenCalled();
+
+        checkboxes = containerEl.findAll('input');
+        details = containerEl.findAll('details')[0];
+        details.open = true;
+        checkboxes[1].checked = false;
+        checkboxes[1].dispatchEvent({ type: 'change' });
+        await Promise.resolve();
+
+        expect(plugin.settings.enabledSkillIds).not.toContain(firstSkill.id);
+        expect(plugin.saveSettings).toHaveBeenCalledTimes(2);
+        expect(containerEl.findAll('.pa-settings-skill-picker__summary-text')[0]?.textContent).toBe(
+            `${BUNDLED_SKILL_CATALOG.length - 1} of ${BUNDLED_SKILL_CATALOG.length} enabled`,
+        );
+        expect(containerEl.findAll('details')[0]?.open).toBe(true);
+        expect(containerEl.findAll('input')[1]?.focus).toHaveBeenCalled();
     });
 });
 
@@ -1251,6 +1394,9 @@ describe('Phase 3 IA reorder + provider UX', () => {
             // qwenOptionsContainer (not a top-level child), so it is absent here.
             'h3:Skill guides',
             'h2:Memory',
+            'h2:Data & Privacy Boundaries',
+            'h3:Local recall preferences',
+            'h3:Local data cleanup',
             // Pagelet section ships between Memory and Statistics (B3). Its
             // three sub-headings (General/Model/Limits) are also top-level
             // children of containerEl because `renderPageletSection` writes
@@ -1264,6 +1410,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h3:Reviews',
             'h3:Quiet Hours',
             'h3:Foreground Cost',
+            'h2:Quick Capture',
             'h2:Vault Statistics',
             'h2:Settings for Record',
             'h2:Settings for Hover Local Graph',
@@ -1293,6 +1440,348 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const featuredSetting = getMockSettingRecords()[featuredIdx];
         expect(featuredSetting.desc).toContain('saved in your vault');
         expect(featuredSetting.texts[0].placeholder).toBe('attachments/ai-images');
+    });
+
+    it('renders Quick Capture destination settings with safe defaults', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const quickCaptureToggle = records.find((record) => record.name === 'Quick Capture')?.toggles[0];
+        const destination = records.find((record) => record.name === 'Save captures to')?.dropdowns[0];
+        const inboxPath = records.find((record) => record.name === 'Inbox note path')?.texts[0];
+        const postProcessingToggle = records.find((record) => record.name === 'Prepare suggestions after saving')?.toggles[0];
+
+        expect(quickCaptureToggle?.value).toBe(true);
+        expect(destination?.value).toBe('daily');
+        expect(destination?.options).toEqual([
+            { value: 'daily', text: 'Daily Note' },
+            { value: 'inbox', text: 'Inbox note' },
+            { value: 'current-file', text: 'Current file' },
+        ]);
+        expect(inboxPath?.value).toBe('Inbox/Quick Capture.md');
+        expect(postProcessingToggle?.value).toBe(false);
+
+        destination?.onChange?.('current-file');
+        inboxPath?.onChange?.('Captures/Inbox');
+        postProcessingToggle?.onChange?.(true);
+
+        expect(plugin.settings.quickCapture.destination).toBe('current-file');
+        expect(plugin.settings.quickCapture.inboxPath).toBe('Captures/Inbox.md');
+        expect(plugin.settings.quickCapture.postProcessingEnabled).toBe(true);
+    });
+
+    it('normalizes Data Boundary settings with safe defaults', () => {
+        expect(DATA_BOUNDARY_DEFAULTS.generatedNotePolicy).toBe('exclude-generated');
+        expect(DATA_BOUNDARY_DEFAULTS.providerDisclosureReasons).toContain('broad_scope');
+        expect(DATA_BOUNDARY_DEFAULTS.cleanupGroups).toEqual([
+            'cache',
+            'queue',
+            'replay',
+            'candidates',
+            'confirmed_memory',
+            'tombstones',
+        ]);
+
+        expect(mergeDataBoundarySettings({
+            excludedFolders: [' private ', '', 'private', 'archive/sensitive'],
+            excludedTags: [' sensitive ', 'sensitive', ''],
+            generatedNotePolicy: 'bad-policy',
+            providerDisclosureReasons: ['broad_scope', 'not-real'],
+            cleanupGroups: ['cache', 'bad-group'],
+        })).toEqual({
+            excludedFolders: ['private', 'archive/sensitive'],
+            excludedTags: ['sensitive'],
+            generatedNotePolicy: 'exclude-generated',
+            providerDisclosureReasons: ['broad_scope'],
+            cleanupGroups: ['cache'],
+        });
+        expect(mergeDataBoundarySettings({
+            generatedNotePolicy: 'ask',
+        }).generatedNotePolicy).toBe('exclude-generated');
+        expect(mergeDataBoundarySettings({
+            generatedNotePolicy: 'include-generated',
+        }).generatedNotePolicy).toBe('include-generated');
+    });
+
+    it('normalizes Context Pager settings with the M6-visible default enabled', () => {
+        expect(CONTEXT_PAGER_DEFAULTS.enabled).toBe(true);
+        expect(DEFAULT_SETTINGS.contextPager.enabled).toBe(true);
+        expect(mergeContextPagerSettings(undefined).enabled).toBe(true);
+        expect(mergeLoadedSettings({ contextPager: { enabled: false } }).contextPager.enabled).toBe(false);
+    });
+
+    it('keeps Maintenance Review weekly scans disabled by default', () => {
+        expect(DEFAULT_SETTINGS.maintenanceReview.weeklyScanEnabled).toBe(false);
+        expect(DEFAULT_SETTINGS.maintenanceReview.actionLog).toEqual([]);
+        expect(mergeMaintenanceReviewSettings(undefined).weeklyScanEnabled).toBe(false);
+        expect(mergeMaintenanceReviewSettings({ weeklyScanEnabled: 'yes' }).weeklyScanEnabled).toBe(false);
+        expect(mergeLoadedSettings({ maintenanceReview: { weeklyScanEnabled: true } }).maintenanceReview).toMatchObject({
+            weeklyScanEnabled: true,
+            actionLog: [],
+        });
+        const merged = mergeMaintenanceReviewSettings({
+            actionLog: [
+                {
+                    id: 'act-1',
+                    proposalId: 'maint-1',
+                    reviewQueueItemId: 'rq-1',
+                    actionType: 'move',
+                    status: 'applied',
+                    oldPath: 'Inbox/Quick Capture.md',
+                    newPath: 'Notes/Quick Capture.md',
+                    appliedAt: '2026-06-28T12:00:00.000Z',
+                    sourceRefs: [{
+                        path: 'Inbox/Quick Capture.md',
+                        excerptHash: 'abc123',
+                        whyShown: ['Inbox note'],
+                        evidenceStrength: 'medium',
+                    }],
+                    dataBoundarySnapshotId: 'boundary',
+                    undoStrategy: 'move_back',
+                },
+                {
+                    id: 'raw-1',
+                    proposalId: 'maint-raw',
+                    actionType: 'move',
+                    status: 'applied',
+                    oldPath: 'Inbox/raw.md',
+                    newPath: 'Notes/raw.md',
+                    appliedAt: '2026-06-28T12:00:00.000Z',
+                    sourceRefs: [{ path: 'Inbox/raw.md', excerpt: 'raw note text' }],
+                    dataBoundarySnapshotId: 'boundary',
+                    undoStrategy: 'move_back',
+                },
+            ],
+        });
+        expect(merged.actionLog).toHaveLength(1);
+        expect(merged.actionLog[0]).toMatchObject({
+            id: 'act-1',
+            oldPath: 'Inbox/Quick Capture.md',
+            newPath: 'Notes/Quick Capture.md',
+        });
+    });
+
+    it('keeps Weekly Review manual-first and Quiet Recall bubble-off by default', () => {
+        expect(DEFAULT_SETTINGS.weeklyReview).toEqual({
+            enabled: true,
+            preparedReviewEnabled: false,
+        });
+        expect(DEFAULT_SETTINGS.quietRecall).toEqual({
+            enabled: true,
+            bubbleNudgesEnabled: false,
+        });
+        expect(DEFAULT_SETTINGS.retrievalHabitProfile).toEqual({
+            enabled: false,
+            state: { aggregates: [] },
+        });
+        expect(mergeLoadedSettings({
+            weeklyReview: { enabled: false, preparedReviewEnabled: true },
+            quietRecall: { enabled: false, bubbleNudgesEnabled: true },
+            retrievalHabitProfile: {
+                enabled: true,
+                state: {
+                    aggregates: [{
+                        key: "relation:current",
+                        signal: "quiet_recall_relation",
+                        counts: { view: 1 },
+                        updatedAt: "2026-06-29T12:00:00.000Z",
+                    }],
+                },
+            },
+        })).toMatchObject({
+            weeklyReview: {
+                enabled: false,
+                preparedReviewEnabled: true,
+            },
+            quietRecall: {
+                enabled: false,
+                bubbleNudgesEnabled: true,
+            },
+            retrievalHabitProfile: {
+                enabled: true,
+                state: {
+                    aggregates: [{
+                        key: "relation:current",
+                        signal: "quiet_recall_relation",
+                        counts: { view: 1 },
+                        updatedAt: "2026-06-29T12:00:00.000Z",
+                    }],
+                },
+            },
+        });
+        expect(mergeLoadedSettings({
+            weeklyReview: { enabled: "yes", preparedReviewEnabled: "yes" },
+            quietRecall: { enabled: "yes", bubbleNudgesEnabled: "yes" },
+            retrievalHabitProfile: {
+                enabled: "yes",
+                state: {
+                    aggregates: [{
+                        key: "raw:path.md",
+                        signal: "quiet_recall_relation",
+                        counts: { view: "often" },
+                        updatedAt: "2026-06-29T12:00:00.000Z",
+                    }],
+                },
+            },
+        })).toMatchObject({
+            weeklyReview: {
+                enabled: true,
+                preparedReviewEnabled: false,
+            },
+            quietRecall: {
+                enabled: true,
+                bubbleNudgesEnabled: false,
+            },
+            retrievalHabitProfile: {
+                enabled: false,
+                state: { aggregates: [] },
+            },
+        });
+    });
+
+    it('normalizes Saved Insight and Memory governance settings through local contracts', () => {
+        const saved = mergeSavedInsightSettings({
+            items: [{
+                id: 'ins-1',
+                type: 'theme',
+                text: 'Pricing notes keep coming back.',
+                origin: 'pa-generated',
+                sourceRefs: [{ path: 'notes/current.md', excerptHash: 'abc123' }],
+                whyShown: ['Recurring theme'],
+                scope: { kind: 'current_note', paths: ['notes/current.md'] },
+                status: 'active',
+                influencePolicy: 'weak-only',
+                createdAt: '2026-06-28T01:00:00.000Z',
+                updatedAt: '2026-06-28T01:00:00.000Z',
+            }, {
+                id: 'ins-bad',
+                type: 'theme',
+                text: 'Missing source',
+                origin: 'pa-generated',
+                sourceRefs: [],
+                whyShown: [],
+                scope: { kind: 'custom' },
+                status: 'active',
+                influencePolicy: 'weak-only',
+                createdAt: '2026-06-28T01:00:00.000Z',
+                updatedAt: '2026-06-28T01:00:00.000Z',
+            }],
+        });
+        const memory = mergeMemoryGovernanceSettings({
+            records: [{
+                id: 'mem-1',
+                type: 'preference',
+                lifecycle: 'active',
+                sensitivity: 'low',
+                summary: 'Prefers concise weekly planning.',
+                sourceRefs: [{ path: 'notes/current.md', excerptHash: 'def456' }],
+                scope: { kind: 'current_note', paths: ['notes/current.md'] },
+                createdAt: '2026-06-28T01:00:00.000Z',
+                updatedAt: '2026-06-28T01:00:00.000Z',
+            }, {
+                id: 'mem-bad',
+                type: 'decision',
+                lifecycle: 'active',
+                sensitivity: 'low',
+                summary: 'A decision without source should not load.',
+                sourceRefs: [],
+                scope: { kind: 'custom' },
+                createdAt: '2026-06-28T01:00:00.000Z',
+                updatedAt: '2026-06-28T01:00:00.000Z',
+            }],
+        });
+
+        expect(saved.items).toHaveLength(1);
+        expect(saved.items[0].id).toBe('ins-1');
+        expect(memory.records).toHaveLength(1);
+        expect(memory.records[0].id).toBe('mem-1');
+    });
+
+    it('renders Data Boundary settings and disabled cleanup skeleton', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const excludedFolders = records.find((record) => record.name === 'Excluded folders')?.texts[0];
+        const excludedTags = records.find((record) => record.name === 'Excluded tags')?.texts[0];
+        const generatedNotes = records.find((record) => record.name === 'Generated notes')?.dropdowns[0];
+        const providerDisclosure = records.find((record) => record.name === 'Provider disclosure');
+        const cleanupButtons = [
+            'Local cache',
+            'Review queue',
+            'Replay metadata',
+            'Candidates',
+            'Confirmed Memory',
+            'Tombstones',
+        ].map((name) => records.find((record) => record.name === name)?.buttons[0]);
+
+        expect(excludedFolders?.value).toBe('');
+        expect(excludedTags?.value).toBe('');
+        expect(generatedNotes?.value).toBe('exclude-generated');
+        expect(generatedNotes?.options).toEqual([
+            { value: 'exclude-generated', text: 'Skip generated notes' },
+            { value: 'include-generated', text: 'Allow generated notes' },
+        ]);
+        expect(providerDisclosure?.desc).toContain('PA asks before broad');
+        expect(cleanupButtons).toHaveLength(6);
+        expect(cleanupButtons.every((button) => button?.text === 'Unavailable' && button.disabled === true)).toBe(true);
+
+        excludedFolders?.onChange?.('private, archive/sensitive, private');
+        excludedTags?.onChange?.('#sensitive, private');
+        generatedNotes?.onChange?.('include-generated');
+
+        expect(plugin.settings.dataBoundary.excludedFolders).toEqual(['private', 'archive/sensitive']);
+        expect(plugin.settings.dataBoundary.excludedTags).toEqual(['sensitive', 'private']);
+        expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('include-generated');
+    });
+
+    it('requires explicit opt-in and supports clearing local recall preferences', async () => {
+        const plugin = makePlugin({
+            retrievalHabitProfile: {
+                enabled: false,
+                state: {
+                    aggregates: [{
+                        key: 'relation:related',
+                        signal: 'quiet_recall_relation',
+                        counts: { accept: 1 },
+                        updatedAt: '2026-06-29T12:00:00.000Z',
+                        windowStart: '2026-06-29',
+                        windowDays: 1,
+                    }],
+                },
+            },
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+
+        tab.display();
+
+        const records = getMockSettingRecords();
+        const improveRecall = records.find((record) => record.name === 'Improve recall locally')?.toggles[0];
+        const clearProfile = records.find((record) => record.name === 'Clear local recall preferences')?.buttons[0];
+        expect(improveRecall?.value).toBe(false);
+        expect(clearProfile?.text).toBe('Clear');
+        expect(clearProfile?.disabled).toBe(false);
+
+        (globalThis as typeof globalThis & { __paConfirmDecision?: boolean }).__paConfirmDecision = false;
+        await improveRecall?.onChange?.(true);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(false);
+
+        (globalThis as typeof globalThis & { __paConfirmDecision?: boolean }).__paConfirmDecision = true;
+        await improveRecall?.onChange?.(true);
+        expect(plugin.settings.retrievalHabitProfile.enabled).toBe(true);
+
+        await clearProfile?.onClick?.();
+        expect(plugin.settings.retrievalHabitProfile.state.aggregates).toEqual([]);
+        expect(plugin.settings.retrievalHabitProfile.state.clearedAt).toEqual(expect.any(String));
+        expect(plugin.saveSettings).toHaveBeenCalled();
     });
 
     it('renders Legal links from the plugin version without terms placeholders', () => {
@@ -1876,9 +2365,10 @@ describe('Phase 4 P1 UX', () => {
             expect(names).toContain('Advanced memory controls');
         });
 
-        it('keeps AI Memory Extraction and Vault Insights context on by default', () => {
-            expect(DEFAULT_SETTINGS.memoryExtractionEnabled).toBe(true);
-            expect(DEFAULT_SETTINGS.memoryExtractionIncludeVaultInsights).toBe(true);
+        it('keeps AI Memory Extraction and Vault Insights context off until first-use confirmation', () => {
+            expect(DEFAULT_SETTINGS.memoryExtractionEnabled).toBe(false);
+            expect(DEFAULT_SETTINGS.memoryExtractionIncludeVaultInsights).toBe(false);
+            expect(DEFAULT_SETTINGS.memoryExtractionConsent.state).toBe("unconfirmed");
             const plugin = makePlugin();
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
@@ -1886,13 +2376,20 @@ describe('Phase 4 P1 UX', () => {
 
             const records = getMockSettingRecords();
             expect(records.find((r) => r.name === 'AI Memory Extraction')?.toggles[0])
-                .toMatchObject({ value: true });
-            expect(records.find((r) => r.name === 'Include Vault Insights in AI Context')?.toggles[0])
-                .toMatchObject({ value: true });
+                .toMatchObject({ value: false });
+            expect(records.find((r) => r.name === 'Include Vault Insights in AI Context')).toBeUndefined();
         });
 
         it('shows AI Insights entry point without enabling Advanced memory controls', () => {
-            const plugin = makePlugin({ showAdvancedMemoryControls: false });
+            const plugin = makePlugin({
+                showAdvancedMemoryControls: false,
+                memoryExtractionEnabled: true,
+                memoryExtractionConsent: {
+                    state: "confirmed",
+                    version: 1,
+                    confirmedAt: "2026-06-29T12:00:00.000Z",
+                },
+            });
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
             tab.display();
@@ -1908,7 +2405,15 @@ describe('Phase 4 P1 UX', () => {
         });
 
         it('re-checks the AI Insights gate before opening from Settings', () => {
-            const plugin = makePlugin({ showAdvancedMemoryControls: false });
+            const plugin = makePlugin({
+                showAdvancedMemoryControls: false,
+                memoryExtractionEnabled: true,
+                memoryExtractionConsent: {
+                    state: "confirmed",
+                    version: 1,
+                    confirmedAt: "2026-06-29T12:00:00.000Z",
+                },
+            });
             (plugin.canShowAiInsights as jest.Mock)
                 .mockReturnValueOnce(true)
                 .mockReturnValueOnce(false);
@@ -1949,6 +2454,11 @@ describe('Phase 4 P1 UX', () => {
             await toggle!.onChange!(true);
 
             expect(plugin.settings.memoryExtractionEnabled).toBe(true);
+            expect(plugin.settings.memoryExtractionConsent).toMatchObject({
+                state: "confirmed",
+                version: 1,
+                confirmedAt: expect.any(String),
+            });
             expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
             const options = (confirmUserAction as jest.Mock).mock.calls[0]?.[1] as { message?: string };
             expect(options?.message).toContain('Conversation content');
@@ -1961,7 +2471,15 @@ describe('Phase 4 P1 UX', () => {
 
         it('does not ask for confirmation when disabling AI Memory Extraction', async () => {
             (confirmUserAction as jest.Mock).mockClear();
-            const plugin = makePlugin({ memoryExtractionEnabled: true });
+            const plugin = makePlugin({
+                memoryExtractionEnabled: true,
+                memoryExtractionIncludeVaultInsights: true,
+                memoryExtractionConsent: {
+                    state: "confirmed",
+                    version: 1,
+                    confirmedAt: "2026-06-29T12:00:00.000Z",
+                },
+            });
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
             tab.display();
@@ -1972,6 +2490,12 @@ describe('Phase 4 P1 UX', () => {
 
             expect(confirmUserAction).not.toHaveBeenCalled();
             expect(plugin.settings.memoryExtractionEnabled).toBe(false);
+            expect(plugin.settings.memoryExtractionIncludeVaultInsights).toBe(false);
+            expect(plugin.settings.memoryExtractionConsent).toMatchObject({
+                state: "paused",
+                version: 1,
+                confirmedAt: "2026-06-29T12:00:00.000Z",
+            });
             expect(plugin.saveSettings).toHaveBeenCalledTimes(1);
         });
 

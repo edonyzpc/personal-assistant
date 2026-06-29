@@ -76,7 +76,7 @@ describe("PA Agent canonical history metadata", () => {
 
         const metadata = extractCanonicalTurnMetadata(canonicalTurn);
 
-        expect(metadata).toEqual({
+        expect(metadata).toEqual(expect.objectContaining({
             hasMemoryContent: true,
             allowedMemorySourcePaths: ["0.unsorted/Dog.md"],
             sourceRecords: [
@@ -87,7 +87,13 @@ describe("PA Agent canonical history metadata", () => {
                 expect.objectContaining({ category: "memory", label: "Selected Memory" }),
                 expect.objectContaining({ category: "current-note", label: "Current note" }),
             ],
-        });
+            contextTrace: expect.objectContaining({
+                runId: "run-1",
+                usedSourceCount: 1,
+                usedMemoryCount: 1,
+            }),
+        }));
+        expect(JSON.stringify(metadata.contextTrace)).not.toContain("observation");
     });
 
     it("reconstructs host pre-context source records and Context Used without toolResult messages", () => {
@@ -124,7 +130,7 @@ describe("PA Agent canonical history metadata", () => {
 
         const metadata = extractCanonicalTurnMetadata(canonicalTurn);
 
-        expect(metadata).toEqual({
+        expect(metadata).toEqual(expect.objectContaining({
             hasMemoryContent: false,
             allowedMemorySourcePaths: [],
             sourceRecords: [expect.objectContaining({
@@ -136,7 +142,11 @@ describe("PA Agent canonical history metadata", () => {
                 category: "skill-guide",
                 label: "pa-vault-link-health",
             })],
-        });
+            contextTrace: expect.objectContaining({
+                runId: "run-1",
+                usedSourceCount: 1,
+            }),
+        }));
         expect(metadata.sourceRecords).toHaveLength(1);
         expect(canonicalTurn.sourceRecords?.[0]).not.toBe(metadata.sourceRecords?.[0]);
         expect(canonicalTurn.contextUsed?.[0]).not.toBe(metadata.contextUsed?.[0]);
@@ -196,6 +206,7 @@ describe("PA Agent canonical history metadata", () => {
             allowedMemorySourcePaths: [],
             sourceRecords: [expect.objectContaining({ kind: "web-source", url: "https://example.com" })],
             contextUsed: [expect.objectContaining({ category: "read-only-tool", label: "WebSearch" })],
+            contextTrace: expect.objectContaining({ runId: "run-1" }),
         });
     });
 

@@ -1,0 +1,60 @@
+{
+  "id": "maintenance-review-pass",
+  "title": "Maintenance Review previews are source-backed and non-mutating",
+  "category": "maintenance_review",
+  "actual": {
+    "maintenanceProposals": [
+      {
+        "id": "maint-rename-1",
+        "actionType": "rename",
+        "preview": {
+          "summary": "Preview rename from inbox/capture.md to inbox/Product idea.md.",
+          "sourcePath": "inbox/capture.md",
+          "affectedPaths": ["inbox/capture.md", "inbox/Product idea.md"],
+          "oldPath": "inbox/capture.md",
+          "newPath": "inbox/Product idea.md"
+        },
+        "actionPlan": {
+          "actionType": "rename",
+          "previewOnly": true,
+          "applyBoundary": "blocked_until_user_approval"
+        }
+      },
+      {
+        "id": "maint-merge-1",
+        "actionType": "merge",
+        "preview": {
+          "summary": "Preview merge into a new synthesis note.",
+          "sourcePath": "projects/pa-agent/source.md",
+          "affectedPaths": ["projects/pa-agent/source.md", "projects/pa-agent/merged-note.md"]
+        },
+        "actionPlan": {
+          "actionType": "merge",
+          "previewOnly": true,
+          "applyBoundary": "blocked_until_user_approval",
+          "mergeStrategy": "create_new_note"
+        }
+      }
+    ],
+    "sourceWrites": []
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "maintenance_proposal_has_preview",
+        "itemId": "maint-rename-1"
+      },
+      {
+        "type": "maintenance_affected_paths_listed",
+        "itemId": "maint-rename-1"
+      },
+      {
+        "type": "maintenance_merge_creates_new_note",
+        "itemId": "maint-merge-1"
+      },
+      {
+        "type": "maintenance_no_source_write"
+      }
+    ]
+  }
+}

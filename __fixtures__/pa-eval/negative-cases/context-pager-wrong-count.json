@@ -1,0 +1,36 @@
+{
+  "id": "context-pager-wrong-count",
+  "title": "Context Pager wrong count fixture",
+  "category": "context_pager",
+  "actual": {
+    "contextTrace": {
+      "runId": "context-run-wrong",
+      "usedSourceRefs": [
+        {
+          "path": "projects/pa-agent/source.md",
+          "excerptHash": "excerpt-1"
+        }
+      ],
+      "skippedSourceRefs": [],
+      "usedMemoryRefs": [],
+      "droppedMemoryRefs": [],
+      "skippedScopeCount": 0,
+      "usedSourceCount": 0,
+      "skippedSourceCount": 0,
+      "usedMemoryCount": 0,
+      "droppedMemoryCount": 0
+    }
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "context_counts_match",
+        "usedSources": 1,
+        "skippedSources": 0,
+        "usedMemories": 0,
+        "droppedMemories": 0,
+        "skippedScopes": 0
+      }
+    ]
+  }
+}
