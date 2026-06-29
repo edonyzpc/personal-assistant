@@ -17,6 +17,7 @@ export {
     buildDiscoveryContent,
     buildNudgeContent,
     buildEmptyContent,
+    buildWeeklyReviewNudgeContent,
 } from "./BubbleContent";
 
 export type {

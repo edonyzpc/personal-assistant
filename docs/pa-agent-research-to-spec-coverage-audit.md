@@ -107,7 +107,7 @@ Resolved decisions:
   options.
 - Trigger is manual-first with optional weekly prepared review as a quiet
   Pagelet hint.
-- Weekly Review note contains only accepted/saved items with sourceRefs.
+- Weekly Review note contains only selected/saved items with sourceRefs.
 - Low-risk Memory Candidates and Maintenance Proposals can be batched; high-risk
   items require individual review.
 

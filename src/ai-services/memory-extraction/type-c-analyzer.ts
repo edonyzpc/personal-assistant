@@ -28,17 +28,26 @@ async function yieldToEventLoop(): Promise<void> {
 
 export type SemanticClusterProvider = (maxClusters: number) => Promise<Array<{ clusterId: number; label: string; paths: string[] }> | null>;
 
+export interface TypeCVaultMetacognitionAnalyzerOptions {
+    shouldIncludeFile?: (file: TFile) => boolean;
+}
+
 export class TypeCVaultMetacognitionAnalyzer {
     private semanticClusterProvider: SemanticClusterProvider | null = null;
 
-    constructor(private readonly app: App) {}
+    constructor(
+        private readonly app: App,
+        private readonly options: TypeCVaultMetacognitionAnalyzerOptions = {},
+    ) {}
 
     setSemanticClusterProvider(provider: SemanticClusterProvider): void {
         this.semanticClusterProvider = provider;
     }
 
     async analyze(now = new Date()): Promise<VaultMetacognitionSnapshot> {
-        const files = this.app.vault.getMarkdownFiles();
+        const files = this.app.vault.getMarkdownFiles()
+            .filter((file) => this.options.shouldIncludeFile?.(file) ?? true);
+        const allowedPaths = new Set(files.map((file) => normalizePath(file.path)));
         const folderThemes = rankFolders(files);
         await yieldToEventLoop();
         const tagTaxonomy = rankTags(this.app, files);
@@ -52,7 +61,17 @@ export class TypeCVaultMetacognitionAnalyzer {
             try {
                 const semantic = await this.semanticClusterProvider(20);
                 if (semantic && semantic.length > 0) {
-                    topicClusters = semantic.map(c => ({ label: c.label, paths: c.paths }));
+                    topicClusters = semantic
+                        .map((c) => {
+                            const paths = c.paths
+                                .map((path) => normalizePath(path))
+                                .filter((path) => allowedPaths.has(path));
+                            return {
+                                label: labelTopicClusterFromAllowedPaths(paths),
+                                paths,
+                            };
+                        })
+                        .filter((cluster) => cluster.paths.length > 0);
                 }
             } catch {
                 // fallback to folder-based clustering
@@ -144,14 +163,17 @@ function analyzeLinks(app: App, files: readonly TFile[]): VaultMetacognitionSnap
     const unresolvedLinks = app.metadataCache.unresolvedLinks ?? {};
     const inbound = new Map<string, number>();
     const outbound = new Map<string, number>();
+    const filePaths = new Set(files.map((file) => normalizePath(file.path)));
     for (const [source, targets] of Object.entries(resolvedLinks)) {
-        const outCount = Object.values(targets ?? {}).reduce((sum, count) => sum + Number(count || 0), 0);
+        if (!filePaths.has(normalizePath(source))) continue;
+        const allowedTargets = Object.entries(targets ?? {})
+            .filter(([target]) => filePaths.has(normalizePath(target)));
+        const outCount = allowedTargets.reduce((sum, [, count]) => sum + Number(count || 0), 0);
         outbound.set(source, outCount);
-        for (const [target, count] of Object.entries(targets ?? {})) {
+        for (const [target, count] of allowedTargets) {
             inbound.set(target, (inbound.get(target) ?? 0) + Number(count || 0));
         }
     }
-    const filePaths = new Set(files.map((file) => normalizePath(file.path)));
     const hubNotes = [...filePaths].map((path) => ({
         path,
         inbound: inbound.get(path) ?? 0,
@@ -159,7 +181,8 @@ function analyzeLinks(app: App, files: readonly TFile[]): VaultMetacognitionSnap
     })).sort((left, right) => (right.inbound + right.outbound) - (left.inbound + left.outbound)).slice(0, 12);
 
     const unresolved = new Map<string, number>();
-    for (const targets of Object.values(unresolvedLinks)) {
+    for (const [source, targets] of Object.entries(unresolvedLinks)) {
+        if (!filePaths.has(normalizePath(source))) continue;
         for (const [target, count] of Object.entries(targets ?? {})) {
             unresolved.set(target, (unresolved.get(target) ?? 0) + Number(count || 0));
         }
@@ -198,6 +221,22 @@ function inferTopicClusters(files: readonly TFile[]): Array<{ label: string; pat
         .sort((left, right) => right[1].length - left[1].length)
         .slice(0, 8)
         .map(([label, paths]) => ({ label, paths: paths.slice(0, 12) }));
+}
+
+function labelTopicClusterFromAllowedPaths(paths: readonly string[]): string {
+    const folders = new Map<string, number>();
+    const basenames = new Map<string, number>();
+    for (const path of paths) {
+        const normalized = normalizePath(path);
+        const slash = normalized.lastIndexOf("/");
+        const folder = slash > 0 ? normalized.slice(0, slash) : "Root";
+        const basename = normalized.slice(slash + 1).replace(/\.md$/i, "");
+        folders.set(folder, (folders.get(folder) ?? 0) + 1);
+        if (basename) basenames.set(basename, (basenames.get(basename) ?? 0) + 1);
+    }
+    return sortCounts(folders)[0]?.[0]
+        ?? sortCounts(basenames)[0]?.[0]
+        ?? "Topic";
 }
 
 function inferKnowledgeGaps(

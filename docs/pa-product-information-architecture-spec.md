@@ -1,6 +1,6 @@
 # PA Product Information Architecture Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -13,6 +13,7 @@ Updated: 2026-06-28
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related specs | [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [Context Pager spec](./pa-context-pager-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [Pagelet async result plan](./pagelet-async-result-plan.md), [Pagelet user guide](./pagelet-user-guide.md) |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This spec defines the product information architecture for PA's future
 AI-native knowledge workflows. It is not current shipped behavior.
@@ -29,7 +30,8 @@ PA needs several surfaces with clear roles:
 - Pagelet reviews candidates and decisions.
 - Bubble previews only the most timely nudges.
 - Memory panel governs confirmed long-term memory.
-- Review Queue carries typed pending decisions across surfaces.
+- Review Queue carries user-kept items and typed action/confirmation items
+  across surfaces when there is user intent or durable consequence.
 
 This document records the one-question-at-a-time product decisions confirmed on
 2026-06-28. It should guide future SDD work before runtime implementation.
@@ -43,6 +45,7 @@ This document records the one-question-at-a-time product decisions confirmed on
 | IA-D3 | Pagelet owns the unified Review Queue at Panel/Tab level; Bubble only previews high-signal nudges. | Pagelet can be the review surface without making the Bubble complex. |
 | IA-D4 | Review Queue is logically global, with context-filtered UI. | One queue model can serve Pagelet, Memory, Maintenance, Graph Discovery, and Chat-triggered flows while each surface shows only the relevant slice. |
 | IA-D5 | Product Information Architecture needs its own spec. | The surface contract is cross-cutting and should not be hidden inside Memory, Maintenance, or Pagelet implementation specs. |
+| IA-D6 | Preview is not queue debt. | Read-only cues, digests, and generated candidates become queue items only after user-kept intent or durable proposed change. |
 
 ## 1. Product Decision
 
@@ -232,6 +235,12 @@ Product rule:
 The Review Queue should be logically global and physically shared, while each
 surface presents a context-filtered view.
 
+The Review Queue should stay small and consequential. It is not the storage
+place for every AI-generated candidate, recall cue, weak graph relation, or
+digest line. Use it when there is user intent (`Keep`, `Later`, `Save`) or a
+durable proposed consequence such as Memory, Markdown, maintenance, or external
+action.
+
 Product IA is the canonical owner for Review Queue item types. Other specs may
 describe the subset they emit or consume, but they should not introduce new
 queue type strings unless this table is updated first.
@@ -242,15 +251,15 @@ Canonical v1 item types:
 
 | Type | Origin | Primary review surface |
 | --- | --- | --- |
-| `evidence_insight` | Trust Layer / Pagelet review | Pagelet Panel |
+| `evidence_insight` | Trust Layer / Pagelet review, only after user-kept or durable proposal | Pagelet Panel |
 | `memory_candidate` | Trust Layer / Chat / Pagelet | Pagelet Panel or Tab |
 | `memory_conflict` | Trust Layer | Pagelet Panel or Memory panel handoff |
 | `maintenance_proposal` | Maintenance Review | Pagelet Panel or Tab |
-| `capture_enrichment` | Quick Capture | Pagelet Panel or Tab |
+| `capture_enrichment` | Quick Capture, only for durable or user-kept enrichment | Pagelet Panel or Tab |
 | `task_suggestion` | Quick Capture / Maintenance Review | Pagelet Panel or Tab |
-| `recall_suggestion` | Quiet Recall | Pagelet Bubble, then Panel |
-| `related_note` | Graph Discovery | Pagelet Panel |
-| `theme_chain` | Graph Discovery | Pagelet Panel or Tab |
+| `recall_suggestion` | Quiet Recall, only for user-chosen later/save/promote handoff | Pagelet Bubble, then Panel |
+| `related_note` | Graph Discovery, only after user-kept or explicit review context | Pagelet Panel |
+| `theme_chain` | Graph Discovery, only after user-kept or explicit review context | Pagelet Panel or Tab |
 | `conflict_pair` | Graph Discovery / Trust Layer | Pagelet Panel or Tab |
 | `index_note_candidate` | Graph Discovery / Maintenance Review | Pagelet Tab |
 | `review_summary` | Weekly Review / Pagelet review / Scope Recap | Pagelet Tab |
@@ -264,7 +273,9 @@ variation.
 Terminology rules:
 
 - User-saved insights are `Saved Insight` objects, not queue items.
-- PA-discovered insight proposals enter the queue as `evidence_insight`.
+- PA-discovered insight candidates do not enter the queue by default. A
+  user-kept or durable PA-discovered insight proposal enters the queue as
+  `evidence_insight`.
 - `theme_chain` may create a Saved Insight, an index note candidate, or a
   `memory_candidate`; it is not itself Confirmed Memory.
 - Memory Candidate types come from
@@ -315,7 +326,7 @@ stateDiagram-v2
 
 Not every item supports every transition. For example:
 
-- `memory_candidate` can become Confirmed Memory after accepted or edited.
+- `memory_candidate` can become Confirmed Memory after the user confirms or edits it.
 - `maintenance_proposal` can become applied, failed, or undone.
 - `related_note` can be saved, dismissed, or converted into a stronger link
   proposal later.
@@ -353,7 +364,7 @@ acknowledgements only when the underlying queue item remains inspectable later.
 
 When a Memory Candidate is confirmed:
 
-1. Pagelet records the user's accepted wording and sourceRefs.
+1. Pagelet records the user's selected wording and sourceRefs.
 2. Trust Layer creates or updates Confirmed Memory.
 3. Memory panel becomes the long-term place to inspect, edit, stale, forget, or
    export that memory.
@@ -387,8 +398,8 @@ The Pagelet progressive disclosure stack should keep distinct responsibilities.
 
 Allowed:
 
-- "2 review items ready"
-- "1 possible memory needs review"
+- "2 kept or action-ready items"
+- "1 possible memory to confirm"
 - "Weekly maintenance scan is ready"
 - "This note may connect to 3 older notes"
 - "Open Pagelet" or `View`
@@ -433,7 +444,7 @@ Memory has three stages and three surface responsibilities.
 | Stage | Meaning | Primary surface |
 | --- | --- | --- |
 | Memory Candidate | PA thinks this may be worth remembering | Pagelet |
-| Confirmed Memory | User has accepted or edited it into durable memory | Memory panel |
+| Confirmed Memory | User has confirmed or edited it into durable memory | Memory panel |
 | Used Memory | PA selected it for a current run | Chat/Pagelet compact trace |
 
 ### Candidate Review
@@ -482,6 +493,9 @@ memory, maintenance, and review decisions need stable surfaces.
 
 Bubble is good at gentle awareness. It is weak at list management. Keep review
 queues in Panel/Tab.
+
+Preview, recall, and digest candidates should be disposable. A queue item means
+the user chose to keep it or PA is proposing a durable consequence.
 
 ### Principle 3: Candidate Is Not Confirmed Memory
 

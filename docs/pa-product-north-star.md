@@ -1,6 +1,6 @@
 # PA Product North Star
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -10,6 +10,7 @@ Updated: 2026-06-28
 | Scope | PA Agent, Pagelet, Memory, Capture, Review, Maintenance, Action |
 | Role | North Star for product design, SDD decisions, and implementation tradeoffs |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
+| Related product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This document records PA's product philosophy. It should stay shorter and more
 stable than feature specs. Use it when a design decision is ambiguous.
@@ -28,6 +29,17 @@ PA's value is not making AI think for the user. PA's value is helping the
 user's own thinking become easier to keep, revisit, connect, and care for over
 time.
 
+PA should also avoid turning review into a new management burden:
+
+> Review should feel like recognition, not administration.
+>
+> 回顾应该像“想起来了”，不是“又多了一组待处理”。
+
+The default PA artifact is ignorable. The user should be able to read, close,
+ignore, or dismiss a recall cue, digest, or insight candidate without creating
+future debt. Explicit confirmation is required when PA will create durable
+state, change future PA behavior, mutate the vault, or act outside the vault.
+
 ## Product Philosophy
 
 ### 1. Let Thoughts Stay First
@@ -44,6 +56,10 @@ own old thoughts again at the right time.
 
 PA should help with retrieval, review, connection, and recall before it tries to
 create more output.
+
+Returning a thought should not become a processing task. A quiet recall,
+Pagelet hint, or AI insight preview may simply be noticed and forgotten again.
+That is acceptable.
 
 ### 3. Care For Knowledge Gently
 
@@ -75,6 +91,10 @@ It should begin with small, reviewable actions. When the user repeatedly accepts
 similar suggestions with low edits and low undo rates, PA may earn more scoped
 autonomy.
 
+Trust does not mean asking for more confirmations. Trust means PA learns which
+durable actions deserve preview and which read-only signals should stay
+lightweight, sparse, and easy to ignore.
+
 ## Design Principles
 
 - Less management, more capture.
@@ -83,6 +103,7 @@ autonomy.
 - Less black-box insight, more source-backed evidence.
 - Less full automation, more earned trust.
 - Less tool jargon, more long-term companionship.
+- Less confirmation burden, more optional recognition.
 
 ## Product Review Questions
 
@@ -95,6 +116,9 @@ Before adding or implementing a PA feature, ask:
 - Does this maintain the vault gently, with preview, recovery, or undo?
 - Does this keep advanced AI capability behind a quiet product surface?
 - Does this earn trust gradually instead of assuming broad permission?
+- Can the user ignore this without future penalty?
+- Is confirmation tied to a durable consequence rather than an AI sentence?
+- Does this reduce more review burden than it creates?
 
 If a feature does not pass these questions, it may still belong in an
 engineering substrate, but it should not become a prominent product surface yet.
@@ -106,9 +130,12 @@ engineering substrate, but it should not become a prominent product surface yet.
 - Do not let AI content drown out the user's original notes.
 - Do not interrupt often just to appear intelligent.
 - Do not pursue fully automatic organization before trust exists.
+- Do not turn human-in-the-loop safety into human-as-clickworker chores.
+- Do not create queues, badges, or unresolved states for every AI candidate.
 - Do not expose RAG, GraphRAG, VSS, agent, or memory jargon as product concepts.
 
 ## Final Principle
 
 > Capture should be light. Review should be natural. Connections should have
-> evidence. Maintenance should be reversible. Action should be earned.
+> evidence. AI artifacts should be ignorable. Maintenance should be reversible.
+> Action should be earned.

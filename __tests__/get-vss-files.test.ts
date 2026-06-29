@@ -1,4 +1,5 @@
 import { describe, expect, it, jest } from '@jest/globals';
+import { TFile } from 'obsidian';
 
 const mockBundledSkillIds = [
     'obsidian-markdown',
@@ -96,14 +97,51 @@ import { PluginManager } from '../src/plugin';
 
 interface FakeFile { path: string }
 
-const buildHarness = (files: FakeFile[], excludePaths: string[] | undefined) => {
+const DATA_BOUNDARY_DEFAULTS = {
+    excludedFolders: [] as string[],
+    excludedTags: [] as string[],
+    generatedNotePolicy: "exclude-generated" as const,
+};
+
+const buildHarness = (
+    files: FakeFile[],
+    excludePaths: string[] | undefined,
+    options: {
+        dataBoundary?: Partial<typeof DATA_BOUNDARY_DEFAULTS>;
+        metadataByPath?: Record<string, unknown>;
+    } = {},
+) => {
     const plugin = Object.create(PluginManager.prototype) as unknown as {
-        app: { vault: { getMarkdownFiles: () => FakeFile[] } };
-        settings: { vssCacheExcludePath: string[] | undefined };
+        app: {
+            vault: {
+                getMarkdownFiles: () => FakeFile[];
+                getAbstractFileByPath: (path: string) => FakeFile | null;
+            };
+            metadataCache: { getFileCache: (file: FakeFile) => unknown };
+        };
+        settings: {
+            vssCacheExcludePath: string[] | undefined;
+            dataBoundary: typeof DATA_BOUNDARY_DEFAULTS;
+        };
         getVSSFiles: () => FakeFile[];
+        isDataBoundaryAllowedPath: (path: string) => boolean;
     };
-    plugin.app = { vault: { getMarkdownFiles: () => files } };
-    plugin.settings = { vssCacheExcludePath: excludePaths };
+    plugin.app = {
+        vault: {
+            getMarkdownFiles: () => files,
+            getAbstractFileByPath: (path: string) => files.find((file) => file.path === path) ?? null,
+        },
+        metadataCache: {
+            getFileCache: (file: FakeFile) => options.metadataByPath?.[file.path],
+        },
+    };
+    plugin.settings = {
+        vssCacheExcludePath: excludePaths,
+        dataBoundary: {
+            ...DATA_BOUNDARY_DEFAULTS,
+            ...options.dataBoundary,
+        },
+    };
     return plugin;
 };
 
@@ -155,5 +193,65 @@ describe('PluginManager.getVSSFiles', () => {
 
         const withoutSlash = buildHarness([inFolder, looksLike], ['docs']);
         expect(withoutSlash.getVSSFiles()).toEqual([]);
+    });
+
+    it('applies Data Boundary folder, tag, and generated-note exclusions', () => {
+        const keep = { path: 'notes/keep.md' };
+        const folderDrop = { path: 'private/secret.md' };
+        const tagDrop = { path: 'notes/tagged.md' };
+        const generatedDrop = { path: '.pagelet/generated.md' };
+        const plugin = buildHarness(
+            [keep, folderDrop, tagDrop, generatedDrop],
+            [],
+            {
+                dataBoundary: {
+                    excludedFolders: ['private'],
+                    excludedTags: ['sensitive'],
+                },
+                metadataByPath: {
+                    'notes/tagged.md': { tags: [{ tag: '#Sensitive' }] },
+                    '.pagelet/generated.md': { frontmatter: { pagelet: true } },
+                },
+            },
+        );
+
+        expect(plugin.getVSSFiles()).toEqual([keep]);
+    });
+
+    it('keeps legacy VSS excludes and Data Boundary excludes as a union', () => {
+        const keep = { path: 'notes/keep.md' };
+        const legacyDrop = { path: '.obsidian/plugin.md' };
+        const boundaryDrop = { path: 'private/plan.md' };
+        const plugin = buildHarness(
+            [keep, legacyDrop, boundaryDrop],
+            ['.obsidian'],
+            { dataBoundary: { excludedFolders: ['private'] } },
+        );
+
+        expect(plugin.getVSSFiles()).toEqual([keep]);
+    });
+
+    it('uses existing file metadata for path-level Data Boundary checks', () => {
+        const FileCtor = TFile as unknown as { new(path: string): FakeFile };
+        const tagged = new FileCtor('notes/tagged.md');
+        const generated = new FileCtor('Reviews/generated.md');
+        const plugin = buildHarness(
+            [tagged, generated],
+            [],
+            {
+                dataBoundary: {
+                    excludedTags: ['sensitive'],
+                    generatedNotePolicy: 'exclude-generated',
+                },
+                metadataByPath: {
+                    'notes/tagged.md': { tags: [{ tag: '#sensitive' }] },
+                    'Reviews/generated.md': { frontmatter: { pagelet: true } },
+                },
+            },
+        );
+
+        expect(plugin.isDataBoundaryAllowedPath('notes/tagged.md')).toBe(false);
+        expect(plugin.isDataBoundaryAllowedPath('Reviews/generated.md')).toBe(false);
+        expect(plugin.isDataBoundaryAllowedPath('notes/missing.md')).toBe(true);
     });
 });

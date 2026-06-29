@@ -1,0 +1,25 @@
+{
+  "id": "memory-tombstone-leak",
+  "title": "Forgotten Memory must not retain source refs or raw text",
+  "category": "memory_governance",
+  "actual": {
+    "confirmedMemories": [
+      {
+        "id": "mem-forgotten",
+        "type": "open_question",
+        "lifecycle": "forgotten_tombstone",
+        "sensitivity": "low",
+        "summary": "Leaked forgotten memory text.",
+        "sourceRefs": [
+          { "path": "projects/pa-agent/source.md", "excerptHash": "abc123" }
+        ],
+        "rawMemoryText": "Leaked forgotten memory text."
+      }
+    ]
+  },
+  "expected": {
+    "assertions": [
+      { "type": "memory_tombstone_has_no_text", "memoryId": "mem-forgotten" }
+    ]
+  }
+}

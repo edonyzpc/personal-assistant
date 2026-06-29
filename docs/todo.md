@@ -18,6 +18,7 @@ archived to [project-todo-pre-2.8.0.md](./archive/project-todo-pre-2.8.0.md).
 
 | Area | Status | Next decision or action | Evidence |
 | --- | --- | --- | --- |
+| PA Agent product spec implementation | Complete / release-readiness | Slices 0-G, A2, and M12 are implemented with automated gates and Obsidian smoke evidence. Use the tracker for release-readiness review or define a new approval gate for future scope. | [Product spec development plan](./pa-agent-product-spec-development-plan.md); [tracker](./pa-agent-product-spec-development-tracker.md#next-approval-gates) |
 | Operations Agent append mode | Deferred / not exposed | Keep `OPERATIONS_AGENT_RUNTIME_ENABLED=false` until the full action runtime, prompt split, setting semantics, and Obsidian smoke are complete. | `src/operations-agent-flags.ts`; [architecture refactor tracker](./archive/architecture-refactor-development-tracker.md) |
 | Operations Agent Phase 2 | Future | Scope replace-section, multi-file edits, command execution, batch-confirm UX, and production audit only after separate product/security review. | [Operations Agent plan](./operations-agent-plan.md); [Operations Agent mode SDD](./operations-agent-mode-sdd.md) |
 | User custom Skills (SPEC-C2) | Deferred | Decide the product value and UX before drafting the SDD for allowed tools, Settings UI, and optional vault-side discovery. | [v2 post-release tracker](./archive/v2-post-release-spec-driven-development.md) |

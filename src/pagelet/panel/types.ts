@@ -15,6 +15,16 @@ import type {
     PageletScopeCandidateReason,
     PageletScopeSkippedReason,
 } from "../scope";
+import type {
+    ConfirmedMemoryRecord,
+    ContextPagerState,
+    GraphDiscoveryRunResult,
+    MaintenanceReviewRunResult,
+    QuietRecallRunResult,
+    ReviewQueueItem,
+    SavedInsight,
+    WeeklyReviewRunResult,
+} from "../../pa";
 
 /** Which scenario opened the Panel -- determines layout */
 export type PanelLayoutType = "review" | "current" | "discover" | "summary";
@@ -57,6 +67,7 @@ export interface PanelCallbacks {
     onRelatedNoteClick?: (noteName: string, sourcePath?: string) => void;
     onResearchFinding?: (finding: PanelFinding) => void | Promise<void>;
     onToggleHints?: () => void;
+    onReviewQueueItemDismiss?: (id: string) => void | Promise<void>;
 }
 
 /** Options for creating a PanelView */
@@ -84,11 +95,39 @@ export interface PanelScopeState {
     estimatedInputTokens?: number;
 }
 
+export interface PanelReviewQueueState {
+    items: ReviewQueueItem[];
+    totalCount: number;
+}
+
+export interface PanelSavedInsightState {
+    items: SavedInsight[];
+    totalCount: number;
+}
+
+export interface PanelMemoryGovernanceState {
+    records: ConfirmedMemoryRecord[];
+    totalCount: number;
+}
+
+export type PanelMaintenanceReviewState = MaintenanceReviewRunResult;
+export type PanelWeeklyReviewState = WeeklyReviewRunResult;
+export type PanelQuietRecallState = QuietRecallRunResult;
+export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
+
 export interface PanelOpenExtra {
     connections?: NoteConnection[];
     markdown?: string;
     scope?: PanelScopeState;
     sourcePath?: string;
+    reviewQueue?: PanelReviewQueueState;
+    contextPager?: ContextPagerState;
+    savedInsights?: PanelSavedInsightState;
+    memoryGovernance?: PanelMemoryGovernanceState;
+    maintenanceReview?: PanelMaintenanceReviewState;
+    weeklyReview?: PanelWeeklyReviewState;
+    quietRecall?: PanelQuietRecallState;
+    graphDiscovery?: PanelGraphDiscoveryState;
 }
 
 /** Discovery connection between notes */

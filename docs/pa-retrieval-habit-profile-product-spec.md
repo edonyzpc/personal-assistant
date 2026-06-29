@@ -1,20 +1,23 @@
 # PA Retrieval Habit Profile Product Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
 | Field | Value |
 | --- | --- |
 | Document type | Product spec / future implementation input |
-| Status | Confirmed decision spec; implementation not started |
+| Status | Confirmed decision spec; M12 runtime implemented for local opt-in weak retrieval adaptation |
 | Feature family | Retrieval Habit Profile / Local retrieval adaptation |
 | Primary surfaces | Active Vault Indexer, Quiet Recall, Pagelet, Settings advanced data controls |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related specs | [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md) |
 
 This spec defines Retrieval Habit Profile as a local, clearable, weak-influence
-adaptation layer for retrieval and recall. It is not current shipped behavior.
+adaptation layer for retrieval and recall. Slice G implemented the narrow
+disabled-by-default aggregate feedback seed; M12 implemented user-facing opt-in
+and clear controls, 90-day aggregate retention, unsafe-shape rejection, and weak
+near-tie influence through the Active Vault Indexer.
 
 The product definition:
 
@@ -74,9 +77,9 @@ Allowed v1 signals:
 | Source click | user opens a cited note from PA result |
 | Search query type | path/folder-like, tag-like, natural language, exact term |
 | Related note open | user opens a related-note suggestion |
-| Recall feedback | accept, dismiss, not relevant |
+| Recall feedback | keep, dismiss, not relevant |
 | Saved insight | user saves a theme/tension/question |
-| Accepted related note | user accepts a related-note suggestion |
+| Kept related note | user keeps a related-note suggestion |
 | Common entry type | Chat, Pagelet, Weekly Review, Quick Capture |
 | Dismissed / not relevant | lightweight negative feedback |
 
@@ -152,7 +155,7 @@ Controls:
 
 Default state:
 
-- v1 starts disabled until the user enables `Improve recall locally` or accepts
+- v1 starts disabled until the user enables `Improve recall locally` or confirms
   a lightweight first-use notice.
 - The notice must say the profile is local-only, clearable, weak influence,
   and not Confirmed Memory.

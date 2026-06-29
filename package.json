@@ -15,6 +15,7 @@
     "changelog": "node scripts/changelog.mjs",
     "version": "node version-bump.mjs && git add manifest-beta.json manifest.json versions.json CHANGELOG.md",
     "lint": "eslint \"src/**/*.{ts,tsx}\" \"__mocks__/**/*.ts\"",
+    "eval:pa:fast": "jest --runTestsByPath __tests__/pa-eval.test.ts --runInBand",
     "generate:third-party-notices": "node scripts/generate-third-party-notices.mjs",
     "check:third-party-notices": "node scripts/check-third-party-notices.mjs",
     "audit:bundle": "node scripts/audit-bundle.mjs --input dist/main.js --allow-node-builtins",

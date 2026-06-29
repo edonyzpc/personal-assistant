@@ -225,6 +225,40 @@ describe("PetView task kind", () => {
 
         expect(view.taskKind).toBe("summary");
     });
+
+    it("defines a hold gesture that opens the shared Quick Capture modal", () => {
+        const source = readFileSync("src/pagelet/pet/PetView.ts", "utf8");
+
+        expect(source).toContain("const QUICK_CAPTURE_HOLD_MS = 520;");
+        expect(source).toContain("onQuickCaptureOpen");
+        expect(source).toContain("this.openQuickCapture();");
+        expect(source).toContain("_handleMouseDown");
+        expect(source).toContain("_handleTouchstart");
+        expect(source).toContain("this.startQuickCaptureHold();");
+        expect(source).toContain("if (this.consumeQuickCaptureHold()) return;");
+        expect(source).not.toContain("pa-pagelet-pet-capture-form");
+        expect(source).not.toContain("pagelet.pet.quickCapturePlaceholder");
+    });
+
+    it("opens shared Quick Capture from the hold path without calling the bubble callback", () => {
+        jest.useFakeTimers();
+        type PetViewCaptureInternals = {
+            startQuickCaptureHold: () => void;
+        };
+        const onToggleBubble = jest.fn();
+        const onQuickCaptureOpen = jest.fn();
+        const view = new PetView({
+            callbacks: { onToggleBubble, onQuickCaptureOpen },
+            getLocale: () => "en",
+        });
+        const internals = view as unknown as PetViewCaptureInternals;
+
+        internals.startQuickCaptureHold();
+        jest.advanceTimersByTime(520);
+
+        expect(onQuickCaptureOpen).toHaveBeenCalledTimes(1);
+        expect(onToggleBubble).not.toHaveBeenCalled();
+    });
 });
 
 describe("Pet SVG visual weight", () => {

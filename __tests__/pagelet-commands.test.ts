@@ -1,8 +1,13 @@
 import {
     PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
+    PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
+    PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
     PAGELET_OPEN_PANEL_COMMAND_ID,
     PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
+    PAGELET_QUIET_RECALL_COMMAND_ID,
     PAGELET_REVIEW_CURRENT_COMMAND_ID,
+    PAGELET_SCOPE_RECAP_COMMAND_ID,
+    PAGELET_WEEKLY_REVIEW_COMMAND_ID,
     registerPageletCommands,
     type PageletCommandCallbacks,
 } from "../src/pagelet/commands";
@@ -30,6 +35,11 @@ function makeCallbacks(): PageletCommandCallbacks {
         onQuickReview: jest.fn(),
         onDiscoverConnections: jest.fn(),
         onPeriodicSummary: jest.fn(),
+        onMaintenanceReview: jest.fn(),
+        onWeeklyReview: jest.fn(),
+        onQuietRecall: jest.fn(),
+        onGraphDiscovery: jest.fn(),
+        onScopeRecap: jest.fn(),
         onToggleProactiveHints: jest.fn(),
         onShowBackgroundPreparationStatus: jest.fn(),
         onMovePetCorner: jest.fn(),
@@ -47,6 +57,11 @@ describe("registerPageletCommands", () => {
         expect(host.registered.map((command) => command.id)).toEqual(expect.arrayContaining([
             PAGELET_OPEN_PANEL_COMMAND_ID,
             PAGELET_REVIEW_CURRENT_COMMAND_ID,
+            PAGELET_MAINTENANCE_REVIEW_COMMAND_ID,
+            PAGELET_WEEKLY_REVIEW_COMMAND_ID,
+            PAGELET_QUIET_RECALL_COMMAND_ID,
+            PAGELET_GRAPH_DISCOVERY_COMMAND_ID,
+            PAGELET_SCOPE_RECAP_COMMAND_ID,
             PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID,
             PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
         ]));
@@ -62,11 +77,21 @@ describe("registerPageletCommands", () => {
         registerPageletCommands(host, callbacks);
         host.registered.find((command) => command.id === PAGELET_OPEN_PANEL_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_REVIEW_CURRENT_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_MAINTENANCE_REVIEW_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_WEEKLY_REVIEW_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_QUIET_RECALL_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_GRAPH_DISCOVERY_COMMAND_ID)?.callback();
+        host.registered.find((command) => command.id === PAGELET_SCOPE_RECAP_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID)?.callback();
         host.registered.find((command) => command.id === PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID)?.callback();
 
         expect(callbacks.onOpenPanel).toHaveBeenCalledTimes(1);
         expect(callbacks.onReviewCurrent).toHaveBeenCalledTimes(1);
+        expect(callbacks.onMaintenanceReview).toHaveBeenCalledTimes(1);
+        expect(callbacks.onWeeklyReview).toHaveBeenCalledTimes(1);
+        expect(callbacks.onQuietRecall).toHaveBeenCalledTimes(1);
+        expect(callbacks.onGraphDiscovery).toHaveBeenCalledTimes(1);
+        expect(callbacks.onScopeRecap).toHaveBeenCalledTimes(1);
         expect(callbacks.onShowBackgroundPreparationStatus).toHaveBeenCalledTimes(2);
     });
 });

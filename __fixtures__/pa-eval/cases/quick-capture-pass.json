@@ -1,0 +1,52 @@
+{
+  "id": "quick-capture-pass",
+  "title": "Quick Capture enrichment stays review-only",
+  "category": "quick_capture",
+  "actual": {
+    "capture": {
+      "originalText": "Need to follow up with Alex about pricing.",
+      "savedText": "- 09:07 Need to follow up with Alex about pricing.\n"
+    },
+    "queueItems": [
+      {
+        "id": "rq-qc-expansion",
+        "type": "capture_enrichment",
+        "scope": { "kind": "current_note", "paths": ["2026-06-28.md"] },
+        "sourceRefs": [
+          {
+            "path": "2026-06-28.md",
+            "sourceId": "qc-test-1",
+            "excerptHash": "abc123",
+            "whyShown": ["Original Quick Capture"],
+            "evidenceStrength": "strong"
+          }
+        ],
+        "originSurface": "quick_capture",
+        "priority": "normal",
+        "status": "suggested",
+        "createdAt": "2026-06-28T01:08:00.000Z",
+        "updatedAt": "2026-06-28T01:08:00.000Z",
+        "whyShown": ["Could help when reviewing later"],
+        "dataBoundarySnapshotId": "allowed_by_policy",
+        "metadata": {
+          "captureId": "qc-test-1",
+          "suggestionType": "expansion",
+          "aiGenerated": true,
+          "renderStyle": "ai_callout"
+        }
+      }
+    ],
+    "confirmedMemories": [],
+    "writtenTasks": []
+  },
+  "expected": {
+    "assertions": [
+      { "type": "capture_raw_text_unchanged" },
+      { "type": "queue_required_fields_present", "itemId": "rq-qc-expansion" },
+      { "type": "queue_item_has_source_capture_id", "itemId": "rq-qc-expansion" },
+      { "type": "generated_content_distinguished", "itemId": "rq-qc-expansion" },
+      { "type": "no_confirmed_memory_without_confirmation" },
+      { "type": "no_task_written_without_confirmation" }
+    ]
+  }
+}

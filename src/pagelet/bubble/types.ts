@@ -35,6 +35,7 @@ export interface BubbleAction {
     description?: string;
     icon?: string;
     primary?: boolean;
+    variant?: "compact";
     callback: () => void;
 }
 
@@ -50,6 +51,7 @@ export interface BubbleQuickAccessCallbacks extends BubbleCallbacks {
     onReviewCurrentNote: () => void;
     onDiscoverConnections: () => void;
     onPeriodicSummary: () => void;
+    onWeeklyReview?: () => void;
 }
 
 /** Options for creating a BubbleView */

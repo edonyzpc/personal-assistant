@@ -560,6 +560,23 @@ function cloneMemoryMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMe
         allowedMemorySourcePaths: [...metadata.allowedMemorySourcePaths],
         ...(metadata.contextUsed ? { contextUsed: metadata.contextUsed.map(cloneContextUsedItem) } : {}),
         ...(metadata.sourceRecords ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) } : {}),
+        ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
+    };
+}
+
+function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {
+    return {
+        ...trace,
+        usedSourceRefs: trace.usedSourceRefs.map((ref) => ({
+            ...ref,
+            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+        })),
+        skippedSourceRefs: trace.skippedSourceRefs.map((ref) => ({
+            ...ref,
+            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+        })),
+        usedMemoryRefs: trace.usedMemoryRefs.map((ref) => ({ ...ref })),
+        droppedMemoryRefs: trace.droppedMemoryRefs.map((ref) => ({ ...ref })),
     };
 }
 

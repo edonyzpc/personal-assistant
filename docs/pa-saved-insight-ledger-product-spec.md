@@ -1,6 +1,6 @@
 # PA Saved Insight And Insight Ledger Product Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -13,6 +13,7 @@ Updated: 2026-06-28
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related specs | [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md) |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This spec defines Saved Insight as PA's durable but lightweight thought object.
 It is not current shipped behavior.
@@ -32,11 +33,11 @@ This document records the one-question-at-a-time product decisions confirmed on
 
 | ID | Decision | Product consequence |
 | --- | --- | --- |
-| INS-D1 | Saved Insight uses a mixed shape. | It starts as a local source-backed object and can later be written to Weekly Review note, review note, or independent Markdown. |
+| INS-D1 | Saved Insight uses a mixed shape. | It starts as a local source-backed object and can later be explicitly written to Weekly Review note, review note, or independent Markdown. |
 | INS-D2 | The key distinction from Memory Candidate is whether it affects PA future behavior. | Insight is a reviewable thought asset; Memory Candidate may become future behavioral context after confirmation. |
 | INS-D3 | v1 insight types use a medium taxonomy. | `observation`, `theme`, `tension`, `question`, `decision`, and `opportunity` cover most review cases without over-classification. |
-| INS-D4 | Review Queue behavior depends on origin. | User-saved insights go directly to Insight Ledger; PA-discovered insights require Review Queue confirmation first. |
-| INS-D5 | Markdown write target follows triggering context, with independent note as an option. | Weekly Review insights default to Weekly Review note; Pagelet review insights default to review note; important insights can become independent notes. |
+| INS-D4 | Insight candidates are ignorable until the user chooses durability. | User-saved insights go directly to Insight Ledger; PA-discovered candidates stay ephemeral unless the user saves, keeps for later, promotes, or PA proposes a durable action. |
+| INS-D5 | Markdown write target follows triggering context, with independent note as an option. | Weekly Review insights default to Weekly Review note; Pagelet review insights may be explicitly added to a review note; important insights can become independent notes. |
 | INS-D6 | Saved Insight has weak influence on future retrieval/recommendation. | It can affect recall and ranking, but cannot act as a fact, preference, or behavioral constraint. |
 | INS-D7 | Saved Insight has lightweight lifecycle state. | `active`, `archived`, and `promoted` are enough for v1. |
 | INS-D8 | Insight Ledger is a lightweight Pagelet Tab filter/view. | Users can review insights without creating a new top-level product entry. |
@@ -64,6 +65,16 @@ This avoids two product failures:
 
 - treating every useful insight as Confirmed Memory; and
 - letting insights disappear inside Chat, Bubble, or transient review sessions.
+
+It must also avoid a third failure:
+
+- turning every PA-generated insight candidate into a new item the user must
+  review.
+
+The product boundary:
+
+> Insight candidates are ignorable. Saved Insight begins when the user chooses
+> to save, keep, or promote.
 
 ## 2. Saved Insight Versus Memory Candidate
 
@@ -103,12 +114,28 @@ Saved Insight behavior depends on how it is created.
 | Origin | Default behavior | Reason |
 | --- | --- | --- |
 | User manually saves an insight | Save directly to Insight Ledger | The save action is already confirmation |
-| PA discovers an insight automatically | Create Review Queue item first | AI-generated insight should be reviewed before becoming a user asset |
-| Weekly Review section | User accepts or edits, then save | Weekly Review is an intentional review session |
+| PA discovers an insight automatically | Show ephemerally or discard if low confidence | AI-generated candidates should not become user assets or queue debt without intent |
+| User chooses `Later` / `Keep` on a PA-discovered insight | Create a Review Queue item or lightweight saved draft | The user has expressed intent to return |
+| PA proposes durable save, Memory promotion, or maintenance action from an insight | Create the appropriate confirmed flow | Durable consequence needs confirmation before it affects the vault or future PA behavior |
+| Weekly Review section | User selects, saves, or edits, then save | Weekly Review is an intentional review session |
 | Quiet Recall Panel | User saves from evidence view, then save | The user has inspected or chosen the cue |
 | Chat | Chat can create a save action, but structured review routes to Pagelet when evidence is complex | Chat should invoke, not become the ledger |
 
 PA-discovered insights should not silently fill the ledger.
+They should also not silently fill Review Queue. The queue is for user intent or
+durable consequence, not for every generated candidate.
+
+### 4.1 Burden Boundary
+
+Saved Insight must preserve optionality:
+
+- Reading an insight preview does not create ledger state.
+- Ignoring an insight preview does not create queue state.
+- Dismissing an insight preview does not require a reason.
+- Saving an insight is confirmation for ledger storage only.
+- Promoting an insight to Memory requires separate Memory confirmation.
+- Turning an insight into maintenance requires preview/diff and action
+  confirmation.
 
 ## 5. Insight Ledger
 
@@ -148,7 +175,7 @@ Default target follows triggering context:
 | Triggering context | Default Markdown target |
 | --- | --- |
 | Weekly Review | Weekly Review note |
-| Pagelet review | Current review note |
+| Pagelet review | Current review note only after an explicit insight-save/export action |
 | Quick Capture post-processing | Review note or source-linked companion note |
 | Quiet Recall | Review note or Weekly Review note if inside weekly session |
 | User explicitly promotes | Independent Insight note |
@@ -307,13 +334,15 @@ Weekly Review is the main compounding surface for Saved Insights.
 Weekly Review can:
 
 - show candidate insights
-- let users accept/edit/dismiss
-- save accepted insights to Ledger
-- write accepted insights into Weekly Review note
+- let users select/save/edit/dismiss or simply skip sections
+- save selected insights to Ledger
+- write selected insights into Weekly Review note
 - promote selected insights to Memory Candidate or Maintenance Proposal
 
-Weekly Review note should include only accepted/saved insights, never raw
+Weekly Review note should include only selected/saved insights, never raw
 candidate insight spam.
+Skipped or ignored candidates should not become queue debt unless the user
+explicitly keeps or snoozes them.
 
 ## 13. Relationship To Quiet Recall
 
@@ -328,7 +357,9 @@ Flow:
 5. Insight enters Ledger directly if user saves from Panel.
 
 If PA wants to suggest a generated insight without user action, it should create
-a Review Queue item first.
+an ephemeral recall or digest candidate first. It should create a Review Queue
+item only when the user chooses `Later` / `Keep`, or when the insight is being
+promoted into a durable Memory, Markdown, or maintenance/action flow.
 
 ## 14. Relationship To Trust Layer
 
@@ -356,10 +387,11 @@ Suggested cases:
 | --- | --- |
 | PA-generated insight with sources | Can be saved after review; sourceRefs retained |
 | PA-generated insight without sources | Cannot be silently saved as PA insight |
+| PA-generated insight ignored by user | Does not create Ledger or Review Queue state |
 | User-authored insight | Can be saved without sourceRefs and marked user-authored |
 | Saved insight retrieval | Weakly influences recall but not behavior constraint |
 | Insight promoted to Memory Candidate | Requires Trust Layer confirmation |
-| Weekly Review note | Includes accepted insights only |
+| Weekly Review note | Includes selected insights only |
 | Archived insight | Does not proactively recall by default |
 
 Deterministic checks:
@@ -368,6 +400,7 @@ Deterministic checks:
 - user-authored unsourced insight has correct origin
 - saved insight does not become Confirmed Memory
 - weak influence does not override source evidence
+- ignored candidates do not create Review Queue debt
 - Markdown write requires user action
 
 ## 16. Roadmap
@@ -376,9 +409,9 @@ Deterministic checks:
 
 - Link this spec from Product IA, Weekly Review, Quiet Recall, Trust Layer,
   Data Boundary, and Eval Harness.
-- Use Product IA canonical Review Queue terminology: PA-discovered insight
-  proposals are `evidence_insight`; user-saved insights are Saved Insight
-  objects and do not need a queue item.
+- Use Product IA canonical Review Queue terminology only for durable or
+  user-kept proposals: `evidence_insight` means a user-kept or durable
+  source-backed insight proposal, not every PA-discovered candidate.
 
 ### Phase 1: Local Saved Insight Object
 
@@ -393,8 +426,8 @@ Deterministic checks:
 
 ### Phase 3: Weekly Review Integration
 
-- Save accepted Weekly Review insights to Ledger.
-- Write accepted insights to optional Weekly Review note.
+- Save user-selected Weekly Review insights to Ledger.
+- Write user-selected insights to optional Weekly Review note.
 
 ### Phase 4: Quiet Recall Integration
 
@@ -412,6 +445,8 @@ Deterministic checks:
 - Resolved: PA-discovered insight proposals use Product IA canonical
   `evidence_insight`; user-saved insights are Saved Insight objects, not queue
   item types.
+- Resolved: saving a Pagelet review note is not an insight-save action and does
+  not create `evidence_insight` Review Queue items by itself.
 - What exact UI label should users see: `Insight`, `Saved thought`,
   `Observation`, or Pagelet-native wording?
 - Where should independent Insight notes be saved by default?

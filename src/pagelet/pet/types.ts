@@ -14,6 +14,7 @@ export type PetCorner = "bottom-right" | "bottom-left" | "top-right" | "top-left
 /** Callback interface for Pet interactions */
 export interface PetCallbacks {
     onToggleBubble: () => void;
+    onQuickCaptureOpen?: () => void;
 }
 
 /** Options for creating a PetRenderer */

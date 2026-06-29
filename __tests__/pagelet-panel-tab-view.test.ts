@@ -64,6 +64,7 @@ class FakeElement {
     isConnected = false;
     disabled = false;
     checked = false;
+    scrollTop = 0;
     value = "";
 
     constructor(tagName: string) {
@@ -126,6 +127,7 @@ class FakeElement {
 
     removeChild<T extends FakeElement>(child: T): T {
         this.children = this.children.filter((candidate) => candidate !== child);
+        if (this.children.length === 0) this.scrollTop = 0;
         child.parent = null;
         child.setConnected(false);
         return child;
@@ -274,6 +276,18 @@ globalRecord.requestAnimationFrame = (callback: FrameRequestCallback): number =>
 import { PanelView } from "../src/pagelet/panel/PanelView";
 import { TabView } from "../src/pagelet/tab/TabView";
 import {
+    createContextPagerStateFromRetrievalOutcome,
+    type ConfirmedMemoryRecord,
+    type MaintenanceMoveApplyResult,
+    type MaintenanceMoveUndoResult,
+    type MaintenanceProposal,
+    type QuietRecallCandidate,
+    type ReviewQueueItem,
+    type RetrievalOutcome,
+    type SavedInsight,
+    type WeeklyReviewRunResult,
+} from "../src/pa";
+import {
     PAGELET_DETAIL_ICON,
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
@@ -289,6 +303,144 @@ describe("Pagelet panel and tab view regressions", () => {
         globalRecord.document = originalDocument;
         globalRecord.requestAnimationFrame = originalRequestAnimationFrame;
     });
+
+    function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): ReviewQueueItem {
+        const status = overrides.status ?? "suggested";
+        return {
+            id: overrides.id ?? `rq-${status}`,
+            type: overrides.type ?? "evidence_insight",
+            title: overrides.title ?? "Source-backed insight",
+            claim: overrides.claim ?? "This note could use clearer evidence.",
+            scope: overrides.scope ?? { kind: "current_note", paths: ["notes/current.md"] },
+            sourceRefs: overrides.sourceRefs ?? [{
+                path: "notes/current.md",
+                excerptHash: "abc123",
+                whyShown: ["Saved from Pagelet review"],
+                evidenceStrength: "medium",
+            }],
+            originSurface: overrides.originSurface ?? "pagelet",
+            priority: overrides.priority ?? "normal",
+            status,
+            createdAt: overrides.createdAt ?? "2026-06-28T12:00:00.000Z",
+            updatedAt: overrides.updatedAt ?? "2026-06-28T12:00:00.000Z",
+            whyShown: overrides.whyShown ?? ["Saved from Pagelet review"],
+            dataBoundarySnapshotId: overrides.dataBoundarySnapshotId ?? "boundary-test",
+            admissionReason: overrides.admissionReason ?? "user_kept_for_later",
+            replayRef: overrides.replayRef,
+            metadata: overrides.metadata,
+            snoozedUntil: overrides.snoozedUntil,
+        };
+    }
+
+    function makeContextPagerState() {
+        const outcome: RetrievalOutcome = {
+            id: "pagelet-context",
+            status: "partial_evidence",
+            sources: [{
+                path: "notes/current.md",
+                whyShown: ["current note"],
+                excerptHash: "abc123",
+            }],
+            skippedSources: [{
+                path: "private/secret.md",
+                excerptHash: "def456",
+                skippedReason: "data_boundary",
+                boundaryReason: "denied_by_data_boundary",
+                privateTitle: "Excluded source",
+            }],
+            missingScopeHints: ["1 note skipped"],
+        };
+        return createContextPagerStateFromRetrievalOutcome(outcome, { runId: "pagelet-run" });
+    }
+
+    function makeSavedInsight(overrides: Partial<SavedInsight> = {}): SavedInsight {
+        return {
+            id: overrides.id ?? "ins-1",
+            type: overrides.type ?? "theme",
+            text: overrides.text ?? "Pricing notes keep coming back.",
+            origin: overrides.origin ?? "pa-generated",
+            sourceRefs: overrides.sourceRefs ?? [{
+                path: "notes/current.md",
+                excerptHash: "abc123",
+                whyShown: ["Recurring theme"],
+                evidenceStrength: "medium",
+            }],
+            whyShown: overrides.whyShown ?? ["Recurring theme"],
+            scope: overrides.scope ?? { kind: "current_note", paths: ["notes/current.md"] },
+            status: overrides.status ?? "active",
+            influencePolicy: "weak-only",
+            createdAt: overrides.createdAt ?? "2026-06-28T12:00:00.000Z",
+            updatedAt: overrides.updatedAt ?? "2026-06-28T12:00:00.000Z",
+            dataBoundarySnapshotId: overrides.dataBoundarySnapshotId,
+            replayRef: overrides.replayRef,
+            promotedTo: overrides.promotedTo,
+        };
+    }
+
+    function makeMemoryRecord(overrides: Partial<ConfirmedMemoryRecord> = {}): ConfirmedMemoryRecord {
+        const lifecycle = overrides.lifecycle ?? "active";
+        return {
+            id: overrides.id ?? "mem-1",
+            type: overrides.type ?? "preference",
+            lifecycle,
+            sensitivity: overrides.sensitivity ?? "low",
+            summary: overrides.summary ?? (lifecycle === "forgotten_tombstone" ? "" : "Prefers concise weekly planning."),
+            sourceRefs: overrides.sourceRefs ?? (lifecycle === "forgotten_tombstone" ? [] : [{
+                path: "notes/current.md",
+                excerptHash: "def456",
+                whyShown: ["Confirmed by user"],
+                evidenceStrength: "strong",
+            }]),
+            scope: overrides.scope ?? { kind: "current_note", paths: ["notes/current.md"], label: "Current note" },
+            createdAt: overrides.createdAt ?? "2026-06-28T12:00:00.000Z",
+            updatedAt: overrides.updatedAt ?? "2026-06-28T12:00:00.000Z",
+            confirmedAt: overrides.confirmedAt,
+            archivedAt: overrides.archivedAt,
+            forgottenAt: overrides.forgottenAt,
+            validFrom: overrides.validFrom,
+            validUntil: overrides.validUntil,
+            lastVerified: overrides.lastVerified,
+            updatePolicy: overrides.updatePolicy,
+            confirmationStrength: overrides.confirmationStrength,
+            confirmationSource: overrides.confirmationSource,
+            tombstoneReason: overrides.tombstoneReason,
+        };
+    }
+
+    function makeMaintenanceProposal(overrides: Partial<MaintenanceProposal> = {}): MaintenanceProposal {
+        return {
+            id: overrides.id ?? "maint-1",
+            category: overrides.category ?? "inbox_cleanup",
+            actionType: overrides.actionType ?? "move",
+            title: overrides.title ?? "Review inbox note destination",
+            claim: overrides.claim ?? "Inbox/Untitled.md appears to be in an inbox.",
+            confidence: overrides.confidence ?? "medium",
+            scope: overrides.scope ?? { kind: "current_note", paths: ["Inbox/Untitled.md"] },
+            sourceRefs: overrides.sourceRefs ?? [{ path: "Inbox/Untitled.md", evidenceStrength: "medium" }],
+            preview: overrides.preview ?? {
+                summary: "Preview move.",
+                sourcePath: "Inbox/Untitled.md",
+                affectedPaths: ["Inbox/Untitled.md", "Notes/Untitled.md"],
+                oldPath: "Inbox/Untitled.md",
+                newPath: "Notes/Untitled.md",
+            },
+            undoMetadata: overrides.undoMetadata ?? {
+                strategy: "move_back",
+                affectedPaths: ["Inbox/Untitled.md", "Notes/Untitled.md"],
+                oldPath: "Inbox/Untitled.md",
+                newPath: "Notes/Untitled.md",
+                reversible: true,
+            },
+            actionPlan: overrides.actionPlan ?? {
+                actionType: "move",
+                previewOnly: true,
+                applyBoundary: "blocked_until_user_approval",
+            },
+            whyShown: overrides.whyShown ?? ["Inbox note"],
+            dataBoundarySnapshotId: overrides.dataBoundarySnapshotId ?? "boundary",
+            generatedAt: overrides.generatedAt ?? "2026-06-28T12:00:00.000Z",
+        };
+    }
 
     it("renders an explicit empty state when the tab opens without findings", () => {
         const container = new FakeElement("div");
@@ -339,6 +491,25 @@ describe("Pagelet panel and tab view regressions", () => {
         const contentEl = view.contentEl as unknown as FakeElement;
         expect(contentEl.textContent).toContain("No findings yet");
         expect(contentEl.querySelector(".pa-pagelet-tab-header")).toBeNull();
+    });
+
+    it("registers a quiet compound Pagelet detail tab icon", () => {
+        new PageletDetailView({} as never, () => "en");
+
+        const { addIcon: addIconMock } = jest.requireMock("obsidian") as { addIcon: jest.Mock };
+        const iconCall = addIconMock.mock.calls.find(([name]) => name === PAGELET_DETAIL_ICON);
+        const svg = iconCall?.[1] ?? "";
+
+        expect(svg).toContain('viewBox="0 0 24 24"');
+        expect(svg).toContain('stroke-width="2.4"');
+        expect(svg).toContain('M3.8 19.25');
+        expect(svg).toContain('cx="19.8"');
+        expect(svg).toContain('fill="#2f9e44"');
+        expect(svg).toContain('fill="#1971c2"');
+        expect(svg).toContain('fill="#f08c00"');
+        expect(svg).toContain("<circle");
+        expect(svg).not.toContain("<rect");
+        expect(svg).not.toContain('fill="#e03131"');
     });
 
     it("renders discovery payloads in the native detail tab", async () => {
@@ -416,6 +587,484 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).toContain("A concise periodic summary.");
         expect(contentEl.textContent).not.toContain("1 findings found");
         expect(contentEl.textContent).not.toContain("Raw finding text should not render");
+    });
+
+    it("renders Saved Insight and Memory ledger sections in the native detail tab", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                savedInsights: {
+                    items: [makeSavedInsight()],
+                    totalCount: 1,
+                },
+                memoryGovernance: {
+                    records: [
+                        makeMemoryRecord(),
+                        makeMemoryRecord({
+                            id: "mem-forgotten",
+                            lifecycle: "forgotten_tombstone",
+                            type: "open_question",
+                            summary: "",
+                            sourceRefs: [],
+                            forgottenAt: "2026-06-28T12:30:00.000Z",
+                            tombstoneReason: "user_forget",
+                        }),
+                    ],
+                    totalCount: 2,
+                },
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-saved-insights")).not.toBeNull();
+        expect(container.querySelector(".pa-pagelet-tab-memory-governance")).not.toBeNull();
+        expect(container.textContent).toContain("Saved Insights");
+        expect(container.textContent).toContain("Pricing notes keep coming back.");
+        expect(container.textContent).toContain("recall only");
+        expect(container.textContent).toContain("Memory");
+        expect(container.textContent).toContain("Prefers concise weekly planning.");
+        expect(container.textContent).toContain("Forgotten memory marker");
+        expect(container.textContent).not.toContain("No findings yet");
+    });
+
+    it("renders preview-only Maintenance Review results in the native detail tab", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Maintenance Review", [], {
+            layoutType: "review",
+            extra: {
+                maintenanceReview: {
+                    generatedAt: "2026-06-28T12:00:00.000Z",
+                    previewOnly: true,
+                    weeklyScanEnabled: false,
+                    totalCount: 1,
+                    categories: [
+                        { category: "inbox_cleanup", label: "inbox_cleanup", count: 1 },
+                        { category: "better_titles", label: "better_titles", count: 0 },
+                        { category: "weak_links", label: "weak_links", count: 0 },
+                    ],
+                    proposals: [{
+                        id: "maint-1",
+                        category: "inbox_cleanup",
+                        actionType: "move",
+                        title: "Review inbox note destination",
+                        claim: "Inbox/Untitled.md appears to be in an inbox.",
+                        confidence: "medium",
+                        scope: { kind: "current_note", paths: ["Inbox/Untitled.md"] },
+                        sourceRefs: [{ path: "Inbox/Untitled.md", evidenceStrength: "medium" }],
+                        preview: {
+                            summary: "Preview move.",
+                            sourcePath: "Inbox/Untitled.md",
+                            affectedPaths: ["Inbox/Untitled.md", "Notes/Untitled.md"],
+                            oldPath: "Inbox/Untitled.md",
+                            newPath: "Notes/Untitled.md",
+                        },
+                        undoMetadata: {
+                            strategy: "move_back",
+                            affectedPaths: ["Inbox/Untitled.md", "Notes/Untitled.md"],
+                            oldPath: "Inbox/Untitled.md",
+                            newPath: "Notes/Untitled.md",
+                            reversible: true,
+                        },
+                        actionPlan: {
+                            actionType: "move",
+                            previewOnly: true,
+                            applyBoundary: "blocked_until_user_approval",
+                        },
+                        whyShown: ["Inbox note"],
+                        dataBoundarySnapshotId: "boundary",
+                        generatedAt: "2026-06-28T12:00:00.000Z",
+                    }],
+                },
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-maintenance-review")).not.toBeNull();
+        expect(container.textContent).toContain("Maintenance Review");
+        expect(container.textContent).toContain("Preview only");
+        expect(container.textContent).toContain("Weekly scan is off");
+        expect(container.textContent).toContain("Review inbox note destination");
+        expect(container.textContent).toContain("Inbox/Untitled.md");
+        expect(container.textContent).toContain("Notes/Untitled.md");
+        expect(container.textContent).not.toContain("No findings yet");
+    });
+
+    it("applies and undoes one Maintenance Review move from the native detail tab", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const proposal = makeMaintenanceProposal();
+        const appliedAction = {
+            id: "act-1",
+            proposalId: proposal.id,
+            reviewQueueItemId: "rq-1",
+            actionType: "move" as const,
+            status: "applied" as const,
+            oldPath: "Inbox/Untitled.md",
+            newPath: "Notes/Untitled.md",
+            appliedAt: "2026-06-28T12:00:00.000Z",
+            sourceRefs: proposal.sourceRefs,
+            dataBoundarySnapshotId: "boundary",
+            undoStrategy: "move_back" as const,
+        };
+        const applyMove = jest.fn(async (_proposal: MaintenanceProposal): Promise<MaintenanceMoveApplyResult> => ({
+            ok: true,
+            action: appliedAction,
+            message: "Moved Inbox/Untitled.md to Notes/Untitled.md.",
+        }));
+        const undoMove = jest.fn(async (_actionId: string): Promise<MaintenanceMoveUndoResult> => ({
+            ok: true,
+            action: {
+                ...appliedAction,
+                status: "undone",
+                undoneAt: "2026-06-28T12:05:00.000Z",
+            },
+            message: "Moved Notes/Untitled.md back to Inbox/Untitled.md.",
+        }));
+        const tab = new TabView("en", {
+            onApplyMaintenanceProposal: applyMove,
+            onUndoMaintenanceAction: undoMove,
+        });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Maintenance Review", [], {
+            layoutType: "review",
+            extra: {
+                maintenanceReview: {
+                    generatedAt: "2026-06-28T12:00:00.000Z",
+                    previewOnly: true,
+                    weeklyScanEnabled: false,
+                    totalCount: 1,
+                    categories: [{ category: "inbox_cleanup", label: "inbox_cleanup", count: 1 }],
+                    proposals: [proposal],
+                },
+            },
+        });
+
+        const applyButton = container.querySelector(".pa-pagelet-tab-maintenance-apply");
+        expect(applyButton?.textContent).toBe("Move note");
+
+        await applyButton?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(applyMove).toHaveBeenCalledWith(proposal);
+        expect(container.textContent).toContain("Moved");
+        const undoButton = container.querySelector(".pa-pagelet-tab-maintenance-undo");
+        expect(undoButton?.textContent).toBe("Undo move");
+
+        await undoButton?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(undoMove).toHaveBeenCalledWith("act-1");
+        expect(container.textContent).toContain("Move undone");
+        expect(container.querySelector(".pa-pagelet-tab-maintenance-apply")).toBeNull();
+    });
+
+    it("renders Weekly Review as digest first and saves selected items only", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const weeklyReview: WeeklyReviewRunResult = {
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            range: {
+                startDate: "2026-06-23",
+                endDate: "2026-06-29",
+                days: 7,
+                label: "2026-06-23 to 2026-06-29",
+            },
+            totalCount: 2,
+            sections: [{
+                type: "saved_insights",
+                title: "Saved insights",
+                summary: "2 items",
+                items: [
+                    {
+                        id: "weekly-insight-1",
+                        section: "saved_insights",
+                        title: "Theme",
+                        summary: "Review cadence matters.",
+                        status: "candidate",
+                        sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+                        whyShown: ["Saved insight."],
+                        generatedAt: "2026-06-29T12:00:00.000Z",
+                    },
+                    {
+                        id: "weekly-insight-2",
+                        section: "saved_insights",
+                        title: "Question",
+                        summary: "This should stay unaccepted.",
+                        status: "candidate",
+                        sourceRefs: [{ path: "notes/other.md", evidenceStrength: "medium" }],
+                        whyShown: ["Saved insight."],
+                        generatedAt: "2026-06-29T12:00:00.000Z",
+                    },
+                ],
+            }],
+        };
+        const saveWeekly = jest.fn(async (_review: WeeklyReviewRunResult, _acceptedItemIds: readonly string[]) => ({
+            success: true,
+            filePath: ".pagelet/pagelet-weekly-review-2026-06-29.md",
+        }));
+        const tab = new TabView("en", {
+            onSaveWeeklyReviewNote: saveWeekly,
+        });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Weekly Review", [], {
+            layoutType: "review",
+            extra: { weeklyReview },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-weekly-review")).not.toBeNull();
+        expect(container.textContent).toContain("Weekly Review");
+        expect(container.textContent).toContain("Review cadence matters.");
+        expect(container.textContent).toContain("notes/current.md");
+        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")).toBeNull();
+        const chooseButton = container.querySelector(".pa-pagelet-tab-weekly-choose");
+        expect(chooseButton?.textContent).toBe("Save items from this review");
+        expect(chooseButton?.disabled).toBe(false);
+        const tabBody = container.querySelector(".pa-pagelet-tab-body");
+        const weeklySection = container.querySelector(".pa-pagelet-tab-weekly-review");
+        if (tabBody) tabBody.scrollTop = 640;
+
+        await chooseButton?.click();
+        expect(tabBody?.scrollTop).toBe(640);
+
+        const selectionWeeklySection = container.querySelector(".pa-pagelet-tab-weekly-review");
+        const firstCheckbox = container.querySelector(".pa-pagelet-tab-weekly-accept");
+        const labelledBy = firstCheckbox?.getAttribute("aria-labelledby");
+        expect(labelledBy).toBeTruthy();
+        expect(container.querySelectorAll("h4").some((heading) =>
+            heading.getAttribute("id") === labelledBy && heading.textContent === "Theme")).toBe(true);
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (0)");
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(true);
+
+        await firstCheckbox?.click();
+        expect(tabBody?.scrollTop).toBe(640);
+        expect(weeklySection?.isConnected).toBe(false);
+        expect(selectionWeeklySection?.isConnected).toBe(true);
+        expect(firstCheckbox?.isConnected).toBe(true);
+        const saveButton = container.querySelector(".pa-pagelet-tab-weekly-save");
+        expect(saveButton?.disabled).toBe(false);
+        expect(saveButton?.textContent).toBe("Save selected (1)");
+        expect(container.querySelector(".pa-pagelet-tab-weekly-back")?.textContent).toBe("Back to digest");
+
+        await saveButton?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(saveWeekly).toHaveBeenCalledWith(weeklyReview, ["weekly-insight-1"]);
+        expect(container.textContent).toContain(".pagelet/pagelet-weekly-review-2026-06-29.md");
+    });
+
+    it("clears Weekly Review accepted state when the detail tab is reused", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const firstReview: WeeklyReviewRunResult = {
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            range: { startDate: "2026-06-23", endDate: "2026-06-29", days: 7, label: "first week" },
+            totalCount: 1,
+            sections: [{
+                type: "saved_insights",
+                title: "Saved insights",
+                summary: "1 item",
+                items: [{
+                    id: "weekly-insight-1",
+                    section: "saved_insights",
+                    title: "First theme",
+                    summary: "First accepted item.",
+                    status: "candidate",
+                    sourceRefs: [{ path: "notes/first.md", evidenceStrength: "medium" }],
+                    whyShown: ["Saved insight."],
+                    generatedAt: "2026-06-29T12:00:00.000Z",
+                }],
+            }],
+        };
+        const secondReview: WeeklyReviewRunResult = {
+            ...firstReview,
+            generatedAt: "2026-07-06T12:00:00.000Z",
+            range: { startDate: "2026-06-30", endDate: "2026-07-06", days: 7, label: "second week" },
+            sections: [{
+                type: "saved_insights",
+                title: "Saved insights",
+                summary: "1 item",
+                items: [{
+                    id: "weekly-insight-2",
+                    section: "saved_insights",
+                    title: "Second theme",
+                    summary: "Second item should start unchecked.",
+                    status: "candidate",
+                    sourceRefs: [{ path: "notes/second.md", evidenceStrength: "medium" }],
+                    whyShown: ["Saved insight."],
+                    generatedAt: "2026-07-06T12:00:00.000Z",
+                }],
+            }],
+        };
+        const saveWeekly = jest.fn(async (_review: WeeklyReviewRunResult, _acceptedItemIds: readonly string[]) => ({
+            success: true,
+            filePath: ".pagelet/pagelet-weekly-review.md",
+        }));
+        const tab = new TabView("en", { onSaveWeeklyReviewNote: saveWeekly });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Weekly Review", [], { layoutType: "review", extra: { weeklyReview: firstReview } });
+        await container.querySelector(".pa-pagelet-tab-weekly-choose")?.click();
+        await container.querySelector(".pa-pagelet-tab-weekly-accept")?.click();
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(false);
+
+        tab.open("Weekly Review", [], { layoutType: "review", extra: { weeklyReview: secondReview } });
+
+        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")).toBeNull();
+        expect(container.querySelector(".pa-pagelet-tab-weekly-choose")?.textContent).toBe("Save items from this review");
+        await container.querySelector(".pa-pagelet-tab-weekly-choose")?.click();
+        const secondCheckbox = container.querySelector(".pa-pagelet-tab-weekly-accept");
+        expect(secondCheckbox?.checked).toBe(false);
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(true);
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (0)");
+        await container.querySelector(".pa-pagelet-tab-weekly-save")?.click();
+        await Promise.resolve();
+        expect(saveWeekly).not.toHaveBeenCalled();
+    });
+
+    it("preserves Weekly Review accepted state across internal detail rerenders", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const weeklyReview: WeeklyReviewRunResult = {
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            range: { startDate: "2026-06-23", endDate: "2026-06-29", days: 7, label: "2026-06-23 to 2026-06-29" },
+            totalCount: 1,
+            sections: [{
+                type: "saved_insights",
+                title: "Saved insights",
+                summary: "1 item",
+                items: [{
+                    id: "weekly-insight-1",
+                    section: "saved_insights",
+                    title: "Theme",
+                    summary: "Accepted state should survive filter rerenders.",
+                    status: "candidate",
+                    sourceRefs: [{ path: "notes/theme.md", evidenceStrength: "medium" }],
+                    whyShown: ["Saved insight."],
+                    generatedAt: "2026-06-29T12:00:00.000Z",
+                }],
+            }],
+        };
+        const saveWeekly = jest.fn(async (_review: WeeklyReviewRunResult, _acceptedItemIds: readonly string[]) => ({
+            success: true,
+            filePath: ".pagelet/pagelet-weekly-review.md",
+        }));
+        const tab = new TabView("en", { onSaveWeeklyReviewNote: saveWeekly });
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Weekly Review", [], {
+            layoutType: "review",
+            extra: {
+                reviewQueue: {
+                    items: [
+                        makeReviewQueueItem({ id: "rq-1", type: "evidence_insight" }),
+                        makeReviewQueueItem({ id: "rq-2", type: "maintenance_proposal", originSurface: "maintenance" }),
+                    ],
+                    totalCount: 2,
+                },
+                weeklyReview,
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")).toBeNull();
+        await container.querySelector(".pa-pagelet-tab-weekly-choose")?.click();
+        await container.querySelector(".pa-pagelet-tab-weekly-accept")?.click();
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (1)");
+
+        const filterButtons = container.querySelectorAll(".pa-pagelet-tab-review-queue-filter");
+        await filterButtons[1]?.click();
+
+        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")?.checked).toBe(true);
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(false);
+        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (1)");
+    });
+
+    it("renders Quiet Recall in panel and tab before Bubble nudges", async () => {
+        const candidate: QuietRecallCandidate = {
+            id: "qr-ins-1",
+            title: "Recall: current",
+            summary: "A saved insight may matter now.",
+            sourceInsightId: "ins-1",
+            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+            whyNow: ["Source matches the note you are looking at."],
+            nextAction: "Compare this saved insight with the current note.",
+            relation: "current",
+            score: 90,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const quietRecall = {
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 1,
+            candidates: [candidate],
+        };
+        const panelContainer = new FakeElement("div");
+        panelContainer.isConnected = true;
+        const panel = new PanelView({
+            callbacks: {
+                onExpandToTab: jest.fn(),
+                onClose: jest.fn(),
+                onSourceClick: jest.fn(),
+                onSaveAsReviewNote: () => undefined,
+            },
+        });
+        panel.mount(panelContainer as unknown as HTMLElement);
+        panel.open("current", [], { quietRecall });
+
+        expect(panelContainer.querySelector(".pa-pagelet-panel-quiet-recall")).not.toBeNull();
+        expect(panelContainer.textContent).toContain("A saved insight may matter now.");
+        expect(panelContainer.textContent).toContain("notes/current.md");
+
+        const tabContainer = new FakeElement("div");
+        tabContainer.isConnected = true;
+        const saveRecall = jest.fn(async (_candidate: QuietRecallCandidate) => ({
+            ok: true as const,
+            value: {
+                id: "ins-saved",
+                type: "observation" as const,
+                text: "A saved insight may matter now.",
+                origin: "pa-recommended" as const,
+                sourceRefs: candidate.sourceRefs,
+                whyShown: candidate.whyNow,
+                scope: { kind: "custom" as const, label: "Quiet Recall" },
+                status: "active" as const,
+                influencePolicy: "weak-only" as const,
+                createdAt: "2026-06-29T12:00:00.000Z",
+                updatedAt: "2026-06-29T12:00:00.000Z",
+            },
+            message: "Recall saved as insight.",
+        }));
+        const tab = new TabView("en", {
+            onSaveQuietRecallAsInsight: saveRecall,
+        });
+        tab.mount(tabContainer as unknown as HTMLElement);
+        tab.open("Quiet Recall", [], {
+            layoutType: "current",
+            extra: { quietRecall },
+        });
+
+        expect(tabContainer.querySelector(".pa-pagelet-tab-quiet-recall")).not.toBeNull();
+        expect(tabContainer.textContent).toContain("Why now: Source matches the note you are looking at.");
+        expect(tabContainer.textContent).toContain("Next: Compare this saved insight with the current note.");
+        const saveButton = tabContainer.querySelector(".pa-pagelet-tab-recall-save");
+        expect(saveButton?.textContent).toBe("Save as insight");
+
+        await saveButton?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(saveRecall).toHaveBeenCalledWith(candidate);
+        expect(tabContainer.textContent).toContain("Recall saved as insight.");
     });
 
     it("saves periodic summary markdown from the native detail tab", async () => {
@@ -544,6 +1193,41 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).toContain("Test-2023-04-08");
         expect(contentEl.textContent).toContain("Diary-2023-04-03");
         expect(contentEl.querySelector(".pa-pagelet-panel-connection-graph")).not.toBeNull();
+    });
+
+    it("restores ledger payloads from the in-memory native detail session", async () => {
+        const view = new PageletDetailView({} as never, () => "en");
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Pagelet — Detail View",
+            locale: "en",
+            layoutType: "review",
+            content: [],
+            extra: {
+                savedInsights: {
+                    items: [makeSavedInsight()],
+                    totalCount: 1,
+                },
+                memoryGovernance: {
+                    records: [makeMemoryRecord()],
+                    totalCount: 1,
+                },
+            },
+        });
+        const serializedState = JSON.parse(JSON.stringify(view.getState()));
+        expect(JSON.stringify(serializedState)).not.toContain("Pricing notes");
+        expect(JSON.stringify(serializedState)).not.toContain("Prefers concise");
+
+        const restored = new PageletDetailView({} as never, () => "en");
+        await restored.onOpen();
+        await restored.setState(serializedState, {} as never);
+
+        const contentEl = restored.contentEl as unknown as FakeElement;
+        expect(contentEl.textContent).toContain("Saved Insights");
+        expect(contentEl.textContent).toContain("Pricing notes keep coming back.");
+        expect(contentEl.textContent).toContain("Prefers concise weekly planning.");
+        expect(contentEl.textContent).not.toContain("Result no longer available");
     });
 
     it("shows the unavailable state when the native detail session is not in memory", async () => {
@@ -760,6 +1444,144 @@ describe("Pagelet panel and tab view regressions", () => {
 
         await container.querySelector(".pa-pagelet-panel-scope-checkbox")?.click();
         expect(toggleCandidate).toHaveBeenCalledWith("active.md", false);
+    });
+
+    it("renders current-scope Review Queue cards in the panel without storing full source text", async () => {
+        const sourceClick = jest.fn();
+        const dismiss = jest.fn((_id: string) => undefined);
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: sourceClick,
+                onReviewQueueItemDismiss: dismiss,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("current", [], {
+            sourcePath: "notes/current.md",
+            reviewQueue: {
+                totalCount: 1,
+                items: [makeReviewQueueItem({
+                    title: "AI expansion",
+                    claim: "This generated expansion stays separate from the original capture.",
+                    metadata: {
+                        renderStyle: "ai_callout",
+                        aiGenerated: true,
+                    },
+                })],
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-panel-review-queue")).not.toBeNull();
+        expect(container.querySelector(".pa-pagelet-panel-review-queue-card--ai-callout")).not.toBeNull();
+        expect(container.textContent).toContain("Review Queue");
+        expect(container.textContent).toContain("AI-generated suggestion");
+        expect(container.textContent).toContain("This generated expansion stays separate from the original capture.");
+        expect(JSON.stringify(panel.currentPanelExtra)).not.toContain("fullProviderOutput");
+        expect(JSON.stringify(panel.currentPanelExtra)).not.toContain("promptChunk");
+        expect(JSON.stringify(panel.currentPanelExtra)).not.toContain("raw note body");
+
+        const buttons = container.querySelectorAll(".pa-pagelet-panel-review-queue-action");
+        await buttons[0]?.click();
+        await buttons[1]?.click();
+
+        expect(sourceClick).toHaveBeenCalledWith("notes/current.md");
+        expect(dismiss).toHaveBeenCalledWith("rq-suggested");
+    });
+
+    it("renders compact Context Pager details in the panel and detail tab", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("current", [], {
+            contextPager: makeContextPagerState(),
+        });
+
+        expect(container.querySelector(".pa-pagelet-panel-context-pager")).not.toBeNull();
+        expect(container.textContent).toContain("Used 1 sources, 0 memories. 2 skipped.");
+        expect(container.textContent).toContain("notes/current.md");
+        expect(container.textContent).toContain("privacy excluded");
+        expect(container.textContent).not.toContain("raw prompt");
+
+        const tabContainer = new FakeElement("div");
+        tabContainer.isConnected = true;
+        const tab = new TabView("en");
+        tab.mount(tabContainer as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "current",
+            extra: { contextPager: makeContextPagerState() },
+        });
+
+        expect(tabContainer.textContent).toContain("Used sources");
+        expect(tabContainer.textContent).toContain("notes/current.md");
+        expect(tabContainer.textContent).not.toContain("No findings yet");
+    });
+
+    it("renders and filters the global Review Queue in the native detail tab", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                reviewQueue: {
+                    totalCount: 2,
+                    items: [
+                        makeReviewQueueItem({
+                            id: "rq-suggested",
+                            status: "suggested",
+                            title: "Needs source decision",
+                            claim: "Needs a review decision.",
+                        }),
+                        makeReviewQueueItem({
+                            id: "rq-accepted",
+                            status: "accepted",
+                            title: "Ready to apply",
+                            claim: "Ready for the next action.",
+                            metadata: {
+                                renderStyle: "ai_callout",
+                                aiGenerated: true,
+                            },
+                        }),
+                    ],
+                },
+            },
+        });
+
+        expect(container.textContent).toContain("Kept Items & Actions");
+        expect(container.textContent).toContain("Kept for later");
+        expect(container.textContent).toContain("Actions to confirm");
+        expect(container.textContent).toContain("Needs a review decision.");
+        expect(container.textContent).toContain("Ready for the next action.");
+        expect(container.textContent).toContain("AI-generated suggestion");
+        expect(container.querySelector(".pa-pagelet-tab-review-queue-card--ai-callout")).not.toBeNull();
+
+        const readyFilter = container.querySelectorAll(".pa-pagelet-tab-review-queue-filter")
+            .find((button) => button.textContent === "Actions to confirm");
+        await readyFilter?.click();
+
+        expect(container.textContent).toContain("Ready for the next action.");
+        expect(container.textContent).not.toContain("Needs a review decision.");
     });
 
     it("renders suggestion cards with draft save workflow", async () => {

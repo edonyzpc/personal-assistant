@@ -25,9 +25,9 @@ between notes without becoming a full knowledge graph product.
 | ID | Decision | Product consequence |
 | --- | --- | --- |
 | LGD-D1 | Use a restrained local Graph UI, not a full graph product. | No full-vault Knowledge Map; local graph appears only as an explanation layer for a card, note neighborhood, or scope. |
-| LGD-D2 | MVP review item types are `related_note`, `theme_chain`, `conflict_pair`, and `index_note_candidate`. | Graph value appears as typed Pagelet Review Queue items, not a generic graph browser. |
-| LGD-D3 | AI-inferred edges use lifecycle-based influence. | Suggested edges weakly influence discovery; accepted/source-backed edges can influence rerank more strongly. |
-| LGD-D4 | Primary surface is Pagelet Review Queue; current note gets only a lightweight entry. | Discovery is review-first, with optional note-neighborhood expansion when useful. |
+| LGD-D2 | MVP graph insight types are `related_note`, `theme_chain`, `conflict_pair`, and `index_note_candidate`. | Graph value appears as typed Pagelet preview/digest items first, not a generic graph browser or automatic queue. |
+| LGD-D3 | AI-inferred edges use lifecycle-based influence. | Suggested edges weakly influence discovery; kept/source-backed edges can influence rerank more strongly. |
+| LGD-D4 | Primary surface is Pagelet preview/detail, with Review Queue only after explicit keep/action intent. | Discovery is recognition-first, with optional note-neighborhood expansion when useful. |
 | LGD-D5 | Local Graph UI is bounded. | Default folded, max 8-12 nodes, max 1 hop, card/scope-local, no full-vault roaming. |
 | LGD-D6 | Discovery signals include explicit structure, semantic similarity, and activity/context. | Use folder/tag/link/backlink/alias + semantic similarity + current/recent/review/memory context. |
 | LGD-D7 | `conflict_pair` generation is moderately strict. | Generate conflicts for decision/status/preference/task-constraint/scope-state differences, not for ordinary opinion variation. |
@@ -63,7 +63,7 @@ Graph UI exists only when it helps explain why a relationship was suggested.
 
 Folder, tag, link, backlink, and alias are first-class signals because they are
 user-authored or user-shaped. AI-inferred relationships are useful but must not
-be treated as user intent until accepted or source-backed.
+be treated as user intent until kept or source-backed.
 
 ### 2.3 Soft Associations Need Lifecycle
 
@@ -97,8 +97,10 @@ future behavior, decisions, memory, or maintenance.
 | `conflict_pair` | Two or more notes disagree on a decision, status, preference, task constraint, or project context | review, update memory, split scope, mark stale, dismiss |
 | `index_note_candidate` | A scope/theme has enough material to deserve an MOC or index note | preview outline, create note, dismiss |
 
-These items should enter Pagelet's typed Review Queue and use the Trust Layer's
-Source-backed Card family.
+These items should first appear as a read-only Pagelet preview/digest and use
+the Trust Layer's Source-backed Card family. They enter Pagelet's kept/action
+state only after the user explicitly keeps the relation or starts a durable
+action such as link creation, Memory confirmation, or index-note creation.
 
 ## 4. Edge Lifecycle
 
@@ -107,7 +109,7 @@ Graph-aware Discovery should track edge lifecycle.
 | Edge state | Meaning | Retrieval/discovery influence |
 | --- | --- | --- |
 | `suggested` | AI inferred a possible relation | can appear in discovery; weak influence only |
-| `accepted` | user accepted or saved the relation | can participate in rerank |
+| `kept` | user kept or saved the relation | can participate in rerank |
 | `source-backed` | relation has strong explicit source support or user-created link | strong why-shown and rerank signal |
 | `rejected` | user dismissed or marked wrong | suppress similar relation unless evidence changes |
 | `expired` | source changed or relation no longer applies | no influence |
@@ -115,8 +117,8 @@ Graph-aware Discovery should track edge lifecycle.
 
 Promotion signals:
 
-- user accepts a related note suggestion
-- user creates or accepts a link
+- user keeps a related note suggestion
+- user creates or confirms a link
 - user saves a theme chain
 - user creates an index/MOC note
 - repeated positive source clicks
@@ -322,7 +324,7 @@ Product metrics:
 
 Quality gates:
 
-- AI-suggested edges do not strongly affect rerank until accepted/source-backed.
+- AI-suggested edges do not strongly affect rerank until kept/source-backed.
 - Local Graph UI never shows full-vault graph by default.
 - Conflict pairs cite both sides.
 - Index note candidates list source notes before creation.
@@ -342,8 +344,8 @@ Status: this document.
 
 ### Phase 1: Related Notes And Edge Lifecycle
 
-- Generate `related_note` items in Pagelet Review Queue.
-- Track edge states: suggested, accepted, rejected, expired.
+- Generate `related_note` items as Pagelet preview/digest entries.
+- Track edge states: suggested, kept, rejected, expired.
 - Use explicit structure + semantic + activity signals.
 - No local Graph UI yet unless needed for source explanation.
 
@@ -367,7 +369,7 @@ Status: this document.
 
 ### Phase 5: Rerank Integration
 
-- Let accepted/source-backed edges influence Active Vault Indexer rerank.
+- Let kept/source-backed edges influence Active Vault Indexer rerank.
 - Keep suggested edges weak and discovery-only.
 - Add eval fixtures for edge pollution and repeated bad suggestions.
 

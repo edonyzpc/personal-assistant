@@ -1,6 +1,6 @@
 # Pagelet Trust Layer Product Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -14,6 +14,7 @@ Updated: 2026-06-28
 | Related retrieval substrate | [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Context Pager spec](./pa-context-pager-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [Pagelet async result plan](./pagelet-async-result-plan.md) |
 | Related Memory docs | [VSS local state plan](./vss-local-state-plan.md), [SQLite/WASM architecture](./vss-sqlite-wasm-architecture.md), [Embedding refresh](./vss-embedding-refresh.md) |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This spec defines the product layer that makes PA's insights, memories, and
 future actions trustworthy. It is not current shipped behavior.
@@ -78,6 +79,20 @@ memories, conflicts, and logs. But the UI must not flatten them into generic
 Rule:
 
 > Queue is unified; workflow is type-specific.
+
+Queue entry is constrained:
+
+> Evidence can be shown without becoming a queue item. Queue is for
+> user-kept intent or durable consequence.
+
+Examples:
+
+- A source-backed recall cue can be read and closed with no queue state.
+- A PA-discovered insight candidate enters the queue only when the user keeps
+  it or when it is proposed for Saved Insight, Memory, Markdown, maintenance,
+  or another durable flow.
+- A Memory Candidate enters the queue because it may affect future PA behavior.
+- A Maintenance Proposal enters the queue because it may mutate the vault.
 
 ### 2.3 Confirmed Memory Still Needs Context Gating
 
@@ -197,7 +212,7 @@ the table below is the Trust Layer subset.
 | Review Item Type | Meaning | Primary actions |
 | --- | --- | --- |
 | `maintenance_proposal` | vault maintenance action proposal | accept, edit, dismiss, apply |
-| `evidence_insight` | source-backed insight or recall | save, remember, dismiss |
+| `evidence_insight` | user-kept or durable source-backed insight / recall handoff | save, remember, dismiss |
 | `memory_candidate` | candidate durable memory | confirm, edit, limit scope, dismiss, later |
 | `memory_conflict` | old memory and new evidence disagree | update, keep both, split scope, mark stale |
 | `review_summary` | periodic or scope summary | save note, share to memory, dismiss |
@@ -212,16 +227,18 @@ Suggested filters:
 - Conflicts
 - Logs
 
-Suggested groups:
+- Suggested groups:
 
-- Needs decision
-- Ready to apply
+- Kept for later
+- Actions to confirm
 - Recently applied
 - Snoozed
 - Stale
 
-Weekly prepared review should create typed queue items, not only a prose report.
-The user may choose to save a summary note after reviewing the queue.
+Weekly prepared review should start as a digest. It creates typed queue items
+only for user-kept material or action-bearing items, not for every generated
+candidate. The user may choose to save a summary note after selecting what to
+keep.
 
 ## 6. Evidence-To-Memory Lifecycle
 
@@ -247,7 +264,7 @@ Promotion rules:
 
 | From | To | Trigger |
 | --- | --- | --- |
-| evidence | saved_insight | user saves it or includes it in a review note |
+| evidence | saved_insight | user explicitly saves it as an insight |
 | evidence | memory_candidate | user clicks `Remember this` or PA proposes with evidence |
 | saved_insight | memory_candidate | PA detects future-use value or user promotes it |
 | memory_candidate | confirmed_memory | user confirms after reviewing fields |
@@ -255,6 +272,10 @@ Promotion rules:
 | confirmed_memory | stale_memory | validity expires or user marks stale |
 | stale_memory | confirmed_memory | user confirms it still applies |
 | confirmed_memory | forgotten | user forgets/deletes it |
+
+A saved review note is a traceable Markdown history artifact. Including
+evidence in a review note does not by itself create a Saved Insight or Review
+Queue item.
 
 ## 7. Memory Candidate Policy
 
@@ -419,7 +440,7 @@ Existing:
 Maintenance should be manual-first.
 
 New evidence:
-Inbox cleanup may become execute-first after repeated accepted plans.
+Inbox cleanup may become execute-first after repeated confirmed plans.
 
 Suggested update:
 Manual-first remains default. Execute-first is allowed only for authorized
@@ -455,7 +476,7 @@ Recommended split:
 | memory candidates | local review queue | reviewable, not durable yet |
 | confirmed memory | local store + Memory panel | visible without polluting vault |
 | memory conflicts | local review queue | needs user resolution |
-| saved insight | local store or user-saved review note | depends on user action |
+| saved insight | local store; optional explicit Markdown export/review note inclusion | avoids turning every review note into future work |
 | decision/project notes | user-selected vault artifact | syncable and auditable |
 | full hidden provider output | do not persist | privacy and drift risk |
 
@@ -581,7 +602,8 @@ Status: this document.
 
 - Add or formalize source-backed card fields in Pagelet.
 - Support save/dismiss actions for evidence insights.
-- Store saved insights locally or in user-confirmed review notes.
+- Store saved insights locally; optional Markdown/review-note inclusion is a
+  separate explicit write action.
 - Add compact "why shown" and source excerpt UI.
 
 ### Phase 2: Memory Candidates In Pagelet Queue
