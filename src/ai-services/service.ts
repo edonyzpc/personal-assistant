@@ -326,7 +326,10 @@ export class AIService {
                 "ai-featured-image-progress-1",
                 this.t("plugin.ai.progress.prompt"),
             );
-            const imageDesc = await this.callLLM(content, this.getImageDescriptionPrompt());
+            const imageDesc = await withFeaturedImageTimeout(
+                this.callLLM(content, this.getImageDescriptionPrompt()),
+                FEATURED_IMAGE_GENERATION_TIMEOUT_MS,
+            );
             if (imageDesc.length <= 0) {
                 notice.hide();
                 new Notice(this.t("plugin.ai.notice.unavailable"));

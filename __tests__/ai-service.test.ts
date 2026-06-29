@@ -400,6 +400,47 @@ describe('AI featured image generation', () => {
         expect(serializedNotices).not.toContain('test-token');
     });
 
+    it('times out stalled LLM prompt generation during featured image flow', async () => {
+        jest.useFakeTimers();
+        const { plugin, service } = createFeaturedImageService();
+        const noticeElement = createMockNoticeElement();
+
+        (service as unknown as {
+            aiUtils: {
+                createAIFeaturedImageNotice: () => { notice: { messageEl: typeof noticeElement; hide: () => void } };
+                getDocumentContent: (markdown: string) => { content: string; frontmatterInfo: { exists: boolean; contentStart: number } };
+            };
+            callLLM: () => Promise<string>;
+        }).aiUtils = {
+            createAIFeaturedImageNotice: () => ({ notice: { messageEl: noticeElement, hide: jest.fn() } }),
+            getDocumentContent: (markdown: string) => ({
+                content: markdown,
+                frontmatterInfo: { exists: false, contentStart: 0 },
+            }),
+        };
+        (service as unknown as { callLLM: () => Promise<string> }).callLLM = jest.fn(
+            () => new Promise<string>(() => { }),
+        );
+
+        const generation = (service as unknown as {
+            generateFeaturedImage: (editor: unknown, view: unknown) => Promise<void>;
+        }).generateFeaturedImage(
+            { getValue: () => 'note body' },
+            { editor: { cm: {} } },
+        );
+        await Promise.resolve();
+        await Promise.resolve();
+
+        jest.advanceTimersByTime(300000);
+        await generation;
+
+        expect(noticeMessages.map(({ message }) => message)).toContain(
+            'AI Featured Images failed: Featured image generation timed out after 300000ms.',
+        );
+        const serializedNotices = JSON.stringify(noticeMessages);
+        expect(serializedNotices).not.toContain('note body');
+    });
+
     it('inserts successfully downloaded featured images when one download fails', async () => {
         const { plugin, service } = createFeaturedImageService();
         const noticeElement = createMockNoticeElement();
