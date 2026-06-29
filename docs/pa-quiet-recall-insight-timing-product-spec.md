@@ -1,6 +1,6 @@
 # PA Quiet Recall And Insight Timing Product Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -9,10 +9,11 @@ Updated: 2026-06-28
 | Document type | Product spec / future implementation input |
 | Status | Confirmed decision spec; implementation not started |
 | Feature family | Quiet Recall / Just-in-time insight / Cognitive scaffolding |
-| Primary surfaces | Pagelet Bubble, Pagelet Panel, Review Queue |
+| Primary surfaces | Pagelet Bubble, Pagelet Panel, optional Review Queue handoff |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related specs | [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md) |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This spec defines when and how PA should proactively surface old notes,
 themes, and counterexamples. It is not current shipped behavior.
@@ -39,6 +40,7 @@ This document records the one-question-at-a-time product decisions confirmed on
 | QR-D7 | Recall supports dismiss and `not relevant` feedback. | PA can learn lightweight negative signals without asking users to fill out reason forms. |
 | QR-D8 | Recall has simple frequency settings: Off / Quiet / Balanced. | Users can control proactive behavior without a complex rule engine. |
 | QR-D9 | Bubble shows only a line and why-shown; evidence lives in Pagelet Panel. | Bubble remains a doorway; Panel provides source-backed verification. |
+| QR-D10 | Recall is not a queue item by default. | Closing, ignoring, or dismissing a recall cue creates no user debt; Review Queue is used only after user-chosen save, later, promotion, or action handoff. |
 
 ## 1. Product Decision
 
@@ -76,6 +78,14 @@ Quiet Recall should therefore follow a narrow promise:
 
 > PA may softly point at useful old context, but the user decides whether it
 > matters and whether it becomes part of the vault structure.
+
+This promise includes a burden boundary:
+
+> Recall is allowed to be noticed and then disappear.
+
+PA should not create a Review Queue item merely because a recall candidate was
+generated. Queue handoff is reserved for explicit user intent, such as `Later`,
+`Save`, `Create Memory Candidate`, or a maintenance/action proposal.
 
 ## 3. Trigger Model
 
@@ -218,6 +228,9 @@ Bubble should show:
 - source count when useful
 - actions: `View`, `Dismiss`, `Not relevant`, optionally `Later`
 
+Closing the Bubble without choosing an action is a valid completion. It should
+not count as an unhandled item.
+
 Example:
 
 ```text
@@ -265,10 +278,13 @@ Allowed actions:
 | Create Memory Candidate | Sends a source-backed candidate to Trust Layer |
 | Dismiss | Removes this recall item |
 | Not relevant | Records negative feedback and dismisses |
-| Later | Snoozes the item |
+| Later | Snoozes the item and may create a Review Queue handoff |
 
 Any action that writes to source notes must follow the relevant write boundary
 and review policy.
+
+Panel actions are optional. Opening evidence does not require the user to save,
+accept, or classify the recall item.
 
 ## 9. No Automatic Writes
 
@@ -287,11 +303,11 @@ It should not automatically:
 
 User-confirmed save actions may create:
 
-- link proposals or accepted links
+- link proposals or confirmed links
 - source-backed insight cards
 - Memory Candidates
 - review notes
-- graph edges with accepted/source-backed lifecycle state
+- graph edges with kept/source-backed lifecycle state
 
 The key product rule:
 
@@ -373,14 +389,14 @@ Graph Discovery can provide:
 - tension pairs
 - counterexamples
 - remote associations
-- accepted/source-backed graph edges
+- kept/source-backed graph edges
 
 Quiet Recall constrains how these are shown:
 
 - Bubble shows only 2 to 3 cues
 - Panel shows bounded evidence
 - full-vault graph browsing is out of scope
-- AI-inferred edges are suggestions until accepted/source-backed
+- AI-inferred edges are suggestions until kept/source-backed
 
 ## 13. Relationship To Quick Capture
 
@@ -493,6 +509,7 @@ Deterministic checks:
 - recall items include sourceRefs
 - Bubble includes why-shown but not full evidence
 - Panel includes evidence
+- closing or ignoring a Bubble item does not create Review Queue debt
 - no vault writes occur without user action
 - no Confirmed Memory is created by recall alone
 
@@ -502,7 +519,8 @@ Deterministic checks:
 
 - Link this spec from Product IA, Active Vault Indexer, Graph Discovery, Trust
   Layer, Quick Capture, Data Boundary, and Eval Harness.
-- Add `recall_suggestion` to shared Review Queue item taxonomy.
+- Add `recall_suggestion` only as an optional Review Queue handoff type for
+  user-chosen `Later` or save/promote flows, not for every generated recall.
 - Keep editor inline recall out of v1.
 
 ### Phase 1: Passive Recall In Pagelet
@@ -557,6 +575,7 @@ Quiet Recall is PA's restrained way to make personal knowledge compound.
 The durable contract:
 
 - Bubble surfaces low-frequency recall cues
+- ignored recall creates no user debt
 - triggers follow explicit context changes
 - ranking uses mixed relevance, not pure similarity
 - one small remote-association candidate is allowed

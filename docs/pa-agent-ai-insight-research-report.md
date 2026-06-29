@@ -1,6 +1,6 @@
 # PA Agent AI Insight Research Report
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 This report synthesizes the reading pack in `docs/pa-agent-ai-insight-research-reading-pack.md`, agent-team research, and the Gemini / GPT-5-style / ChatGPT DeepResearch follow-up reports used as second-opinion lenses.
 
@@ -17,6 +17,7 @@ It is optimized as a product research report for PA Agent/Pagelet. The goal is n
 - 长上下文不是长期记忆。Lost in the Middle 类研究提醒我们：更大窗口不保证模型稳定使用关键证据。长上下文适合用户选定的局部工作区；跨时间、跨项目、跨 vault 的问题仍需要检索、重排、摘要、引用和 replay。
 - Memory 不能只是向量库。PA 应区分 Raw / Index / Derived / Confirmed Memory，并让每条长期 Memory 经历 admission、consolidation、version/update、retrieval、expiry/forgetting 的生命周期。
 - 用户确认不是自动化的阻碍，而是个人知识产品的信任边界。Index 可以自动刷新，Derived 可以后台生成，Confirmed Memory、用户画像、跨项目长期判断、写回 vault 和外部行动必须由用户确认。
+- 但确认本身也是负担。PA 不能把 human-in-the-loop 做成 human-as-clickworker；Recall、digest、insight candidate 应默认可忽略，只有 Saved Insight、Confirmed Memory、vault mutation、外部行动等持久后果需要确认。
 - GraphRAG / LightRAG / TagRAG 的产品价值不在于做一个漂亮图谱 UI，而在于把 folder、tag、link、alias、backlink 变成轻量、可解释、可增量的后台拓扑，用来支持候选关联和知识结晶。
 - PA 的 UI 应偏安静：低摩擦 capture、少量高信号 recall、可展开证据、可编辑候选 Memory、可复盘 replay。它不应该静默替用户定义和重排一切。
 - Evaluation 必须从第一天进入产品设计：citation coverage、context contamination、memory admission safety、temporal memory accuracy、Answer-ID/replay trace、latency、token cost 和 action state correctness 都是产品指标，不只是研究指标。
@@ -36,6 +37,7 @@ Strategic filter:
 - Does it make knowledge maintenance safer or cheaper?
 - Does it avoid context contamination?
 - Does it support review and long-term evolution?
+- Does it reduce more review burden than it creates?
 - Can the user verify and undo it?
 
 如果答案是否定的，即使论文 benchmark 很漂亮，也不应该成为 PA 的优先方向。反过来，如果一个能力能让用户更安全地流转、命名、归档、链接和更新笔记，它就不应该被“不要 autonomous agent”的警惕误伤。
@@ -189,8 +191,8 @@ Best first step:
 
 1. Use existing user structure: folder, tag, link, alias, backlink.
 2. Generate candidate theme chains, candidate links, candidate Memory Cards.
-3. Let user accept/edit/dismiss.
-4. Only accepted/source-backed edges affect durable Memory or high-weight retrieval.
+3. Let user keep/edit/dismiss.
+4. Only kept/source-backed edges affect durable Memory or high-weight retrieval.
 
 AI suggested edges should have lifecycle states:
 
@@ -260,6 +262,25 @@ Insight Inbox can exist, but only as a limited batch mode:
 - each card includes claim, evidence, why it matters, next move
 
 Review is more important than real-time chat. Capture creates raw material; daily/weekly/project review creates compounding value.
+
+But review must not become administration. The product rule is:
+
+> All AI artifacts are ignorable by default. Only durable change requires
+> confirmation.
+
+Implications:
+
+- A Quiet Recall card can be read and closed without creating debt.
+- An insight candidate should not enter Review Queue merely because it exists.
+- Weekly Review should start as a digest, then offer optional save/confirm/apply
+  paths.
+- Maintenance Review should be an explicit cleanup mode, not a constant stream
+  of weak suggestions.
+- Confirmation belongs to durable consequence: Saved Insight, Confirmed Memory,
+  Markdown writes, source-note mutations, file moves, or external actions.
+
+This keeps human review as a trust boundary without turning the user into the
+operator of PA's generated workload.
 
 ### 7. Evaluation Is A Product Feature
 

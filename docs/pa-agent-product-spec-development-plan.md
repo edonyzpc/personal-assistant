@@ -1,6 +1,6 @@
 # PA Agent Product Spec Development Plan
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -8,9 +8,9 @@ Updated: 2026-06-28
 | --- | --- |
 | Document type | Development execution plan / Codex handoff |
 | Source commit | `372294e docs(pa): add product research and planning specs` |
-| Scope | PA North Star, Active Vault Indexer, Data Boundary, Eval Harness, Product IA, Pagelet Trust Layer, Maintenance Review, Quick Capture, Weekly Review, Quiet Recall, Saved Insight, Memory governance |
+| Scope | PA North Star, Active Vault Indexer, Data Boundary, Eval Harness, Product IA, Pagelet Trust Layer, Maintenance Review, Quick Capture, Weekly Review, Quiet Recall, Saved Insight, Memory governance, M12 Later Layers |
 | Audience | Codex / Claude Code / implementation agents |
-| Current state | Planning document only; implementation not started |
+| Current state | Slices 0-G, A2, and M12 are implemented and tracked; no runtime gate remains open in this product-spec plan |
 
 This plan converts the product design documents from commit `372294e` into a
 coherent implementation sequence. It is intentionally fine-grained so an agent
@@ -264,7 +264,7 @@ minimal shared contracts
 | M4 Active Vault Indexer V1 | Pagelet-first Source/Semantic/Structure/Activity lanes over existing VSS and vault structure | Shared evidence substrate without rewriting VSS/Chat early |
 | M5 Review Queue + Source Cards | Pagelet-owned typed review surface | Main decision buffer for PA |
 | M6 Context Pager V1 | Compact used/skipped context transparency | Makes retrieval/memory decisions visible |
-| M7 Quick Capture Enrichment | Optional AI enrichment routed to Review Queue | Adds intelligence after raw capture already works |
+| M7 Quick Capture Enrichment | Optional durable AI enrichment routed to Review Queue | Adds intelligence after raw capture already works without turning lightweight suggestions into review debt |
 | M8 Saved Insight + Memory Candidate V1 | Insight ledger, candidate admission, Memory lifecycle shell | Trust layer starts compounding knowledge |
 | M9 Maintenance Review V1 | Manual scan, proposals, preview-only cards | Gives PA a safe "hand" inside the vault |
 | M10 Weekly Review V1 | Manual weekly loop combining review/memory/maintenance | Product compounding loop |
@@ -425,8 +425,9 @@ Steps:
     no Chat adoption claimed unless explicitly implemented.
   - Slice B: Bubble only routes/counts, Panel current-scope cards, Tab global
     filters, no raw provider output persisted.
-  - Slice C: capture enrichment failure does not block raw save, suggestions go
-    to Review Queue, AI expansion remains visibly separated.
+  - Slice C: capture enrichment failure does not block raw save, durable
+    suggestions go to Review Queue, lightweight title/tag/related/expansion
+    previews require an explicit Keep UI before they create review work.
   - Slice E: Maintenance manual scan creates preview-only proposals; M9.6B
     applies only the one approved action family and proves undo/recovery.
 
@@ -1010,6 +1011,21 @@ Tests:
 - current note receives activity reason.
 - activity alone cannot create evidence-found outcome.
 
+Acceptance:
+
+- Activity signals are allowed only as current-context reasons, rerank hints, or
+  why-shown text.
+- Activity signals cannot change an unsupported result into source-backed
+  evidence.
+- Denied or generated sources are filtered before activity metadata is attached.
+
+Validation:
+
+- Focused `ActiveVaultIndexer` tests cover current-note/recent-edit labels and
+  prove activity-only candidates remain `partial_evidence` or `no_evidence`.
+- Data Boundary coverage proves denied sources do not appear in activity
+  reasons or replay metadata.
+
 ### TASK M4.3 Structure Lane
 
 Goal: Use folder/tag/link/backlink/alias as context.
@@ -1023,6 +1039,21 @@ Tests:
 
 - folder/tag match can reorder equal-strength candidates.
 - weak structure-only candidate cannot outrank strong source-backed evidence.
+
+Acceptance:
+
+- Structure metadata is never treated as proof by itself.
+- Folder/tag/link/backlink/alias signals may break ties only when evidence
+  strength is otherwise comparable.
+- Why-shown copy uses product language and does not expose internal scoring
+  jargon.
+
+Validation:
+
+- Focused `ActiveVaultIndexer` tests cover tie-breaking and prove weak
+  structure-only matches cannot outrank stronger source-backed evidence.
+- UI-facing tests, if a visible surface is touched, prove source cards still show
+  source refs before structure reasons.
 
 ### TASK M4.4 Retrieval Outcome Statuses
 
@@ -1039,6 +1070,22 @@ Tests:
 - no supporting source returns `no_evidence`.
 - privacy-blocked query returns `blocked_by_privacy`.
 
+Acceptance:
+
+- Outcome statuses are explicit enough for UI/eval to distinguish supported,
+  partial, conflict, no-evidence, and privacy-blocked results.
+- Unsupported, conflict, and privacy-blocked results cannot be silently shown as
+  ordinary recommendations.
+- Existing source refs and Data Boundary decisions remain visible to downstream
+  Pagelet callers.
+
+Validation:
+
+- Focused eval and `ActiveVaultIndexer` tests cover supported, partial,
+  conflict, no-evidence, and blocked-by-privacy fixtures.
+- Pagelet tests, if a visible surface is touched, prove blocked/conflict states
+  route to review copy instead of action-ready copy.
+
 ### TASK M4.5 Sources-To-Check Plan Model
 
 Goal: Add broad retrieval plan-first object before provider calls.
@@ -1053,6 +1100,22 @@ Tests:
 - broad scope returns plan instead of immediate provider-backed run.
 - excluded scopes are shown as excluded.
 - cancel/adjust of the plan performs no provider call and creates no queue item.
+
+Acceptance:
+
+- Broad retrieval starts with a local plan object that lists included/excluded
+  source groups, provider/cost disclosure needs, and the user's cancel/adjust
+  choice.
+- Cancel or adjust is side-effect free: no provider call, queue item, saved
+  insight, memory candidate, or replay record.
+- Private skipped-source titles or raw excerpts are not persisted in the plan.
+
+Validation:
+
+- Focused Data Boundary and retrieval-plan tests prove cancel/adjust has no
+  provider or queue side effects.
+- Provider-call mocks prove no model request is made before disclosure and user
+  confirmation.
 
 ### TASK M4.6 Replay Metadata Without Private Text
 
@@ -1069,6 +1132,22 @@ Tests:
 - replay record has no raw excerpt.
 - can re-resolve current excerpt from vault source when allowed.
 
+Acceptance:
+
+- Replay metadata stores ids, source refs, reason codes, policy snapshot ids,
+  and hashes only.
+- Raw excerpts, full provider output, prompt chunks, private skipped-source
+  titles, and generated memory text are never persisted in replay records.
+- Re-resolution reads from the current vault source only when the Data Boundary
+  still allows that source.
+
+Validation:
+
+- Focused replay tests assert serialized records contain no raw excerpt-like
+  fields and can re-resolve allowed current snippets from the vault.
+- Data Boundary tests prove denied sources cannot be re-resolved from replay
+  metadata.
+
 ## 9. M5 Review Queue And Source Cards
 
 Review Queue is a decision queue, not a provider job queue and not a full result
@@ -1084,9 +1163,10 @@ Implementation:
 
 - Extend Pagelet host boundaries with queue read/update methods instead of
   storing queue state directly in `plugin.ts` or Panel internals.
-- Define how Bubble count/routes, Panel focused cards, and Tab batch review
-  share source identity and active-file changes.
-- Keep Bubble to count/nudge/route only.
+- Define how Bubble routes/soft reminders, Panel focused cards, and Tab batch
+  review share source identity and active-file changes.
+- Keep Bubble route-only for generated suggestions; only user-kept or snoozed
+  items may appear as a lightweight later reminder.
 - Preserve existing Pagelet async foreground-run guard; queue producers must not
   start provider work or weaken `beginForegroundReviewRun()` semantics.
 
@@ -1165,7 +1245,7 @@ Goal: Add global queue view for batch review.
 Implementation:
 
 - Add type/status/scope filters.
-- Add groups: needs decision, ready to apply, recently applied, snoozed, stale.
+- Add groups: kept for later, actions to confirm, recently applied, snoozed, stale.
 
 Tests:
 
@@ -1205,7 +1285,7 @@ Implementation:
 Tests:
 
 - current review still works.
-- queue item created for accepted/saved source-backed suggestion.
+- queue item created only for user-kept or action-bearing source-backed suggestion.
 - no duplicate queue item on repeated render.
 
 ## 10. M6 Context Pager V1
@@ -1341,22 +1421,24 @@ Prerequisite:
 
 Implementation:
 
-- Generate title/tag/related-note/memory/task/expansion suggestions.
-- Route suggestions to Review Queue.
-- Keep AI expansion visually separate as callout.
+- Generate Memory Candidate and task-like suggestions first; keep
+  title/tag/related-note/expansion as future preview/Keep flows until a visible
+  Keep UI exists.
+- Route only durable or user-kept suggestions to Review Queue.
+- Keep any future confirmed AI expansion visually separate as a callout.
 - If enrichment needs a provider call, disclosure/plan gate must run first for
   first-use, broad, sensitive, costly, or excluded-override cases.
-- Enrichment output is not written into the source note unless the user accepts
+- Enrichment output is not written into the source note unless the user confirms
   a specific write action.
 
 Tests:
 
 - raw capture succeeds even if AI enrichment fails.
-- expansion is marked AI-generated.
 - memory/task suggestions are queue-only, not directly applied.
 - cancel/adjust of provider disclosure creates no provider call and no queue
   item.
-- AI expansion uses callout-style separation when rendered or proposed.
+- AI expansion uses callout-style separation if a future preview/Keep UI renders
+  or proposes it.
 
 ### TASK M7.5 Quick Capture Eval Fixtures
 
@@ -1618,6 +1700,8 @@ Implementation:
 - Include sourceRefs and generatedAt.
 - Do not dump whole queue.
 - Use generated-note Data Boundary policy.
+- Keep the default Weekly Review Tab as a digest; render item selection only
+  after the user chooses to save material from the review.
 - Keep full provider output out of the note unless each section is accepted and
   source-backed.
 
@@ -1700,11 +1784,34 @@ Implementation:
 - Frequency setting enforced.
 - Nudge has View, Dismiss, Later.
 - No automatic writes.
+- Bubble output is route-only and follows M11.0 arbitration.
+- View opens the existing Quiet Recall Panel/Tab evidence surface.
+- Dismiss suppresses the same candidate; Later snoozes without creating a saved
+  insight, memory candidate, or queue item.
 
 Tests:
 
 - frequency cap works.
 - dismiss suppresses repeat.
+
+Acceptance:
+
+- Recall Bubble nudges remain disabled unless `quietRecall.bubbleNudgesEnabled`
+  is explicitly on and Pagelet proactive hints are allowed.
+- Quiet/off settings, cooldowns, and the M11.0 max-one nudge rule suppress
+  recall Bubble output.
+- Bubble copy contains only a short why-now/route hint. Sources, evidence,
+  save/apply actions, and generated review content remain in Panel/Tab.
+- View, Dismiss, and Later are reversible local UI state transitions with no
+  automatic vault or Memory writes.
+
+Validation:
+
+- Quiet Recall and Bubble tests cover disabled default, explicit enablement,
+  quiet/off suppression, frequency cap, dismiss repeat suppression, and Later
+  snooze.
+- Pagelet smoke is required before closing M11.3 because Bubble behavior is a
+  visible UI surface.
 
 ### TASK M11.4 Recall Feedback Learning
 
@@ -1719,20 +1826,37 @@ Tests:
 - excluded scopes do not produce learning signals.
 - stored signal is aggregate-only and contains no raw query/path/title.
 
+Acceptance:
+
+- Feedback learning remains off unless the user enables Retrieval Habit Profile
+  or accepts a first-use notice that clearly starts local aggregate learning.
+- Feedback events may use only aggregate counters/scores and source ids already
+  permitted by the Data Boundary.
+- Disable or clear stops new collection and removes influence from future
+  ranking.
+- Feedback cannot write to notes, Memory, Saved Insights, or provider telemetry.
+
+Validation:
+
+- Retrieval Habit Profile tests prove disabled collection receives no signal,
+  opt-in collection remains local/aggregate-only, clear/disable stops both
+  collection and influence, and denied scopes produce no learning signal.
+- Serialization tests assert no raw query, raw path, title, excerpt, prompt, or
+  provider output appears in stored profile data.
+
 ## 16. M12 Later Layers
 
-These should start only after M3-M6 and at least one product loop are stable.
-M12 is backlog until each item is expanded into full `Acceptance`, `Validation`,
-and tracker evidence. Do not assign M12 tasks to an implementation agent in
-their current form.
+These start only after M3-M6 and at least one product loop are stable. M12.1-M12.3
+were approved on 2026-06-29 and are now implemented; future later-layer scope
+must be added as a new approval gate before runtime work starts.
 
 ### TASK M12.1 Retrieval Habit Profile
 
 Goal: Add opt-in weak local retrieval adaptation.
 
-Must prove:
+Acceptance:
 
-- disabled by default until explicit opt-in or the user accepts a first-use
+- disabled by default until explicit opt-in or the user confirms a first-use
   notice that clearly starts local aggregate learning
 - no provider calls
 - no vault writes
@@ -1741,26 +1865,65 @@ Must prove:
 - clear/disable stops collection and influence
 - weak signal cannot cross Data Boundary or evidence strength
 
+Validation:
+
+- `retrieval-habit-profile` tests cover disabled default, opt-in, local-only
+  aggregate writes, 90-day rolling retention, clear/disable, Data Boundary
+  denial, and evidence-strength ceiling.
+- Data serialization tests assert no raw query, path, title, excerpt, prompt,
+  provider output, or sensitive labels are stored.
+- Ranking tests prove profile signal can only break near-ties and cannot
+  override source-backed evidence or denied scopes.
+
 ### TASK M12.2 Lightweight Graph Discovery
 
 Goal: Add related_note/theme_chain/conflict_pair/index_note_candidate items.
 
-Must prove:
+Acceptance:
 
 - no graph visualization MVP
 - sourceRefs required
 - `theme_chain` does not become memory directly
 - rejected edge remains local
+- Graph discovery produces reviewable Pagelet items, not an always-on graph
+  management UI.
+- Every edge or theme claim carries source refs and an outcome status.
+- Rejected or dismissed edges stay local aggregate feedback and do not modify
+  notes, links, Memory, or Saved Insights.
+
+Validation:
+
+- Graph discovery tests cover related-note, theme-chain, conflict-pair, and
+  index-note-candidate fixtures with source refs.
+- Tests prove rejected/dismissed edges do not create vault writes, Memory
+  writes, Saved Insight writes, or provider telemetry.
+- UI smoke is required only if a visible Pagelet surface is added; a graph
+  visualization remains out of scope.
 
 ### TASK M12.3 Scope Recap And Theme Summary
 
 Goal: Add on-demand source-backed recap for selected scope.
 
-Must prove:
+Acceptance:
 
 - sourceRefs for important claims
 - generated recap not source by default
 - Markdown write requires confirmation
+- Recap is on-demand and scope-bounded; it does not run as a broad background
+  scan.
+- Important claims include source refs; unsourced generated prose is clearly
+  marked as AI-generated helper text and is not admitted as Memory/source.
+- Markdown export uses accepted-only content and Write Action Framework
+  confirmation.
+
+Validation:
+
+- Scope recap tests cover sourceRefs for claims, excluded/generated source
+  filtering, on-demand invocation, and no background scan.
+- Write tests prove Markdown export requires confirmation and does not write
+  unaccepted or unsourced content.
+- Pagelet/Obsidian smoke is required if a visible recap surface or Markdown
+  export command is added.
 
 ## 17. Suggested Release Slices
 
@@ -1773,7 +1936,8 @@ Must prove:
 | Slice D: Insight/Memory Loop | M8 + M6 | Saved insights and memory candidates become governable |
 | Slice E: Maintenance Hand | M9 preview-only, then M9.6A/B one allowlisted action | PA starts caring for the vault safely |
 | Slice F: Weekly Compounding Loop | M10 + M11.0-M11.2 | PA helps old thoughts return and weekly knowledge compounds |
-| Slice G: Advanced Adaptation | M11.3-M11.4, M12 after expansion | Bubble recall and graph/recap/habit improve relevance after core trust exists |
+| Slice G: Recall Adaptation | M11.3-M11.4 | Bubble recall and feedback learning improve relevance after core trust exists |
+| M12 Later Layers Expansion | M12.1-M12.3 | Done. Habit, graph, and recap layers improve relevance while preserving local, source-backed, confirmed-write boundaries |
 
 ## 18. Stop Points Requiring User Decision
 
@@ -1799,7 +1963,8 @@ Codex must stop and ask before implementing these:
 - Any user-facing graph visualization.
 - Any external action outside the vault.
 - Any telemetry beyond local or explicit opt-in aggregate usage.
-- Any M12 task before it has full Acceptance, Validation, and tracker evidence.
+- Any future M12-adjacent scope beyond the completed M12.1-M12.3 boundary before
+  it has full Acceptance, Validation, approval, and tracker evidence.
 
 ## 19. Final Handoff Checklist
 
