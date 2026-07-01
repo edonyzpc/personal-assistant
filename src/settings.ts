@@ -283,6 +283,8 @@ export interface PluginManagerSettings {
     weeklyReview: WeeklyReviewSettings;
     /** Quiet Recall surfaces. Bubble nudges remain disabled until the later slice. */
     quietRecall: QuietRecallSettings;
+    /** Global Focus Mode: suppress all PA-initiated proactive behavior. */
+    focusMode: boolean;
     /** Opt-in local aggregate recall feedback profile. */
     retrievalHabitProfile: RetrievalHabitProfileSettings;
     /**
@@ -398,6 +400,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     },
     weeklyReview: { ...WEEKLY_REVIEW_DEFAULTS },
     quietRecall: { ...QUIET_RECALL_DEFAULTS },
+    focusMode: false,
     retrievalHabitProfile: {
         enabled: RETRIEVAL_HABIT_PROFILE_DEFAULTS.enabled,
         state: { aggregates: [] },
@@ -521,6 +524,7 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.maintenanceReview = mergeMaintenanceReviewSettings(loadedObject.maintenanceReview);
     merged.weeklyReview = mergeWeeklyReviewSettings(loadedObject.weeklyReview);
     merged.quietRecall = mergeQuietRecallSettings(loadedObject.quietRecall);
+    merged.focusMode = typeof loadedObject.focusMode === "boolean" ? loadedObject.focusMode : false;
     merged.retrievalHabitProfile = mergeRetrievalHabitProfileSettings(loadedObject.retrievalHabitProfile);
     merged.memoryExtractionConsent = mergeMemoryExtractionConsentSettings(loadedObject.memoryExtractionConsent);
     if (!isMemoryExtractionConsentConfirmed(merged.memoryExtractionConsent)) {

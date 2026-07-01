@@ -286,6 +286,9 @@
     "plugin.settings.quickCapture.inboxPath.desc": "Used when Quick Capture saves to Inbox. Captures append to this rolling note.",
     "plugin.settings.quickCapture.postProcessing.name": "Prepare suggestions after saving",
     "plugin.settings.quickCapture.postProcessing.desc": "After the original capture is saved, PA can prepare Memory or possible-task suggestions. Capture text may be sent to your configured AI provider after disclosure; only suggestions that need confirmation are kept for review.",
+    "plugin.command.focusMode": "PA: Toggle Focus Mode",
+    "plugin.focusMode.enabled": "Focus Mode enabled — all PA suggestions paused.",
+    "plugin.focusMode.disabled": "Focus Mode disabled — PA suggestions resumed.",
 
     "plugin.settings.statistics.title": "Vault Statistics",
     "plugin.settings.statistics.show.name": "Show Statistics",

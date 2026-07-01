@@ -35,6 +35,11 @@ const PAGELET_DETAIL_SESSION_CACHE_LIMIT = 12;
 const pageletDetailSessionCache = new Map<string, PageletDetailPayload>();
 let pageletDetailSessionCounter = 0;
 
+export function clearPageletDetailSessionCache(): void {
+    pageletDetailSessionCache.clear();
+    pageletDetailSessionCounter = 0;
+}
+
 function createPageletDetailSessionId(): string {
     const cryptoProvider = getPlatformCrypto();
     if (typeof cryptoProvider?.randomUUID === "function") {

@@ -1722,7 +1722,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'Tombstones',
         ].map((name) => records.find((record) => record.name === name)?.buttons[0]);
 
-        expect(excludedFolders?.value).toBe('');
+        expect(excludedFolders?.value).toBe('.obsidian');
         expect(excludedTags?.value).toBe('');
         expect(generatedNotes?.value).toBe('exclude-generated');
         expect(generatedNotes?.options).toEqual([

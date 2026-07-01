@@ -110,6 +110,8 @@ export class PageletOrchestrator {
     private destroyed = false;
 
     // ---- Constants --------------------------------------------------------
+    /** 60 s ceiling for any single foreground LLM call. */
+    private static readonly FOREGROUND_TIMEOUT_MS = 60_000;
     /** 10 minutes of no activity -> Pet enters resting state. */
     private static readonly IDLE_TIMEOUT_MS = 10 * 60 * 1000;
     /** 5 s debounce for note-activity detection (vault modify events). */
@@ -399,21 +401,11 @@ export class PageletOrchestrator {
             onPeriodicSummary: () => {
                 void this.runPeriodicSummary();
             },
-            onMaintenanceReview: () => {
-                void this.runMaintenanceReview();
-            },
-            onWeeklyReview: () => {
-                void this.runWeeklyReview();
-            },
-            onQuietRecall: () => {
-                void this.runQuietRecall();
-            },
-            onGraphDiscovery: () => {
-                void this.runGraphDiscovery();
-            },
-            onScopeRecap: () => {
-                void this.runScopeRecap();
-            },
+            onMaintenanceReview: () => this.runMaintenanceReview(),
+            onWeeklyReview: () => this.runWeeklyReview(),
+            onQuietRecall: () => this.runQuietRecall(),
+            onGraphDiscovery: () => this.runGraphDiscovery(),
+            onScopeRecap: () => this.runScopeRecap(),
             onToggleProactiveHints: () => this.toggleProactiveHints(),
             onShowBackgroundPreparationStatus: () => {
                 this.showBackgroundPreparationStatusNotice();
@@ -445,8 +437,9 @@ export class PageletOrchestrator {
 
     async runMaintenanceReview(): Promise<void> {
         const routeToken = this.beginForegroundRoute("review", "review");
+        if (routeToken === null) return;
         try {
-            const maintenanceReview = await this.host.runMaintenanceReview({ enqueueProposals: false });
+            const maintenanceReview = await this.withForegroundTimeout(this.host.runMaintenanceReview({ enqueueProposals: false }));
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.transitionPet("analysis-done");
             const locale = getPageletUiLanguage();
@@ -473,8 +466,9 @@ export class PageletOrchestrator {
 
     async runWeeklyReview(): Promise<void> {
         const routeToken = this.beginForegroundRoute("review", "review");
+        if (routeToken === null) return;
         try {
-            const weeklyReview = await this.host.runWeeklyReview();
+            const weeklyReview = await this.withForegroundTimeout(this.host.runWeeklyReview());
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.transitionPet("analysis-done");
             const locale = getPageletUiLanguage();
@@ -501,8 +495,9 @@ export class PageletOrchestrator {
 
     async runQuietRecall(): Promise<void> {
         const routeToken = this.beginForegroundRoute("current", "review");
+        if (routeToken === null) return;
         try {
-            const quietRecall = await this.host.runQuietRecall();
+            const quietRecall = await this.withForegroundTimeout(this.host.runQuietRecall());
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.transitionPet("analysis-done");
             const locale = getPageletUiLanguage();
@@ -526,8 +521,9 @@ export class PageletOrchestrator {
 
     async runGraphDiscovery(): Promise<void> {
         const routeToken = this.beginForegroundRoute("review", "connection");
+        if (routeToken === null) return;
         try {
-            const graphDiscovery = await this.host.runGraphDiscovery({ enqueueItems: false });
+            const graphDiscovery = await this.withForegroundTimeout(this.host.runGraphDiscovery({ enqueueItems: false }));
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.transitionPet("analysis-done");
             const locale = getPageletUiLanguage();
@@ -557,8 +553,9 @@ export class PageletOrchestrator {
 
     async runScopeRecap(): Promise<void> {
         const routeToken = this.beginForegroundRoute("summary", "review");
+        if (routeToken === null) return;
         try {
-            const recap = await this.host.runScopeRecap();
+            const recap = await this.withForegroundTimeout(this.host.runScopeRecap());
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.transitionPet("analysis-done");
             const markdown = buildScopeRecapMarkdown(recap, [recap.summary.id]);
@@ -585,7 +582,8 @@ export class PageletOrchestrator {
         this.petView?.setTaskKind?.(taskKind);
     }
 
-    private beginForegroundRoute(layout: "summary" | "discover" | "current" | "review", taskKind: PetTaskKind): number {
+    private beginForegroundRoute(layout: "summary" | "discover" | "current" | "review", taskKind: PetTaskKind): number | null {
+        if (!this.sessionManager.reserveForegroundCall()) return null;
         const routeToken = ++this.foregroundRouteToken;
         this.currentPanelLayout = layout;
         this.saveFlow.clearPending();
@@ -595,6 +593,17 @@ export class PageletOrchestrator {
 
     private isCurrentForegroundRoute(routeToken: number): boolean {
         return !this.destroyed && routeToken === this.foregroundRouteToken;
+    }
+
+    private withForegroundTimeout<T>(promise: Promise<T>): Promise<T> {
+        let timer: ReturnType<typeof setTimeout>;
+        return Promise.race([
+            promise.finally(() => clearTimeout(timer)),
+            new Promise<never>((_, reject) => {
+                timer = setTimeout(() => reject(new Error("Foreground LLM call timed out")),
+                    PageletOrchestrator.FOREGROUND_TIMEOUT_MS);
+            }),
+        ]);
     }
 
     private transitionPet(event: "analysis-start" | "analysis-done" | "insights-ready", taskKind?: PetTaskKind): void {
@@ -815,8 +824,9 @@ export class PageletOrchestrator {
         this.bubbleCoordinator.handlePetClick(this.bubbleView, this.petView);
     }
 
-    /** Show the Bubble via the BubbleCoordinator. */
+    /** Show the Bubble via the BubbleCoordinator. Suppressed by Focus Mode. */
     private showBubble(): void {
+        if (this.host.settings.focusMode) return;
         this.bubbleCoordinator.showBubble(this.bubbleView, this.petView);
     }
 

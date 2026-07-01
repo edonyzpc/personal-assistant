@@ -67,6 +67,7 @@ import { registerPageletCommands, type PageletCommandCallbacks } from './pagelet
 import {
     PAGELET_DETAIL_VIEW_TYPE,
     PageletDetailView,
+    clearPageletDetailSessionCache,
     registerPageletDetailIcon,
     type PageletDetailPayload,
 } from './pagelet/tab';
@@ -465,6 +466,19 @@ export class PluginManager extends Plugin {
             callback: () => {
                 this.openQuickCaptureModal();
             }
+        });
+
+        this.addCommand({
+            id: "pa-toggle-focus-mode",
+            name: this.t("plugin.command.focusMode"),
+            callback: () => {
+                this.settings.focusMode = !this.settings.focusMode;
+                void this.saveSettings();
+                const message = this.settings.focusMode
+                    ? this.t("plugin.focusMode.enabled")
+                    : this.t("plugin.focusMode.disabled");
+                new Notice(message, 3000);
+            },
         });
 
         this.addCommand({
@@ -1032,6 +1046,7 @@ export class PluginManager extends Plugin {
         const getPageletSettings = () => this.getPageletSettingsWithDataBoundary();
         const getContextPagerSettings = () => this.settings.contextPager;
         const getQuietRecallSettings = () => this.settings.quietRecall;
+        const getFocusMode = () => this.settings.focusMode;
         return {
             app: this.app,
             settings: {
@@ -1045,6 +1060,9 @@ export class PluginManager extends Plugin {
                 },
                 get quietRecall() {
                     return getQuietRecallSettings();
+                },
+                get focusMode() {
+                    return getFocusMode();
                 },
             },
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
@@ -1473,6 +1491,7 @@ export class PluginManager extends Plugin {
                 return right.stat.mtime - left.stat.mtime;
             })
             .slice(0, 40);
+        const backlinkMap = this.buildGraphDiscoveryBacklinkMap();
         const notes: GraphDiscoveryNote[] = [];
         for (const file of files) {
             try {
@@ -1483,7 +1502,7 @@ export class PluginManager extends Plugin {
                     content,
                     tags: this.getDataBoundaryTags(file),
                     links: this.getGraphDiscoveryLinks(file),
-                    backlinks: this.getGraphDiscoveryBacklinks(file.path),
+                    backlinks: backlinkMap.get(normalizePath(file.path)) ?? [],
                     aliases: this.getGraphDiscoveryAliases(file),
                     folder: parentFolder(file.path),
                     modifiedAt: new Date(file.stat.mtime).toISOString(),
@@ -1508,12 +1527,21 @@ export class PluginManager extends Plugin {
             : []);
     }
 
-    private getGraphDiscoveryBacklinks(path: string): string[] {
+    private buildGraphDiscoveryBacklinkMap(): Map<string, string[]> {
         const resolvedLinks = this.app.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined;
-        if (!resolvedLinks) return [];
-        return Object.entries(resolvedLinks)
-            .filter(([, targets]) => Number(targets[path] ?? 0) > 0)
-            .map(([sourcePath]) => normalizePath(sourcePath));
+        const map = new Map<string, string[]>();
+        if (!resolvedLinks) return map;
+        for (const [sourcePath, targets] of Object.entries(resolvedLinks)) {
+            const normalizedSource = normalizePath(sourcePath);
+            for (const [targetPath, count] of Object.entries(targets)) {
+                if (count <= 0) continue;
+                const normalizedTarget = normalizePath(targetPath);
+                const list = map.get(normalizedTarget);
+                if (list) list.push(normalizedSource);
+                else map.set(normalizedTarget, [normalizedSource]);
+            }
+        }
+        return map;
     }
 
     private getGraphDiscoveryAliases(file: TFile): string[] {
@@ -2453,6 +2481,12 @@ export class PluginManager extends Plugin {
             }
             this.pageletRuntime = null;
         }
+        this.reviewQueueStore = null;
+        this.savedInsightStore = null;
+        this.memoryGovernanceStore = null;
+        this.retrievalHabitProfileStore = null;
+        this.pageletRateLimiterInstance = null;
+        clearPageletDetailSessionCache();
     }
 
     getMemoryExtractionPromptContext(): MemoryExtractionPromptContext {

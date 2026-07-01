@@ -83,6 +83,7 @@ export interface PageletHost {
             enabled: boolean;
             bubbleNudgesEnabled: boolean;
         };
+        focusMode: boolean;
     };
 
     /** Structured debug log (no-op when debug is false). */

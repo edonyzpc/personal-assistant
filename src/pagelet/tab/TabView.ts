@@ -176,6 +176,9 @@ export class TabView {
         this.labelEl = null;
         this.containerEl = null;
         this._isOpen = false;
+        this.maintenanceActionState.clear();
+        this.weeklyAcceptedItemIds.clear();
+        this.quietRecallSaveState.clear();
     }
 
     // -----------------------------------------------------------------------
@@ -754,6 +757,11 @@ export class TabView {
         }
         section.appendChild(categories);
 
+        if (maintenanceReview.proposals.length === 0) {
+            const emptyCard = el("div", "pa-pagelet-tab-insight-card");
+            emptyCard.appendChild(el("p", undefined, pageletT("pagelet.tab.maintenance.noProposals", this.locale)));
+            section.appendChild(emptyCard);
+        }
         if (maintenanceReview.proposals.length > 0) {
             const proposals = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-maintenance-proposals");
             proposals.appendChild(el("h3", undefined, pageletT("pagelet.tab.maintenance.proposals", this.locale)));
@@ -1080,7 +1088,8 @@ export class TabView {
                 }
                 cardEl.appendChild(bodyP);
                 const tagRow = el("div", "pa-pagelet-tab-tag-row");
-                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", item.type));
+                const typeLabel = pageletT(`pagelet.tab.reviewQueue.type.${item.type}`, this.locale);
+                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", typeLabel));
                 tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", item.status));
                 const source = item.sourceRefs[0]?.path;
                 if (source) {

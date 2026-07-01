@@ -286,6 +286,9 @@
     "plugin.settings.quickCapture.inboxPath.desc": "当 Quick Capture 保存到 Inbox 时使用。新内容会追加到这篇滚动笔记。",
     "plugin.settings.quickCapture.postProcessing.name": "保存后准备建议",
     "plugin.settings.quickCapture.postProcessing.desc": "原始捕捉保存后，PA 可以准备 Memory 或可能的任务建议。经过提示后，捕捉文本可能会发送给当前 AI 服务商；只有需要确认的建议会保留待审阅。",
+    "plugin.command.focusMode": "PA: 切换专注模式",
+    "plugin.focusMode.enabled": "专注模式已开启 — PA 所有主动建议已暂停。",
+    "plugin.focusMode.disabled": "专注模式已关闭 — PA 建议已恢复。",
 
     "plugin.settings.statistics.title": "库统计",
     "plugin.settings.statistics.show.name": "显示统计",
