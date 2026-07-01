@@ -819,8 +819,9 @@ export class PageletOrchestrator {
         this.petView.mount(containerEl);
     }
 
-    /** Handle a click/tap on the Pet element. */
+    /** Handle a click/tap on the Pet element. Suppressed by Focus Mode. */
     private handlePetClick(): void {
+        if (this.host.settings.focusMode) return;
         this.bubbleCoordinator.handlePetClick(this.bubbleView, this.petView);
     }
 
