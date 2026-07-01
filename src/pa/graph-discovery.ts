@@ -5,6 +5,7 @@ import {
     type ReviewQueueScope,
     type ReviewQueueStatus,
 } from "./contracts";
+import { normalizeVaultPath, stableHash, cloneSourceRef } from "./helpers";
 import type {
     ReviewQueueCreateInput,
     ReviewQueueItem,
@@ -95,10 +96,6 @@ function nowDate(now: GraphDiscoveryOptions["now"]): Date {
     return value ? new Date(value.getTime()) : new Date();
 }
 
-function normalizeVaultPath(path: string): string {
-    return String(path ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/g, "");
-}
-
 function basenameFromPath(path: string): string {
     const name = normalizeVaultPath(path).split("/").pop() ?? path;
     return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
@@ -114,28 +111,12 @@ function noteTitle(note: GraphDiscoveryNote): string {
     return note.title?.trim() || basenameFromPath(note.path);
 }
 
-function stableHash(text: string): string {
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-        hash ^= text.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
 function normalizeTag(tag: string): string {
     return tag.trim().replace(/^#+/, "").toLowerCase();
 }
 
 function uniqueStrings(values: readonly string[]): string[] {
     return [...new Set(values.map((value) => value.trim()).filter(Boolean))];
-}
-
-function cloneSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...ref,
-        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-    };
 }
 
 function sourceRefsAreValid(refs: readonly PersistedSourceRef[]): boolean {
@@ -236,9 +217,10 @@ function buildRelatedNoteItems(
     generatedAt: string,
     options: GraphDiscoveryOptions,
 ): GraphDiscoveryItem[] {
+    const cap = Math.max(1, options.maxItemsPerType ?? DEFAULT_MAX_ITEMS_PER_TYPE);
     const items: GraphDiscoveryItem[] = [];
-    for (let leftIndex = 0; leftIndex < notes.length; leftIndex += 1) {
-        for (let rightIndex = leftIndex + 1; rightIndex < notes.length; rightIndex += 1) {
+    for (let leftIndex = 0; leftIndex < notes.length && items.length < cap; leftIndex += 1) {
+        for (let rightIndex = leftIndex + 1; rightIndex < notes.length && items.length < cap; rightIndex += 1) {
             const left = notes[leftIndex];
             const right = notes[rightIndex];
             const sharedTags = sharedValues(left.tags ?? [], right.tags ?? []);

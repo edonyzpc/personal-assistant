@@ -3,6 +3,7 @@ import {
     validateSourceRefPathShape,
     type PersistedSourceRef,
 } from "./contracts";
+import { normalizeVaultPath, cloneSourceRef } from "./helpers";
 import type { ReviewQueueCreateInput } from "./review-queue-store";
 import type { SavedInsight, SavedInsightResult } from "./saved-insight-store";
 
@@ -54,6 +55,7 @@ export interface QuietRecallBuildInput {
     savedInsights?: readonly SavedInsight[];
     maxCandidates?: number;
     staleAfterDays?: number;
+    isPathAllowed?: (path: string) => boolean;
 }
 
 export type QuietRecallSaveResult =
@@ -66,10 +68,6 @@ const CURRENT_RELEVANCE_BASE = 80;
 const RELATED_RELEVANCE_BASE = 48;
 const FAR_ASSOCIATION_CAP = 35;
 
-function normalizeVaultPath(path: string): string {
-    return String(path ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/g, "");
-}
-
 function nowDate(now: QuietRecallBuildInput["now"]): Date {
     const value = typeof now === "function" ? now() : now;
     return value ? new Date(value.getTime()) : new Date();
@@ -78,13 +76,6 @@ function nowDate(now: QuietRecallBuildInput["now"]): Date {
 function fileStem(path: string): string {
     const name = normalizeVaultPath(path).split("/").pop() ?? path;
     return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
-}
-
-function cloneSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...ref,
-        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-    };
 }
 
 function sourceRefsAreValid(sourceRefs: readonly PersistedSourceRef[]): boolean {
@@ -178,11 +169,13 @@ export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): Q
         relatedScores.set(path, Math.max(relatedScores.get(path) ?? 0, related.score ?? 0.5));
     }
 
+    const isPathAllowed = input.isPathAllowed ?? (() => true);
     const candidates: QuietRecallCandidate[] = [];
     for (const insight of input.savedInsights ?? []) {
         if (insight.status !== "active") continue;
         if (!sourceRefsAreValid(insight.sourceRefs)) continue;
         if (insightIsStale(insight, now, staleAfterDays)) continue;
+        if (insight.sourceRefs.some((ref) => !isPathAllowed(ref.path))) continue;
         const relation = relationForInsight(insight, currentPath, relatedScores);
         if (!relation) continue;
         candidates.push({

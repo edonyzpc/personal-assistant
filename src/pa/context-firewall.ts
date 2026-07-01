@@ -1,3 +1,4 @@
+import { normalizeVaultPath } from "./helpers";
 import type { ConfirmedMemoryRecord } from "./memory-governance-store";
 
 export const CONTEXT_FIREWALL_DECISIONS = ["auto_include", "ask_user", "drop"] as const;
@@ -19,10 +20,6 @@ export interface ContextFirewallDecision {
     decision: ContextFirewallDecisionKind;
     reason: ContextFirewallReason;
     memoryId: string;
-}
-
-function normalizeVaultPath(path: string): string {
-    return path.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
 }
 
 function memoryMatchesScope(memory: ConfirmedMemoryRecord, scopePaths: readonly string[] = []): boolean {

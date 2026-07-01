@@ -13,6 +13,7 @@ import {
     type ReviewQueueScope,
     type ReviewQueueStatus,
 } from "./contracts";
+import { normalizeVaultPath, isRecord, cloneSourceRef, cloneScope } from "./helpers";
 import {
     reviewQueueAdmissionReasonForItem,
     reviewQueueItemHasUserIntentOrDurableConsequence,
@@ -77,6 +78,18 @@ export interface ReviewQueueStoreOptions {
     idFactory?: () => string;
 }
 
+const VALID_STATUS_TRANSITIONS: Record<ReviewQueueStatus, readonly ReviewQueueStatus[]> = {
+    suggested: ["accepted", "dismissed", "snoozed", "expired"],
+    accepted: ["applied", "dismissed", "edited", "snoozed"],
+    edited: ["applied", "dismissed", "snoozed"],
+    applied: ["undone", "failed"],
+    dismissed: ["suggested"],
+    snoozed: ["suggested", "dismissed", "expired"],
+    expired: ["suggested"],
+    failed: ["suggested", "dismissed"],
+    undone: ["suggested", "dismissed"],
+};
+
 const SOURCE_BACKED_TYPES = new Set<ReviewQueueItemType>([
     "evidence_insight",
     "memory_candidate",
@@ -109,6 +122,9 @@ const ADMISSION_REASONS_BY_TYPE: Readonly<Record<ReviewQueueItemType, readonly R
     action_log: ["user_initiated_action_recovery_required"],
 };
 
+const MAX_QUEUE_SIZE = 200;
+const EVICTABLE_STATUSES = new Set<ReviewQueueStatus>(["dismissed", "expired", "failed"]);
+
 export class ReviewQueueStore {
     private items: ReviewQueueItem[];
     private readonly now: () => Date;
@@ -120,6 +136,18 @@ export class ReviewQueueStore {
         this.now = options.now ?? (() => new Date());
         this.persist = options.persist;
         this.idFactory = options.idFactory ?? (() => `rq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+    }
+
+    private evictIfNeeded(): void {
+        if (this.items.length <= MAX_QUEUE_SIZE) return;
+        const keep: ReviewQueueItem[] = [];
+        const evictable: ReviewQueueItem[] = [];
+        for (const item of this.items) {
+            (EVICTABLE_STATUSES.has(item.status) ? evictable : keep).push(item);
+        }
+        evictable.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
+        const budget = MAX_QUEUE_SIZE - keep.length;
+        this.items = [...keep, ...evictable.slice(Math.max(0, evictable.length - budget))];
     }
 
     snapshot(): ReviewQueueState {
@@ -173,6 +201,7 @@ export class ReviewQueueStore {
             return { ok: true, value: cloneItem(duplicate) };
         }
         this.items = [item, ...this.items.filter((existing) => !isDuplicateItem(existing, item))];
+        this.evictIfNeeded();
         await this.flush();
         return { ok: true, value: cloneItem(item) };
     }
@@ -184,7 +213,12 @@ export class ReviewQueueStore {
     ): Promise<ReviewQueueResult<ReviewQueueItem>> {
         const index = this.items.findIndex((item) => item.id === id);
         if (index < 0) return { ok: false, reason: "not_found" };
-        const item = cloneItem(this.items[index]);
+        const current = this.items[index];
+        const allowed = VALID_STATUS_TRANSITIONS[current.status];
+        if (!allowed || !allowed.includes(status)) {
+            return { ok: false, reason: `invalid_transition_${current.status}_to_${status}` };
+        }
+        const item = cloneItem(current);
         item.status = status;
         item.updatedAt = this.now().toISOString();
         if (status === "snoozed" && options.snoozedUntil) {
@@ -349,25 +383,3 @@ function cloneItem(item: ReviewQueueItem): ReviewQueueItem {
     return clone;
 }
 
-function cloneScope(scope: ReviewQueueScope): ReviewQueueScope {
-    return {
-        ...scope,
-        paths: scope.paths ? [...scope.paths] : undefined,
-        tags: scope.tags ? [...scope.tags] : undefined,
-    };
-}
-
-function cloneSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...ref,
-        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-    };
-}
-
-function normalizeVaultPath(path: string): string {
-    return path.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}

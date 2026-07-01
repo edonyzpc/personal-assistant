@@ -1,3 +1,5 @@
+import { normalizeVaultPath } from "../helpers";
+
 export const GENERATED_NOTE_POLICIES = ["exclude-generated", "include-generated", "ask"] as const;
 export type GeneratedNotePolicy = typeof GENERATED_NOTE_POLICIES[number];
 
@@ -76,14 +78,10 @@ export interface DataBoundaryDecision {
 }
 
 export const DEFAULT_DATA_BOUNDARY_POLICY: Readonly<DataBoundaryPolicy> = Object.freeze({
-    excludedFolders: [],
+    excludedFolders: [".obsidian"],
     excludedTags: [],
     generatedNotePolicy: "exclude-generated",
 });
-
-function normalizeVaultPath(path: string): string {
-    return path.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
-}
 
 function normalizeTag(tag: string): string {
     return tag.trim().replace(/^#+/, "").toLowerCase();
@@ -108,7 +106,7 @@ export function decideDataBoundaryForSource(
 ): DataBoundaryDecision {
     const path = normalizeVaultPath(source.path);
     const excludedTags = new Set(policy.excludedTags.map(normalizeTag).filter(Boolean));
-    if (override?.scope === "one-run" && (!override.sourcePath || normalizeVaultPath(override.sourcePath) === path)) {
+    if (override?.scope === "one-run" && override.sourcePath && normalizeVaultPath(override.sourcePath) === path) {
         return { decision: "allow", reason: "one_run_override", sourcePath: path, override };
     }
     if (policy.excludedFolders.some((folder) => isInsideFolder(path, folder))) {

@@ -11,6 +11,8 @@ import {
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
+import { decideContextFirewall } from "./context-firewall";
+import { isRecord, includesString, cloneSourceRef, cloneScope } from "./helpers";
 import type { ReviewQueueItem } from "./review-queue-store";
 
 export interface ConfirmedMemoryRecord extends MemoryLifecycleRecord {
@@ -49,29 +51,6 @@ export interface MemoryGovernanceListFilter {
 export type MemoryGovernanceResult<T> =
     | { ok: true; value: T }
     | { ok: false; reason: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-function includesString<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
-    return typeof value === "string" && (values as readonly string[]).includes(value);
-}
-
-function cloneSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...ref,
-        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-    };
-}
-
-function cloneScope(scope: ReviewQueueScope): ReviewQueueScope {
-    return {
-        ...scope,
-        paths: scope.paths ? [...scope.paths] : undefined,
-        tags: scope.tags ? [...scope.tags] : undefined,
-    };
-}
 
 function cloneRecord(record: ConfirmedMemoryRecord): ConfirmedMemoryRecord {
     return {
@@ -164,6 +143,22 @@ export class MemoryGovernanceStore {
             .filter((record) => !lifecycles || lifecycles.has(record.lifecycle))
             .filter((record) => !types || types.has(record.type))
             .map(cloneRecord);
+    }
+
+    listForContext(options: { scopePaths?: readonly string[] } = {}): ConfirmedMemoryRecord[] {
+        return this.list().filter((record) => {
+            const decision = decideContextFirewall(record, options);
+            return decision.decision === "auto_include";
+        });
+    }
+
+    listRecentlyConfirmed(options: { withinMs?: number } = {}): ConfirmedMemoryRecord[] {
+        const windowMs = options.withinMs ?? 7 * 24 * 60 * 60 * 1000;
+        const cutoff = this.now().getTime() - windowMs;
+        return this.list({ lifecycles: ["active"] }).filter((record) => {
+            const confirmedAt = Date.parse(record.confirmedAt ?? "");
+            return Number.isFinite(confirmedAt) && confirmedAt >= cutoff;
+        });
     }
 
     async confirmCandidate(

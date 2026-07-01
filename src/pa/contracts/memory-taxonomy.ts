@@ -1,4 +1,5 @@
 import type { PersistedSourceRef } from "./source-ref";
+import { includesString } from "../helpers";
 
 export const MEMORY_TYPES = [
     "preference",
@@ -60,10 +61,6 @@ export type MemoryContractValidationResult =
     | { ok: true }
     | { ok: false; reason: string };
 
-function includesString<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
-    return typeof value === "string" && (values as readonly string[]).includes(value);
-}
-
 export function isMemoryType(value: unknown): value is MemoryType {
     return includesString(MEMORY_TYPES, value);
 }
@@ -97,6 +94,9 @@ export function validateMemoryLifecycleRecord(record: MemoryLifecycleRecord): Me
     return { ok: true };
 }
 
+// Intentionally returns false for all types: auto-confirmation is disabled until
+// trust-layer graduation criteria are defined. The type guard is kept so the
+// activation path only needs a single change here.
 export function canAutoConfirmMemoryCandidate(candidate: Pick<MemoryCandidateContract, "type">): boolean {
     if (candidate.type === "task_constraint") return false;
     return false;

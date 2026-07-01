@@ -4,6 +4,7 @@ import {
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
+import { normalizeVaultPath, stableHash } from "./helpers";
 import type { ReviewQueueCreateInput } from "./review-queue-store";
 
 export const MAINTENANCE_PROPOSAL_ACTION_TYPES = [
@@ -120,10 +121,6 @@ const STOPWORDS = new Set([
     "there", "these", "this", "with", "would", "your", "当前", "这个", "一个", "我们",
 ]);
 
-function normalizeVaultPath(path: string): string {
-    return String(path ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/g, "");
-}
-
 function basenameFromPath(path: string): string {
     const fileName = normalizeVaultPath(path).split("/").pop() ?? path;
     return fileName.toLowerCase().endsWith(".md") ? fileName.slice(0, -3) : fileName;
@@ -141,15 +138,6 @@ function parentFolder(path: string): string {
 
 function ensureMarkdownExtension(path: string): string {
     return path.toLowerCase().endsWith(".md") ? path : `${path}.md`;
-}
-
-function stableHash(text: string): string {
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-        hash ^= text.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(36).padStart(7, "0");
 }
 
 function nowIso(now: MaintenanceReviewScanOptions["now"]): string {
@@ -444,12 +432,15 @@ export function validateMaintenanceProposal(proposal: MaintenanceProposal): Main
     return { ok: true };
 }
 
+const MAX_SCAN_NOTES = 100;
+
 export function scanMaintenanceReview(
     notes: readonly MaintenanceReviewNote[],
     options: MaintenanceReviewScanOptions = {},
 ): MaintenanceReviewRunResult {
     const generatedAt = nowIso(options.now);
     const maxProposalsPerCategory = Math.max(1, options.maxProposalsPerCategory ?? 20);
+    if (notes.length > MAX_SCAN_NOTES) notes = notes.slice(0, MAX_SCAN_NOTES);
     const inboxFolders = [
         ...DEFAULT_INBOX_FOLDERS,
         ...(options.inboxFolders ?? []),
