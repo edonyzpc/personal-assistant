@@ -1,3 +1,5 @@
+import { stableHash, isRecord } from "../helpers";
+
 export const EVIDENCE_STRENGTHS = ["weak", "medium", "strong", "conflicting"] as const;
 export type EvidenceStrength = typeof EVIDENCE_STRENGTHS[number];
 
@@ -46,19 +48,6 @@ const FORBIDDEN_PERSISTED_TEXT_KEYS = new Set([
 export type SourceRefValidationResult =
     | { ok: true }
     | { ok: false; reason: string };
-
-function stableHash(text: string): string {
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-        hash ^= text.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
 
 export function validateSourceRefPathShape(ref: Pick<UISourceRef, "path" | "heading" | "blockId">): SourceRefValidationResult {
     if (typeof ref.path !== "string" || ref.path.trim().length === 0) {

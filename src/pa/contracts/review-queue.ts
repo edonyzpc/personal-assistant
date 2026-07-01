@@ -1,4 +1,5 @@
 import type { PersistedSourceRef } from "./source-ref";
+import { isRecord, includesString } from "../helpers";
 
 export const REVIEW_QUEUE_ITEM_TYPES = [
     "evidence_insight",
@@ -116,14 +117,6 @@ export interface ReviewQueueItemBase {
 export type ContractValidationResult =
     | { ok: true }
     | { ok: false; reason: string };
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-function includesString<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
-    return typeof value === "string" && (values as readonly string[]).includes(value);
-}
 
 export function isReviewQueueItemType(value: unknown): value is ReviewQueueItemType {
     return includesString(REVIEW_QUEUE_ITEM_TYPES, value);

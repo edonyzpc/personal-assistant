@@ -1,10 +1,11 @@
 import {
     hasForbiddenPersistedTextFields,
     validateSourceRefPathShape,
+    type GeneratedReviewNote,
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
-import type { GeneratedReviewNote } from "../pagelet/output/types";
+import { normalizeVaultPath, stableHash, cloneSourceRef } from "./helpers";
 
 export type ScopeRecapSectionType = "summary" | "theme" | "tension" | "open_question" | "next_review_action";
 export type ScopeRecapStaleStatus = "fresh" | "stale" | "low-coverage" | "boundary-changed";
@@ -82,19 +83,6 @@ function nowDate(now: BuildScopeRecapOptions["now"]): Date {
     return value ? new Date(value.getTime()) : new Date();
 }
 
-function normalizeVaultPath(path: string): string {
-    return String(path ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/g, "");
-}
-
-function stableHash(text: string): string {
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-        hash ^= text.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
 function basenameFromPath(path: string): string {
     const name = normalizeVaultPath(path).split("/").pop() ?? path;
     return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
@@ -116,13 +104,6 @@ function sourceRefsAreValid(refs: readonly PersistedSourceRef[]): boolean {
     return refs.length > 0
         && refs.every((ref) => validateSourceRefPathShape(ref).ok)
         && !hasForbiddenPersistedTextFields(refs);
-}
-
-function cloneSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...ref,
-        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-    };
 }
 
 function sourceRefForNote(note: ScopeRecapSourceNote, generatedAt: string, whyShown: string): PersistedSourceRef {

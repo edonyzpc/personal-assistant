@@ -1,14 +1,15 @@
 import {
     hasForbiddenPersistedTextFields,
     validateSourceRefPathShape,
+    type GeneratedReviewNote,
     type PersistedSourceRef,
 } from "./contracts";
+import { normalizeVaultPath, cloneSourceRef } from "./helpers";
 import type { ConfirmedMemoryRecord } from "./memory-governance-store";
 import type { MaintenanceReviewRunResult } from "./maintenance-review";
 import type { QuietRecallRunResult } from "./quiet-recall";
 import type { ReviewQueueItem } from "./review-queue-store";
 import type { SavedInsight } from "./saved-insight-store";
-import type { GeneratedReviewNote } from "../pagelet/output/types";
 import { isReviewQueueWeeklyCarryoverEligible } from "./review-artifact-lifecycle";
 
 export const WEEKLY_REVIEW_SECTION_TYPES = [
@@ -91,10 +92,6 @@ const SECTION_TITLES: Record<WeeklyReviewSectionType, string> = {
     quiet_recall_candidates: "Quiet recall candidates",
 };
 
-function normalizeVaultPath(path: string): string {
-    return String(path ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/g, "");
-}
-
 function nowDate(now: WeeklyReviewBuildInput["now"]): Date {
     const value = typeof now === "function" ? now() : now;
     return value ? new Date(value.getTime()) : new Date();
@@ -116,13 +113,6 @@ function addUtcDays(date: Date, days: number): Date {
 function fileStem(path: string): string {
     const name = normalizeVaultPath(path).split("/").pop() ?? path;
     return name.toLowerCase().endsWith(".md") ? name.slice(0, -3) : name;
-}
-
-function cloneSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...ref,
-        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-    };
 }
 
 function sourceRefsAreValid(sourceRefs: readonly PersistedSourceRef[]): boolean {

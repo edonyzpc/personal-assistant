@@ -1,6 +1,7 @@
 import type { RetrievalOutcome } from "./retrieval-outcome";
 import type { PersistedSourceRef, UISourceRef } from "./source-ref";
 import { hasForbiddenPersistedTextFields, toReplaySourceRef } from "./source-ref";
+import { stableHash } from "../helpers";
 
 export const CONTEXT_DROP_REASONS = [
     "privacy excluded",
@@ -65,15 +66,6 @@ export interface PersistedContextTrace {
     usedMemoryCount: number;
     droppedMemoryCount: number;
     compressionSummaryHash?: string;
-}
-
-function stableHash(text: string): string {
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-        hash ^= text.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
 }
 
 export function isContextDropReason(value: unknown): value is ContextDropReason {

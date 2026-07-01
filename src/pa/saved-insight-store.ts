@@ -4,6 +4,7 @@ import {
     type PersistedSourceRef,
     type ReviewQueueScope,
 } from "./contracts";
+import { isRecord, includesString, normalizeVaultPath, cloneSourceRef, cloneScope } from "./helpers";
 
 export const SAVED_INSIGHT_TYPES = ["observation", "theme", "tension", "question", "decision", "opportunity"] as const;
 export type SavedInsightType = typeof SAVED_INSIGHT_TYPES[number];
@@ -61,33 +62,6 @@ export interface SavedInsightStoreOptions {
     now?: () => Date;
     persist?: (state: SavedInsightState) => Promise<void> | void;
     idFactory?: () => string;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
-function includesString<T extends readonly string[]>(values: T, value: unknown): value is T[number] {
-    return typeof value === "string" && (values as readonly string[]).includes(value);
-}
-
-function normalizeVaultPath(path: string): string {
-    return path.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
-}
-
-function cloneSourceRef(ref: PersistedSourceRef): PersistedSourceRef {
-    return {
-        ...ref,
-        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-    };
-}
-
-function cloneScope(scope: ReviewQueueScope): ReviewQueueScope {
-    return {
-        ...scope,
-        paths: scope.paths ? [...scope.paths] : undefined,
-        tags: scope.tags ? [...scope.tags] : undefined,
-    };
 }
 
 function cloneInsight(insight: SavedInsight): SavedInsight {

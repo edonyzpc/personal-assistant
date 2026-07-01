@@ -5,6 +5,7 @@ import {
     type PersistedSourceRef,
     type RetrievalLane,
 } from "./contracts";
+import { normalizeVaultPath, stableHash, isRecord } from "./helpers";
 import type { QuietRecallCandidate } from "./quiet-recall";
 
 export const RETRIEVAL_HABIT_FEEDBACK_KINDS = [
@@ -88,10 +89,6 @@ export interface RetrievalHabitProfileStoreOptions {
     now?: Date | (() => Date);
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
-
 function nowIso(now: RetrievalHabitProfileStoreOptions["now"]): string {
     return nowDate(now).toISOString();
 }
@@ -125,19 +122,6 @@ function daysOld(windowStart: string, now: Date): number {
     if (!start) return Number.POSITIVE_INFINITY;
     const nowStart = dateFromKey(dateKey(now)) ?? now;
     return Math.floor((nowStart.getTime() - start.getTime()) / DAY_MS);
-}
-
-function stableHash(text: string): string {
-    let hash = 2166136261;
-    for (let index = 0; index < text.length; index += 1) {
-        hash ^= text.charCodeAt(index);
-        hash = Math.imul(hash, 16777619);
-    }
-    return (hash >>> 0).toString(16).padStart(8, "0");
-}
-
-function normalizeVaultPath(path: string): string {
-    return String(path ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/g, "");
 }
 
 function safeSourceId(value: unknown): string | undefined {

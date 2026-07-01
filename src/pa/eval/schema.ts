@@ -1,8 +1,5 @@
 import { EVAL_CASE_CATEGORIES, type EvalAssertion, type EvalCase } from "./types";
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-    return typeof value === "object" && value !== null;
-}
+import { isRecord } from "../helpers";
 
 function isCategory(value: unknown): boolean {
     return typeof value === "string" && (EVAL_CASE_CATEGORIES as readonly string[]).includes(value);

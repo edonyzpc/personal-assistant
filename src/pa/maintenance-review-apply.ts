@@ -4,6 +4,7 @@ import {
     validateSourceRefPathShape,
     type PersistedSourceRef,
 } from "./contracts";
+import { normalizeVaultPath } from "./helpers";
 import type { MaintenanceProposal } from "./maintenance-review";
 
 export type MaintenanceMoveActionStatus = "applied" | "undone";
@@ -41,10 +42,6 @@ export type MaintenanceMoveUndoResult =
 
 const GENERATED_NOTE_ROOTS = [".pagelet", "pagelet-generated"] as const;
 
-function normalizeVaultPath(path: string | undefined): string {
-    return String(path ?? "").trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/").replace(/\/$/g, "");
-}
-
 function parentFolder(path: string): string {
     const normalized = normalizeVaultPath(path);
     const slash = normalized.lastIndexOf("/");
@@ -58,8 +55,8 @@ function targetAllowedRoots(path: string): string[] {
 
 function targetAllowedRootsForProposal(proposal: MaintenanceProposal, oldPath: string, newPath: string): string[] {
     if (proposal.category === "inbox_cleanup") return ["Notes"];
-    const declaredTarget = normalizeVaultPath(proposal.undoMetadata.newPath ?? proposal.preview.affectedPaths.find((path) =>
-        normalizeVaultPath(path) !== oldPath));
+    const declaredTarget = normalizeVaultPath((proposal.undoMetadata.newPath ?? proposal.preview.affectedPaths.find((path) =>
+        normalizeVaultPath(path) !== oldPath)) ?? "");
     if (declaredTarget && declaredTarget === newPath) return targetAllowedRoots(newPath);
     return targetAllowedRoots(oldPath);
 }
@@ -144,7 +141,7 @@ export async function applyMaintenanceMoveProposal(
     }
 
     const oldPath = normalizeVaultPath(proposal.preview.oldPath ?? proposal.preview.sourcePath);
-    const newPath = normalizeVaultPath(proposal.preview.newPath);
+    const newPath = normalizeVaultPath(proposal.preview.newPath ?? "");
     const pathError = validateMovePaths(oldPath, newPath);
     if (pathError) return pathError;
     if (!hasSourceRefForPath(proposal, oldPath)) {

@@ -8,6 +8,7 @@ import {
     type SkippedSourceRef,
     type UISourceRef,
 } from "./contracts";
+import { normalizeVaultPath } from "./helpers";
 import {
     applyRetrievalHabitProfileToEvidence,
     type RetrievalHabitProfileSettings,
@@ -530,10 +531,6 @@ function detectConflict(evidence: readonly ActiveVaultEvidence[]): {
         };
     }
     return { conflictingSources: [] };
-}
-
-function normalizeVaultPath(path: string): string {
-    return path.trim().replace(/\\/g, "/").replace(/^\.\//, "").replace(/\/+/g, "/");
 }
 
 function normalizeScore(score: unknown): number {
