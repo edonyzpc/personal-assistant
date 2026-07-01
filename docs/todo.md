@@ -30,6 +30,17 @@ archived to [project-todo-pre-2.8.0.md](./archive/project-todo-pre-2.8.0.md).
 | Settings IA/componentization | Partially open | Finish broader Settings IA, remaining componentization, Statistics hidden fields, text-input save churn audit, and narrow-screen Metadata UX. | [Settings current status](./settings-status.md); [historical Settings UI review](./settings-ui-review.md); [Settings SDD](./archive/settings-ui-sdd.md) |
 | Android VSS real-device validation | Pending verification | Validate the SQLite/WASM VSS backend on a physical Android device before claiming full Android parity. | [README](../README.md#mobile-vss-validation-note) |
 
+## Architecture Observations (需讨论后再执行)
+
+以下三项来自 PR #376 review，已确认不阻塞合入，但在后续迭代前需产品/架构讨论。
+**不要直接执行修改**——每项需在对应迭代启动时先讨论方案再动代码。
+
+| 观察 | 触发时机 | 讨论要点 | 来源 |
+| --- | --- | --- | --- |
+| MemoryGovernanceStore 与 MemoryManager 并行 | 当 forget 需要影响 VSS 索引，或 confirmed memories 注入 LLM context 时 | 是否加协调层？forget 是否通知 MemoryManager 标记 stale？两者注入 context 时谁管 budget？ | [PR #376 review](./pr-376-review-report.md) |
+| VALID_STATUS_TRANSITIONS 在 store 层而非 contracts 层 | 当 TabView 需要根据 status 决定按钮显示时 | 转移规则是业务语义还是存储实现？移到 contracts 后 store 只做 enforcement？ | [PR #376 review](./pr-376-review-report.md) |
+| listRecentlyConfirmed() 就绪但无 UI 消费 | Memory Panel 功能扩展时 | 最近确认列表的交互形式？7 天撤回窗口是否合理？撤回操作是 archive 还是新增 unconfirm？ | [PR #376 review](./pr-376-review-report.md)；spec checklist 1.6 |
+
 ## Triggered Evaluations
 
 | Evaluation | Trigger | Source |

@@ -79,7 +79,7 @@ export interface ReviewQueueStoreOptions {
 }
 
 const VALID_STATUS_TRANSITIONS: Record<ReviewQueueStatus, readonly ReviewQueueStatus[]> = {
-    suggested: ["accepted", "dismissed", "snoozed", "expired"],
+    suggested: ["accepted", "applied", "dismissed", "snoozed", "expired"],
     accepted: ["applied", "dismissed", "edited", "snoozed"],
     edited: ["applied", "dismissed", "snoozed"],
     applied: ["undone", "failed"],
@@ -136,6 +136,7 @@ export class ReviewQueueStore {
         this.now = options.now ?? (() => new Date());
         this.persist = options.persist;
         this.idFactory = options.idFactory ?? (() => `rq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
+        this.evictIfNeeded();
     }
 
     private evictIfNeeded(): void {
@@ -339,7 +340,7 @@ function normalizeReviewQueueItems(value: unknown): ReviewQueueItem[] {
 }
 
 function normalizePersistedReviewQueueItem(entry: Record<string, unknown>): ReviewQueueItem {
-    const item = entry as unknown as ReviewQueueItem;
+    const item = { ...entry } as unknown as ReviewQueueItem;
     if (!isReviewQueueAdmissionReason(item.admissionReason)) {
         item.admissionReason = "legacy_pre_refactor";
         item.metadata = {
