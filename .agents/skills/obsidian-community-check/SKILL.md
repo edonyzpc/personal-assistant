@@ -1,6 +1,6 @@
 ---
 name: obsidian-community-check
-description: Trigger and inspect the Obsidian Community plugin review-branch scan for the personal-assistant plugin. Use when Codex is asked to run, trigger, poll, verify, or report the community.obsidian.md automated check for master, a branch, tag, or commit before Obsidian plugin release or publication.
+description: Trigger and inspect the Obsidian Community plugin review-branch scan for the personal-assistant plugin. Use when asked to run, trigger, poll, verify, or report the community.obsidian.md automated check for master, a branch, tag, or commit before Obsidian plugin release or publication.
 ---
 
 # Obsidian Community Check
@@ -74,17 +74,28 @@ CSS LINT: Warning
 DEPENDENCIES: Pass
 ```
 
-## Reporting
+## Output
 
-Report these fields:
+```markdown
+Community check:
+- Ref: `<branch/tag/sha>`
+- Commit: `<short-sha>`
+- Status: Pending / Completed / Failed
+- Findings:
+  - PASS: `<category>` - Pass
+  - FAIL: `<category>` - Error (release blocker)
+  - WARNING: `<category>` - Warning
+- Complete: yes / no (still pending)
+- Chrome tab: kept open / closed
+```
 
-- Ref
-- Commit
-- Status
-- Any visible `Error`, `Warning`, `Pass`, or `Failed` sections
-- Whether the result is complete or still pending
-- Whether the Chrome result tab was kept open
-
-Treat Obsidian community review `Error` findings as release blockers. Warnings should be reported concretely, but do not call the scan failed unless the page status says `Failed` or an `Error` finding is visible.
+Per **Obsidian Community Review Rules** from AGENTS.md, `Error` findings are release blockers. Warnings should be reported concretely, but do not call the scan failed unless the page status says `Failed` or an `Error` finding is visible.
 
 Do not claim the community check passed until the page shows a completed result and the visible findings have been reviewed.
+
+## Related Skills
+
+This skill is typically preceded by local and app-level validation:
+- `obsidian-test-vault-smoke` for local + app smoke.
+- `obsidian-ios-real-device-smoke` for mobile validation.
+- `personal-assistant-review` for code-level review gates.

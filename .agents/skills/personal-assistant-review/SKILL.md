@@ -1,12 +1,14 @@
 ---
 name: personal-assistant-review
-description: Review uncommitted or PR diffs in the personal-assistant Obsidian plugin with project-specific risk lanes, second-layer future-risk checks, severity discipline, subagent review routing, and validation boundaries. Use when the user asks for code review, agent team review, multi-angle review, review-first analysis, release-readiness review, hidden side effects, compatibility risk, edge cases, security/performance risk, test gaps, maintenance cost, or comparison of review quality in this repository.
+description: Review uncommitted or PR diffs in the personal-assistant Obsidian plugin with project-specific risk lanes, second-layer future-risk checks, severity discipline, subagent review routing, and validation boundaries. Use when the user asks for code review, agent team review, multi-angle review, review-first analysis, code-level release-readiness review, hidden side effects, compatibility risk, edge cases, security/performance risk, test gaps, maintenance cost, or comparison of review quality in this repository. For product/milestone-level release readiness via Linear, use `pa-linear-product-manager` instead.
 ---
 
 # Personal Assistant Review
 
-Use this skill for review-only or review-first work in
-`/Users/edonyzpc/code/personal-assistant`.
+## Core Rule
+
+Use this skill for review-only or review-first work in the
+`personal-assistant` repository.
 
 Default to high-signal review. Find correctness, product-contract, state,
 privacy, concurrency, docs/tests consistency, and release-blocking risks before
@@ -87,7 +89,8 @@ are unavailable, perform the same lanes locally.
 
 4. **UI/UX/accessibility/mobile**
    - Inspect focus management, keyboard behavior, ARIA, mobile overflow,
-     touch gestures, text clipping, theme variables, and ordinary-user copy.
+     touch gestures, text clipping, theme variables, and ordinary-user copy
+     (follow **Memory/VSS Product Rules** from AGENTS.md for user-facing terms).
    - Keep UI findings concrete: include the visible symptom or user flow.
 
 5. **Performance, safety, and maintainability**
@@ -166,7 +169,7 @@ Memory/VSS:
 - durable vs fallback behavior
 - VSS operation queue / exclusive lock for mutating operations
 - dirty state, background reconcile, retry/backoff, and chat non-blocking paths
-- user-facing copy should say Memory, not VSS/RAG/SQLite/OPFS/vector
+- user-facing copy per **Memory/VSS Product Rules** from AGENTS.md
 
 Community/release:
 
@@ -198,21 +201,13 @@ compatibility, or release impact.
 
 ## Validation
 
-Run the smallest useful checks for the changed surface. For broad Pagelet or
-shared-runtime diffs, prefer:
+Run the **Local Validation Gate** from AGENTS.md, scoped to the changed
+surface. For broad Pagelet or shared-runtime diffs, also include `npm run lint`.
 
-```bash
-npm test -- --runInBand <focused Pagelet/VSS/Memory suites>
-npx tsc -noEmit -skipLibCheck
-npm run lint
-git diff --check
-rg -n "createElement\\([\"']style[\"']\\)|\\.innerHTML\\s*=|\\.outerHTML\\s*=" src
-```
+Per AGENTS.md Testing Instructions, do not claim Obsidian validation without
+deployed evidence. If `make deploy` and real test-vault smoke were not run, state it.
 
-For UI/runtime changes, do not claim Obsidian behavior was validated unless
-`make deploy` and real test-vault smoke actually ran. If not run, state it.
-
-## Final Output
+## Output
 
 Use this structure:
 
@@ -232,3 +227,10 @@ Use this structure:
 
 Keep summaries secondary. If there are no actionable findings, say that clearly
 and list remaining validation gaps.
+
+## Related Skills
+
+- To triage and implement fixes from this review, use `personal-assistant-review-followup`.
+- For app-level smoke validation, use `obsidian-test-vault-smoke`.
+- For real-device iOS validation, use `obsidian-ios-real-device-smoke`.
+- For community compliance scan before release, use `obsidian-community-check`.
