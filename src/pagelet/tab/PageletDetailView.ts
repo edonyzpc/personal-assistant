@@ -10,10 +10,17 @@ import {
 
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locales/pagelet";
 import { getPlatformCrypto } from "../../platform-dom";
-import { buildMascotMarkup } from "../ui/mascot";
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import { resolveRelatedMarkdownNote } from "../related-note";
 import { TabView } from "./TabView";
+import type {
+    MaintenanceMoveApplyResult,
+    MaintenanceMoveUndoResult,
+    MaintenanceProposal,
+    QuietRecallCandidate,
+    QuietRecallSaveResult,
+    WeeklyReviewRunResult,
+} from "../../pa";
 import type {
     PageletDetailContent,
     PageletDetailLayoutType,
@@ -27,6 +34,11 @@ const PAGELET_DETAIL_SESSION_CACHE_LIMIT = 12;
 
 const pageletDetailSessionCache = new Map<string, PageletDetailPayload>();
 let pageletDetailSessionCounter = 0;
+
+export function clearPageletDetailSessionCache(): void {
+    pageletDetailSessionCache.clear();
+    pageletDetailSessionCounter = 0;
+}
 
 function createPageletDetailSessionId(): string {
     const cryptoProvider = getPlatformCrypto();
@@ -48,6 +60,168 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
         copy.extra = {};
         if (payload.extra.connections) copy.extra.connections = [...payload.extra.connections];
         if (typeof payload.extra.markdown === "string") copy.extra.markdown = payload.extra.markdown;
+        if (payload.extra.reviewQueue) {
+            copy.extra.reviewQueue = {
+                totalCount: payload.extra.reviewQueue.totalCount,
+                items: payload.extra.reviewQueue.items.map((item) => ({
+                    ...item,
+                    scope: {
+                        ...item.scope,
+                        paths: item.scope.paths ? [...item.scope.paths] : undefined,
+                        tags: item.scope.tags ? [...item.scope.tags] : undefined,
+                    },
+                    sourceRefs: item.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                    whyShown: [...item.whyShown],
+                    metadata: item.metadata ? { ...item.metadata } : undefined,
+                })),
+            };
+        }
+        if (payload.extra.contextPager) {
+            copy.extra.contextPager = {
+                ...payload.extra.contextPager,
+                summary: { ...payload.extra.contextPager.summary },
+                usedSources: payload.extra.contextPager.usedSources.map((item) => ({ ...item })),
+                skippedSources: payload.extra.contextPager.skippedSources.map((item) => ({ ...item })),
+                usedMemories: payload.extra.contextPager.usedMemories.map((item) => ({ ...item })),
+                droppedMemories: payload.extra.contextPager.droppedMemories.map((item) => ({ ...item })),
+                persistedTrace: {
+                    ...payload.extra.contextPager.persistedTrace,
+                    usedSourceRefs: payload.extra.contextPager.persistedTrace.usedSourceRefs.map((item) => ({
+                        ...item,
+                        whyShown: item.whyShown ? [...item.whyShown] : undefined,
+                    })),
+                    skippedSourceRefs: payload.extra.contextPager.persistedTrace.skippedSourceRefs.map((item) => ({
+                        ...item,
+                        whyShown: item.whyShown ? [...item.whyShown] : undefined,
+                    })),
+                    usedMemoryRefs: payload.extra.contextPager.persistedTrace.usedMemoryRefs.map((item) => ({ ...item })),
+                    droppedMemoryRefs: payload.extra.contextPager.persistedTrace.droppedMemoryRefs.map((item) => ({ ...item })),
+                },
+            };
+        }
+        if (payload.extra.savedInsights) {
+            copy.extra.savedInsights = {
+                totalCount: payload.extra.savedInsights.totalCount,
+                items: payload.extra.savedInsights.items.map((item) => ({
+                    ...item,
+                    sourceRefs: item.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                    whyShown: [...item.whyShown],
+                    scope: {
+                        ...item.scope,
+                        paths: item.scope.paths ? [...item.scope.paths] : undefined,
+                        tags: item.scope.tags ? [...item.scope.tags] : undefined,
+                    },
+                })),
+            };
+        }
+        if (payload.extra.memoryGovernance) {
+            copy.extra.memoryGovernance = {
+                totalCount: payload.extra.memoryGovernance.totalCount,
+                records: payload.extra.memoryGovernance.records.map((record) => ({
+                    ...record,
+                    scope: {
+                        ...record.scope,
+                        paths: record.scope.paths ? [...record.scope.paths] : undefined,
+                        tags: record.scope.tags ? [...record.scope.tags] : undefined,
+                    },
+                    sourceRefs: record.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                })),
+            };
+        }
+        if (payload.extra.maintenanceReview) {
+            copy.extra.maintenanceReview = {
+                generatedAt: payload.extra.maintenanceReview.generatedAt,
+                previewOnly: true,
+                weeklyScanEnabled: false,
+                totalCount: payload.extra.maintenanceReview.totalCount,
+                categories: payload.extra.maintenanceReview.categories.map((category) => ({ ...category })),
+                proposals: payload.extra.maintenanceReview.proposals.map((proposal) => ({
+                    ...proposal,
+                    scope: {
+                        ...proposal.scope,
+                        paths: proposal.scope.paths ? [...proposal.scope.paths] : undefined,
+                        tags: proposal.scope.tags ? [...proposal.scope.tags] : undefined,
+                    },
+                    sourceRefs: proposal.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                    preview: {
+                        ...proposal.preview,
+                        affectedPaths: [...proposal.preview.affectedPaths],
+                    },
+                    undoMetadata: {
+                        ...proposal.undoMetadata,
+                        affectedPaths: [...proposal.undoMetadata.affectedPaths],
+                    },
+                    actionPlan: { ...proposal.actionPlan },
+                    whyShown: [...proposal.whyShown],
+                })),
+            };
+        }
+        if (payload.extra.graphDiscovery) {
+            copy.extra.graphDiscovery = {
+                generatedAt: payload.extra.graphDiscovery.generatedAt,
+                totalCount: payload.extra.graphDiscovery.totalCount,
+                skippedSourceCount: payload.extra.graphDiscovery.skippedSourceCount,
+                items: payload.extra.graphDiscovery.items.map((item) => ({
+                    ...item,
+                    scope: {
+                        ...item.scope,
+                        paths: item.scope.paths ? [...item.scope.paths] : undefined,
+                        tags: item.scope.tags ? [...item.scope.tags] : undefined,
+                    },
+                    sourceRefs: item.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                    whyShown: [...item.whyShown],
+                    metadata: { ...item.metadata },
+                })),
+            };
+        }
+        if (payload.extra.weeklyReview) {
+            copy.extra.weeklyReview = {
+                generatedAt: payload.extra.weeklyReview.generatedAt,
+                range: { ...payload.extra.weeklyReview.range },
+                totalCount: payload.extra.weeklyReview.totalCount,
+                sections: payload.extra.weeklyReview.sections.map((section) => ({
+                    ...section,
+                    items: section.items.map((item) => ({
+                        ...item,
+                        sourceRefs: item.sourceRefs.map((ref) => ({
+                            ...ref,
+                            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                        })),
+                        whyShown: [...item.whyShown],
+                    })),
+                })),
+            };
+        }
+        if (payload.extra.quietRecall) {
+            copy.extra.quietRecall = {
+                generatedAt: payload.extra.quietRecall.generatedAt,
+                currentPath: payload.extra.quietRecall.currentPath,
+                totalCount: payload.extra.quietRecall.totalCount,
+                candidates: payload.extra.quietRecall.candidates.map((candidate) => ({
+                    ...candidate,
+                    sourceRefs: candidate.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                    whyNow: [...candidate.whyNow],
+                })),
+            };
+        }
     }
     if (payload.sourcePath) copy.sourcePath = payload.sourcePath;
     if (payload.summarySaveNote) copy.summarySaveNote = payload.summarySaveNote;
@@ -65,25 +239,15 @@ function rememberPageletDetailPayload(sessionId: string, payload: PageletDetailP
 }
 
 function buildPageletDetailIconSvg(): string {
-    const markup = buildMascotMarkup("idle", {
-        translator: (_key, fallback = "") => fallback,
-        reducedMotion: true,
-    });
-    const paths = markup.svgShapes.paths
-        .map((path) => [
-            `<path d="${path.d}"`,
-            `fill="none"`,
-            `stroke="currentColor"`,
-            `stroke-width="${path.strokeWidth}"`,
-            `stroke-linejoin="round"`,
-            `stroke-linecap="round"/>`,
-        ].join(" "))
-        .join("");
-
     return [
-        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${markup.svgViewBox}"`,
-        `fill="none" stroke="currentColor">`,
-        paths,
+        `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"`,
+        `fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round">`,
+        `<path d="M3.8 19.25c3.3-7.45 8.5-12.95 16.3-14.8"/>`,
+        `<path d="M7.05 18.75c5.15 1.55 10.1-1.05 13.55-7"/>`,
+        `<path d="M9.45 12.65c3.05.7 6.1-.85 8.4-3.9"/>`,
+        `<circle cx="4" cy="19.3" r="2.65" fill="#2f9e44" stroke="none"/>`,
+        `<circle cx="11.25" cy="12.7" r="2.35" fill="#1971c2" stroke="none"/>`,
+        `<circle cx="19.8" cy="4.55" r="2.55" fill="#f08c00" stroke="none"/>`,
         `</svg>`,
     ].join("");
 }
@@ -95,6 +259,10 @@ export function registerPageletDetailIcon(): void {
 export class PageletDetailView extends ItemView {
     private readonly getLocale: () => PageletLocale;
     private readonly onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
+    private readonly onApplyMaintenanceProposal?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>;
+    private readonly onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
+    private readonly onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>;
+    private readonly onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     private renderer: TabView | null = null;
     private title: string;
     private content: PageletDetailContent = [];
@@ -106,10 +274,18 @@ export class PageletDetailView extends ItemView {
         leaf: WorkspaceLeaf,
         getLocale: () => PageletLocale = getPageletUiLanguage,
         onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>,
+        onApplyMaintenanceProposal?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>,
+        onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>,
+        onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>,
+        onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>,
     ) {
         super(leaf);
         this.getLocale = getLocale;
         this.onSaveSummaryNote = onSaveSummaryNote;
+        this.onApplyMaintenanceProposal = onApplyMaintenanceProposal;
+        this.onUndoMaintenanceAction = onUndoMaintenanceAction;
+        this.onSaveWeeklyReviewNote = onSaveWeeklyReviewNote;
+        this.onSaveQuietRecallAsInsight = onSaveQuietRecallAsInsight;
         this.locale = getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.sessionId = createPageletDetailSessionId();
@@ -139,6 +315,10 @@ export class PageletDetailView extends ItemView {
             onSaveSummaryNote: this.onSaveSummaryNote
                 ? (note) => this.saveSummaryNote(note)
                 : undefined,
+            onApplyMaintenanceProposal: this.onApplyMaintenanceProposal,
+            onUndoMaintenanceAction: this.onUndoMaintenanceAction,
+            onSaveWeeklyReviewNote: this.onSaveWeeklyReviewNote,
+            onSaveQuietRecallAsInsight: this.onSaveQuietRecallAsInsight,
         });
         this.renderer.mount(this.contentEl);
         this.renderer.open(this.title, this.content, this.payloadOptions);

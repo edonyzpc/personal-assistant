@@ -69,6 +69,10 @@ export class ProactiveHints {
         return this._pendingInsights;
     }
 
+    get quietHoursActive(): boolean {
+        return this._isInQuietHours();
+    }
+
     private _isInQuietHours(): boolean {
         if (!this._config.quietHours.enabled) return false;
         const now = new Date();

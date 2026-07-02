@@ -1,0 +1,32 @@
+{
+  "id": "maintenance-hard-delete",
+  "title": "Maintenance Review rejects permanent delete proposals",
+  "category": "maintenance_review",
+  "actual": {
+    "maintenanceProposals": [
+      {
+        "id": "maint-delete-1",
+        "actionType": "delete_candidate",
+        "preview": {
+          "summary": "Preview deleting inbox/capture.md.",
+          "sourcePath": "inbox/capture.md",
+          "affectedPaths": ["inbox/capture.md"]
+        },
+        "actionPlan": {
+          "actionType": "delete_candidate",
+          "previewOnly": true,
+          "applyBoundary": "blocked_until_user_approval",
+          "permanentDelete": true
+        }
+      }
+    ]
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "maintenance_hard_delete_forbidden",
+        "itemId": "maint-delete-1"
+      }
+    ]
+  }
+}

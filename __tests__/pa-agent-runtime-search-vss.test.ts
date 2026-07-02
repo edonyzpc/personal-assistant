@@ -38,6 +38,7 @@ function makePlugin(opts: {
     searchHybrid?: (args: SearchHybridArgs) => Promise<unknown>;
     getChunksByPath?: (args: GetChunksByPathArgs) => Promise<unknown>;
     resolvedLinks?: Record<string, Record<string, number>>;
+    isDataBoundaryAllowedPath?: (path: string) => boolean;
 }) {
     const calls: SearchHybridArgs[] = [];
     const searchHybrid = opts.searchHybrid
@@ -59,6 +60,7 @@ function makePlugin(opts: {
             }),
         },
         getResolvedLinks: jest.fn(() => opts.resolvedLinks),
+        isDataBoundaryAllowedPath: opts.isDataBoundaryAllowedPath,
     };
     return { plugin: { ...plugin, vss: plugin.memorySearch }, calls };
 }
@@ -321,5 +323,86 @@ describe("MemorySearchTool searchVss contract", () => {
         expect(plugin.vss.searchHybrid).toHaveBeenCalledTimes(1);
         expect(plugin.vss.getChunksByPath).toHaveBeenCalledTimes(1);
         expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual(["notes/a.md"]);
+    });
+
+    it("filters Data Boundary denied paths from stale VSS chunks and one-hop expansion", async () => {
+        const { plugin } = makePlugin({
+            policyModelName: "",
+            isDataBoundaryAllowedPath: (path) => !path.startsWith("private/"),
+            resolvedLinks: {
+                "notes/a.md": { "private/linked.md": 1, "notes/b.md": 1 },
+            },
+            searchHybrid: async () => [
+                {
+                    score: 0.9,
+                    doc: { pageContent: "allowed root", metadata: { path: "notes/a.md", chunkIndex: 0 } },
+                },
+                {
+                    score: 0.8,
+                    doc: { pageContent: "private stale chunk", metadata: { path: "private/secret.md", chunkIndex: 0 } },
+                },
+            ],
+            getChunksByPath: async ({ paths }) => paths.map((path) => ({
+                score: 1,
+                doc: { pageContent: `linked chunk ${path}`, metadata: { path, chunkIndex: 0 } },
+            })),
+        });
+        const aiUtils = makeAIUtils();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tool = new MemorySearchTool(plugin as any, aiUtils as any);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (tool as any).searchVss("hello world", undefined);
+
+        expect(plugin.vss.getChunksByPath).toHaveBeenCalledWith(
+            ["notes/b.md"],
+            expect.objectContaining({ limitPerPath: 3 }),
+        );
+        expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            "notes/a.md",
+            "notes/b.md",
+        ]);
+        expect(result.sources.map((source: { path: string }) => source.path)).toEqual([
+            "notes/a.md",
+            "notes/b.md",
+        ]);
+    });
+
+    it("collects allowed Memory candidates beyond denied top results", async () => {
+        const denied = Array.from({ length: 8 }, (_, index) => ({
+            score: 0.95 - index * 0.01,
+            doc: {
+                pageContent: `private stale chunk ${index}`,
+                metadata: { path: `private/secret-${index}.md`, chunkIndex: 0 },
+            },
+        }));
+        const { plugin } = makePlugin({
+            policyModelName: "",
+            isDataBoundaryAllowedPath: (path) => !path.startsWith("private/"),
+            searchHybrid: async () => [
+                ...denied,
+                {
+                    score: 0.7,
+                    doc: {
+                        pageContent: "allowed evidence that answers the question",
+                        metadata: { path: "notes/allowed.md", chunkIndex: 0 },
+                    },
+                },
+            ],
+        });
+        const aiUtils = makeAIUtils();
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const tool = new MemorySearchTool(plugin as any, aiUtils as any);
+
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await (tool as any).searchVss("hello world", undefined);
+
+        expect(result.usedMemory).toBe(true);
+        expect(result.candidates.map((candidate: { path: string }) => candidate.path)).toEqual([
+            "notes/allowed.md",
+        ]);
+        expect(result.sources.map((source: { path: string }) => source.path)).toEqual([
+            "notes/allowed.md",
+        ]);
     });
 });

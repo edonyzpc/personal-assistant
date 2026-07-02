@@ -1,0 +1,80 @@
+{
+  "id": "maintenance-apply-pass",
+  "title": "Maintenance Review applies one approved move and can roll it back",
+  "category": "maintenance_review",
+  "actual": {
+    "maintenanceProposals": [
+      {
+        "id": "maint-move-1",
+        "actionType": "move",
+        "preview": {
+          "summary": "Preview move from inbox/capture.md to Notes/capture.md.",
+          "sourcePath": "inbox/capture.md",
+          "affectedPaths": ["inbox/capture.md", "Notes/capture.md"],
+          "oldPath": "inbox/capture.md",
+          "newPath": "Notes/capture.md"
+        },
+        "actionPlan": {
+          "actionType": "move",
+          "previewOnly": true,
+          "applyBoundary": "blocked_until_user_approval"
+        }
+      },
+      {
+        "id": "maint-move-unselected",
+        "actionType": "move",
+        "preview": {
+          "summary": "Preview move from inbox/other.md to Notes/other.md.",
+          "sourcePath": "inbox/other.md",
+          "affectedPaths": ["inbox/other.md", "Notes/other.md"],
+          "oldPath": "inbox/other.md",
+          "newPath": "Notes/other.md"
+        },
+        "actionPlan": {
+          "actionType": "move",
+          "previewOnly": true,
+          "applyBoundary": "blocked_until_user_approval"
+        }
+      }
+    ],
+    "maintenanceActions": [
+      {
+        "id": "act-move-1",
+        "proposalId": "maint-move-1",
+        "actionType": "move",
+        "status": "undone",
+        "oldPath": "inbox/capture.md",
+        "newPath": "Notes/capture.md",
+        "appliedAt": "2026-06-28T12:00:00.000Z",
+        "undoneAt": "2026-06-28T12:05:00.000Z",
+        "sourceRefs": [
+          {
+            "path": "inbox/capture.md",
+            "excerptHash": "abc123",
+            "whyShown": ["Approved Maintenance Review move"],
+            "evidenceStrength": "medium"
+          }
+        ],
+        "dataBoundarySnapshotId": "boundary",
+        "undoStrategy": "move_back",
+        "rollbackRestored": true
+      }
+    ],
+    "sourceWrites": []
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "maintenance_apply_selected_only",
+        "itemId": "maint-move-1"
+      },
+      {
+        "type": "maintenance_rollback_restores",
+        "actionId": "act-move-1"
+      },
+      {
+        "type": "maintenance_no_source_write"
+      }
+    ]
+  }
+}

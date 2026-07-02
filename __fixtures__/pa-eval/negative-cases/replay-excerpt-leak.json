@@ -1,0 +1,21 @@
+{
+  "id": "replay-excerpt-leak",
+  "title": "Replay source refs must not store raw excerpts",
+  "category": "retrieval",
+  "actual": {
+    "replaySourceRefs": [
+      {
+        "path": "projects/pa-agent/source.md",
+        "excerpt": "raw private excerpt"
+      }
+    ]
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "replay_ref_has_no_excerpt",
+        "path": "projects/pa-agent/source.md"
+      }
+    ]
+  }
+}

@@ -1,3 +1,5 @@
+import type { PersistedContextTrace } from "../pa/contracts";
+
 export interface ChatMessage {
     role: 'user' | 'assistant';
     content: string;
@@ -100,6 +102,7 @@ export interface ChatTurnMemoryMetadata {
     allowedMemorySourcePaths: string[];
     contextUsed?: ChatContextUsedItem[];
     sourceRecords?: SourceRecord[];
+    contextTrace?: PersistedContextTrace;
 }
 
 export type ChatContextUsedCategory =

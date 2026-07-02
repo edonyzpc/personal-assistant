@@ -3,6 +3,16 @@
 import type { PageletLocale } from "../../locales/pagelet";
 import type { GeneratedReviewNote } from "../output/types";
 import type { NoteConnection, PanelFinding } from "../panel/types";
+import type {
+    PanelMaintenanceReviewState,
+    PanelMemoryGovernanceState,
+    PanelQuietRecallState,
+    PanelGraphDiscoveryState,
+    PanelReviewQueueState,
+    PanelSavedInsightState,
+    PanelWeeklyReviewState,
+} from "../panel/types";
+import type { ContextPagerState } from "../../pa";
 
 /**
  * Pagelet -- Tab component types.
@@ -30,6 +40,14 @@ export type PageletDetailLayoutType = "review" | "current" | "discover" | "summa
 export interface PageletDetailExtra {
     connections?: NoteConnection[];
     markdown?: string;
+    reviewQueue?: PanelReviewQueueState;
+    contextPager?: ContextPagerState;
+    savedInsights?: PanelSavedInsightState;
+    memoryGovernance?: PanelMemoryGovernanceState;
+    maintenanceReview?: PanelMaintenanceReviewState;
+    weeklyReview?: PanelWeeklyReviewState;
+    quietRecall?: PanelQuietRecallState;
+    graphDiscovery?: PanelGraphDiscoveryState;
 }
 
 export interface PageletDetailPayload {

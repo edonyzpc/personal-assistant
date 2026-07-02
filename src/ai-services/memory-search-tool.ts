@@ -90,7 +90,10 @@ export class MemorySearchTool {
         }) as RawSearchResult[];
 
         throwIfAborted(signal);
-        const candidates = normalizeSearchCandidates(rawResults);
+        const candidates = filterCandidatesByDataBoundary(
+            normalizeSearchCandidates(rawResults, this.host.isDataBoundaryAllowedPath),
+            this.host.isDataBoundaryAllowedPath,
+        );
         const expanded = await expandByOneHop(
             candidates,
             this.host.getResolvedLinks(),
@@ -101,12 +104,14 @@ export class MemorySearchTool {
                 }) as RawSearchResult[] | undefined;
                 return results ?? [];
             },
+            this.host.isDataBoundaryAllowedPath,
         );
+        const boundedExpanded = filterCandidatesByDataBoundary(expanded, this.host.isDataBoundaryAllowedPath);
 
         // Serial: rerank after candidates are ready
         const rankedCandidates = policyModelName
-            ? await this.rerankCandidates(query, expanded, policyModelName, signal)
-            : expanded;
+            ? await this.rerankCandidates(query, boundedExpanded, policyModelName, signal)
+            : boundedExpanded;
 
         const documents = flattenCandidateDocuments(rankedCandidates).slice(0, MAX_MEMORY_DOCUMENTS);
         const hasAnswerableContent = documents.length > 0;
@@ -232,25 +237,35 @@ export function parseRerankResponse(content: string, candidates: MemoryCandidate
     return result;
 }
 
-export function normalizeSearchCandidates(results: RawSearchResult[]): MemoryCandidate[] {
-    const documents = results.slice(0, 8).map((result): MemorySearchDocument | null => {
+export function normalizeSearchCandidates(
+    results: RawSearchResult[],
+    isPathAllowed?: (path: string) => boolean,
+): MemoryCandidate[] {
+    const documents: MemorySearchDocument[] = [];
+    const maxDocuments = MAX_MEMORY_RERANK_CANDIDATES * MAX_MEMORY_CANDIDATE_CHUNKS;
+    for (const result of results) {
         const metadata = result.doc?.metadata ?? {};
         const path = typeof metadata.path === "string" ? metadata.path : "";
         if (!path) {
-            return null;
+            continue;
+        }
+        if (isPathAllowed && !isPathAllowed(path)) {
+            continue;
         }
         const chunkIndex = typeof metadata.chunkIndex === "number"
             ? metadata.chunkIndex
             : Number.isFinite(Number(metadata.chunkIndex))
                 ? Number(metadata.chunkIndex)
                 : undefined;
-        return {
+        const score = typeof result.score === "number" ? result.score : Number(result.score ?? 0);
+        if (!Number.isFinite(score) || score < MIN_MEMORY_SCORE) continue;
+        const document = {
             content: truncate(stringifyModelContent(result.doc?.pageContent), MAX_MEMORY_CHARS),
-            score: typeof result.score === "number" ? result.score : Number(result.score ?? 0),
+            score,
             source: {
                 path,
                 chunkIndex,
-                score: typeof result.score === "number" ? result.score : Number(result.score ?? 0),
+                score,
             },
             anchorMetadata: {
                 contentHash: typeof metadata.contentHash === "string" ? metadata.contentHash : undefined,
@@ -262,8 +277,9 @@ export function normalizeSearchCandidates(results: RawSearchResult[]): MemoryCan
                 indexVersion: typeof metadata.indexVersion === "string" ? metadata.indexVersion : undefined,
             },
         };
-    }).filter((entry): entry is MemorySearchDocument => entry !== null)
-      .filter(entry => entry.score >= MIN_MEMORY_SCORE);
+        documents.push(document);
+        if (documents.length >= maxDocuments) break;
+    }
 
     return createMemoryCandidatesFromDocuments(documents);
 }
@@ -316,6 +332,22 @@ function createMemoryCandidateAnchor(
     };
 }
 
+function filterCandidatesByDataBoundary(
+    candidates: MemoryCandidate[],
+    isPathAllowed?: (path: string) => boolean,
+): MemoryCandidate[] {
+    if (!isPathAllowed) return candidates;
+    return candidates
+        .filter((candidate) => isPathAllowed(candidate.path))
+        .map((candidate) => {
+            const documents = candidate.documents.filter((document) =>
+                isPathAllowed(document.source.path),
+            );
+            return { ...candidate, documents };
+        })
+        .filter((candidate) => candidate.documents.length > 0);
+}
+
 function flattenCandidateDocuments(candidates: MemoryCandidate[]): MemorySearchDocument[] {
     return dedupeDocuments(candidates.flatMap((candidate) => candidate.documents));
 }
@@ -336,6 +368,7 @@ export async function expandByOneHop(
     candidates: MemoryCandidate[],
     resolvedLinks: Record<string, Record<string, number>> | undefined,
     fetchChunks?: (paths: string[]) => Promise<RawSearchResult[]>,
+    isPathAllowed?: (path: string) => boolean,
 ): Promise<MemoryCandidate[]> {
     if (!resolvedLinks || candidates.length === 0) return candidates;
     const existingPaths = new Set(candidates.map((c) => c.path));
@@ -349,6 +382,7 @@ export async function expandByOneHop(
             for (const targetPath of Object.keys(outbound)) {
                 if (added >= 2) break;
                 if (!targetPath.endsWith(".md")) continue;
+                if (isPathAllowed && !isPathAllowed(targetPath)) continue;
                 if (existingPaths.has(targetPath)) continue;
                 existingPaths.add(targetPath);
                 expansionTargets.push({
@@ -367,6 +401,7 @@ export async function expandByOneHop(
             if (inboundAdded >= 2) break;
             if (!targets || !(parent.path in targets)) continue;
             if (!sourcePath.endsWith(".md")) continue;
+            if (isPathAllowed && !isPathAllowed(sourcePath)) continue;
             if (existingPaths.has(sourcePath)) continue;
             existingPaths.add(sourcePath);
             expansionTargets.push({
@@ -399,7 +434,7 @@ export async function expandByOneHop(
 
     const expanded: MemoryCandidate[] = [];
     for (const target of expansionTargets) {
-        const docs = normalizeSearchCandidates(rawByPath.get(target.targetPath) ?? []);
+        const docs = normalizeSearchCandidates(rawByPath.get(target.targetPath) ?? [], isPathAllowed);
         if (docs.length === 0) continue;
 
         const decay = target.kind === "backlink" ? 0.4 : 0.5;

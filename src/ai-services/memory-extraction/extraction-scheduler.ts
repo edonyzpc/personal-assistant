@@ -26,6 +26,7 @@ export interface MemoryExtractionSchedulerOptions {
     typeCWritePath?: string | null;
     includeVaultInsightsInPrompt?: boolean;
     createModelForExtraction?: CreateModelForExtraction;
+    shouldHandleVaultEvent?: (file: TFile) => boolean;
 }
 
 export interface MemoryExtractionPromptContext {
@@ -62,6 +63,7 @@ export class MemoryExtractionScheduler {
     private typeCRefreshInFlight: Promise<VaultMetacognitionSnapshot | null> | null = null;
     private readonly typeAProcessedTurnByConversation = new Map<string, number>();
     private readonly createModelForExtraction: CreateModelForExtraction | null;
+    private readonly shouldHandleVaultEvent: (file: TFile) => boolean;
 
     constructor(options: MemoryExtractionSchedulerOptions) {
         this.app = options.app;
@@ -76,7 +78,10 @@ export class MemoryExtractionScheduler {
         this.includeVaultInsightsInPrompt = options.includeVaultInsightsInPrompt ?? false;
         this.userProfileStore = options.userProfileStore ?? new MemoryUserProfileStore();
         this.createModelForExtraction = options.createModelForExtraction ?? null;
-        this.typeCAnalyzer = new TypeCVaultMetacognitionAnalyzer(this.app);
+        this.shouldHandleVaultEvent = options.shouldHandleVaultEvent ?? (() => true);
+        this.typeCAnalyzer = new TypeCVaultMetacognitionAnalyzer(this.app, {
+            shouldIncludeFile: (file) => this.shouldHandleVaultEvent(file),
+        });
     }
 
     setSemanticClusterProvider(provider: SemanticClusterProvider): void {
@@ -156,6 +161,7 @@ export class MemoryExtractionScheduler {
         if (!(file instanceof TFile)) return;
         if (!file.path.endsWith(".md")) return;
         if (this.typeCWritePath && normalizePath(file.path) === this.typeCWritePath) return;
+        if (!this.shouldHandleVaultEvent(file)) return;
         this.scheduleTypeCRefresh(reason, DEFAULT_TYPE_C_VAULT_EVENT_DELAY_MS);
     }
 

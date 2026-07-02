@@ -1,0 +1,42 @@
+{
+  "id": "retrieval-source-pass",
+  "title": "Retrieval source refs are present and replay-safe",
+  "category": "retrieval",
+  "actual": {
+    "sourceRefs": [
+      {
+        "path": "projects/pa-agent/source.md"
+      }
+    ],
+    "replaySourceRefs": [
+      {
+        "path": "projects/pa-agent/source.md",
+        "heading": "Decision",
+        "contentHash": "content-1",
+        "excerptHash": "excerpt-1",
+        "whyShown": ["direct evidence"],
+        "evidenceStrength": "strong"
+      }
+    ]
+  },
+  "expected": {
+    "assertions": [
+      {
+        "type": "must_include_source",
+        "path": "projects/pa-agent/source.md"
+      },
+      {
+        "type": "must_not_include_source",
+        "path": "private/secret.md"
+      },
+      {
+        "type": "source_ref_exists",
+        "path": "projects/pa-agent/source.md"
+      },
+      {
+        "type": "replay_ref_has_no_excerpt",
+        "path": "projects/pa-agent/source.md"
+      }
+    ]
+  }
+}

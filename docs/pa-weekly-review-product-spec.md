@@ -1,6 +1,6 @@
 # PA Weekly Review Product Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -13,6 +13,7 @@ Updated: 2026-06-28
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related specs | [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [Pagelet async result plan](./pagelet-async-result-plan.md) |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This spec defines Weekly Review as PA's low-frequency compounding loop. It is
 not current shipped behavior.
@@ -35,12 +36,13 @@ This document records the one-question-at-a-time product decisions confirmed on
 | WR-D2 | v1 includes review + memory + maintenance, shown in restrained sections. | Weekly Review covers themes/insights, Memory Candidates, Memory Conflicts, and Maintenance Proposals without dumping the whole queue. |
 | WR-D3 | Default range is recent 7 days, with natural week / recent 14 days / custom range options. | Users can review on their own rhythm without pre-configuration burden. |
 | WR-D4 | Trigger is manual-first, with weekly prepared review available as quiet Pagelet hint. | PA can prepare review candidates without popping reminders or forcing attention. |
-| WR-D5 | Weekly Review note contains weekly summary + accepted insights/memories/actions + sourceRefs only. | Unconfirmed, ignored, or dismissed candidates do not pollute Markdown vault history. |
+| WR-D5 | Weekly Review note contains weekly summary + selected insights, confirmed memories/actions, and sourceRefs only. | Unconfirmed, ignored, or dismissed candidates do not pollute Markdown vault history. |
 | WR-D6 | Memory Candidates are grouped; low-risk candidates may be batch-confirmed. | Efficient weekly memory review without silent memory admission. |
 | WR-D7 | Maintenance Proposals support batch review; low-risk actions may batch apply, high-risk actions require per-item preview/diff. | Weekly Review can reduce maintenance cost while preserving action safety. |
-| WR-D8 | Completion requires explicit Finish Review after each section is handled, skipped, or deferred. | Review has a real loop without requiring every item to be processed. |
-| WR-D9 | Unhandled items can snooze to next Weekly Review, stay in queue, or dismiss. | Weekly Review is not a coercive inbox-zero ritual. |
+| WR-D8 | Weekly Review is digest-first. | The user can read the digest, handle only chosen sections, and finish without processing every candidate. |
+| WR-D9 | Only user-kept items need a destination. | Snooze, keep in queue, and dismiss apply to items the user intentionally keeps handling; ignored ephemeral candidates create no debt. |
 | WR-D10 | v1 tracks a small metric set. | Completion rate, saved insights, confirmed memories, executed maintenance, and dismiss/not relevant ratio measure whether review creates value. |
+| WR-D11 | Weekly Review note contains selected material only. | The Markdown artifact records what the user chose to keep, not a dump of generated candidates. |
 
 ## 1. Product Decision
 
@@ -60,8 +62,13 @@ Weekly Review should feel like:
 
 - a calm checkpoint
 - a low-frequency review ritual
+- a readable digest of recent thinking
 - a way to turn scattered suggestions into durable choices
 - a way to reduce queue pressure without forcing inbox zero
+
+It should not feel like a weekly administrative duty. Reading and closing the
+review can be a complete session if the user does not want to save, confirm, or
+apply anything.
 
 ## 2. Role In PA
 
@@ -87,21 +94,26 @@ Suggested flow:
 1. User opens Pagelet Tab and chooses Weekly Review, or clicks a quiet prepared
    review hint.
 2. User confirms or adjusts time range.
-3. Pagelet shows sectioned review candidates.
-4. User reviews each section, accepting, editing, snoozing, skipping, or
-   dismissing items.
-5. User clicks `Finish Review`.
-6. PA records review completion.
-7. User may generate a Weekly Review note.
+3. Pagelet shows a digest-first review: summary, top themes, and restrained
+   optional sections, without checkboxes or required decisions in the default
+   reading state.
+4. Reading and closing the digest is a complete session.
+5. If the user chooses to save material from the review, Pagelet enters an
+   explicit selection mode for the chosen items.
+6. PA records review completion when that exists as a product action.
+7. User may generate a Weekly Review note from selected material.
 
 ```mermaid
 flowchart LR
   Start["Open Weekly Review"] --> Range["Choose range"]
-  Range --> Sections["Review sections"]
-  Sections --> Handle["Accept / edit / snooze / skip / dismiss"]
+  Range --> Digest["Read digest"]
+  Digest --> Sections["Optional sections"]
+  Digest --> Close["Close without debt"]
+  Sections --> SelectMode["Optional save/select mode"]
+  SelectMode --> Handle["Select / edit / snooze / dismiss chosen items"]
   Handle --> Finish["Finish Review"]
   Finish --> OptionalNote["Optional Weekly Review note"]
-  Finish --> Queue["Unhandled items get chosen destination"]
+  Finish --> Queue["User-kept items get chosen destination"]
 ```
 
 ## 4. Trigger Model
@@ -189,6 +201,10 @@ Product guardrails:
 - allow expand for more
 - preserve filters for type/scope/source
 - allow section-level skip
+- allow digest-only completion
+- do not render item-level checkboxes or disabled save buttons until the user
+  explicitly enters a save/selection mode
+- do not create queue debt for ignored generated candidates
 - never write unconfirmed candidates into the Weekly Review note
 
 ## 7. Weekly Review Note
@@ -197,8 +213,8 @@ Weekly Review note is optional.
 
 It should be generated only after:
 
-- user clicks `Finish Review`; and
-- user chooses to create/save the note.
+- user chooses to create/save the note; and
+- user selects at least one item in the explicit save/selection mode.
 
 ### 7.1 Note Content
 
@@ -206,7 +222,7 @@ The note should include:
 
 - review date and time range
 - short weekly summary
-- accepted/saved insights
+- selected/saved insights
 - confirmed memories or memory updates
 - applied maintenance actions
 - sourceRefs for important claims
@@ -357,27 +373,29 @@ Required for all applied maintenance:
 
 ## 11. Completion Model
 
-Weekly Review completion requires explicit `Finish Review`.
+Weekly Review completion requires explicit `Finish Review`, but it does not
+require item-by-item administration.
 
 A section can be:
 
 - processed
 - skipped
+- left unread after digest-only completion
+
+For items the user intentionally keeps handling, the destination should be
+clear before `Finish Review`:
+
+- saved or confirmed
 - snoozed
-- left for queue
-
-The user does not need to process every candidate. However, each section should
-have a clear state before `Finish Review`:
-
-- reviewed
-- skipped
-- deferred
+- kept in queue
+- dismissed
 
 This creates a loop without making review feel like homework.
 
 ## 12. Unhandled Items
 
-Unhandled items should get one of three destinations:
+Unhandled generated candidates do not automatically become durable state.
+Only user-kept items should get one of three destinations:
 
 | Destination | Meaning |
 | --- | --- |
@@ -385,8 +403,8 @@ Unhandled items should get one of three destinations:
 | Keep in Review Queue | Leave it available in normal Pagelet Tab filters |
 | Dismiss | Remove the item and optionally provide lightweight negative signal |
 
-Do not automatically delete unhandled items unless their own item policy says
-they have expired.
+Ignored ephemeral candidates may simply expire. Do not automatically promote
+them into Review Queue or Markdown history.
 
 ## 13. Metrics
 
@@ -455,9 +473,10 @@ Suggested cases:
 | Memory conflict | Individual review required |
 | Maintenance low-risk action | Batch apply available with action log |
 | Maintenance high-risk action | Per-item preview/diff required |
-| Finish Review | Completion recorded after section states set |
+| Finish Review | Completion recorded after digest-only or chosen-item handling |
 | Weekly note generation | Includes accepted content only |
 | Dismissed item | Does not appear in Weekly Review note |
+| Ignored generated candidate | Does not become Review Queue debt |
 | Excluded folder | Does not appear in candidates |
 
 Deterministic checks:
@@ -465,7 +484,8 @@ Deterministic checks:
 - no unconfirmed Memory Candidate becomes Confirmed Memory
 - no unconfirmed Maintenance Proposal writes to source notes
 - Weekly Review note excludes dismissed/unconfirmed items
-- sourceRefs exist for accepted insights and memory updates
+- ignored candidates do not create durable state
+- sourceRefs exist for selected insights and memory updates
 - undo/action log exists for applied maintenance
 
 ## 17. Roadmap
@@ -480,8 +500,9 @@ Deterministic checks:
 
 - Add Pagelet Tab Weekly Review mode.
 - Support recent 7 days / natural week / recent 14 days / custom range.
-- Show section placeholders and counts from existing Review Queue.
-- Add Finish Review state without writes.
+- Show digest-first sections with restrained counts and top items.
+- Add Finish Review state without writes or item-by-item completion
+  requirements.
 
 ### Phase 2: Memory And Recall Sections
 
@@ -500,7 +521,7 @@ Deterministic checks:
 ### Phase 4: Weekly Review Note
 
 - Generate optional Markdown note after Finish Review.
-- Include only accepted/saved items with sourceRefs.
+- Include only selected/saved items with sourceRefs.
 - Exclude ignored/dismissed/unconfirmed candidates.
 
 ### Phase 5: Weekly Prepared Review
@@ -535,9 +556,10 @@ The durable contract:
 - review includes themes, insights, memory, conflicts, and maintenance
 - confirmed content can become a Markdown Weekly Review note
 - unconfirmed content stays out of Markdown
+- ignored candidates create no queue debt
 - low-risk memory and maintenance can be batched
 - high-risk items require individual review
-- Finish Review closes the loop
+- Finish Review closes the loop without forcing inbox zero
 
 This gives PA a weekly rhythm without turning it into a nagging manager or a
 second inbox.

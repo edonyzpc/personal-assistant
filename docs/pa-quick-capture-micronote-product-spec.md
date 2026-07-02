@@ -1,6 +1,6 @@
 # PA Quick Capture And Micronote Product Spec
 
-Updated: 2026-06-28
+Updated: 2026-06-29
 
 ## Status
 
@@ -9,10 +9,11 @@ Updated: 2026-06-28
 | Document type | Product spec / future implementation input |
 | Status | Confirmed decision spec; implementation not started |
 | Feature family | Quick Capture / Micronote / AI post-processing |
-| Primary surfaces | Quick Capture command, Pagelet Review Queue, Daily Note, Memory panel |
+| Primary surfaces | Quick Capture command, optional Pagelet Review Queue, Daily Note, Memory panel |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related specs | [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md) |
+| Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
 This spec defines how PA should participate in the first moment of personal
 knowledge capture. It is not current shipped behavior.
@@ -34,8 +35,8 @@ This spec reflects the one-question-at-a-time product decisions confirmed on
 | --- | --- | --- |
 | CAP-D1 | Use B+: lightweight Quick Capture now, preserve part of AI inbox as background capability. | v1 saves immutable micronotes first; AI post-processing appears as reviewable suggestions, not as a foreground inbox product. |
 | CAP-D2 | Original capture destination is configurable, defaulting to Daily Note. | Users get low-friction default behavior while Obsidian power users can choose Inbox folder or current file. |
-| CAP-D3 | Capture feedback uses lightweight mixed feedback. | After saving, show a small "saved" signal and route full suggestions to Pagelet Review Queue. |
-| CAP-D4 | v1 AI post-processing has medium scope. | Include title, tag, related-note, Memory Candidate, and task-like suggestions; exclude archive/move/rewrite/replacement/project flow. |
+| CAP-D3 | Capture feedback uses lightweight mixed feedback. | After saving, show a small "saved" signal; only durable or user-kept suggestions enter Pagelet Review Queue. |
+| CAP-D4 | v1 AI post-processing has restrained queue scope. | Queue Memory Candidate and task-like suggestions first; keep title, tag, related-note, and expansion as future preview/Keep flows until an explicit UI exists. Exclude archive/move/rewrite/replacement/project flow. |
 | CAP-D5 | Task-like detection creates a task suggestion in Review Queue. | PA can identify potential tasks, but user confirmation is required before writing Markdown tasks. |
 | CAP-D6 | AI expansion is suggestion-only and visually separated by callout. | PA never rewrites the original micronote; accepted expansion content uses an Obsidian callout to distinguish AI text. |
 | CAP-D7 | Accepted expansion uses a mixed save strategy. | Short expansions append as callouts near the original; long or structured expansions become companion/review notes with links. |
@@ -55,8 +56,9 @@ This means:
 
 - the user's original text is saved immediately
 - AI post-processing is asynchronous
-- AI suggestions are reviewable and dismissible
+- AI suggestions are optional, reviewable, and dismissible
 - the original capture remains inspectable even if the user ignores suggestions
+- ignored low-value suggestions create no queue debt
 - future autonomy can grow from repeated user trust, not from first-use
   takeover
 
@@ -100,8 +102,9 @@ Suggested v1 flow:
 3. PA immediately saves the original text to the configured destination.
 4. PA shows a small saved confirmation.
 5. PA optionally starts asynchronous post-processing.
-6. Post-processing produces reviewable suggestions.
-7. Suggestions enter Pagelet Review Queue.
+6. Post-processing produces restrained review suggestions.
+7. Only durable suggestions or suggestions the user explicitly keeps enter
+   Pagelet Review Queue.
 8. User can review, accept, edit, dismiss, or ignore suggestions later.
 
 ```mermaid
@@ -109,7 +112,8 @@ flowchart LR
   User["User writes micronote"] --> Save["Save original text"]
   Save --> Feedback["Small saved feedback"]
   Save --> Async["Async AI post-processing"]
-  Async --> Queue["Pagelet Review Queue"]
+  Async --> Preview["Optional suggestions"]
+  Preview --> Queue["Durable / kept suggestions"]
   Queue --> Accept["Accept or edit"]
   Queue --> Dismiss["Dismiss or ignore"]
   Accept --> Note["Write accepted enrichment"]
@@ -167,7 +171,8 @@ Risk:
 Mitigation:
 
 - do not require inbox review for captures to remain useful
-- use Pagelet Review Queue as the review surface, not the folder itself
+- use Pagelet Review Queue only for durable or user-kept suggestions, not every
+  enrichment preview
 
 ### 4.3 Current File Option
 
@@ -215,18 +220,19 @@ Avoid:
 
 ## 6. AI Post-processing Scope
 
-v1 should include medium-scope AI enrichment.
+Quick Capture may eventually support medium-scope AI enrichment, but the
+current queueable v1 stays restrained until a visible preview/Keep UI exists.
 
 Included:
 
 | Suggestion | Purpose | Review behavior |
 | --- | --- | --- |
-| Title suggestion | Helps future retrieval and skimming | User may accept/edit; never renames source automatically |
-| Tag suggestion | Adds lightweight structure | User may accept/edit/dismiss |
-| Related notes | Connects capture to existing vault context | User may open, link, or dismiss |
+| Title suggestion | Helps future retrieval and skimming | Future preview/Keep UI; not requested or queued automatically today |
+| Tag suggestion | Adds lightweight structure | Future preview/Keep UI; not requested or queued automatically today |
+| Related notes | Connects capture to existing vault context | Future preview/Keep UI; not requested or queued automatically today |
 | Memory Candidate | Identifies durable preference, decision, project context, task constraint, or open question | Must go through Trust Layer confirmation |
 | Task-like suggestion | Identifies possible action item | Must be confirmed before Markdown task write |
-| AI expansion | Turns fragment into richer reflection | Must be accepted and visually separated |
+| AI expansion | Turns fragment into richer reflection | Future preview/Keep UI; accepted content must be visually separated |
 
 Excluded from v1:
 
@@ -243,17 +249,23 @@ capture moment quiet and trustworthy.
 
 ## 7. Review Queue Items
 
-Quick Capture should emit typed Review Queue items rather than creating a new
-AI inbox surface.
+Quick Capture should emit typed Review Queue items only when a suggestion has
+durable consequence or the user chooses to keep it for later. It should not
+create a new AI inbox surface.
 
-Initial item types:
+Initial queueable item types:
 
 | Queue item type | Examples | Primary surface |
 | --- | --- | --- |
-| `capture_enrichment` | title, tag, expansion, related-note suggestions | Pagelet Panel or Tab |
 | `task_suggestion` | "This may be a task" | Pagelet Panel or Tab |
 | `memory_candidate` | "This preference may be worth remembering" | Pagelet Panel, then Memory panel after confirmation |
-| `related_note` | older note that may connect to the capture | Pagelet Panel |
+
+Planned item types after a visible preview/Keep UI exists:
+
+| Queue item type | Examples | Primary surface |
+| --- | --- | --- |
+| `capture_enrichment` | kept title, tag, or expansion suggestions | Pagelet Panel or Tab |
+| `related_note` | older note that may connect to the capture after the user keeps it | Pagelet Panel |
 
 Queue item fields should include:
 
@@ -265,6 +277,8 @@ Queue item fields should include:
 - data boundary snapshot
 - AI provider used, when applicable
 - suggested write target, when applicable
+
+Low-confidence or ignored enrichment previews may expire without queue state.
 
 ## 8. Task-like Detection
 
@@ -502,9 +516,10 @@ Deterministic checks:
 
 ### Phase 2: Async Post-processing
 
-- Generate title, tag, related-note, Memory Candidate, task-like, and expansion
-  suggestions.
-- Route suggestions to Pagelet Review Queue.
+- Generate Memory Candidate and task-like suggestions first.
+- Keep title, tag, related-note, and expansion suggestions parser-supported but
+  do not request or queue them until a visible preview/Keep UI exists.
+- Route only durable or user-kept suggestions to Pagelet Review Queue.
 - Preserve sourceRefs and why-shown.
 
 ### Phase 3: Review And Accept
@@ -551,8 +566,8 @@ The durable contract:
 - original micronote first
 - configurable destination, default Daily Note
 - tiny saved feedback
-- AI suggestions later
-- Pagelet Review Queue for enrichment
+- AI suggestions later, optional and ignorable
+- Pagelet Review Queue only for durable or user-kept enrichment
 - callout separation for AI expansion
 - task and memory require confirmation
 - mobile and voice are future-ready, not v1 scope

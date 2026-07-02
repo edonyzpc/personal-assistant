@@ -18,6 +18,8 @@ archived to [project-todo-pre-2.8.0.md](./archive/project-todo-pre-2.8.0.md).
 
 | Area | Status | Next decision or action | Evidence |
 | --- | --- | --- | --- |
+| PA Agent product spec implementation | Complete / release-readiness | Slices 0-G, A2, and M12 are implemented with automated gates and Obsidian smoke evidence. Use the tracker for release-readiness review or define a new approval gate for future scope. | [Product spec development plan](./pa-agent-product-spec-development-plan.md); [tracker](./pa-agent-product-spec-development-tracker.md#next-approval-gates) |
+| PA Product Redesign | **Active** — next version | 6 Phase 开发计划已批准。Phase 0 文档对齐 → Phase 1 Quiet Recall 核心重构 → Phase 2 Weekly Review 拆解 → Phase 3 Frontmatter 建链 → Phase 4 首次引导 → Phase 5 Chat 文字选择 + 模式检测。 | [产品讨论记录](./pa-product-discussion-2026-07-02.md); [开发计划](./pa-product-redesign-development-plan.md) |
 | Operations Agent append mode | Deferred / not exposed | Keep `OPERATIONS_AGENT_RUNTIME_ENABLED=false` until the full action runtime, prompt split, setting semantics, and Obsidian smoke are complete. | `src/operations-agent-flags.ts`; [architecture refactor tracker](./archive/architecture-refactor-development-tracker.md) |
 | Operations Agent Phase 2 | Future | Scope replace-section, multi-file edits, command execution, batch-confirm UX, and production audit only after separate product/security review. | [Operations Agent plan](./operations-agent-plan.md); [Operations Agent mode SDD](./operations-agent-mode-sdd.md) |
 | User custom Skills (SPEC-C2) | Deferred | Decide the product value and UX before drafting the SDD for allowed tools, Settings UI, and optional vault-side discovery. | [v2 post-release tracker](./archive/v2-post-release-spec-driven-development.md) |
@@ -28,6 +30,17 @@ archived to [project-todo-pre-2.8.0.md](./archive/project-todo-pre-2.8.0.md).
 | Architecture quality pass | Deferred | Improve prompt/classifier builders, Chat conversation lifecycle extraction, VSS method-body extraction, and plain `tsc --noEmit` DOM/WebWorker tsconfig split. | [architecture refactor tracker](./archive/architecture-refactor-development-tracker.md) |
 | Settings IA/componentization | Partially open | Finish broader Settings IA, remaining componentization, Statistics hidden fields, text-input save churn audit, and narrow-screen Metadata UX. | [Settings current status](./settings-status.md); [historical Settings UI review](./settings-ui-review.md); [Settings SDD](./archive/settings-ui-sdd.md) |
 | Android VSS real-device validation | Pending verification | Validate the SQLite/WASM VSS backend on a physical Android device before claiming full Android parity. | [README](../README.md#mobile-vss-validation-note) |
+
+## Architecture Observations (需讨论后再执行)
+
+以下三项来自 PR #376 review，已确认不阻塞合入，但在后续迭代前需产品/架构讨论。
+**不要直接执行修改**——每项需在对应迭代启动时先讨论方案再动代码。
+
+| 观察 | 触发时机 | 讨论要点 | 来源 |
+| --- | --- | --- | --- |
+| MemoryGovernanceStore 与 MemoryManager 并行 | 当 forget 需要影响 VSS 索引，或 confirmed memories 注入 LLM context 时 | 是否加协调层？forget 是否通知 MemoryManager 标记 stale？两者注入 context 时谁管 budget？ | [PR #376 review](./pr-376-review-report.md) |
+| VALID_STATUS_TRANSITIONS 在 store 层而非 contracts 层 | 当 TabView 需要根据 status 决定按钮显示时 | 转移规则是业务语义还是存储实现？移到 contracts 后 store 只做 enforcement？ | [PR #376 review](./pr-376-review-report.md) |
+| listRecentlyConfirmed() 就绪但无 UI 消费 | Memory Panel 功能扩展时 | 最近确认列表的交互形式？7 天撤回窗口是否合理？撤回操作是 archive 还是新增 unconfirm？ | [PR #376 review](./pr-376-review-report.md)；spec checklist 1.6 |
 
 ## Triggered Evaluations
 

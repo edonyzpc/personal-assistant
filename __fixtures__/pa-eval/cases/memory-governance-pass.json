@@ -1,0 +1,88 @@
+{
+  "id": "memory-governance-pass",
+  "title": "Memory governance keeps insights weak and forgotten memory text-free",
+  "category": "memory_governance",
+  "actual": {
+    "sourceRefs": [
+      { "path": "projects/pa-agent/source.md" }
+    ],
+    "savedInsights": [
+      {
+        "id": "ins-theme",
+        "type": "theme",
+        "text": "Pagelet work often needs real app smoke evidence.",
+        "origin": "pa-generated",
+        "sourceRefs": [
+          { "path": "projects/pa-agent/source.md", "excerptHash": "abc123" }
+        ],
+        "influencePolicy": "weak-only"
+      }
+    ],
+    "memoryCandidates": [
+      {
+        "id": "rq-memory",
+        "type": "preference",
+        "lifecycle": "candidate",
+        "sensitivity": "low",
+        "summary": "Prefers concise weekly planning.",
+        "sourceRefs": [
+          { "path": "projects/pa-agent/source.md", "excerptHash": "def456" }
+        ]
+      }
+    ],
+    "confirmedMemories": [
+      {
+        "id": "mem-active",
+        "type": "preference",
+        "lifecycle": "active",
+        "sensitivity": "low",
+        "summary": "Prefers concise weekly planning.",
+        "sourceRefs": [
+          { "path": "projects/pa-agent/source.md", "excerptHash": "def456" }
+        ]
+      },
+      {
+        "id": "mem-forgotten",
+        "type": "open_question",
+        "lifecycle": "forgotten_tombstone",
+        "sensitivity": "low",
+        "summary": "",
+        "sourceRefs": [],
+        "tombstoneReason": "user_forget"
+      }
+    ],
+    "contextFirewallDecisions": [
+      {
+        "memoryId": "mem-active",
+        "decision": "auto_include",
+        "reason": "in_scope_low_risk"
+      },
+      {
+        "memoryId": "mem-forgotten",
+        "decision": "drop",
+        "reason": "forgotten"
+      }
+    ]
+  },
+  "expected": {
+    "assertions": [
+      { "type": "source_ref_exists", "path": "projects/pa-agent/source.md" },
+      { "type": "saved_insight_has_source_refs", "itemId": "ins-theme" },
+      { "type": "saved_insight_weak_influence_only", "itemId": "ins-theme" },
+      { "type": "confirmed_memory_source_backed", "memoryId": "mem-active" },
+      { "type": "memory_tombstone_has_no_text", "memoryId": "mem-forgotten" },
+      {
+        "type": "context_firewall_decision",
+        "memoryId": "mem-active",
+        "decision": "auto_include",
+        "reason": "in_scope_low_risk"
+      },
+      {
+        "type": "context_firewall_decision",
+        "memoryId": "mem-forgotten",
+        "decision": "drop",
+        "reason": "forgotten"
+      }
+    ]
+  }
+}
