@@ -178,15 +178,15 @@ function getUpdatedAt(days: StatsDashboardDay[], locale: PluginLocale): string {
 
 function metricCard(label: string, value: string, compact: boolean, detail?: string) {
 	return (
-		<div className="pa-min-w-0 pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3 pa-shadow-sm">
-			<div className="pa-text-xs pa-font-medium pa-uppercase pa-tracking-normal pa-text-slate-500">
+		<div className="pa-stat-card pa-min-w-0 pa-p-3">
+			<div className="pa-stat-metric-label">
 				{label}
 			</div>
-			<div className={`pa-mt-1 pa-break-words pa-font-semibold pa-text-slate-900 ${compact ? "pa-text-xl" : "pa-text-2xl"}`}>
+			<div className={`pa-stat-metric-value pa-mt-1 pa-break-words ${compact ? "pa-text-xl" : "pa-text-2xl"}`}>
 				{value}
 			</div>
 			{detail ? (
-				<div className="pa-mt-1 pa-break-all pa-text-xs pa-text-slate-500">{detail}</div>
+				<div className="pa-stat-text-secondary pa-mt-1 pa-break-all pa-text-xs">{detail}</div>
 			) : null}
 		</div>
 	);
@@ -264,6 +264,16 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const overviewChartHeight = compact ? "pa-h-60" : "pa-h-72";
 	const detailChartHeight = compact ? "pa-h-80" : medium ? "pa-h-96" : "pa-h-[32rem]";
 
+	const chartColors = useMemo(() => {
+		const el = containerRef.current;
+		if (!el) return { text: "rgb(71, 85, 105)", grid: "rgba(148, 163, 184, 0.2)" };
+		const s = getComputedStyle(el);
+		return {
+			text: s.getPropertyValue("--pa-stat-chart-text").trim() || "rgb(71, 85, 105)",
+			grid: s.getPropertyValue("--pa-stat-chart-grid").trim() || "rgba(148, 163, 184, 0.2)",
+		};
+	}, [containerWidth]);
+
 	const commonOptions = useMemo<MixedChartOptions>(
 		() => ({
 			responsive: true,
@@ -274,7 +284,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 			plugins: {
 				legend: {
 					labels: {
-						color: "rgb(51, 65, 85)",
+						color: chartColors.text,
 						usePointStyle: true,
 					},
 				},
@@ -294,17 +304,17 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 			},
 			scales: {
 				x: {
-					grid: { color: "rgba(148, 163, 184, 0.18)" },
+					grid: { color: chartColors.grid },
 					ticks: {
 						autoSkip: true,
-						color: "rgb(71, 85, 105)",
+						color: chartColors.text,
 						maxRotation: 0,
 						maxTicksLimit: compact ? 4 : medium ? 6 : 10,
 					},
 				},
 				y: {
 					beginAtZero: true,
-					grid: { color: "rgba(148, 163, 184, 0.22)" },
+					grid: { color: chartColors.grid },
 					ticks: { color: "rgb(225, 29, 72)", maxTicksLimit: compact ? 4 : 6 },
 				},
 				y1: {
@@ -315,7 +325,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				},
 			},
 		}),
-		[chartAnimation, compact, medium, pageDatasetLabels, pageUnit]
+		[chartAnimation, chartColors, compact, medium, pageDatasetLabels, pageUnit]
 	);
 
 	const activeChartData = useMemo<MixedChartData | null>(() => {
@@ -431,21 +441,21 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	const showRangePicker = activeView === "daily" || activeView === "growth";
 
 	return (
-		<div ref={containerRef} className="pa-statistics-view pa-flex pa-h-full pa-w-full pa-flex-col pa-overflow-auto pa-bg-slate-50 pa-text-slate-900">
-			<div className={`pa-border-b pa-border-slate-200 pa-bg-white ${compact ? "pa-px-3 pa-py-2" : "pa-px-4 pa-py-3"}`}>
+		<div ref={containerRef} className="pa-statistics-view pa-flex pa-h-full pa-w-full pa-flex-col pa-overflow-auto">
+			<div className={`pa-stat-header ${compact ? "pa-px-3 pa-py-2" : "pa-px-4 pa-py-3"}`}>
 				<div className="pa-flex pa-flex-wrap pa-items-center pa-justify-between pa-gap-3">
 					<div className="pa-min-w-0">
 						<h2 className="pa-m-0 pa-text-lg pa-font-semibold">
 							{t("plugin.statistics.title", { vault: app.vault.getName() })}
 						</h2>
-						<div className="pa-mt-1 pa-text-xs pa-text-slate-500">
+						<div className="pa-stat-text-secondary pa-mt-1 pa-text-xs">
 							{t("plugin.statistics.updated", { time: getUpdatedAt(days, locale) })}
 						</div>
 					</div>
 					<div
 						className={compact
-							? "pa-statistics-segment pa-statistics-segment--views pa-grid pa-w-full pa-grid-cols-2 pa-gap-1 pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"
-						: "pa-statistics-segment pa-statistics-segment--views pa-inline-flex pa-max-w-full pa-overflow-x-auto pa-rounded-md pa-border pa-border-slate-200 pa-bg-slate-100 pa-p-1"}
+							? "pa-statistics-segment pa-statistics-segment--views pa-stat-segment-bg pa-grid pa-w-full pa-grid-cols-2 pa-gap-1 pa-p-1"
+						: "pa-statistics-segment pa-statistics-segment--views pa-stat-segment-bg pa-inline-flex pa-max-w-full pa-overflow-x-auto pa-p-1"}
 						role="tablist"
 						aria-label={t("plugin.statistics.aria.views")}
 					>
@@ -465,21 +475,21 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 					</div>
 				</div>
 				{issueMessage ? (
-					<div className="pa-mt-3 pa-rounded-md pa-border pa-border-amber-200 pa-bg-amber-50 pa-p-2 pa-text-xs pa-text-amber-900">
+					<div className="pa-stat-warning pa-mt-3 pa-p-2 pa-text-xs">
 						{issueMessage}
 					</div>
 				) : null}
 			</div>
 
 			{!hasData ? (
-				<div className="pa-m-4 pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-6 pa-text-sm pa-text-slate-500">
+				<div className="pa-stat-card pa-stat-text-secondary pa-m-4 pa-p-6 pa-text-sm">
 					{emptyStateMessage}
 				</div>
 			) : (
 				<div className={`pa-flex pa-flex-1 pa-flex-col pa-gap-4 ${compact ? "pa-p-3" : "pa-p-4"}`}>
 					{showRangePicker ? (
 						<div className="pa-flex pa-justify-end">
-							<div className="pa-statistics-segment pa-statistics-segment--range pa-inline-flex pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-1" role="group" aria-label={t("plugin.statistics.aria.chartRange")}>
+							<div className="pa-statistics-segment pa-statistics-segment--range pa-stat-range-bg pa-inline-flex pa-p-1" role="group" aria-label={t("plugin.statistics.aria.chartRange")}>
 								{rangeOptions.map((option) => (
 									<button
 										key={option.id}
@@ -508,8 +518,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 									? metricCard(t("plugin.statistics.metric.devices"), formatNumber(deviceCount), compact)
 									: null}
 							</div>
-							<div className={`${overviewChartHeight} pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3`}>
-								<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">{t("plugin.statistics.chart.loading")}</div>}>
+							<div className={`${overviewChartHeight} pa-stat-card pa-p-3`}>
+								<Suspense fallback={<div className="pa-stat-text-secondary pa-p-4 pa-text-sm">{t("plugin.statistics.chart.loading")}</div>}>
 									{activeChartData ? <DashboardChart type="bar" data={activeChartData} options={commonOptions} /> : null}
 								</Suspense>
 							</div>
@@ -517,16 +527,16 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 					) : null}
 
 					{activeView === "daily" ? (
-						<div className={`${detailChartHeight} pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3`}>
-							<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">{t("plugin.statistics.chart.loading")}</div>}>
+						<div className={`${detailChartHeight} pa-stat-card pa-p-3`}>
+							<Suspense fallback={<div className="pa-stat-text-secondary pa-p-4 pa-text-sm">{t("plugin.statistics.chart.loading")}</div>}>
 								{activeChartData ? <DashboardChart type="bar" data={activeChartData} options={commonOptions} /> : null}
 							</Suspense>
 						</div>
 					) : null}
 
 					{activeView === "growth" ? (
-						<div className={`${detailChartHeight} pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-3`}>
-							<Suspense fallback={<div className="pa-p-4 pa-text-sm pa-text-slate-500">{t("plugin.statistics.chart.loading")}</div>}>
+						<div className={`${detailChartHeight} pa-stat-card pa-p-3`}>
+							<Suspense fallback={<div className="pa-stat-text-secondary pa-p-4 pa-text-sm">{t("plugin.statistics.chart.loading")}</div>}>
 								{activeChartData ? <DashboardChart type="line" data={activeChartData} options={commonOptions} /> : null}
 							</Suspense>
 						</div>
@@ -537,15 +547,15 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 							{compositionRows.map((row) => (
 								<div
 									key={row.label}
-									className="pa-rounded-md pa-border pa-border-slate-200 pa-bg-white pa-p-4 pa-shadow-sm"
+									className="pa-stat-card pa-p-4"
 								>
 									<div className="pa-flex pa-items-center pa-justify-between pa-gap-3">
-										<div className="pa-text-sm pa-font-medium pa-text-slate-600">{row.label}</div>
-										<div className="pa-text-xl pa-font-semibold pa-text-slate-950">
+										<div className="pa-stat-text-secondary pa-text-sm pa-font-medium">{row.label}</div>
+										<div className="pa-stat-metric-value pa-text-xl">
 											{formatNumber(row.value)}
 										</div>
 									</div>
-									<div className="pa-mt-3 pa-h-2 pa-rounded pa-bg-slate-100">
+									<div className="pa-stat-progress-track pa-mt-3 pa-h-2 pa-rounded">
 										<CompositionProgress
 											label={row.label}
 											value={row.value}

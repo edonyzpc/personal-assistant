@@ -11,8 +11,8 @@
  * {@link PeriodicSummaryFlow}.
  */
 
-import { Notice, normalizePath } from "obsidian";
-import type { MarkdownView, TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, TFile, normalizePath } from "obsidian";
+import type { MarkdownView, WorkspaceLeaf } from "obsidian";
 
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 import {
@@ -24,6 +24,7 @@ import {
 import { isObsidianModalOpen } from "./dom-utils";
 
 import { BubbleView } from "./bubble/BubbleView";
+import type { OnboardingNudge, OnboardingNudgeKind } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
 import type { DiscoveryResult, NoteConnection, PanelFinding, PanelLayoutType, PanelOpenExtra } from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
@@ -58,6 +59,7 @@ import {
     toReplaySourceRef,
     type ContextDropReason,
     type PersistedSourceRef,
+    type PatternDetectionResult,
     type QuietRecallBubbleNudge,
     type QuietRecallCandidate,
     type RetrievalHabitFeedbackKind,
@@ -75,6 +77,7 @@ export class PageletOrchestrator {
     private currentPanelLayout: PanelLayoutType | null = null;
     private preservePanelSessionOnClose = false;
     private readonly handleEscape: (e: KeyboardEvent) => void;
+    private readonly handleQuietRecallShortcut: (e: KeyboardEvent) => void;
     private readonly preloadCache: PreloadCache;
     private readonly preloadBudget: PreloadBudget;
     private readonly changeDetector: ChangeDetector;
@@ -103,7 +106,13 @@ export class PageletOrchestrator {
     private activityDebounceTimer: PlatformTimeoutHandle | null = null;
     private quietRecallNudgeCandidate: QuietRecallCandidate | null = null;
     private quietRecallBubbleNudge: QuietRecallBubbleNudge | null = null;
+    private onboardingNudge: OnboardingNudge | null = null;
+    get hasActiveOnboardingNudge(): boolean { return this.onboardingNudge !== null; }
+    private patternDetectionNudge: PatternDetectionResult | null = null;
     private quietRecallNudgeRunId = 0;
+    private quietRecallNudgeInFlight = false;
+    private quietRecallNudgePending = false;
+    private lastQuietRecallCtrlKeydownAt = 0;
     private readonly quietRecallDismissedCandidateIds = new Set<string>();
     private readonly quietRecallSnoozedCandidateIds = new Map<string, number>();
     private foregroundRouteToken = 0;
@@ -116,8 +125,11 @@ export class PageletOrchestrator {
     private static readonly IDLE_TIMEOUT_MS = 10 * 60 * 1000;
     /** 5 s debounce for note-activity detection (vault modify events). */
     private static readonly ACTIVITY_DEBOUNCE_MS = 5_000;
+    /** Debounce for Quiet Recall after leaf change (avoids sync vault scan jank). */
+    private static readonly QUIET_RECALL_LEAF_CHANGE_DEBOUNCE_MS = 250;
     /** Local UI snooze for the same Quiet Recall Bubble candidate. */
     private static readonly QUIET_RECALL_LATER_SNOOZE_MS = 24 * 60 * 60 * 1000;
+    private static readonly QUIET_RECALL_DOUBLE_CTRL_MS = 300;
 
     constructor(private readonly host: PageletHost) {
         const s = host.settings.pagelet;
@@ -178,10 +190,16 @@ export class PageletOrchestrator {
             onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
             onDiscoverConnections: () => { void this.discoverConnections(); },
             onPeriodicSummary: () => { void this.runPeriodicSummary(); },
+            getOnboardingNudge: () => this.onboardingNudge,
+            onOnboardingNudgeDismiss: (nudge) => this.handleOnboardingNudgeDismiss(nudge),
             getQuietRecallNudge: () => this.quietRecallBubbleNudge,
             onQuietRecallView: (candidate) => { void this.handleQuietRecallBubbleView(candidate); },
+            onQuietRecallLink: (candidate) => { void this.handleQuietRecallBubbleLink(candidate); },
             onQuietRecallDismiss: (candidate) => { void this.handleQuietRecallBubbleDismiss(candidate); },
             onQuietRecallLater: (candidate) => { void this.handleQuietRecallBubbleLater(candidate); },
+            getPatternDetectionNudge: () => this.patternDetectionNudge,
+            onPatternDetectionView: (result) => { void this.handlePatternDetectionBubbleView(result); },
+            onPatternDetectionDismiss: (result) => this.handlePatternDetectionBubbleDismiss(result),
         });
 
         // Delegate: periodic summary flow
@@ -214,6 +232,18 @@ export class PageletOrchestrator {
                 e.stopPropagation();
                 return;
             }
+        };
+        this.handleQuietRecallShortcut = (e: KeyboardEvent) => {
+            if (e.key !== "Control" || e.repeat || e.metaKey || e.altKey || e.shiftKey) return;
+            if (this.host.settings.focusMode || !this.host.settings.quietRecall.enabled) return;
+            const now = Date.now();
+            if (now - this.lastQuietRecallCtrlKeydownAt <= PageletOrchestrator.QUIET_RECALL_DOUBLE_CTRL_MS) {
+                this.lastQuietRecallCtrlKeydownAt = 0;
+                e.preventDefault();
+                void this.runQuietRecall();
+                return;
+            }
+            this.lastQuietRecallCtrlKeydownAt = now;
         };
     }
 
@@ -280,6 +310,7 @@ export class PageletOrchestrator {
         // 1c. Escape handler (Panel > Bubble priority)
         this.escapeListenerDocument = getPlatformDocument();
         this.escapeListenerDocument.addEventListener("keydown", this.handleEscape, true);
+        this.escapeListenerDocument.addEventListener("keydown", this.handleQuietRecallShortcut, true);
 
         // 2. Workspace event: re-mount Pet when the active leaf changes
         this.host.registerEvent(
@@ -321,9 +352,9 @@ export class PageletOrchestrator {
         }
 
         // 5. Mount Pet on whatever leaf is currently active
-        const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
-        if (activeLeaf) {
-            this.handleLeafChange(activeLeaf);
+        const initialLeaf = this.host.app.workspace.getMostRecentLeaf();
+        if (initialLeaf) {
+            this.handleLeafChange(initialLeaf);
         }
 
         // 6. Begin idle tracking
@@ -340,7 +371,12 @@ export class PageletOrchestrator {
 
         this.clearIdleTimer();
         this.clearActivityDebounce();
+        if (this.quietRecallLeafChangeTimer !== null) {
+            clearTimeout(this.quietRecallLeafChangeTimer);
+            this.quietRecallLeafChangeTimer = null;
+        }
         this.escapeListenerDocument?.removeEventListener("keydown", this.handleEscape, true);
+        this.escapeListenerDocument?.removeEventListener("keydown", this.handleQuietRecallShortcut, true);
         this.escapeListenerDocument = null;
         this.backgroundPrep.destroy();
         this.petView?.destroy();
@@ -402,7 +438,6 @@ export class PageletOrchestrator {
                 void this.runPeriodicSummary();
             },
             onMaintenanceReview: () => this.runMaintenanceReview(),
-            onWeeklyReview: () => this.runWeeklyReview(),
             onQuietRecall: () => this.runQuietRecall(),
             onGraphDiscovery: () => this.runGraphDiscovery(),
             onScopeRecap: () => this.runScopeRecap(),
@@ -451,6 +486,7 @@ export class PageletOrchestrator {
                 content: [],
                 locale,
                 layoutType: "review",
+                entryReason: "maintenance",
             };
             const detailExtra = this.detailExtraForTab(extra);
             if (detailExtra) payload.extra = detailExtra;
@@ -460,35 +496,6 @@ export class PageletOrchestrator {
             this.transitionPet("analysis-done");
             this.petView?.flashError();
             this.host.log("Pagelet maintenance review failed", error);
-            new Notice(this.t("pagelet.panel.status.error"), 4000);
-        }
-    }
-
-    async runWeeklyReview(): Promise<void> {
-        const routeToken = this.beginForegroundRoute("review", "review");
-        if (routeToken === null) return;
-        try {
-            const weeklyReview = await this.withForegroundTimeout(this.host.runWeeklyReview());
-            if (!this.isCurrentForegroundRoute(routeToken)) return;
-            this.transitionPet("analysis-done");
-            const locale = getPageletUiLanguage();
-            const extra = this.withGlobalLedgerExtra(
-                this.withGlobalReviewQueueExtra({ weeklyReview }),
-            );
-            const payload: PageletDetailPayload = {
-                title: pageletT("pagelet.tab.weekly.title", locale),
-                content: [],
-                locale,
-                layoutType: "review",
-            };
-            const detailExtra = this.detailExtraForTab(extra);
-            if (detailExtra) payload.extra = detailExtra;
-            await Promise.resolve(this.host.openPageletDetailView(payload));
-        } catch (error) {
-            if (!this.isCurrentForegroundRoute(routeToken)) return;
-            this.transitionPet("analysis-done");
-            this.petView?.flashError();
-            this.host.log("Pagelet weekly review failed", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
         }
     }
@@ -507,6 +514,7 @@ export class PageletOrchestrator {
                 locale,
                 layoutType: "current",
                 extra: { quietRecall },
+                entryReason: "quiet-recall",
             };
             if (quietRecall.currentPath) payload.sourcePath = quietRecall.currentPath;
             await Promise.resolve(this.host.openPageletDetailView(payload));
@@ -535,6 +543,7 @@ export class PageletOrchestrator {
                 content: [],
                 locale,
                 layoutType: "review",
+                entryReason: "graph-discovery",
             };
             const detailExtra = this.detailExtraForTab(extra);
             if (detailExtra) payload.extra = detailExtra;
@@ -549,6 +558,25 @@ export class PageletOrchestrator {
             this.host.log("Pagelet graph discovery failed", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
         }
+    }
+
+    setPatternDetectionNudge(result: PatternDetectionResult | null): void {
+        this.patternDetectionNudge = result && result.totalCount > 0 ? result : null;
+        if (this.patternDetectionNudge && this.proactiveHints.onInsightsReady()) {
+            this.petView?.stateMachine.forceState("nudge");
+        }
+    }
+
+    setOnboardingNudge(kind: OnboardingNudgeKind | null): boolean {
+        this.onboardingNudge = kind
+            ? { kind, generatedAt: new Date().toISOString() }
+            : null;
+        if (this.onboardingNudge && this.proactiveHints.onInsightsReady()) {
+            this.petView?.stateMachine.forceState("nudge");
+            return Boolean(this.petView);
+        }
+        if (!this.onboardingNudge) return true;
+        return false;
     }
 
     async runScopeRecap(): Promise<void> {
@@ -567,6 +595,7 @@ export class PageletOrchestrator {
                 layoutType: "summary",
                 extra: { markdown },
                 sourcePath: recap.scope.paths?.[0],
+                entryReason: "scope-recap",
             };
             await Promise.resolve(this.host.openPageletDetailView(payload));
         } catch (error) {
@@ -817,6 +846,11 @@ export class PageletOrchestrator {
         }
 
         this.petView.mount(containerEl);
+        this.clearQuietRecallBubbleNudge();
+        if (this.canPrepareQuietRecallBubbleNudge()) {
+            this.scheduleQuietRecallAfterLeafChange(
+                PageletOrchestrator.QUIET_RECALL_LEAF_CHANGE_DEBOUNCE_MS);
+        }
     }
 
     /** Handle a click/tap on the Pet element. Suppressed by Focus Mode. */
@@ -1204,11 +1238,33 @@ export class PageletOrchestrator {
     // ======================================================================
 
     private canPrepareQuietRecallBubbleNudge(): boolean {
-        return this.host.settings.pagelet.enabled
+        return !this.host.settings.focusMode
+            && this.host.settings.pagelet.enabled
             && this.host.settings.pagelet.petVisible
             && this.host.settings.pagelet.proactiveHints
             && this.host.settings.quietRecall.enabled
             && this.host.settings.quietRecall.bubbleNudgesEnabled;
+    }
+
+    private quietRecallLeafChangeTimer: ReturnType<typeof setTimeout> | null = null;
+
+    private scheduleQuietRecallAfterLeafChange(delayMs = PageletOrchestrator.QUIET_RECALL_LEAF_CHANGE_DEBOUNCE_MS): void {
+        if (this.quietRecallLeafChangeTimer !== null) {
+            clearTimeout(this.quietRecallLeafChangeTimer);
+        }
+        if (delayMs <= 0) {
+            this.quietRecallLeafChangeTimer = null;
+            if (!this.destroyed && this.canPrepareQuietRecallBubbleNudge()) {
+                void this.prepareQuietRecallBubbleNudge();
+            }
+            return;
+        }
+        this.quietRecallLeafChangeTimer = setTimeout(() => {
+            this.quietRecallLeafChangeTimer = null;
+            if (!this.destroyed && this.canPrepareQuietRecallBubbleNudge()) {
+                void this.prepareQuietRecallBubbleNudge();
+            }
+        }, delayMs);
     }
 
     private clearQuietRecallBubbleNudge(): void {
@@ -1226,11 +1282,16 @@ export class PageletOrchestrator {
     }
 
     private async prepareQuietRecallBubbleNudge(): Promise<void> {
+        const runId = ++this.quietRecallNudgeRunId;
+        if (this.quietRecallNudgeInFlight) {
+            this.quietRecallNudgePending = true;
+            return;
+        }
         if (!this.canPrepareQuietRecallBubbleNudge()) {
             this.clearQuietRecallBubbleNudge();
             return;
         }
-        const runId = ++this.quietRecallNudgeRunId;
+        this.quietRecallNudgeInFlight = true;
         try {
             const recall = await this.host.runQuietRecall();
             if (runId !== this.quietRecallNudgeRunId || this.destroyed) return;
@@ -1241,15 +1302,28 @@ export class PageletOrchestrator {
                 return;
             }
             this.quietRecallNudgeCandidate = candidate;
-            this.quietRecallBubbleNudge = quietRecallCandidateToBubbleNudge(candidate);
+            const showOnboardingExplanation = !this.host.settings.pagelet.quietRecallExplained;
+            this.quietRecallBubbleNudge = {
+                ...quietRecallCandidateToBubbleNudge(candidate, { currentPath: recall.currentPath }),
+                ...(showOnboardingExplanation ? { onboardingExplanation: true } : {}),
+            };
             if (this.proactiveHints.onInsightsReady()) {
                 this.petView?.stateMachine.forceState("nudge");
+                if (showOnboardingExplanation) {
+                    this.host.updatePageletSetting("quietRecallExplained", true);
+                }
             }
         } catch (error) {
             if (runId === this.quietRecallNudgeRunId) {
                 this.clearQuietRecallBubbleNudge();
             }
             this.host.log("Quiet Recall Bubble nudge skipped", error);
+        } finally {
+            this.quietRecallNudgeInFlight = false;
+            if (this.quietRecallNudgePending && !this.destroyed) {
+                this.quietRecallNudgePending = false;
+                void this.prepareQuietRecallBubbleNudge();
+            }
         }
     }
 
@@ -1274,6 +1348,31 @@ export class PageletOrchestrator {
         this.bubbleView?.close();
         this.recordQuietRecallFeedback(candidate, "view");
         await this.runQuietRecall();
+    }
+
+    private async handleQuietRecallBubbleLink(nudge: QuietRecallBubbleNudge): Promise<void> {
+        const candidate = this.quietRecallCandidateForNudge(nudge);
+        const activeFile = this.host.app.workspace.getActiveFile();
+        const candidatePath = candidate?.sourceRefs[0]?.path;
+        const currentPath = nudge.currentPath ? normalizePath(nudge.currentPath).replace(/^\.\//, "") : "";
+        if (
+            !currentPath
+            || !(activeFile instanceof TFile)
+            || activeFile.extension !== "md"
+            || activeFile.path !== currentPath
+            || !candidatePath
+        ) {
+            new Notice(pageletT("pagelet.tab.recall.linkNoActiveNote", getPageletUiLanguage()), 4000);
+            return;
+        }
+        const result = await this.host.linkRecallCandidate(currentPath, candidatePath);
+        if (result.ok) {
+            this.clearQuietRecallBubbleNudge();
+            this.recordQuietRecallFeedback(candidate, "accept");
+        } else {
+            new Notice(result.message, 5000);
+        }
+        this.bubbleView?.close();
     }
 
     private handleQuietRecallBubbleDismiss(nudge: QuietRecallBubbleNudge): void {
@@ -1365,7 +1464,6 @@ export class PageletOrchestrator {
             || Boolean(tabExtra?.memoryGovernance && tabExtra.memoryGovernance.records.length > 0)
             || Boolean(tabExtra?.maintenanceReview)
             || Boolean(tabExtra?.graphDiscovery)
-            || Boolean(tabExtra?.weeklyReview)
             || Boolean(tabExtra?.quietRecall);
         let findings = panelFindings;
         if (!hasPanelContent) {
@@ -1380,6 +1478,7 @@ export class PageletOrchestrator {
             content: findings,
             locale,
             layoutType,
+            entryReason: "panel-expand",
         };
         if (detailExtra) {
             payload.extra = detailExtra;
@@ -1413,7 +1512,11 @@ export class PageletOrchestrator {
     private withGlobalLedgerExtra(extra: PanelOpenExtra | undefined): PanelOpenExtra | undefined {
         const savedInsights = this.host.listSavedInsights();
         const memories = this.host.listConfirmedMemories();
-        if (savedInsights.length === 0 && memories.length === 0) return extra;
+        const memoryCandidates = this.host.listReviewQueueItems({
+            types: ["memory_candidate", "memory_conflict"],
+            statuses: ["suggested", "edited", "snoozed"],
+        });
+        if (savedInsights.length === 0 && memories.length === 0 && memoryCandidates.length === 0) return extra;
         return {
             ...(extra ?? {}),
             ...(savedInsights.length > 0 ? {
@@ -1425,7 +1528,14 @@ export class PageletOrchestrator {
             ...(memories.length > 0 ? {
                 memoryGovernance: {
                     records: memories,
-                    totalCount: memories.length,
+                    ...(memoryCandidates.length > 0 ? { candidates: memoryCandidates } : {}),
+                    totalCount: memories.length + memoryCandidates.length,
+                },
+            } : memoryCandidates.length > 0 ? {
+                memoryGovernance: {
+                    records: [],
+                    candidates: memoryCandidates,
+                    totalCount: memoryCandidates.length,
                 },
             } : {}),
         };
@@ -1458,13 +1568,13 @@ export class PageletOrchestrator {
         if (extra.graphDiscovery) {
             detailExtra.graphDiscovery = extra.graphDiscovery;
         }
-        if (extra.weeklyReview) {
-            detailExtra.weeklyReview = extra.weeklyReview;
+        if (extra.patternDetection) {
+            detailExtra.patternDetection = extra.patternDetection;
         }
         if (extra.quietRecall) {
             detailExtra.quietRecall = extra.quietRecall;
         }
-        return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.reviewQueue || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.weeklyReview || detailExtra.quietRecall
+        return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.reviewQueue || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.patternDetection || detailExtra.quietRecall
             ? detailExtra
             : undefined;
     }
@@ -1518,6 +1628,32 @@ export class PageletOrchestrator {
             sourceFile: finding.sourceFile,
             sourceTitle: finding.sourceTitle || finding.title,
         });
+    }
+
+    private async handlePatternDetectionBubbleView(result: PatternDetectionResult): Promise<void> {
+        this.patternDetectionNudge = null;
+        const locale = getPageletUiLanguage();
+        const payload: PageletDetailPayload = {
+            title: pageletT("pagelet.tab.patterns.title", locale),
+            content: [],
+            locale,
+            layoutType: "review",
+            extra: { patternDetection: result },
+            entryReason: "pattern-detection",
+        };
+        await Promise.resolve(this.host.openPageletDetailView(payload));
+    }
+
+    private handlePatternDetectionBubbleDismiss(result: PatternDetectionResult): void {
+        if (!this.patternDetectionNudge || this.patternDetectionNudge.generatedAt === result.generatedAt) {
+            this.patternDetectionNudge = null;
+        }
+    }
+
+    private handleOnboardingNudgeDismiss(nudge: OnboardingNudge): void {
+        if (!this.onboardingNudge || this.onboardingNudge.generatedAt === nudge.generatedAt) {
+            this.onboardingNudge = null;
+        }
     }
 
     /** Handle Bubble dismiss. Hook exists for future telemetry. */

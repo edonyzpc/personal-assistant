@@ -61,10 +61,16 @@ function makeCoordinator(
             onReviewCurrentNote: jest.fn(),
             onDiscoverConnections: jest.fn(),
             onPeriodicSummary: jest.fn(),
+            getOnboardingNudge: () => null,
+            onOnboardingNudgeDismiss: jest.fn(),
             getQuietRecallNudge: () => null,
             onQuietRecallView: jest.fn(),
+            onQuietRecallLink: jest.fn(),
             onQuietRecallDismiss: jest.fn(),
             onQuietRecallLater: jest.fn(),
+            getPatternDetectionNudge: () => null,
+            onPatternDetectionView: jest.fn(),
+            onPatternDetectionDismiss: jest.fn(),
         },
     );
 }

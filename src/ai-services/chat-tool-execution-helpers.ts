@@ -74,6 +74,7 @@ import type {
 
 export interface EditorLike {
     getSelection?: () => string;
+    replaceSelection?: (replacement: string) => void;
     getValue?: () => string;
     getCursor?: () => { line: number; ch: number };
     lineCount?: () => number;

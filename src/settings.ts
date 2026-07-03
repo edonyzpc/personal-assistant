@@ -121,11 +121,13 @@ export const MAINTENANCE_REVIEW_DEFAULTS: Readonly<MaintenanceReviewSettings> = 
     actionLog: [],
 });
 
+/** @deprecated Weekly Review is retired as a standalone runtime feature. */
 export interface WeeklyReviewSettings {
     enabled: boolean;
     preparedReviewEnabled: boolean;
 }
 
+/** @deprecated Kept only to preserve existing persisted settings. */
 export const WEEKLY_REVIEW_DEFAULTS: Readonly<WeeklyReviewSettings> = Object.freeze({
     enabled: true,
     preparedReviewEnabled: false,
@@ -283,6 +285,8 @@ export interface PluginManagerSettings {
     weeklyReview: WeeklyReviewSettings;
     /** Quiet Recall surfaces. Bubble nudges remain disabled until the later slice. */
     quietRecall: QuietRecallSettings;
+    /** Last structure-based cross-note pattern detection run timestamp. */
+    lastPatternDetectionAt?: string;
     /** Global Focus Mode: suppress all PA-initiated proactive behavior. */
     focusMode: boolean;
     /** Opt-in local aggregate recall feedback profile. */
@@ -400,6 +404,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     },
     weeklyReview: { ...WEEKLY_REVIEW_DEFAULTS },
     quietRecall: { ...QUIET_RECALL_DEFAULTS },
+    lastPatternDetectionAt: undefined,
     focusMode: false,
     retrievalHabitProfile: {
         enabled: RETRIEVAL_HABIT_PROFILE_DEFAULTS.enabled,
@@ -524,6 +529,10 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.maintenanceReview = mergeMaintenanceReviewSettings(loadedObject.maintenanceReview);
     merged.weeklyReview = mergeWeeklyReviewSettings(loadedObject.weeklyReview);
     merged.quietRecall = mergeQuietRecallSettings(loadedObject.quietRecall);
+    merged.lastPatternDetectionAt = typeof loadedObject.lastPatternDetectionAt === "string"
+        && loadedObject.lastPatternDetectionAt.trim()
+        ? loadedObject.lastPatternDetectionAt.trim()
+        : undefined;
     merged.focusMode = typeof loadedObject.focusMode === "boolean" ? loadedObject.focusMode : false;
     merged.retrievalHabitProfile = mergeRetrievalHabitProfileSettings(loadedObject.retrievalHabitProfile);
     merged.memoryExtractionConsent = mergeMemoryExtractionConsentSettings(loadedObject.memoryExtractionConsent);

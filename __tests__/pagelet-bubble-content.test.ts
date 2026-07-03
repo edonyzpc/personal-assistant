@@ -4,6 +4,8 @@ import {
     buildDiscoveryContent,
     buildEmptyContent,
     buildNudgeContent,
+    buildOnboardingNudgeContent,
+    buildPatternDetectionNudgeContent,
     buildQuickReviewContent,
     buildQuietRecallNudgeContent,
     buildReviewQueueNudgeContent,
@@ -225,6 +227,7 @@ describe("Pagelet Bubble quick access content", () => {
         };
         const recallCallbacks = {
             onView: jest.fn(),
+            onLink: jest.fn(),
             onDismiss: jest.fn(),
             onLater: jest.fn(),
         };
@@ -262,6 +265,7 @@ describe("Pagelet Bubble quick access content", () => {
         };
         const recallCallbacks = {
             onView: jest.fn(),
+            onLink: jest.fn(),
             onDismiss: jest.fn(),
             onLater: jest.fn(),
         };
@@ -281,6 +285,7 @@ describe("Pagelet Bubble quick access content", () => {
         expect(JSON.stringify(content)).not.toContain("Small weekly rituals");
         expect(content?.actions.map((action) => action.label)).toEqual([
             "View",
+            "Link",
             "Dismiss",
             "Later",
         ]);
@@ -288,9 +293,118 @@ describe("Pagelet Bubble quick access content", () => {
         content?.actions[0].callback();
         content?.actions[1].callback();
         content?.actions[2].callback();
+        content?.actions[3].callback();
 
         expect(recallCallbacks.onView).toHaveBeenCalledWith(candidate);
+        expect(recallCallbacks.onLink).toHaveBeenCalledWith(candidate);
         expect(recallCallbacks.onDismiss).toHaveBeenCalledWith(candidate);
         expect(recallCallbacks.onLater).toHaveBeenCalledWith(candidate);
+    });
+
+    it("adds the first-use Quiet Recall explanation when requested", () => {
+        const candidate = {
+            candidateId: "qr-vault-1",
+            relation: "current" as const,
+            generatedAt: "2026-07-02T12:00:00.000Z",
+            onboardingExplanation: true,
+        };
+        const content = buildQuietRecallNudgeContent({
+            pageletEnabled: true,
+            quietRecallEnabled: true,
+            bubbleNudgesEnabled: true,
+            proactiveHints: true,
+            candidate,
+        }, {
+            onView: jest.fn(),
+            onLink: jest.fn(),
+            onDismiss: jest.fn(),
+            onLater: jest.fn(),
+        }, "en");
+
+        expect(content?.findings.map((finding) => finding.text)).toEqual([
+            "A saved insight may fit the note you are viewing.",
+            "PA found a note you wrote before that may be relevant now. Click to see why.",
+        ]);
+    });
+
+    it("renders one-time onboarding bridge nudges through Bubble content", () => {
+        const nudge = {
+            kind: "quick_capture" as const,
+            generatedAt: "2026-07-02T12:00:00.000Z",
+        };
+        const callbacks = { onDismiss: jest.fn() };
+
+        expect(buildOnboardingNudgeContent({
+            pageletEnabled: true,
+            proactiveHints: false,
+            nudge,
+        }, callbacks, "en")).toBeNull();
+
+        const content = buildOnboardingNudgeContent({
+            pageletEnabled: true,
+            proactiveHints: true,
+            nudge,
+        }, callbacks, "en");
+
+        expect(content?.findings).toEqual([{
+            text: "Your thought is saved. PA will remind you when it becomes relevant to what you're writing.",
+        }]);
+        expect(content?.actions[0]).toMatchObject({
+            label: "Got it",
+            primary: true,
+        });
+
+        content?.actions[0].callback();
+        expect(callbacks.onDismiss).toHaveBeenCalledWith(nudge);
+    });
+
+    it("renders pattern detection nudges only when enabled and routes to the pattern detail", () => {
+        const result = {
+            generatedAt: "2026-07-02T12:00:00.000Z",
+            totalCount: 1,
+            patterns: [{
+                id: "pattern-recurring-tag",
+                patternType: "recurring_tag" as const,
+                title: "Recurring tag: #project",
+                summary: "3 recent notes share #project.",
+                sourceRefs: [{ path: "Projects/A.md", evidenceStrength: "medium" as const }],
+                whyShown: ["At least 3 recent notes share #project."],
+            }],
+        };
+        const callbacks = {
+            onView: jest.fn(),
+            onDismiss: jest.fn(),
+        };
+
+        expect(buildPatternDetectionNudgeContent({
+            pageletEnabled: true,
+            proactiveHints: false,
+            result,
+        }, callbacks, "en")).toBeNull();
+        expect(buildPatternDetectionNudgeContent({
+            pageletEnabled: true,
+            proactiveHints: true,
+            quietHoursActive: true,
+            result,
+        }, callbacks, "en")).toBeNull();
+
+        const content = buildPatternDetectionNudgeContent({
+            pageletEnabled: true,
+            proactiveHints: true,
+            result,
+        }, callbacks, "en");
+
+        expect(content?.findings).toEqual([{ text: "PA noticed 1 cross-note patterns." }]);
+        expect(JSON.stringify(content)).not.toContain("Projects/A.md");
+        expect(content?.actions.map((action) => action.label)).toEqual([
+            "View patterns",
+            "Dismiss",
+        ]);
+
+        content?.actions[0].callback();
+        content?.actions[1].callback();
+
+        expect(callbacks.onView).toHaveBeenCalledWith(result);
+        expect(callbacks.onDismiss).toHaveBeenCalledWith(result);
     });
 });

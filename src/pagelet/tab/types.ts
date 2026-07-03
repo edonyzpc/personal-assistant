@@ -8,6 +8,7 @@ import type {
     PanelMemoryGovernanceState,
     PanelQuietRecallState,
     PanelGraphDiscoveryState,
+    PanelPatternDetectionState,
     PanelReviewQueueState,
     PanelSavedInsightState,
     PanelWeeklyReviewState,
@@ -48,6 +49,7 @@ export interface PageletDetailExtra {
     weeklyReview?: PanelWeeklyReviewState;
     quietRecall?: PanelQuietRecallState;
     graphDiscovery?: PanelGraphDiscoveryState;
+    patternDetection?: PanelPatternDetectionState;
 }
 
 export interface PageletDetailPayload {

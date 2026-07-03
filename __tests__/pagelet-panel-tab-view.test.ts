@@ -631,6 +631,57 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.textContent).not.toContain("No findings yet");
     });
 
+    it("renders pending Memory candidates and handles candidate actions", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const candidate = makeReviewQueueItem({
+            id: "rq-memory",
+            type: "memory_candidate",
+            title: "Remember preference",
+            claim: "Prefers concise planning notes.",
+            admissionReason: "memory_confirmation_required",
+            metadata: {
+                memoryType: "preference",
+                sensitivity: "low",
+            },
+        });
+        const confirmCandidate = jest.fn(async (_item: ReviewQueueItem) => ({
+            ok: true,
+            message: "Confirmed",
+        }));
+        const dismissCandidate = jest.fn(async (_item: ReviewQueueItem) => ({
+            ok: true,
+            message: "Dismissed",
+        }));
+        const tab = new TabView("en", {
+            onConfirmMemoryCandidate: confirmCandidate,
+            onDismissMemoryCandidate: dismissCandidate,
+        });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                memoryGovernance: {
+                    records: [],
+                    candidates: [candidate],
+                    totalCount: 1,
+                },
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-memory-candidates")).not.toBeNull();
+        expect(container.textContent).toContain("Memory candidates");
+        expect(container.textContent).toContain("Prefers concise planning notes.");
+        expect(container.textContent).not.toContain("No memory candidates pending");
+
+        await container.querySelector(".pa-pagelet-tab-memory-confirm")?.click();
+
+        expect(confirmCandidate).toHaveBeenCalledWith(candidate);
+        expect(container.textContent).toContain("Confirmed");
+        expect(dismissCandidate).not.toHaveBeenCalled();
+    });
+
     it("renders preview-only Maintenance Review results in the native detail tab", () => {
         const container = new FakeElement("div");
         container.isConnected = true;
@@ -1027,6 +1078,10 @@ describe("Pagelet panel and tab view regressions", () => {
 
         const tabContainer = new FakeElement("div");
         tabContainer.isConnected = true;
+        const linkRecall = jest.fn(async (_candidate: QuietRecallCandidate, _currentPath?: string) => ({
+            ok: true,
+            message: "Linked",
+        }));
         const saveRecall = jest.fn(async (_candidate: QuietRecallCandidate) => ({
             ok: true as const,
             value: {
@@ -1045,6 +1100,7 @@ describe("Pagelet panel and tab view regressions", () => {
             message: "Recall saved as insight.",
         }));
         const tab = new TabView("en", {
+            onLinkRecallCandidate: linkRecall,
             onSaveQuietRecallAsInsight: saveRecall,
         });
         tab.mount(tabContainer as unknown as HTMLElement);
@@ -1056,10 +1112,21 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(tabContainer.querySelector(".pa-pagelet-tab-quiet-recall")).not.toBeNull();
         expect(tabContainer.textContent).toContain("Why now: Source matches the note you are looking at.");
         expect(tabContainer.textContent).toContain("Next: Compare this saved insight with the current note.");
+        const linkButton = tabContainer.querySelector(".pa-pagelet-tab-recall-link");
+        expect(linkButton?.textContent).toBe("Link to current note");
         const saveButton = tabContainer.querySelector(".pa-pagelet-tab-recall-save");
         expect(saveButton?.textContent).toBe("Save as insight");
 
-        await saveButton?.click();
+        await linkButton?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(linkRecall).toHaveBeenCalledWith(candidate, "notes/current.md");
+        expect(tabContainer.querySelector(".pa-pagelet-tab-recall-link")?.textContent).toBe("Linked");
+        expect(tabContainer.querySelector(".pa-pagelet-tab-recall-link")?.disabled).toBe(true);
+
+        const refreshedSaveButton = tabContainer.querySelector(".pa-pagelet-tab-recall-save");
+        await refreshedSaveButton?.click();
         await Promise.resolve();
         await Promise.resolve();
 
@@ -1211,7 +1278,18 @@ describe("Pagelet panel and tab view regressions", () => {
                 },
                 memoryGovernance: {
                     records: [makeMemoryRecord()],
-                    totalCount: 1,
+                    candidates: [makeReviewQueueItem({
+                        id: "rq-memory",
+                        type: "memory_candidate",
+                        title: "Remember preference",
+                        claim: "Prefers concise planning notes.",
+                        admissionReason: "memory_confirmation_required",
+                        metadata: {
+                            memoryType: "preference",
+                            sensitivity: "low",
+                        },
+                    })],
+                    totalCount: 2,
                 },
             },
         });
@@ -1226,8 +1304,53 @@ describe("Pagelet panel and tab view regressions", () => {
         const contentEl = restored.contentEl as unknown as FakeElement;
         expect(contentEl.textContent).toContain("Saved Insights");
         expect(contentEl.textContent).toContain("Pricing notes keep coming back.");
+        expect(contentEl.textContent).toContain("Memory candidates");
+        expect(contentEl.textContent).toContain("Prefers concise planning notes.");
         expect(contentEl.textContent).toContain("Prefers concise weekly planning.");
         expect(contentEl.textContent).not.toContain("Result no longer available");
+    });
+
+    it("renders pattern detection details with clickable source refs and local dismiss", async () => {
+        const sourceClick = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en", { onSourcePathClick: sourceClick });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Cross-note patterns", [], {
+            layoutType: "review",
+            extra: {
+                patternDetection: {
+                    generatedAt: "2026-07-02T12:00:00.000Z",
+                    totalCount: 1,
+                    patterns: [{
+                        id: "pattern-project",
+                        patternType: "recurring_tag",
+                        title: "Recurring tag: #project",
+                        summary: "3 recent notes share #project.",
+                        sourceRefs: [
+                            { path: "Projects/A.md", evidenceStrength: "medium" },
+                            { path: "Projects/B.md", evidenceStrength: "medium" },
+                        ],
+                        whyShown: ["At least 3 recent notes share #project."],
+                    }],
+                },
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-pattern-detection")).not.toBeNull();
+        expect(container.querySelector(".pa-pagelet-tab-pattern-card")).not.toBeNull();
+        expect(container.textContent).toContain("Recurring tag: #project");
+        expect(container.textContent).toContain("Projects/A.md");
+
+        const sourceButton = container.querySelector(".pa-pagelet-tab-source-link");
+        await sourceButton?.click();
+        expect(sourceClick).toHaveBeenCalledWith("Projects/A.md");
+
+        const dismissButton = container.querySelector(".pa-pagelet-tab-pattern-dismiss");
+        await dismissButton?.click();
+        expect(container.querySelector(".pa-pagelet-tab-pattern-card")).toBeNull();
+        expect(container.textContent).toContain("No patterns left in this view.");
     });
 
     it("shows the unavailable state when the native detail session is not in memory", async () => {

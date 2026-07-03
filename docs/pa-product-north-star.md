@@ -1,6 +1,6 @@
 # PA Product North Star
 
-Updated: 2026-06-29
+Updated: 2026-07-02
 
 ## Status
 
@@ -9,6 +9,7 @@ Updated: 2026-06-29
 | Document type | Product philosophy / design principle |
 | Scope | PA Agent, Pagelet, Memory, Capture, Review, Maintenance, Action |
 | Role | North Star for product design, SDD decisions, and implementation tradeoffs |
+| Source decision | [PA product discussion 2026-07-02](./pa-product-discussion-2026-07-02.md) |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
@@ -17,85 +18,61 @@ stable than feature specs. Use it when a design decision is ambiguous.
 
 ## North Star
 
-> PA is a quiet and trustworthy personal knowledge assistant that helps users
-> capture lightly, review naturally, connect with evidence, maintain
-> reversibly, and act only after trust has grown.
+> 随手记下，需要时自然浮现。
 
-Short form:
+English working form:
 
-> Let personal knowledge compound naturally.
+> Capture lightly. Let the right notes return when they matter.
 
-PA's value is not making AI think for the user. PA's value is helping the
-user's own thinking become easier to keep, revisit, connect, and care for over
-time.
+PA's value is not making AI think for the user. PA's value is lowering the cost
+of leaving real thoughts behind, then helping useful old notes return at the
+right moment with evidence.
 
-PA should also avoid turning review into a new management burden:
+Expanded form:
 
-> Review should feel like recognition, not administration.
->
-> 回顾应该像“想起来了”，不是“又多了一组待处理”。
+> PA lets you capture thoughts with minimal friction, then lets worthwhile old
+> notes naturally appear when they are useful - while keeping the vault orderly,
+> reversible, and easier to reuse over time.
 
 The default PA artifact is ignorable. The user should be able to read, close,
 ignore, or dismiss a recall cue, digest, or insight candidate without creating
 future debt. Explicit confirmation is required when PA will create durable
 state, change future PA behavior, mutate the vault, or act outside the vault.
 
-## Product Philosophy
+## Design Philosophy
 
-### 1. Let Thoughts Stay First
+> 安静且可信。
 
-Do not begin with complex knowledge management. Do not require the user to
-classify, structure, configure, or write long-form content before value appears.
+This is a design constraint, not the product's user-facing value proposition.
+It describes how PA should deliver the North Star:
 
-PA should first lower the cost of leaving a real thought behind.
+```mermaid
+flowchart TD
+  A["North Star: 随手记下，需要时自然浮现"] --> B["Design philosophy: 安静且可信"]
+  B --> C["Implementation principles and review gates"]
+```
 
-### 2. Let Thoughts Return Naturally
+Quiet and trustworthy means PA should appear at natural breaks, show source
+evidence, preserve the user's original thinking, and earn permission before
+durable action.
 
-Users do not need more AI-generated content by default. They need to meet their
-own old thoughts again at the right time.
+## Research-Backed Principles
 
-PA should help with retrieval, review, connection, and recall before it tries to
-create more output.
+These principles summarize the 2026-07-02 product discussion and should guide
+feature tradeoffs:
 
-Returning a thought should not become a processing task. A quiet recall,
-Pagelet hint, or AI insight preview may simply be noticed and forgotten again.
-That is acceptable.
+1. Organization is often the surface request; reuse at the right moment is the
+   deeper user need.
+2. Knowledge value comes from being reused, not merely being stored neatly.
+3. AI should help users remember and reconnect their own thoughts before it
+   tries to think for them.
+4. "Knowledge compounding" is a metaphor, not a product promise; prefer reuse
+   and return as concrete language.
+5. Not every note deserves to be rescued. Low-value notes may naturally fade.
+6. The most valuable recall is contextual and queryless.
+7. Users welcome proactive help but resist autonomous control.
 
-### 3. Care For Knowledge Gently
-
-Second brains become messy. Notes age, titles blur, links go missing, drafts
-stall, and ideas scatter.
-
-PA should help maintain the vault like a quiet knowledge steward: rename, link,
-archive, review, and update when useful, but never roughly overwrite the user's
-thinking.
-
-### 4. Keep AI Behind The User
-
-AI may expand, summarize, suggest, maintain, and act. But the user should always
-be able to tell:
-
-- what the original thought was
-- what AI added or changed
-- why PA suggested it
-- where the evidence came from
-- whether the change can be undone
-
-The stronger PA becomes, the quieter and more explainable it should feel.
-
-### 5. Let Trust Grow Slowly
-
-PA should not start as a fully automatic vault manager.
-
-It should begin with small, reviewable actions. When the user repeatedly accepts
-similar suggestions with low edits and low undo rates, PA may earn more scoped
-autonomy.
-
-Trust does not mean asking for more confirmations. Trust means PA learns which
-durable actions deserve preview and which read-only signals should stay
-lightweight, sparse, and easy to ignore.
-
-## Design Principles
+## Design Constraints
 
 - Less management, more capture.
 - Less generation, more return.
@@ -103,15 +80,35 @@ lightweight, sparse, and easy to ignore.
 - Less black-box insight, more source-backed evidence.
 - Less full automation, more earned trust.
 - Less tool jargon, more long-term companionship.
-- Less confirmation burden, more optional recognition.
+
+Review should feel like recognition, not administration.
+
+> 回顾应该像“想起来了”，不是“又多了一组待处理”。
+
+## Decay Principle
+
+Do not use hard decay as the primary ranking mechanism. Use multi-signal
+ranking instead.
+
+| Signal | Role |
+| --- | --- |
+| Semantic relevance | Primary signal: decides whether something should appear. |
+| Time freshness | Tie-breaker: favors newer notes when relevance is similar. |
+| Connection density | Quality signal: linked or referenced notes may matter more. |
+| Note richness | Quality signal: distinguishes deep notes from short temporary captures. |
+| User feedback | Learning signal: repeated dismissal lowers priority. |
+
+Hard time decay fails when many older same-topic notes are all highly
+semantically related. PA should instead combine signals so old notes can still
+return when they are truly useful, while noisy candidates quietly rank lower.
 
 ## Product Review Questions
 
 Before adding or implementing a PA feature, ask:
 
 - Does this lower the friction of capturing or revisiting real thoughts?
+- Does this make the user's own notes more likely to return at the right time?
 - Does this protect the user's original thinking?
-- Does this help old thoughts return at the right time?
 - Does this connect ideas with evidence instead of producing black-box insight?
 - Does this maintain the vault gently, with preview, recovery, or undo?
 - Does this keep advanced AI capability behind a quiet product surface?
@@ -136,6 +133,6 @@ engineering substrate, but it should not become a prominent product surface yet.
 
 ## Final Principle
 
-> Capture should be light. Review should be natural. Connections should have
-> evidence. AI artifacts should be ignorable. Maintenance should be reversible.
-> Action should be earned.
+Capture should be light. Review should be natural. Connections should have
+evidence. AI artifacts should be ignorable. Maintenance should be reversible.
+Action should be earned. The right old notes should appear when they matter.

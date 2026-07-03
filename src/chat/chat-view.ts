@@ -373,6 +373,12 @@ export class LLMView extends ItemView {
         const composerHint = inputDiv.createDiv({ cls: 'pa-chat-composer-hint' });
         composerHint.hidden = true;
         composerHint.setAttribute('aria-live', 'polite');
+        const selectionHint = inputDiv.createDiv({
+            cls: 'pa-chat-selection-hint',
+            text: t("plugin.chat.hint.selectedText"),
+        });
+        selectionHint.hidden = true;
+        selectionHint.setAttribute('aria-live', 'polite');
 
         sendButton.disabled = true;
 
@@ -510,6 +516,40 @@ export class LLMView extends ItemView {
             composerHint.setText(message);
             composerHint.hidden = false;
         };
+        const hasActiveMarkdownSelection = () => {
+            const workspace = this.app.workspace as {
+                getActiveViewOfType?: <T>(type: new (...args: never[]) => T) => T | null;
+                getMostRecentLeaf?: () => WorkspaceLeaf | null;
+            };
+            const activeView = workspace.getActiveViewOfType?.(MarkdownView) as MarkdownView | null | undefined;
+            const leafView = workspace.getMostRecentLeaf?.()?.view as (MarkdownView & {
+                editor?: { getSelection?: () => string };
+                getViewType?: () => string;
+            }) | null | undefined;
+            const view = activeView ?? (leafView?.getViewType?.() === 'markdown' ? leafView : null);
+            const selection = view?.editor?.getSelection?.();
+            return typeof selection === 'string' && selection.trim().length > 0;
+        };
+        const syncSelectionHint = () => {
+            selectionHint.hidden = !hasActiveMarkdownSelection();
+        };
+        const selectionHintDocument = getOptionalPlatformDocument();
+        const selectionHintEvents = ['selectionchange', 'keyup', 'pointerup', 'focusin'];
+        if (
+            selectionHintDocument
+            && typeof selectionHintDocument.addEventListener === 'function'
+            && typeof selectionHintDocument.removeEventListener === 'function'
+        ) {
+            for (const eventName of selectionHintEvents) {
+                selectionHintDocument.addEventListener(eventName, syncSelectionHint);
+            }
+            this.registerViewTeardown(() => {
+                for (const eventName of selectionHintEvents) {
+                    selectionHintDocument.removeEventListener(eventName, syncSelectionHint);
+                }
+            });
+        }
+        setPlatformTimeout(syncSelectionHint, 0);
         const hideSkillTypeahead = () => {
             skillTypeahead.empty();
             skillTypeahead.hidden = true;

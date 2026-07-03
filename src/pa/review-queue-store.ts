@@ -80,7 +80,7 @@ export interface ReviewQueueStoreOptions {
 
 const VALID_STATUS_TRANSITIONS: Record<ReviewQueueStatus, readonly ReviewQueueStatus[]> = {
     suggested: ["accepted", "applied", "dismissed", "snoozed", "expired"],
-    accepted: ["applied", "dismissed", "edited", "snoozed"],
+    accepted: ["applied", "dismissed", "edited", "snoozed", "failed"],
     edited: ["applied", "dismissed", "snoozed"],
     applied: ["undone", "failed"],
     dismissed: ["suggested"],
@@ -383,4 +383,3 @@ function cloneItem(item: ReviewQueueItem): ReviewQueueItem {
     if (item.metadata) clone.metadata = { ...item.metadata };
     return clone;
 }
-

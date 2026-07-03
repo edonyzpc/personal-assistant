@@ -1,5 +1,7 @@
 # PA Quiet Recall And Insight Timing Product Spec
 
+> [!warning] This spec is partially superseded by [PA product discussion 2026-07-02](./pa-product-discussion-2026-07-02.md): Quiet Recall's candidate pool expands from Saved Insights to the whole vault, and its trigger model changes to note open/switch, save-after, and user-initiated shortcut. Use that discussion as the current product baseline.
+
 Updated: 2026-06-29
 
 ## Status

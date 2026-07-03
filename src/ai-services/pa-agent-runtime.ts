@@ -53,6 +53,7 @@ import { createAbortError, isAbortError, throwIfAborted } from "./chat-utils";
 import { errorMessage } from "./agent-utils";
 import { LOAD_SKILL_TOOL_NAME, SkillContextProvider } from "./skill-context-provider";
 import { AppendToolProvider } from "./append-tool-provider";
+import { SelectionToolProvider } from "./selection-tool-provider";
 import {
     chatToolResultToPaAgentToolExecutionResult,
     createPaAgentCapabilityToolExecutor,
@@ -683,10 +684,11 @@ export class PaAgentRuntime {
         // any caller-supplied providers (e.g., web search).
         if (operationsAgentEnabled) {
             const appendProvider = new AppendToolProvider();
+            const selectionProvider = new SelectionToolProvider();
             const existingProviders = this.options.additionalCapabilityProviders ?? [];
             this.options = {
                 ...this.options,
-                additionalCapabilityProviders: [...existingProviders, appendProvider],
+                additionalCapabilityProviders: [...existingProviders, appendProvider, selectionProvider],
             };
         }
     }

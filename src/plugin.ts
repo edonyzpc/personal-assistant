@@ -107,9 +107,13 @@ import {
     type MaintenanceMoveActionLogEntry,
     type MaintenanceMoveApplyResult,
     type MaintenanceMoveUndoResult,
+    type PatternDetectionInput,
+    type PatternDetectionResult,
     type QuietRecallCandidate,
+    type QuietRecallRelatedNote,
     type QuietRecallRunResult,
     type QuietRecallSaveResult,
+    type QuietRecallVaultNote,
     type RetrievalHabitFeedbackKind,
     type RetrievalHabitProfileRecordResult,
     type ReviewQueueCreateInput,
@@ -120,21 +124,18 @@ import {
     type SavedInsight,
     type ScopeRecapRunResult,
     type ScopeRecapSourceNote,
-    type WeeklyReviewRunResult,
-    type WeeklyReviewSourceNote,
+    addPaRelatedLink,
     applyMaintenanceMoveProposal,
     applyRetrievalHabitProfileToRecallCandidates,
     buildQuietRecallCandidates,
     buildScopeRecap,
-    buildWeeklyReview,
-    buildWeeklyReviewGeneratedNote,
     coerceQuietRecallSaveResult,
-    filterWeeklyReviewAcceptedItemIds,
+    detectCrossNotePatterns,
     findMaintenanceActionLogEntry,
     discoverLightweightGraphItems,
     graphDiscoveryItemToReviewQueueInput,
     maintenanceProposalToReviewQueueInput,
-    isReviewQueueWeeklyCarryoverEligible,
+    memoryCandidateFromQueueItem,
     quietRecallCandidateToSavedInsightInput,
     scanMaintenanceReview,
     undoMaintenanceMoveAction,
@@ -147,6 +148,18 @@ const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
 const CALLOUT_MANAGER_READY_POLL_MS = 50;
 const MEMORY_STARTUP_EVENT_REPLAY_WINDOW_MS = 90_000;
 const MEMORY_STARTUP_EVENT_MTIME_GRACE_MS = 5_000;
+const QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES = 40;
+const PATTERN_DETECTION_RECENT_WINDOW_MS = 14 * 24 * 60 * 60 * 1000;
+const PATTERN_DETECTION_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
+const PATTERN_DETECTION_MIN_ACTIVE_NOTES = 5;
+const PATTERN_DETECTION_MAX_SOURCE_NOTES = 80;
+const PAGELET_MAINTENANCE_ONBOARDING_MIN_NOTES = 50;
+
+interface QuietRecallVaultNoteCollection {
+    vaultNotes: QuietRecallVaultNote[];
+    relatedNotes: QuietRecallRelatedNote[];
+}
+
 interface TechnicalMemoryDetail {
     label: string;
     value: string;
@@ -443,8 +456,10 @@ export class PluginManager extends Plugin {
                     (note) => this.savePageletSummaryNote(note),
                     (proposal) => this.applyMaintenanceProposal(proposal),
                     (actionId) => this.undoMaintenanceMove(actionId),
-                    (review, acceptedItemIds) => this.saveWeeklyReviewNote(review, acceptedItemIds),
+                    (item) => this.confirmMemoryCandidateFromQueueItem(item),
+                    (item) => this.dismissMemoryCandidateFromQueueItem(item),
                     (candidate) => this.saveQuietRecallAsInsight(candidate),
+                    (candidate) => this.linkQuietRecallCandidateFromActiveNote(candidate),
                 );
             }
         );
@@ -694,7 +709,15 @@ export class PluginManager extends Plugin {
     private onIdle(): void {
         if (this.unloading) return;
         this.syncPageletRuntime();
+        void this.maybeShowNextOnboardingNudge();
+        void this.maybeRunPatternDetectionNudge();
         this.syncMemoryExtractionRuntime();
+    }
+
+    private async maybeShowNextOnboardingNudge(): Promise<void> {
+        await this.maybeShowMaintenanceScanOnboardingNudge();
+        if (this.pageletOrchestrator?.hasActiveOnboardingNudge) return;
+        await this.maybeShowQuickCaptureOnboardingNudge();
     }
 
     private setupHoverPopoverObserver(): void {
@@ -987,7 +1010,6 @@ export class PluginManager extends Plugin {
             onDiscoverConnections: () => dispatch((callbacks) => callbacks.onDiscoverConnections()),
             onPeriodicSummary: () => dispatch((callbacks) => callbacks.onPeriodicSummary()),
             onMaintenanceReview: () => dispatch((callbacks) => callbacks.onMaintenanceReview()),
-            onWeeklyReview: () => dispatch((callbacks) => callbacks.onWeeklyReview()),
             onQuietRecall: () => dispatch((callbacks) => callbacks.onQuietRecall()),
             onGraphDiscovery: () => dispatch((callbacks) => callbacks.onGraphDiscovery()),
             onScopeRecap: () => dispatch((callbacks) => callbacks.onScopeRecap()),
@@ -1264,12 +1286,11 @@ export class PluginManager extends Plugin {
             dismissReviewQueueItem: (id) => this.dismissReviewQueueItem(id),
             runMaintenanceReview: (options) => this.runMaintenanceReview(options),
             runGraphDiscovery: (options) => this.runGraphDiscovery(options),
+            detectCrossNotePatterns: () => this.detectCrossNotePatternsForPagelet(),
             runScopeRecap: () => this.runScopeRecap(),
-            runWeeklyReview: () => this.runWeeklyReview(),
-            saveWeeklyReviewNote: (review, acceptedItemIds) =>
-                this.saveWeeklyReviewNote(review, acceptedItemIds),
             runQuietRecall: () => this.runQuietRecall(),
             saveQuietRecallAsInsight: (candidate) => this.saveQuietRecallAsInsight(candidate),
+            linkRecallCandidate: (currentPath, candidatePath) => this.linkRecallCandidate(currentPath, candidatePath),
             recordQuietRecallFeedback: (candidate, feedback) =>
                 this.recordQuietRecallFeedback(candidate, feedback),
             listSavedInsights: () => this.listSavedInsights(),
@@ -1293,6 +1314,11 @@ export class PluginManager extends Plugin {
     private listReviewQueueItems(filter: ReviewQueueListFilter = {}): ReviewQueueItem[] {
         if (!this.settings.reviewQueue.enabled) return [];
         return this.getReviewQueueStore().list(filter);
+    }
+
+    private getReviewQueueItemById(id: string): ReviewQueueItem | null {
+        if (!this.settings.reviewQueue.enabled) return null;
+        return this.getReviewQueueStore().list().find((item) => item.id === id) ?? null;
     }
 
     private createReviewQueueItem(input: ReviewQueueCreateInput): Promise<ReviewQueueResult<ReviewQueueItem>> {
@@ -1514,6 +1540,225 @@ export class PluginManager extends Plugin {
         return notes;
     }
 
+    private async maybeRunPatternDetectionNudge(): Promise<void> {
+        if (this.unloading || !this.pageletOrchestrator) return;
+        if (!this.settings.pagelet.enabled || !this.settings.pagelet.proactiveHints || this.settings.focusMode) return;
+
+        const now = new Date();
+        const lastDetectionAt = Date.parse(this.settings.lastPatternDetectionAt ?? "");
+        if (Number.isFinite(lastDetectionAt) && now.getTime() - lastDetectionAt < PATTERN_DETECTION_INTERVAL_MS) {
+            return;
+        }
+
+        const result = await this.detectCrossNotePatternsForPagelet(now);
+        if (this.unloading || !this.pageletOrchestrator || !result) return;
+
+        this.settings.lastPatternDetectionAt = now.toISOString();
+        await this.saveSettings();
+        if (result.totalCount > 0) {
+            this.pageletOrchestrator?.setPatternDetectionNudge(result);
+        }
+    }
+
+    private async maybeShowMaintenanceScanOnboardingNudge(): Promise<void> {
+        if (this.unloading || !this.pageletOrchestrator) return;
+        if (!this.settings.pagelet.enabled || !this.settings.pagelet.proactiveHints || this.settings.focusMode) return;
+        if (this.settings.pagelet.maintenanceScanSuggested) return;
+        if (this.app.vault.getMarkdownFiles().length <= PAGELET_MAINTENANCE_ONBOARDING_MIN_NOTES) return;
+
+        const surfaced = this.pageletOrchestrator?.setOnboardingNudge("maintenance_scan") === true;
+        if (!surfaced) return;
+        this.settings.pagelet.maintenanceScanSuggested = true;
+        await this.saveSettings();
+    }
+
+    private async maybeShowQuickCaptureOnboardingNudge(): Promise<void> {
+        if (this.unloading) return;
+        if (!this.settings.pagelet.enabled || !this.settings.pagelet.proactiveHints || this.settings.focusMode) return;
+        if (this.settings.pagelet.quickCaptureExplained) return;
+        this.syncPageletRuntime();
+        if (!this.pageletOrchestrator) return;
+
+        const surfaced = this.pageletOrchestrator?.setOnboardingNudge("quick_capture") === true;
+        if (!surfaced) return;
+        this.settings.pagelet.quickCaptureExplained = true;
+        await this.saveSettings();
+    }
+
+    private async detectCrossNotePatternsForPagelet(now = new Date()): Promise<PatternDetectionResult | null> {
+        const notes = await this.collectPatternDetectionNotes(now);
+        if (notes.length < PATTERN_DETECTION_MIN_ACTIVE_NOTES) return null;
+        return detectCrossNotePatterns(notes, {
+            now,
+            minActiveNotes: PATTERN_DETECTION_MIN_ACTIVE_NOTES,
+        });
+    }
+
+    private async collectPatternDetectionNotes(now: Date): Promise<PatternDetectionInput[]> {
+        const cutoff = now.getTime() - PATTERN_DETECTION_RECENT_WINDOW_MS;
+        const files = this.app.vault.getMarkdownFiles()
+            .filter((file) => file.stat.mtime >= cutoff)
+            .filter((file) => this.isDataBoundaryAllowedFile(file))
+            .sort((left, right) => right.stat.mtime - left.stat.mtime)
+            .slice(0, PATTERN_DETECTION_MAX_SOURCE_NOTES);
+        const backlinkMap = this.buildGraphDiscoveryBacklinkMap();
+        const notes: PatternDetectionInput[] = [];
+        for (const file of files) {
+            try {
+                const content = await this.app.vault.cachedRead(file);
+                const resolvedLinks = this.getResolvedOutgoingLinks(file.path);
+                notes.push({
+                    path: file.path,
+                    title: file.basename,
+                    content,
+                    tags: this.getDataBoundaryTags(file),
+                    links: resolvedLinks.length > 0 ? resolvedLinks : this.getGraphDiscoveryLinks(file),
+                    backlinks: backlinkMap.get(normalizePath(file.path)) ?? [],
+                    folder: parentFolder(file.path),
+                    modifiedAt: new Date(file.stat.mtime).toISOString(),
+                });
+            } catch (error) {
+                this.log("Failed to read note for pattern detection", { path: file.path, error });
+            }
+        }
+        return notes;
+    }
+
+    private async collectQuietRecallVaultNotes(
+        activeFile: TFile,
+        currentContent: string,
+    ): Promise<QuietRecallVaultNoteCollection> {
+        if (await this.isPageletMemorySearchReady()) {
+            const relatedNotes = await this.findPageletRelatedNotes(
+                activeFile.path,
+                [{ path: activeFile.path, content: currentContent }],
+                [activeFile.path],
+                QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES,
+            );
+            return this.collectQuietRecallVaultNotesFromRelatedNotes(relatedNotes);
+        }
+        return this.collectQuietRecallVaultNotesFromMetadata(activeFile);
+    }
+
+    private async collectQuietRecallVaultNotesFromRelatedNotes(
+        relatedNotes: Array<{ path: string; content: string; score?: number; headingPath?: string[] }>,
+    ): Promise<QuietRecallVaultNoteCollection> {
+        const backlinkMap = this.buildGraphDiscoveryBacklinkMap();
+        const vaultNotes: QuietRecallVaultNote[] = [];
+        const recallRelatedNotes: QuietRecallRelatedNote[] = [];
+        for (const related of relatedNotes.slice(0, QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES)) {
+            const path = normalizePath(related.path).replace(/^\.\//, "");
+            const file = this.app.vault.getAbstractFileByPath(path);
+            if (!(file instanceof TFile) || file.extension !== "md") continue;
+            if (!this.isDataBoundaryAllowedFile(file)) continue;
+            const note = await this.readQuietRecallVaultNote(file, backlinkMap, related.content);
+            if (!note) continue;
+            vaultNotes.push(note);
+            recallRelatedNotes.push({
+                path: file.path,
+                score: related.score ?? 0.5,
+                headingPath: related.headingPath,
+            });
+        }
+        return { vaultNotes, relatedNotes: recallRelatedNotes };
+    }
+
+    private async collectQuietRecallVaultNotesFromMetadata(activeFile: TFile): Promise<QuietRecallVaultNoteCollection> {
+        const backlinkMap = this.buildGraphDiscoveryBacklinkMap();
+        const candidates = this.rankQuietRecallMetadataCandidates(activeFile, backlinkMap)
+            .slice(0, QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES);
+        const vaultNotes: QuietRecallVaultNote[] = [];
+        const relatedNotes: QuietRecallRelatedNote[] = [];
+        for (const candidate of candidates) {
+            const note = await this.readQuietRecallVaultNote(candidate.file, backlinkMap);
+            if (!note) continue;
+            vaultNotes.push(note);
+            relatedNotes.push({
+                path: candidate.file.path,
+                score: candidate.score,
+            });
+        }
+        return { vaultNotes, relatedNotes };
+    }
+
+    private rankQuietRecallMetadataCandidates(
+        activeFile: TFile,
+        backlinkMap: Map<string, string[]>,
+    ): Array<{ file: TFile; score: number }> {
+        const activePath = normalizePath(activeFile.path);
+        const activeFolder = parentFolder(activeFile.path);
+        const activeTags = new Set(this.getDataBoundaryTags(activeFile));
+        const activeResolvedLinks = new Set(this.getResolvedOutgoingLinks(activeFile.path));
+        const activeBacklinks = new Set(backlinkMap.get(activePath) ?? []);
+        const scores = new Map<string, { file: TFile; score: number }>();
+
+        const addScore = (file: TFile | null | undefined, amount: number): void => {
+            if (!(file instanceof TFile) || file.extension !== "md") return;
+            if (file.path === activeFile.path) return;
+            if (!this.isDataBoundaryAllowedFile(file)) return;
+            const existing = scores.get(file.path);
+            const score = Math.min(0.95, (existing?.score ?? 0) + amount);
+            scores.set(file.path, { file, score });
+        };
+
+        for (const path of activeResolvedLinks) {
+            addScore(this.app.vault.getAbstractFileByPath(path) as TFile | null, 0.5);
+        }
+        for (const path of activeBacklinks) {
+            addScore(this.app.vault.getAbstractFileByPath(path) as TFile | null, 0.45);
+        }
+
+        const resolvedLinks = this.app.metadataCache?.resolvedLinks as
+            Record<string, Record<string, number>> | undefined;
+        for (const file of this.app.vault.getMarkdownFiles()) {
+            if (file.path === activeFile.path || !this.isDataBoundaryAllowedFile(file)) continue;
+            if (parentFolder(file.path) === activeFolder) addScore(file, 0.18);
+            const tags = this.getDataBoundaryTags(file);
+            const sharedTagCount = tags.filter((tag) => activeTags.has(tag)).length;
+            if (sharedTagCount > 0) addScore(file, Math.min(0.36, sharedTagCount * 0.12));
+            const fileLinks = resolvedLinks?.[file.path];
+            if (fileLinks && Number(fileLinks[activePath] ?? 0) > 0) addScore(file, 0.35);
+            if (fileLinks) {
+                for (const linkedPath of Object.keys(fileLinks)) {
+                    if (Number(fileLinks[linkedPath]) > 0 && activeResolvedLinks.has(linkedPath)) {
+                        addScore(file, 0.12);
+                        break;
+                    }
+                }
+            }
+        }
+
+        return [...scores.values()]
+            .filter((entry) => entry.score > 0)
+            .sort((left, right) => {
+                if (right.score !== left.score) return right.score - left.score;
+                return right.file.stat.mtime - left.file.stat.mtime;
+            });
+    }
+
+    private async readQuietRecallVaultNote(
+        file: TFile,
+        backlinkMap: Map<string, string[]>,
+        contentOverride?: string,
+    ): Promise<QuietRecallVaultNote | null> {
+        try {
+            const content = contentOverride ?? await this.app.vault.cachedRead(file);
+            return {
+                path: file.path,
+                title: file.basename,
+                content,
+                tags: this.getDataBoundaryTags(file),
+                links: this.getGraphDiscoveryLinks(file),
+                backlinks: backlinkMap.get(normalizePath(file.path)) ?? [],
+                modifiedAt: new Date(file.stat.mtime).toISOString(),
+                createdAt: new Date(file.stat.ctime).toISOString(),
+            };
+        } catch (error) {
+            this.log("Failed to read note for Quiet Recall", { path: file.path, error });
+            return null;
+        }
+    }
+
     private getGraphDiscoveryLinks(file: TFile): string[] {
         const cache = this.app.metadataCache?.getFileCache(file) as {
             links?: Array<{ link?: unknown }>;
@@ -1525,6 +1770,14 @@ export class PluginManager extends Plugin {
         ].flatMap((entry) => typeof entry.link === "string" && entry.link.trim()
             ? [normalizePath(entry.link.trim())]
             : []);
+    }
+
+    private getResolvedOutgoingLinks(path: string): string[] {
+        const resolvedLinks = this.app.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined;
+        const targets = resolvedLinks?.[normalizePath(path)];
+        if (!targets) return [];
+        return Object.entries(targets).flatMap(([targetPath, count]) =>
+            count > 0 ? [normalizePath(targetPath)] : []);
     }
 
     private buildGraphDiscoveryBacklinkMap(): Map<string, string[]> {
@@ -1766,89 +2019,6 @@ export class PluginManager extends Plugin {
         return result;
     }
 
-    private async runWeeklyReview(): Promise<WeeklyReviewRunResult> {
-        if (!this.settings.weeklyReview.enabled) {
-            return buildWeeklyReview({ now: new Date(), days: 7 });
-        }
-
-        const now = new Date();
-        const notes = this.collectWeeklyReviewSourceNotes(now);
-        const reviewQueueItems = this.listReviewQueueItems({
-            statuses: ["suggested", "accepted", "edited", "snoozed"],
-        }).filter(isReviewQueueWeeklyCarryoverEligible);
-        const [maintenanceReview, quietRecall] = await Promise.all([
-            this.runMaintenanceReview({
-                enqueueProposals: false,
-                scopePaths: notes.map((note) => note.path),
-                maxFiles: 50,
-                maxProposalsPerCategory: 3,
-            }).catch((error) => {
-                this.log("Weekly Review maintenance section skipped", error);
-                return null;
-            }),
-            this.runQuietRecall().catch((error) => {
-                this.log("Weekly Review recall section skipped", error);
-                return null;
-            }),
-        ]);
-
-        return buildWeeklyReview({
-            now,
-            days: 7,
-            notes,
-            reviewQueueItems,
-            savedInsights: this.listDataBoundaryAllowedSavedInsights(),
-            confirmedMemories: this.listConfirmedMemories(),
-            maintenanceReview,
-            quietRecall,
-        });
-    }
-
-    private collectWeeklyReviewSourceNotes(now: Date): WeeklyReviewSourceNote[] {
-        const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-        const earliest = now.getTime() - sevenDaysMs;
-        return this.app.vault.getMarkdownFiles()
-            .filter((file) => file.stat.mtime >= earliest)
-            .filter((file) => this.isDataBoundaryAllowedFile(file))
-            .sort((left, right) => right.stat.mtime - left.stat.mtime)
-            .slice(0, 50)
-            .map((file) => ({
-                path: file.path,
-                title: file.basename,
-                modifiedAt: new Date(file.stat.mtime).toISOString(),
-                createdAt: new Date(file.stat.ctime).toISOString(),
-            }));
-    }
-
-    private async saveWeeklyReviewNote(
-        review: WeeklyReviewRunResult,
-        acceptedItemIds: readonly string[],
-    ): Promise<WriteResult> {
-        const filteredAcceptedItemIds = filterWeeklyReviewAcceptedItemIds(review, acceptedItemIds);
-        if (filteredAcceptedItemIds.length === 0) {
-            return { success: false, error: pageletT("pagelet.weekly.save.noAccepted", this.getPageletLocale()) };
-        }
-
-        const confirmed = await confirmUserAction(this.app, {
-            title: pageletT("pagelet.weekly.save.confirmTitle", this.getPageletLocale()),
-            message: pageletT("pagelet.weekly.save.confirmMessage", this.getPageletLocale(), {
-                count: filteredAcceptedItemIds.length,
-                range: review.range.label,
-            }),
-            confirmText: pageletT("pagelet.weekly.save.confirm", this.getPageletLocale()),
-        });
-        if (!confirmed) {
-            return { success: false, error: pageletT("pagelet.weekly.save.cancelled", this.getPageletLocale()) };
-        }
-
-        const note = buildWeeklyReviewGeneratedNote(
-            review,
-            filteredAcceptedItemIds,
-            this.settings.pagelet.reviewsFolder,
-        );
-        return this.writePageletReviewNote(note);
-    }
-
     private async runQuietRecall(): Promise<QuietRecallRunResult> {
         if (!this.settings.quietRecall.enabled) {
             return buildQuietRecallCandidates({ now: new Date() });
@@ -1863,14 +2033,14 @@ export class PluginManager extends Plugin {
         }
 
         const content = await this.app.vault.cachedRead(activeFile);
-        const relatedNotes = (await this.findPageletRelatedNotes(
-            activeFile.path,
-            [{ path: activeFile.path, content }],
-            [activeFile.path],
-        ).catch((error) => {
-            this.log("Quiet Recall related-note search skipped", error);
-            return [];
-        })).filter((note) => this.isDataBoundaryAllowedPath(note.path));
+        const collectedVaultNotes = await this.collectQuietRecallVaultNotes(activeFile, content).catch((error) => {
+            this.log("Quiet Recall vault-note collection skipped", error);
+            return { vaultNotes: [], relatedNotes: [] } satisfies QuietRecallVaultNoteCollection;
+        });
+        const relatedNotes = collectedVaultNotes.relatedNotes
+            .filter((note) => this.isDataBoundaryAllowedPath(note.path));
+        const vaultNotes = collectedVaultNotes.vaultNotes
+            .filter((note) => this.isDataBoundaryAllowedPath(note.path));
 
         const recall = buildQuietRecallCandidates({
             now: new Date(),
@@ -1880,6 +2050,7 @@ export class PluginManager extends Plugin {
                 content,
             },
             relatedNotes,
+            vaultNotes,
             savedInsights: this.listDataBoundaryAllowedSavedInsights(),
         });
         const candidates = applyRetrievalHabitProfileToRecallCandidates(
@@ -1913,6 +2084,79 @@ export class PluginManager extends Plugin {
             new Notice(coerced.message, 5000);
         }
         return coerced;
+    }
+
+    private async linkQuietRecallCandidateFromActiveNote(
+        candidate: QuietRecallCandidate,
+        currentPath?: string,
+    ): Promise<{ ok: boolean; message: string }> {
+        const sourcePath = currentPath ? normalizePath(currentPath).replace(/^\.\//, "") : "";
+        const activeFile = this.app.workspace.getActiveFile();
+        const resolvedSourcePath = sourcePath || (activeFile instanceof TFile && activeFile.extension === "md" ? activeFile.path : "");
+        if (!resolvedSourcePath) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.recall.linkNoActiveNote", this.getPageletLocale()),
+            };
+        }
+        const candidatePath = candidate.sourceRefs[0]?.path;
+        if (!candidatePath) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.recall.linkNoCandidate", this.getPageletLocale()),
+            };
+        }
+        return this.linkRecallCandidate(resolvedSourcePath, candidatePath);
+    }
+
+    private async linkRecallCandidate(currentPath: string, candidatePath: string): Promise<{ ok: boolean; message: string }> {
+        const locale = this.getPageletLocale();
+        const currentFile = this.app.vault.getAbstractFileByPath(normalizePath(currentPath).replace(/^\.\//, ""));
+        const candidateFile = this.app.vault.getAbstractFileByPath(normalizePath(candidatePath).replace(/^\.\//, ""));
+        if (
+            !(currentFile instanceof TFile)
+            || currentFile.extension !== "md"
+            || !(candidateFile instanceof TFile)
+            || candidateFile.extension !== "md"
+        ) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.recall.linkFailed", locale, { reason: "file-not-found" }),
+            };
+        }
+        if (!this.isDataBoundaryAllowedPath(currentFile.path) || !this.isDataBoundaryAllowedPath(candidateFile.path)) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.recall.linkBlocked", locale),
+            };
+        }
+
+        const result = await addPaRelatedLink(this.app, currentFile.path, candidateFile.path);
+        if (!result.ok) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.recall.linkFailed", locale, { reason: result.reason }),
+            };
+        }
+        void this.recordQuietRecallFeedback({
+            id: `quiet-recall-link:${currentFile.path}:${candidateFile.path}`,
+            title: candidateFile.basename,
+            summary: `Linked ${currentFile.path} and ${candidateFile.path}.`,
+            sourceRefs: [{ path: candidateFile.path, evidenceStrength: "medium" }],
+            whyNow: [],
+            nextAction: "",
+            relation: "related",
+            score: 0,
+            generatedAt: new Date().toISOString(),
+        }, "accept").catch((error) => {
+            this.log("Quiet Recall link feedback skipped", error);
+        });
+        return {
+            ok: true,
+            message: result.changed
+                ? pageletT("pagelet.tab.recall.linked", locale)
+                : pageletT("pagelet.tab.recall.alreadyLinked", locale),
+        };
     }
 
     private getRetrievalHabitProfileStore(): RetrievalHabitProfileStore {
@@ -1982,6 +2226,116 @@ export class PluginManager extends Plugin {
         return this.getMemoryGovernanceStore().list();
     }
 
+    private async confirmMemoryCandidateFromQueueItem(item: ReviewQueueItem): Promise<{ ok: boolean; message: string }> {
+        const currentItem = this.getReviewQueueItemById(item.id);
+        if (!currentItem) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
+                    reason: "not_found",
+                }),
+            };
+        }
+        if (currentItem.status !== "suggested") {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
+                    reason: `already_${currentItem.status}`,
+                }),
+            };
+        }
+
+        const candidate = memoryCandidateFromQueueItem(currentItem);
+        if (!candidate.ok) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
+                    reason: candidate.reason,
+                }),
+            };
+        }
+        let reserveResult: ReviewQueueResult<ReviewQueueItem>;
+        try {
+            reserveResult = await this.updateReviewQueueItemStatus(currentItem.id, "accepted");
+        } catch (error) {
+            this.log("Memory candidate queue reserve failed", { id: currentItem.id, error });
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
+                    reason: "queue_reserve_failed",
+                }),
+            };
+        }
+        if (!reserveResult.ok) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
+                    reason: reserveResult.reason,
+                }),
+            };
+        }
+        const result = await this.getMemoryGovernanceStore().confirmCandidate(candidate.value, {
+            scope: reserveResult.value.scope,
+            confirmationSource: "pagelet",
+        });
+        if (!result.ok) {
+            try {
+                const failedResult = await this.updateReviewQueueItemStatus(currentItem.id, "failed");
+                if (!failedResult.ok) {
+                    this.log("Memory candidate confirmation failed and queue failure status update failed", {
+                        id: currentItem.id,
+                        reason: failedResult.reason,
+                    });
+                }
+            } catch (error) {
+                this.log("Memory candidate confirmation failed and queue failure status persist threw", {
+                    id: currentItem.id,
+                    error,
+                });
+            }
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
+                    reason: result.reason,
+                }),
+            };
+        }
+        try {
+            const queueResult = await this.updateReviewQueueItemStatus(currentItem.id, "applied");
+            if (!queueResult.ok) {
+                this.log("Memory candidate confirmed but queue status update failed", {
+                    id: currentItem.id,
+                    reason: queueResult.reason,
+                });
+            }
+        } catch (error) {
+            this.log("Memory candidate confirmed but queue status persist threw", {
+                id: currentItem.id,
+                error,
+            });
+        }
+        return {
+            ok: true,
+            message: pageletT("pagelet.tab.memory.confirmed", this.getPageletLocale()),
+        };
+    }
+
+    private async dismissMemoryCandidateFromQueueItem(item: ReviewQueueItem): Promise<{ ok: boolean; message: string }> {
+        const result = await this.dismissReviewQueueItem(item.id);
+        if (!result.ok) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.dismissFailed", this.getPageletLocale(), {
+                    reason: result.reason,
+                }),
+            };
+        }
+        return {
+            ok: true,
+            message: pageletT("pagelet.tab.memory.dismissed", this.getPageletLocale()),
+        };
+    }
+
     private createMemoryHost(): MemoryHost {
         return {
             app: this.app,
@@ -2046,6 +2400,9 @@ export class PluginManager extends Plugin {
                 get: () => this.quickCaptureDraft,
                 set: (value) => { this.quickCaptureDraft = value; },
                 clear: () => { this.quickCaptureDraft = ""; },
+            },
+            onCaptureSaved: () => {
+                void this.maybeShowQuickCaptureOnboardingNudge();
             },
             postProcessCapture: (input) => this.postProcessQuickCapture(input),
         }, this.quickCaptureCopy());
@@ -2255,6 +2612,7 @@ export class PluginManager extends Plugin {
         primarySourcePath: string,
         noteContents: Array<{ path: string; content: string }>,
         sourcePaths: readonly string[],
+        limit = 6,
     ): Promise<Array<{ path: string; content: string; score?: number; headingPath?: string[] }>> {
         if (!this.vss || noteContents.length === 0) return [];
         if (!(await this.isPageletMemorySearchReady())) return [];
@@ -2278,7 +2636,7 @@ export class PluginManager extends Plugin {
                 retrievalHabitProfile: this.settings.retrievalHabitProfile,
                 ftsQueryOverride: null,
                 signal: controller.signal,
-                limit: 6,
+                limit: Math.max(1, Math.min(limit, QUIET_RECALL_MAX_VAULT_CANDIDATE_NOTES)),
             });
             return result.evidence.map((entry) => ({
                 path: entry.path,
