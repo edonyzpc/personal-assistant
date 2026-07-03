@@ -472,6 +472,7 @@ export type ChatToolName =
     | "read_canvas_summary"
     | "search_vault_snippets"
     | "list_vault_tags"
+    | "replace_selection"
     | "webSearch"
     | "load_skill";
 

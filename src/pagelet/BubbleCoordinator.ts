@@ -15,13 +15,13 @@ import { getPageletUiLanguage } from "../locales/pagelet";
 
 import type { BubbleContent, BubbleFinding, BubbleQuickAccessCallbacks } from "./bubble/types";
 import type { BubbleView } from "./bubble/BubbleView";
-import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildQuickReviewContent, buildQuietRecallNudgeContent, buildReviewQueueNudgeContent, buildWritingAssistContent } from "./bubble/BubbleContent";
+import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildQuickReviewContent, buildQuietRecallNudgeContent, buildReviewQueueNudgeContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
 import type { PreloadCache } from "./preload/PreloadCache";
 import type { PreloadFinding } from "./preload/types";
 import type { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetView } from "./pet/PetView";
 import type { PageletHost } from "./PageletHost";
-import { isReviewQueueBubbleReminderEligible, type QuietRecallBubbleNudge, type ReviewQueueStatus } from "../pa";
+import { isReviewQueueBubbleReminderEligible, type PatternDetectionResult, type QuietRecallBubbleNudge, type ReviewQueueStatus } from "../pa";
 
 const REVIEW_QUEUE_BUBBLE_REMINDER_STATUSES = [
     "accepted",
@@ -46,14 +46,23 @@ export interface BubbleCoordinatorCallbacks {
     onDiscoverConnections(): void;
     /** Generate a periodic summary. */
     onPeriodicSummary(): void;
+    /** Return a one-time onboarding bridge nudge, if pending. */
+    getOnboardingNudge(): OnboardingNudge | null;
+    /** Dismiss a one-time onboarding bridge nudge. */
+    onOnboardingNudgeDismiss(nudge: OnboardingNudge): void;
     /** Return the current local Quiet Recall Bubble nudge candidate, if one is pending. */
     getQuietRecallNudge(): QuietRecallBubbleNudge | null;
     /** Open the existing Quiet Recall detail surface from the Bubble nudge. */
     onQuietRecallView(candidate: QuietRecallBubbleNudge): void;
+    /** Link the current note and this Quiet Recall candidate. */
+    onQuietRecallLink(candidate: QuietRecallBubbleNudge): void;
     /** Suppress this Quiet Recall nudge candidate for the local session. */
     onQuietRecallDismiss(candidate: QuietRecallBubbleNudge): void;
     /** Snooze this Quiet Recall nudge candidate without saving or enqueuing it. */
     onQuietRecallLater(candidate: QuietRecallBubbleNudge): void;
+    getPatternDetectionNudge(): PatternDetectionResult | null;
+    onPatternDetectionView(result: PatternDetectionResult): void;
+    onPatternDetectionDismiss(result: PatternDetectionResult): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -191,6 +200,20 @@ export class BubbleCoordinator {
             return buildReviewQueueNudgeContent(queueCount, callbacks, locale);
         }
 
+        const onboardingContent = buildOnboardingNudgeContent({
+            pageletEnabled: this.host.settings.pagelet.enabled,
+            proactiveHints: this.host.settings.pagelet.proactiveHints,
+            quietHoursActive: this.proactiveHints.quietHoursActive,
+            nudge: this.callbacks.getOnboardingNudge(),
+        }, {
+            onDismiss: (nudge) => {
+                callbacks.onDismiss();
+                this.callbacks.onOnboardingNudgeDismiss(nudge);
+            },
+        }, locale);
+
+        if (onboardingContent) return onboardingContent;
+
         const quietRecallContent = buildQuietRecallNudgeContent({
             pageletEnabled: this.host.settings.pagelet.enabled,
             quietRecallEnabled: this.host.settings.quietRecall.enabled,
@@ -203,6 +226,10 @@ export class BubbleCoordinator {
                 callbacks.onDismiss();
                 this.callbacks.onQuietRecallView(candidate);
             },
+            onLink: (candidate) => {
+                callbacks.onDismiss();
+                this.callbacks.onQuietRecallLink(candidate);
+            },
             onDismiss: (candidate) => {
                 callbacks.onDismiss();
                 this.callbacks.onQuietRecallDismiss(candidate);
@@ -213,7 +240,25 @@ export class BubbleCoordinator {
             },
         }, locale);
 
-        return quietRecallContent ?? buildEmptyContent(callbacks, locale);
+        if (quietRecallContent) return quietRecallContent;
+
+        const patternContent = buildPatternDetectionNudgeContent({
+            pageletEnabled: this.host.settings.pagelet.enabled,
+            proactiveHints: this.host.settings.pagelet.proactiveHints,
+            quietHoursActive: this.proactiveHints.quietHoursActive,
+            result: this.callbacks.getPatternDetectionNudge(),
+        }, {
+            onView: (result) => {
+                callbacks.onDismiss();
+                this.callbacks.onPatternDetectionView(result);
+            },
+            onDismiss: (result) => {
+                callbacks.onDismiss();
+                this.callbacks.onPatternDetectionDismiss(result);
+            },
+        }, locale);
+
+        return patternContent ?? buildEmptyContent(callbacks, locale);
     }
 
     private keptReviewQueueItemCount(): number {

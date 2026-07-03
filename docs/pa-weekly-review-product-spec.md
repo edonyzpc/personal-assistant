@@ -1,5 +1,7 @@
 # PA Weekly Review Product Spec
 
+> [!warning] This spec is partially superseded by [PA product discussion 2026-07-02](./pa-product-discussion-2026-07-02.md): Weekly Review as a standalone feature is decomposed into always-available Memory candidate confirmation in Pagelet Tab and pattern-detection nudges. Use that discussion as the current product baseline.
+
 Updated: 2026-06-29
 
 ## Status

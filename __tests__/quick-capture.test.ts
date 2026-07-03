@@ -123,6 +123,7 @@ import {
     normalizeQuickCaptureInboxPath,
     type QuickCaptureCopy,
     type QuickCapturePostProcessInput,
+    type QuickCaptureResult,
     type QuickCaptureSettings,
 } from "../src/quick-capture";
 
@@ -197,6 +198,7 @@ function makeService(
     quickCapture?: Partial<QuickCaptureSettings>,
     postProcessCapture?: (input: QuickCapturePostProcessInput) => Promise<void> | void,
     draft?: { value: string },
+    onCaptureSaved?: (result: Extract<QuickCaptureResult, { status: "saved" }>) => Promise<void> | void,
 ): QuickCaptureService {
     return new QuickCaptureService({
         app,
@@ -215,6 +217,7 @@ function makeService(
                 clear: () => { draft.value = ""; },
             }
             : undefined,
+        onCaptureSaved,
         postProcessCapture,
     }, copy);
 }
@@ -444,6 +447,27 @@ describe("QuickCaptureService", () => {
             "2026-06-28.md",
             "- 09:07 maybe turn this into a task\n",
         );
+    });
+
+    it("calls the saved callback only after a raw capture succeeds", async () => {
+        const harness = makeAppHarness();
+        const onCaptureSaved = jest.fn((_result: Extract<QuickCaptureResult, { status: "saved" }>) => undefined);
+        const service = makeService(harness.app, undefined, undefined, undefined, onCaptureSaved);
+
+        await service.captureText("bridge this capture later");
+
+        expect(onCaptureSaved).toHaveBeenCalledWith(expect.objectContaining({
+            status: "saved",
+            path: "2026-06-28.md",
+            captureId: expect.stringMatching(/^qc-/),
+        }));
+
+        const blocked = makeService(harness.app, {
+            destination: "inbox",
+            inboxPath: ".obsidian/plugins/personal-assistant/capture.md",
+        }, undefined, undefined, onCaptureSaved);
+        await expect(blocked.captureText("blocked")).rejects.toThrow("Quick Capture target is not allowed");
+        expect(onCaptureSaved).toHaveBeenCalledTimes(1);
     });
 
     it("can skip post-processing for one-action Pagelet capture", async () => {

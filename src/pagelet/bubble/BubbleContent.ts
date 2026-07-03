@@ -16,7 +16,7 @@ import type {
     BubbleQuickAccessCallbacks,
 } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
-import type { QuietRecallBubbleNudge } from "../../pa";
+import type { PatternDetectionResult, QuietRecallBubbleNudge } from "../../pa";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -46,8 +46,39 @@ export interface QuietRecallNudgeOptions {
 
 export interface QuietRecallNudgeCallbacks {
     onView(candidate: QuietRecallBubbleNudge): void;
+    onLink(candidate: QuietRecallBubbleNudge): void;
     onDismiss(candidate: QuietRecallBubbleNudge): void;
     onLater(candidate: QuietRecallBubbleNudge): void;
+}
+
+export type OnboardingNudgeKind = "maintenance_scan" | "quick_capture";
+
+export interface OnboardingNudge {
+    kind: OnboardingNudgeKind;
+    generatedAt: string;
+}
+
+export interface OnboardingNudgeOptions {
+    pageletEnabled: boolean;
+    proactiveHints: boolean;
+    quietHoursActive?: boolean;
+    nudge: OnboardingNudge | null;
+}
+
+export interface OnboardingNudgeCallbacks {
+    onDismiss(nudge: OnboardingNudge): void;
+}
+
+export interface PatternDetectionNudgeOptions {
+    pageletEnabled: boolean;
+    proactiveHints: boolean;
+    quietHoursActive?: boolean;
+    result: PatternDetectionResult | null;
+}
+
+export interface PatternDetectionNudgeCallbacks {
+    onView(result: PatternDetectionResult): void;
+    onDismiss(result: PatternDetectionResult): void;
 }
 
 function buildPageletQuickAccessActions(
@@ -276,9 +307,12 @@ export function buildQuietRecallNudgeContent(
 
     return {
         type: "nudge",
-        findings: [{
-            text: pageletT(textKey, locale),
-        }],
+        findings: [
+            { text: pageletT(textKey, locale) },
+            ...(candidate.onboardingExplanation
+                ? [{ text: pageletT("pagelet.onboarding.quietRecall", locale) }]
+                : []),
+        ],
         actions: [
             {
                 label: pageletT("pagelet.bubble.quietRecall.view", locale),
@@ -286,6 +320,12 @@ export function buildQuietRecallNudgeContent(
                 icon: "panel-right-open",
                 primary: true,
                 callback: () => callbacks.onView(candidate),
+            },
+            {
+                label: pageletT("pagelet.bubble.quietRecall.link", locale),
+                description: pageletT("pagelet.bubble.quietRecall.linkDescription", locale),
+                icon: "link",
+                callback: () => callbacks.onLink(candidate),
             },
             {
                 label: pageletT("pagelet.bubble.quietRecall.dismiss", locale),
@@ -296,6 +336,66 @@ export function buildQuietRecallNudgeContent(
                 label: pageletT("pagelet.bubble.later", locale),
                 variant: "compact",
                 callback: () => callbacks.onLater(candidate),
+            },
+        ],
+    };
+}
+
+export function buildOnboardingNudgeContent(
+    options: OnboardingNudgeOptions,
+    callbacks: OnboardingNudgeCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent | null {
+    const nudge = options.nudge;
+    if (!nudge || !options.pageletEnabled || !options.proactiveHints || options.quietHoursActive) {
+        return null;
+    }
+    const textKey = nudge.kind === "maintenance_scan"
+        ? "pagelet.onboarding.maintenanceScan"
+        : "pagelet.onboarding.quickCapture";
+    return {
+        type: "nudge",
+        findings: [{ text: pageletT(textKey, locale) }],
+        actions: [{
+            label: pageletT("pagelet.onboarding.gotIt", locale),
+            primary: true,
+            callback: () => callbacks.onDismiss(nudge),
+        }],
+    };
+}
+
+export function buildPatternDetectionNudgeContent(
+    options: PatternDetectionNudgeOptions,
+    callbacks: PatternDetectionNudgeCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent | null {
+    const result = options.result;
+    if (
+        !result
+        || result.totalCount === 0
+        || !options.pageletEnabled
+        || !options.proactiveHints
+        || options.quietHoursActive
+    ) {
+        return null;
+    }
+    return {
+        type: "nudge",
+        findings: [{
+            text: pageletT("pagelet.bubble.patterns.ready", locale, { count: result.totalCount }),
+        }],
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.patterns.open", locale),
+                description: pageletT("pagelet.bubble.patterns.openDescription", locale),
+                icon: "git-branch",
+                primary: true,
+                callback: () => callbacks.onView(result),
+            },
+            {
+                label: pageletT("pagelet.bubble.patterns.dismiss", locale),
+                variant: "compact",
+                callback: () => callbacks.onDismiss(result),
             },
         ],
     };

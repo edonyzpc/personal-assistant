@@ -23,6 +23,7 @@ import type {
     ConfirmedMemoryRecord,
     GraphDiscoveryRunResult,
     MaintenanceReviewRunResult,
+    PatternDetectionResult,
     QuietRecallCandidate,
     QuietRecallRunResult,
     QuietRecallSaveResult,
@@ -34,7 +35,6 @@ import type {
     ReviewQueueResult,
     SavedInsight,
     ScopeRecapRunResult,
-    WeeklyReviewRunResult,
 } from "../pa";
 
 /**
@@ -75,6 +75,9 @@ export interface PageletHost {
             excludedTags: string[];
             excludedPatterns: string[];
             onboardingShown: boolean;
+            maintenanceScanSuggested: boolean;
+            quickCaptureExplained: boolean;
+            quietRecallExplained: boolean;
         };
         contextPager: {
             enabled: boolean;
@@ -162,20 +165,20 @@ export interface PageletHost {
     /** Run local graph-aware discovery. Queue entry is explicit only. */
     runGraphDiscovery(options?: { enqueueItems?: boolean }): Promise<GraphDiscoveryRunResult>;
 
+    /** Run local structure-based cross-note pattern detection. */
+    detectCrossNotePatterns(): Promise<PatternDetectionResult | null>;
+
     /** Build an on-demand source-backed recap for the current Pagelet scope. */
     runScopeRecap(): Promise<ScopeRecapRunResult>;
-
-    /** Run the manual Weekly Review loop for the recent seven-day range. */
-    runWeeklyReview(): Promise<WeeklyReviewRunResult>;
-
-    /** Save user-selected Weekly Review items as a generated review note. */
-    saveWeeklyReviewNote(review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]): Promise<WriteResult>;
 
     /** Generate quiet recall candidates for the active note. */
     runQuietRecall(): Promise<QuietRecallRunResult>;
 
     /** Save a quiet recall candidate into the Saved Insight ledger. */
     saveQuietRecallAsInsight(candidate: QuietRecallCandidate): Promise<QuietRecallSaveResult>;
+
+    /** Add a frontmatter relationship between the source note and a Quiet Recall candidate. */
+    linkRecallCandidate(currentPath: string, candidatePath: string): Promise<{ ok: boolean; message: string }>;
 
     /** Record local aggregate-only Quiet Recall feedback when the profile is enabled. */
     recordQuietRecallFeedback(

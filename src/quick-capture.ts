@@ -47,6 +47,7 @@ export interface QuickCaptureHost {
     now(): Date;
     log(message: string, ...args: unknown[]): void;
     draft?: QuickCaptureDraftStore;
+    onCaptureSaved?(result: Extract<QuickCaptureResult, { status: "saved" }>): Promise<void> | void;
     postProcessCapture?(input: QuickCapturePostProcessInput): Promise<void> | void;
 }
 
@@ -286,7 +287,10 @@ export class QuickCaptureService {
                     path,
                     capturedAt: timestamp.toISOString(),
                 }, options);
-                return { status: "saved", destination: settings.destination, path, captureId };
+                const result = { status: "saved" as const, destination: settings.destination, path, captureId };
+                void Promise.resolve(this.host.onCaptureSaved?.(result))
+                    .catch((error) => this.host.log("Quick Capture saved callback failed", error));
+                return result;
             }
 
             const path = settings.destination === "inbox"
@@ -307,7 +311,10 @@ export class QuickCaptureService {
                 path: savedPath,
                 capturedAt: timestamp.toISOString(),
             }, options);
-            return { status: "saved", destination: settings.destination, path: savedPath, captureId };
+            const result = { status: "saved" as const, destination: settings.destination, path: savedPath, captureId };
+            void Promise.resolve(this.host.onCaptureSaved?.(result))
+                .catch((error) => this.host.log("Quick Capture saved callback failed", error));
+            return result;
         } catch (error) {
             this.host.log("Quick Capture save failed", error);
             new Notice(this.copy.saveFailed);

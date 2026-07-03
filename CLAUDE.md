@@ -12,13 +12,15 @@ Maintenance, or PA Agent behavior work, read
 
 The product standard:
 
-> PA is a quiet and trustworthy personal knowledge assistant that helps users
-> capture lightly, review naturally, connect with evidence, maintain
-> reversibly, and act only after trust has grown.
+> 随手记下，需要时自然浮现。
 
 Short form:
 
-> Let personal knowledge compound naturally.
+> Capture lightly. Let the right notes return when they matter.
+
+Design philosophy:
+
+> 安静且可信。
 
 Use this when judging tradeoffs:
 

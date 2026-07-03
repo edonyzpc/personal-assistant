@@ -20,7 +20,6 @@
     "pa-pagelet:discover-connections",
     "pa-pagelet:periodic-summary",
     "pa-pagelet:maintenance-review",
-    "pa-pagelet:weekly-review",
     "pa-pagelet:quiet-recall",
     "pa-pagelet:graph-discovery",
     "pa-pagelet:scope-recap",
@@ -29,6 +28,9 @@
     "pa-pagelet:background-preparation-status",
     "pa-pagelet:move-pet-corner",
     "pa-pagelet:toggle-pet-visibility",
+  ];
+  const RETIRED_COMMAND_IDS = [
+    "pa-pagelet:weekly-review",
   ];
 
   const startedAt = new Date().toISOString();
@@ -87,6 +89,9 @@
     for (const id of COMMAND_IDS) {
       assert(`Command registered: ${id}`, Boolean(app.commands.commands[`${PLUGIN_ID}:${id}`]));
     }
+    for (const id of RETIRED_COMMAND_IDS) {
+      assert(`Retired command absent: ${id}`, !app.commands.commands[`${PLUGIN_ID}:${id}`]);
+    }
 
     const sourceFile = await openFirstMarkdownFile();
     assert("Opened a markdown note for Pagelet shell smoke", Boolean(sourceFile), sourceFile?.path || "");
@@ -106,12 +111,13 @@
       /Review current note|审阅当前笔记|Review selected \(\d+\)|审阅已选（\d+）/i.test(textOf(primaryButton)),
       textOf(primaryButton));
 
-    const pet = petRoot();
-    if (plugin?.settings?.pagelet?.petVisible) {
-      assert("Pet is mounted when visible setting is enabled on markdown leaf", Boolean(pet));
-    } else {
-      record("Pet visibility disabled by setting", "PASS");
-    }
+    const activeLeafType = app.workspace.activeLeaf?.view?.getViewType?.() || "unknown";
+    const petShouldMount = plugin?.settings?.pagelet?.petVisible === true && activeLeafType === "markdown";
+    assert(
+      "Pet mount state observed",
+      !petShouldMount || Boolean(petRoot()),
+      `petVisible=${plugin?.settings?.pagelet?.petVisible}; activeLeafType=${activeLeafType}; petDom=${petRoot() ? 1 : 0}`,
+    );
 
     await app.commands.executeCommandById(`${PLUGIN_ID}:pa-pagelet:background-preparation-status`);
     record("Background preparation status command executed without throwing", "PASS");

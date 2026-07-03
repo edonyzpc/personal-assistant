@@ -1045,6 +1045,18 @@ describe('LLMView turn lifecycle', () => {
         expect(streamCalls[1].chatHistory?.[1]).not.toBe(view.chatHistory[1]);
     });
 
+    it('shows a selected-text hint when the active Markdown editor has a selection', async () => {
+        const { view, containerEl, editor } = createView({ withMarkdownLeaf: true });
+        (editor as typeof editor & { getSelection: () => string }).getSelection = jest.fn(() => 'selected text');
+
+        await view.onOpen();
+        await new Promise((resolve) => setTimeout(resolve, 0));
+
+        const hint = getElementByClass(containerEl, 'pa-chat-selection-hint');
+        expect(hint.hidden).toBe(false);
+        expect(allText(hint)).toContain('You have text selected');
+    });
+
     it('shows a live assistant placeholder before the first response chunk and reuses it without a side loader', async () => {
         const { view, containerEl } = createView();
         await view.onOpen();
@@ -4865,10 +4877,10 @@ describe('LLMView turn lifecycle', () => {
         });
         streamCalls[0].options.onStatus?.({ type: 'tool-skipped', tool: 'read_note_outline', reason: 'technical tool failure' });
 
-        expect(allText(containerEl)).toContain('No related memory');
+        expect(allText(containerEl)).toContain('No related notes found');
         expect(allText(containerEl)).toContain('Checking 2 related notes...');
-        expect(allText(containerEl)).toContain('Reading selected Memory...');
-        expect(allText(containerEl)).toContain('Vault context unavailable');
+        expect(allText(containerEl)).toContain('Reading selected notes...');
+        expect(allText(containerEl)).toContain('Context unavailable');
         expect(allText(containerEl)).toContain('Reading note outline...');
         expect(allText(containerEl)).toContain('Context Used');
         expect(allText(containerEl)).not.toContain('fallback path');
@@ -4912,7 +4924,7 @@ describe('LLMView turn lifecycle', () => {
         expect(runningText).toContain('Reading note structure...');
         expect(runningText).toContain('Checking canvas structure...');
         expect(runningText).toContain('Searching note snippets...');
-        expect(runningText).toContain('Reading vault tags...');
+        expect(runningText).toContain('Reading tags...');
 
         streamCalls[0].options.onStatus?.({
             type: 'tool-done',
@@ -4945,7 +4957,7 @@ describe('LLMView turn lifecycle', () => {
         expect(text).toContain('links/backlinks');
         expect(text).toContain('Canvas structure');
         expect(text).toContain('Note snippets');
-        expect(text).toContain('Vault tags');
+        expect(text).toContain('Tags');
         expect(text).toContain('Not a Memory reference');
         expect(text).not.toContain('inspect_obsidian_note');
         expect(text).not.toContain('read_canvas_summary');
@@ -5005,13 +5017,13 @@ describe('LLMView turn lifecycle', () => {
 
         const text = allText(containerEl);
         expect(text).toContain('Read note structure: 2 heading(s), 2 task(s), 2 tag(s).');
-        expect(text).toContain('Vault context already gathered');
+        expect(text).toContain('Context already gathered');
         expect(text).toContain('Using gathered context after reaching the planning limit.');
         expect(text).toContain('Context Used');
         expect(text).toContain('Note structure');
         expect(text).not.toContain('Note structure unavailable');
         expect(text).not.toContain('Vault context was unavailable for this turn.');
-        expect(text).not.toContain('Vault context unavailable');
+        expect(text).not.toContain('Context unavailable');
     });
 
     it('shows gathered-context wording when the planning limit is reached', async () => {

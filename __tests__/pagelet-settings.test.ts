@@ -256,8 +256,20 @@ describe("mergePageletSettings", () => {
             foregroundPerHourCap: 10,
             foregroundPerDayCap: 100,
             onboardingShown: false,
+            maintenanceScanSuggested: true,
+            quickCaptureExplained: true,
+            quietRecallExplained: true,
         };
         expect(mergePageletSettings(persisted)).toEqual(persisted);
+    });
+
+    it("defaults new onboarding bridge flags to false for older settings", () => {
+        const merged = mergePageletSettings({ onboardingShown: true });
+
+        expect(merged.onboardingShown).toBe(true);
+        expect(merged.maintenanceScanSuggested).toBe(false);
+        expect(merged.quickCaptureExplained).toBe(false);
+        expect(merged.quietRecallExplained).toBe(false);
     });
 
     it("ignores garbage values on a single field without poisoning others", () => {

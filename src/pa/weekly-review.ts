@@ -272,6 +272,11 @@ export function calculateWeeklyReviewRange(now: Date = new Date(), days = DEFAUL
     };
 }
 
+/**
+ * @deprecated Weekly Review is no longer a standalone Pagelet runtime feature.
+ * Keep this builder as a historical regression record for the decomposed
+ * Memory candidate and pattern-detection kernels.
+ */
 export function buildWeeklyReview(input: WeeklyReviewBuildInput = {}): WeeklyReviewRunResult {
     const now = nowDate(input.now);
     const generatedAt = now.toISOString();
@@ -292,6 +297,10 @@ export function buildWeeklyReview(input: WeeklyReviewBuildInput = {}): WeeklyRev
     };
 }
 
+/**
+ * @deprecated Weekly Review Markdown output is retained only for historical
+ * regression coverage. Runtime Pagelet no longer saves weekly review notes.
+ */
 export function buildWeeklyReviewMarkdown(
     review: WeeklyReviewRunResult,
     acceptedItemIds: readonly string[],
@@ -350,6 +359,10 @@ export function filterWeeklyReviewAcceptedItemIds(
     return [...new Set(acceptedItemIds)].filter((id) => reviewItemIds.has(id));
 }
 
+/**
+ * @deprecated Weekly Review note generation is retained only for historical
+ * regression coverage. Runtime Pagelet no longer saves weekly review notes.
+ */
 export function buildWeeklyReviewGeneratedNote(
     review: WeeklyReviewRunResult,
     acceptedItemIds: readonly string[],

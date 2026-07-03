@@ -41,11 +41,15 @@ import { renderDiscoveryLayout, renderSummaryPreview } from "../panel/PanelLayou
 interface TabViewOptions {
     app?: App;
     onConnectionNodeClick?: (noteName: string, sourcePath?: string) => void;
+    onSourcePathClick?: (path: string) => void;
     onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
     onApplyMaintenanceProposal?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>;
     onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
+    onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
+    onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
     onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>;
     onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
+    onLinkRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<QuietRecallLinkResult>;
 }
 
 type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState">;
@@ -54,6 +58,18 @@ type MaintenanceActionUiStatus = "applying" | "applied" | "failed" | "undoing" |
 type WeeklyReviewUiMode = "digest" | "selecting";
 type WeeklyReviewSaveStatus = "idle" | "saving" | "saved" | "failed";
 type QuietRecallSaveStatus = "saving" | "saved" | "failed";
+type QuietRecallLinkStatus = "linking" | "linked" | "failed";
+type MemoryCandidateActionStatus = "confirming" | "confirmed" | "dismissing" | "dismissed" | "failed";
+
+interface MemoryCandidateActionResult {
+    ok: boolean;
+    message: string;
+}
+
+interface QuietRecallLinkResult {
+    ok: boolean;
+    message: string;
+}
 
 interface MaintenanceActionUiState {
     status: MaintenanceActionUiStatus;
@@ -63,6 +79,16 @@ interface MaintenanceActionUiState {
 
 interface QuietRecallSaveState {
     status: QuietRecallSaveStatus;
+    message: string;
+}
+
+interface QuietRecallLinkState {
+    status: QuietRecallLinkStatus;
+    message: string;
+}
+
+interface MemoryCandidateActionState {
+    status: MemoryCandidateActionStatus;
     message: string;
 }
 
@@ -103,6 +129,9 @@ export class TabView {
     private weeklyReviewSaveStatus: WeeklyReviewSaveStatus = "idle";
     private weeklyReviewSaveMessage = "";
     private readonly quietRecallSaveState = new Map<string, QuietRecallSaveState>();
+    private readonly quietRecallLinkState = new Map<string, QuietRecallLinkState>();
+    private readonly memoryCandidateActionState = new Map<string, MemoryCandidateActionState>();
+    private readonly dismissedPatternIds = new Set<string>();
 
     constructor(locale: PageletLocale = "en", options: TabViewOptions = {}) {
         this.locale = locale;
@@ -179,6 +208,7 @@ export class TabView {
         this.maintenanceActionState.clear();
         this.weeklyAcceptedItemIds.clear();
         this.quietRecallSaveState.clear();
+        this.quietRecallLinkState.clear();
     }
 
     // -----------------------------------------------------------------------
@@ -245,6 +275,7 @@ export class TabView {
         const renderedMemoryGovernance = this.renderMemoryGovernanceContent(options.extra?.memoryGovernance);
         const renderedMaintenanceReview = this.renderMaintenanceReviewContent(options.extra?.maintenanceReview);
         const renderedGraphDiscovery = this.renderGraphDiscoveryContent(options.extra?.graphDiscovery);
+        const renderedPatternDetection = this.renderPatternDetectionContent(options.extra?.patternDetection);
         const renderedWeeklyReview = this.renderWeeklyReviewContent(options.extra?.weeklyReview);
         const renderedQuietRecall = this.renderQuietRecallContent(options.extra?.quietRecall);
 
@@ -270,6 +301,7 @@ export class TabView {
                 && !renderedMemoryGovernance
                 && !renderedMaintenanceReview
                 && !renderedGraphDiscovery
+                && !renderedPatternDetection
                 && !renderedWeeklyReview
                 && !renderedQuietRecall
             ) {
@@ -601,32 +633,86 @@ export class TabView {
     }
 
     private renderQuietRecallActions(cardEl: HTMLElement, candidate: QuietRecallCandidate): void {
-        if (!this.options.onSaveQuietRecallAsInsight) return;
-        const state = this.quietRecallSaveState.get(candidate.id);
+        if (!this.options.onSaveQuietRecallAsInsight && !this.options.onLinkRecallCandidate) return;
+        const saveState = this.quietRecallSaveState.get(candidate.id);
+        const linkState = this.quietRecallLinkState.get(candidate.id);
         const actionRow = el("div", "pa-pagelet-tab-recall-actions");
-        const saveBtn = el(
-            "button",
-            "pa-pagelet-tab-recall-save",
-            state?.status === "saving"
-                ? pageletT("pagelet.tab.recall.saving", this.locale)
-                : state?.status === "saved"
-                    ? pageletT("pagelet.tab.recall.saved", this.locale)
-                    : pageletT("pagelet.tab.recall.saveInsight", this.locale),
-        );
-        saveBtn.setAttribute("type", "button");
-        if (state?.status === "saving" || state?.status === "saved") {
-            saveBtn.disabled = true;
-            saveBtn.setAttribute("aria-disabled", "true");
+
+        if (this.options.onLinkRecallCandidate) {
+            const linkBtn = el(
+                "button",
+                "pa-pagelet-tab-recall-link",
+                linkState?.status === "linking"
+                    ? pageletT("pagelet.tab.recall.linking", this.locale)
+                    : linkState?.status === "linked"
+                        ? pageletT("pagelet.tab.recall.linked", this.locale)
+                        : pageletT("pagelet.tab.recall.link", this.locale),
+            );
+            linkBtn.setAttribute("type", "button");
+            if (linkState?.status === "linking" || linkState?.status === "linked") {
+                linkBtn.disabled = true;
+                linkBtn.setAttribute("aria-disabled", "true");
+            }
+            linkBtn.addEventListener("click", (event) => {
+                event.preventDefault();
+                void this.linkQuietRecallFromTab(candidate);
+            });
+            actionRow.appendChild(linkBtn);
         }
-        saveBtn.addEventListener("click", (event) => {
-            event.preventDefault();
-            void this.saveQuietRecallFromTab(candidate);
-        });
-        actionRow.appendChild(saveBtn);
-        if (state) {
-            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status", state.message));
+
+        if (this.options.onSaveQuietRecallAsInsight) {
+            const saveBtn = el(
+                "button",
+                "pa-pagelet-tab-recall-save",
+                saveState?.status === "saving"
+                    ? pageletT("pagelet.tab.recall.saving", this.locale)
+                    : saveState?.status === "saved"
+                        ? pageletT("pagelet.tab.recall.saved", this.locale)
+                        : pageletT("pagelet.tab.recall.saveInsight", this.locale),
+            );
+            saveBtn.setAttribute("type", "button");
+            if (saveState?.status === "saving" || saveState?.status === "saved") {
+                saveBtn.disabled = true;
+                saveBtn.setAttribute("aria-disabled", "true");
+            }
+            saveBtn.addEventListener("click", (event) => {
+                event.preventDefault();
+                void this.saveQuietRecallFromTab(candidate);
+            });
+            actionRow.appendChild(saveBtn);
+        }
+
+        for (const status of [linkState, saveState]) {
+            if (!status) continue;
+            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status", status.message));
         }
         cardEl.appendChild(actionRow);
+    }
+
+    private async linkQuietRecallFromTab(candidate: QuietRecallCandidate): Promise<void> {
+        if (!this.options.onLinkRecallCandidate) return;
+        this.quietRecallLinkState.set(candidate.id, {
+            status: "linking",
+            message: pageletT("pagelet.tab.recall.linking", this.locale),
+        });
+        this.renderContent(this.currentContent, this.currentOptions);
+        try {
+            const result = await this.options.onLinkRecallCandidate(candidate, this.currentQuietRecallSourcePath());
+            this.quietRecallLinkState.set(candidate.id, {
+                status: result.ok ? "linked" : "failed",
+                message: result.message,
+            });
+        } catch (error) {
+            this.quietRecallLinkState.set(candidate.id, {
+                status: "failed",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+        this.renderContent(this.currentContent, this.currentOptions);
+    }
+
+    private currentQuietRecallSourcePath(): string | undefined {
+        return this.currentOptions.extra?.quietRecall?.currentPath ?? this.currentOptions.sourcePath;
     }
 
     private async saveQuietRecallFromTab(candidate: QuietRecallCandidate): Promise<void> {
@@ -691,45 +777,199 @@ export class TabView {
     }
 
     private renderMemoryGovernanceContent(memoryGovernance: DetailExtra["memoryGovernance"]): boolean {
-        if (!this.bodyEl || !memoryGovernance || memoryGovernance.records.length === 0) return false;
+        if (!this.bodyEl || !memoryGovernance) return false;
+        const candidates = memoryGovernance.candidates ?? [];
+        if (memoryGovernance.records.length === 0 && candidates.length === 0) return false;
 
         const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-memory-governance");
         section.appendChild(el("h2", undefined, pageletT("pagelet.tab.memory.title", this.locale)));
         section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
             pageletT("pagelet.tab.memory.summary", this.locale, { count: memoryGovernance.totalCount })));
 
-        for (const record of memoryGovernance.records) {
-            const isTombstone = record.lifecycle === "forgotten_tombstone";
-            const cardEl = el(
-                "div",
-                isTombstone
-                    ? "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-card pa-pagelet-tab-memory-card--tombstone"
-                    : "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-card",
-            );
-            cardEl.appendChild(el("h4", undefined,
-                pageletT(`pagelet.tab.memory.type.${record.type}`, this.locale)));
-            cardEl.appendChild(el("p", undefined, isTombstone
-                ? pageletT("pagelet.tab.memory.forgottenMarker", this.locale)
-                : record.summary));
-
-            const tagRow = el("div", "pa-pagelet-tab-tag-row");
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT(`pagelet.tab.memory.lifecycle.${record.lifecycle}`, this.locale)));
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT(`pagelet.tab.memory.sensitivity.${record.sensitivity}`, this.locale)));
-            const scopeLabel = record.scope.label ?? record.scope.paths?.[0] ?? record.scope.kind;
-            if (scopeLabel) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", scopeLabel));
-            if (!isTombstone) {
-                const source = record.sourceRefs[0]?.path;
-                if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
+        if (candidates.length > 0) {
+            const candidateGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-candidates");
+            const headerRow = el("div", "pa-pagelet-tab-memory-candidates-header");
+            headerRow.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.candidatesTitle", this.locale)));
+            const confirmable = candidates.filter((item) => item.type === "memory_candidate");
+            if (confirmable.length > 1 && this.options.onConfirmMemoryCandidate) {
+                const confirmAllButton = el("button", "pa-pagelet-tab-memory-confirm-all",
+                    pageletT("pagelet.tab.memory.confirmAll", this.locale, { count: confirmable.length }));
+                confirmAllButton.setAttribute("type", "button");
+                confirmAllButton.addEventListener("click", (event) => {
+                    event.preventDefault();
+                    void this.confirmAllMemoryCandidates(confirmable);
+                });
+                headerRow.appendChild(confirmAllButton);
             }
-            cardEl.appendChild(tagRow);
+            candidateGroup.appendChild(headerRow);
+            candidateGroup.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
+                pageletT("pagelet.tab.memory.candidatesSummary", this.locale, { count: candidates.length })));
+            for (const item of candidates) {
+                candidateGroup.appendChild(this.renderMemoryCandidateItem(item));
+            }
+            section.appendChild(candidateGroup);
+        } else {
+            const emptyCard = el("div", "pa-pagelet-tab-empty-card pa-pagelet-tab-memory-candidates-empty");
+            emptyCard.appendChild(el("div", "pa-pagelet-tab-empty-title",
+                pageletT("pagelet.tab.memory.noCandidates", this.locale)));
+            section.appendChild(emptyCard);
+        }
 
-            section.appendChild(cardEl);
+        if (memoryGovernance.records.length > 0) {
+            const recordsGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-records");
+            recordsGroup.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.recordsTitle", this.locale)));
+            for (const record of memoryGovernance.records) {
+                const isTombstone = record.lifecycle === "forgotten_tombstone";
+                const cardEl = el(
+                    "div",
+                    isTombstone
+                        ? "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-card pa-pagelet-tab-memory-card--tombstone"
+                        : "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-card",
+                );
+                cardEl.appendChild(el("h4", undefined,
+                    pageletT(`pagelet.tab.memory.type.${record.type}`, this.locale)));
+                cardEl.appendChild(el("p", undefined, isTombstone
+                    ? pageletT("pagelet.tab.memory.forgottenMarker", this.locale)
+                    : record.summary));
+
+                const tagRow = el("div", "pa-pagelet-tab-tag-row");
+                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+                    pageletT(`pagelet.tab.memory.lifecycle.${record.lifecycle}`, this.locale)));
+                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+                    pageletT(`pagelet.tab.memory.sensitivity.${record.sensitivity}`, this.locale)));
+                const scopeLabel = record.scope.label ?? record.scope.paths?.[0] ?? record.scope.kind;
+                if (scopeLabel) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", scopeLabel));
+                if (!isTombstone) {
+                    const source = record.sourceRefs[0]?.path;
+                    if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
+                }
+                cardEl.appendChild(tagRow);
+
+                recordsGroup.appendChild(cardEl);
+            }
+            section.appendChild(recordsGroup);
         }
 
         this.bodyEl.appendChild(section);
         return true;
+    }
+
+    private renderMemoryCandidateItem(item: ReviewQueueItem): HTMLElement {
+        const state = this.memoryCandidateActionState.get(item.id);
+        const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-candidate-card");
+        cardEl.appendChild(el("h4", undefined, item.title));
+        cardEl.appendChild(el("p", undefined, item.claim));
+
+        const tagRow = el("div", "pa-pagelet-tab-tag-row");
+        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+            pageletT(`pagelet.tab.memory.candidateType.${item.type}`, this.locale)));
+        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", item.status));
+        const memoryType = item.metadata?.memoryType;
+        if (typeof memoryType === "string") {
+            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+                pageletT(`pagelet.tab.memory.type.${memoryType}`, this.locale)));
+        }
+        const source = item.sourceRefs[0]?.path;
+        if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
+        cardEl.appendChild(tagRow);
+
+        const actionRow = el("div", "pa-pagelet-tab-memory-candidate-actions");
+        if (this.options.onConfirmMemoryCandidate && item.type === "memory_candidate") {
+            const confirmButton = el("button", "pa-pagelet-tab-memory-confirm",
+                state?.status === "confirming"
+                    ? pageletT("pagelet.tab.memory.confirming", this.locale)
+                    : state?.status === "confirmed"
+                        ? pageletT("pagelet.tab.memory.confirmed", this.locale)
+                        : pageletT("pagelet.tab.memory.confirm", this.locale));
+            confirmButton.setAttribute("type", "button");
+            if (state?.status === "confirming" || state?.status === "confirmed" || state?.status === "dismissed") {
+                confirmButton.disabled = true;
+                confirmButton.setAttribute("aria-disabled", "true");
+            }
+            confirmButton.addEventListener("click", (event) => {
+                event.preventDefault();
+                void this.confirmMemoryCandidate(item);
+            });
+            actionRow.appendChild(confirmButton);
+        } else if (item.type === "memory_conflict") {
+            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status",
+                pageletT("pagelet.tab.memory.conflictHint", this.locale)));
+        }
+        if (this.options.onDismissMemoryCandidate) {
+            const dismissButton = el("button", "pa-pagelet-tab-memory-dismiss",
+                state?.status === "dismissing"
+                    ? pageletT("pagelet.tab.memory.dismissing", this.locale)
+                    : state?.status === "dismissed"
+                        ? pageletT("pagelet.tab.memory.dismissed", this.locale)
+                        : pageletT("pagelet.tab.memory.dismiss", this.locale));
+            dismissButton.setAttribute("type", "button");
+            if (state?.status === "dismissing" || state?.status === "confirmed" || state?.status === "dismissed") {
+                dismissButton.disabled = true;
+                dismissButton.setAttribute("aria-disabled", "true");
+            }
+            dismissButton.addEventListener("click", (event) => {
+                event.preventDefault();
+                void this.dismissMemoryCandidate(item);
+            });
+            actionRow.appendChild(dismissButton);
+        }
+        if (state) {
+            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status", state.message));
+        }
+        cardEl.appendChild(actionRow);
+        return cardEl;
+    }
+
+    private async confirmAllMemoryCandidates(items: readonly ReviewQueueItem[]): Promise<void> {
+        for (const item of items) {
+            const state = this.memoryCandidateActionState.get(item.id);
+            if (state?.status === "confirmed" || state?.status === "confirming" || state?.status === "dismissed") continue;
+            await this.confirmMemoryCandidate(item);
+        }
+    }
+
+    private async confirmMemoryCandidate(item: ReviewQueueItem): Promise<void> {
+        if (!this.options.onConfirmMemoryCandidate) return;
+        this.memoryCandidateActionState.set(item.id, {
+            status: "confirming",
+            message: pageletT("pagelet.tab.memory.confirming", this.locale),
+        });
+        this.renderContent(this.currentContent, this.currentOptions);
+        try {
+            const result = await this.options.onConfirmMemoryCandidate(item);
+            this.memoryCandidateActionState.set(item.id, {
+                status: result.ok ? "confirmed" : "failed",
+                message: result.message,
+            });
+        } catch (error) {
+            this.memoryCandidateActionState.set(item.id, {
+                status: "failed",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+        this.renderContent(this.currentContent, this.currentOptions);
+    }
+
+    private async dismissMemoryCandidate(item: ReviewQueueItem): Promise<void> {
+        if (!this.options.onDismissMemoryCandidate) return;
+        this.memoryCandidateActionState.set(item.id, {
+            status: "dismissing",
+            message: pageletT("pagelet.tab.memory.dismissing", this.locale),
+        });
+        this.renderContent(this.currentContent, this.currentOptions);
+        try {
+            const result = await this.options.onDismissMemoryCandidate(item);
+            this.memoryCandidateActionState.set(item.id, {
+                status: result.ok ? "dismissed" : "failed",
+                message: result.message,
+            });
+        } catch (error) {
+            this.memoryCandidateActionState.set(item.id, {
+                status: "failed",
+                message: error instanceof Error ? error.message : String(error),
+            });
+        }
+        this.renderContent(this.currentContent, this.currentOptions);
     }
 
     private renderMaintenanceReviewContent(maintenanceReview: DetailExtra["maintenanceReview"]): boolean {
@@ -861,6 +1101,76 @@ export class TabView {
             cardEl.appendChild(list);
         }
         return cardEl;
+    }
+
+    private renderPatternDetectionContent(patternDetection: DetailExtra["patternDetection"]): boolean {
+        if (!this.bodyEl || !patternDetection) return false;
+        const visiblePatterns = patternDetection.patterns.filter((pattern) => !this.dismissedPatternIds.has(pattern.id));
+
+        const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-pattern-detection");
+        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.patterns.title", this.locale)));
+        section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
+            pageletT("pagelet.tab.patterns.summary", this.locale, { count: visiblePatterns.length })));
+
+        if (visiblePatterns.length === 0) {
+            section.appendChild(el("div", "pa-pagelet-tab-empty-card", pageletT("pagelet.tab.patterns.empty", this.locale)));
+            this.bodyEl.appendChild(section);
+            return true;
+        }
+
+        const group = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-pattern-items");
+        for (const pattern of visiblePatterns) {
+            const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-pattern-card");
+            cardEl.appendChild(el("h4", undefined, pattern.title));
+            cardEl.appendChild(el("p", undefined, pattern.summary));
+
+            const tagRow = el("div", "pa-pagelet-tab-tag-row");
+            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+                pageletT(`pagelet.tab.patterns.type.${pattern.patternType}`, this.locale)));
+            cardEl.appendChild(tagRow);
+
+            if (pattern.whyShown.length > 0) {
+                cardEl.appendChild(el("p", "pa-pagelet-tab-review-queue-why",
+                    pageletT("pagelet.tab.weekly.whyNow", this.locale, { reason: pattern.whyShown.slice(0, 2).join("; ") })));
+            }
+
+            const sourcePaths = [...new Set(pattern.sourceRefs.map((ref) => ref.path).filter(Boolean))].slice(0, 8);
+            if (sourcePaths.length > 0) {
+                const list = el("ul", "pa-pagelet-tab-context-pager-list");
+                for (const path of sourcePaths) {
+                    const item = el("li");
+                    if (this.options.onSourcePathClick) {
+                        const button = el("button", "pa-pagelet-tab-source-link", path);
+                        button.setAttribute("type", "button");
+                        button.addEventListener("click", (event) => {
+                            event.preventDefault();
+                            this.options.onSourcePathClick?.(path);
+                        });
+                        item.appendChild(button);
+                    } else {
+                        item.textContent = path;
+                    }
+                    list.appendChild(item);
+                }
+                cardEl.appendChild(list);
+            }
+
+            const actions = el("div", "pa-pagelet-tab-memory-candidate-actions");
+            const dismissButton = el("button", "pa-pagelet-tab-pattern-dismiss",
+                pageletT("pagelet.tab.patterns.dismiss", this.locale));
+            dismissButton.setAttribute("type", "button");
+            dismissButton.addEventListener("click", (event) => {
+                event.preventDefault();
+                this.dismissedPatternIds.add(pattern.id);
+                this.renderContent(this.currentContent, this.currentOptions);
+            });
+            actions.appendChild(dismissButton);
+            cardEl.appendChild(actions);
+            group.appendChild(cardEl);
+        }
+        section.appendChild(group);
+        this.bodyEl.appendChild(section);
+        return true;
     }
 
     private renderMaintenanceProposalActions(cardEl: HTMLElement, proposal: MaintenanceProposal): void {

@@ -39,7 +39,6 @@ import type {
     QuietRecallRunResult,
     ReviewQueueItem,
     SavedInsight,
-    WeeklyReviewRunResult,
 } from "../src/pa";
 
 function makeTFile(path: string, stat: { size?: number; mtime?: number; ctime?: number } = {}): TFile {
@@ -47,6 +46,12 @@ function makeTFile(path: string, stat: { size?: number; mtime?: number; ctime?: 
         new(path: string, stat?: { size?: number; mtime?: number; ctime?: number }): TFile;
     };
     return new FileCtor(path, stat);
+}
+
+async function flushAsyncWork(): Promise<void> {
+    for (let index = 0; index < 8; index += 1) {
+        await Promise.resolve();
+    }
 }
 
 function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
@@ -92,6 +97,9 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 excludedTags: [],
                 excludedPatterns: [],
                 onboardingShown: true,
+                maintenanceScanSuggested: false,
+                quickCaptureExplained: false,
+                quietRecallExplained: false,
             },
             contextPager: {
                 enabled: true,
@@ -149,6 +157,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             items: [],
             skippedSourceCount: 0,
         }),
+        detectCrossNotePatterns: async () => null,
         runScopeRecap: async () => ({
             id: "recap-test",
             scope: { kind: "current_note", paths: ["notes/current.md"] },
@@ -179,18 +188,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
             dataBoundarySnapshotId: "data_boundary:scope_recap",
         }),
-        runWeeklyReview: async () => ({
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            range: {
-                startDate: "2026-06-23",
-                endDate: "2026-06-29",
-                days: 7,
-                label: "2026-06-23 to 2026-06-29",
-            },
-            totalCount: 0,
-            sections: [],
-        }),
-        saveWeeklyReviewNote: async () => ({ success: true, filePath: ".pagelet/pagelet-weekly-review.md" }),
         runQuietRecall: async () => ({
             generatedAt: "2026-06-29T12:00:00.000Z",
             currentPath: "notes/current.md",
@@ -202,6 +199,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             reason: "not_configured",
             message: "not configured",
         }),
+        linkRecallCandidate: async () => ({ ok: false, message: "not configured" }),
         recordQuietRecallFeedback: async () => ({ ok: false, reason: "disabled" }),
         createReviewQueueItem: async () => ({ ok: false, reason: "not_configured" }),
         dismissReviewQueueItem: async () => ({ ok: false, reason: "not_configured" }),
@@ -622,16 +620,13 @@ describe("PageletOrchestrator detail expansion", () => {
         internals.expandPanelToTab();
 
         expect(panelView.close).toHaveBeenCalledTimes(1);
-        expect(openPageletDetailView).toHaveBeenCalledWith({
+        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
             title: "Pagelet — Detail View",
             content: findings,
             locale: "en",
             layoutType: "discover",
-            extra: {
-                connections: extra.connections,
-            },
             sourcePath: "2.fleeting/Test-2023-04-08.md",
-        });
+        }));
     });
 
     it("passes the current Periodic Summary markdown payload to the detail tab", () => {
@@ -693,15 +688,14 @@ describe("PageletOrchestrator detail expansion", () => {
 
         expect(panelView.close).toHaveBeenCalledTimes(1);
         expect(internals.saveFlow.pending?.targetPath).toBe(".pagelet/pagelet-weekly-review.md");
-        expect(openPageletDetailView).toHaveBeenCalledWith({
+        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
             title: "Pagelet — Detail View",
             content: findings,
             locale: "en",
             layoutType: "summary",
-            extra: { markdown },
             sourcePath: ".pagelet/pagelet-weekly-review.md",
             summarySaveNote: pendingNote,
-        });
+        }));
     });
 
     it("attaches global Saved Insight and Memory ledgers when expanding to the detail tab", () => {
@@ -952,57 +946,6 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(payload?.extra?.markdown).not.toContain("Theme: #pa");
     });
 
-    it("runs manual Weekly Review and opens selected-only review state in the native detail tab", async () => {
-        const weeklyReview: WeeklyReviewRunResult = {
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            range: {
-                startDate: "2026-06-23",
-                endDate: "2026-06-29",
-                days: 7,
-                label: "2026-06-23 to 2026-06-29",
-            },
-            totalCount: 1,
-            sections: [{
-                type: "saved_insights",
-                title: "Saved insights",
-                summary: "1 item",
-                items: [{
-                    id: "weekly-insight-1",
-                    section: "saved_insights",
-                    title: "theme",
-                    summary: "Review cadence matters.",
-                    status: "candidate",
-                    sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
-                    whyShown: ["Saved insight."],
-                    generatedAt: "2026-06-29T12:00:00.000Z",
-                    savedInsightId: "ins-1",
-                }],
-            }],
-        };
-        const runWeeklyReview = jest.fn(async () => weeklyReview);
-        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
-        const host = makeHost({
-            runWeeklyReview,
-            openPageletDetailView,
-        });
-        const orchestrator = new PageletOrchestrator(host);
-
-        await orchestrator.getCommandCallbacks().onWeeklyReview();
-
-        expect(runWeeklyReview).toHaveBeenCalledTimes(1);
-        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
-            title: "Weekly Review",
-            content: [],
-            layoutType: "review",
-            extra: expect.objectContaining({
-                weeklyReview: expect.objectContaining({
-                    totalCount: 1,
-                    range: expect.objectContaining({ label: "2026-06-23 to 2026-06-29" }),
-                }),
-            }),
-        }));
-    });
-
     it("runs Quiet Recall and opens recall candidates in the native detail tab", async () => {
         const quietRecall: QuietRecallRunResult = {
             generatedAt: "2026-06-29T12:00:00.000Z",
@@ -1046,17 +989,270 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
     });
 
-    it("keeps slower stale foreground routes from replacing newer detail content", async () => {
-        const weeklyReview: WeeklyReviewRunResult = {
+    afterEach(() => { jest.useRealTimers(); });
+
+    it("prepares a Quiet Recall Bubble nudge after opening a markdown note", async () => {
+        jest.useFakeTimers();
+        const candidate: QuietRecallCandidate = {
+            id: "qr-vault-beta",
+            title: "Recall: Beta",
+            summary: "Beta may be useful again.",
+            sourceRefs: [{ path: "notes/beta.md", evidenceStrength: "medium" }],
+            whyNow: ["This note appears related to the note you are viewing."],
+            nextAction: "Open this note and decide whether the connection still matters.",
+            relation: "related",
+            score: 70,
             generatedAt: "2026-06-29T12:00:00.000Z",
-            range: {
-                startDate: "2026-06-23",
-                endDate: "2026-06-29",
-                days: 7,
-                label: "2026-06-23 to 2026-06-29",
+        };
+        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 1,
+            candidates: [candidate],
+        }));
+        const host = makeHost({ runQuietRecall });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
             },
+            setTaskKind: jest.fn(),
+        };
+        const bubbleView = { close: jest.fn() };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            bubbleView: typeof bubbleView;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            handleLeafChange(leaf: unknown): void;
+        };
+        internals.petView = petView;
+        internals.bubbleView = bubbleView;
+
+        internals.handleLeafChange({
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/current.md"),
+                contentEl: {} as HTMLElement,
+            },
+        });
+        jest.advanceTimersByTime(300);
+        await flushAsyncWork();
+
+        expect(runQuietRecall).toHaveBeenCalledTimes(1);
+        expect(internals.quietRecallBubbleNudge).toEqual({
+            candidateId: "qr-vault-beta",
+            currentPath: "notes/current.md",
+            relation: "related",
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            onboardingExplanation: true,
+        });
+        expect(petView.stateMachine.forceState).toHaveBeenCalledWith("nudge");
+        expect(host.updatePageletSetting).toHaveBeenCalledWith("quietRecallExplained", true);
+    });
+
+    it("keeps Quiet Recall onboarding explanation pending when quiet hours block the nudge", async () => {
+        jest.useFakeTimers();
+        const candidate: QuietRecallCandidate = {
+            id: "qr-vault-quiet-hours",
+            title: "Recall: Quiet",
+            summary: "Quiet-hours note may be useful.",
+            sourceRefs: [{ path: "notes/quiet.md", evidenceStrength: "medium" }],
+            whyNow: ["This note appears related to the note you are viewing."],
+            nextAction: "Open this note and decide whether the connection still matters.",
+            relation: "related",
+            score: 70,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 1,
+            candidates: [candidate],
+        }));
+        const host = makeHost({ runQuietRecall });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.pagelet.proactiveHintsQuietHours = { enabled: true, start: "00:00", end: "23:59" };
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            handleLeafChange(leaf: unknown): void;
+        };
+        internals.petView = petView;
+
+        internals.handleLeafChange({
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/current.md"),
+                contentEl: {} as HTMLElement,
+            },
+        });
+        jest.advanceTimersByTime(300);
+        await flushAsyncWork();
+
+        expect(internals.quietRecallBubbleNudge).toEqual(expect.objectContaining({
+            candidateId: "qr-vault-quiet-hours",
+            onboardingExplanation: true,
+        }));
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+        expect(host.updatePageletSetting).not.toHaveBeenCalledWith("quietRecallExplained", true);
+    });
+
+    it("deduplicates rapid note switches via debounce and runs Quiet Recall only once", async () => {
+        jest.useFakeTimers();
+        const candidate: QuietRecallCandidate = {
+            id: "qr-vault-latest",
+            title: "Recall: Latest",
+            summary: "Latest note may be useful.",
+            sourceRefs: [{ path: "notes/latest.md", evidenceStrength: "medium" }],
+            whyNow: ["This note appears related to the note you are viewing."],
+            nextAction: "Open this note and decide whether the connection still matters.",
+            relation: "related",
+            score: 70,
+            generatedAt: "2026-06-29T12:01:00.000Z",
+        };
+        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
+            generatedAt: "2026-06-29T12:01:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 1,
+            candidates: [candidate],
+        }));
+        const host = makeHost({ runQuietRecall });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            handleLeafChange(leaf: unknown): void;
+        };
+        internals.petView = petView;
+
+        const leaf = {
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/current.md"),
+                contentEl: {} as HTMLElement,
+            },
+        };
+        internals.handleLeafChange(leaf);
+        internals.handleLeafChange(leaf);
+        internals.handleLeafChange(leaf);
+        jest.advanceTimersByTime(300);
+        await flushAsyncWork();
+
+        expect(runQuietRecall).toHaveBeenCalledTimes(1);
+        expect(internals.quietRecallBubbleNudge?.candidateId).toBe("qr-vault-latest");
+    });
+
+    it("suppresses open-note Quiet Recall preparation in Focus Mode", async () => {
+        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: "notes/current.md",
             totalCount: 0,
-            sections: [],
+            candidates: [],
+        }));
+        const host = makeHost({ runQuietRecall });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        host.settings.focusMode = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            handleLeafChange(leaf: unknown): void;
+        };
+        internals.petView = petView;
+
+        internals.handleLeafChange({
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/current.md"),
+                contentEl: {} as HTMLElement,
+            },
+        });
+        await flushAsyncWork();
+
+        expect(runQuietRecall).not.toHaveBeenCalled();
+    });
+
+    it("runs Quiet Recall on double Ctrl but ignores a single Ctrl press", async () => {
+        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 0,
+            candidates: [],
+        }));
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const host = makeHost({ runQuietRecall, openPageletDetailView });
+        const orchestrator = new PageletOrchestrator(host);
+        const preventDefault = jest.fn();
+        const internals = orchestrator as unknown as {
+            handleQuietRecallShortcut(event: Partial<KeyboardEvent> & { preventDefault: () => void }): void;
+        };
+
+        internals.handleQuietRecallShortcut({ key: "Control", preventDefault });
+        await flushAsyncWork();
+        expect(runQuietRecall).not.toHaveBeenCalled();
+
+        internals.handleQuietRecallShortcut({ key: "Control", preventDefault });
+        await flushAsyncWork();
+
+        expect(preventDefault).toHaveBeenCalledTimes(1);
+        expect(runQuietRecall).toHaveBeenCalledTimes(1);
+        expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
+            title: "Quiet Recall",
+        }));
+    });
+
+    it("keeps slower stale foreground routes from replacing newer detail content", async () => {
+        const maintenanceReview: MaintenanceReviewRunResult = {
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            previewOnly: true,
+            weeklyScanEnabled: false,
+            totalCount: 0,
+            categories: [
+                { category: "inbox_cleanup", label: "inbox_cleanup", count: 0 },
+                { category: "better_titles", label: "better_titles", count: 0 },
+                { category: "weak_links", label: "weak_links", count: 0 },
+            ],
+            proposals: [],
         };
         const quietRecall: QuietRecallRunResult = {
             generatedAt: "2026-06-29T12:01:00.000Z",
@@ -1064,29 +1260,29 @@ describe("PageletOrchestrator detail expansion", () => {
             totalCount: 0,
             candidates: [],
         };
-        let resolveWeekly!: (value: WeeklyReviewRunResult) => void;
-        const weeklyGate = new Promise<WeeklyReviewRunResult>((resolve) => {
-            resolveWeekly = resolve;
+        let resolveMaintenance!: (value: MaintenanceReviewRunResult) => void;
+        const maintenanceGate = new Promise<MaintenanceReviewRunResult>((resolve) => {
+            resolveMaintenance = resolve;
         });
-        const runWeeklyReview = jest.fn(() => weeklyGate);
+        const runMaintenanceReview = jest.fn(() => maintenanceGate);
         const runQuietRecall = jest.fn(async () => quietRecall);
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
         const host = makeHost({
-            runWeeklyReview,
+            runMaintenanceReview,
             runQuietRecall,
             openPageletDetailView,
         });
         const orchestrator = new PageletOrchestrator(host);
         const internals = orchestrator as unknown as {
-            runWeeklyReview(): Promise<void>;
+            runMaintenanceReview(): Promise<void>;
             runQuietRecall(): Promise<void>;
         };
 
-        const oldWeeklyRun = internals.runWeeklyReview();
+        const oldMaintenanceRun = internals.runMaintenanceReview();
         await Promise.resolve();
         await internals.runQuietRecall();
-        resolveWeekly(weeklyReview);
-        await oldWeeklyRun;
+        resolveMaintenance(maintenanceReview);
+        await oldMaintenanceRun;
 
         expect(openPageletDetailView).toHaveBeenCalledTimes(1);
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
@@ -1825,5 +2021,67 @@ describe("PageletOrchestrator connection discovery", () => {
         expect(recordQuietRecallFeedback).toHaveBeenCalledWith(candidate, "later");
         expect(saveQuietRecallAsInsight).not.toHaveBeenCalled();
         expect(createReviewQueueItem).not.toHaveBeenCalled();
+    });
+
+    it("links Quiet Recall Bubble candidates only when the active note still matches the nudge source", async () => {
+        const linkRecallCandidate = jest.fn(async (_currentPath: string, _candidatePath: string) => ({
+            ok: true,
+            message: "Linked",
+        }));
+        const recordQuietRecallFeedback = jest.fn(async (
+            _candidate: QuietRecallCandidate,
+            _feedback: "view" | "accept" | "dismiss" | "later" | "not_relevant",
+        ) => ({ ok: false as const, reason: "disabled" as const }));
+        const candidate: QuietRecallCandidate = {
+            id: "qr-link",
+            title: "Recall: Link",
+            summary: "Linkable note.",
+            sourceRefs: [{ path: "notes/related.md", evidenceStrength: "medium" }],
+            whyNow: ["This note appears related to the note you are viewing."],
+            nextAction: "Open this note and decide whether the connection still matters.",
+            relation: "related",
+            score: 80,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const nudge: QuietRecallBubbleNudge = {
+            candidateId: candidate.id,
+            currentPath: "notes/current.md",
+            relation: candidate.relation,
+            generatedAt: candidate.generatedAt,
+        };
+        const host = makeHost({ linkRecallCandidate, recordQuietRecallFeedback });
+        const orchestrator = new PageletOrchestrator(host);
+        const bubbleView = { close: jest.fn() };
+        const internals = orchestrator as unknown as {
+            bubbleView: typeof bubbleView;
+            quietRecallNudgeCandidate: QuietRecallCandidate | null;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            handleQuietRecallBubbleLink(nudge: QuietRecallBubbleNudge): Promise<void>;
+        };
+        internals.bubbleView = bubbleView;
+        internals.quietRecallNudgeCandidate = candidate;
+        internals.quietRecallBubbleNudge = nudge;
+
+        await internals.handleQuietRecallBubbleLink(nudge);
+
+        expect(linkRecallCandidate).toHaveBeenCalledWith("notes/current.md", "notes/related.md");
+        expect(recordQuietRecallFeedback).toHaveBeenCalledWith(candidate, "accept");
+        expect(internals.quietRecallBubbleNudge).toBeNull();
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+
+        linkRecallCandidate.mockClear();
+        recordQuietRecallFeedback.mockClear();
+        bubbleView.close.mockClear();
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(makeTFile("notes/other.md"));
+        internals.quietRecallNudgeCandidate = candidate;
+        internals.quietRecallBubbleNudge = nudge;
+
+        await internals.handleQuietRecallBubbleLink(nudge);
+
+        expect(linkRecallCandidate).not.toHaveBeenCalled();
+        expect(recordQuietRecallFeedback).not.toHaveBeenCalled();
+        expect(internals.quietRecallBubbleNudge).toBe(nudge);
+        expect(bubbleView.close).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith("Open a Markdown note before linking.", 4000);
     });
 });

@@ -20,6 +20,7 @@ import type {
     ContextPagerState,
     GraphDiscoveryRunResult,
     MaintenanceReviewRunResult,
+    PatternDetectionResult,
     QuietRecallRunResult,
     ReviewQueueItem,
     SavedInsight,
@@ -107,6 +108,7 @@ export interface PanelSavedInsightState {
 
 export interface PanelMemoryGovernanceState {
     records: ConfirmedMemoryRecord[];
+    candidates?: ReviewQueueItem[];
     totalCount: number;
 }
 
@@ -114,6 +116,7 @@ export type PanelMaintenanceReviewState = MaintenanceReviewRunResult;
 export type PanelWeeklyReviewState = WeeklyReviewRunResult;
 export type PanelQuietRecallState = QuietRecallRunResult;
 export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
+export type PanelPatternDetectionState = PatternDetectionResult;
 
 export interface PanelOpenExtra {
     connections?: NoteConnection[];
@@ -128,6 +131,7 @@ export interface PanelOpenExtra {
     weeklyReview?: PanelWeeklyReviewState;
     quietRecall?: PanelQuietRecallState;
     graphDiscovery?: PanelGraphDiscoveryState;
+    patternDetection?: PanelPatternDetectionState;
 }
 
 /** Discovery connection between notes */

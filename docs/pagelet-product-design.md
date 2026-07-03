@@ -1,5 +1,7 @@
 # Pagelet Product Design
 
+> [!warning] This spec is partially superseded by [PA product discussion 2026-07-02](./pa-product-discussion-2026-07-02.md): Pagelet must include one-time bridge nudges for Maintenance Scan, Quick Capture, and Quiet Recall using the PA Bubble/Pet notification style. Use that discussion as the current product baseline.
+
 ## Status
 
 | Field | Value |

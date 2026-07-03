@@ -139,6 +139,12 @@ export interface PageletSettings {
     // ── Onboarding ────────────────────────────────────────────────
     /** Whether the Pagelet v2 onboarding guide has been shown. */
     onboardingShown: boolean;
+    /** Whether the first large-vault Maintenance Review suggestion has been shown. */
+    maintenanceScanSuggested: boolean;
+    /** Whether the first Quick Capture bridge explanation has been shown. */
+    quickCaptureExplained: boolean;
+    /** Whether the first Quiet Recall bridge explanation has been shown. */
+    quietRecallExplained: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +184,9 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     foregroundPerDayCap: 100,
     // Onboarding
     onboardingShown: false,
+    maintenanceScanSuggested: false,
+    quickCaptureExplained: false,
+    quietRecallExplained: false,
 });
 
 /**
@@ -333,6 +342,9 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         foregroundPerDayCap: normalizeBoundedInt(raw.foregroundPerDayCap, PAGELET_DEFAULTS.foregroundPerDayCap, PAGELET_BOUNDS.foregroundPerDayCap.min, PAGELET_BOUNDS.foregroundPerDayCap.max),
         // Onboarding
         onboardingShown: typeof raw.onboardingShown === "boolean" ? raw.onboardingShown : PAGELET_DEFAULTS.onboardingShown,
+        maintenanceScanSuggested: typeof raw.maintenanceScanSuggested === "boolean" ? raw.maintenanceScanSuggested : PAGELET_DEFAULTS.maintenanceScanSuggested,
+        quickCaptureExplained: typeof raw.quickCaptureExplained === "boolean" ? raw.quickCaptureExplained : PAGELET_DEFAULTS.quickCaptureExplained,
+        quietRecallExplained: typeof raw.quietRecallExplained === "boolean" ? raw.quietRecallExplained : PAGELET_DEFAULTS.quietRecallExplained,
     };
 }
 

@@ -19,6 +19,7 @@ import type {
     MaintenanceProposal,
     QuietRecallCandidate,
     QuietRecallSaveResult,
+    ReviewQueueItem,
     WeeklyReviewRunResult,
 } from "../../pa";
 import type {
@@ -135,6 +136,20 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                         whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
                     })),
                 })),
+                candidates: payload.extra.memoryGovernance.candidates?.map((item) => ({
+                    ...item,
+                    scope: {
+                        ...item.scope,
+                        paths: item.scope.paths ? [...item.scope.paths] : undefined,
+                        tags: item.scope.tags ? [...item.scope.tags] : undefined,
+                    },
+                    sourceRefs: item.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                    whyShown: [...(item.whyShown ?? [])],
+                    metadata: item.metadata ? { ...item.metadata } : undefined,
+                })),
             };
         }
         if (payload.extra.maintenanceReview) {
@@ -186,6 +201,20 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                     })),
                     whyShown: [...item.whyShown],
                     metadata: { ...item.metadata },
+                })),
+            };
+        }
+        if (payload.extra.patternDetection) {
+            copy.extra.patternDetection = {
+                generatedAt: payload.extra.patternDetection.generatedAt,
+                totalCount: payload.extra.patternDetection.totalCount,
+                patterns: payload.extra.patternDetection.patterns.map((pattern) => ({
+                    ...pattern,
+                    sourceRefs: pattern.sourceRefs.map((ref) => ({
+                        ...ref,
+                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                    })),
+                    whyShown: [...pattern.whyShown],
                 })),
             };
         }
@@ -261,8 +290,11 @@ export class PageletDetailView extends ItemView {
     private readonly onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
     private readonly onApplyMaintenanceProposal?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>;
     private readonly onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
+    private readonly onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>;
+    private readonly onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>;
     private readonly onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>;
     private readonly onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
+    private readonly onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>;
     private renderer: TabView | null = null;
     private title: string;
     private content: PageletDetailContent = [];
@@ -276,16 +308,22 @@ export class PageletDetailView extends ItemView {
         onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>,
         onApplyMaintenanceProposal?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>,
         onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>,
+        onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>,
+        onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>,
         onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>,
         onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>,
+        onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>,
     ) {
         super(leaf);
         this.getLocale = getLocale;
         this.onSaveSummaryNote = onSaveSummaryNote;
         this.onApplyMaintenanceProposal = onApplyMaintenanceProposal;
         this.onUndoMaintenanceAction = onUndoMaintenanceAction;
+        this.onConfirmMemoryCandidate = onConfirmMemoryCandidate;
+        this.onDismissMemoryCandidate = onDismissMemoryCandidate;
         this.onSaveWeeklyReviewNote = onSaveWeeklyReviewNote;
         this.onSaveQuietRecallAsInsight = onSaveQuietRecallAsInsight;
+        this.onLinkQuietRecallCandidate = onLinkQuietRecallCandidate;
         this.locale = getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.sessionId = createPageletDetailSessionId();
@@ -312,13 +350,17 @@ export class PageletDetailView extends ItemView {
         this.renderer = new TabView(this.locale, {
             app: this.app,
             onConnectionNodeClick: (noteName, sourcePath) => this.openRelatedNote(noteName, sourcePath),
+            onSourcePathClick: (path) => this.openRelatedNote(path),
             onSaveSummaryNote: this.onSaveSummaryNote
                 ? (note) => this.saveSummaryNote(note)
                 : undefined,
             onApplyMaintenanceProposal: this.onApplyMaintenanceProposal,
             onUndoMaintenanceAction: this.onUndoMaintenanceAction,
+            onConfirmMemoryCandidate: this.onConfirmMemoryCandidate,
+            onDismissMemoryCandidate: this.onDismissMemoryCandidate,
             onSaveWeeklyReviewNote: this.onSaveWeeklyReviewNote,
             onSaveQuietRecallAsInsight: this.onSaveQuietRecallAsInsight,
+            onLinkRecallCandidate: this.onLinkQuietRecallCandidate,
         });
         this.renderer.mount(this.contentEl);
         this.renderer.open(this.title, this.content, this.payloadOptions);

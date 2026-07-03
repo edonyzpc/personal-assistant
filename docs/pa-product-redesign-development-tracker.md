@@ -54,12 +54,12 @@ Phase 5B can start after Phase 1.
 
 | Slice | Tasks | User-Visible Value | Status | Gate |
 |-------|-------|-------------------|--------|------|
-| Phase 0: Document Alignment | P0.1-P0.3 | None (internal alignment) | `[ ]` | Spec text review |
-| Phase 1: Quiet Recall Refactor | P1.1-P1.6 | Vault-wide contextual recall with multi-signal ranking | `[ ]` | Phase 0 done |
-| Phase 2: Weekly Review Decompose | P2.1-P2.3 | Memory batch confirmation always available; weekly command retired | `[ ]` | Phase 0 done |
-| Phase 3: Frontmatter Linking | P3.1-P3.3 | One-click `pa-related` link in frontmatter from Recall | `[ ]` | Phase 1 done |
-| Phase 4: Onboarding | P4.1-P4.3 | Three one-time bridge nudges for new users | `[ ]` | Phase 1 done |
-| Phase 5: Chat + Patterns | P5.1-P5.2 | Chat text selection ops; cross-note pattern nudge | `[ ]` | Phase 1+2 done |
+| Phase 0: Document Alignment | P0.1-P0.3 | None (internal alignment) | `[x]` | Spec text review |
+| Phase 1: Quiet Recall Refactor | P1.1-P1.6 | Vault-wide contextual recall with multi-signal ranking | `[x]` | Phase 0 done |
+| Phase 2: Weekly Review Decompose | P2.1-P2.3 | Memory batch confirmation always available; weekly command retired | `[x]` | Phase 0 done |
+| Phase 3: Frontmatter Linking | P3.1-P3.3 | One-click `pa-related` link in frontmatter from Recall | `[x]` | Phase 1 done |
+| Phase 4: Onboarding | P4.1-P4.3 | Three one-time bridge nudges for new users | `[x]` | Phase 1 done |
+| Phase 5: Chat + Patterns | P5.1-P5.2 | Chat text selection ops; cross-note pattern nudge | `[x]` | Phase 1+2 done |
 
 ---
 
@@ -70,19 +70,18 @@ Phase 5B can start after Phase 1.
 #### P0.1 — Update North Star document
 
 - **Spec refs**: `pa-product-discussion-2026-07-02.md` § I
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **File**: `docs/pa-product-north-star.md`
 - **Scope**:
   - Replace North Star statement with "随手记下，需要时自然浮现"
-  - Replace short form "Let personal knowledge compound naturally"
-    with the new Chinese + English pair
+  - Replace the old English short form with the new Chinese + English pair
   - Demote "安静且可信" from North Star to Design Philosophy section
   - Preserve 6 "Less X, more Y" principles under Design Constraints
   - Add 7 research-backed design principles from discussion § III
   - Add decay principle (multi-signal ranking, no hard decay)
 - **Non-goals**: No code changes. No runtime behavior changes.
 - **Acceptance**:
-  - `rg "compound naturally" docs/pa-product-north-star.md` returns 0
+  - The old English short form no longer appears in `docs/pa-product-north-star.md`
   - "安静且可信" appears under "Design Philosophy" not under "North Star"
   - New North Star appears at the top of the document
 - **Validation**: `git diff --check`
@@ -90,22 +89,22 @@ Phase 5B can start after Phase 1.
 #### P0.2 — Update AGENTS.md and CLAUDE.md
 
 - **Spec refs**: `pa-product-discussion-2026-07-02.md` § I, § II
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Files**: `AGENTS.md`, `CLAUDE.md`
 - **Scope**:
   - Update Product North Star section to reference new North Star
   - Move "安静且可信" to a Design Philosophy sub-section
-  - Replace "compound naturally" short form
+  - Replace the old English short form
 - **Non-goals**: No changes to dev commands, architecture rules, or release rules.
 - **Acceptance**:
-  - `rg "compound naturally" AGENTS.md CLAUDE.md` returns 0
+  - The old English short form no longer appears in `AGENTS.md` or `CLAUDE.md`
   - AGENTS.md § Product North Star matches `pa-product-north-star.md`
 - **Validation**: `git diff --check`
 
 #### P0.3 — Add spec drift callouts to affected specs
 
 - **Spec refs**: `pa-product-discussion-2026-07-02.md` § "文档关系"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Files**: `docs/pa-quiet-recall-insight-timing-product-spec.md`,
   `docs/pa-weekly-review-product-spec.md`,
   `docs/pagelet-product-design.md`
@@ -126,7 +125,7 @@ Phase 5B can start after Phase 1.
 #### P1.1 — Extend candidate pool data model
 
 - **Spec refs**: Discussion § V.1 "候选池扩展"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **File**: `src/pa/quiet-recall.ts`
 - **Scope**:
   - Define `QuietRecallVaultNote` interface (path, title, content,
@@ -154,7 +153,7 @@ Phase 5B can start after Phase 1.
 #### P1.2 — Implement multi-signal scoring model
 
 - **Spec refs**: Discussion § III "衰减原则", § V.1
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P1.1
 - **File**: `src/pa/quiet-recall.ts`
 - **Scope**:
@@ -182,7 +181,7 @@ Phase 5B can start after Phase 1.
 #### P1.3 — Implement VSS + metadataCache hybrid retrieval
 
 - **Spec refs**: Discussion § V.1 "混合：VSS 可用时用 embedding"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P1.1, P1.2
 - **File**: `src/plugin.ts` (method `runQuietRecall`)
 - **Scope**:
@@ -211,7 +210,7 @@ Phase 5B can start after Phase 1.
 #### P1.4 — Add "open note" and "save after" triggers
 
 - **Spec refs**: Discussion § V.1 "触发模型"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P1.3
 - **File**: `src/pagelet/orchestrator.ts`
 - **Scope**:
@@ -245,7 +244,7 @@ Phase 5B can start after Phase 1.
 #### P1.5 — Add keyboard shortcut trigger
 
 - **Spec refs**: Discussion § V.1 "快捷键（如双击 Ctrl）"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P1.3
 - **File**: `src/pagelet/orchestrator.ts`, `src/plugin.ts`
 - **Scope**:
@@ -272,7 +271,7 @@ Phase 5B can start after Phase 1.
 #### P1.6 — Quiet Recall test suite update
 
 - **Spec refs**: All P1 tasks
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P1.2, P1.3
 - **File**: `__tests__/quiet-recall.test.ts`
 - **Scope**:
@@ -297,7 +296,7 @@ Phase 5B can start after Phase 1.
 #### P2.1 — Extract Memory batch confirmation to Pagelet Tab
 
 - **Spec refs**: Discussion § V.2 "Memory 候选批量确认"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: Phase 0 done
 - **Files**: `src/pagelet/tab/TabView.ts`, `src/pagelet/orchestrator.ts`,
   `src/plugin.ts`
@@ -324,7 +323,7 @@ Phase 5B can start after Phase 1.
 #### P2.2 — Implement cross-note pattern detection
 
 - **Spec refs**: Discussion § V.2 "跨笔记模式检测", Plan Phase 5.2
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: Phase 0 done
 - **File**: New `src/pa/pattern-detection.ts`
 - **Scope**:
@@ -357,7 +356,7 @@ Phase 5B can start after Phase 1.
 #### P2.3 — Retire Weekly Review command, wire pattern detection nudge
 
 - **Spec refs**: Discussion § V.2 "结论：Weekly Review 作为独立功能拆解"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P2.1, P2.2
 - **Files**: `src/pagelet/orchestrator.ts`, `src/pagelet/commands.ts`,
   `src/plugin.ts`, `src/pagelet/PageletHost.ts`, `src/pa/weekly-review.ts`,
@@ -401,7 +400,7 @@ Phase 5B can start after Phase 1.
 #### P3.1 — Implement frontmatter write utility
 
 - **Spec refs**: Discussion § V.4 "通过 Frontmatter"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: Phase 1 done
 - **File**: New `src/pa/frontmatter-link.ts`
 - **Scope**:
@@ -434,7 +433,7 @@ Phase 5B can start after Phase 1.
 #### P3.2 — Add "Link" action to Quiet Recall UI
 
 - **Spec refs**: Discussion § V.4
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P3.1, Phase 1 done
 - **Files**: `src/pagelet/tab/TabView.ts`,
   `src/pagelet/bubble/BubbleContent.ts`,
@@ -463,7 +462,7 @@ Phase 5B can start after Phase 1.
 #### P3.3 — Frontmatter linking integration test
 
 - **Spec refs**: Discussion § V.4 "已验证：Obsidian v1.4+"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P3.2
 - **File**: `__tests__/frontmatter-link.test.ts`
 - **Scope**:
@@ -480,7 +479,7 @@ Phase 5B can start after Phase 1.
 #### P4.1 — Extend onboarding state model
 
 - **Spec refs**: Discussion § VI
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: Phase 1 done
 - **Files**: `src/settings/pagelet/index.ts`, `src/settings.ts`
 - **Scope**:
@@ -501,7 +500,7 @@ Phase 5B can start after Phase 1.
 #### P4.2 — Implement three onboarding triggers
 
 - **Spec refs**: Discussion § VI "一次性桥梁引导"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P4.1
 - **Files**: `src/pagelet/orchestrator.ts`, `src/plugin.ts`,
   `src/quick-capture.ts`
@@ -533,7 +532,7 @@ Phase 5B can start after Phase 1.
 #### P4.3 — Onboarding i18n
 
 - **Spec refs**: Discussion § VI
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P4.2
 - **Files**: `src/locales/pagelet/en.json`, `src/locales/pagelet/zh.json`
 - **Scope**: Add i18n keys for three onboarding messages (en + zh)
@@ -547,7 +546,7 @@ Phase 5B can start after Phase 1.
 #### P5.1 — Chat text selection operations
 
 - **Spec refs**: Discussion § V.6, § IV "Chat — 基础能力"
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: Phase 0 done (no dependency on Phase 1)
 - **Files**: `src/ai-services/chat-tool-factories.ts`,
   `src/chat/chat-view.ts`
@@ -582,7 +581,7 @@ Phase 5B can start after Phase 1.
 #### P5.2 — Pattern detection Tab detail view
 
 - **Spec refs**: Discussion § V.2
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Prerequisite**: P2.3 (nudge wiring done)
 - **Files**: `src/pagelet/tab/TabView.ts`, `src/pagelet/orchestrator.ts`
 - **Scope**:
@@ -609,12 +608,12 @@ Phase 5B can start after Phase 1.
 
 | Phase | Spec Review | Dev | Test | Code Review | Deploy | Smoke | Status |
 |-------|-------------|-----|------|-------------|--------|-------|--------|
-| 0 | `[ ]` | `[ ]` | N/A | `[ ]` | N/A | N/A | `[ ]` |
-| 1 | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` |
-| 2 | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` |
-| 3 | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` |
-| 4 | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` |
-| 5 | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` | `[ ]` |
+| 0 | `[x]` | `[x]` | N/A | N/A | N/A | N/A | `[x]` |
+| 1 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| 2 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| 3 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| 4 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| 5 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
 
 ---
 
@@ -622,26 +621,26 @@ Phase 5B can start after Phase 1.
 
 | Task | Spec Refs | Status | Owner | Branch/Commit | Validation | Smoke | Notes |
 |------|-----------|--------|-------|---------------|------------|-------|-------|
-| P0.1 | Discussion §I | `[ ]` | — | — | — | N/A | — |
-| P0.2 | Discussion §I,II | `[ ]` | — | — | — | N/A | — |
-| P0.3 | Discussion §文档关系 | `[ ]` | — | — | — | N/A | — |
-| P1.1 | Discussion §V.1 | `[ ]` | — | — | — | — | — |
-| P1.2 | Discussion §III,V.1 | `[ ]` | — | — | — | — | — |
-| P1.3 | Discussion §V.1 | `[ ]` | — | — | — | — | Depends P1.1,P1.2 |
-| P1.4 | Discussion §V.1 | `[ ]` | — | — | — | — | Depends P1.3 |
-| P1.5 | Discussion §V.1 | `[ ]` | — | — | — | — | Depends P1.3 |
-| P1.6 | All P1 | `[ ]` | — | — | — | — | Depends P1.2,P1.3 |
-| P2.1 | Discussion §V.2 | `[ ]` | — | — | — | — | — |
-| P2.2 | Discussion §V.2 | `[ ]` | — | — | — | — | — |
-| P2.3 | Discussion §V.2 | `[ ]` | — | — | — | — | Depends P2.1,P2.2 |
-| P3.1 | Discussion §V.4 | `[ ]` | — | — | — | — | — |
-| P3.2 | Discussion §V.4 | `[ ]` | — | — | — | — | Depends P3.1 |
-| P3.3 | Discussion §V.4 | `[ ]` | — | — | — | — | Depends P3.2 |
-| P4.1 | Discussion §VI | `[ ]` | — | — | — | — | — |
-| P4.2 | Discussion §VI | `[ ]` | — | — | — | — | Depends P4.1 |
-| P4.3 | Discussion §VI | `[ ]` | — | — | — | — | Depends P4.2 |
-| P5.1 | Discussion §V.6 | `[ ]` | — | — | — | — | No Phase 1 dep |
-| P5.2 | Discussion §V.2 | `[ ]` | — | — | — | — | Depends P2.3 |
+| P0.1 | Discussion §I | `[x]` | Codex | — | Old English short-form grep returned no output; `git diff --check` passed | N/A | North Star rewritten to new baseline |
+| P0.2 | Discussion §I,II | `[x]` | Codex | — | Old English short-form grep returned no output; `git diff --check` passed | N/A | AGENTS/CLAUDE product standard synced |
+| P0.3 | Discussion §文档关系 | `[x]` | Codex | — | Callouts added in first 5 lines; `git diff --check` passed | N/A | Quiet Recall, Weekly Review, Pagelet specs marked drifted |
+| P1.1 | Discussion §V.1 | `[x]` | Codex | — | `npm test -- --runInBand quiet-recall`; `make deploy` | Pagelet runner PASS | Vault-note candidate data model added |
+| P1.2 | Discussion §III,V.1 | `[x]` | Codex | — | `npm test -- --runInBand quiet-recall`; `make deploy` | Pagelet runner PASS | Multi-signal scoring keeps SavedInsight path separate |
+| P1.3 | Discussion §V.1 | `[x]` | Codex | — | `npm test -- --runInBand quiet-recall pagelet-orchestrator`; `make deploy` | Pagelet runner PASS | VSS-ready and metadata fallback paths covered |
+| P1.4 | Discussion §V.1 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-orchestrator`; `make deploy` | Pagelet runner PASS | Open-note and save-after triggers covered; follow-up serialized Bubble nudge preparation |
+| P1.5 | Discussion §V.1 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-orchestrator`; `make deploy` | Pagelet runner PASS | Double-Ctrl trigger and teardown covered |
+| P1.6 | All P1 | `[x]` | Codex | — | `npm test -- --runInBand quiet-recall`; full Jest | Pagelet runner PASS | Quiet Recall suite expanded |
+| P2.1 | Discussion §V.2 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-panel-tab-view pagelet-orchestrator`; `make deploy` | Pagelet panel screenshot | Memory candidates render from Review Queue |
+| P2.2 | Discussion §V.2 | `[x]` | Codex | — | `npm test -- --runInBand pattern-detection`; full Jest | Pagelet runner PASS | Structure-only pattern detector added |
+| P2.3 | Discussion §V.2 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-commands pagelet-orchestrator`; `make deploy` | Runner confirms retired command absent | Weekly command retired; pattern nudge wired |
+| P3.1 | Discussion §V.4 | `[x]` | Codex | — | `npm test -- --runInBand frontmatter-link`; full Jest | Disposable Obsidian link smoke PASS | `pa-related` utility added; follow-up added target preflight and source rollback |
+| P3.2 | Discussion §V.4 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-panel-tab-view pagelet-bubble-content pagelet-bubble-coordinator`; `make deploy` | Disposable Obsidian link smoke PASS | Recall Link action wired through host; follow-up carries stable source path |
+| P3.3 | Discussion §V.4 | `[x]` | Codex | — | `npm test -- --runInBand frontmatter-link`; full Jest | Disposable Obsidian link smoke PASS | Bidirectional wikilink output verified with failure rollback coverage |
+| P4.1 | Discussion §VI | `[x]` | Codex | — | `npm test -- --runInBand pagelet-settings`; full Jest | Pagelet runner PASS | One-time onboarding flags merge/save |
+| P4.2 | Discussion §VI | `[x]` | Codex | — | `npm test -- --runInBand pagelet-orchestrator quick-capture pagelet-bubble-content`; `make deploy` | Pagelet panel/console smoke PASS | Bubble/Pet nudge paths only; one-time flags persist only after a nudge is surfaced |
+| P4.3 | Discussion §VI | `[x]` | Codex | — | `npm run build`; full Jest | Pagelet runner PASS | en/zh onboarding copy added |
+| P5.1 | Discussion §V.6 | `[x]` | Codex | — | `npm test -- --runInBand selection-tool-provider chat-view`; full Jest | Chat selection hint DOM + screenshot PASS | `replace_selection` direct execution is disabled until Write Action Framework wiring exists |
+| P5.2 | Discussion §V.2 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-panel-tab-view pattern-detection`; full Jest | Pagelet runner PASS | Pattern detail cards and dismiss/source refs covered |
 
 ---
 
@@ -664,39 +663,50 @@ Phase 5B can start after Phase 1.
 
 | Risk | Owner | Status | Closure Condition |
 |------|-------|--------|-------------------|
-| Quiet Recall vault-level retrieval causes jank on large vaults | Dev | Open | Benchmark on 1000+ note test vault; p95 < 500ms |
-| Weekly Review removal causes regression if users depend on it | Product | Open | Feature not yet in stable release; confirm via release notes |
-| Frontmatter write causes sync conflicts on multi-device | Dev | Open | Test with Obsidian Sync; verify `pa-related` merge behavior |
+| Quiet Recall vault-level retrieval causes jank on large vaults | Dev | Mitigated / dogfood | Candidate cap and tests in place; benchmark on 1000+ note test vault for p95 < 500ms |
+| Weekly Review removal causes regression if users depend on it | Product | Mitigated | Feature not yet in stable release; command absent in live smoke; call out in release notes |
+| Frontmatter write causes sync conflicts on multi-device | Dev | Open | Local writes now preflight both files and roll back source additions on reverse-write failure; still test Obsidian Sync merge behavior |
 | Double-tap Ctrl conflicts with system shortcuts | Dev | Open | Test on macOS/Windows/Linux; document known conflicts |
-| Pattern detection false positives | Dev | Open | Start structure-only (no LLM); validate precision before LLM |
-| Chat replace_selection bypasses write safety | Dev | Open | Gate behind `operationsAgentEnabled`; add undo via Obsidian |
+| Pattern detection false positives | Dev | Mitigated / dogfood | Structure-only detector shipped; validate precision before any LLM-based extension |
+| Chat replace_selection bypasses write safety | Dev | Fixed / draft-only | Direct `execute()` no longer mutates the editor; enable real replacement only after Write Action Framework `executeWrite` wiring and preview/stale-reread tests |
 
 ---
 
 ## Verification Log
 
-_Empty — entries added as phases complete._
-
 | Date | Phase/Task | Command / Evidence | Result | Residual Risk |
 |------|------------|-------------------|--------|---------------|
+| 2026-07-02 | Phase 0 / P0.1-P0.3 | Old English short-form grep; `git diff --check` | Pass: old literal no longer appears; whitespace check clean | No runtime validation required for docs-only phase |
+| 2026-07-02 | Phase 1 / P1.1-P1.6 | `npm test -- --runInBand quiet-recall pagelet-orchestrator`; full Jest via `make deploy` | Pass: vault-note candidates, scoring, trigger paths, and keyboard shortcut covered | Large-vault performance still needs dogfooding beyond test fixtures |
+| 2026-07-02 | Phase 2 / P2.1-P2.3 | `npm test -- --runInBand pagelet-commands pagelet-orchestrator pagelet-panel-tab-view pattern-detection weekly-review`; full Jest via `make deploy` | Pass: Memory candidates shown independently; weekly command absent; pattern nudge/detail covered | Weekly review helper code remains deprecated for compatibility |
+| 2026-07-02 | Phase 3 / P3.1-P3.3 | `npm test -- --runInBand frontmatter-link pagelet-panel-tab-view pagelet-bubble-content pagelet-bubble-coordinator pagelet-orchestrator`; disposable Obsidian link smoke | Pass: bidirectional `pa-related` write verified in deployed app | Multi-device sync conflict behavior remains a dogfooding risk |
+| 2026-07-02 | Phase 4 / P4.1-P4.3 | `npm test -- --runInBand pagelet-settings quick-capture pagelet-bubble-content pagelet-bubble-coordinator pagelet-orchestrator`; full Jest via `make deploy` | Pass: one-time onboarding flags, triggers, and i18n covered | Real first-install experience depends on vault size/settings state |
+| 2026-07-02 | Phase 5 / P5.1-P5.2 | `npm test -- --runInBand selection-tool-provider chat-view pagelet-panel-tab-view pattern-detection`; Chat selection DOM smoke | Pass: selection hint visible; `replace_selection` available only when Operations Agent runtime is mocked on and setting enabled | Production write-back remains hidden while `OPERATIONS_AGENT_RUNTIME_ENABLED=false` |
+| 2026-07-02 | Full gate | `npm test -- --runInBand`; `npm run lint`; `npm run build`; `npx tsc -noEmit -skipLibCheck`; `git diff --check`; source scan for runtime style/HTML injection | Pass: 134 suites / 2267 tests; lint/build/type/whitespace clean; no source-scan matches | None for automated gate |
+| 2026-07-03 | Review follow-up / P1-P5 fixes | `npm test -- --runInBand selection-tool-provider frontmatter-link pagelet-orchestrator pagelet-panel-tab-view review-queue-store`; `npx tsc -noEmit -skipLibCheck`; `npm run lint` | Pass: 5 suites / 89 tests; typecheck and lint clean | Obsidian app smoke not rerun in this follow-up pass |
 
 ---
 
 ## Validation Log
 
-_Empty — entries added as phases complete._
-
 | Date | Phase/Task | Acceptance Evidence | Validation Evidence | Smoke Evidence | Notes |
 |------|------------|--------------------|--------------------|----------------|-------|
+| 2026-07-02 | Phase 0 / P0.1-P0.3 | New North Star in `docs/pa-product-north-star.md`, `AGENTS.md`, and `CLAUDE.md`; affected specs have top callouts | Old English short-form grep returned no output; `git diff --check` passed | N/A | Runtime work remains gated until subsequent phase prerequisites are met |
+| 2026-07-02 | Phase 1 / Quiet Recall | Vault-note candidates coexist with saved insights; multi-signal ranking added; open/save/double-Ctrl triggers wired | Focused tests and full Jest via `make deploy` passed | Pagelet runner PASS after deploy/reload | Smoke did not force a provider-backed Quiet Recall run |
+| 2026-07-02 | Phase 2 / Weekly Review decompose | `pa-pagelet:weekly-review` absent; Memory candidates available in Tab; pattern detector+nudge wired | Focused tests and full Jest via `make deploy` passed | `pagelet-smoke-runner.js` PASS; command list confirms weekly-review absent | Deprecated weekly-review helpers retained as compatibility guard |
+| 2026-07-02 | Phase 3 / Frontmatter linking | `linkRecallCandidate()` writes bidirectional `pa-related` wikilinks and cleans up disposable fixture | Focused tests and full Jest via `make deploy` passed | Obsidian eval smoke returned `{ ok: true, message: "Linked" }`, `sourceHas=true`, `targetHas=true` | Temporary smoke folders cleaned; no persistent test-vault artifact |
+| 2026-07-02 | Phase 4 / Onboarding | Maintenance scan, Quick Capture, and Quiet Recall first-use nudge paths implemented with BubbleContent builders | Focused tests and full Jest via `make deploy` passed | Pagelet panel runner and console smoke PASS; no captured errors | No `new Notice()` onboarding path introduced |
+| 2026-07-02 | Phase 5 / Chat + Patterns | Chat selection hint appears with selected editor text; pattern detail cards render source refs and dismiss | Focused tests and full Jest via `make deploy` passed | Chat DOM: `.pa-chat-selection-hint` visible with expected text; screenshot `/private/tmp/pa-redesign-chat-selection.png`; Pagelet screenshot `/private/tmp/pa-redesign-pagelet-panel.png` | No Chat prompt/provider call was sent for selection-hint smoke |
+| 2026-07-03 | Review follow-up fixes | Confirmed review findings addressed: draft-only `replace_selection`, atomic-ish `pa-related` linking, stable Recall Link source path, surfaced-only onboarding flags, queue-first Memory confirmation, Pet smoke assertion | Focused Jest, typecheck, and lint passed | Not run | Follow-up did not claim new Obsidian UI validation |
 
 ---
 
 ## Review Log
 
-_Empty — entries added as reviews complete._
-
 | Date | Scope | Reviewer | Result | Findings | Disposition |
 |------|-------|----------|--------|----------|-------------|
+| 2026-07-02 | PA redesign full diff | Codex local review | Pass | No P0/P1/P2 correctness findings after focused tests, full gate, source scan, and Obsidian smoke | Fixed lint issue in `pattern-detection.ts`, stale smoke-runner weekly command expectation, and active-leaf startup preference |
+| 2026-07-03 | PA redesign review follow-up | Codex agent-team review | Follow-up required | P1 `replace_selection` write-safety bypass; P2 frontmatter partial write; P2 stale Recall Link source; P2 one-time nudge flags; P2 Memory confirm queue ordering; P2 smoke runner false green | Runtime/tests/docs patched; double-Ctrl shortcut scope remains a product decision |
 
 ---
 
@@ -707,7 +717,7 @@ _Empty — entries added as reviews complete._
 | Double-tap Ctrl vs configurable hotkey | Implement double-tap with fallback to Obsidian hotkey setting | No — documented as P1 enhancement | P1.5 |
 | LLM-based tension detection in patterns | Defer — structure-only first | Yes — requires product decision on LLM cost | P2.2, P5.2 |
 | Bidirectional frontmatter links by default | Yes (bidirectional) | No | P3.1, P3.2 |
-| `replace_selection` gate on operationsAgentEnabled | Yes (gated) | No | P5.1 |
+| `replace_selection` write-back | Disabled until Write Action Framework wiring exists | No — safe draft default; enabling write-back requires WAF preview/stale-reread implementation | P5.1 |
 
 ---
 
@@ -720,6 +730,7 @@ _Empty — entries added as reviews complete._
 | Chat Quick Command popup menu | Copilot-style floating menu on selection | Chat text selection via tool proves useful in dogfooding |
 | Weekly Review complete removal | Code marked @deprecated, not deleted | 1 version after decomposed kernels are validated |
 | Obsidian hotkey API for default binding | Obsidian API does not support plugin-set default hotkeys | Obsidian adds API or community workaround found |
+| Double-Ctrl shortcut scope hardening | Current SDD keeps double-Ctrl; shortcut conflict remains product/device dogfooding risk | Decide whether to constrain to Markdown editor focus or replace with configurable command-only entry |
 
 ---
 
@@ -734,8 +745,9 @@ _Empty — entries added as reviews complete._
    must use BubbleContent / Pet state change.
 4. Do not remove weekly-review.ts test file when retiring the command.
    Tests serve as regression guard during the deprecation period.
-5. Do not implement `replace_selection` without the `operationsAgentEnabled`
-   gate. Ungated editor writes violate the trust boundary.
+5. Do not implement executable `replace_selection` without Write Action
+   Framework preview, confirmation, stale-reread, and `executeWrite` wiring.
+   A settings/kill-switch gate alone is not sufficient for editor writes.
 6. Do not add `pa-related` links without Data Boundary checks. Excluded
    files must not appear in frontmatter links.
 7. Do not conflate SavedInsight scoring and vault note scoring. Keep both
