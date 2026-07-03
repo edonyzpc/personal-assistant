@@ -265,6 +265,7 @@ class FakeDocument {
 const globalRecord = globalThis as unknown as Record<string, unknown>;
 const originalDocument = globalRecord.document;
 const originalRequestAnimationFrame = globalRecord.requestAnimationFrame;
+const originalConfirm = globalRecord.confirm;
 
 globalRecord.HTMLElement = FakeElement;
 globalRecord.document = new FakeDocument();
@@ -285,7 +286,6 @@ import {
     type ReviewQueueItem,
     type RetrievalOutcome,
     type SavedInsight,
-    type WeeklyReviewRunResult,
 } from "../src/pa";
 import {
     PAGELET_DETAIL_ICON,
@@ -296,12 +296,14 @@ import {
 describe("Pagelet panel and tab view regressions", () => {
     beforeEach(() => {
         globalRecord.document = new FakeDocument();
+        globalRecord.confirm = originalConfirm;
         mockMarkdownRender.mockClear();
     });
 
     afterAll(() => {
         globalRecord.document = originalDocument;
         globalRecord.requestAnimationFrame = originalRequestAnimationFrame;
+        globalRecord.confirm = originalConfirm;
     });
 
     function makeReviewQueueItem(overrides: Partial<ReviewQueueItem> = {}): ReviewQueueItem {
@@ -682,6 +684,63 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(dismissCandidate).not.toHaveBeenCalled();
     });
 
+    it("allows low-burden batch confirmation for visible Memory candidates", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const confirmPrompt = jest.fn((_message?: string) => true);
+        globalRecord.confirm = confirmPrompt;
+        const firstCandidate = makeReviewQueueItem({
+            id: "rq-memory-first",
+            type: "memory_candidate",
+            title: "Remember first preference",
+            claim: "Prefers concise planning notes.",
+            admissionReason: "memory_confirmation_required",
+            metadata: { memoryType: "preference", sensitivity: "low" },
+        });
+        const secondCandidate = makeReviewQueueItem({
+            id: "rq-memory-second",
+            type: "memory_candidate",
+            title: "Remember second preference",
+            claim: "Prefers source-backed decisions.",
+            admissionReason: "memory_confirmation_required",
+            metadata: { memoryType: "preference", sensitivity: "low" },
+        });
+        const confirmCandidate = jest.fn(async (_item: ReviewQueueItem) => ({
+            ok: true,
+            message: "Confirmed",
+        }));
+        const tab = new TabView("en", {
+            onConfirmMemoryCandidate: confirmCandidate,
+        });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                memoryGovernance: {
+                    records: [],
+                    candidates: [firstCandidate, secondCandidate],
+                    totalCount: 2,
+                },
+            },
+        });
+
+        const confirmAllButton = container.querySelector(".pa-pagelet-tab-memory-confirm-all");
+        expect(confirmAllButton?.textContent).toBe("Confirm visible (2)");
+        const confirmButtons = container.querySelectorAll(".pa-pagelet-tab-memory-confirm");
+        expect(confirmButtons).toHaveLength(2);
+
+        await confirmAllButton?.click();
+        for (let index = 0; index < 8; index += 1) {
+            await Promise.resolve();
+        }
+
+        expect(confirmPrompt).toHaveBeenCalledWith(expect.stringContaining("2 visible Memory suggestions"));
+        expect(confirmCandidate).toHaveBeenCalledTimes(2);
+        expect(confirmCandidate).toHaveBeenNthCalledWith(1, firstCandidate);
+        expect(confirmCandidate).toHaveBeenNthCalledWith(2, secondCandidate);
+    });
+
     it("renders preview-only Maintenance Review results in the native detail tab", () => {
         const container = new FakeElement("div");
         container.isConnected = true;
@@ -819,225 +878,82 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelector(".pa-pagelet-tab-maintenance-apply")).toBeNull();
     });
 
-    it("renders Weekly Review as digest first and saves selected items only", async () => {
+    it("keeps maintenance action state when another tab section forces a full rerender", async () => {
         const container = new FakeElement("div");
         container.isConnected = true;
-        const weeklyReview: WeeklyReviewRunResult = {
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            range: {
-                startDate: "2026-06-23",
-                endDate: "2026-06-29",
-                days: 7,
-                label: "2026-06-23 to 2026-06-29",
-            },
-            totalCount: 2,
-            sections: [{
-                type: "saved_insights",
-                title: "Saved insights",
-                summary: "2 items",
-                items: [
-                    {
-                        id: "weekly-insight-1",
-                        section: "saved_insights",
-                        title: "Theme",
-                        summary: "Review cadence matters.",
-                        status: "candidate",
-                        sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
-                        whyShown: ["Saved insight."],
-                        generatedAt: "2026-06-29T12:00:00.000Z",
-                    },
-                    {
-                        id: "weekly-insight-2",
-                        section: "saved_insights",
-                        title: "Question",
-                        summary: "This should stay unaccepted.",
-                        status: "candidate",
-                        sourceRefs: [{ path: "notes/other.md", evidenceStrength: "medium" }],
-                        whyShown: ["Saved insight."],
-                        generatedAt: "2026-06-29T12:00:00.000Z",
-                    },
-                ],
-            }],
+        const proposal = makeMaintenanceProposal();
+        const appliedAction = {
+            id: "act-rerender",
+            proposalId: proposal.id,
+            reviewQueueItemId: "rq-1",
+            actionType: "move" as const,
+            status: "applied" as const,
+            oldPath: "Inbox/Untitled.md",
+            newPath: "Notes/Untitled.md",
+            appliedAt: "2026-06-28T12:00:00.000Z",
+            sourceRefs: proposal.sourceRefs,
+            dataBoundarySnapshotId: "boundary",
+            undoStrategy: "move_back" as const,
         };
-        const saveWeekly = jest.fn(async (_review: WeeklyReviewRunResult, _acceptedItemIds: readonly string[]) => ({
-            success: true,
-            filePath: ".pagelet/pagelet-weekly-review-2026-06-29.md",
+        let resolveApply: (value: MaintenanceMoveApplyResult) => void = () => undefined;
+        const applyPromise = new Promise<MaintenanceMoveApplyResult>((resolve) => {
+            resolveApply = resolve;
+        });
+        const applyMove = jest.fn((_proposal: MaintenanceProposal) => applyPromise);
+        const undoMove = jest.fn(async (): Promise<MaintenanceMoveUndoResult> => ({
+            ok: false,
+            reason: "not_reversible",
+            message: "not undone",
         }));
         const tab = new TabView("en", {
-            onSaveWeeklyReviewNote: saveWeekly,
+            onApplyMaintenanceProposal: applyMove,
+            onUndoMaintenanceAction: undoMove,
         });
 
         tab.mount(container as unknown as HTMLElement);
-        tab.open("Weekly Review", [], {
-            layoutType: "review",
-            extra: { weeklyReview },
-        });
-
-        expect(container.querySelector(".pa-pagelet-tab-weekly-review")).not.toBeNull();
-        expect(container.textContent).toContain("Weekly Review");
-        expect(container.textContent).toContain("Review cadence matters.");
-        expect(container.textContent).toContain("notes/current.md");
-        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")).toBeNull();
-        const chooseButton = container.querySelector(".pa-pagelet-tab-weekly-choose");
-        expect(chooseButton?.textContent).toBe("Save items from this review");
-        expect(chooseButton?.disabled).toBe(false);
-        const tabBody = container.querySelector(".pa-pagelet-tab-body");
-        const weeklySection = container.querySelector(".pa-pagelet-tab-weekly-review");
-        if (tabBody) tabBody.scrollTop = 640;
-
-        await chooseButton?.click();
-        expect(tabBody?.scrollTop).toBe(640);
-
-        const selectionWeeklySection = container.querySelector(".pa-pagelet-tab-weekly-review");
-        const firstCheckbox = container.querySelector(".pa-pagelet-tab-weekly-accept");
-        const labelledBy = firstCheckbox?.getAttribute("aria-labelledby");
-        expect(labelledBy).toBeTruthy();
-        expect(container.querySelectorAll("h4").some((heading) =>
-            heading.getAttribute("id") === labelledBy && heading.textContent === "Theme")).toBe(true);
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (0)");
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(true);
-
-        await firstCheckbox?.click();
-        expect(tabBody?.scrollTop).toBe(640);
-        expect(weeklySection?.isConnected).toBe(false);
-        expect(selectionWeeklySection?.isConnected).toBe(true);
-        expect(firstCheckbox?.isConnected).toBe(true);
-        const saveButton = container.querySelector(".pa-pagelet-tab-weekly-save");
-        expect(saveButton?.disabled).toBe(false);
-        expect(saveButton?.textContent).toBe("Save selected (1)");
-        expect(container.querySelector(".pa-pagelet-tab-weekly-back")?.textContent).toBe("Back to digest");
-
-        await saveButton?.click();
-        await Promise.resolve();
-        await Promise.resolve();
-
-        expect(saveWeekly).toHaveBeenCalledWith(weeklyReview, ["weekly-insight-1"]);
-        expect(container.textContent).toContain(".pagelet/pagelet-weekly-review-2026-06-29.md");
-    });
-
-    it("clears Weekly Review accepted state when the detail tab is reused", async () => {
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const firstReview: WeeklyReviewRunResult = {
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            range: { startDate: "2026-06-23", endDate: "2026-06-29", days: 7, label: "first week" },
-            totalCount: 1,
-            sections: [{
-                type: "saved_insights",
-                title: "Saved insights",
-                summary: "1 item",
-                items: [{
-                    id: "weekly-insight-1",
-                    section: "saved_insights",
-                    title: "First theme",
-                    summary: "First accepted item.",
-                    status: "candidate",
-                    sourceRefs: [{ path: "notes/first.md", evidenceStrength: "medium" }],
-                    whyShown: ["Saved insight."],
-                    generatedAt: "2026-06-29T12:00:00.000Z",
-                }],
-            }],
-        };
-        const secondReview: WeeklyReviewRunResult = {
-            ...firstReview,
-            generatedAt: "2026-07-06T12:00:00.000Z",
-            range: { startDate: "2026-06-30", endDate: "2026-07-06", days: 7, label: "second week" },
-            sections: [{
-                type: "saved_insights",
-                title: "Saved insights",
-                summary: "1 item",
-                items: [{
-                    id: "weekly-insight-2",
-                    section: "saved_insights",
-                    title: "Second theme",
-                    summary: "Second item should start unchecked.",
-                    status: "candidate",
-                    sourceRefs: [{ path: "notes/second.md", evidenceStrength: "medium" }],
-                    whyShown: ["Saved insight."],
-                    generatedAt: "2026-07-06T12:00:00.000Z",
-                }],
-            }],
-        };
-        const saveWeekly = jest.fn(async (_review: WeeklyReviewRunResult, _acceptedItemIds: readonly string[]) => ({
-            success: true,
-            filePath: ".pagelet/pagelet-weekly-review.md",
-        }));
-        const tab = new TabView("en", { onSaveWeeklyReviewNote: saveWeekly });
-
-        tab.mount(container as unknown as HTMLElement);
-        tab.open("Weekly Review", [], { layoutType: "review", extra: { weeklyReview: firstReview } });
-        await container.querySelector(".pa-pagelet-tab-weekly-choose")?.click();
-        await container.querySelector(".pa-pagelet-tab-weekly-accept")?.click();
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(false);
-
-        tab.open("Weekly Review", [], { layoutType: "review", extra: { weeklyReview: secondReview } });
-
-        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")).toBeNull();
-        expect(container.querySelector(".pa-pagelet-tab-weekly-choose")?.textContent).toBe("Save items from this review");
-        await container.querySelector(".pa-pagelet-tab-weekly-choose")?.click();
-        const secondCheckbox = container.querySelector(".pa-pagelet-tab-weekly-accept");
-        expect(secondCheckbox?.checked).toBe(false);
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(true);
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (0)");
-        await container.querySelector(".pa-pagelet-tab-weekly-save")?.click();
-        await Promise.resolve();
-        expect(saveWeekly).not.toHaveBeenCalled();
-    });
-
-    it("preserves Weekly Review accepted state across internal detail rerenders", async () => {
-        const container = new FakeElement("div");
-        container.isConnected = true;
-        const weeklyReview: WeeklyReviewRunResult = {
-            generatedAt: "2026-06-29T12:00:00.000Z",
-            range: { startDate: "2026-06-23", endDate: "2026-06-29", days: 7, label: "2026-06-23 to 2026-06-29" },
-            totalCount: 1,
-            sections: [{
-                type: "saved_insights",
-                title: "Saved insights",
-                summary: "1 item",
-                items: [{
-                    id: "weekly-insight-1",
-                    section: "saved_insights",
-                    title: "Theme",
-                    summary: "Accepted state should survive filter rerenders.",
-                    status: "candidate",
-                    sourceRefs: [{ path: "notes/theme.md", evidenceStrength: "medium" }],
-                    whyShown: ["Saved insight."],
-                    generatedAt: "2026-06-29T12:00:00.000Z",
-                }],
-            }],
-        };
-        const saveWeekly = jest.fn(async (_review: WeeklyReviewRunResult, _acceptedItemIds: readonly string[]) => ({
-            success: true,
-            filePath: ".pagelet/pagelet-weekly-review.md",
-        }));
-        const tab = new TabView("en", { onSaveWeeklyReviewNote: saveWeekly });
-        tab.mount(container as unknown as HTMLElement);
-        tab.open("Weekly Review", [], {
+        tab.open("Maintenance Review", [], {
             layoutType: "review",
             extra: {
-                reviewQueue: {
-                    items: [
-                        makeReviewQueueItem({ id: "rq-1", type: "evidence_insight" }),
-                        makeReviewQueueItem({ id: "rq-2", type: "maintenance_proposal", originSurface: "maintenance" }),
-                    ],
-                    totalCount: 2,
+                maintenanceReview: {
+                    generatedAt: "2026-06-28T12:00:00.000Z",
+                    previewOnly: true,
+                    weeklyScanEnabled: false,
+                    totalCount: 1,
+                    categories: [{ category: "inbox_cleanup", label: "inbox_cleanup", count: 1 }],
+                    proposals: [proposal],
                 },
-                weeklyReview,
+                patternDetection: {
+                    generatedAt: "2026-07-02T12:00:00.000Z",
+                    totalCount: 1,
+                    patterns: [{
+                        id: "pattern-project",
+                        patternType: "recurring_tag",
+                        title: "Recurring tag: #project",
+                        summary: "3 recent notes share #project.",
+                        sourceRefs: [{ path: "Projects/A.md", evidenceStrength: "medium" }],
+                        whyShown: ["At least 3 recent notes share #project."],
+                    }],
+                },
             },
         });
 
-        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")).toBeNull();
-        await container.querySelector(".pa-pagelet-tab-weekly-choose")?.click();
-        await container.querySelector(".pa-pagelet-tab-weekly-accept")?.click();
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (1)");
+        await container.querySelector(".pa-pagelet-tab-maintenance-apply")?.click();
+        expect(container.textContent).toContain("Moving...");
 
-        const filterButtons = container.querySelectorAll(".pa-pagelet-tab-review-queue-filter");
-        await filterButtons[1]?.click();
+        await container.querySelector(".pa-pagelet-tab-pattern-dismiss")?.click();
+        expect(container.textContent).toContain("Moving...");
 
-        expect(container.querySelector(".pa-pagelet-tab-weekly-accept")?.checked).toBe(true);
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.disabled).toBe(false);
-        expect(container.querySelector(".pa-pagelet-tab-weekly-save")?.textContent).toBe("Save selected (1)");
+        resolveApply({
+            ok: true,
+            action: appliedAction,
+            message: "Moved Inbox/Untitled.md to Notes/Untitled.md.",
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(applyMove).toHaveBeenCalledWith(proposal);
+        expect(container.textContent).toContain("Moved");
+        expect(container.querySelector(".pa-pagelet-tab-maintenance-undo")).not.toBeNull();
     });
 
     it("renders Quiet Recall in panel and tab before Bubble nudges", async () => {
@@ -1308,6 +1224,55 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).toContain("Prefers concise planning notes.");
         expect(contentEl.textContent).toContain("Prefers concise weekly planning.");
         expect(contentEl.textContent).not.toContain("Result no longer available");
+    });
+
+    it("preserves entry reason through native detail state restoration", async () => {
+        const candidate: QuietRecallCandidate = {
+            id: "qr-entry-reason",
+            title: "Recall: current",
+            summary: "A saved insight may matter now.",
+            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+            whyNow: ["Source matches the note you are looking at."],
+            nextAction: "Compare this saved insight with the current note.",
+            relation: "current",
+            score: 90,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const view = new PageletDetailView({} as never, () => "en");
+
+        await view.onOpen();
+        view.setPayload({
+            title: "Quiet Recall",
+            locale: "en",
+            layoutType: "current",
+            content: [],
+            entryReason: "quiet-recall",
+            extra: {
+                memoryGovernance: {
+                    records: [makeMemoryRecord()],
+                    candidates: [],
+                    totalCount: 1,
+                },
+                quietRecall: {
+                    generatedAt: "2026-06-29T12:00:00.000Z",
+                    currentPath: "notes/current.md",
+                    totalCount: 1,
+                    candidates: [candidate],
+                },
+            },
+        });
+        const serializedState = JSON.parse(JSON.stringify(view.getState()));
+        expect(serializedState.payload.entryReason).toBe("quiet-recall");
+
+        const restored = new PageletDetailView({} as never, () => "en");
+        await restored.onOpen();
+        await restored.setState(serializedState, {} as never);
+
+        const text = (restored.contentEl as unknown as FakeElement).textContent;
+        expect(text.indexOf("A saved insight may matter now.")).toBeGreaterThanOrEqual(0);
+        expect(text.indexOf("A saved insight may matter now.")).toBeLessThan(
+            text.indexOf("Prefers concise weekly planning."),
+        );
     });
 
     it("renders pattern detection details with clickable source refs and local dismiss", async () => {

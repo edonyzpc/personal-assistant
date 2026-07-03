@@ -1,0 +1,154 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 700">
+  <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    .title { font-size: 18px; font-weight: 600; fill: #111827; }
+    .subtitle { font-size: 12px; fill: #6b7280; }
+    .state-label { font-size: 13px; font-weight: 600; fill: #111827; }
+    .state-desc { font-size: 10px; fill: #6b7280; }
+    .section-title { font-size: 14px; font-weight: 600; fill: #374151; }
+    .arrow-label { font-size: 10px; fill: #374151; }
+    .arrow-label-bg { fill: #ffffff; opacity: 0.95; }
+    .legend-text { font-size: 11px; fill: #6b7280; }
+  </style>
+  <defs>
+    <marker id="ab" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/></marker>
+    <marker id="ag" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#16a34a"/></marker>
+    <marker id="ao" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#ea580c"/></marker>
+    <marker id="ap" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#7c3aed"/></marker>
+    <marker id="ay" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto"><polygon points="0 0, 10 3.5, 0 7" fill="#9ca3af"/></marker>
+    <filter id="sh" x="-4%" y="-4%" width="108%" height="108%"><feDropShadow dx="0" dy="1" stdDeviation="2" flood-color="#000" flood-opacity="0.06"/></filter>
+  </defs>
+  <rect width="1200" height="700" fill="#ffffff"/>
+  <text x="600" y="32" text-anchor="middle" class="title">PA Pagelet Interaction Flow</text>
+  <text x="600" y="48" text-anchor="middle" class="subtitle">Pet State Machine + 4-Layer Escalation + User Decision Points</text>
+  <rect x="30" y="62" width="560" height="250" rx="6" fill="none" stroke="#d1d5db" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="45" y="82" class="section-title">Pet State Machine</text>
+  <circle cx="65" cy="170" r="8" fill="#111827"/>
+  <rect x="100" y="100" width="110" height="56" rx="20" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="155" y="124" text-anchor="middle" class="state-label">idle</text>
+  <text x="155" y="140" text-anchor="middle" class="state-desc">float animation</text>
+  <text x="155" y="150" text-anchor="middle" class="state-desc">gray, neutral</text>
+  <rect x="100" y="190" width="110" height="56" rx="20" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="155" y="214" text-anchor="middle" class="state-label">working</text>
+  <text x="155" y="230" text-anchor="middle" class="state-desc">pulse, blue</text>
+  <text x="155" y="240" text-anchor="middle" class="state-desc">task-specific color</text>
+  <rect x="280" y="100" width="110" height="56" rx="20" fill="#f0fdf4" stroke="#16a34a" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="335" y="124" text-anchor="middle" class="state-label">nudge</text>
+  <text x="335" y="140" text-anchor="middle" class="state-desc">bounce + dot</text>
+  <text x="335" y="150" text-anchor="middle" class="state-desc">green glow</text>
+  <rect x="280" y="190" width="110" height="56" rx="20" fill="#f9fafb" stroke="#d1d5db" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="335" y="214" text-anchor="middle" class="state-label">resting</text>
+  <text x="335" y="230" text-anchor="middle" class="state-desc">breathe, zzz</text>
+  <text x="335" y="240" text-anchor="middle" class="state-desc">dim, 0.8 opacity</text>
+  <rect x="460" y="145" width="110" height="48" rx="20" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="515" y="167" text-anchor="middle" class="state-label">error</text>
+  <text x="515" y="181" text-anchor="middle" class="state-desc">red flash, transient</text>
+  <line x1="73" y1="170" x2="98" y2="135" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <line x1="155" y1="156" x2="155" y2="188" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <rect x="158" y="163" width="54" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="185" y="173" text-anchor="middle" class="arrow-label">command</text>
+  <line x1="210" y1="210" x2="278" y2="140" stroke="#16a34a" stroke-width="1.5" marker-end="url(#ag)"/>
+  <rect x="220" y="164" width="62" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="251" y="174" text-anchor="middle" class="arrow-label">insights ok</text>
+  <path d="M 120,218 C 80,218 80,128 120,128" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#ab)"/>
+  <rect x="62" y="165" width="32" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="78" y="175" text-anchor="middle" class="arrow-label">done</text>
+  <line x1="280" y1="118" x2="212" y2="118" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#ay)"/>
+  <rect x="226" y="105" width="42" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="247" y="115" text-anchor="middle" class="arrow-label">interact</text>
+  <line x1="210" y1="148" x2="278" y2="200" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#ay)"/>
+  <rect x="225" y="184" width="42" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="246" y="194" text-anchor="middle" class="arrow-label">10min</text>
+  <line x1="280" y1="228" x2="212" y2="228" stroke="#9ca3af" stroke-width="1.5" marker-end="url(#ay)"/>
+  <rect x="226" y="230" width="42" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="247" y="240" text-anchor="middle" class="arrow-label">activity</text>
+  <path d="M 390,210 C 430,180 440,170 458,170" stroke="#ea580c" stroke-width="1" fill="none" stroke-dasharray="4,2" marker-end="url(#ao)"/>
+  <text x="420" y="270" text-anchor="middle" class="state-desc">auto-restore</text>
+  <path d="M 515,193 C 515,260 400,290 335,250" stroke="#ea580c" stroke-width="1" fill="none" stroke-dasharray="4,2" marker-end="url(#ao)"/>
+  <rect x="30" y="325" width="1140" height="350" rx="6" fill="none" stroke="#d1d5db" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="45" y="345" class="section-title">4-Layer Escalation Flow (each layer is self-contained — user can stop at any point)</text>
+  <circle cx="70" cy="460" r="22" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5"/>
+  <text x="70" y="457" text-anchor="middle" class="state-desc">User</text>
+  <text x="70" y="468" text-anchor="middle" class="state-desc">Action</text>
+  <rect x="120" y="380" width="120" height="70" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="180" y="405" text-anchor="middle" class="state-label">L1: Pet</text>
+  <text x="180" y="420" text-anchor="middle" class="state-desc">Click / Tap</text>
+  <text x="180" y="435" text-anchor="middle" class="state-desc">→ opens Bubble</text>
+  <polygon points="310,415 365,385 420,415 365,445" fill="#fff7ed" stroke="#fdba74" stroke-width="1.5"/>
+  <text x="365" y="412" text-anchor="middle" class="state-desc">Bubble</text>
+  <text x="365" y="424" text-anchor="middle" class="state-desc">Content?</text>
+  <rect x="450" y="365" width="130" height="100" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="515" y="385" text-anchor="middle" class="state-label">L2: Bubble</text>
+  <text x="515" y="400" text-anchor="middle" class="state-desc">quick-review</text>
+  <text x="515" y="412" text-anchor="middle" class="state-desc">quiet-recall nudge</text>
+  <text x="515" y="424" text-anchor="middle" class="state-desc">pattern nudge</text>
+  <text x="515" y="436" text-anchor="middle" class="state-desc">onboarding</text>
+  <text x="515" y="452" text-anchor="middle" class="state-desc">empty (3 actions)</text>
+  <polygon points="630,415 680,385 730,415 680,445" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1.5"/>
+  <text x="680" y="412" text-anchor="middle" class="state-desc">User</text>
+  <text x="680" y="424" text-anchor="middle" class="state-desc">decides</text>
+  <rect x="770" y="365" width="130" height="100" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="835" y="385" text-anchor="middle" class="state-label">L3: Panel</text>
+  <text x="835" y="400" text-anchor="middle" class="state-desc">Evidence + actions</text>
+  <text x="835" y="412" text-anchor="middle" class="state-desc">Scope controls</text>
+  <text x="835" y="424" text-anchor="middle" class="state-desc">Draft collection</text>
+  <text x="835" y="436" text-anchor="middle" class="state-desc">Connection graph</text>
+  <text x="835" y="452" text-anchor="middle" class="state-desc">Save as review note</text>
+  <rect x="940" y="365" width="130" height="100" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" filter="url(#sh)"/>
+  <text x="1005" y="385" text-anchor="middle" class="state-label">L4: Tab</text>
+  <text x="1005" y="400" text-anchor="middle" class="state-desc">Full deep review</text>
+  <text x="1005" y="412" text-anchor="middle" class="state-desc">9 sections flat</text>
+  <text x="1005" y="424" text-anchor="middle" class="state-desc">Memory governance</text>
+  <text x="1005" y="436" text-anchor="middle" class="state-desc">Maintenance review</text>
+  <text x="1005" y="452" text-anchor="middle" class="state-desc">Quiet recall detail</text>
+  <line x1="92" y1="460" x2="118" y2="430" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <line x1="240" y1="415" x2="308" y2="415" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <line x1="420" y1="415" x2="448" y2="415" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <line x1="580" y1="415" x2="628" y2="415" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <line x1="730" y1="415" x2="768" y2="415" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <rect x="731" y="400" width="40" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="751" y="410" text-anchor="middle" class="arrow-label">expand</text>
+  <line x1="900" y1="415" x2="938" y2="415" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+  <rect x="900" y="400" width="40" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="920" y="410" text-anchor="middle" class="arrow-label">expand</text>
+  <text x="180" y="475" text-anchor="middle" class="state-desc" fill="#16a34a">can stop here</text>
+  <line x1="515" y1="465" x2="515" y2="500" stroke="#16a34a" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="515" y="515" text-anchor="middle" class="state-desc" fill="#16a34a">close / dismiss</text>
+  <text x="515" y="527" text-anchor="middle" class="state-desc" fill="#16a34a">= valid completion</text>
+  <line x1="835" y1="465" x2="835" y2="500" stroke="#16a34a" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="835" y="515" text-anchor="middle" class="state-desc" fill="#16a34a">close panel</text>
+  <text x="835" y="527" text-anchor="middle" class="state-desc" fill="#16a34a">= valid completion</text>
+  <line x1="680" y1="445" x2="680" y2="490" stroke="#9ca3af" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#ay)"/>
+  <text x="680" y="505" text-anchor="middle" class="state-desc" fill="#9ca3af">dismiss / later</text>
+  <text x="680" y="517" text-anchor="middle" class="state-desc" fill="#9ca3af">no penalty</text>
+  <rect x="120" y="550" width="450" height="55" rx="8" fill="#faf5ff" stroke="#c4b5fd" stroke-width="1" filter="url(#sh)"/>
+  <text x="345" y="570" text-anchor="middle" class="state-label" fill="#7c3aed">Background Preparation Engine</text>
+  <text x="345" y="586" text-anchor="middle" class="state-desc">Timed polling + Change detection → AI analysis → Preload cache → Pet nudge</text>
+  <text x="345" y="598" text-anchor="middle" class="state-desc">Gated by: proactiveHintsEnabled + quiet hours + cooldown | runKind=background, allowWrite=false</text>
+  <path d="M 345,550 L 345,530 L 50,530 L 50,415 L 118,415" stroke="#7c3aed" stroke-width="1" fill="none" stroke-dasharray="4,2" marker-end="url(#ap)"/>
+  <rect x="55" y="517" width="55" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="82" y="527" text-anchor="middle" class="arrow-label" fill="#7c3aed">nudge Pet</text>
+  <rect x="620" y="550" width="450" height="55" rx="8" fill="#f0fdfa" stroke="#5eead4" stroke-width="1" filter="url(#sh)"/>
+  <text x="845" y="570" text-anchor="middle" class="state-label" fill="#0d9488">Quiet Recall Trigger</text>
+  <text x="845" y="586" text-anchor="middle" class="state-desc">Leaf change (250ms debounce) | Note save | Double-Ctrl shortcut</text>
+  <text x="845" y="598" text-anchor="middle" class="state-desc">Multi-signal ranking: links + backlinks + tags + folder proximity + VSS similarity</text>
+  <path d="M 620,575 C 530,575 480,480 470,465" stroke="#0d9488" stroke-width="1" fill="none" stroke-dasharray="4,2" marker-end="url(#ag)"/>
+  <rect x="512" y="530" width="72" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="548" y="540" text-anchor="middle" class="arrow-label" fill="#0d9488">recall nudge</text>
+  <rect x="120" y="480" width="120" height="36" rx="16" fill="#fffbeb" stroke="#fcd34d" stroke-width="1" filter="url(#sh)"/>
+  <text x="180" y="498" text-anchor="middle" class="state-desc">Quick Capture</text>
+  <text x="180" y="510" text-anchor="middle" class="state-desc">long-press / Shift+Enter</text>
+  <line x1="180" y1="450" x2="180" y2="478" stroke="#ea580c" stroke-width="1" marker-end="url(#ao)"/>
+  <rect x="140" y="458" width="60" height="13" rx="2" class="arrow-label-bg"/>
+  <text x="170" y="468" text-anchor="middle" class="arrow-label" fill="#ea580c">long-press</text>
+  <g transform="translate(620, 640)">
+    <line x1="0" y1="8" x2="30" y2="8" stroke="#2563eb" stroke-width="1.5" marker-end="url(#ab)"/>
+    <text x="36" y="12" class="legend-text">User interaction</text>
+    <line x1="140" y1="8" x2="170" y2="8" stroke="#7c3aed" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#ap)"/>
+    <text x="176" y="12" class="legend-text">Background trigger</text>
+    <line x1="300" y1="8" x2="330" y2="8" stroke="#0d9488" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#ag)"/>
+    <text x="336" y="12" class="legend-text">Quiet Recall</text>
+    <line x1="420" y1="8" x2="450" y2="8" stroke="#16a34a" stroke-width="1" stroke-dasharray="4,2"/>
+    <text x="456" y="12" class="legend-text">Valid exit point</text>
+  </g>
+</svg>

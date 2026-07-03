@@ -24,7 +24,6 @@ import type {
     QuietRecallRunResult,
     ReviewQueueItem,
     SavedInsight,
-    WeeklyReviewRunResult,
 } from "../../pa";
 
 /** Which scenario opened the Panel -- determines layout */
@@ -113,7 +112,7 @@ export interface PanelMemoryGovernanceState {
 }
 
 export type PanelMaintenanceReviewState = MaintenanceReviewRunResult;
-export type PanelWeeklyReviewState = WeeklyReviewRunResult;
+
 export type PanelQuietRecallState = QuietRecallRunResult;
 export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;
 export type PanelPatternDetectionState = PatternDetectionResult;
@@ -128,7 +127,8 @@ export interface PanelOpenExtra {
     savedInsights?: PanelSavedInsightState;
     memoryGovernance?: PanelMemoryGovernanceState;
     maintenanceReview?: PanelMaintenanceReviewState;
-    weeklyReview?: PanelWeeklyReviewState;
+    /** @deprecated Weekly Review decomposed (2026-07-02). Field kept for deserialization compat. */
+    weeklyReview?: unknown;
     quietRecall?: PanelQuietRecallState;
     graphDiscovery?: PanelGraphDiscoveryState;
     patternDetection?: PanelPatternDetectionState;

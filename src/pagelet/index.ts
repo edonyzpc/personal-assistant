@@ -192,7 +192,7 @@ export {
 export { PetView, PetStateMachine, updatePetSvgState } from "./pet";
 export type { PetState, PetTaskKind, PetCorner, PetEvent, PetCallbacks, PetRenderer, PetRendererOptions, PetStateListener } from "./pet";
 
-export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent, buildWeeklyReviewNudgeContent } from "./bubble";
+export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent } from "./bubble";
 export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCallbacks, BubbleQuickAccessCallbacks, BubbleViewOptions } from "./bubble";
 
 export { PreloadEngine, PreloadCache, PreloadBudget } from "./preload";

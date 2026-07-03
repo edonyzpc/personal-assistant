@@ -1,0 +1,180 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 820">
+  <style>
+    text { font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Microsoft YaHei', sans-serif; }
+    .title { font-size: 18px; font-weight: 600; fill: #111827; }
+    .subtitle { font-size: 12px; fill: #6b7280; }
+    .node-label { font-size: 14px; font-weight: 600; fill: #111827; }
+    .node-desc { font-size: 11px; fill: #6b7280; }
+    .node-detail { font-size: 10px; fill: #9ca3af; }
+    .section-label { font-size: 13px; font-weight: 600; fill: #374151; }
+    .score-label { font-size: 11px; font-weight: 600; }
+    .legend-text { font-size: 11px; fill: #6b7280; }
+    .arrow-label { font-size: 10px; fill: #6b7280; }
+  </style>
+  <defs>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#2563eb"/>
+    </marker>
+    <marker id="arrow-gray" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#9ca3af"/>
+    </marker>
+    <marker id="arrow-green" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#16a34a"/>
+    </marker>
+    <filter id="shadow" x="-4%" y="-4%" width="108%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#000" flood-opacity="0.08"/>
+    </filter>
+  </defs>
+  <rect width="1200" height="820" fill="#ffffff"/>
+  <text x="600" y="36" text-anchor="middle" class="title">PA UI Surface Topology</text>
+  <text x="600" y="52" text-anchor="middle" class="subtitle">Audit Score Color Map: Green (≥4.0) | Yellow (3.5-3.9) | Red (&lt;3.5)</text>
+  <rect x="40" y="300" width="130" height="60" rx="12" fill="#eff6ff" stroke="#93c5fd" stroke-width="2" filter="url(#shadow)"/>
+  <text x="105" y="325" text-anchor="middle" class="node-label">PA Plugin</text>
+  <text x="105" y="340" text-anchor="middle" class="node-detail">v2.8.x</text>
+  <rect x="210" y="68" width="770" height="340" rx="8" fill="none" stroke="#d1d5db" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="225" y="88" class="section-label">Push Model (Pagelet) — PA prepares, user optionally views</text>
+  <path d="M 170,320 L 195,320 L 195,200 L 210,200" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#arrow-blue)"/>
+  <rect x="175" y="248" width="30" height="16" fill="#ffffff" rx="2"/>
+  <text x="190" y="259" text-anchor="middle" class="arrow-label">push</text>
+  <rect x="235" y="105" width="155" height="140" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="312" y="125" text-anchor="middle" class="node-label">Pet</text>
+  <text x="312" y="140" text-anchor="middle" class="score-label" fill="#16a34a">Score: 4.4/5</text>
+  <text x="312" y="156" text-anchor="middle" class="node-desc">Always visible, 48px</text>
+  <text x="312" y="170" text-anchor="middle" class="node-desc">Corner mascot</text>
+  <line x1="245" y1="182" x2="380" y2="182" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="250" y="196" class="node-detail">States: idle | working</text>
+  <text x="250" y="208" class="node-detail">nudge | resting | error</text>
+  <text x="250" y="224" class="node-detail">click → Bubble</text>
+  <text x="250" y="236" class="node-detail">long-press → Quick Capture</text>
+  <rect x="430" y="105" width="155" height="140" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="507" y="125" text-anchor="middle" class="node-label">Bubble</text>
+  <text x="507" y="140" text-anchor="middle" class="score-label" fill="#16a34a">Score: 4.3/5</text>
+  <text x="507" y="156" text-anchor="middle" class="node-desc">On-demand overlay</text>
+  <text x="507" y="170" text-anchor="middle" class="node-desc">2-3 items, doorway</text>
+  <line x1="440" y1="182" x2="575" y2="182" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="445" y="196" class="node-detail">quick-review | nudge</text>
+  <text x="445" y="208" class="node-detail">onboarding | empty</text>
+  <text x="445" y="224" class="node-detail">Quiet Recall nudge</text>
+  <text x="445" y="236" class="node-detail">Pattern detection nudge</text>
+  <line x1="390" y1="175" x2="428" y2="175" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <rect x="395" y="160" width="28" height="14" fill="#ffffff" rx="2"/>
+  <text x="409" y="171" text-anchor="middle" class="arrow-label">click</text>
+  <rect x="625" y="105" width="155" height="140" rx="8" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="702" y="125" text-anchor="middle" class="node-label">Panel</text>
+  <text x="702" y="140" text-anchor="middle" class="score-label" fill="#16a34a">Score: 4.1/5</text>
+  <text x="702" y="156" text-anchor="middle" class="node-desc">~380px side panel</text>
+  <text x="702" y="170" text-anchor="middle" class="node-desc">Mobile: full-screen</text>
+  <line x1="635" y1="182" x2="770" y2="182" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="640" y="196" class="node-detail">review | current</text>
+  <text x="640" y="208" class="node-detail">discover | summary</text>
+  <text x="640" y="224" class="node-detail">Scope controls</text>
+  <text x="640" y="236" class="node-detail">Draft + Save</text>
+  <line x1="585" y1="175" x2="623" y2="175" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <rect x="585" y="153" width="38" height="14" fill="#ffffff" rx="2"/>
+  <text x="604" y="164" text-anchor="middle" class="arrow-label">expand</text>
+  <rect x="820" y="105" width="145" height="280" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="892" y="125" text-anchor="middle" class="node-label">Tab</text>
+  <text x="892" y="140" text-anchor="middle" class="score-label" fill="#dc2626">Score: 2.9/5</text>
+  <text x="892" y="156" text-anchor="middle" class="node-desc">Full workspace leaf</text>
+  <line x1="830" y1="166" x2="955" y2="166" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="835" y="180" class="node-detail">Review queue (5 filters)</text>
+  <text x="835" y="194" class="node-detail">Saved insights</text>
+  <text x="835" y="208" class="node-detail">Memory governance</text>
+  <text x="835" y="222" class="node-detail">Maintenance review</text>
+  <text x="835" y="236" class="node-detail">Graph discovery</text>
+  <text x="835" y="250" class="node-detail">Pattern detection</text>
+  <text x="835" y="264" class="node-detail">Weekly review</text>
+  <text x="835" y="278" class="node-detail">Quiet recall</text>
+  <line x1="830" y1="290" x2="955" y2="290" stroke="#fca5a5" stroke-width="0.5"/>
+  <text x="835" y="304" class="node-detail" fill="#dc2626">P0: 33 unstyled classes</text>
+  <text x="835" y="318" class="node-detail" fill="#dc2626">P0: Queue violation</text>
+  <text x="835" y="332" class="node-detail" fill="#dc2626">P0: Obligation lang</text>
+  <text x="835" y="346" class="node-detail" fill="#dc2626">P1: No navigation</text>
+  <text x="835" y="360" class="node-detail" fill="#dc2626">P1: Scroll loss</text>
+  <text x="835" y="374" class="node-detail" fill="#dc2626">P1: Batch no confirm</text>
+  <line x1="780" y1="175" x2="818" y2="175" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+  <rect x="780" y="153" width="38" height="14" fill="#ffffff" rx="2"/>
+  <text x="799" y="164" text-anchor="middle" class="arrow-label">expand</text>
+  <text x="312" y="100" text-anchor="middle" class="node-detail">Layer 1</text>
+  <text x="507" y="100" text-anchor="middle" class="node-detail">Layer 2</text>
+  <text x="702" y="100" text-anchor="middle" class="node-detail">Layer 3</text>
+  <text x="892" y="100" text-anchor="middle" class="node-detail">Layer 4</text>
+  <rect x="210" y="430" width="380" height="155" rx="8" fill="none" stroke="#d1d5db" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="225" y="450" class="section-label">Pull Model — user asks, PA answers</text>
+  <path d="M 170,340 L 195,340 L 195,505 L 210,505" stroke="#2563eb" stroke-width="1.5" fill="none" marker-end="url(#arrow-blue)"/>
+  <rect x="175" y="410" width="26" height="14" fill="#ffffff" rx="2"/>
+  <text x="188" y="421" text-anchor="middle" class="arrow-label">pull</text>
+  <rect x="235" y="465" width="165" height="108" rx="8" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="317" y="485" text-anchor="middle" class="node-label">Chat</text>
+  <text x="317" y="500" text-anchor="middle" class="score-label" fill="#ca8a04">Score: 3.7/5</text>
+  <text x="317" y="516" text-anchor="middle" class="node-desc">AI conversation view</text>
+  <line x1="245" y1="526" x2="390" y2="526" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="250" y="540" class="node-detail">Composer + Messages</text>
+  <text x="250" y="552" class="node-detail">Thinking status + Context</text>
+  <text x="250" y="564" class="node-detail">P0: Jargon in formatters</text>
+  <rect x="420" y="465" width="155" height="108" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1" stroke-dasharray="4,2"/>
+  <text x="497" y="485" text-anchor="middle" class="node-detail" fill="#dc2626">Chat Issues</text>
+  <text x="432" y="502" class="node-detail" fill="#dc2626">P0: vault/memory/budget</text>
+  <text x="432" y="516" class="node-detail" fill="#dc2626">P0: Raw enum strings</text>
+  <text x="432" y="530" class="node-detail" fill="#ca8a04">P1: 5-color loader noise</text>
+  <text x="432" y="544" class="node-detail" fill="#ca8a04">P2: 3 border-radius values</text>
+  <text x="432" y="558" class="node-detail" fill="#ca8a04">P2: llm-* class naming</text>
+  <rect x="210" y="610" width="770" height="185" rx="8" fill="none" stroke="#d1d5db" stroke-width="1" stroke-dasharray="6,3"/>
+  <text x="225" y="630" class="section-label">Supporting Surfaces</text>
+  <path d="M 105,360 L 105,700 L 210,700" stroke="#9ca3af" stroke-width="1.5" fill="none" marker-end="url(#arrow-gray)"/>
+  <rect x="235" y="645" width="155" height="138" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="312" y="665" text-anchor="middle" class="node-label">Statistics</text>
+  <text x="312" y="680" text-anchor="middle" class="score-label" fill="#dc2626">Score: 3.1/5</text>
+  <text x="312" y="696" text-anchor="middle" class="node-desc">React dashboard</text>
+  <line x1="245" y1="706" x2="380" y2="706" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="250" y="720" class="node-detail">4 tabs: overview/daily</text>
+  <text x="250" y="732" class="node-detail">growth/composition</text>
+  <text x="250" y="748" class="node-detail" fill="#dc2626">P0: Dark mode broken</text>
+  <text x="250" y="760" class="node-detail" fill="#dc2626">P0: Tailwind hardcoded</text>
+  <text x="250" y="772" class="node-detail" fill="#dc2626">Alien visual system</text>
+  <rect x="430" y="645" width="155" height="138" rx="8" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="507" y="665" text-anchor="middle" class="node-label">Settings</text>
+  <text x="507" y="680" text-anchor="middle" class="score-label" fill="#ca8a04">Score: 3.6/5</text>
+  <text x="507" y="696" text-anchor="middle" class="node-desc">Plugin settings tab</text>
+  <line x1="440" y1="706" x2="575" y2="706" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="445" y="720" class="node-detail">16 sections, no nav</text>
+  <text x="445" y="732" class="node-detail">Obsidian native API</text>
+  <text x="445" y="748" class="node-detail" fill="#ca8a04">P1: No collapsing</text>
+  <text x="445" y="760" class="node-detail" fill="#ca8a04">P2: Disabled buttons</text>
+  <text x="445" y="772" class="node-detail" fill="#ca8a04">unexplained</text>
+  <rect x="625" y="645" width="155" height="105" rx="8" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="702" y="665" text-anchor="middle" class="node-label">Quick Capture</text>
+  <text x="702" y="680" text-anchor="middle" class="score-label" fill="#ca8a04">Score: 3.6/5</text>
+  <text x="702" y="696" text-anchor="middle" class="node-desc">Modal dialog</text>
+  <line x1="635" y1="706" x2="770" y2="706" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="640" y="720" class="node-detail">Cmd+Enter fast path</text>
+  <text x="640" y="732" class="node-detail">Draft persistence</text>
+  <text x="640" y="744" class="node-detail">Auto-folder creation</text>
+  <rect x="820" y="645" width="145" height="105" rx="8" fill="#fffbeb" stroke="#fcd34d" stroke-width="1.5" filter="url(#shadow)"/>
+  <text x="892" y="665" text-anchor="middle" class="node-label">Modals</text>
+  <text x="892" y="680" text-anchor="middle" class="score-label" fill="#ca8a04">Score: 3.6/5</text>
+  <text x="892" y="696" text-anchor="middle" class="node-desc">Confirm/Control</text>
+  <line x1="830" y1="706" x2="955" y2="706" stroke="#d1d5db" stroke-width="0.5"/>
+  <text x="835" y="720" class="node-detail">Confirmation dialogs</text>
+  <text x="835" y="732" class="node-detail">Plugin control</text>
+  <text x="835" y="744" class="node-detail">Batch operations</text>
+  <line x1="250" y1="260" x2="250" y2="275" stroke="none"/>
+  <path d="M 312,248 L 312,265 L 892,265 L 892,248" stroke="#16a34a" stroke-width="1" fill="none" stroke-dasharray="4,2"/>
+  <text x="600" y="280" text-anchor="middle" class="node-detail" fill="#16a34a">Progressive Disclosure: each layer is self-contained, user can stop at any depth</text>
+  <path d="M 312,248 L 312,395 L 702,395 L 702,645" stroke="#9ca3af" stroke-width="1" fill="none" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
+  <rect x="475" y="387" width="62" height="14" fill="#ffffff" rx="2"/>
+  <text x="506" y="398" text-anchor="middle" class="arrow-label">long-press</text>
+  <g transform="translate(30, 70)">
+    <text x="0" y="0" class="section-label">Legend</text>
+    <rect x="0" y="10" width="14" height="14" rx="3" fill="#f0fdf4" stroke="#86efac" stroke-width="1"/>
+    <text x="20" y="22" class="legend-text">Score ≥ 4.0 (Good)</text>
+    <rect x="0" y="30" width="14" height="14" rx="3" fill="#fffbeb" stroke="#fcd34d" stroke-width="1"/>
+    <text x="20" y="42" class="legend-text">Score 3.5-3.9 (Fair)</text>
+    <rect x="0" y="50" width="14" height="14" rx="3" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+    <text x="20" y="62" class="legend-text">Score &lt; 3.5 (Needs Work)</text>
+    <line x1="0" y1="80" x2="25" y2="80" stroke="#2563eb" stroke-width="1.5" marker-end="url(#arrow-blue)"/>
+    <text x="30" y="84" class="legend-text">User interaction flow</text>
+    <line x1="0" y1="98" x2="25" y2="98" stroke="#9ca3af" stroke-width="1" stroke-dasharray="4,2" marker-end="url(#arrow-gray)"/>
+    <text x="30" y="102" class="legend-text">Alternative path</text>
+  </g>
+</svg>

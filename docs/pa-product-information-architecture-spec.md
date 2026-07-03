@@ -1,6 +1,6 @@
 # PA Product Information Architecture Spec
 
-Updated: 2026-06-29
+Updated: 2026-07-04
 
 ## Status
 
@@ -11,7 +11,7 @@ Updated: 2026-06-29
 | Feature family | Product Information Architecture |
 | Primary surfaces | Chat, Pagelet, Memory panel, Review Queue |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
-| Related specs | [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [Context Pager spec](./pa-context-pager-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
+| Related specs | [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [Context Pager spec](./pa-context-pager-product-spec.md), [PA Active Vault Indexer spec](./pa-active-vault-indexer-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md) |
 | Related Pagelet docs | [Pagelet product design](./pagelet-product-design.md), [Pagelet async result plan](./pagelet-async-result-plan.md), [Pagelet user guide](./pagelet-user-guide.md) |
 | Product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
@@ -65,7 +65,7 @@ The architecture should therefore separate four jobs:
 | Job | Product surface | Why this surface |
 | --- | --- | --- |
 | Ask, delegate, command, or explore | Chat | Natural for open-ended intent and follow-up |
-| Review candidates, evidence, conflicts, and proposed actions | Pagelet Panel/Tab | Natural for scoped review and batch decisions |
+| Review candidates, evidence, conflicts, and proposed actions | Pagelet Panel/Tab | Natural for scoped review, source evidence, and explicit decisions |
 | Notice quiet status or one timely nudge | Pet/Bubble | Natural for low-friction awareness |
 | Govern confirmed durable personal memory | Memory panel | Natural for long-lived identity, scope, stale state, and forgetting |
 
@@ -139,7 +139,7 @@ It should not show:
 - local graph exploration
 - source microscope views
 - rollback details
-- batch processing controls
+- grouped processing controls that bypass explicit review
 
 Product rule:
 
@@ -173,13 +173,13 @@ Product rule:
 
 ### 2.5 Pagelet Tab
 
-The Pagelet Tab is the global or batch review surface.
+The Pagelet Tab is the global review and source-backed exploration surface.
 
 It can show:
 
 - global Review Queue
-- weekly maintenance scan results
-- batch filters by type, scope, and priority
+- maintenance scan results
+- filters by type, scope, and priority
 - review history
 - broad scan progress
 - postponed items
@@ -187,9 +187,8 @@ It can show:
 
 The Tab should optimize for:
 
-- weekly review
 - global vault maintenance
-- batch resolution
+- explicit per-item or approved grouped resolution
 - calm triage
 
 Product rule:
@@ -262,7 +261,7 @@ Canonical v1 item types:
 | `theme_chain` | Graph Discovery, only after user-kept or explicit review context | Pagelet Panel or Tab |
 | `conflict_pair` | Graph Discovery / Trust Layer | Pagelet Panel or Tab |
 | `index_note_candidate` | Graph Discovery / Maintenance Review | Pagelet Tab |
-| `review_summary` | Weekly Review / Pagelet review / Scope Recap | Pagelet Tab |
+| `review_summary` | Pagelet review / Scope Recap / periodic summary | Pagelet Tab |
 | `broad_scan_plan` | Active Vault Indexer | Pagelet Tab |
 | `action_log` | Maintenance Review / Write actions | Pagelet Tab |
 
@@ -392,7 +391,7 @@ The Pagelet progressive disclosure stack should keep distinct responsibilities.
 | Pet | Status and availability | Single state plus small badge |
 | Bubble | Timely preview | 1 to 3 items, lightweight actions only |
 | Panel | Current-scope review | Focused cards, source-backed evidence, scoped queue |
-| Tab | Global review | Filters, weekly review, batch operations |
+| Tab | Global review | Filters, Scope Recap, maintenance, explicit actions |
 
 ### Bubble Allowed Content
 
@@ -430,8 +429,8 @@ Allowed:
 Allowed:
 
 - full global queue
-- weekly scan
-- batch review
+- periodic scan
+- explicit per-item review
 - deferred items
 - review history
 - broad source plans
@@ -553,8 +552,9 @@ MVP should not include:
 ### Phase 3: Pagelet Tab Global Queue
 
 - Add global filters.
-- Add weekly scan view.
-- Add batch processing for low-risk grouped items.
+- Add periodic scan view.
+- Add grouped processing only for low-risk actions with an explicit product spec
+  and user approval boundary.
 - Add review history and applied action logs.
 
 ### Phase 4: Bubble Digest

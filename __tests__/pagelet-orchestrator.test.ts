@@ -574,6 +574,43 @@ describe("PageletOrchestrator pet task visuals", () => {
         expect(setTaskKind).toHaveBeenCalledWith("summary");
         expect(transition).toHaveBeenCalledWith("analysis-start");
     });
+
+    it("mounts the Pet when a markdown file opens in the current leaf", () => {
+        const contentEl = {} as HTMLElement;
+        const leaf = {
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/current.md"),
+                contentEl,
+            },
+        };
+        const host = makeHost();
+        (host.app.workspace as unknown as { getMostRecentLeaf: jest.Mock }).getMostRecentLeaf = jest.fn(() => leaf);
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: false,
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+        };
+        const bubbleView = { close: jest.fn() };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            bubbleView: typeof bubbleView;
+            handleFileOpen(): void;
+        };
+        internals.petView = petView;
+        internals.bubbleView = bubbleView;
+
+        internals.handleFileOpen();
+
+        expect(petView.unmount).toHaveBeenCalledTimes(1);
+        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+        expect(petView.mount).toHaveBeenCalledWith(contentEl);
+    });
 });
 
 describe("PageletOrchestrator detail expansion", () => {
@@ -1170,6 +1207,97 @@ describe("PageletOrchestrator detail expansion", () => {
 
         expect(runQuietRecall).toHaveBeenCalledTimes(1);
         expect(internals.quietRecallBubbleNudge?.candidateId).toBe("qr-vault-latest");
+    });
+
+    it("invalidates in-flight Quiet Recall Bubble nudges when the active note changes", async () => {
+        jest.useFakeTimers();
+        let resolveFirstRun: (value: QuietRecallRunResult) => void = () => undefined;
+        const firstRun = new Promise<QuietRecallRunResult>((resolve) => {
+            resolveFirstRun = resolve;
+        });
+        const staleCandidate: QuietRecallCandidate = {
+            id: "qr-stale",
+            title: "Recall: Stale",
+            summary: "Old note result should not be shown.",
+            sourceRefs: [{ path: "notes/stale.md", evidenceStrength: "medium" }],
+            whyNow: ["This was prepared for the previous active note."],
+            nextAction: "Ignore stale results.",
+            relation: "related",
+            score: 60,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const latestCandidate: QuietRecallCandidate = {
+            id: "qr-latest",
+            title: "Recall: Latest",
+            summary: "Latest note result should be shown.",
+            sourceRefs: [{ path: "notes/latest.md", evidenceStrength: "medium" }],
+            whyNow: ["This was prepared after the active note changed."],
+            nextAction: "Open the latest note.",
+            relation: "related",
+            score: 80,
+            generatedAt: "2026-06-29T12:01:00.000Z",
+        };
+        const runQuietRecall = jest.fn<() => Promise<QuietRecallRunResult>>()
+            .mockImplementationOnce(() => firstRun)
+            .mockImplementationOnce(async (): Promise<QuietRecallRunResult> => ({
+                generatedAt: "2026-06-29T12:01:00.000Z",
+                currentPath: "notes/latest.md",
+                totalCount: 1,
+                candidates: [latestCandidate],
+            }));
+        const host = makeHost({ runQuietRecall });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            handleLeafChange(leaf: unknown): void;
+        };
+        internals.petView = petView;
+
+        internals.handleLeafChange({
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/stale.md"),
+                contentEl: {} as HTMLElement,
+            },
+        });
+        jest.advanceTimersByTime(300);
+        await flushAsyncWork();
+        expect(runQuietRecall).toHaveBeenCalledTimes(1);
+
+        internals.handleLeafChange({
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/latest.md"),
+                contentEl: {} as HTMLElement,
+            },
+        });
+        resolveFirstRun({
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: "notes/stale.md",
+            totalCount: 1,
+            candidates: [staleCandidate],
+        });
+        await flushAsyncWork();
+        expect(internals.quietRecallBubbleNudge).toBeNull();
+
+        jest.advanceTimersByTime(300);
+        await flushAsyncWork();
+
+        expect(runQuietRecall).toHaveBeenCalledTimes(2);
+        expect(internals.quietRecallBubbleNudge?.candidateId).toBe("qr-latest");
     });
 
     it("suppresses open-note Quiet Recall preparation in Focus Mode", async () => {

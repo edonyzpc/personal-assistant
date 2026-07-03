@@ -20,12 +20,12 @@ import type {
     QuietRecallCandidate,
     QuietRecallSaveResult,
     ReviewQueueItem,
-    WeeklyReviewRunResult,
 } from "../../pa";
 import type {
     PageletDetailContent,
     PageletDetailLayoutType,
     PageletDetailPayload,
+    TabEntryReason,
 } from "./types";
 
 export const PAGELET_DETAIL_VIEW_TYPE = "pa-pagelet-detail-view";
@@ -57,6 +57,7 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
         locale: payload.locale,
     };
     if (payload.layoutType) copy.layoutType = payload.layoutType;
+    if (payload.entryReason) copy.entryReason = payload.entryReason;
     if (payload.extra) {
         copy.extra = {};
         if (payload.extra.connections) copy.extra.connections = [...payload.extra.connections];
@@ -218,24 +219,6 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                 })),
             };
         }
-        if (payload.extra.weeklyReview) {
-            copy.extra.weeklyReview = {
-                generatedAt: payload.extra.weeklyReview.generatedAt,
-                range: { ...payload.extra.weeklyReview.range },
-                totalCount: payload.extra.weeklyReview.totalCount,
-                sections: payload.extra.weeklyReview.sections.map((section) => ({
-                    ...section,
-                    items: section.items.map((item) => ({
-                        ...item,
-                        sourceRefs: item.sourceRefs.map((ref) => ({
-                            ...ref,
-                            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-                        })),
-                        whyShown: [...item.whyShown],
-                    })),
-                })),
-            };
-        }
         if (payload.extra.quietRecall) {
             copy.extra.quietRecall = {
                 generatedAt: payload.extra.quietRecall.generatedAt,
@@ -292,7 +275,6 @@ export class PageletDetailView extends ItemView {
     private readonly onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
     private readonly onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>;
     private readonly onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>;
-    private readonly onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>;
     private readonly onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     private readonly onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>;
     private renderer: TabView | null = null;
@@ -300,7 +282,7 @@ export class PageletDetailView extends ItemView {
     private content: PageletDetailContent = [];
     private locale: PageletLocale;
     private sessionId: string;
-    private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState"> = {};
+    private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason"> = {};
 
     constructor(
         leaf: WorkspaceLeaf,
@@ -310,7 +292,6 @@ export class PageletDetailView extends ItemView {
         onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>,
         onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>,
         onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>,
-        onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>,
         onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>,
         onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>,
     ) {
@@ -321,7 +302,6 @@ export class PageletDetailView extends ItemView {
         this.onUndoMaintenanceAction = onUndoMaintenanceAction;
         this.onConfirmMemoryCandidate = onConfirmMemoryCandidate;
         this.onDismissMemoryCandidate = onDismissMemoryCandidate;
-        this.onSaveWeeklyReviewNote = onSaveWeeklyReviewNote;
         this.onSaveQuietRecallAsInsight = onSaveQuietRecallAsInsight;
         this.onLinkQuietRecallCandidate = onLinkQuietRecallCandidate;
         this.locale = getLocale();
@@ -358,7 +338,6 @@ export class PageletDetailView extends ItemView {
             onUndoMaintenanceAction: this.onUndoMaintenanceAction,
             onConfirmMemoryCandidate: this.onConfirmMemoryCandidate,
             onDismissMemoryCandidate: this.onDismissMemoryCandidate,
-            onSaveWeeklyReviewNote: this.onSaveWeeklyReviewNote,
             onSaveQuietRecallAsInsight: this.onSaveQuietRecallAsInsight,
             onLinkRecallCandidate: this.onLinkQuietRecallCandidate,
         });
@@ -389,6 +368,9 @@ export class PageletDetailView extends ItemView {
         if (this.payloadOptions.sourcePath) {
             payload.sourcePath = this.payloadOptions.sourcePath;
         }
+        if (this.payloadOptions.entryReason) {
+            payload.entryReason = this.payloadOptions.entryReason;
+        }
         return {
             version: PAGELET_DETAIL_STATE_VERSION,
             payload,
@@ -416,6 +398,7 @@ export class PageletDetailView extends ItemView {
             sourcePath: payload.sourcePath,
             summarySaveNote: payload.summarySaveNote,
             restoredFromState: payload.restoredFromState,
+            entryReason: payload.entryReason,
         };
         if (!payload.restoredFromState) {
             this.cacheCurrentPayload();
@@ -454,6 +437,7 @@ export class PageletDetailView extends ItemView {
             extra: this.payloadOptions.extra,
             sourcePath: this.payloadOptions.sourcePath,
             summarySaveNote: this.payloadOptions.summarySaveNote,
+            entryReason: this.payloadOptions.entryReason,
         });
     }
 
@@ -530,6 +514,8 @@ function readPageletDetailState(
     const layoutType = normalizePageletDetailLayoutType(payload.layoutType);
     if (layoutType) result.layoutType = layoutType;
     if (typeof payload.sourcePath === "string") result.sourcePath = payload.sourcePath;
+    const entryReason = normalizeTabEntryReason(payload.entryReason);
+    if (entryReason) result.entryReason = entryReason;
     return { sessionId, payload: result };
 }
 
@@ -539,6 +525,18 @@ function normalizePageletLocale(value: unknown): PageletLocale | null {
 
 function normalizePageletDetailLayoutType(value: unknown): PageletDetailLayoutType | undefined {
     return value === "review" || value === "current" || value === "discover" || value === "summary"
+        ? value
+        : undefined;
+}
+
+function normalizeTabEntryReason(value: unknown): TabEntryReason | undefined {
+    return value === "panel-expand"
+        || value === "maintenance"
+        || value === "quiet-recall"
+        || value === "graph-discovery"
+        || value === "pattern-detection"
+        || value === "scope-recap"
+        || value === "default"
         ? value
         : undefined;
 }

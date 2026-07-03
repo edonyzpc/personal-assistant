@@ -20,7 +20,7 @@ import type { App } from "obsidian";
 
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import type { PanelFinding } from "../panel/types";
-import type { PageletDetailPayload, TabSection } from "./types";
+import type { PageletDetailPayload, TabEntryReason, TabSection } from "./types";
 import {
     groupReviewQueueItemsForTab,
     type ContextPagerState,
@@ -32,11 +32,22 @@ import {
     type QuietRecallSaveResult,
     type ReviewQueueItem,
     type ReviewQueueTabGroup,
-    type WeeklyReviewRunResult,
 } from "../../pa";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import { clearChildren, el } from "../dom-utils";
 import { renderDiscoveryLayout, renderSummaryPreview } from "../panel/PanelLayouts";
+import type {
+    MaintenanceActionUiState,
+    MemoryCandidateActionState,
+    MemoryCandidateActionResult,
+    QuietRecallLinkState,
+    QuietRecallLinkResult,
+    QuietRecallSaveState,
+    TabSectionRenderer,
+} from "./sections/types";
+import { MemoryGovernanceSection } from "./sections/MemoryGovernanceSection";
+import { MaintenanceReviewSection } from "./sections/MaintenanceReviewSection";
+import { QuietRecallSection } from "./sections/QuietRecallSection";
 
 interface TabViewOptions {
     app?: App;
@@ -47,53 +58,21 @@ interface TabViewOptions {
     onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
     onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
     onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
-    onSaveWeeklyReviewNote?: (review: WeeklyReviewRunResult, acceptedItemIds: readonly string[]) => Promise<WriteResult>;
     onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     onLinkRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<QuietRecallLinkResult>;
 }
 
-type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState">;
+type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason">;
 type DetailExtra = NonNullable<PageletDetailPayload["extra"]>;
-type MaintenanceActionUiStatus = "applying" | "applied" | "failed" | "undoing" | "undone";
-type WeeklyReviewUiMode = "digest" | "selecting";
-type WeeklyReviewSaveStatus = "idle" | "saving" | "saved" | "failed";
-type QuietRecallSaveStatus = "saving" | "saved" | "failed";
-type QuietRecallLinkStatus = "linking" | "linked" | "failed";
-type MemoryCandidateActionStatus = "confirming" | "confirmed" | "dismissing" | "dismissed" | "failed";
-
-interface MemoryCandidateActionResult {
-    ok: boolean;
-    message: string;
-}
-
-interface QuietRecallLinkResult {
-    ok: boolean;
-    message: string;
-}
-
-interface MaintenanceActionUiState {
-    status: MaintenanceActionUiStatus;
-    message: string;
-    actionId?: string;
-}
-
-interface QuietRecallSaveState {
-    status: QuietRecallSaveStatus;
-    message: string;
-}
-
-interface QuietRecallLinkState {
-    status: QuietRecallLinkStatus;
-    message: string;
-}
-
-interface MemoryCandidateActionState {
-    status: MemoryCandidateActionStatus;
-    message: string;
-}
 
 let tabLabelSequence = 0;
-let weeklyAcceptLabelSequence = 0;
+
+const ENTRY_REASON_TO_PRIMARY_SECTION: Partial<Record<TabEntryReason, string>> = {
+    "maintenance": "maintenance",
+    "quiet-recall": "quiet-recall",
+    "graph-discovery": "graph-discovery",
+    "pattern-detection": "pattern-detection",
+};
 
 // ---------------------------------------------------------------------------
 // TabView
@@ -121,17 +100,14 @@ export class TabView {
     private currentContent: PanelFinding[] | TabSection[] = [];
     private currentOptions: TabOpenOptions = {};
     private reviewQueueTabFilter: ReviewQueueTabGroup | "all" = "all";
+    private readonly sectionRenderers: TabSectionRenderer[] = [];
+    private readonly dismissedPatternIds = new Set<string>();
+    private readonly memoryCandidateActionState = new Map<string, MemoryCandidateActionState>();
     private readonly maintenanceActionState = new Map<string, MaintenanceActionUiState>();
-    private readonly weeklyAcceptedItemIds = new Set<string>();
-    private weeklyReviewUiStateKey: string | null = null;
-    private weeklyReviewUiMode: WeeklyReviewUiMode = "digest";
-    private weeklyReviewActionsEl: HTMLElement | null = null;
-    private weeklyReviewSaveStatus: WeeklyReviewSaveStatus = "idle";
-    private weeklyReviewSaveMessage = "";
     private readonly quietRecallSaveState = new Map<string, QuietRecallSaveState>();
     private readonly quietRecallLinkState = new Map<string, QuietRecallLinkState>();
-    private readonly memoryCandidateActionState = new Map<string, MemoryCandidateActionState>();
-    private readonly dismissedPatternIds = new Set<string>();
+    private actionStateGeneration = 0;
+    private disposed = false;
 
     constructor(locale: PageletLocale = "en", options: TabViewOptions = {}) {
         this.locale = locale;
@@ -175,6 +151,10 @@ export class TabView {
         this.ensureMounted();
         if (!this.rootEl || !this.bodyEl) return;
 
+        this.disposed = false;
+        if (this.currentContent !== content || this.currentOptions !== options) {
+            this.clearSectionActionState();
+        }
         this.currentContent = content;
         this.currentOptions = options;
         if (this.labelEl) {
@@ -196,7 +176,9 @@ export class TabView {
 
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
+        this.disposed = true;
         this.unloadRenderComponent();
+        this.destroySectionRenderers();
         if (this.rootEl) {
             this.rootEl.remove();
             this.rootEl = null;
@@ -205,14 +187,97 @@ export class TabView {
         this.labelEl = null;
         this.containerEl = null;
         this._isOpen = false;
+        this.dismissedPatternIds.clear();
+        this.clearSectionActionState();
+    }
+
+    private destroySectionRenderers(): void {
+        for (const renderer of this.sectionRenderers) {
+            renderer.destroy();
+        }
+        this.sectionRenderers.length = 0;
+    }
+
+    private clearSectionActionState(): void {
+        this.actionStateGeneration += 1;
+        this.memoryCandidateActionState.clear();
         this.maintenanceActionState.clear();
-        this.weeklyAcceptedItemIds.clear();
         this.quietRecallSaveState.clear();
         this.quietRecallLinkState.clear();
     }
 
+    private createSectionCallbacks(): { requestRerender: () => void; canCommitActionState: () => boolean } {
+        const generation = this.actionStateGeneration;
+        return {
+            requestRerender: () => this.handleSectionRerender(),
+            canCommitActionState: () => !this.disposed && generation === this.actionStateGeneration,
+        };
+    }
+
+    private renderExtractedSection<T>(data: T | undefined, factory: (data: T) => TabSectionRenderer): boolean {
+        if (!this.bodyEl || !data) return false;
+        const renderer = factory(data);
+        if (!renderer.hasContent()) {
+            renderer.destroy();
+            return false;
+        }
+        const wrapper = el("div");
+        renderer.render(wrapper);
+        this.bodyEl.appendChild(wrapper);
+        this.sectionRenderers.push(renderer);
+        return true;
+    }
+
+    private handleSectionRerender(): void {
+        const scrollTop = this.bodyEl?.scrollTop ?? 0;
+        for (const renderer of this.sectionRenderers) {
+            renderer.rerender();
+        }
+        if (this.bodyEl) this.bodyEl.scrollTop = scrollTop;
+    }
+
+    private rerenderCurrentContentPreservingScroll(): void {
+        const scrollTop = this.bodyEl?.scrollTop ?? 0;
+        this.renderContent(this.currentContent, this.currentOptions);
+        if (this.bodyEl) this.bodyEl.scrollTop = scrollTop;
+    }
+
     // -----------------------------------------------------------------------
     // DOM construction
+    private renderSectionNav(slots: { id: string; labelKey: string }[]): void {
+        if (!this.bodyEl) return;
+        const nav = el("div", "pa-pagelet-tab-nav");
+        nav.setAttribute("role", "navigation");
+        nav.setAttribute("aria-label", pageletT("pagelet.tab.title", this.locale));
+        for (const slot of slots) {
+            const btn = el("button", "pa-pagelet-tab-nav-item", pageletT(slot.labelKey, this.locale));
+            btn.setAttribute("type", "button");
+            btn.addEventListener("click", () => {
+                const target = this.bodyEl?.querySelector(`.pa-pagelet-tab-${slot.id}, .pa-pagelet-tab-section.pa-pagelet-tab-${slot.id}`);
+                if (!target) {
+                    const sections = this.bodyEl?.querySelectorAll(".pa-pagelet-tab-section, .pa-pagelet-tab-context-pager-details");
+                    const index = slots.indexOf(slot);
+                    const fallbackTarget = sections?.[index];
+                    if (fallbackTarget) this.scrollTabNavTarget(fallbackTarget);
+                    return;
+                }
+                this.scrollTabNavTarget(target);
+            });
+            nav.appendChild(btn);
+        }
+        this.bodyEl.prepend(nav);
+    }
+
+    private scrollTabNavTarget(target: Element): void {
+        const details = target.closest(".pa-pagelet-tab-context-pager-details") as HTMLDetailsElement | null;
+        if (details) {
+            details.open = true;
+            details.scrollIntoView({ behavior: "smooth", block: "start" });
+            return;
+        }
+        target.scrollIntoView({ behavior: "smooth", block: "start" });
+    }
+
     // -----------------------------------------------------------------------
 
     private buildDOM(): HTMLDivElement {
@@ -243,7 +308,7 @@ export class TabView {
         options: TabOpenOptions = {},
     ): void {
         if (!this.bodyEl) return;
-        this.weeklyReviewActionsEl = null;
+        this.destroySectionRenderers();
         clearChildren(this.bodyEl);
 
         if (options.restoredFromState) {
@@ -252,32 +317,34 @@ export class TabView {
             return;
         }
 
+        const sectionCallbacks = this.createSectionCallbacks();
+
         if (options.layoutType === "summary") {
             const markdown = options.extra?.markdown;
             if (typeof markdown === "string" && markdown.trim().length > 0) {
                 this.renderSummaryContent(markdown, options);
                 this.renderSavedInsightContent(options.extra?.savedInsights);
-                this.renderMemoryGovernanceContent(options.extra?.memoryGovernance);
+                this.renderExtractedSection(options.extra?.memoryGovernance, (data) =>
+                    new MemoryGovernanceSection(this.locale, data, {
+                        onConfirm: this.options.onConfirmMemoryCandidate,
+                        onDismiss: this.options.onDismissMemoryCandidate,
+                    }, sectionCallbacks, this.memoryCandidateActionState),
+                );
             } else {
                 this.unloadRenderComponent();
                 const renderedSavedInsights = this.renderSavedInsightContent(options.extra?.savedInsights);
-                const renderedMemoryGovernance = this.renderMemoryGovernanceContent(options.extra?.memoryGovernance);
+                const renderedMemoryGovernance = this.renderExtractedSection(options.extra?.memoryGovernance, (data) =>
+                    new MemoryGovernanceSection(this.locale, data, {
+                        onConfirm: this.options.onConfirmMemoryCandidate,
+                        onDismiss: this.options.onDismissMemoryCandidate,
+                    }, sectionCallbacks, this.memoryCandidateActionState),
+                );
                 if (!renderedSavedInsights && !renderedMemoryGovernance) this.renderEmptyState();
             }
             return;
         }
 
         this.unloadRenderComponent();
-
-        const renderedContextPager = this.renderContextPagerContent(options.extra?.contextPager);
-        const renderedQueue = this.renderReviewQueueContent(options.extra?.reviewQueue);
-        const renderedSavedInsights = this.renderSavedInsightContent(options.extra?.savedInsights);
-        const renderedMemoryGovernance = this.renderMemoryGovernanceContent(options.extra?.memoryGovernance);
-        const renderedMaintenanceReview = this.renderMaintenanceReviewContent(options.extra?.maintenanceReview);
-        const renderedGraphDiscovery = this.renderGraphDiscoveryContent(options.extra?.graphDiscovery);
-        const renderedPatternDetection = this.renderPatternDetectionContent(options.extra?.patternDetection);
-        const renderedWeeklyReview = this.renderWeeklyReviewContent(options.extra?.weeklyReview);
-        const renderedQuietRecall = this.renderQuietRecallContent(options.extra?.quietRecall);
 
         if (options.layoutType === "discover" && !isTabSections(content)) {
             renderDiscoveryLayout(
@@ -293,28 +360,62 @@ export class TabView {
             return;
         }
 
-        if (content.length === 0) {
-            if (
-                !renderedContextPager
-                && !renderedQueue
-                && !renderedSavedInsights
-                && !renderedMemoryGovernance
-                && !renderedMaintenanceReview
-                && !renderedGraphDiscovery
-                && !renderedPatternDetection
-                && !renderedWeeklyReview
-                && !renderedQuietRecall
-            ) {
-                this.renderEmptyState();
-            }
-            return;
+        type SectionSlot = { id: string; labelKey: string; render: () => boolean };
+        const allSlots: SectionSlot[] = [
+            { id: "memory", labelKey: "pagelet.tab.memory.title", render: () => this.renderExtractedSection(options.extra?.memoryGovernance, (data) =>
+                new MemoryGovernanceSection(this.locale, data, {
+                    onConfirm: this.options.onConfirmMemoryCandidate,
+                    onDismiss: this.options.onDismissMemoryCandidate,
+                }, sectionCallbacks, this.memoryCandidateActionState)) },
+            { id: "maintenance", labelKey: "pagelet.tab.maintenance.title", render: () => this.renderExtractedSection(options.extra?.maintenanceReview, (data) =>
+                new MaintenanceReviewSection(this.locale, data, {
+                    onApply: this.options.onApplyMaintenanceProposal,
+                    onUndo: this.options.onUndoMaintenanceAction,
+                }, sectionCallbacks, this.maintenanceActionState)) },
+            { id: "quiet-recall", labelKey: "pagelet.tab.recall.title", render: () => this.renderExtractedSection(options.extra?.quietRecall, (data) =>
+                new QuietRecallSection(this.locale, data, {
+                    onSave: this.options.onSaveQuietRecallAsInsight,
+                    onLink: this.options.onLinkRecallCandidate,
+                }, sectionCallbacks, options.sourcePath, this.quietRecallSaveState, this.quietRecallLinkState)) },
+            { id: "review-queue", labelKey: "pagelet.tab.reviewQueue.title", render: () => this.renderReviewQueueContent(options.extra?.reviewQueue) },
+            { id: "graph-discovery", labelKey: "pagelet.tab.graphDiscovery.title", render: () => this.renderGraphDiscoveryContent(options.extra?.graphDiscovery) },
+            { id: "pattern-detection", labelKey: "pagelet.tab.patterns.title", render: () => this.renderPatternDetectionContent(options.extra?.patternDetection) },
+            { id: "saved-insights", labelKey: "pagelet.tab.savedInsights.title", render: () => this.renderSavedInsightContent(options.extra?.savedInsights) },
+        ];
+
+        const entryReason = options.entryReason ?? "default";
+        const primaryId = ENTRY_REASON_TO_PRIMARY_SECTION[entryReason];
+        const sorted = primaryId
+            ? [
+                ...allSlots.filter((s) => s.id === primaryId),
+                ...allSlots.filter((s) => s.id !== primaryId),
+            ]
+            : allSlots;
+
+        const renderedSlots: SectionSlot[] = [];
+        for (const slot of sorted) {
+            if (slot.render()) renderedSlots.push(slot);
         }
 
-        // Detect whether content is TabSection[] or PanelFinding[]
-        if (isTabSections(content)) {
-            this.renderTabSections(content);
-        } else {
-            this.renderFromFindings(content);
+        if (content.length > 0) {
+            if (isTabSections(content)) {
+                this.renderTabSections(content);
+            } else {
+                this.renderFromFindings(content);
+            }
+            renderedSlots.push({ id: "findings", labelKey: "pagelet.tab.overview", render: () => true });
+        }
+
+        if (this.renderContextPagerAsDetails(options.extra?.contextPager)) {
+            renderedSlots.push({ id: "context-pager", labelKey: "pagelet.panel.contextPager.usedSources", render: () => true });
+        }
+
+        if (renderedSlots.length >= 3) {
+            this.renderSectionNav(renderedSlots);
+        }
+
+        if (renderedSlots.length === 0) {
+            this.renderEmptyState();
         }
     }
 
@@ -371,377 +472,20 @@ export class TabView {
         return true;
     }
 
-    private renderWeeklyReviewContent(weeklyReview: DetailExtra["weeklyReview"]): boolean {
-        if (!this.bodyEl || !weeklyReview) return false;
-        this.ensureWeeklyReviewUiState(weeklyReview);
-        const selectionMode = this.weeklyReviewUiMode === "selecting";
-
-        const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-weekly-review");
-        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.weekly.title", this.locale)));
-        section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.weekly.summary", this.locale, {
-                count: weeklyReview.totalCount,
-                range: weeklyReview.range.label,
-            })));
-
-        const overviewCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-weekly-overview-card");
-        const tagRow = el("div", "pa-pagelet-tab-tag-row");
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", pageletT("pagelet.tab.weekly.manualOnly", this.locale)));
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", weeklyReview.range.label));
-        overviewCard.appendChild(tagRow);
-        section.appendChild(overviewCard);
-
-        for (const reviewSection of weeklyReview.sections) {
-            const group = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-weekly-section");
-            group.appendChild(el("h3", undefined, reviewSection.title));
-            if (reviewSection.items.length === 0) {
-                const emptyCard = el("div", "pa-pagelet-tab-empty-card pa-pagelet-tab-weekly-empty");
-                emptyCard.appendChild(el("div", "pa-pagelet-tab-empty-title",
-                    pageletT("pagelet.tab.weekly.emptySection", this.locale)));
-                group.appendChild(emptyCard);
-                section.appendChild(group);
-                continue;
-            }
-
-            for (const item of reviewSection.items) {
-                const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-weekly-card");
-                const header = el("div", "pa-pagelet-tab-weekly-card-header");
-                const titleEl = el("h4", undefined, item.title);
-                if (selectionMode) {
-                    const checkbox = el("input", "pa-pagelet-tab-weekly-accept") as HTMLInputElement;
-                    const titleId = `pa-pagelet-tab-weekly-title-${++weeklyAcceptLabelSequence}`;
-                    checkbox.setAttribute("type", "checkbox");
-                    checkbox.setAttribute("aria-labelledby", titleId);
-                    checkbox.checked = this.weeklyAcceptedItemIds.has(item.id);
-                    checkbox.addEventListener("change", () => {
-                        if (checkbox.checked) this.weeklyAcceptedItemIds.add(item.id);
-                        else this.weeklyAcceptedItemIds.delete(item.id);
-                        this.weeklyReviewSaveStatus = "idle";
-                        this.weeklyReviewSaveMessage = "";
-                        this.refreshWeeklyReviewActions(weeklyReview);
-                    });
-                    header.appendChild(checkbox);
-                    titleEl.setAttribute("id", titleId);
-                }
-                header.appendChild(titleEl);
-                cardEl.appendChild(header);
-                cardEl.appendChild(el("p", undefined, item.summary));
-
-                const itemTags = el("div", "pa-pagelet-tab-tag-row");
-                itemTags.appendChild(el("span", "pa-pagelet-tab-tag-chip", reviewSection.title));
-                const source = item.sourceRefs[0]?.path;
-                if (source) itemTags.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
-                cardEl.appendChild(itemTags);
-
-                if (item.whyShown.length > 0) {
-                    cardEl.appendChild(el("p", "pa-pagelet-tab-muted",
-                        pageletT("pagelet.tab.weekly.whyNow", this.locale, {
-                            reason: item.whyShown.slice(0, 2).join("; "),
-                        })));
-                }
-
-                group.appendChild(cardEl);
-            }
-            section.appendChild(group);
-        }
-
-        this.renderWeeklyReviewActions(section, weeklyReview);
-        this.bodyEl.appendChild(section);
+    private renderContextPagerAsDetails(contextPager: ContextPagerState | undefined): boolean {
+        if (!this.bodyEl || !contextPager) return false;
+        const details = el("details", "pa-pagelet-tab-context-pager-details") as HTMLDetailsElement;
+        const summary = el("summary");
+        summary.textContent = pageletT("pagelet.panel.contextPager.usedSources", this.locale);
+        details.appendChild(summary);
+        const wrapper = el("div");
+        const saved = this.bodyEl;
+        this.bodyEl = wrapper;
+        this.renderContextPagerContent(contextPager);
+        this.bodyEl = saved;
+        details.appendChild(wrapper);
+        this.bodyEl.appendChild(details);
         return true;
-    }
-
-    private renderWeeklyReviewActions(section: HTMLElement, weeklyReview: WeeklyReviewRunResult): void {
-        if (!this.options.onSaveWeeklyReviewNote) return;
-        const actions = el("div", "pa-pagelet-tab-weekly-actions");
-        this.weeklyReviewActionsEl = actions;
-        this.populateWeeklyReviewActions(actions, weeklyReview);
-        section.appendChild(actions);
-    }
-
-    private resetWeeklyReviewUiState(): void {
-        this.weeklyAcceptedItemIds.clear();
-        this.weeklyReviewUiMode = "digest";
-        this.weeklyReviewSaveStatus = "idle";
-        this.weeklyReviewSaveMessage = "";
-    }
-
-    private ensureWeeklyReviewUiState(weeklyReview: WeeklyReviewRunResult): void {
-        const key = [
-            weeklyReview.generatedAt,
-            weeklyReview.range.label,
-            weeklyReview.sections
-                .flatMap((section) => section.items.map((item) => item.id))
-                .join("|"),
-        ].join("::");
-        if (this.weeklyReviewUiStateKey === key) return;
-        this.weeklyReviewUiStateKey = key;
-        this.resetWeeklyReviewUiState();
-    }
-
-    private acceptedWeeklyItemIdsForReview(weeklyReview: WeeklyReviewRunResult): string[] {
-        const currentIds = new Set(
-            weeklyReview.sections.flatMap((section) => section.items.map((item) => item.id)),
-        );
-        return [...this.weeklyAcceptedItemIds].filter((id) => currentIds.has(id));
-    }
-
-    private refreshWeeklyReviewActions(weeklyReview: WeeklyReviewRunResult): void {
-        if (!this.weeklyReviewActionsEl) return;
-        clearChildren(this.weeklyReviewActionsEl);
-        this.populateWeeklyReviewActions(this.weeklyReviewActionsEl, weeklyReview);
-    }
-
-    private rerenderCurrentContentPreservingScroll(): void {
-        const scrollTop = this.bodyEl?.scrollTop ?? 0;
-        this.renderContent(this.currentContent, this.currentOptions);
-        if (this.bodyEl) this.bodyEl.scrollTop = scrollTop;
-    }
-
-    private populateWeeklyReviewActions(actions: HTMLElement, weeklyReview: WeeklyReviewRunResult): void {
-        if (this.weeklyReviewUiMode === "digest") {
-            if (weeklyReview.totalCount === 0) return;
-            const chooseBtn = el(
-                "button",
-                "pa-pagelet-tab-weekly-save pa-pagelet-tab-weekly-choose",
-                pageletT("pagelet.tab.weekly.chooseItems", this.locale),
-            );
-            chooseBtn.setAttribute("type", "button");
-            chooseBtn.addEventListener("click", (event) => {
-                event.preventDefault();
-                this.weeklyReviewUiMode = "selecting";
-                this.weeklyReviewSaveStatus = "idle";
-                this.weeklyReviewSaveMessage = "";
-                this.rerenderCurrentContentPreservingScroll();
-            });
-            actions.appendChild(chooseBtn);
-            return;
-        }
-
-        const acceptedItemIds = this.acceptedWeeklyItemIdsForReview(weeklyReview);
-        const acceptedCount = acceptedItemIds.length;
-        const saveBtn = el(
-            "button",
-            "pa-pagelet-tab-weekly-save",
-            this.weeklyReviewSaveStatus === "saving"
-                ? pageletT("pagelet.panel.status.saving", this.locale)
-                : this.weeklyReviewSaveStatus === "saved"
-                    ? pageletT("pagelet.tab.weekly.saved", this.locale)
-                    : pageletT("pagelet.tab.weekly.saveSelected", this.locale, { count: acceptedCount }),
-        );
-        saveBtn.setAttribute("type", "button");
-        if (acceptedCount === 0 || this.weeklyReviewSaveStatus === "saving" || this.weeklyReviewSaveStatus === "saved") {
-            saveBtn.disabled = true;
-            saveBtn.setAttribute("aria-disabled", "true");
-        }
-        if (this.weeklyReviewSaveStatus === "saving") {
-            saveBtn.setAttribute("aria-busy", "true");
-        }
-        saveBtn.addEventListener("click", (event) => {
-            event.preventDefault();
-            void this.saveWeeklyReviewFromTab(weeklyReview);
-        });
-        actions.appendChild(saveBtn);
-        if (this.weeklyReviewSaveStatus !== "saving") {
-            const backBtn = el(
-                "button",
-                "pa-pagelet-tab-maintenance-action pa-pagelet-tab-weekly-back",
-                pageletT("pagelet.tab.weekly.backToDigest", this.locale),
-            );
-            backBtn.setAttribute("type", "button");
-            backBtn.addEventListener("click", (event) => {
-                event.preventDefault();
-                this.weeklyAcceptedItemIds.clear();
-                this.weeklyReviewUiMode = "digest";
-                this.weeklyReviewSaveStatus = "idle";
-                this.weeklyReviewSaveMessage = "";
-                this.rerenderCurrentContentPreservingScroll();
-            });
-            actions.appendChild(backBtn);
-        }
-        if (this.weeklyReviewSaveMessage) {
-            actions.appendChild(el("span", "pa-pagelet-tab-maintenance-status", this.weeklyReviewSaveMessage));
-        }
-    }
-
-    private async saveWeeklyReviewFromTab(weeklyReview: WeeklyReviewRunResult): Promise<void> {
-        if (!this.options.onSaveWeeklyReviewNote) return;
-        const acceptedItemIds = this.acceptedWeeklyItemIdsForReview(weeklyReview);
-        if (acceptedItemIds.length === 0) return;
-        this.weeklyReviewSaveStatus = "saving";
-        this.weeklyReviewSaveMessage = pageletT("pagelet.panel.status.saving", this.locale);
-        this.refreshWeeklyReviewActions(weeklyReview);
-        try {
-            const result = await this.options.onSaveWeeklyReviewNote(weeklyReview, acceptedItemIds);
-            if (result.success) {
-                this.weeklyReviewSaveStatus = "saved";
-                this.weeklyReviewSaveMessage = result.filePath ?? pageletT("pagelet.tab.weekly.saved", this.locale);
-            } else {
-                this.weeklyReviewSaveStatus = "failed";
-                this.weeklyReviewSaveMessage = result.error ?? pageletT("pagelet.reviewNote.createFailed", this.locale, { error: "" });
-            }
-        } catch (error) {
-            this.weeklyReviewSaveStatus = "failed";
-            this.weeklyReviewSaveMessage = error instanceof Error ? error.message : String(error);
-        }
-        this.refreshWeeklyReviewActions(weeklyReview);
-    }
-
-    private renderQuietRecallContent(quietRecall: DetailExtra["quietRecall"]): boolean {
-        if (!this.bodyEl || !quietRecall) return false;
-
-        const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-quiet-recall");
-        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.recall.title", this.locale)));
-        section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.recall.summary", this.locale, { count: quietRecall.totalCount })));
-
-        if (quietRecall.candidates.length === 0) {
-            const emptyCard = el("div", "pa-pagelet-tab-empty-card pa-pagelet-tab-recall-empty");
-            emptyCard.appendChild(el("div", "pa-pagelet-tab-empty-title",
-                pageletT("pagelet.tab.recall.empty", this.locale)));
-            section.appendChild(emptyCard);
-            this.bodyEl.appendChild(section);
-            return true;
-        }
-
-        for (const candidate of quietRecall.candidates) {
-            const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-recall-card");
-            cardEl.appendChild(el("h4", undefined, candidate.title));
-            cardEl.appendChild(el("p", undefined, candidate.summary));
-
-            const tagRow = el("div", "pa-pagelet-tab-tag-row");
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT(`pagelet.tab.recall.relation.${candidate.relation}`, this.locale)));
-            const source = candidate.sourceRefs[0]?.path;
-            if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
-            cardEl.appendChild(tagRow);
-
-            cardEl.appendChild(el("p", "pa-pagelet-tab-muted",
-                pageletT("pagelet.tab.recall.whyNow", this.locale, {
-                    reason: candidate.whyNow.slice(0, 2).join("; "),
-                })));
-            cardEl.appendChild(el("p", "pa-pagelet-tab-muted",
-                pageletT("pagelet.tab.recall.nextAction", this.locale, {
-                    action: candidate.nextAction,
-                })));
-
-            this.renderQuietRecallActions(cardEl, candidate);
-            section.appendChild(cardEl);
-        }
-
-        this.bodyEl.appendChild(section);
-        return true;
-    }
-
-    private renderQuietRecallActions(cardEl: HTMLElement, candidate: QuietRecallCandidate): void {
-        if (!this.options.onSaveQuietRecallAsInsight && !this.options.onLinkRecallCandidate) return;
-        const saveState = this.quietRecallSaveState.get(candidate.id);
-        const linkState = this.quietRecallLinkState.get(candidate.id);
-        const actionRow = el("div", "pa-pagelet-tab-recall-actions");
-
-        if (this.options.onLinkRecallCandidate) {
-            const linkBtn = el(
-                "button",
-                "pa-pagelet-tab-recall-link",
-                linkState?.status === "linking"
-                    ? pageletT("pagelet.tab.recall.linking", this.locale)
-                    : linkState?.status === "linked"
-                        ? pageletT("pagelet.tab.recall.linked", this.locale)
-                        : pageletT("pagelet.tab.recall.link", this.locale),
-            );
-            linkBtn.setAttribute("type", "button");
-            if (linkState?.status === "linking" || linkState?.status === "linked") {
-                linkBtn.disabled = true;
-                linkBtn.setAttribute("aria-disabled", "true");
-            }
-            linkBtn.addEventListener("click", (event) => {
-                event.preventDefault();
-                void this.linkQuietRecallFromTab(candidate);
-            });
-            actionRow.appendChild(linkBtn);
-        }
-
-        if (this.options.onSaveQuietRecallAsInsight) {
-            const saveBtn = el(
-                "button",
-                "pa-pagelet-tab-recall-save",
-                saveState?.status === "saving"
-                    ? pageletT("pagelet.tab.recall.saving", this.locale)
-                    : saveState?.status === "saved"
-                        ? pageletT("pagelet.tab.recall.saved", this.locale)
-                        : pageletT("pagelet.tab.recall.saveInsight", this.locale),
-            );
-            saveBtn.setAttribute("type", "button");
-            if (saveState?.status === "saving" || saveState?.status === "saved") {
-                saveBtn.disabled = true;
-                saveBtn.setAttribute("aria-disabled", "true");
-            }
-            saveBtn.addEventListener("click", (event) => {
-                event.preventDefault();
-                void this.saveQuietRecallFromTab(candidate);
-            });
-            actionRow.appendChild(saveBtn);
-        }
-
-        for (const status of [linkState, saveState]) {
-            if (!status) continue;
-            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status", status.message));
-        }
-        cardEl.appendChild(actionRow);
-    }
-
-    private async linkQuietRecallFromTab(candidate: QuietRecallCandidate): Promise<void> {
-        if (!this.options.onLinkRecallCandidate) return;
-        this.quietRecallLinkState.set(candidate.id, {
-            status: "linking",
-            message: pageletT("pagelet.tab.recall.linking", this.locale),
-        });
-        this.renderContent(this.currentContent, this.currentOptions);
-        try {
-            const result = await this.options.onLinkRecallCandidate(candidate, this.currentQuietRecallSourcePath());
-            this.quietRecallLinkState.set(candidate.id, {
-                status: result.ok ? "linked" : "failed",
-                message: result.message,
-            });
-        } catch (error) {
-            this.quietRecallLinkState.set(candidate.id, {
-                status: "failed",
-                message: error instanceof Error ? error.message : String(error),
-            });
-        }
-        this.renderContent(this.currentContent, this.currentOptions);
-    }
-
-    private currentQuietRecallSourcePath(): string | undefined {
-        return this.currentOptions.extra?.quietRecall?.currentPath ?? this.currentOptions.sourcePath;
-    }
-
-    private async saveQuietRecallFromTab(candidate: QuietRecallCandidate): Promise<void> {
-        if (!this.options.onSaveQuietRecallAsInsight) return;
-        this.quietRecallSaveState.set(candidate.id, {
-            status: "saving",
-            message: pageletT("pagelet.tab.recall.saving", this.locale),
-        });
-        this.renderContent(this.currentContent, this.currentOptions);
-        try {
-            const result = await this.options.onSaveQuietRecallAsInsight(candidate);
-            if (result.ok) {
-                this.quietRecallSaveState.set(candidate.id, {
-                    status: "saved",
-                    message: result.message,
-                });
-            } else {
-                this.quietRecallSaveState.set(candidate.id, {
-                    status: "failed",
-                    message: result.message,
-                });
-            }
-        } catch (error) {
-            this.quietRecallSaveState.set(candidate.id, {
-                status: "failed",
-                message: error instanceof Error ? error.message : String(error),
-            });
-        }
-        this.renderContent(this.currentContent, this.currentOptions);
     }
 
     private renderSavedInsightContent(savedInsights: DetailExtra["savedInsights"]): boolean {
@@ -770,269 +514,6 @@ export class TabView {
             cardEl.appendChild(tagRow);
 
             section.appendChild(cardEl);
-        }
-
-        this.bodyEl.appendChild(section);
-        return true;
-    }
-
-    private renderMemoryGovernanceContent(memoryGovernance: DetailExtra["memoryGovernance"]): boolean {
-        if (!this.bodyEl || !memoryGovernance) return false;
-        const candidates = memoryGovernance.candidates ?? [];
-        if (memoryGovernance.records.length === 0 && candidates.length === 0) return false;
-
-        const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-memory-governance");
-        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.memory.title", this.locale)));
-        section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.memory.summary", this.locale, { count: memoryGovernance.totalCount })));
-
-        if (candidates.length > 0) {
-            const candidateGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-candidates");
-            const headerRow = el("div", "pa-pagelet-tab-memory-candidates-header");
-            headerRow.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.candidatesTitle", this.locale)));
-            const confirmable = candidates.filter((item) => item.type === "memory_candidate");
-            if (confirmable.length > 1 && this.options.onConfirmMemoryCandidate) {
-                const confirmAllButton = el("button", "pa-pagelet-tab-memory-confirm-all",
-                    pageletT("pagelet.tab.memory.confirmAll", this.locale, { count: confirmable.length }));
-                confirmAllButton.setAttribute("type", "button");
-                confirmAllButton.addEventListener("click", (event) => {
-                    event.preventDefault();
-                    void this.confirmAllMemoryCandidates(confirmable);
-                });
-                headerRow.appendChild(confirmAllButton);
-            }
-            candidateGroup.appendChild(headerRow);
-            candidateGroup.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-                pageletT("pagelet.tab.memory.candidatesSummary", this.locale, { count: candidates.length })));
-            for (const item of candidates) {
-                candidateGroup.appendChild(this.renderMemoryCandidateItem(item));
-            }
-            section.appendChild(candidateGroup);
-        } else {
-            const emptyCard = el("div", "pa-pagelet-tab-empty-card pa-pagelet-tab-memory-candidates-empty");
-            emptyCard.appendChild(el("div", "pa-pagelet-tab-empty-title",
-                pageletT("pagelet.tab.memory.noCandidates", this.locale)));
-            section.appendChild(emptyCard);
-        }
-
-        if (memoryGovernance.records.length > 0) {
-            const recordsGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-records");
-            recordsGroup.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.recordsTitle", this.locale)));
-            for (const record of memoryGovernance.records) {
-                const isTombstone = record.lifecycle === "forgotten_tombstone";
-                const cardEl = el(
-                    "div",
-                    isTombstone
-                        ? "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-card pa-pagelet-tab-memory-card--tombstone"
-                        : "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-card",
-                );
-                cardEl.appendChild(el("h4", undefined,
-                    pageletT(`pagelet.tab.memory.type.${record.type}`, this.locale)));
-                cardEl.appendChild(el("p", undefined, isTombstone
-                    ? pageletT("pagelet.tab.memory.forgottenMarker", this.locale)
-                    : record.summary));
-
-                const tagRow = el("div", "pa-pagelet-tab-tag-row");
-                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                    pageletT(`pagelet.tab.memory.lifecycle.${record.lifecycle}`, this.locale)));
-                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                    pageletT(`pagelet.tab.memory.sensitivity.${record.sensitivity}`, this.locale)));
-                const scopeLabel = record.scope.label ?? record.scope.paths?.[0] ?? record.scope.kind;
-                if (scopeLabel) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", scopeLabel));
-                if (!isTombstone) {
-                    const source = record.sourceRefs[0]?.path;
-                    if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
-                }
-                cardEl.appendChild(tagRow);
-
-                recordsGroup.appendChild(cardEl);
-            }
-            section.appendChild(recordsGroup);
-        }
-
-        this.bodyEl.appendChild(section);
-        return true;
-    }
-
-    private renderMemoryCandidateItem(item: ReviewQueueItem): HTMLElement {
-        const state = this.memoryCandidateActionState.get(item.id);
-        const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-candidate-card");
-        cardEl.appendChild(el("h4", undefined, item.title));
-        cardEl.appendChild(el("p", undefined, item.claim));
-
-        const tagRow = el("div", "pa-pagelet-tab-tag-row");
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-            pageletT(`pagelet.tab.memory.candidateType.${item.type}`, this.locale)));
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", item.status));
-        const memoryType = item.metadata?.memoryType;
-        if (typeof memoryType === "string") {
-            tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                pageletT(`pagelet.tab.memory.type.${memoryType}`, this.locale)));
-        }
-        const source = item.sourceRefs[0]?.path;
-        if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
-        cardEl.appendChild(tagRow);
-
-        const actionRow = el("div", "pa-pagelet-tab-memory-candidate-actions");
-        if (this.options.onConfirmMemoryCandidate && item.type === "memory_candidate") {
-            const confirmButton = el("button", "pa-pagelet-tab-memory-confirm",
-                state?.status === "confirming"
-                    ? pageletT("pagelet.tab.memory.confirming", this.locale)
-                    : state?.status === "confirmed"
-                        ? pageletT("pagelet.tab.memory.confirmed", this.locale)
-                        : pageletT("pagelet.tab.memory.confirm", this.locale));
-            confirmButton.setAttribute("type", "button");
-            if (state?.status === "confirming" || state?.status === "confirmed" || state?.status === "dismissed") {
-                confirmButton.disabled = true;
-                confirmButton.setAttribute("aria-disabled", "true");
-            }
-            confirmButton.addEventListener("click", (event) => {
-                event.preventDefault();
-                void this.confirmMemoryCandidate(item);
-            });
-            actionRow.appendChild(confirmButton);
-        } else if (item.type === "memory_conflict") {
-            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status",
-                pageletT("pagelet.tab.memory.conflictHint", this.locale)));
-        }
-        if (this.options.onDismissMemoryCandidate) {
-            const dismissButton = el("button", "pa-pagelet-tab-memory-dismiss",
-                state?.status === "dismissing"
-                    ? pageletT("pagelet.tab.memory.dismissing", this.locale)
-                    : state?.status === "dismissed"
-                        ? pageletT("pagelet.tab.memory.dismissed", this.locale)
-                        : pageletT("pagelet.tab.memory.dismiss", this.locale));
-            dismissButton.setAttribute("type", "button");
-            if (state?.status === "dismissing" || state?.status === "confirmed" || state?.status === "dismissed") {
-                dismissButton.disabled = true;
-                dismissButton.setAttribute("aria-disabled", "true");
-            }
-            dismissButton.addEventListener("click", (event) => {
-                event.preventDefault();
-                void this.dismissMemoryCandidate(item);
-            });
-            actionRow.appendChild(dismissButton);
-        }
-        if (state) {
-            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status", state.message));
-        }
-        cardEl.appendChild(actionRow);
-        return cardEl;
-    }
-
-    private async confirmAllMemoryCandidates(items: readonly ReviewQueueItem[]): Promise<void> {
-        for (const item of items) {
-            const state = this.memoryCandidateActionState.get(item.id);
-            if (state?.status === "confirmed" || state?.status === "confirming" || state?.status === "dismissed") continue;
-            await this.confirmMemoryCandidate(item);
-        }
-    }
-
-    private async confirmMemoryCandidate(item: ReviewQueueItem): Promise<void> {
-        if (!this.options.onConfirmMemoryCandidate) return;
-        this.memoryCandidateActionState.set(item.id, {
-            status: "confirming",
-            message: pageletT("pagelet.tab.memory.confirming", this.locale),
-        });
-        this.renderContent(this.currentContent, this.currentOptions);
-        try {
-            const result = await this.options.onConfirmMemoryCandidate(item);
-            this.memoryCandidateActionState.set(item.id, {
-                status: result.ok ? "confirmed" : "failed",
-                message: result.message,
-            });
-        } catch (error) {
-            this.memoryCandidateActionState.set(item.id, {
-                status: "failed",
-                message: error instanceof Error ? error.message : String(error),
-            });
-        }
-        this.renderContent(this.currentContent, this.currentOptions);
-    }
-
-    private async dismissMemoryCandidate(item: ReviewQueueItem): Promise<void> {
-        if (!this.options.onDismissMemoryCandidate) return;
-        this.memoryCandidateActionState.set(item.id, {
-            status: "dismissing",
-            message: pageletT("pagelet.tab.memory.dismissing", this.locale),
-        });
-        this.renderContent(this.currentContent, this.currentOptions);
-        try {
-            const result = await this.options.onDismissMemoryCandidate(item);
-            this.memoryCandidateActionState.set(item.id, {
-                status: result.ok ? "dismissed" : "failed",
-                message: result.message,
-            });
-        } catch (error) {
-            this.memoryCandidateActionState.set(item.id, {
-                status: "failed",
-                message: error instanceof Error ? error.message : String(error),
-            });
-        }
-        this.renderContent(this.currentContent, this.currentOptions);
-    }
-
-    private renderMaintenanceReviewContent(maintenanceReview: DetailExtra["maintenanceReview"]): boolean {
-        if (!this.bodyEl || !maintenanceReview) return false;
-
-        const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-maintenance-review");
-        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.maintenance.title", this.locale)));
-        section.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.maintenance.summary", this.locale, { count: maintenanceReview.totalCount })));
-
-        const overviewCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-maintenance-overview-card");
-        const tagRow = el("div", "pa-pagelet-tab-tag-row");
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", pageletT("pagelet.tab.maintenance.previewOnly", this.locale)));
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", pageletT("pagelet.tab.maintenance.weeklyDisabled", this.locale)));
-        overviewCard.appendChild(tagRow);
-        section.appendChild(overviewCard);
-
-        const categories = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-maintenance-categories");
-        categories.appendChild(el("h3", undefined, pageletT("pagelet.tab.maintenance.categories", this.locale)));
-        for (const category of maintenanceReview.categories) {
-            const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-maintenance-category-card");
-            cardEl.appendChild(el("h4", undefined, category.label));
-            cardEl.appendChild(el("p", undefined, String(category.count)));
-            categories.appendChild(cardEl);
-        }
-        section.appendChild(categories);
-
-        if (maintenanceReview.proposals.length === 0) {
-            const emptyCard = el("div", "pa-pagelet-tab-insight-card");
-            emptyCard.appendChild(el("p", undefined, pageletT("pagelet.tab.maintenance.noProposals", this.locale)));
-            section.appendChild(emptyCard);
-        }
-        if (maintenanceReview.proposals.length > 0) {
-            const proposals = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-maintenance-proposals");
-            proposals.appendChild(el("h3", undefined, pageletT("pagelet.tab.maintenance.proposals", this.locale)));
-            for (const proposal of maintenanceReview.proposals) {
-                const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-maintenance-card");
-                cardEl.appendChild(el("h4", undefined, proposal.title));
-                cardEl.appendChild(el("p", undefined, proposal.claim));
-
-                const proposalTags = el("div", "pa-pagelet-tab-tag-row");
-                proposalTags.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                    pageletT(`pagelet.tab.maintenance.action.${proposal.actionType}`, this.locale)));
-                proposalTags.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                    pageletT(`pagelet.tab.maintenance.confidence.${proposal.confidence}`, this.locale)));
-                proposalTags.appendChild(el("span", "pa-pagelet-tab-tag-chip",
-                    pageletT("pagelet.tab.maintenance.previewOnly", this.locale)));
-                cardEl.appendChild(proposalTags);
-
-                const affectedPaths = el("div", "pa-pagelet-tab-maintenance-affected-paths");
-                affectedPaths.appendChild(el("div", "pa-pagelet-tab-empty-title",
-                    pageletT("pagelet.tab.maintenance.affectedPaths", this.locale)));
-                const list = el("ul", "pa-pagelet-tab-context-pager-list");
-                for (const path of proposal.preview.affectedPaths) {
-                    list.appendChild(el("li", undefined, path));
-                }
-                affectedPaths.appendChild(list);
-                cardEl.appendChild(affectedPaths);
-
-                this.renderMaintenanceProposalActions(cardEl, proposal);
-                proposals.appendChild(cardEl);
-            }
-            section.appendChild(proposals);
         }
 
         this.bodyEl.appendChild(section);
@@ -1089,7 +570,7 @@ export class TabView {
 
         if (item.whyShown.length > 0) {
             cardEl.appendChild(el("p", "pa-pagelet-tab-review-queue-why",
-                pageletT("pagelet.tab.weekly.whyNow", this.locale, { reason: item.whyShown.slice(0, 2).join("; ") })));
+                pageletT("pagelet.tab.common.whyNow", this.locale, { reason: item.whyShown.slice(0, 2).join("; ") })));
         }
 
         const sourcePaths = [...new Set(item.sourceRefs.map((ref) => ref.path).filter(Boolean))].slice(0, 6);
@@ -1131,7 +612,7 @@ export class TabView {
 
             if (pattern.whyShown.length > 0) {
                 cardEl.appendChild(el("p", "pa-pagelet-tab-review-queue-why",
-                    pageletT("pagelet.tab.weekly.whyNow", this.locale, { reason: pattern.whyShown.slice(0, 2).join("; ") })));
+                    pageletT("pagelet.tab.common.whyNow", this.locale, { reason: pattern.whyShown.slice(0, 2).join("; ") })));
             }
 
             const sourcePaths = [...new Set(pattern.sourceRefs.map((ref) => ref.path).filter(Boolean))].slice(0, 8);
@@ -1162,7 +643,7 @@ export class TabView {
             dismissButton.addEventListener("click", (event) => {
                 event.preventDefault();
                 this.dismissedPatternIds.add(pattern.id);
-                this.renderContent(this.currentContent, this.currentOptions);
+                this.rerenderCurrentContentPreservingScroll();
             });
             actions.appendChild(dismissButton);
             cardEl.appendChild(actions);
@@ -1171,156 +652,6 @@ export class TabView {
         section.appendChild(group);
         this.bodyEl.appendChild(section);
         return true;
-    }
-
-    private renderMaintenanceProposalActions(cardEl: HTMLElement, proposal: MaintenanceProposal): void {
-        if (!this.options.onApplyMaintenanceProposal) return;
-
-        const actionRow = el("div", "pa-pagelet-tab-maintenance-actions");
-        const state = this.maintenanceActionState.get(proposal.id);
-        const hasUndoTarget = Boolean(this.options.onUndoMaintenanceAction
-            && state?.actionId
-            && (state.status === "applied" || state.status === "undoing" || state.status === "failed"));
-
-        if (proposal.actionType !== "move") {
-            actionRow.appendChild(el("span", "pa-pagelet-tab-maintenance-status",
-                pageletT("pagelet.tab.maintenance.actionUnavailable", this.locale)));
-            cardEl.appendChild(actionRow);
-            return;
-        }
-
-        if (!hasUndoTarget && state?.status !== "undone" && state?.status !== "applied") {
-            const button = el(
-                "button",
-                "pa-pagelet-tab-maintenance-action pa-pagelet-tab-maintenance-apply",
-                state?.status === "applying"
-                    ? pageletT("pagelet.tab.maintenance.applying", this.locale)
-                    : pageletT("pagelet.tab.maintenance.applyMove", this.locale),
-            );
-            button.setAttribute("type", "button");
-            if (state?.status === "applying") {
-                button.disabled = true;
-                button.setAttribute("aria-busy", "true");
-            }
-            button.addEventListener("click", (event) => {
-                event.preventDefault();
-                void this.applyMaintenanceProposalFromTab(proposal);
-            });
-            actionRow.appendChild(button);
-        }
-
-        if (hasUndoTarget) {
-            const button = el(
-                "button",
-                "pa-pagelet-tab-maintenance-action pa-pagelet-tab-maintenance-undo",
-                state?.status === "undoing"
-                    ? pageletT("pagelet.tab.maintenance.undoing", this.locale)
-                    : pageletT("pagelet.tab.maintenance.undoMove", this.locale),
-            );
-            button.setAttribute("type", "button");
-            if (state?.status === "undoing") {
-                button.disabled = true;
-                button.setAttribute("aria-busy", "true");
-            }
-            button.addEventListener("click", (event) => {
-                event.preventDefault();
-                if (state?.actionId) {
-                    void this.undoMaintenanceActionFromTab(proposal.id, state.actionId);
-                }
-            });
-            actionRow.appendChild(button);
-        }
-
-        if (state) {
-            const status = el(
-                "span",
-                "pa-pagelet-tab-maintenance-status",
-                this.maintenanceActionStatusText(state),
-            );
-            status.setAttribute("data-status", state.status);
-            actionRow.appendChild(status);
-        }
-
-        cardEl.appendChild(actionRow);
-    }
-
-    private maintenanceActionStatusText(state: MaintenanceActionUiState): string {
-        if (state.status === "applying") return pageletT("pagelet.tab.maintenance.applying", this.locale);
-        if (state.status === "applied") return pageletT("pagelet.tab.maintenance.moved", this.locale);
-        if (state.status === "undoing") return pageletT("pagelet.tab.maintenance.undoing", this.locale);
-        if (state.status === "undone") return pageletT("pagelet.tab.maintenance.undone", this.locale);
-        return state.message || pageletT("pagelet.tab.maintenance.actionFailed", this.locale);
-    }
-
-    private async applyMaintenanceProposalFromTab(proposal: MaintenanceProposal): Promise<void> {
-        if (!this.options.onApplyMaintenanceProposal) return;
-        this.maintenanceActionState.set(proposal.id, {
-            status: "applying",
-            message: pageletT("pagelet.tab.maintenance.applying", this.locale),
-        });
-        this.renderContent(this.currentContent, this.currentOptions);
-
-        try {
-            const result = await this.options.onApplyMaintenanceProposal(proposal);
-            if (result.ok) {
-                this.maintenanceActionState.set(proposal.id, {
-                    status: "applied",
-                    message: result.message,
-                    actionId: result.action.id,
-                });
-            } else {
-                this.maintenanceActionState.set(proposal.id, {
-                    status: "failed",
-                    message: result.message || pageletT("pagelet.tab.maintenance.actionFailed", this.locale),
-                });
-            }
-        } catch (error) {
-            this.maintenanceActionState.set(proposal.id, {
-                status: "failed",
-                message: error instanceof Error
-                    ? error.message
-                    : pageletT("pagelet.tab.maintenance.actionFailed", this.locale),
-            });
-        }
-
-        this.renderContent(this.currentContent, this.currentOptions);
-    }
-
-    private async undoMaintenanceActionFromTab(proposalId: string, actionId: string): Promise<void> {
-        if (!this.options.onUndoMaintenanceAction) return;
-        this.maintenanceActionState.set(proposalId, {
-            status: "undoing",
-            message: pageletT("pagelet.tab.maintenance.undoing", this.locale),
-            actionId,
-        });
-        this.renderContent(this.currentContent, this.currentOptions);
-
-        try {
-            const result = await this.options.onUndoMaintenanceAction(actionId);
-            if (result.ok) {
-                this.maintenanceActionState.set(proposalId, {
-                    status: "undone",
-                    message: result.message,
-                    actionId: result.action.id,
-                });
-            } else {
-                this.maintenanceActionState.set(proposalId, {
-                    status: "failed",
-                    message: result.message || pageletT("pagelet.tab.maintenance.actionFailed", this.locale),
-                    actionId,
-                });
-            }
-        } catch (error) {
-            this.maintenanceActionState.set(proposalId, {
-                status: "failed",
-                message: error instanceof Error
-                    ? error.message
-                    : pageletT("pagelet.tab.maintenance.actionFailed", this.locale),
-                actionId,
-            });
-        }
-
-        this.renderContent(this.currentContent, this.currentOptions);
     }
 
     /** Render an explicit no-content state instead of a blank detail view. */
@@ -1360,7 +691,7 @@ export class TabView {
             button.addEventListener("click", (event) => {
                 event.preventDefault();
                 this.reviewQueueTabFilter = filter;
-                this.renderContent(this.currentContent, this.currentOptions);
+                this.rerenderCurrentContentPreservingScroll();
             });
             filters.appendChild(button);
         };
