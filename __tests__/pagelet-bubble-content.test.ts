@@ -9,7 +9,6 @@ import {
     buildQuickReviewContent,
     buildQuietRecallNudgeContent,
     buildReviewQueueNudgeContent,
-    buildWeeklyReviewNudgeContent,
 } from "../src/pagelet/bubble/BubbleContent";
 import type { BubbleQuickAccessCallbacks } from "../src/pagelet/bubble/types";
 
@@ -21,7 +20,6 @@ function makeCallbacks(): BubbleQuickAccessCallbacks {
         onReviewCurrentNote: jest.fn(),
         onDiscoverConnections: jest.fn(),
         onPeriodicSummary: jest.fn(),
-        onWeeklyReview: jest.fn(),
     };
 }
 
@@ -158,65 +156,6 @@ describe("Pagelet Bubble quick access content", () => {
         expect(callbacks.onDismiss).toHaveBeenCalledTimes(1);
     });
 
-    it("shows Weekly Review hints only after opt-in and routes to the detail tab command", () => {
-        const callbacks = makeCallbacks();
-
-        expect(buildWeeklyReviewNudgeContent({
-            pageletEnabled: true,
-            preparedReviewEnabled: false,
-            proactiveHints: true,
-            count: 3,
-        }, callbacks, "en")).toBeNull();
-        expect(buildWeeklyReviewNudgeContent({
-            pageletEnabled: true,
-            preparedReviewEnabled: true,
-            proactiveHints: false,
-            count: 3,
-        }, callbacks, "en")).toBeNull();
-        expect(buildWeeklyReviewNudgeContent({
-            pageletEnabled: true,
-            preparedReviewEnabled: true,
-            proactiveHints: true,
-            quietHoursActive: true,
-            count: 3,
-        }, callbacks, "en")).toBeNull();
-
-        const content = buildWeeklyReviewNudgeContent({
-            pageletEnabled: true,
-            preparedReviewEnabled: true,
-            proactiveHints: true,
-            count: 3,
-        }, callbacks, "en");
-
-        expect(content?.findings).toEqual([{ text: "Weekly Review is ready with 3 items." }]);
-        expect(content?.findings[0].text).not.toContain("Saved insights");
-        expect(content?.actions[0]).toMatchObject({
-            label: "Open Weekly Review",
-            description: "Review selected-only sections in Pagelet",
-            icon: "calendar-check",
-            primary: true,
-        });
-        expect(content?.actions.map((action) => action.label)).toEqual([
-            "Open Weekly Review",
-            "Later",
-            "Review current note",
-            "Discover connections",
-            "Generate summary",
-        ]);
-
-        content?.actions[0].callback();
-        content?.actions[1].callback();
-        content?.actions[2].callback();
-        content?.actions[3].callback();
-        content?.actions[4].callback();
-
-        expect(callbacks.onWeeklyReview).toHaveBeenCalledTimes(1);
-        expect(callbacks.onExpandPanel).not.toHaveBeenCalled();
-        expect(callbacks.onDismiss).toHaveBeenCalledTimes(1);
-        expect(callbacks.onReviewCurrentNote).toHaveBeenCalledTimes(1);
-        expect(callbacks.onDiscoverConnections).toHaveBeenCalledTimes(1);
-        expect(callbacks.onPeriodicSummary).toHaveBeenCalledTimes(1);
-    });
 
     it("keeps Quiet Recall Bubble nudges disabled by default and gated by proactive hints", () => {
         const candidate = {

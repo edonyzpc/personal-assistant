@@ -11,7 +11,7 @@ Updated: 2026-06-28
 | Primary surfaces | Chat, Pagelet, Memory, Maintenance Review |
 | Feature family | Active Vault Indexer / Retrieval Substrate |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
-| Related specs | [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [Context Pager spec](./pa-context-pager-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md) |
+| Related specs | [PA Product Information Architecture spec](./pa-product-information-architecture-spec.md), [Quick Capture and Micronote spec](./pa-quick-capture-micronote-product-spec.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Scope Recap and Theme Summary spec](./pa-scope-recap-theme-summary-product-spec.md), [Memory Type Taxonomy spec](./pa-memory-type-taxonomy-product-spec.md), [Retrieval Habit Profile spec](./pa-retrieval-habit-profile-product-spec.md), [Context Pager spec](./pa-context-pager-product-spec.md), [Lightweight Graph Discovery spec](./pa-lightweight-graph-discovery-product-spec.md), [Pagelet Trust Layer spec](./pagelet-trust-layer-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md), [PA Eval Harness spec](./pa-eval-harness-product-spec.md), [PA Data Boundary spec](./pa-data-boundary-product-spec.md) |
 | Related runtime docs | [VSS SQLite/WASM architecture](./vss-sqlite-wasm-architecture.md), [VSS local state plan](./vss-local-state-plan.md), [Embedding refresh](./vss-embedding-refresh.md), [PA Agent architecture](./pa-agent-architecture-plan.md) |
 
 This spec defines the product contract for PA's shared vault evidence substrate.
@@ -35,7 +35,7 @@ as a claim that the runtime already implements these behaviors.
 | AVI-D3 | Structure and Activity participate in rerank and why-shown, but are not hard truth rules. | Folder/tag/link/backlink/recent signals improve ordering and explanation without replacing source evidence. |
 | AVI-D4 | Broad, costly, or sensitive retrieval is plan-first via `Sources to check`. | Small scopes run directly; large or sensitive scopes show included/excluded sources before running. |
 | AVI-D5 | Evidence-insufficient retrieval uses explicit statuses. | PA can answer with evidence, partial evidence, needs-scope, conflict, no-evidence, or blocked-by-privacy states. |
-| AVI-D6 | Active Vault Indexer is shared across surfaces, with surface-specific policies. | Chat, Pagelet, Maintenance, Memory, and Weekly Review share sourceRefs, exclusions, outcomes, why-shown, and replay metadata. |
+| AVI-D6 | Active Vault Indexer is shared across surfaces, with surface-specific policies. | Chat, Pagelet, Maintenance, Memory, Scope Recap, and periodic summaries share sourceRefs, exclusions, outcomes, why-shown, and replay metadata. |
 | AVI-D7 | First implementation focus is substrate standardization, then Pagelet, then Chat. | Prioritize sourceRefs, retrieval outcomes, lanes, policies, exclusions, why-shown, and replay metadata first; after that, connect Pagelet, then Chat. |
 
 ## 1. Product Decision
@@ -287,7 +287,7 @@ The substrate is shared; policies are surface-specific.
 | Pagelet | scope-first review | visible included/skipped sources; supports insight/review queues |
 | Maintenance Review | action safety | affected scope, link/path impact, source evidence, undo context |
 | Memory | admission safety | sourceRefs, scope, validity, conflict checks |
-| Weekly review | batch review | recent activity, queue items, unresolved questions, memory conflicts |
+| Scope Recap / periodic summaries | bounded reflection | recent activity, selected scope, unresolved questions, memory conflicts |
 
 Policy objects can be internal implementation details:
 
@@ -470,7 +470,7 @@ the shared evidence model real enough for later surfaces to adopt consistently.
 - Standardize why-shown labels.
 - Standardize replay metadata shape.
 - Define internal surface policy interfaces for Chat, Pagelet, Maintenance,
-  Memory, and Weekly Review.
+  Memory, Scope Recap, and periodic summaries.
 
 ### Phase 2: Source + Activity + Existing Semantic
 

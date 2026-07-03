@@ -27,14 +27,6 @@ const MAX_FINDINGS = 3;
 /** Maximum findings shown in the nudge bubble */
 const MAX_NUDGE_FINDINGS = 2;
 
-export interface WeeklyReviewNudgeOptions {
-    pageletEnabled: boolean;
-    preparedReviewEnabled: boolean;
-    proactiveHints: boolean;
-    quietHoursActive?: boolean;
-    count: number;
-}
-
 export interface QuietRecallNudgeOptions {
     pageletEnabled: boolean;
     quietRecallEnabled: boolean;
@@ -245,36 +237,6 @@ export function buildReviewQueueNudgeContent(
                 icon: "bookmark-check",
                 primary: true,
                 callback: () => callbacks.onExpandPanel("review"),
-            },
-            laterAction(callbacks, locale),
-        ], callbacks, locale),
-    };
-}
-
-/** Build a quiet Weekly Review hint. Full review sections stay in Panel/Tab. */
-export function buildWeeklyReviewNudgeContent(
-    options: WeeklyReviewNudgeOptions,
-    callbacks: BubbleQuickAccessCallbacks,
-    locale: PageletLocale = "en",
-): BubbleContent | null {
-    if (!options.pageletEnabled || !options.preparedReviewEnabled || !options.proactiveHints || options.quietHoursActive) {
-        return null;
-    }
-    return {
-        type: "nudge",
-        findings: [{
-            text: pageletT("pagelet.bubble.weeklyReview.ready", locale, { count: options.count }),
-        }],
-        actions: appendQuickAccessActions([
-            {
-                label: pageletT("pagelet.bubble.weeklyReview.open", locale),
-                description: pageletT("pagelet.bubble.weeklyReview.openDescription", locale),
-                icon: "calendar-check",
-                primary: true,
-                callback: () => {
-                    if (callbacks.onWeeklyReview) callbacks.onWeeklyReview();
-                    else callbacks.onExpandPanel("review");
-                },
             },
             laterAction(callbacks, locale),
         ], callbacks, locale),

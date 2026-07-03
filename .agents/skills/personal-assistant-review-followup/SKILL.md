@@ -14,6 +14,11 @@ The goal is not to fix every review comment. The goal is to separate real
 release risk from optional polish, get the needed decision, implement only the
 confirmed fix set, and verify the result without over-claiming.
 
+Hard boundary: do not make product decisions while fixing review findings.
+If a finding can be fixed by removing, hiding, narrowing, or adding friction to
+a user-facing capability, ask the user before coding unless the user already
+made that exact product choice in the current turn.
+
 ## Workflow
 
 1. Restate the findings in plain engineering terms.
@@ -31,12 +36,27 @@ confirmed fix set, and verify the result without over-claiming.
 4. Identify decision points before coding.
 5. If the user only asked for analysis, stop after the classification and
    decision options.
-6. Ask or infer a concrete decision only when implementation semantics differ.
+6. Ask for a concrete decision when implementation semantics, product behavior,
+   or user effort differ. Do not infer these decisions from reviewer severity.
 7. Implement the confirmed fix set only after the user explicitly asks to
    implement or fix it.
 8. Add a regression test for the accepted trigger path.
 9. Validate with focused checks, then app smoke only when the changed surface
    needs deployed Obsidian evidence.
+
+Mandatory decision prompts:
+- Removing or hiding a visible control, command, workflow, or shortcut.
+- Increasing or decreasing confirmation burden for durable, provider-backed,
+  cost-bearing, privacy-sensitive, or future-behavior-changing actions.
+- Choosing between safety/trust and the product goal of reducing user burden.
+- Changing product copy, information architecture, queue/batch behavior, or
+  review cadence in a way that changes what users can do.
+- Reinterpreting a current product doc, roadmap, tracker, or user-stated
+  product principle.
+
+When a mandatory decision appears, stop and present the smallest viable options
+with a recommendation and tradeoff. Do not continue into code edits for that
+decision until the user chooses.
 
 ## Decision Lens
 
@@ -59,6 +79,10 @@ Product:
 - Decide what the user should see and what should not happen twice.
 - Protect provider-backed, cost-bearing, destructive, or persistent actions
   from accidental duplicate execution.
+- Preserve the user's product intent and local product docs even when a reviewer
+  suggests a safer but higher-burden alternative.
+- For Memory, Review Queue, Pagelet, and other review surfaces, explicitly
+  weigh the burden of extra confirmations against trust and source evidence.
 - Keep ordinary copy in the product language for the touched surface. Internal
   terms are acceptable in diagnostics, logs, and developer-only output.
 

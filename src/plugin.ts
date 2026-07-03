@@ -1542,7 +1542,8 @@ export class PluginManager extends Plugin {
 
     private async maybeRunPatternDetectionNudge(): Promise<void> {
         if (this.unloading || !this.pageletOrchestrator) return;
-        if (!this.settings.pagelet.enabled || !this.settings.pagelet.proactiveHints || this.settings.focusMode) return;
+        const pageletSettings = this.settings.pagelet;
+        if (!pageletSettings?.enabled || !pageletSettings.proactiveHints || this.settings.focusMode) return;
 
         const now = new Date();
         const lastDetectionAt = Date.parse(this.settings.lastPatternDetectionAt ?? "");
@@ -1562,26 +1563,28 @@ export class PluginManager extends Plugin {
 
     private async maybeShowMaintenanceScanOnboardingNudge(): Promise<void> {
         if (this.unloading || !this.pageletOrchestrator) return;
-        if (!this.settings.pagelet.enabled || !this.settings.pagelet.proactiveHints || this.settings.focusMode) return;
-        if (this.settings.pagelet.maintenanceScanSuggested) return;
+        const pageletSettings = this.settings.pagelet;
+        if (!pageletSettings?.enabled || !pageletSettings.proactiveHints || this.settings.focusMode) return;
+        if (pageletSettings.maintenanceScanSuggested) return;
         if (this.app.vault.getMarkdownFiles().length <= PAGELET_MAINTENANCE_ONBOARDING_MIN_NOTES) return;
 
         const surfaced = this.pageletOrchestrator?.setOnboardingNudge("maintenance_scan") === true;
         if (!surfaced) return;
-        this.settings.pagelet.maintenanceScanSuggested = true;
+        pageletSettings.maintenanceScanSuggested = true;
         await this.saveSettings();
     }
 
     private async maybeShowQuickCaptureOnboardingNudge(): Promise<void> {
         if (this.unloading) return;
-        if (!this.settings.pagelet.enabled || !this.settings.pagelet.proactiveHints || this.settings.focusMode) return;
-        if (this.settings.pagelet.quickCaptureExplained) return;
+        const pageletSettings = this.settings.pagelet;
+        if (!pageletSettings?.enabled || !pageletSettings.proactiveHints || this.settings.focusMode) return;
+        if (pageletSettings.quickCaptureExplained) return;
         this.syncPageletRuntime();
         if (!this.pageletOrchestrator) return;
 
         const surfaced = this.pageletOrchestrator?.setOnboardingNudge("quick_capture") === true;
         if (!surfaced) return;
-        this.settings.pagelet.quickCaptureExplained = true;
+        pageletSettings.quickCaptureExplained = true;
         await this.saveSettings();
     }
 

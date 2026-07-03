@@ -318,6 +318,11 @@ export class PageletOrchestrator {
                 this.handleLeafChange(leaf);
             }),
         );
+        this.host.registerEvent(
+            this.host.app.workspace.on("file-open", () => {
+                this.handleFileOpen();
+            }),
+        );
 
         // 3. Vault events: markdown-only activity tracking + scope invalidation
         this.host.registerEvent(
@@ -811,6 +816,7 @@ export class PageletOrchestrator {
         // Always unmount from previous location
         this.petView?.unmount();
         this.bubbleView?.close();
+        this.invalidateQuietRecallBubbleNudge();
 
         // Only mount on markdown views (D029/R1)
         if (!leaf || leaf.view?.getViewType() !== "markdown") {
@@ -846,11 +852,15 @@ export class PageletOrchestrator {
         }
 
         this.petView.mount(containerEl);
-        this.clearQuietRecallBubbleNudge();
         if (this.canPrepareQuietRecallBubbleNudge()) {
             this.scheduleQuietRecallAfterLeafChange(
                 PageletOrchestrator.QUIET_RECALL_LEAF_CHANGE_DEBOUNCE_MS);
         }
+    }
+
+    private handleFileOpen(): void {
+        const activeLeaf = this.host.app.workspace.getMostRecentLeaf();
+        this.handleLeafChange(activeLeaf ?? null);
     }
 
     /** Handle a click/tap on the Pet element. Suppressed by Focus Mode. */
@@ -1270,6 +1280,16 @@ export class PageletOrchestrator {
     private clearQuietRecallBubbleNudge(): void {
         this.quietRecallNudgeCandidate = null;
         this.quietRecallBubbleNudge = null;
+    }
+
+    private invalidateQuietRecallBubbleNudge(): void {
+        if (this.quietRecallLeafChangeTimer !== null) {
+            clearTimeout(this.quietRecallLeafChangeTimer);
+            this.quietRecallLeafChangeTimer = null;
+        }
+        this.quietRecallNudgeRunId += 1;
+        this.quietRecallNudgePending = false;
+        this.clearQuietRecallBubbleNudge();
     }
 
     private isQuietRecallCandidateSuppressed(candidateId: string, now = Date.now()): boolean {
