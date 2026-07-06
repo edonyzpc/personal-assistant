@@ -40,6 +40,8 @@ flowchart TD
     P1 --> P4[Phase 4: Onboarding]
     P2 --> P5A[Phase 5A: Cross-Note Patterns]
     P1 --> P5B[Phase 5B: Chat Text Selection]
+    P1 --> P6[Phase 6: Delivery Preparation Consolidation]
+    P2 --> P6
 ```
 
 Phase 0 is a prerequisite for all runtime work.
@@ -47,6 +49,9 @@ Phase 2 is independent of Phase 1 (can run in parallel).
 Phase 3 and 4 require Phase 1 completion.
 Phase 5A requires Phase 2 (pattern detection is a Weekly Review kernel).
 Phase 5B can start after Phase 1.
+Phase 6 depends on the shipped Quiet Recall/Weekly Review decomposition shape.
+Periodic Summary's terminal migration into Recap time-range mode is approved;
+runtime command/removal work was completed by the Phase 6 migration SDD.
 
 ---
 
@@ -60,6 +65,7 @@ Phase 5B can start after Phase 1.
 | Phase 3: Frontmatter Linking | P3.1-P3.3 | One-click `pa-related` link in frontmatter from Recall | `[x]` | Phase 1 done |
 | Phase 4: Onboarding | P4.1-P4.3 | Three one-time bridge nudges for new users | `[x]` | Phase 1 done |
 | Phase 5: Chat + Patterns | P5.1-P5.2 | Chat text selection ops; cross-note pattern nudge | `[x]` | Phase 1+2 done |
+| Phase 6: Delivery Preparation Consolidation | P6.0-P6.5 | Unified delivery candidate model for Bubble/Panel/Tab | `[x]` | Product amendment review + runtime smoke passed |
 
 ---
 
@@ -604,6 +610,122 @@ Phase 5B can start after Phase 1.
 
 ---
 
+### Phase 6: Delivery Preparation Consolidation
+
+#### P6.0 — Inventory overlapping Pagelet preparation capabilities
+
+- **Spec refs**:
+  [pagelet-delivery-preparation-consolidation-product-note.md](./pagelet-delivery-preparation-consolidation-product-note.md)
+- **Status**: `[D]`
+- **Scope**:
+  - Map Periodic Summary, Scope Recap, Background Preparation / Preload,
+    Quiet Recall, and Pattern Detection entrypoints.
+  - Record trigger type, source scope, output object, cache/persistence,
+    Panel/Tab route, Bubble visibility, and durable actions.
+  - Separate redundant product capabilities from merely confusing names or
+    triggers.
+- **Non-goals**: No runtime deletion. No command removal.
+- **Acceptance**: Inventory table exists in the consolidation product note or a
+  follow-up SDD.
+- **Decision gate**: Product direction is resolved. Runtime migration details
+  move to P6.5.
+
+#### P6.1 — Define DeliveryCandidate contract
+
+- **Spec refs**:
+  [pagelet-bubble-readiness-and-recall-sdd.md](./pagelet-bubble-readiness-and-recall-sdd.md)
+  § 1.1
+- **Status**: `[D]`
+- **Scope**:
+  - Define a shared delivery candidate contract for `recall`, `recap`,
+    `pattern`, and `review`.
+  - Include sourceRefs, why-now, preparedAt, staleStatus, route, and active-card
+    actions.
+  - Ensure Bubble can consume delivery candidates without exposing old feature
+    boundaries.
+- **Non-goals**: No persistence decision beyond in-memory candidate delivery.
+- **Acceptance**: SDD includes candidate contract and adapters required for the
+  first runtime slice.
+
+#### P6.2 — Implement Bubble single-visible-card stack
+
+- **Spec refs**:
+  [pagelet-bubble-readiness-and-recall-product-spec.md](./pagelet-bubble-readiness-and-recall-product-spec.md)
+  § 3.3
+- **Status**: `[D]`
+- **Scope**:
+  - Default to one visible card.
+  - Support up to three high-quality distinct cards.
+  - Desktop: restrained arrows/dots.
+  - Mobile/tablet: horizontal swipe.
+  - Every action binds to the active card only.
+  - Respect reduced motion.
+- **Non-goals**: No external Bootstrap/template dependency; no runtime
+  `innerHTML` or style injection.
+- **Acceptance**: Unit tests cover active-card action routing; Obsidian desktop
+  and mobile-sized smoke verify switching.
+
+#### P6.3 — Adapt Quiet Recall to DeliveryCandidate
+
+- **Status**: `[D]`
+- **Scope**:
+  - Adapt existing `QuietRecallCandidate` / `QuietRecallBubbleNudge` into
+    delivery cards.
+  - Preserve existing dismiss/later/feedback/link behavior.
+  - Bubble actions are `Open`, `Link to current`, `Later`.
+  - `Save as insight` remains Panel/Tab only.
+- **Non-goals**: Do not create an incompatible parallel `RecallResult` runtime
+  model unless a later SDD proves it is needed.
+- **Acceptance**: Existing Quiet Recall tests remain green; new Bubble tests
+  verify active-card action routing and active-note snapshot validation.
+
+#### P6.4 — Define prepared Recap Delivery runtime
+
+- **Status**: `[D]`
+- **Scope**:
+  - Promote Scope Recap as the Recap Delivery substrate.
+  - Use local derived cache for prepared recap artifacts. The artifact must
+    contain enough structured detail for Panel/Tab, including recap items,
+    sourceRefs, source coverage, stale status, preparedAt, scope/range, and
+    skipped-source metadata where relevant.
+  - Do not auto-write Markdown recap notes and do not store full raw provider
+    output.
+  - Default recap scope is current-context + time-range, not daily/weekly
+    whole-vault summary.
+  - Allowed preparation signals: Pagelet open, current note save, and
+    low-frequency idle preparation with budget limits.
+  - Define how a fresh prepared recap artifact is created, cached, invalidated,
+    and routed to Panel/Tab.
+  - Ensure Bubble never shows a recap card when no prepared recap exists.
+  - Ensure Bubble never uses "PA can build a recap" as a delivery substitute.
+- **Non-goals**: No foreground Generate Summary CTA in Bubble. No automatic
+  Markdown recap writes. No whole-vault weekly summary default.
+- **Acceptance**: SDD defines prepared recap lifecycle, stale policy, source
+  coverage, Data Boundary behavior, cache schema, budget limits, and
+  no-prepared-artifact empty behavior.
+
+#### P6.5 — Migrate Periodic Summary to Time-range Recap
+
+- **Status**: `[D]`
+- **Scope**:
+  - Treat Periodic Summary as a removed legacy surface whose value moves to the
+    Recap time-range mode.
+  - Directly remove old `Generate summary` / Periodic Summary entrypoints after
+    command usage and locale strings are audited. Do not keep alias or redirect.
+  - Retire the standalone Periodic Summary product concept from user-facing
+    copy, docs, and long-term architecture.
+  - Add tests that old Bubble/command entrypoints are absent and replacement
+    Recap routes are present.
+- **Non-goals**:
+  - No Bubble foreground `Generate summary` CTA.
+  - No hidden automatic weekly summary write.
+  - No default Markdown write without explicit user confirmation.
+- **Acceptance**: Phase 6 migration SDD records command/Panel/Tab replacement
+  paths, locale cleanup, tests, release-note language, absence of alias/redirect,
+  and Obsidian smoke gates.
+
+---
+
 ## Phase Ledger
 
 | Phase | Spec Review | Dev | Test | Code Review | Deploy | Smoke | Status |
@@ -614,6 +736,7 @@ Phase 5B can start after Phase 1.
 | 3 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
 | 4 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
 | 5 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
+| 6 | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` | `[x]` |
 
 ---
 
@@ -641,6 +764,12 @@ Phase 5B can start after Phase 1.
 | P4.3 | Discussion §VI | `[x]` | Codex | — | `npm run build`; full Jest | Pagelet runner PASS | en/zh onboarding copy added |
 | P5.1 | Discussion §V.6 | `[x]` | Codex | — | `npm test -- --runInBand selection-tool-provider chat-view`; full Jest | Chat selection hint DOM + screenshot PASS | `replace_selection` direct execution is disabled until Write Action Framework wiring exists |
 | P5.2 | Discussion §V.2 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-panel-tab-view pattern-detection`; full Jest | Pagelet runner PASS | Pattern detail cards and dismiss/source refs covered |
+| P6.0 | Delivery Preparation note | `[x]` | Codex | — | Docs inventory updated | N/A | Capability inventory and consolidation direction drafted |
+| P6.1 | Bubble SDD §1.1 | `[x]` | Codex | — | `npx tsc -noEmit -skipLibCheck`; focused Bubble tests; full gate via `make deploy` | Obsidian Force Reload + Bubble smoke PASS | DeliveryCandidate contract and Recall/Recap adapters implemented |
+| P6.2 | Bubble spec §3.3 | `[x]` | Codex | — | `npm test -- --runInBand pagelet-bubble-view pagelet-bubble-content pagelet-bubble-coordinator`; full gate via `make deploy` | Obsidian Bubble smoke PASS | Single-visible-card stack implemented; active-card action routing covered |
+| P6.3 | Quiet Recall adapter | `[x]` | Codex | — | `npm test -- --runInBand pagelet-bubble-content pagelet-bubble-coordinator quiet-recall`; full gate via `make deploy` | Obsidian Bubble regression smoke PASS | Existing `QuietRecallCandidate` path feeds delivery cards; Discover click uses source-bound Bubble Recall |
+| P6.4 | Recap Delivery | `[x]` | Codex | — | `npm test -- --runInBand pagelet-orchestrator scope-recap pagelet-bubble-coordinator`; full gate via `make deploy` | Obsidian prepared Recap Delivery smoke PASS | Scope Recap writes a local derived prepared artifact/cache; Bubble only shows fresh prepared candidates |
+| P6.5 | Periodic Summary terminal migration | `[x]` | Codex/Product | — | `npx tsc -noEmit -skipLibCheck`; focused Pagelet tests; full gate via `make deploy`; legacy grep audit | Obsidian Bubble smoke confirms no Generate Summary CTA | Runtime command/generator/settings/locale entrypoints removed; no alias/redirect |
 
 ---
 
@@ -656,6 +785,9 @@ Phase 5B can start after Phase 1.
 | 3 | Click "Link" on Recall candidate | Frontmatter `pa-related` added, Graph View shows link | `npm test` | Deploy → Recall → Link → check frontmatter + graph |
 | 4 | First install on vault > 50 notes | Maintenance scan suggestion nudge appears once | `npm test` | Deploy → clear onboarding flags → verify nudge |
 | 5 | Select text in editor → open Chat | Chat hint about selection appears | `npm test` | Deploy → select → open Chat → verify hint |
+| 6 | Multiple high-quality delivery candidates exist | Bubble shows one active card and supports card switching; actions apply to active card only | `npm test` | Deploy → desktop + mobile viewport smoke |
+| 6 | Prepared recap exists | Bubble may show Recap Delivery and route to Panel/Tab detail | `npm test` | Deploy → prepared recap fixture smoke |
+| 6 | No prepared recap exists | Bubble does not show recap CTA or foreground generation prompt | `npm test` | Deploy → open Bubble with no recap cache |
 
 ---
 
@@ -669,6 +801,9 @@ Phase 5B can start after Phase 1.
 | Double-tap Ctrl conflicts with system shortcuts | Dev | Open | Test on macOS/Windows/Linux; document known conflicts |
 | Pattern detection false positives | Dev | Mitigated / dogfood | Structure-only detector shipped; validate precision before any LLM-based extension |
 | Chat replace_selection bypasses write safety | Dev | Fixed / draft-only | Direct `execute()` no longer mutates the editor; enable real replacement only after Write Action Framework `executeWrite` wiring and preview/stale-reread tests |
+| Delivery Preparation scope creep | Product/Dev | Mitigated | Phase 6 remains scoped to Bubble delivery/readiness, prepared Recap cache, Discover Recall adapter, and Periodic Summary removal |
+| Recap Delivery degenerates into Generate Summary CTA | Product | Mitigated | Bubble smoke confirms Recap appears only from a fresh prepared local artifact; no "can build recap" copy or foreground Generate Summary entrypoint |
+| Multi-card Bubble becomes a queue/list | UX | Mitigated | Single-visible-card stack, max 3 cards, active-card-only actions, no autoplay, no unresolved count; card-stack behavior covered by focused tests |
 
 ---
 
@@ -698,6 +833,7 @@ Phase 5B can start after Phase 1.
 | 2026-07-02 | Phase 4 / Onboarding | Maintenance scan, Quick Capture, and Quiet Recall first-use nudge paths implemented with BubbleContent builders | Focused tests and full Jest via `make deploy` passed | Pagelet panel runner and console smoke PASS; no captured errors | No `new Notice()` onboarding path introduced |
 | 2026-07-02 | Phase 5 / Chat + Patterns | Chat selection hint appears with selected editor text; pattern detail cards render source refs and dismiss | Focused tests and full Jest via `make deploy` passed | Chat DOM: `.pa-chat-selection-hint` visible with expected text; screenshot `/private/tmp/pa-redesign-chat-selection.png`; Pagelet screenshot `/private/tmp/pa-redesign-pagelet-panel.png` | No Chat prompt/provider call was sent for selection-hint smoke |
 | 2026-07-03 | Review follow-up fixes | Confirmed review findings addressed: draft-only `replace_selection`, atomic-ish `pa-related` linking, stable Recall Link source path, surfaced-only onboarding flags, queue-first Memory confirmation, Pet smoke assertion | Focused Jest, typecheck, and lint passed | Not run | Follow-up did not claim new Obsidian UI validation |
+| 2026-07-05 | Phase 6 implementation pass | DeliveryCandidate adapters, Bubble B-type readiness resolver, single-card stack, Bubble Discover Recall, prepared Recap local cache, and Periodic Summary runtime removal are implemented in code | `npm test -- --runInBand pagelet-bubble-content pagelet-bubble-coordinator pagelet-bubble-view pagelet-orchestrator pagelet-settings pagelet-pet-state-machine pagelet-panel-tab-view e2e-pagelet-write scope-recap quiet-recall pagelet-commands`; `npm test -- --runInBand --detectOpenHandles pagelet-orchestrator pagelet-bubble-coordinator`; `npm test -- --runInBand`; `npm run lint`; `npm run build`; `npx tsc -noEmit -skipLibCheck`; `git diff --check`; community source scan; `make deploy` passed | PASS: Obsidian 1.13.1 test vault, Force Reload, pet click opens new Bubble; prepared Recap Delivery shows coverage, no `Generate summary` CTA, `View recap` opens Pagelet Detail View, `Later` closes Bubble | `obsidian` CLI unavailable in PATH; smoke used real visible Obsidian window via Computer Use |
 
 ---
 
@@ -758,6 +894,16 @@ Phase 5B can start after Phase 1.
    app/test-vault evidence for all UI tasks (P2.1, P3.2, P4.2, P5.1, P5.2).
 10. Do not bypass the shared Review Queue with a per-feature hidden queue.
     P2.1 Memory candidates come from the existing ReviewQueueStore.
+11. Do not show Recap Delivery in Bubble unless a prepared recap artifact
+    already exists. A foreground "Generate summary" prompt is not delivery.
+12. Do not keep Periodic Summary as an independent long-term product concept.
+    Migrate it toward Recap time-range mode and remove old entrypoints directly;
+    do not add a legacy alias or redirect.
+13. Do not implement multi-card Bubble as a visible list. It must stay a
+    single-visible-card stack with active-card actions.
+14. Do not turn `DeliveryCandidate` into a durable inbox of PA suggestions.
+    Candidate persistence is source-specific; only prepared Recap gets a local
+    derived cache by default.
 
 ## Execution Protocol
 

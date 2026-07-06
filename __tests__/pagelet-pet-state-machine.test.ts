@@ -209,7 +209,7 @@ describe("PetView locale labels", () => {
 
     it("resolves task-specific aria-label while working", () => {
         expect(getPetAriaLabel("en", "working", "connection")).toBe("Pagelet assistant: discovering connections");
-        expect(getPetAriaLabel("zh", "working", "summary")).toBe("拾页助手: 正在准备周期性整理");
+        expect(getPetAriaLabel("zh", "working", "summary")).toBe("拾页助手: 正在准备回顾");
     });
 });
 

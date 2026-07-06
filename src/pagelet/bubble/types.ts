@@ -13,7 +13,67 @@ import type { PageletLocale } from "../../locales/pagelet";
 export type BubbleState = "hidden" | "visible";
 
 /** Content type determines which scenario's content to render */
-export type BubbleContentType = "quick-review" | "writing-assist" | "discovery" | "nudge" | "empty";
+export type BubbleContentType =
+    | "recall-delivery"
+    | "recap-delivery"
+    | "pattern-delivery"
+    | "bridge-hint"
+    | "needs-setup"
+    | "preparing"
+    | "ready-empty"
+    | "intentionally-quiet"
+    | "context-limited"
+    | "quick-review"
+    | "writing-assist"
+    | "discovery"
+    | "nudge"
+    | "empty";
+
+export type DeliveryCandidateKind = "recall" | "recap" | "pattern" | "review";
+export type DeliveryCandidateStaleStatus = "fresh" | "stale" | "low-coverage" | "boundary-changed";
+
+export type BubbleExplanationState =
+    | "needs-setup"
+    | "preparing"
+    | "ready-empty"
+    | "intentionally-quiet"
+    | "context-limited-short"
+    | "context-limited-boundary";
+
+export interface DeliveryCandidateSourceRef {
+    path: string;
+    title?: string;
+    excerpt?: string;
+}
+
+export interface DeliveryCandidateRoute {
+    surface: "panel" | "tab";
+    payloadType: string;
+}
+
+export interface DeliveryCandidate {
+    id: string;
+    kind: DeliveryCandidateKind;
+    title: string;
+    body: string;
+    sourceRefs: DeliveryCandidateSourceRef[];
+    whyNow: string[];
+    preparedAt: string;
+    staleStatus?: DeliveryCandidateStaleStatus;
+    route: DeliveryCandidateRoute;
+}
+
+export interface InlineContextHint {
+    text: string;
+    icon?: string;
+}
+
+export interface BubbleCard {
+    id: string;
+    findings: BubbleFinding[];
+    actions: BubbleAction[];
+    inlineHint?: InlineContextHint;
+}
 
 /** A single finding item displayed in the Bubble */
 export interface BubbleFinding {
@@ -27,6 +87,8 @@ export interface BubbleContent {
     type: BubbleContentType;
     findings: BubbleFinding[];
     actions: BubbleAction[];
+    inlineHint?: InlineContextHint;
+    cards?: BubbleCard[];
 }
 
 /** Quick action button in the Bubble */
@@ -50,7 +112,13 @@ export interface BubbleCallbacks {
 export interface BubbleQuickAccessCallbacks extends BubbleCallbacks {
     onReviewCurrentNote: () => void;
     onDiscoverConnections: () => void;
-    onPeriodicSummary: () => void;
+}
+
+/** Callbacks for B-type Bubble explanation states. */
+export interface BubbleStateCallbacks extends BubbleQuickAccessCallbacks {
+    onPrepareMemory: () => void;
+    onQuickCapture: () => void;
+    onOpenSettings: () => void;
 }
 
 /** Options for creating a BubbleView */

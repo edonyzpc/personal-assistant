@@ -11,7 +11,6 @@ export const PAGELET_OPEN_PANEL_COMMAND_ID = "pa-pagelet:open-panel" as const;
 export const PAGELET_REVIEW_CURRENT_COMMAND_ID = "pa-pagelet:review-current" as const;
 export const PAGELET_QUICK_REVIEW_COMMAND_ID = "pa-pagelet:quick-review" as const;
 export const PAGELET_DISCOVER_COMMAND_ID = "pa-pagelet:discover-connections" as const;
-export const PAGELET_PERIODIC_SUMMARY_COMMAND_ID = "pa-pagelet:periodic-summary" as const;
 export const PAGELET_MAINTENANCE_REVIEW_COMMAND_ID = "pa-pagelet:maintenance-review" as const;
 export const PAGELET_QUIET_RECALL_COMMAND_ID = "pa-pagelet:quiet-recall" as const;
 export const PAGELET_GRAPH_DISCOVERY_COMMAND_ID = "pa-pagelet:graph-discovery" as const;
@@ -31,7 +30,6 @@ export interface PageletCommandCallbacks {
     onReviewCurrent: () => void | Promise<void>;
     onQuickReview: () => void | Promise<void>;
     onDiscoverConnections: () => void | Promise<void>;
-    onPeriodicSummary: () => void | Promise<void>;
     onMaintenanceReview: () => void | Promise<void>;
     onQuietRecall: () => void | Promise<void>;
     onGraphDiscovery: () => void | Promise<void>;
@@ -81,12 +79,6 @@ export function registerPageletCommands(
         id: PAGELET_DISCOVER_COMMAND_ID,
         name: pageletT("pagelet.command.discoverConnections", locale),
         callback: safeCallback(callbacks.onDiscoverConnections),
-    });
-
-    host.addCommand({
-        id: PAGELET_PERIODIC_SUMMARY_COMMAND_ID,
-        name: pageletT("pagelet.command.periodicSummary", locale),
-        callback: safeCallback(callbacks.onPeriodicSummary),
     });
 
     host.addCommand({

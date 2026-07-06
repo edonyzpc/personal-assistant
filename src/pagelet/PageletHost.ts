@@ -7,15 +7,15 @@
  * actually reads. Everything else stays behind the plugin boundary.
  *
  * Extracted from orchestrator.ts so it can be imported independently
- * by sub-modules (BubbleCoordinator, BackgroundPreparationCoordinator,
- * PeriodicSummaryFlow, etc.) without pulling in the full orchestrator.
+ * by sub-modules (BubbleCoordinator, BackgroundPreparationCoordinator, etc.)
+ * without pulling in the full orchestrator.
  */
 
 import type { App, EventRef } from "obsidian";
 
 import type { PetCorner } from "./pet/types";
 import type { AnalyzeCallback } from "./preload/types";
-import type { GenerateCallback, GeneratedReviewNote } from "./output/types";
+import type { GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
 import type { PageletDetailPayload } from "./tab/types";
 import type { DiscoveryResult } from "./panel/types";
@@ -70,7 +70,6 @@ export interface PageletHost {
             maxInputTokens: number;
             maxOutputTokens: number;
             reviewsFolder: string;
-            periodicSummaryScope: "3d" | "7d" | "14d";
             excludedFolders: string[];
             excludedTags: string[];
             excludedPatterns: string[];
@@ -78,6 +77,7 @@ export interface PageletHost {
             maintenanceScanSuggested: boolean;
             quickCaptureExplained: boolean;
             quietRecallExplained: boolean;
+            quietAcknowledged: boolean;
         };
         contextPager: {
             enabled: boolean;
@@ -107,9 +107,6 @@ export interface PageletHost {
     /** Factory for the LLM callback used by foreground review commands. */
     createForegroundAnalyzeCallback(): AnalyzeCallback;
 
-    /** Factory for the LLM callback used by ReviewNoteGenerator. */
-    createGenerateCallback(): GenerateCallback;
-
     /** Write a review note through the Pagelet write framework. */
     writeReviewNote(note: GeneratedReviewNote): Promise<WriteResult>;
 
@@ -121,6 +118,23 @@ export interface PageletHost {
 
     /** Persist current settings to disk. */
     saveSettings(): Promise<void> | void;
+
+    /** Start Memory preparation from a Pagelet setup state. */
+    prepareMemoryForPagelet(): Promise<void> | void;
+
+    /** Synchronous snapshot of active Memory preparation, if any. */
+    getMemoryPreparationStatus?(): {
+        filesDone?: number;
+        filesTotal?: number;
+        chunksEmbedded?: number;
+        chunksTotal?: number;
+    } | null;
+
+    /** Check whether a path is inside PA's Data Boundary for Pagelet surfaces. */
+    isPathAllowedForPagelet(path: string): boolean;
+
+    /** Open PA settings from a trust/boundary explanation. */
+    openPageletSettings(): void;
 
     /** Open the shared Quick Capture modal. */
     openQuickCapture(): void;

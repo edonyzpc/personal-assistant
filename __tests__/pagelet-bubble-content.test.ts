@@ -3,61 +3,130 @@ import { describe, expect, it, jest } from "@jest/globals";
 import {
     buildDiscoveryContent,
     buildEmptyContent,
+    buildPreparedRecapDeliveryContent,
+    buildRecallDeliveryContent,
     buildNudgeContent,
     buildOnboardingNudgeContent,
     buildPatternDetectionNudgeContent,
     buildQuickReviewContent,
     buildQuietRecallNudgeContent,
-    buildReviewQueueNudgeContent,
+    buildNeedsSetupContent,
+    buildPreparingContent,
+    buildContextLimitedContent,
+    buildIntentionallyQuietContent,
 } from "../src/pagelet/bubble/BubbleContent";
-import type { BubbleQuickAccessCallbacks } from "../src/pagelet/bubble/types";
+import { quietRecallCandidateToDeliveryCandidate } from "../src/pagelet/bubble/recall-card";
+import { scopeRecapToDeliveryCandidate } from "../src/pagelet/bubble/recap-card";
+import type { BubbleStateCallbacks } from "../src/pagelet/bubble/types";
 
-function makeCallbacks(): BubbleQuickAccessCallbacks {
+function makeCallbacks(): BubbleStateCallbacks {
     return {
         onExpandPanel: jest.fn(),
         onSourceClick: jest.fn(),
         onDismiss: jest.fn(),
         onReviewCurrentNote: jest.fn(),
         onDiscoverConnections: jest.fn(),
-        onPeriodicSummary: jest.fn(),
+        onPrepareMemory: jest.fn(),
+        onQuickCapture: jest.fn(),
+        onOpenSettings: jest.fn(),
     };
 }
 
 describe("Pagelet Bubble quick access content", () => {
+    it("adapts QuietRecallCandidate into a DeliveryCandidate", () => {
+        const candidate = {
+            id: "recall-1",
+            title: "Recall: Alpha",
+            summary: "Alpha may matter again.",
+            sourceRefs: [{ path: "Projects/Alpha.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
+            whyNow: ["Source appears near the current note in Memory search."],
+            nextAction: "Open the source note.",
+            relation: "related" as const,
+            score: 82,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+        };
+
+        expect(quietRecallCandidateToDeliveryCandidate(candidate)).toEqual({
+            id: "recall-1",
+            kind: "recall",
+            title: "Recall: Alpha",
+            body: "Alpha may matter again.",
+            sourceRefs: [{ path: "Projects/Alpha.md", title: "Alpha" }],
+            whyNow: ["Source appears near the current note in Memory search."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            staleStatus: "fresh",
+            route: { surface: "tab", payloadType: "quiet-recall" },
+        });
+    });
+
+    it("adapts fresh ScopeRecap artifacts into Recap Delivery candidates", () => {
+        const recap = {
+            id: "recap-1",
+            scope: { kind: "folder" as const, label: "Projects/PA", paths: ["Projects/PA"] },
+            generatedAt: "2026-07-05T12:00:00.000Z",
+            ttlDays: 7,
+            staleStatus: "fresh" as const,
+            sourceCoverage: {
+                totalSourceCount: 2,
+                includedSourceCount: 2,
+                skippedSourceCount: 0,
+                coverageRatio: 1,
+            },
+            skippedSources: [],
+            summary: {
+                id: "summary",
+                section: "summary" as const,
+                title: "Short recap",
+                summary: "The project moved from feature menu to delivery.",
+                sourceRefs: [{ path: "Projects/PA/A.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
+                generatedAt: "2026-07-05T12:00:00.000Z",
+                generatedHelper: true as const,
+                status: "candidate" as const,
+            },
+            themes: [],
+            tensions: [],
+            openQuestions: [],
+            nextReviewActions: [],
+            sourceRefs: [
+                { path: "Projects/PA/A.md", generatedAt: "2026-07-05T12:00:00.000Z" },
+                { path: "Projects/PA/B.md", generatedAt: "2026-07-05T12:00:00.000Z" },
+            ],
+            dataBoundarySnapshotId: "data_boundary:scope_recap",
+        };
+
+        expect(scopeRecapToDeliveryCandidate(recap)).toMatchObject({
+            id: "recap-1",
+            kind: "recap",
+            title: "Projects/PA",
+            body: "The project moved from feature menu to delivery.",
+            staleStatus: "fresh",
+            route: { surface: "tab", payloadType: "scope-recap" },
+        });
+
+        expect(scopeRecapToDeliveryCandidate({
+            ...recap,
+            staleStatus: "stale",
+        })).toBeNull();
+    });
+
     it.each([
-        ["discovery", (callbacks: BubbleQuickAccessCallbacks) => buildDiscoveryContent([{
+        ["discovery", (callbacks: BubbleStateCallbacks) => buildDiscoveryContent([{
             text: "Related note found",
             sourceLink: "notes/related.md",
             sourceTitle: "related",
         }], callbacks, "en")],
-        ["empty", (callbacks: BubbleQuickAccessCallbacks) => buildEmptyContent(callbacks, "en")],
-    ])("adds the three primary Pagelet quick actions to %s bubbles", (_name, buildContent) => {
+        ["empty", (callbacks: BubbleStateCallbacks) => buildEmptyContent(callbacks, "en")],
+    ])("does not offer Generate summary from %s bubbles", (_name, buildContent) => {
         const callbacks = makeCallbacks();
         const content = buildContent(callbacks);
 
-        expect(content.actions.map((action) => action.label)).toEqual([
-            "Review current note",
-            "Discover connections",
-            "Generate summary",
-        ]);
-        expect(content.actions.map((action) => action.description)).toEqual([
-            "Scan the active note now",
-            "Find related notes",
-            "Use AI to summarize recent changes",
-        ]);
-        expect(content.actions.map((action) => action.icon)).toEqual([
-            "search",
-            "link",
-            "calendar",
-        ]);
+        expect(content.actions.map((action) => action.label)).not.toContain("Generate summary");
+        expect(content.actions.map((action) => action.label)).toContain("Find related old notes");
 
-        content.actions[0].callback();
-        content.actions[1].callback();
-        content.actions[2].callback();
+        const discover = content.actions.find((action) => action.label === "Find related old notes");
+        discover?.callback();
 
-        expect(callbacks.onReviewCurrentNote).toHaveBeenCalledTimes(1);
         expect(callbacks.onDiscoverConnections).toHaveBeenCalledTimes(1);
-        expect(callbacks.onPeriodicSummary).toHaveBeenCalledTimes(1);
     });
 
     it("keeps cached findings inspectable before offering launch actions", () => {
@@ -70,9 +139,7 @@ describe("Pagelet Bubble quick access content", () => {
 
         expect(content.actions.map((action) => action.label)).toEqual([
             "View details",
-            "Review current note",
-            "Discover connections",
-            "Generate summary",
+            "Find related old notes",
         ]);
         expect(content.actions[0]).toMatchObject({
             description: "Open prepared findings",
@@ -83,13 +150,9 @@ describe("Pagelet Bubble quick access content", () => {
 
         content.actions[0].callback();
         content.actions[1].callback();
-        content.actions[2].callback();
-        content.actions[3].callback();
 
         expect(callbacks.onExpandPanel).toHaveBeenCalledWith("prepared");
-        expect(callbacks.onReviewCurrentNote).toHaveBeenCalledTimes(1);
         expect(callbacks.onDiscoverConnections).toHaveBeenCalledTimes(1);
-        expect(callbacks.onPeriodicSummary).toHaveBeenCalledTimes(1);
     });
 
     it("opens nudge suggestions through the prepared findings route", () => {
@@ -105,43 +168,47 @@ describe("Pagelet Bubble quick access content", () => {
         expect(callbacks.onExpandPanel).toHaveBeenCalledWith("prepared");
     });
 
-    it("keeps Review Queue bubbles lightweight while preserving quick access actions", () => {
+    it("builds Needs Setup with Prepare Memory and current-note fallback only", () => {
         const callbacks = makeCallbacks();
-        const content = buildReviewQueueNudgeContent(3, callbacks, "en");
+        const content = buildNeedsSetupContent(callbacks, "en");
 
-        expect(content.findings).toEqual([{
-            text: "You kept 3 items for later.",
-        }]);
-        expect(content.findings[0].text).not.toContain("fullProviderOutput");
-        expect(content.findings[0].text).not.toContain("Review Queue");
         expect(content.actions.map((action) => action.label)).toEqual([
-            "View later items",
-            "Later",
-            "Review current note",
-            "Discover connections",
-            "Generate summary",
+            "Prepare Memory",
+            "Review this note",
         ]);
         expect(content.actions[0]).toMatchObject({
-            description: "Open the items you kept",
-            icon: "bookmark-check",
             primary: true,
         });
-        expect(content.actions[1]).toMatchObject({
-            variant: "compact",
-        });
-        expect(content.actions[2].primary).toBe(false);
 
         content.actions[0].callback();
         content.actions[1].callback();
-        content.actions[2].callback();
-        content.actions[3].callback();
-        content.actions[4].callback();
 
-        expect(callbacks.onExpandPanel).toHaveBeenCalledWith("review");
-        expect(callbacks.onDismiss).toHaveBeenCalledTimes(1);
+        expect(callbacks.onPrepareMemory).toHaveBeenCalledTimes(1);
         expect(callbacks.onReviewCurrentNote).toHaveBeenCalledTimes(1);
-        expect(callbacks.onDiscoverConnections).toHaveBeenCalledTimes(1);
-        expect(callbacks.onPeriodicSummary).toHaveBeenCalledTimes(1);
+        expect(JSON.stringify(content)).not.toContain("Generate summary");
+        expect(JSON.stringify(content)).not.toContain("Review Queue");
+    });
+
+    it("builds preparing and context-limited explanation states", () => {
+        const callbacks = makeCallbacks();
+        const preparing = buildPreparingContent({ current: 47, total: 120 }, "en");
+        const short = buildContextLimitedContent("short", callbacks, "en");
+        const boundary = buildContextLimitedContent("boundary", callbacks, "en");
+
+        expect(preparing.actions).toEqual([]);
+        expect(preparing.findings[0].text).toContain("47/120");
+        expect(short.actions.map((action) => action.label)).toEqual(["Capture a thought"]);
+        expect(boundary.actions.map((action) => action.label)).toEqual(["View boundary settings"]);
+    });
+
+    it("shows Intentionally Quiet explanation once and can render minimal later", () => {
+        const callbacks = makeCallbacks();
+        const first = buildIntentionallyQuietContent(callbacks, false, "en");
+        const later = buildIntentionallyQuietContent(callbacks, true, "en");
+
+        expect(first.findings).toEqual([{ text: "PA is quiet unless you open it." }]);
+        expect(later.findings).toEqual([]);
+        expect(later.actions.map((action) => action.label)).toEqual(["Find related old notes"]);
     });
 
     it("does not offer prepared suggestions when a nudge has no findings", () => {
@@ -222,22 +289,92 @@ describe("Pagelet Bubble quick access content", () => {
         }]);
         expect(JSON.stringify(content)).not.toContain("Projects/Alpha.md");
         expect(JSON.stringify(content)).not.toContain("Small weekly rituals");
+        expect(content?.type).toBe("recall-delivery");
         expect(content?.actions.map((action) => action.label)).toEqual([
             "View",
             "Link",
-            "Dismiss",
             "Later",
         ]);
 
         content?.actions[0].callback();
         content?.actions[1].callback();
         content?.actions[2].callback();
-        content?.actions[3].callback();
 
         expect(recallCallbacks.onView).toHaveBeenCalledWith(candidate);
         expect(recallCallbacks.onLink).toHaveBeenCalledWith(candidate);
-        expect(recallCallbacks.onDismiss).toHaveBeenCalledWith(candidate);
         expect(recallCallbacks.onLater).toHaveBeenCalledWith(candidate);
+    });
+
+    it("builds source-backed Recall Delivery content from a delivery candidate", () => {
+        const candidate = {
+            id: "recall-1",
+            kind: "recall" as const,
+            title: "Old project decision",
+            body: "This note may connect to an older decision.",
+            sourceRefs: [{ path: "Projects/Decision.md", title: "Decision" }],
+            whyNow: ["The current note mentions the same project."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            route: { surface: "tab" as const, payloadType: "quiet-recall" },
+        };
+        const callbacks = {
+            onOpen: jest.fn(),
+            onLinkToCurrent: jest.fn(),
+            onLater: jest.fn(),
+        };
+
+        const content = buildRecallDeliveryContent(candidate, callbacks, "en");
+
+        expect(content.type).toBe("recall-delivery");
+        expect(content.findings).toEqual([{
+            text: "This note may connect to an older decision.",
+            sourceLink: "Projects/Decision.md",
+            sourceTitle: "Decision",
+        }]);
+        expect(content.inlineHint?.text).toBe("The current note mentions the same project.");
+        expect(content.actions.map((action) => action.label)).toEqual([
+            "Open source note",
+            "Link",
+            "Later",
+        ]);
+
+        content.actions[0].callback();
+        content.actions[1].callback();
+        content.actions[2].callback();
+
+        expect(callbacks.onOpen).toHaveBeenCalledWith(candidate);
+        expect(callbacks.onLinkToCurrent).toHaveBeenCalledWith(candidate);
+        expect(callbacks.onLater).toHaveBeenCalledWith(candidate);
+    });
+
+    it("builds prepared Recap Delivery without foreground generation copy", () => {
+        const candidate = {
+            id: "recap-1",
+            kind: "recap" as const,
+            title: "Project recap",
+            body: "Project notes changed this week.",
+            sourceRefs: [{ path: "Projects/A.md", title: "A" }],
+            whyNow: ["5 source notes changed in this scope."],
+            preparedAt: "2026-07-05T12:00:00.000Z",
+            staleStatus: "fresh" as const,
+            route: { surface: "tab" as const, payloadType: "scope-recap" },
+        };
+        const callbacks = {
+            onViewRecap: jest.fn(),
+            onLater: jest.fn(),
+        };
+
+        const content = buildPreparedRecapDeliveryContent(candidate, callbacks, "en");
+
+        expect(content.type).toBe("recap-delivery");
+        expect(content.findings[0]?.text).toBe("PA prepared a short recap for this scope.");
+        expect(JSON.stringify(content)).not.toContain("Generate summary");
+        expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
+
+        content.actions[0].callback();
+        content.actions[1].callback();
+
+        expect(callbacks.onViewRecap).toHaveBeenCalledWith(candidate);
+        expect(callbacks.onLater).toHaveBeenCalledWith(candidate);
     });
 
     it("adds the first-use Quiet Recall explanation when requested", () => {

@@ -78,11 +78,6 @@ export function reviewQueueItemIsLegacy(item: Pick<ReviewQueueItemBase, "admissi
     return reviewQueueAdmissionReasonForItem(item) === "legacy_pre_refactor";
 }
 
-export function isReviewQueueBubbleReminderEligible(item: Pick<ReviewQueueItemBase, "admissionReason" | "status">): boolean {
-    if (!USER_KEPT_REASONS.has(reviewQueueAdmissionReasonForItem(item))) return false;
-    return item.status === "accepted" || item.status === "edited" || item.status === "snoozed";
-}
-
 export function isReviewQueueWeeklyCarryoverEligible(item: Pick<ReviewQueueItemBase, "admissionReason" | "status">): boolean {
     const status: ReviewQueueStatus = item.status;
     if (status === "dismissed" || status === "expired" || status === "undone" || status === "applied") return false;

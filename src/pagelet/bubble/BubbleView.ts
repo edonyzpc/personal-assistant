@@ -25,6 +25,7 @@
 
 import type {
     BubbleAction,
+    BubbleCard,
     BubbleContent,
     BubbleState,
     BubbleViewOptions,
@@ -83,6 +84,12 @@ interface BubbleCloseOptions {
 interface TouchPoint {
     x: number;
     y: number;
+}
+
+interface RenderableBubbleContent {
+    findings: BubbleContent["findings"];
+    actions: BubbleAction[];
+    inlineHint?: BubbleContent["inlineHint"];
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -182,6 +189,8 @@ export class BubbleView {
     private readonly handleTouchStart: (e: TouchEvent) => void;
     private readonly handleTouchMove: (e: TouchEvent) => void;
     private readonly handleTouchEnd: (e: TouchEvent) => void;
+    private readonly handleCardTouchStart: (e: TouchEvent) => void;
+    private readonly handleCardTouchEnd: (e: TouchEvent) => void;
     /** Pending unmount-after-transition timer; cleared if the bubble reopens. */
     private unmountTimer: PlatformTimeoutHandle | null = null;
     /** Pending transitionend listener; cleared if the bubble reopens. */
@@ -193,6 +202,10 @@ export class BubbleView {
     private static readonly ACTION_TAP_THRESHOLD = 12;
     /** Suppress synthetic clicks after a touch action has already fired. */
     private static readonly TOUCH_CLICK_SUPPRESS_MS = 500;
+    /** Minimum horizontal swipe distance for card switching. */
+    private static readonly CARD_SWIPE_THRESHOLD = 36;
+    private activeCardIndex = 0;
+    private cardTouchStart: TouchPoint | null = null;
 
     constructor(options: BubbleViewOptions) {
         this.options = options;
@@ -211,6 +224,8 @@ export class BubbleView {
         this.handleTouchStart = this.onTouchStart.bind(this);
         this.handleTouchMove = this.onTouchMove.bind(this);
         this.handleTouchEnd = this.onTouchEnd.bind(this);
+        this.handleCardTouchStart = this.onCardTouchStart.bind(this);
+        this.handleCardTouchEnd = this.onCardTouchEnd.bind(this);
     }
 
     // -----------------------------------------------------------------------
@@ -248,7 +263,11 @@ export class BubbleView {
 
         this.anchorEl = anchorEl;
         this.focusRestoreEl = anchorEl;
+        const shouldResetCard = this.state === "hidden" || this.currentContent !== content;
         this.currentContent = content;
+        this.activeCardIndex = shouldResetCard
+            ? 0
+            : clamp(this.activeCardIndex, 0, Math.max((content.cards?.length ?? 1) - 1, 0));
         this.renderContent(content);
 
         if (isMobile()) {
@@ -272,6 +291,8 @@ export class BubbleView {
         this.detachGlobalListeners();
         this.anchorEl = null;
         this.focusRestoreEl = null;
+        this.currentContent = null;
+        this.activeCardIndex = 0;
         if (wasVisible && this.rootEl) {
             this.scheduleUnmount(this.rootEl);
         }
@@ -302,6 +323,7 @@ export class BubbleView {
         this.anchorEl = null;
         this.focusRestoreEl = null;
         this.currentContent = null;
+        this.activeCardIndex = 0;
         this.state = "hidden";
     }
 
@@ -390,6 +412,16 @@ export class BubbleView {
         items.className = "pa-pagelet-bubble-items";
         root.appendChild(items);
 
+        const hint = createHtmlElement("div");
+        hint.className = "pa-pagelet-bubble-inline-hint";
+        hint.setAttribute("hidden", "true");
+        root.appendChild(hint);
+
+        const stackNav = createHtmlElement("div");
+        stackNav.className = "pa-pagelet-bubble-stack-nav";
+        stackNav.setAttribute("hidden", "true");
+        root.appendChild(stackNav);
+
         // Actions row (populated by renderContent)
         const actions = createHtmlElement("div");
         actions.className = "pa-pagelet-bubble-actions";
@@ -406,12 +438,19 @@ export class BubbleView {
         if (!this.rootEl) return;
 
         this.rootEl.setAttribute("data-content-type", content.type);
+        const renderable = this.getRenderableContent(content);
 
         // Rebuild findings list
         const itemsEl = this.rootEl.querySelector(".pa-pagelet-bubble-items");
         if (itemsEl) {
             clearChildren(itemsEl);
-            for (const finding of content.findings) {
+            itemsEl.removeEventListener("touchstart", this.handleCardTouchStart as EventListener);
+            itemsEl.removeEventListener("touchend", this.handleCardTouchEnd as EventListener);
+            if ((content.cards?.length ?? 0) > 1) {
+                itemsEl.addEventListener("touchstart", this.handleCardTouchStart as EventListener, { passive: true });
+                itemsEl.addEventListener("touchend", this.handleCardTouchEnd as EventListener, { passive: true });
+            }
+            for (const finding of renderable.findings) {
                 const li = createHtmlElement("li");
 
                 const bullet = createHtmlElement("span");
@@ -445,14 +484,17 @@ export class BubbleView {
             }
         }
 
+        this.renderInlineHint(renderable.inlineHint);
+        this.renderStackNav(content);
+
         // Rebuild action buttons
         const actionsEl = this.rootEl.querySelector(".pa-pagelet-bubble-actions");
         if (actionsEl) {
             clearChildren(actionsEl);
-            actionsEl.className = usesRichActionLayout(content.actions)
+            actionsEl.className = usesRichActionLayout(renderable.actions)
                 ? "pa-pagelet-bubble-actions pa-pagelet-bubble-actions--rich"
                 : "pa-pagelet-bubble-actions";
-            for (const action of content.actions) {
+            for (const action of renderable.actions) {
                 const btn = createHtmlElement("button");
                 btn.className = "pa-pagelet-bubble-btn";
                 btn.setAttribute("type", "button");
@@ -493,6 +535,130 @@ export class BubbleView {
                 actionsEl.appendChild(btn);
             }
         }
+    }
+
+    private getRenderableContent(content: BubbleContent): RenderableBubbleContent {
+        const cards = this.getCards(content);
+        if (cards.length === 0) {
+            return {
+                findings: content.findings,
+                actions: content.actions,
+                inlineHint: content.inlineHint,
+            };
+        }
+        this.activeCardIndex = clamp(this.activeCardIndex, 0, cards.length - 1);
+        const active = cards[this.activeCardIndex];
+        return {
+            findings: active.findings,
+            actions: active.actions,
+            inlineHint: active.inlineHint ?? content.inlineHint,
+        };
+    }
+
+    private getCards(content: BubbleContent): BubbleCard[] {
+        return (content.cards ?? []).slice(0, 3);
+    }
+
+    private renderInlineHint(hint: BubbleContent["inlineHint"]): void {
+        if (!this.rootEl) return;
+        const hintEl = this.rootEl.querySelector<HTMLElement>(".pa-pagelet-bubble-inline-hint");
+        if (!hintEl) return;
+        clearChildren(hintEl);
+        if (!hint?.text) {
+            hintEl.setAttribute("hidden", "true");
+            return;
+        }
+        hintEl.removeAttribute("hidden");
+        const icon = createHtmlElement("span");
+        icon.className = "pa-pagelet-bubble-inline-hint-icon";
+        if (hint.icon) {
+            setIcon(icon, hint.icon);
+        }
+        icon.setAttribute("aria-hidden", "true");
+        hintEl.appendChild(icon);
+        const text = createHtmlElement("span");
+        text.className = "pa-pagelet-bubble-inline-hint-text";
+        text.textContent = hint.text;
+        hintEl.appendChild(text);
+    }
+
+    private renderStackNav(content: BubbleContent): void {
+        if (!this.rootEl) return;
+        const nav = this.rootEl.querySelector<HTMLElement>(".pa-pagelet-bubble-stack-nav");
+        if (!nav) return;
+        clearChildren(nav);
+        const cards = this.getCards(content);
+        if (cards.length <= 1) {
+            nav.setAttribute("hidden", "true");
+            return;
+        }
+        nav.removeAttribute("hidden");
+        nav.setAttribute("aria-label", pageletT("pagelet.bubble.cardStack.ariaLabel", this.getLocale()));
+
+        const previous = createHtmlElement("button");
+        previous.className = "pa-pagelet-bubble-stack-btn";
+        previous.setAttribute("type", "button");
+        previous.setAttribute("title", pageletT("pagelet.bubble.cardStack.previous", this.getLocale()));
+        appendIconButtonLabel(previous, "‹", pageletT("pagelet.bubble.cardStack.previous", this.getLocale()));
+        previous.disabled = this.activeCardIndex === 0;
+        previous.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.activateCard(this.activeCardIndex - 1);
+        });
+        nav.appendChild(previous);
+
+        const dots = createHtmlElement("div");
+        dots.className = "pa-pagelet-bubble-stack-dots";
+        for (let index = 0; index < cards.length; index += 1) {
+            const dot = createHtmlElement("button");
+            dot.className = "pa-pagelet-bubble-stack-dot";
+            dot.setAttribute("type", "button");
+            dot.setAttribute("title", pageletT("pagelet.bubble.cardStack.goTo", this.getLocale(), { current: index + 1, total: cards.length }));
+            dot.setAttribute("aria-current", index === this.activeCardIndex ? "true" : "false");
+            const dotLabel = createHtmlElement("span");
+            dotLabel.className = "pa-sr-only";
+            dotLabel.textContent = pageletT("pagelet.bubble.cardStack.goTo", this.getLocale(), { current: index + 1, total: cards.length });
+            dot.appendChild(dotLabel);
+            dot.addEventListener("click", (event) => {
+                event.stopPropagation();
+                this.activateCard(index);
+            });
+            dots.appendChild(dot);
+        }
+        nav.appendChild(dots);
+
+        const next = createHtmlElement("button");
+        next.className = "pa-pagelet-bubble-stack-btn";
+        next.setAttribute("type", "button");
+        next.setAttribute("title", pageletT("pagelet.bubble.cardStack.next", this.getLocale()));
+        appendIconButtonLabel(next, "›", pageletT("pagelet.bubble.cardStack.next", this.getLocale()));
+        next.disabled = this.activeCardIndex >= cards.length - 1;
+        next.addEventListener("click", (event) => {
+            event.stopPropagation();
+            this.activateCard(this.activeCardIndex + 1);
+        });
+        nav.appendChild(next);
+    }
+
+    private activateCard(index: number): void {
+        if (!this.currentContent) return;
+        const cards = this.getCards(this.currentContent);
+        if (cards.length <= 1) return;
+        const next = clamp(index, 0, cards.length - 1);
+        if (next === this.activeCardIndex) return;
+        this.activeCardIndex = next;
+        this.renderContent(this.currentContent);
+        this.focusActiveStackDot();
+    }
+
+    private focusActiveStackDot(): void {
+        const dots = this.rootEl?.querySelectorAll<HTMLButtonElement>(".pa-pagelet-bubble-stack-dot") ?? [];
+        const dot = dots[this.activeCardIndex];
+        if (dot) {
+            dot.focus({ preventScroll: true });
+            return;
+        }
+        this.focusInitialControl();
     }
 
     private attachActionActivation(btn: HTMLButtonElement, callback: () => void): void {
@@ -831,5 +997,30 @@ export class BubbleView {
             this.close();
             this.options.callbacks.onDismiss();
         }
+    }
+
+    private onCardTouchStart(e: TouchEvent): void {
+        if (e.touches.length !== 1) {
+            this.cardTouchStart = null;
+            return;
+        }
+        const touch = e.touches[0];
+        this.cardTouchStart = { x: touch.clientX, y: touch.clientY };
+    }
+
+    private onCardTouchEnd(e: TouchEvent): void {
+        const start = this.cardTouchStart;
+        this.cardTouchStart = null;
+        if (!start) return;
+        const touch = e.changedTouches[0];
+        if (!touch) return;
+
+        const dx = touch.clientX - start.x;
+        const dy = touch.clientY - start.y;
+        if (Math.abs(dx) < BubbleView.CARD_SWIPE_THRESHOLD) return;
+        if (Math.abs(dy) > Math.abs(dx)) return;
+
+        e.stopPropagation();
+        this.activateCard(dx < 0 ? this.activeCardIndex + 1 : this.activeCardIndex - 1);
     }
 }

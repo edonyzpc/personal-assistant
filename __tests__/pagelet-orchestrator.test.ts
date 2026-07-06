@@ -92,7 +92,6 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 maxInputTokens: 8000,
                 maxOutputTokens: 2000,
                 reviewsFolder: ".pagelet",
-                periodicSummaryScope: "7d",
                 excludedFolders: [],
                 excludedTags: [],
                 excludedPatterns: [],
@@ -100,6 +99,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 maintenanceScanSuggested: false,
                 quickCaptureExplained: false,
                 quietRecallExplained: false,
+                quietAcknowledged: false,
             },
             contextPager: {
                 enabled: true,
@@ -124,12 +124,12 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
             analyzedAt: Date.now(),
             tokenCost: { input: 0, output: 0 },
         }),
-        createGenerateCallback: () => async () => ({
-            text: "",
-            tokenCost: { input: 0, output: 0 },
-        }),
         writeReviewNote: async () => ({ success: true, filePath: ".pagelet/test.md" }),
         saveSettings: () => undefined,
+        prepareMemoryForPagelet: () => undefined,
+        getMemoryPreparationStatus: () => null,
+        isPathAllowedForPagelet: () => true,
+        openPageletSettings: () => undefined,
         openQuickCapture: () => undefined,
         updatePageletSetting: jest.fn(),
         openPageletDetailView: () => undefined,
@@ -427,7 +427,7 @@ describe("PageletOrchestrator foreground review concurrency", () => {
 });
 
 describe("PageletOrchestrator quick review command", () => {
-    it("opens cached findings in the Bubble without triggering a provider call", () => {
+    it("keeps cached generic findings out of Bubble without triggering a provider call", async () => {
         const foregroundAnalyze = jest.fn(async () => ({
             findings: [],
             analyzedFiles: ["notes/current.md"],
@@ -437,9 +437,10 @@ describe("PageletOrchestrator quick review command", () => {
         const host = makeHost({
             createForegroundAnalyzeCallback: () => foregroundAnalyze,
         });
+        host.settings.pagelet.proactiveHints = true;
         const orchestrator = new PageletOrchestrator(host);
         const bubbleView = {
-            show: jest.fn(),
+            show: jest.fn(() => { bubbleView.bubbleState = "visible"; }),
             close: jest.fn(),
             bubbleState: "hidden",
         };
@@ -481,36 +482,21 @@ describe("PageletOrchestrator quick review command", () => {
         });
 
         orchestrator.getCommandCallbacks().onQuickReview();
+        await flushAsyncWork();
 
-        expect(bubbleView.show).toHaveBeenCalledTimes(1);
-        const [content] = bubbleView.show.mock.calls[0] as [{
+        const [content] = bubbleView.show.mock.calls[bubbleView.show.mock.calls.length - 1] as unknown as [{
             type: string;
             findings: Array<{ text: string; sourceLink?: string; sourceTitle?: string }>;
-            actions: Array<{ callback: () => void }>;
+            actions: Array<{ label: string; callback: () => void }>;
         }, HTMLElement];
-        expect(content.type).toBe("quick-review");
-        expect(content.findings).toEqual([{
-            text: "Recent note has a possible follow-up.",
-            sourceLink: "notes/current.md",
-            sourceTitle: "current",
-        }]);
-
-        content.actions[0].callback();
-
-        expect(bubbleView.close).toHaveBeenCalledTimes(1);
-        expect(panelView.open).toHaveBeenCalledWith(
-            "review",
-            [expect.objectContaining({
-                description: "Recent note has a possible follow-up.",
-                sourceFile: "notes/current.md",
-                sourceTitle: "current",
-            })],
-            undefined,
-        );
+        expect(content.type).toBe("ready-empty");
+        expect(JSON.stringify(content.findings)).not.toContain("Recent note has a possible follow-up.");
+        expect(content.actions.map((action) => action.label)).toEqual(["Find related old notes"]);
+        expect(panelView.open).not.toHaveBeenCalled();
         expect(foregroundAnalyze).not.toHaveBeenCalled();
     });
 
-    it("closes the empty Bubble before starting review-current analysis", () => {
+    it("shows ready-empty Bubble without a review-current launcher", async () => {
         const foregroundAnalyze = jest.fn(async () => ({
             findings: [],
             analyzedFiles: ["notes/current.md"],
@@ -520,9 +506,10 @@ describe("PageletOrchestrator quick review command", () => {
         const host = makeHost({
             createForegroundAnalyzeCallback: () => foregroundAnalyze,
         });
+        host.settings.pagelet.proactiveHints = true;
         const orchestrator = new PageletOrchestrator(host);
         const bubbleView = {
-            show: jest.fn(),
+            show: jest.fn(() => { bubbleView.bubbleState = "visible"; }),
             close: jest.fn(),
             bubbleState: "hidden",
         };
@@ -537,17 +524,67 @@ describe("PageletOrchestrator quick review command", () => {
         (orchestrator as unknown as { bubbleView: typeof bubbleView }).bubbleView = bubbleView;
 
         orchestrator.getCommandCallbacks().onQuickReview();
+        await flushAsyncWork();
 
-        const [content] = bubbleView.show.mock.calls[0] as [{
+        const [content] = bubbleView.show.mock.calls[bubbleView.show.mock.calls.length - 1] as unknown as [{
             type: string;
-            actions: Array<{ callback: () => void }>;
+            actions: Array<{ label: string; callback: () => void }>;
         }, HTMLElement];
-        expect(content.type).toBe("empty");
+        expect(content.type).toBe("ready-empty");
+        expect(content.actions.map((action) => action.label)).toEqual(["Find related old notes"]);
+        expect(foregroundAnalyze).not.toHaveBeenCalled();
+    });
 
-        content.actions[0].callback();
+    it("sends the Needs Setup review fallback to the Panel instead of rendering review results in Bubble", async () => {
+        const foregroundAnalyze = jest.fn(async () => ({
+            findings: [{
+                text: "Current note has a possible issue.",
+                sourceFile: "notes/current.md",
+                sourceTitle: "current",
+            }],
+            analyzedFiles: ["notes/current.md"],
+            analyzedAt: Date.now(),
+            tokenCost: { input: 10, output: 5 },
+        }));
+        const host = makeHost({
+            createForegroundAnalyzeCallback: () => foregroundAnalyze,
+            isMemoryReadyForPageletDiscovery: async () => false,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const bubbleView = {
+            show: jest.fn(() => { bubbleView.bubbleState = "visible"; }),
+            close: jest.fn(() => { bubbleView.bubbleState = "hidden"; }),
+            bubbleState: "hidden",
+        };
+        const panelView = { open: jest.fn() };
 
-        expect(bubbleView.close).toHaveBeenCalledTimes(1);
+        (orchestrator as unknown as {
+            petView: { rootEl: HTMLElement; stateMachine: { transition: jest.Mock } };
+            bubbleView: typeof bubbleView;
+            panelView: typeof panelView;
+        }).petView = {
+            rootEl: {} as HTMLElement,
+            stateMachine: { transition: jest.fn() },
+        };
+        (orchestrator as unknown as { bubbleView: typeof bubbleView }).bubbleView = bubbleView;
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        (orchestrator as unknown as { showBubble(): void }).showBubble();
+        const [content] = bubbleView.show.mock.calls[0] as unknown as [{
+            type: string;
+            actions: Array<{ label: string; callback: () => void }>;
+        }, HTMLElement];
+        expect(content.type).toBe("needs-setup");
+
+        content.actions[1].callback();
+        await flushAsyncWork();
+
         expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
+        expect(panelView.open.mock.calls[0]?.[0]).toBe("current");
+        expect(panelView.open.mock.calls[0]?.[1]).toEqual(
+            expect.arrayContaining([expect.objectContaining({ sourceFile: "notes/current.md" })]),
+        );
+        expect(bubbleView.show).toHaveBeenCalledTimes(1);
     });
 });
 
@@ -590,13 +627,14 @@ describe("PageletOrchestrator pet task visuals", () => {
         const petView = {
             unmount: jest.fn(),
             mount: jest.fn(),
+            destroy: jest.fn(),
             stateMachine: {
                 proactiveHintsEnabled: false,
                 transition: jest.fn(),
             },
             setTaskKind: jest.fn(),
         };
-        const bubbleView = { close: jest.fn() };
+        const bubbleView = { close: jest.fn(), destroy: jest.fn() };
         const internals = orchestrator as unknown as {
             petView: typeof petView;
             bubbleView: typeof bubbleView;
@@ -610,6 +648,7 @@ describe("PageletOrchestrator pet task visuals", () => {
         expect(petView.unmount).toHaveBeenCalledTimes(1);
         expect(bubbleView.close).toHaveBeenCalledTimes(1);
         expect(petView.mount).toHaveBeenCalledWith(contentEl);
+        orchestrator.destroy();
     });
 });
 
@@ -666,13 +705,13 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
     });
 
-    it("passes the current Periodic Summary markdown payload to the detail tab", () => {
+    it("passes the current recap markdown payload to the detail tab", () => {
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
         const host = makeHost({ openPageletDetailView });
         const orchestrator = new PageletOrchestrator(host);
-        const markdown = "# Periodic Summary\n\nA concise periodic summary.";
+        const markdown = "# Scope Recap\n\nA concise source-backed recap.";
         const findings = [{
-            title: "pagelet-weekly-review.md",
+            title: "scope-recap.md",
             description: markdown,
         }];
         const extra = {
@@ -685,10 +724,10 @@ describe("PageletOrchestrator detail expansion", () => {
             },
         };
         const pendingNote = {
-            fileName: "pagelet-weekly-review.md",
+            fileName: "scope-recap.md",
             markdown,
             targetFolder: ".pagelet",
-            targetPath: ".pagelet/pagelet-weekly-review.md",
+            targetPath: ".pagelet/scope-recap.md",
             sources: ["notes/current.md"],
             tokenCost: { input: 1, output: 2 },
         };
@@ -724,13 +763,13 @@ describe("PageletOrchestrator detail expansion", () => {
         internals.expandPanelToTab();
 
         expect(panelView.close).toHaveBeenCalledTimes(1);
-        expect(internals.saveFlow.pending?.targetPath).toBe(".pagelet/pagelet-weekly-review.md");
+        expect(internals.saveFlow.pending?.targetPath).toBe(".pagelet/scope-recap.md");
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
             title: "Pagelet — Detail View",
             content: findings,
             locale: "en",
             layoutType: "summary",
-            sourcePath: ".pagelet/pagelet-weekly-review.md",
+            sourcePath: ".pagelet/scope-recap.md",
             summarySaveNote: pendingNote,
         }));
     });
@@ -976,11 +1015,98 @@ describe("PageletOrchestrator detail expansion", () => {
             sourcePath: "notes/current.md",
             extra: expect.objectContaining({
                 markdown: expect.stringContaining("Coverage: 2/2 source notes"),
+                scopeRecap: expect.objectContaining({
+                    id: "recap-test",
+                    sourceCoverage: expect.objectContaining({ includedSourceCount: 2 }),
+                }),
             }),
         }));
         const payload = openPageletDetailView.mock.calls[0]?.[0];
         expect(payload?.summarySaveNote).toBeUndefined();
         expect(payload?.extra?.markdown).not.toContain("Theme: #pa");
+
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        };
+        (orchestrator as unknown as {
+            bubbleView: typeof bubbleView;
+            petView: { rootEl: HTMLElement };
+            showBubble(): void;
+        }).bubbleView = bubbleView;
+        (orchestrator as unknown as {
+            petView: { rootEl: HTMLElement };
+        }).petView = { rootEl: {} as HTMLElement };
+
+        (orchestrator as unknown as { showBubble(): void }).showBubble();
+
+        const [content] = bubbleView.show.mock.calls[0] as unknown as [{
+            type: string;
+            actions: Array<{ label: string }>;
+        }, HTMLElement];
+        expect(content.type).toBe("recap-delivery");
+        expect(content.actions.map((action) => action.label)).toEqual(["View recap", "Later"]);
+    });
+
+    it("does not deliver a prepared Recap after the active note changes", async () => {
+        const currentFile = makeTFile("notes/current.md", { size: 100, mtime: 1000 });
+        const otherFile = makeTFile("notes/other.md", { size: 100, mtime: 1000 });
+        const host = makeHost();
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(currentFile);
+        const orchestrator = new PageletOrchestrator(host);
+
+        await orchestrator.getCommandCallbacks().onScopeRecap();
+
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        };
+        (orchestrator as unknown as {
+            bubbleView: typeof bubbleView;
+            petView: { rootEl: HTMLElement };
+            showBubble(): void;
+        }).bubbleView = bubbleView;
+        (orchestrator as unknown as {
+            petView: { rootEl: HTMLElement };
+        }).petView = { rootEl: {} as HTMLElement };
+
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(otherFile);
+        (orchestrator as unknown as { showBubble(): void }).showBubble();
+
+        const [content] = bubbleView.show.mock.calls[0] as unknown as [{ type: string }, HTMLElement];
+        expect(content.type).not.toBe("recap-delivery");
+    });
+
+    it("does not deliver a prepared Recap after the active note snapshot changes", async () => {
+        const currentFile = makeTFile("notes/current.md", { size: 100, mtime: 1000 });
+        const editedFile = makeTFile("notes/current.md", { size: 120, mtime: 2000 });
+        const host = makeHost();
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(currentFile);
+        const orchestrator = new PageletOrchestrator(host);
+
+        await orchestrator.getCommandCallbacks().onScopeRecap();
+
+        const bubbleView = {
+            bubbleState: "hidden",
+            show: jest.fn(),
+            close: jest.fn(),
+        };
+        (orchestrator as unknown as {
+            bubbleView: typeof bubbleView;
+            petView: { rootEl: HTMLElement };
+            showBubble(): void;
+        }).bubbleView = bubbleView;
+        (orchestrator as unknown as {
+            petView: { rootEl: HTMLElement };
+        }).petView = { rootEl: {} as HTMLElement };
+
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(editedFile);
+        (orchestrator as unknown as { showBubble(): void }).showBubble();
+
+        const [content] = bubbleView.show.mock.calls[0] as unknown as [{ type: string }, HTMLElement];
+        expect(content.type).not.toBe("recap-delivery");
     });
 
     it("runs Quiet Recall and opens recall candidates in the native detail tab", async () => {
@@ -1054,6 +1180,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const petView = {
             unmount: jest.fn(),
             mount: jest.fn(),
+            destroy: jest.fn(),
             stateMachine: {
                 proactiveHintsEnabled: true,
                 forceState: jest.fn(),
@@ -1120,6 +1247,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const petView = {
             unmount: jest.fn(),
             mount: jest.fn(),
+            destroy: jest.fn(),
             stateMachine: {
                 proactiveHintsEnabled: true,
                 forceState: jest.fn(),
@@ -1178,6 +1306,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const petView = {
             unmount: jest.fn(),
             mount: jest.fn(),
+            destroy: jest.fn(),
             stateMachine: {
                 proactiveHintsEnabled: true,
                 forceState: jest.fn(),
@@ -1315,6 +1444,7 @@ describe("PageletOrchestrator detail expansion", () => {
         const petView = {
             unmount: jest.fn(),
             mount: jest.fn(),
+            destroy: jest.fn(),
             stateMachine: {
                 proactiveHintsEnabled: true,
                 forceState: jest.fn(),
@@ -1338,6 +1468,7 @@ describe("PageletOrchestrator detail expansion", () => {
         await flushAsyncWork();
 
         expect(runQuietRecall).not.toHaveBeenCalled();
+        orchestrator.destroy();
     });
 
     it("runs Quiet Recall on double Ctrl but ignores a single Ctrl press", async () => {
@@ -2010,7 +2141,7 @@ describe("PageletOrchestrator connection discovery", () => {
         expect(panelView.open).not.toHaveBeenCalled();
     });
 
-    it("clears stale periodic-summary pending state before saving Discovery findings", async () => {
+    it("clears stale recap pending state before saving Discovery findings", async () => {
         const writeReviewNote = jest.fn(async (_note: unknown) => ({ success: true, filePath: ".pagelet/discovery.md" }));
         const panelView = { open: jest.fn(), close: jest.fn() };
         const host = makeHost({
@@ -2057,10 +2188,10 @@ describe("PageletOrchestrator connection discovery", () => {
         internals.panelView = panelView;
         internals.currentPanelLayout = "summary";
         internals.saveFlow.setPending({
-            fileName: "pagelet-weekly-review.md",
-            markdown: "# Old summary",
+            fileName: "pagelet-scope-recap.md",
+            markdown: "# Old recap",
             targetFolder: ".pagelet",
-            targetPath: ".pagelet/pagelet-weekly-review.md",
+            targetPath: ".pagelet/pagelet-scope-recap.md",
             sources: ["notes/current.md"],
             tokenCost: { input: 1, output: 2 },
         });
@@ -2080,7 +2211,7 @@ describe("PageletOrchestrator connection discovery", () => {
             targetPath: expect.stringContaining("pagelet-discovery-current-"),
         }));
         expect(writeReviewNote).not.toHaveBeenCalledWith(expect.objectContaining({
-            targetPath: ".pagelet/pagelet-weekly-review.md",
+            targetPath: ".pagelet/pagelet-scope-recap.md",
         }));
     });
 

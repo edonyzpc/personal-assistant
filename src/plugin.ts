@@ -1008,7 +1008,6 @@ export class PluginManager extends Plugin {
             onReviewCurrent: () => dispatch((callbacks) => callbacks.onReviewCurrent()),
             onQuickReview: () => dispatch((callbacks) => callbacks.onQuickReview()),
             onDiscoverConnections: () => dispatch((callbacks) => callbacks.onDiscoverConnections()),
-            onPeriodicSummary: () => dispatch((callbacks) => callbacks.onPeriodicSummary()),
             onMaintenanceReview: () => dispatch((callbacks) => callbacks.onMaintenanceReview()),
             onQuietRecall: () => dispatch((callbacks) => callbacks.onQuietRecall()),
             onGraphDiscovery: () => dispatch((callbacks) => callbacks.onGraphDiscovery()),
@@ -1247,31 +1246,16 @@ export class PluginManager extends Plugin {
                     };
                 };
             },
-            createGenerateCallback: () => {
-                return async (prompt, noteContents, tokenBudget) => {
-                    await this.reservePageletRateLimitSlot();
-                    const model = await this.createChatModel(0.3, {
-                        maxTokens: tokenBudget.output,
-                    });
-                    if (!model) {
-                        throw new Error("No AI model configured");
-                    }
-                    const result = await model.invoke(prompt);
-                    const text = coerceModelResultToString(result);
-                    const inputTokens = estimateTokens(prompt);
-                    const outputTokens = estimateTokens(text);
-                    this.pageletCostTracker.record({
-                        inputTokens,
-                        outputTokens,
-                        provider: this.settings.aiProvider,
-                        model: this.settings.chatModelName,
-                    });
-                    return { text, tokenCost: { input: inputTokens, output: outputTokens } };
-                };
-            },
             updatePageletSetting: <K extends keyof PageletSettings>(key: K, value: PageletSettings[K]) => {
                 this.settings.pagelet[key] = value;
                 void this.saveSettings();
+            },
+            prepareMemoryForPagelet: () => this.memoryManager?.prepareFromCommand() ?? Promise.resolve(),
+            getMemoryPreparationStatus: () => this.memoryManager?.getActivePreparationStatus() ?? null,
+            isPathAllowedForPagelet: (path) => this.isDataBoundaryAllowedPath(path),
+            openPageletSettings: () => {
+                openSettings(this.app);
+                openSettingsTab(this.app, 'personal-assistant');
             },
             writeReviewNote: (note: GeneratedReviewNote) => this.writePageletReviewNote(note),
             openPageletDetailView: (payload: PageletDetailPayload) => this.openPageletDetailView(payload),
