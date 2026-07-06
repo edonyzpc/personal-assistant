@@ -75,6 +75,15 @@ make changelog VERSION=1.6.6
 
 `make publish VERSION=x.y.z` pushes both the current branch and the local release tag to `origin`, then uses `gh run watch --exit-status` to wait for `.github/workflows/release.yml`.
 
+Before pushing, `scripts/publish-release.mjs` verifies:
+
+- The working tree is clean.
+- `VERSION` is a bare semantic version without a leading `v`.
+- `package.json` version equals `VERSION`.
+- Stable releases run from `master`.
+- Prerelease versions run from the matching `beta/<VERSION>` branch.
+- The local `VERSION` tag exists and points to `HEAD`.
+
 The GitHub workflow builds from the pushed tag and creates a GitHub Release with these assets:
 
 - `main.js`
@@ -91,6 +100,30 @@ The release workflow installs the Node version declared in `package.json`, check
 Obsidian's community plugin installer and updater install only the standard runtime files: `main.js`, `manifest.json`, and `styles.css`. Legal documents are therefore distributed as GitHub Release assets and exact-tag source files, and the plugin Settings Legal section links to the exact release tag for source, license, and notices. `TRADEMARKS.md` is available through the exact release tag and is linked from `NOTICE`, but it is not part of the formal release asset set.
 
 Starting with version `2.8.0`, release notes for license and compliance releases must state that the client source is `AGPL-3.0-only` starting with that version, that historical releases are not relicensed retroactively, and that the release does not introduce an account system, license key, checkout flow, feature lock, hosted commercial service, or paid entitlement check unless a future release explicitly says otherwise. `scripts/release.mjs` includes this statement in the generated `2.8.0` changelog section and annotated tag body, and the GitHub workflow publishes the tag body through `--notes-from-tag`.
+
+## BRAT Beta Testing
+
+Use [BRAT beta testing](./brat-beta-testing.md) for prerelease builds intended
+for Obsidian BRAT testers.
+
+Key constraints:
+
+- Cut BRAT beta releases from the matching branch name, for example
+  `beta/2.9.0-beta.1` for version `2.9.0-beta.1`; do not commit a beta
+  `manifest.json` version to `master`. The release and publish scripts enforce
+  the matching beta branch for prerelease builds.
+- Treat `beta/<version>` as a temporary packaging branch cut from the tested
+  development branch. Do not merge beta release commits back to `master`; merge
+  the development branch through PR, then cut the stable release from `master`.
+- Use prerelease tags such as `2.9.0-beta.1`. The tag, GitHub Release title,
+  and released `manifest.json` version must match.
+- The release workflow marks tags containing `-` as GitHub prereleases.
+- Current BRAT installs use GitHub Release assets, not `manifest-beta.json`.
+  Keep `manifest-beta.json` only for local deploy and older-tool
+  compatibility.
+- Stable changelog generation ignores prerelease tags by default, so `2.9.0`
+  can still use the previous stable tag as its changelog baseline after
+  `2.9.0-beta.N` testing.
 
 ## Recovery
 

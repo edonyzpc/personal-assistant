@@ -3,9 +3,9 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { EOL } from "node:os";
 import process from "node:process";
 import { fileURLToPath } from "node:url";
+import semver from "semver";
 
 const repoUrl = "https://github.com/edonyzpc/personal-assistant";
-const semanticVersionPattern = /^v?(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/;
 const releaseSubjectPattern = /^\[release\]\s+v?\d+\.\d+\.\d+/;
 const conventionalSubjectPattern = /^(?<type>[a-zA-Z]+)(?:\((?<scope>[^)]+)\))?(?<breaking>!)?:\s*(?<message>.+)$/;
 const categoryOrder = ["Features", "Fix", "Removed (Breaking)", "Improvements", "Docs", "Tests"];
@@ -67,29 +67,29 @@ function parseArgs(argv) {
   return options;
 }
 
-function semverKey(tag) {
-  const match = semanticVersionPattern.exec(tag);
-  if (!match) return null;
-  return match.slice(1, 4).map((part) => Number.parseInt(part, 10));
-}
-
-function compareSemverKey(left, right) {
-  for (let index = 0; index < 3; index++) {
-    if (left[index] !== right[index]) return left[index] - right[index];
-  }
-  return 0;
-}
-
 function tagExists(tag) {
   return runGit(["tag", "--list", tag]).length > 0;
+}
+
+function versionForTag(tag) {
+  const normalized = tag.startsWith("v") ? tag.slice(1) : tag;
+  return semver.valid(normalized);
+}
+
+function isPrereleaseTag(tag) {
+  const version = versionForTag(tag);
+  return version ? semver.prerelease(version) !== null : false;
 }
 
 function semanticTags() {
   return runGit(["tag", "--list"])
     .split(/\r?\n/)
     .filter(Boolean)
-    .filter((tag) => semverKey(tag))
-    .sort((left, right) => compareSemverKey(semverKey(left), semverKey(right)));
+    .filter((tag) => versionForTag(tag))
+    .sort((left, right) => {
+      const comparison = semver.compare(versionForTag(left), versionForTag(right));
+      return comparison === 0 ? left.localeCompare(right) : comparison;
+    });
 }
 
 export function resolvePreviousTag({ targetVersion, targetRef = "HEAD", previousTag }) {
@@ -98,16 +98,19 @@ export function resolvePreviousTag({ targetVersion, targetRef = "HEAD", previous
   if (tags.length === 0) {
     throw new Error("No semantic version tags found.");
   }
-  if (!tagExists(targetRef)) {
-    return tags[tags.length - 1];
+  const target = versionForTag(tagExists(targetRef) ? targetRef : targetVersion);
+  if (!target) {
+    throw new Error(`Invalid semantic version: ${targetVersion}`);
   }
-  const targetKey = semverKey(targetRef) ?? semverKey(targetVersion);
+  const stableTarget = semver.prerelease(target) === null;
   const previous = tags.filter((tag) => {
-    const key = semverKey(tag);
-    return tag !== targetRef && key && compareSemverKey(key, targetKey) < 0;
+    const version = versionForTag(tag);
+    if (tag === targetRef || !version || !semver.lt(version, target)) return false;
+    return !stableTarget || !isPrereleaseTag(tag);
   });
   if (previous.length === 0) {
-    throw new Error(`No previous semantic version tag found before ${targetRef}.`);
+    const releaseType = stableTarget ? "stable " : "";
+    throw new Error(`No previous ${releaseType}semantic version tag found before ${target}.`);
   }
   return previous[previous.length - 1];
 }
