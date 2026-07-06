@@ -913,7 +913,9 @@ graph TB
 
 **双通道发布**:
 - `manifest.json` → 稳定版 (当前 v2.8.4)，Obsidian 社区插件市场
-- `manifest-beta.json` → 测试版通道 (当前 v2.8.4)，BRAT 插件分发
+- GitHub Release prerelease tag → BRAT 测试版通道；BRAT 下载
+  `main.js`、`manifest.json`、`styles.css` release assets
+- `manifest-beta.json` → 本地部署与旧工具兼容，非当前 BRAT 主分发机制
 
 ### 8.3 部署快捷方式
 

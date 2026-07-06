@@ -1,0 +1,4 @@
+interface:
+  display_name: "PA BRAT Beta Release"
+  short_description: "BRAT prerelease branch, publish, and smoke workflow."
+  default_prompt: "Use $pa-brat-beta-release to prepare a Personal Assistant BRAT beta prerelease."

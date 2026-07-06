@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import console from "node:console";
 import process from "node:process";
+import semver from "semver";
 
 function run(command, args, options = {}) {
   return execFileSync(command, args, {
@@ -35,6 +36,27 @@ function packageVersion() {
   return JSON.parse(readFileSync("package.json", "utf8")).version;
 }
 
+function validateTargetVersion(version) {
+  if (!version) {
+    throw new Error("A semantic version is required.");
+  }
+  if (version.startsWith("v")) {
+    throw new Error(`Use a bare semantic version without a leading v, for example ${version.slice(1)}.`);
+  }
+  if (!semver.valid(version)) {
+    throw new Error(`Invalid semantic version: ${version}`);
+  }
+}
+
+function assertPackageVersionMatches(targetVersion) {
+  const currentVersion = packageVersion();
+  if (currentVersion !== targetVersion) {
+    throw new Error(
+      `package.json version ${currentVersion} does not match publish target ${targetVersion}. Run make release VERSION=${targetVersion} first.`,
+    );
+  }
+}
+
 function assertCleanWorktree() {
   const status = run("git", ["status", "--porcelain"], { capture: true });
   if (status) {
@@ -55,6 +77,33 @@ function currentBranch() {
     throw new Error("Cannot publish from a detached HEAD.");
   }
   return branch;
+}
+
+function expectedBranchFor(version) {
+  return semver.prerelease(version) === null ? "master" : `beta/${version}`;
+}
+
+function assertPublishBranch(targetVersion, branch) {
+  const expectedBranch = expectedBranchFor(targetVersion);
+  if (branch !== expectedBranch) {
+    throw new Error(
+      `Publish for ${targetVersion} must run from ${expectedBranch}; current branch is ${branch}.`,
+    );
+  }
+}
+
+function commitFor(ref) {
+  return run("git", ["rev-parse", ref], { capture: true });
+}
+
+function assertTagPointsToHead(targetVersion) {
+  const tagCommit = commitFor(`${targetVersion}^{}`);
+  const headCommit = commitFor("HEAD");
+  if (tagCommit !== headCommit) {
+    throw new Error(
+      `Tag ${targetVersion} points to ${tagCommit}, but HEAD is ${headCommit}. Publish from the release commit that owns the tag.`,
+    );
+  }
 }
 
 function assertGhAvailable() {
@@ -88,13 +137,17 @@ async function findWorkflowRun(version) {
 async function main() {
   const options = parseArgs(process.argv.slice(2));
   const targetVersion = options.targetVersion || packageVersion();
+  validateTargetVersion(targetVersion);
   assertCleanWorktree();
   assertTagExists(targetVersion);
+  assertPackageVersionMatches(targetVersion);
+  const branch = currentBranch();
+  assertPublishBranch(targetVersion, branch);
+  assertTagPointsToHead(targetVersion);
   if (options.watch) {
     assertGhAvailable();
   }
 
-  const branch = currentBranch();
   run("git", ["push", "origin", branch, targetVersion]);
 
   if (!options.watch) {

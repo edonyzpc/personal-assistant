@@ -170,10 +170,14 @@ Now Personal Assistant plugin is available in [plugin market](https://obsidian.m
 - Install BRAT from the Community Plugins in Obsidian
 - Open the command palette and run the command BRAT: Add a beta plugin for testing
 - Copy `https://github.com/edonyzpc/personal-assistant` into the modal that opens up
+- Track the latest release, or freeze a specific beta tag if you are testing a targeted build
 - Click on Add Plugin -- wait a few seconds and BRAT will tell you what is going on
 - After BRAT confirms the installation, in Settings go to the **Community plugins ** tab.
 - Refresh the list of plugins
 - Find the beta plugin you just installed and Enable it.
+
+Maintainers should use the repository BRAT release workflow before inviting beta
+testers: [docs/brat-beta-testing.md](./docs/brat-beta-testing.md).
 
 ### Manually Install
 

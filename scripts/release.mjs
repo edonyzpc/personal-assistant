@@ -107,6 +107,18 @@ function assertCurrentVersionTagged(currentVersion) {
   );
 }
 
+function assertPrereleaseBranch(targetVersion) {
+  if (semver.prerelease(targetVersion) === null) return;
+  const branch = capture("git", ["branch", "--show-current"]);
+  const expectedBranch = `beta/${targetVersion}`;
+  if (branch !== expectedBranch) {
+    const current = branch || "detached HEAD";
+    throw new Error(
+      `Prerelease version ${targetVersion} must be cut from ${expectedBranch}; current branch is ${current}.`,
+    );
+  }
+}
+
 function validateVersion(targetVersion, currentVersion) {
   if (!targetVersion) {
     throw new Error("A new semantic version is required.");
@@ -191,6 +203,7 @@ async function main() {
   const targetVersion = await getTargetVersion(options.targetVersion);
 
   validateVersion(targetVersion, currentVersion);
+  assertPrereleaseBranch(targetVersion);
   assertTagAvailable(targetVersion);
   assertCleanWorktree();
   assertCurrentVersionTagged(currentVersion);
