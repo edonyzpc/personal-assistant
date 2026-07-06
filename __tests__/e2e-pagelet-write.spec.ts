@@ -367,7 +367,7 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
 
     it("drives generated review notes through the same framework capability", async () => {
         const { runtime, adapter, renderer, observer } = buildRuntimeBundle();
-        const targetPath = ".pagelet/pagelet-weekly-review-2026-06-03.md";
+        const targetPath = ".pagelet/scope-recap-2026-06-03.md";
         const input = {
             generatedNote: {
                 markdown: [
@@ -377,10 +377,10 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
                     "---",
                     "",
                     "## Summary",
-                    "A concise periodic summary.",
+                    "A concise source-backed recap.",
                     "",
                 ].join("\n"),
-                fileName: "pagelet-weekly-review-2026-06-03.md",
+                fileName: "scope-recap-2026-06-03.md",
                 targetFolder: ".pagelet",
                 targetPath,
                 sources: ["[[notes/draft]]"],
@@ -402,7 +402,7 @@ describe("E2E · Pagelet review write (Track C · C2)", () => {
             displayPath: targetPath,
             capabilityId: PAGELET_WRITE_REVIEW_OUTPUT_NAME,
         }]);
-        expect(adapter.files.get(targetPath)).toContain("A concise periodic summary.");
+        expect(adapter.files.get(targetPath)).toContain("A concise source-backed recap.");
         expect(runtime.isRecentSelfWrite(targetPath)).toBe(true);
 
         const types = observer.events.map((e) => e.type);

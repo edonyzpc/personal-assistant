@@ -378,6 +378,102 @@ describe("Pagelet BubbleView", () => {
         view.destroy();
     });
 
+    it("renders one active Bubble card at a time and routes actions to the active card", async () => {
+        const first = jest.fn();
+        const second = jest.fn();
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+
+        view.mount(container as unknown as HTMLElement);
+        view.show({
+            type: "recall-delivery",
+            findings: [],
+            actions: [],
+            cards: [{
+                id: "card-1",
+                findings: [{ text: "First recall" }],
+                actions: [{ label: "Open first", primary: true, callback: first }],
+            }, {
+                id: "card-2",
+                findings: [{ text: "Second recall" }],
+                inlineHint: { text: "Second why now", icon: "info" },
+                actions: [{ label: "Open second", primary: true, callback: second }],
+            }],
+        }, anchor as unknown as HTMLElement);
+
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+        expect(bubble?.querySelector(".pa-pagelet-bubble-text")?.textContent).toBe("First recall");
+        expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-dot")).toHaveLength(2);
+        expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-btn")[0]?.textContent).toContain("Previous card");
+        expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-btn")[1]?.textContent).toContain("Next card");
+        expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-dot")[0]?.textContent).toBe("Show card 1 of 2");
+
+        const next = bubble?.querySelectorAll(".pa-pagelet-bubble-stack-btn")[1];
+        await next?.click();
+
+        expect(bubble?.querySelector(".pa-pagelet-bubble-text")?.textContent).toBe("Second recall");
+        expect(bubble?.querySelector(".pa-pagelet-bubble-inline-hint-text")?.textContent).toBe("Second why now");
+        expect(bubble?.querySelectorAll(".pa-pagelet-bubble-stack-dot")[1]?.focusCalls).toBe(1);
+
+        const active = bubble?.querySelector(".pa-pagelet-bubble-btn");
+        await active?.click();
+
+        expect(first).not.toHaveBeenCalled();
+        expect(second).toHaveBeenCalledTimes(1);
+
+        view.destroy();
+    });
+
+    it("resets stacked cards to the first card after closing", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const anchor = new FakeElement("button");
+        const view = new BubbleView({
+            callbacks: {
+                onDismiss: () => undefined,
+                onExpandPanel: () => undefined,
+                onSourceClick: () => undefined,
+            },
+            getLocale: () => "en",
+        });
+        const content = {
+            type: "recall-delivery" as const,
+            findings: [],
+            actions: [],
+            cards: [{
+                id: "card-1",
+                findings: [{ text: "First recall" }],
+                actions: [],
+            }, {
+                id: "card-2",
+                findings: [{ text: "Second recall" }],
+                actions: [],
+            }],
+        };
+
+        view.mount(container as unknown as HTMLElement);
+        view.show(content, anchor as unknown as HTMLElement);
+        const bubble = container.querySelector(".pa-pagelet-bubble");
+        await bubble?.querySelectorAll(".pa-pagelet-bubble-stack-btn")[1]?.click();
+        expect(bubble?.querySelector(".pa-pagelet-bubble-text")?.textContent).toBe("Second recall");
+
+        view.close({ restoreFocus: false });
+        view.show(content, anchor as unknown as HTMLElement);
+
+        expect(bubble?.querySelector(".pa-pagelet-bubble-text")?.textContent).toBe("First recall");
+
+        view.destroy();
+    });
+
     it("keeps the close icon accessible without creating an Obsidian aria-label tooltip", () => {
         const container = new FakeElement("div");
         container.isConnected = true;
@@ -562,8 +658,8 @@ describe("Pagelet BubbleView", () => {
                 icon: "link",
                 callback: () => undefined,
             }, {
-                label: "Periodic summary",
-                description: "Summarize recent changes",
+                label: "Open detail",
+                description: "Review prepared context",
                 icon: "calendar",
                 callback: () => undefined,
             }],

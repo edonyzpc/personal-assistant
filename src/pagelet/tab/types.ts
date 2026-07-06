@@ -13,6 +13,7 @@ import type {
     PanelSavedInsightState,
 } from "../panel/types";
 import type { ContextPagerState } from "../../pa";
+import type { ScopeRecapRunResult } from "../../pa";
 
 /**
  * Pagelet -- Tab component types.
@@ -50,6 +51,7 @@ export interface PageletDetailExtra {
     quietRecall?: PanelQuietRecallState;
     graphDiscovery?: PanelGraphDiscoveryState;
     patternDetection?: PanelPatternDetectionState;
+    scopeRecap?: ScopeRecapRunResult;
 }
 
 export type TabEntryReason =

@@ -16,8 +16,7 @@ export type PromptScenario =
     | "preload"
     | "quick-review"
     | "writing-assist"
-    | "discovery"
-    | "periodic-summary";
+    | "discovery";
 
 // ---------------------------------------------------------------------------
 // Structured finding (LLM output shape)

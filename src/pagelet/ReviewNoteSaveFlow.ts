@@ -108,7 +108,7 @@ export class ReviewNoteSaveFlow {
         }
         this.saveInProgress = true;
 
-        // If we have a pre-generated note from periodic summary, write it directly
+        // If we have a pre-generated review note, write it directly.
         if (currentPanelLayout === "summary" && this.pendingReviewNote) {
             this.callbacks.petTransition("analysis-start");
             try {

@@ -27,6 +27,7 @@
 | Theme | Why it matters | Scope guard |
 | --- | --- | --- |
 | PA Agent product spec completion | Turns the SDD plan into shipped PA capture/review/memory/maintenance/recall layers with evidence and smoke gates. | Slices 0-G, A2, and M12 are complete; next step is release-readiness review or a new approval gate for future scope. |
+| Pagelet Delivery Preparation consolidation | Converges Bubble, Scope Recap, Preload, Recall, Pattern, and Review into one source-backed delivery model instead of separate AI feature buttons. | Implemented in Phase 6. Periodic Summary entrypoints are directly removed; prepared Recap uses a local derived cache. Next step is release-readiness review and dogfooding. |
 | Operations Agent productization | Turns the existing write-action infrastructure into a usable, confirmed note-editing mode. | Start with append-to-current-note only; do not add shell, arbitrary filesystem writes, plugin actions, or command execution without separate review. |
 | User custom Skills | Lets advanced users extend PA Agent behavior without waiting for bundled skills. | Requires product design first; keep scripts/tools out until allowed-tools policy is explicit. |
 | Pagelet async result UX | Prevents paid provider results from being discarded when the user changes notes mid-run. | First pass is in-memory source-bound results only; no hidden persistence of full provider output. |

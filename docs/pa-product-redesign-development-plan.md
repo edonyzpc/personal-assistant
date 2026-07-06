@@ -28,6 +28,7 @@ Phase 2: Weekly Review 拆解（移除 + 重新归位）
 Phase 3: Frontmatter 建链能力（新功能）
 Phase 4: 首次体验引导（新功能）
 Phase 5: Chat 文字选择 + 跨笔记模式检测（增强功能）
+Phase 6: Pagelet Delivery Preparation 收敛（新增产品重构）
 ```
 
 ---
@@ -420,6 +421,131 @@ Phase 5 (Chat + 模式)    ████████████████     
 Phase 0 和 Phase 2 可以并行。
 Phase 3 和 Phase 4 可以并行（都依赖 Phase 1 完成）。
 Phase 5 依赖 Phase 2 但可以在 Phase 3/4 同时进行。
+
+---
+
+## Phase 6: Pagelet Delivery Preparation 收敛
+
+**目标**：将 Pagelet 中重叠的 Review / Recap / Preparation 能力收敛到统一
+Delivery Preparation 模型，避免 Bubble 再次变成 AI 功能菜单。
+
+**依据**：
+- [Pagelet Delivery Preparation Consolidation Product Note](./pagelet-delivery-preparation-consolidation-product-note.md)
+- [Pagelet Bubble Readiness & Recall Product Spec](./pagelet-bubble-readiness-and-recall-product-spec.md)
+- [PA Scope Recap And Theme Summary Product Spec](./pa-scope-recap-theme-summary-product-spec.md)
+
+**状态**：Phase 6 runtime 已实现并通过验证。Periodic Summary 的产品方向
+已迁移到 Recap 时间范围回顾；command、locale、旧入口移除和 prepared
+Recap Delivery 均由 Phase 6 SDD 收口并完成 smoke。
+
+### 背景判断
+
+当前相关能力有三类：
+
+| 能力 | 当前形态 | 结论 |
+|------|----------|------|
+| Periodic Summary | 用户点击后前台生成 summary note preview | 终态迁移到 Recap 的时间范围回顾；退役独立 Periodic Summary 产品概念 |
+| Scope Recap | 用户触发的 source-backed derived recap | 保留并升级为 Recap Delivery 的核心 substrate |
+| Background Preparation / Preload | 后台生成 generic review findings | 保留机制，但输出应逐步收敛为 `DeliveryCandidate[]` |
+
+### Task 6.0: 能力盘点与入口矩阵
+
+**文件**: 文档为主；必要时只读检查 `src/pagelet/*`, `src/pa/*`, `src/plugin.ts`
+
+输出：
+- Periodic Summary / Scope Recap / Preload / Quiet Recall / Pattern Detection
+  的入口、触发条件、输出对象、缓存策略、Panel/Tab 落点矩阵
+- 标记哪些入口是重复的，哪些只是命名/触发方式混乱
+- 不做 runtime 删除
+
+### Task 6.1: 定义 DeliveryCandidate 合同
+
+**文件**: SDD 阶段先写入
+`docs/pagelet-bubble-readiness-and-recall-sdd.md`
+
+合同字段：
+- `id`
+- `kind`: `recall | recap | pattern | review`
+- `title`
+- `body`
+- `sourceRefs`
+- `whyNow`
+- `preparedAt`
+- `staleStatus`
+- `actions`
+- `route`
+
+Bubble、Panel、Tab 只消费 delivery candidate，不直接暴露旧功能边界。
+
+### Task 6.2: Bubble 单卡可见卡片栈
+
+**文件**: `src/pagelet/bubble/*`, `src/custom.pcss`
+
+规则：
+- 默认只显示最高质量 1 张
+- 多候选时最多 3 张，通过桌面箭头/圆点和移动端横向 swipe 切换
+- 不自动轮播，不显示强未处理数量
+- 每张卡的 action 只作用于当前 active card
+- 支持 reduced motion
+
+### Task 6.3: Quiet Recall 适配 DeliveryCandidate
+
+**文件**: `src/pa/quiet-recall.ts`, `src/pagelet/orchestrator.ts`,
+`src/pagelet/bubble/*`
+
+要求：
+- 优先复用现有 `QuietRecallCandidate` / `QuietRecallBubbleNudge`
+- 不平行创建无法和 dismiss/later/feedback/link/save 兼容的新 result 模型
+- Bubble actions：`Open` primary，`Link to current` secondary，`Later`
+  tertiary
+- `Save as insight` 留在 Panel/Tab detail，不进入 Bubble
+
+### Task 6.4: Recap Delivery prepared artifact
+
+**文件**: `src/pa/scope-recap.ts`, `src/pagelet/orchestrator.ts`,
+`src/pagelet/bubble/recap-card.ts`, `src/pagelet/bubble/*`
+
+要求：
+- Recap Delivery 只能来自已准备好的 source-backed recap artifact
+- prepared artifact 使用本地 derived cache，信息量必须足够支撑 Panel/Tab 详情
+  （recap items、sourceRefs、coverage、staleStatus、preparedAt、scope/range、
+  skipped sources）
+- 不保存完整 raw provider output，不自动写 Markdown；只有用户明确保存时才导出
+  recap note
+- 默认 scope 是 current context + time range，不是全库 daily/weekly summary
+- 允许触发信号：Pagelet 打开、当前 note 保存、低频 idle preparation
+- Runtime 使用本地 derived cache 承载 prepared recap artifact；Bubble 只在该
+  artifact 存在且 fresh/high-coverage 时展示 Recap Delivery
+- 如果没有 prepared recap，Bubble 不展示 Recap CTA
+- 点击 `View recap` 打开 Panel/Tab 详情，不在 Bubble 展开全文
+
+### Task 6.5: Periodic Summary 终态迁移
+
+**状态**：runtime 迁移已实现；旧入口直接删除，不保留 alias/redirect。
+
+目标：
+- 将 Periodic Summary 的用户价值迁移到 Recap 的时间范围回顾模式
+- 退役独立 `Periodic Summary` 产品概念，避免与 Recap/Recap Delivery
+  形成两个“回顾”心智
+- 审计并迁移 command palette、Panel/Tab 入口、locale strings、测试、
+  文档和 release note
+- 旧 `PA: Generate summary` / Periodic Summary 入口面向终态直接删除；不做
+  迁移期 alias 或 redirect
+
+非目标：
+- 不在 Bubble 中放回 `Generate summary` CTA
+- 不自动写入 Markdown summary
+- 不把 Periodic Summary 作为独立后台任务继续扩展
+
+### 验证
+
+```bash
+npm test -- --runInBand
+npx tsc -noEmit -skipLibCheck
+git diff --check
+rg -n "createElement\([\"']style[\"']\)|\.innerHTML\s*=|\.outerHTML\s*=" src
+make deploy  # Bubble/UI runtime 阶段需要真实 Obsidian smoke
+```
 
 ## 每个 Phase 的完成标准
 

@@ -11,23 +11,19 @@
  * dependencies through the constructor.
  */
 
-import { getPageletUiLanguage } from "../locales/pagelet";
+import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
-import type { BubbleContent, BubbleFinding, BubbleQuickAccessCallbacks } from "./bubble/types";
+import type { BubbleContent, BubbleFinding, BubbleStateCallbacks, DeliveryCandidate, InlineContextHint } from "./bubble/types";
 import type { BubbleView } from "./bubble/BubbleView";
-import { buildEmptyContent, buildNudgeContent, buildOnboardingContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildQuickReviewContent, buildQuietRecallNudgeContent, buildReviewQueueNudgeContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
+import { buildContextLimitedContent, buildEmptyContent, buildIntentionallyQuietContent, buildNeedsSetupContent, buildOnboardingNudgeContent, buildPatternDetectionNudgeContent, buildPreparedRecapDeliveryContent, buildPreparingContent, buildQuietRecallNudgeContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent, buildReadyEmptyContent, buildWritingAssistContent, type OnboardingNudge } from "./bubble/BubbleContent";
+import { quietRecallCandidateToDeliveryCandidate } from "./bubble/recall-card";
+import { resolveBubbleExplanationState } from "./bubble/state-resolver";
 import type { PreloadCache } from "./preload/PreloadCache";
 import type { PreloadFinding } from "./preload/types";
 import type { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetView } from "./pet/PetView";
 import type { PageletHost } from "./PageletHost";
-import { isReviewQueueBubbleReminderEligible, type PatternDetectionResult, type QuietRecallBubbleNudge, type ReviewQueueStatus } from "../pa";
-
-const REVIEW_QUEUE_BUBBLE_REMINDER_STATUSES = [
-    "accepted",
-    "edited",
-    "snoozed",
-] as const satisfies readonly ReviewQueueStatus[];
+import type { PatternDetectionResult, QuietRecallBubbleNudge, QuietRecallCandidate } from "../pa";
 
 // ---------------------------------------------------------------------------
 // Callbacks the coordinator fires back at the orchestrator
@@ -44,14 +40,14 @@ export interface BubbleCoordinatorCallbacks {
     onReviewCurrentNote(): void;
     /** Trigger note-connection discovery. */
     onDiscoverConnections(): void;
-    /** Generate a periodic summary. */
-    onPeriodicSummary(): void;
     /** Return a one-time onboarding bridge nudge, if pending. */
     getOnboardingNudge(): OnboardingNudge | null;
     /** Dismiss a one-time onboarding bridge nudge. */
     onOnboardingNudgeDismiss(nudge: OnboardingNudge): void;
     /** Return the current local Quiet Recall Bubble nudge candidate, if one is pending. */
     getQuietRecallNudge(): QuietRecallBubbleNudge | null;
+    /** Return the complete Quiet Recall candidate for delivery rendering, if available. */
+    getQuietRecallCandidate(): QuietRecallCandidate | null;
     /** Open the existing Quiet Recall detail surface from the Bubble nudge. */
     onQuietRecallView(candidate: QuietRecallBubbleNudge): void;
     /** Link the current note and this Quiet Recall candidate. */
@@ -63,6 +59,9 @@ export interface BubbleCoordinatorCallbacks {
     getPatternDetectionNudge(): PatternDetectionResult | null;
     onPatternDetectionView(result: PatternDetectionResult): void;
     onPatternDetectionDismiss(result: PatternDetectionResult): void;
+    getPreparedRecapCandidate(): (DeliveryCandidate & { kind: "recap" }) | null;
+    onPreparedRecapView(candidate: DeliveryCandidate & { kind: "recap" }): void;
+    onPreparedRecapLater(candidate: DeliveryCandidate & { kind: "recap" }): void;
 }
 
 // ---------------------------------------------------------------------------
@@ -72,10 +71,16 @@ export interface BubbleCoordinatorCallbacks {
 export class BubbleCoordinator {
     constructor(
         private readonly host: PageletHost,
-        private readonly preloadCache: PreloadCache,
+        _preloadCache: PreloadCache,
         private readonly proactiveHints: ProactiveHints,
         private readonly callbacks: BubbleCoordinatorCallbacks,
     ) {}
+
+    private memoryReadySnapshot: boolean | null = null;
+    private memoryReadinessRefreshInFlight = false;
+    private lastAnchorEl: HTMLElement | null = null;
+    private discoverRunId = 0;
+    private discoverInFlightKey: string | null = null;
 
     // ======================================================================
     // Pet-click entry point
@@ -93,6 +98,7 @@ export class BubbleCoordinator {
 
         // If bubble is already visible, close it (toggle)
         if (bubbleView.bubbleState === "visible") {
+            this.invalidateDiscoverRun();
             bubbleView.close();
             return;
         }
@@ -113,11 +119,12 @@ export class BubbleCoordinator {
     // Bubble content builders
     // ======================================================================
 
-    private buildQuickAccessCallbacks(bubbleView: BubbleView): BubbleQuickAccessCallbacks {
+    private buildStateCallbacks(bubbleView: BubbleView): BubbleStateCallbacks {
         return {
             onExpandPanel: (type) => this.callbacks.onExpandPanel(type ?? ""),
             onSourceClick: (link) => this.callbacks.onSourceClick(link),
             onDismiss: () => {
+                this.invalidateDiscoverRun();
                 bubbleView.close();
                 this.callbacks.onDismiss();
             },
@@ -126,12 +133,21 @@ export class BubbleCoordinator {
                 this.callbacks.onReviewCurrentNote();
             },
             onDiscoverConnections: () => {
-                bubbleView.close();
-                this.callbacks.onDiscoverConnections();
+                void this.handleDiscoverFromBubble(bubbleView);
             },
-            onPeriodicSummary: () => {
+            onPrepareMemory: () => {
                 bubbleView.close();
-                this.callbacks.onPeriodicSummary();
+                void Promise.resolve(this.host.prepareMemoryForPagelet()).catch((error) => {
+                    this.host.log("Pagelet Memory preparation failed", error);
+                });
+            },
+            onQuickCapture: () => {
+                bubbleView.close();
+                this.host.openQuickCapture();
+            },
+            onOpenSettings: () => {
+                bubbleView.close();
+                this.host.openPageletSettings();
             },
         };
     }
@@ -146,60 +162,40 @@ export class BubbleCoordinator {
     ): void {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return;
+        this.invalidateDiscoverRun();
+        this.lastAnchorEl = anchorEl;
 
         const locale = getPageletUiLanguage();
-        const cachedFindings = this.preloadCache.getFindings();
-        const quickAccessCallbacks = this.buildQuickAccessCallbacks(bubbleView);
-
-        if (!this.host.settings.pagelet.onboardingShown && cachedFindings.length === 0) {
-            const content = buildOnboardingContent(() => {
-                this.host.updatePageletSetting("onboardingShown", true);
-                bubbleView.close();
-            }, locale);
-            bubbleView.show(content, anchorEl);
-            return;
-        }
-
-        if (!this.host.settings.pagelet.onboardingShown) {
-            this.host.updatePageletSetting("onboardingShown", true);
-        }
+        const stateCallbacks = this.buildStateCallbacks(bubbleView);
+        this.refreshMemoryReadinessSnapshot(bubbleView, petView);
 
         let content: BubbleContent;
-        if (cachedFindings.length > 0) {
-            const findings: BubbleFinding[] = cachedFindings.map((f) => ({
-                text: f.text,
-                sourceLink: f.sourceFile,
-                sourceTitle: f.sourceTitle,
-            }));
-            content = buildQuickReviewContent(findings, quickAccessCallbacks, locale);
+        const preparedRecap = this.callbacks.getPreparedRecapCandidate();
+        if (preparedRecap) {
+            content = buildPreparedRecapDeliveryContent(preparedRecap, {
+                onViewRecap: (candidate) => {
+                    bubbleView.close();
+                    this.callbacks.onPreparedRecapView(candidate);
+                },
+                onLater: (candidate) => {
+                    bubbleView.close();
+                    this.callbacks.onPreparedRecapLater(candidate);
+                },
+            }, locale);
         } else {
-            const queueCount = this.keptReviewQueueItemCount();
-            content = queueCount > 0
-                ? buildReviewQueueNudgeContent(queueCount, quickAccessCallbacks, locale)
-                : buildEmptyContent(quickAccessCallbacks, locale);
+            content = this.buildRegularBubbleContent(bubbleView, stateCallbacks, locale);
         }
+        this.applyInlineHint(content, locale);
 
         bubbleView.show(content, anchorEl);
+        this.acknowledgeIntentionallyQuietIfNeeded(content);
     }
 
-    private buildReviewQueueAwareNudge(
-        cachedFindings: PreloadFinding[],
-        callbacks: ReturnType<BubbleCoordinator["buildQuickAccessCallbacks"]>,
+    private buildRegularBubbleContent(
+        bubbleView: BubbleView,
+        callbacks: BubbleStateCallbacks,
         locale: ReturnType<typeof getPageletUiLanguage>,
     ): BubbleContent {
-        if (cachedFindings.length > 0) {
-            const findings: BubbleFinding[] = cachedFindings.map((f) => ({
-                text: f.text,
-                sourceLink: f.sourceFile,
-                sourceTitle: f.sourceTitle,
-            }));
-            return buildNudgeContent(findings, callbacks, locale);
-        }
-        const queueCount = this.keptReviewQueueItemCount();
-        if (queueCount > 0) {
-            return buildReviewQueueNudgeContent(queueCount, callbacks, locale);
-        }
-
         const onboardingContent = buildOnboardingNudgeContent({
             pageletEnabled: this.host.settings.pagelet.enabled,
             proactiveHints: this.host.settings.pagelet.proactiveHints,
@@ -214,28 +210,64 @@ export class BubbleCoordinator {
 
         if (onboardingContent) return onboardingContent;
 
+        const quietRecallCandidate = this.callbacks.getQuietRecallCandidate();
+        const quietRecallNudge = this.callbacks.getQuietRecallNudge();
+        if (
+            quietRecallCandidate
+            && quietRecallNudge
+            && this.host.settings.pagelet.enabled
+            && this.host.settings.quietRecall.enabled
+            && this.host.settings.quietRecall.bubbleNudgesEnabled
+            && this.host.settings.pagelet.proactiveHints
+            && !this.proactiveHints.quietHoursActive
+        ) {
+            const deliveryCandidate = quietRecallCandidateToDeliveryCandidate(quietRecallCandidate);
+            const quietRecallContent = buildRecallDeliveryContent(deliveryCandidate, {
+                onOpen: () => {
+                    bubbleView.close();
+                    this.callbacks.onQuietRecallView(quietRecallNudge);
+                },
+                onLinkToCurrent: () => {
+                    bubbleView.close();
+                    this.callbacks.onQuietRecallLink(quietRecallNudge);
+                },
+                onLater: () => {
+                    bubbleView.close();
+                    this.callbacks.onQuietRecallLater(quietRecallNudge);
+                },
+            }, locale);
+            if (quietRecallNudge.onboardingExplanation) {
+                quietRecallContent.inlineHint = {
+                    text: quietRecallContent.inlineHint?.text
+                        ?? pageletT("pagelet.onboarding.quietRecall", locale),
+                    icon: "info",
+                };
+            }
+            return quietRecallContent;
+        }
+
         const quietRecallContent = buildQuietRecallNudgeContent({
             pageletEnabled: this.host.settings.pagelet.enabled,
             quietRecallEnabled: this.host.settings.quietRecall.enabled,
             bubbleNudgesEnabled: this.host.settings.quietRecall.bubbleNudgesEnabled,
             proactiveHints: this.host.settings.pagelet.proactiveHints,
             quietHoursActive: this.proactiveHints.quietHoursActive,
-            candidate: this.callbacks.getQuietRecallNudge(),
+            candidate: quietRecallNudge,
         }, {
             onView: (candidate) => {
-                callbacks.onDismiss();
+                bubbleView.close();
                 this.callbacks.onQuietRecallView(candidate);
             },
             onLink: (candidate) => {
-                callbacks.onDismiss();
+                bubbleView.close();
                 this.callbacks.onQuietRecallLink(candidate);
             },
             onDismiss: (candidate) => {
-                callbacks.onDismiss();
+                bubbleView.close();
                 this.callbacks.onQuietRecallDismiss(candidate);
             },
             onLater: (candidate) => {
-                callbacks.onDismiss();
+                bubbleView.close();
                 this.callbacks.onQuietRecallLater(candidate);
             },
         }, locale);
@@ -258,13 +290,221 @@ export class BubbleCoordinator {
             },
         }, locale);
 
-        return patternContent ?? buildEmptyContent(callbacks, locale);
+        return patternContent ?? this.buildExplanationContent(callbacks, locale);
     }
 
-    private keptReviewQueueItemCount(): number {
-        return this.host.listReviewQueueItems({
-            statuses: REVIEW_QUEUE_BUBBLE_REMINDER_STATUSES,
-        }).filter(isReviewQueueBubbleReminderEligible).length;
+    private buildExplanationContent(
+        callbacks: BubbleStateCallbacks,
+        locale: ReturnType<typeof getPageletUiLanguage>,
+    ): BubbleContent {
+        const state = resolveBubbleExplanationState(this.buildStateContext());
+        switch (state) {
+            case "needs-setup":
+                return buildNeedsSetupContent(callbacks, locale);
+            case "preparing":
+                return buildPreparingContent(this.memoryPreparationProgress(), locale);
+            case "context-limited-short":
+                return buildContextLimitedContent("short", callbacks, locale);
+            case "context-limited-boundary":
+                return buildContextLimitedContent("boundary", callbacks, locale);
+            case "intentionally-quiet":
+                return buildIntentionallyQuietContent(
+                    callbacks,
+                    this.host.settings.pagelet.quietAcknowledged,
+                    locale,
+                );
+            case "ready-empty":
+            default:
+                return buildReadyEmptyContent(callbacks, locale);
+        }
+    }
+
+    private buildStateContext(): Parameters<typeof resolveBubbleExplanationState>[0] {
+        const activeFile = this.host.app?.workspace?.getActiveFile?.() as
+            | { path?: string; extension?: string; stat?: { size?: number } }
+            | null
+            | undefined;
+        const path = typeof activeFile?.path === "string" ? activeFile.path : "";
+        const isMarkdownNote = activeFile?.extension === "md";
+        const preparationStatus = this.host.getMemoryPreparationStatus?.() ?? null;
+        return {
+            memoryReady: this.memoryReadySnapshot ?? false,
+            memoryPreparing: Boolean(preparationStatus),
+            proactiveHintsEnabled: this.host.settings.pagelet.proactiveHints,
+            isMarkdownNote,
+            noteContentLength: typeof activeFile?.stat?.size === "number" ? activeFile.stat.size : 0,
+            isDataBoundaryExcluded: isMarkdownNote && path.length > 0
+                ? !this.host.isPathAllowedForPagelet(path)
+                : false,
+            pageletEnabled: this.host.settings.pagelet.enabled,
+        };
+    }
+
+    private memoryPreparationProgress(): { current: number; total: number } | null {
+        const status = this.host.getMemoryPreparationStatus?.() ?? null;
+        if (!status) return null;
+        const total = status.filesTotal ?? status.chunksTotal;
+        const current = status.filesDone ?? status.chunksEmbedded;
+        if (typeof total !== "number" || total <= 0) return null;
+        if (typeof current !== "number" || current < 0) return null;
+        return { current, total };
+    }
+
+    private applyInlineHint(
+        content: BubbleContent,
+        locale: ReturnType<typeof getPageletUiLanguage>,
+    ): void {
+        if (!this.isDeliveryContent(content)) return;
+        if (!this.host.getMemoryPreparationStatus?.()) return;
+        if (content.inlineHint) return;
+        content.inlineHint = this.memoryPreparingInlineHint(locale);
+    }
+
+    private isDeliveryContent(content: BubbleContent): boolean {
+        return content.type === "recall-delivery"
+            || content.type === "recap-delivery"
+            || content.type === "pattern-delivery"
+            || content.type === "quick-review";
+    }
+
+    private memoryPreparingInlineHint(locale: ReturnType<typeof getPageletUiLanguage>): InlineContextHint {
+        return {
+            text: pageletT("pagelet.bubble.inlineHint.preparing", locale),
+            icon: "info",
+        };
+    }
+
+    private acknowledgeIntentionallyQuietIfNeeded(content: BubbleContent): void {
+        if (content.type !== "intentionally-quiet") return;
+        if (this.host.settings.pagelet.quietAcknowledged) return;
+        this.host.updatePageletSetting("quietAcknowledged", true);
+    }
+
+    private refreshMemoryReadinessSnapshot(
+        bubbleView: BubbleView,
+        petView: PetView | null,
+    ): void {
+        if (this.memoryReadinessRefreshInFlight) return;
+        this.memoryReadinessRefreshInFlight = true;
+        void this.host.isMemoryReadyForPageletDiscovery()
+            .then((ready) => {
+                const changed = this.memoryReadySnapshot !== ready;
+                this.memoryReadySnapshot = ready;
+                if (changed && bubbleView.bubbleState === "visible") {
+                    this.showBubble(bubbleView, petView);
+                }
+            })
+            .catch((error) => {
+                this.host.log("Pagelet Memory readiness refresh failed", error);
+            })
+            .finally(() => {
+                this.memoryReadinessRefreshInFlight = false;
+            });
+    }
+
+    private async handleDiscoverFromBubble(bubbleView: BubbleView): Promise<void> {
+        const anchorEl = this.currentBubbleAnchor();
+        if (!anchorEl) {
+            this.callbacks.onDiscoverConnections();
+            return;
+        }
+        const expectedPath = this.currentActivePath();
+        const runKey = expectedPath ?? "__no-active-path__";
+        const locale = getPageletUiLanguage();
+        bubbleView.show({
+            type: "ready-empty",
+            findings: [{ text: pageletT("pagelet.bubble.discover.loading", locale) }],
+            actions: [],
+        }, anchorEl);
+
+        if (this.discoverInFlightKey === runKey) return;
+
+        const runId = ++this.discoverRunId;
+        this.discoverInFlightKey = runKey;
+        const canPublish = (): boolean => {
+            if (runId !== this.discoverRunId) return false;
+            if (bubbleView.bubbleState !== "visible") return false;
+            return !expectedPath || this.currentActivePath() === expectedPath;
+        };
+        const closeIfStale = (): void => {
+            if (runId !== this.discoverRunId) return;
+            if (bubbleView.bubbleState === "visible") bubbleView.close();
+        };
+
+        try {
+            const recall = await this.host.runQuietRecall();
+            if (!canPublish()) {
+                closeIfStale();
+                return;
+            }
+            const candidates = recall.candidates
+                .filter((candidate) => candidate.score >= 65 && candidate.sourceRefs.length > 0)
+                .slice(0, 3)
+                .map(quietRecallCandidateToDeliveryCandidate);
+            if (candidates.length === 0) {
+                if (!canPublish()) {
+                    closeIfStale();
+                    return;
+                }
+                bubbleView.show({
+                    type: "ready-empty",
+                    findings: [{ text: pageletT("pagelet.bubble.discover.noResults", locale) }],
+                    actions: [buildReadyEmptyContent(this.buildStateCallbacks(bubbleView), locale).actions[0]],
+                }, anchorEl);
+                return;
+            }
+            const content = buildRecallDeliveryStackContent(candidates, {
+                onOpen: (candidate) => {
+                    const sourcePath = candidate.sourceRefs[0]?.path;
+                    bubbleView.close();
+                    if (sourcePath) this.callbacks.onSourceClick(sourcePath);
+                },
+                onLinkToCurrent: (candidate) => {
+                    const currentPath = expectedPath;
+                    const sourcePath = candidate.sourceRefs[0]?.path;
+                    bubbleView.close();
+                    if (currentPath && sourcePath) {
+                        void this.host.linkRecallCandidate(currentPath, sourcePath).catch((error) => {
+                            this.host.log("Pagelet Bubble recall link failed", error);
+                        });
+                    }
+                },
+                onLater: () => {
+                    bubbleView.close();
+                },
+            }, locale);
+            this.applyInlineHint(content, locale);
+            if (!canPublish()) {
+                closeIfStale();
+                return;
+            }
+            bubbleView.show(content, anchorEl);
+        } catch (error) {
+            if (!canPublish()) {
+                closeIfStale();
+                return;
+            }
+            this.host.log("Pagelet Bubble discover recall failed", error);
+            this.callbacks.onDiscoverConnections();
+        } finally {
+            if (runId === this.discoverRunId) {
+                this.discoverInFlightKey = null;
+            }
+        }
+    }
+
+    private currentBubbleAnchor(): HTMLElement | null {
+        return this.lastAnchorEl;
+    }
+
+    private invalidateDiscoverRun(): void {
+        this.discoverRunId += 1;
+        this.discoverInFlightKey = null;
+    }
+
+    private currentActivePath(): string | null {
+        const file = this.host.app?.workspace?.getActiveFile?.() as { path?: string } | null | undefined;
+        return typeof file?.path === "string" ? file.path : null;
     }
 
     /**
@@ -276,24 +516,17 @@ export class BubbleCoordinator {
     ): void {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return;
+        this.invalidateDiscoverRun();
+        this.lastAnchorEl = anchorEl;
 
         const locale = getPageletUiLanguage();
-        const quickAccessCallbacks = this.buildQuickAccessCallbacks(bubbleView);
-        const cachedFindings = this.preloadCache.getFindings();
-        if (cachedFindings.length === 0) {
-            const content = this.buildReviewQueueAwareNudge(cachedFindings, quickAccessCallbacks, locale);
-            bubbleView.show(content, anchorEl);
-            return;
-        }
-        const findings: BubbleFinding[] = cachedFindings.map((f) => ({
-            text: f.text,
-            sourceLink: f.sourceFile,
-            sourceTitle: f.sourceTitle,
-        }));
-
-        const content = buildNudgeContent(findings, quickAccessCallbacks, locale);
+        const stateCallbacks = this.buildStateCallbacks(bubbleView);
+        this.refreshMemoryReadinessSnapshot(bubbleView, petView);
+        const content = this.buildRegularBubbleContent(bubbleView, stateCallbacks, locale);
+        this.applyInlineHint(content, locale);
 
         bubbleView.show(content, anchorEl);
+        this.acknowledgeIntentionallyQuietIfNeeded(content);
     }
 
     /**
@@ -307,9 +540,10 @@ export class BubbleCoordinator {
     ): void {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return;
+        this.lastAnchorEl = anchorEl;
 
         const locale = getPageletUiLanguage();
-        const quickAccessCallbacks = this.buildQuickAccessCallbacks(bubbleView);
+        const stateCallbacks = this.buildStateCallbacks(bubbleView);
 
         if (rawFindings.length > 0) {
             const findings: BubbleFinding[] = rawFindings.map((f) => ({
@@ -327,7 +561,7 @@ export class BubbleCoordinator {
             }, locale);
             bubbleView.show(content, anchorEl);
         } else {
-            const content = buildEmptyContent(quickAccessCallbacks, locale);
+            const content = buildEmptyContent(stateCallbacks, locale);
             bubbleView.show(content, anchorEl);
         }
     }

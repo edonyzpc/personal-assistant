@@ -551,13 +551,13 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).not.toContain("No findings yet");
     });
 
-    it("renders periodic summary markdown in the native detail tab", async () => {
+    it("renders recap markdown in the native detail tab", async () => {
         const view = new PageletDetailView({} as never, () => "en");
         const markdown = [
-            "# Periodic Summary",
+            "# Scope Recap",
             "",
             "## Summary",
-            "A concise periodic summary.",
+            "A concise source-backed recap.",
             "",
             "- First insight",
         ].join("\n");
@@ -568,11 +568,11 @@ describe("Pagelet panel and tab view regressions", () => {
             locale: "en",
             layoutType: "summary",
             content: [{
-                title: "pagelet-weekly-review.md",
+                title: "scope-recap.md",
                 description: "Raw finding text should not render in the summary tab.",
             }],
             extra: { markdown },
-            sourcePath: ".pagelet/pagelet-weekly-review.md",
+            sourcePath: ".pagelet/scope-recap.md",
         });
 
         const contentEl = view.contentEl as unknown as FakeElement;
@@ -581,12 +581,12 @@ describe("Pagelet panel and tab view regressions", () => {
             expect.anything(),
             markdown,
             expect.anything(),
-            ".pagelet/pagelet-weekly-review.md",
+            ".pagelet/scope-recap.md",
             expect.anything(),
         );
         expect(contentEl.querySelector(".pa-pagelet-panel-summary-preview")).not.toBeNull();
-        expect(contentEl.textContent).toContain("Periodic Summary Preview");
-        expect(contentEl.textContent).toContain("A concise periodic summary.");
+        expect(contentEl.textContent).toContain("Recap Preview");
+        expect(contentEl.textContent).toContain("A concise source-backed recap.");
         expect(contentEl.textContent).not.toContain("1 findings found");
         expect(contentEl.textContent).not.toContain("Raw finding text should not render");
     });
@@ -1050,19 +1050,19 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(tabContainer.textContent).toContain("Recall saved as insight.");
     });
 
-    it("saves periodic summary markdown from the native detail tab", async () => {
-        const markdown = "# Periodic Summary\n\nA concise periodic summary.";
+    it("saves recap markdown from the native detail tab", async () => {
+        const markdown = "# Scope Recap\n\nA concise source-backed recap.";
         const summarySaveNote = {
-            fileName: "pagelet-weekly-review.md",
+            fileName: "scope-recap.md",
             markdown,
             targetFolder: ".pagelet",
-            targetPath: ".pagelet/pagelet-weekly-review.md",
+            targetPath: ".pagelet/scope-recap.md",
             sources: ["notes/current.md"],
             tokenCost: { input: 1, output: 2 },
         };
         const saveSummary = jest.fn(async (_note: typeof summarySaveNote) => ({
             success: true,
-            filePath: ".pagelet/pagelet-weekly-review.md",
+            filePath: ".pagelet/scope-recap.md",
         }));
         const view = new PageletDetailView({} as never, () => "en", saveSummary);
 
@@ -1094,12 +1094,12 @@ describe("Pagelet panel and tab view regressions", () => {
     });
 
     it("restores unsaved summary markdown from the in-memory native detail session", async () => {
-        const markdown = "# Periodic Summary\n\nA concise periodic summary.";
+        const markdown = "# Scope Recap\n\nA concise source-backed recap.";
         const summarySaveNote = {
-            fileName: "pagelet-weekly-review.md",
+            fileName: "scope-recap.md",
             markdown,
             targetFolder: ".pagelet",
-            targetPath: ".pagelet/pagelet-weekly-review.md",
+            targetPath: ".pagelet/scope-recap.md",
             sources: ["notes/current.md"],
             tokenCost: { input: 1, output: 2 },
         };
@@ -1127,8 +1127,8 @@ describe("Pagelet panel and tab view regressions", () => {
         await restored.setState(state, {} as never);
 
         const contentEl = restored.contentEl as unknown as FakeElement;
-        expect(contentEl.textContent).toContain("Periodic Summary Preview");
-        expect(contentEl.textContent).toContain("A concise periodic summary.");
+        expect(contentEl.textContent).toContain("Recap Preview");
+        expect(contentEl.textContent).toContain("A concise source-backed recap.");
         expect(contentEl.textContent).not.toContain("Result no longer available");
     });
 

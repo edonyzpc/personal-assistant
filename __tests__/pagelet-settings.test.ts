@@ -248,7 +248,6 @@ describe("mergePageletSettings", () => {
             preloadPerHourCap: 2,
             preloadPerDayCap: 20,
             preloadTokenBudget: { input: 4000, output: 1000 },
-            periodicSummaryScope: "7d",
             excludedFolders: [],
             excludedTags: [],
             excludedPatterns: [],
@@ -259,6 +258,7 @@ describe("mergePageletSettings", () => {
             maintenanceScanSuggested: true,
             quickCaptureExplained: true,
             quietRecallExplained: true,
+            quietAcknowledged: true,
         };
         expect(mergePageletSettings(persisted)).toEqual(persisted);
     });
@@ -726,7 +726,7 @@ describe("renderPageletSection", () => {
 
         renderPageletSection(parent as unknown as HTMLElement, host, factory, "en");
 
-        expect(rows).toHaveLength(25);
+        expect(rows).toHaveLength(24);
         expect(rows.map((r) => r.name)).toEqual([
             "Enable Pagelet",
             "Reviews folder",
@@ -746,8 +746,6 @@ describe("renderPageletSection", () => {
             "Per-day preparation cap",
             "Preparation input token budget",
             "Preparation output token budget",
-            // Reviews
-            "Periodic summary scope",
             // Exclusions
             "Excluded folders",
             "Excluded tags",

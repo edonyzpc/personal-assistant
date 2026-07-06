@@ -192,8 +192,8 @@ export {
 export { PetView, PetStateMachine, updatePetSvgState } from "./pet";
 export type { PetState, PetTaskKind, PetCorner, PetEvent, PetCallbacks, PetRenderer, PetRendererOptions, PetStateListener } from "./pet";
 
-export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent } from "./bubble";
-export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCallbacks, BubbleQuickAccessCallbacks, BubbleViewOptions } from "./bubble";
+export { BubbleView, buildQuickReviewContent, buildWritingAssistContent, buildDiscoveryContent, buildNudgeContent, buildEmptyContent, buildIntentionallyQuietContent, buildPreparedRecapDeliveryContent, buildRecallDeliveryContent, buildRecallDeliveryStackContent } from "./bubble";
+export type { BubbleState, BubbleContentType, BubbleFinding, BubbleContent, BubbleAction, BubbleCard, BubbleCallbacks, BubbleQuickAccessCallbacks, BubbleStateCallbacks, BubbleViewOptions, BubbleExplanationState, DeliveryCandidate, DeliveryCandidateKind, DeliveryCandidateRoute, DeliveryCandidateSourceRef, DeliveryCandidateStaleStatus, InlineContextHint } from "./bubble";
 
 export { PreloadEngine, PreloadCache, PreloadBudget } from "./preload";
 export type { PreloadFinding, PreloadResult, PreloadCacheEntry, PreloadConfig, PreloadErrorCategory, PreloadEvent, AnalyzeCallback } from "./preload";
@@ -204,10 +204,9 @@ export type { ScopeCandidate, ExclusionReason, ScopeResult, ScopeConfig } from "
 export { ProactiveHints } from "./hints";
 export type { ProactiveHintsConfig } from "./hints";
 
-export { ReviewNoteGenerator } from "./output";
-export type { PeriodicSummaryInput, GeneratedReviewNote, GenerateCallback, WriteResult } from "./output";
+export type { GeneratedReviewNote, WriteResult } from "./output";
 
-export { registerPageletCommands, PAGELET_OPEN_PANEL_COMMAND_ID, PAGELET_REVIEW_CURRENT_COMMAND_ID, PAGELET_QUICK_REVIEW_COMMAND_ID, PAGELET_DISCOVER_COMMAND_ID, PAGELET_PERIODIC_SUMMARY_COMMAND_ID, PAGELET_MAINTENANCE_REVIEW_COMMAND_ID, PAGELET_QUIET_RECALL_COMMAND_ID, PAGELET_GRAPH_DISCOVERY_COMMAND_ID, PAGELET_SCOPE_RECAP_COMMAND_ID, PAGELET_TOGGLE_HINTS_COMMAND_ID, PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID, PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID, PAGELET_MOVE_PET_COMMAND_ID, PAGELET_TOGGLE_PET_COMMAND_ID } from "./commands";
+export { registerPageletCommands, PAGELET_OPEN_PANEL_COMMAND_ID, PAGELET_REVIEW_CURRENT_COMMAND_ID, PAGELET_QUICK_REVIEW_COMMAND_ID, PAGELET_DISCOVER_COMMAND_ID, PAGELET_MAINTENANCE_REVIEW_COMMAND_ID, PAGELET_QUIET_RECALL_COMMAND_ID, PAGELET_GRAPH_DISCOVERY_COMMAND_ID, PAGELET_SCOPE_RECAP_COMMAND_ID, PAGELET_TOGGLE_HINTS_COMMAND_ID, PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID, PAGELET_BACKGROUND_PREPARATION_STATUS_COMMAND_ID, PAGELET_MOVE_PET_COMMAND_ID, PAGELET_TOGGLE_PET_COMMAND_ID } from "./commands";
 export type { PageletCommandCallbacks } from "./commands";
 
 export { PageletOrchestrator } from "./orchestrator";
@@ -216,7 +215,6 @@ export type { PageletHost } from "./PageletHost";
 export {
     buildPreloadPrompt,
     buildDiscoveryPrompt,
-    buildPeriodicSummaryPrompt,
     parseStructuredResponse,
 } from "./llm";
 export type { PromptScenario, StructuredFinding, StructuredLLMResponse, PromptBuildResult } from "./llm";

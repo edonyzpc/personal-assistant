@@ -3,15 +3,10 @@
 /**
  * Pagelet — output module barrel exports.
  *
- * Re-exports the Periodic Summary (Scenario 4) pipeline components:
- *  - Types: PeriodicSummaryInput, GeneratedReviewNote, GenerateCallback, WriteResult
- *  - ReviewNoteGenerator: generates a review note from scope-resolved files
+ * Re-exports generated-review-note types used by Pagelet write flows.
  */
 
-export { ReviewNoteGenerator } from "./ReviewNoteGenerator";
 export type {
-    GenerateCallback,
     GeneratedReviewNote,
-    PeriodicSummaryInput,
     WriteResult,
 } from "./types";

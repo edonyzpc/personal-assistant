@@ -9,7 +9,7 @@
  *   - review:   Timeline of recent note activity with AI insights.
  *   - current:  Current note AI analysis.
  *   - discover: Connection map and related notes.
- *   - summary:  Periodic summary preview.
+ *   - summary:  Recap or generated review markdown preview.
  *
  * Mobile mode (`body.is-mobile`):
  *   Full-screen overlay that slides up from the bottom.

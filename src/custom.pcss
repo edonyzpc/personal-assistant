@@ -3203,6 +3203,116 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 	text-decoration: underline;
 }
 
+.pa-pagelet-bubble-inline-hint {
+	display: flex;
+	align-items: flex-start;
+	gap: 8px;
+	margin: -4px 42px 12px 19px;
+	color: var(--text-muted,#999);
+	font-size: 12px;
+	line-height: 1.35;
+}
+
+.pa-pagelet-bubble-inline-hint[hidden] {
+	display: none;
+}
+
+.pa-pagelet-bubble-inline-hint-icon {
+	display: inline-flex;
+	flex: 0 0 auto;
+	width: 15px;
+	height: 15px;
+	margin-top: 1px;
+	color: var(--text-accent,#7f6df2);
+}
+
+.pa-pagelet-bubble-inline-hint-icon svg {
+	width: 15px;
+	height: 15px;
+	stroke-width: 2;
+}
+
+.pa-pagelet-bubble-inline-hint-text {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-bubble-stack-nav {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 10px;
+	margin: -2px 42px 12px 0;
+}
+
+.pa-pagelet-bubble-stack-nav[hidden] {
+	display: none;
+}
+
+.pa-pagelet-bubble-stack-btn,
+.pa-pagelet-bubble-stack-dot {
+	border: 1px solid var(--background-modifier-border,#4a4a4a);
+	background: transparent;
+	color: var(--text-muted,#999);
+	cursor: pointer;
+}
+
+.pa-pagelet-bubble-stack-btn {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	width: 26px;
+	height: 26px;
+	border-radius: 8px;
+	font-size: 18px;
+	line-height: 1;
+}
+
+.pa-pagelet-bubble-stack-btn:disabled {
+	opacity: .35;
+	cursor: default;
+}
+
+.pa-pagelet-bubble-stack-dots {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+}
+
+.pa-pagelet-bubble-stack-dot {
+	position: relative;
+	width: 28px;
+	height: 28px;
+	padding: 0;
+	border: 0;
+	border-radius: 50%;
+	background: transparent;
+}
+
+.pa-pagelet-bubble-stack-dot::before {
+	content: "";
+	position: absolute;
+	top: 50%;
+	left: 50%;
+	width: 8px;
+	height: 8px;
+	border: 1px solid var(--background-modifier-border,#4a4a4a);
+	border-radius: 50%;
+	background: var(--background-modifier-border,#4a4a4a);
+	transform: translate(-50%, -50%);
+}
+
+.pa-pagelet-bubble-stack-dot[aria-current=true]::before {
+	border-color: var(--interactive-accent,#7f6df2);
+	background: var(--interactive-accent,#7f6df2);
+}
+
+body.is-mobile .pa-pagelet-bubble-stack-btn,
+body.is-mobile .pa-pagelet-bubble-stack-dot {
+	min-width: 44px;
+	min-height: 44px;
+}
+
 .pa-pagelet-bubble-actions {
 	display: flex;
 	gap: 8px;

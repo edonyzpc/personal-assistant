@@ -4,11 +4,10 @@
  * Pagelet Orchestrator -- central integration layer.
  *
  * Coordinates Pet, Bubble, Panel, Tab, background preparation,
- * foreground review, and periodic summary. Delegates analysis to
+ * and foreground review. Delegates analysis to
  * {@link AnalysisSessionManager}, note-saving to {@link ReviewNoteSaveFlow},
  * bubble display to {@link BubbleCoordinator}, background prep to
- * {@link BackgroundPreparationCoordinator}, and periodic summary to
- * {@link PeriodicSummaryFlow}.
+ * {@link BackgroundPreparationCoordinator}.
  */
 
 import { Notice, TFile, normalizePath } from "obsidian";
@@ -24,6 +23,8 @@ import {
 import { isObsidianModalOpen } from "./dom-utils";
 
 import { BubbleView } from "./bubble/BubbleView";
+import { scopeRecapToDeliveryCandidate } from "./bubble/recap-card";
+import type { DeliveryCandidate } from "./bubble/types";
 import type { OnboardingNudge, OnboardingNudgeKind } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
 import type { DiscoveryResult, NoteConnection, PanelFinding, PanelLayoutType, PanelOpenExtra } from "./panel/types";
@@ -46,7 +47,6 @@ import { ResearchManager } from "./research";
 import { AnalysisSessionManager } from "./AnalysisSessionManager";
 import { BackgroundPreparationCoordinator } from "./BackgroundPreparationCoordinator";
 import { BubbleCoordinator } from "./BubbleCoordinator";
-import { PeriodicSummaryFlow } from "./PeriodicSummaryFlow";
 import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
 import { resolveRelatedMarkdownNote } from "./related-note";
@@ -64,6 +64,7 @@ import {
     type QuietRecallCandidate,
     type RetrievalHabitFeedbackKind,
     type RetrievalOutcome,
+    type ScopeRecapRunResult,
 } from "../pa";
 
 // Re-export so existing `import { PageletHost } from "./orchestrator"` keeps working.
@@ -90,7 +91,6 @@ export class PageletOrchestrator {
     private readonly sessionManager: AnalysisSessionManager;
     private readonly backgroundPrep: BackgroundPreparationCoordinator;
     private readonly bubbleCoordinator: BubbleCoordinator;
-    private readonly periodicSummary: PeriodicSummaryFlow;
     private readonly saveFlow: ReviewNoteSaveFlow;
 
     /** Proxy for scope range -- kept for test compat. */
@@ -106,6 +106,14 @@ export class PageletOrchestrator {
     private activityDebounceTimer: PlatformTimeoutHandle | null = null;
     private quietRecallNudgeCandidate: QuietRecallCandidate | null = null;
     private quietRecallBubbleNudge: QuietRecallBubbleNudge | null = null;
+    private preparedRecapCandidate: (DeliveryCandidate & { kind: "recap" }) | null = null;
+    private preparedRecapPayload: PageletDetailPayload | null = null;
+    private preparedRecapArtifact: ScopeRecapRunResult | null = null;
+    private preparedRecapScopeKey: string | null = null;
+    private recapPreparationTimer: PlatformTimeoutHandle | null = null;
+    private recapPreparationInFlight = false;
+    private lastRecapPreparationAttemptAt = 0;
+    private lastRecapPreparationScopeKey: string | null = null;
     private onboardingNudge: OnboardingNudge | null = null;
     get hasActiveOnboardingNudge(): boolean { return this.onboardingNudge !== null; }
     private patternDetectionNudge: PatternDetectionResult | null = null;
@@ -130,6 +138,9 @@ export class PageletOrchestrator {
     /** Local UI snooze for the same Quiet Recall Bubble candidate. */
     private static readonly QUIET_RECALL_LATER_SNOOZE_MS = 24 * 60 * 60 * 1000;
     private static readonly QUIET_RECALL_DOUBLE_CTRL_MS = 300;
+    private static readonly PREPARED_RECAP_LEAF_CHANGE_DEBOUNCE_MS = 1_500;
+    private static readonly PREPARED_RECAP_NOTE_ACTIVITY_DEBOUNCE_MS = 5_000;
+    private static readonly PREPARED_RECAP_MIN_INTERVAL_MS = 5 * 60 * 1000;
 
     constructor(private readonly host: PageletHost) {
         const s = host.settings.pagelet;
@@ -187,12 +198,12 @@ export class PageletOrchestrator {
             onExpandPanel: (type) => this.handleExpandPanel(type),
             onSourceClick: (link) => this.handleSourceClick(link),
             onDismiss: () => this.handleBubbleDismiss(),
-            onReviewCurrentNote: () => { void this.reviewCurrentNote(); },
+            onReviewCurrentNote: () => { void this.reviewCurrentNote({ preferPanel: true }); },
             onDiscoverConnections: () => { void this.discoverConnections(); },
-            onPeriodicSummary: () => { void this.runPeriodicSummary(); },
             getOnboardingNudge: () => this.onboardingNudge,
             onOnboardingNudgeDismiss: (nudge) => this.handleOnboardingNudgeDismiss(nudge),
             getQuietRecallNudge: () => this.quietRecallBubbleNudge,
+            getQuietRecallCandidate: () => this.quietRecallNudgeCandidate,
             onQuietRecallView: (candidate) => { void this.handleQuietRecallBubbleView(candidate); },
             onQuietRecallLink: (candidate) => { void this.handleQuietRecallBubbleLink(candidate); },
             onQuietRecallDismiss: (candidate) => { void this.handleQuietRecallBubbleDismiss(candidate); },
@@ -200,19 +211,9 @@ export class PageletOrchestrator {
             getPatternDetectionNudge: () => this.patternDetectionNudge,
             onPatternDetectionView: (result) => { void this.handlePatternDetectionBubbleView(result); },
             onPatternDetectionDismiss: (result) => this.handlePatternDetectionBubbleDismiss(result),
-        });
-
-        // Delegate: periodic summary flow
-        this.periodicSummary = new PeriodicSummaryFlow(host, this.scopeResolver, {
-            petTransition: (event) => this.transitionPet(event, "summary"),
-            petFlashError: () => this.petView?.flashError(),
-            beginForegroundReviewRun: () => this.sessionManager.beginForegroundReviewRun(),
-            finishForegroundReviewRun: () => this.sessionManager.finishForegroundReviewRun(),
-            setPendingNote: (note) => this.saveFlow.setPending(note),
-            openSummaryPanel: (findings, extra) => {
-                this.currentPanelLayout = "summary";
-                this.panelView?.open("summary", findings, extra);
-            },
+            getPreparedRecapCandidate: () => this.currentPreparedRecapCandidate(),
+            onPreparedRecapView: () => { void this.openPreparedRecapDelivery(); },
+            onPreparedRecapLater: () => this.clearPreparedRecapDelivery(),
         });
 
         this.researchManager = new ResearchManager(host.app, {
@@ -329,24 +330,34 @@ export class PageletOrchestrator {
             this.host.app.vault.on("modify", (file) => {
                 if (file.path.endsWith(".md")) {
                     this.sessionManager.invalidateScopePlan();
-                    this.handleNoteActivity();
+                    if (this.host.app.workspace.getActiveFile?.()?.path === file.path) {
+                        this.clearPreparedRecapDelivery();
+                    }
+                    this.handleNoteActivity(file.path);
                 }
             }),
         );
         this.host.registerEvent(
             this.host.app.vault.on("create", (file) => {
-                if (file.path.endsWith(".md")) this.sessionManager.invalidateScopePlan();
+                if (file.path.endsWith(".md")) {
+                    this.sessionManager.invalidateScopePlan();
+                    this.clearPreparedRecapDelivery();
+                }
             }),
         );
         this.host.registerEvent(
             this.host.app.vault.on("delete", (file) => {
-                if (file.path.endsWith(".md")) this.sessionManager.invalidateScopePlan();
+                if (file.path.endsWith(".md")) {
+                    this.sessionManager.invalidateScopePlan();
+                    this.clearPreparedRecapDelivery();
+                }
             }),
         );
         this.host.registerEvent(
             this.host.app.vault.on("rename", (file, oldPath) => {
                 if (file.path.endsWith(".md") || oldPath.endsWith(".md")) {
                     this.sessionManager.invalidateScopePlan();
+                    this.clearPreparedRecapDelivery();
                 }
             }),
         );
@@ -376,6 +387,7 @@ export class PageletOrchestrator {
 
         this.clearIdleTimer();
         this.clearActivityDebounce();
+        this.clearRecapPreparationTimer();
         if (this.quietRecallLeafChangeTimer !== null) {
             clearTimeout(this.quietRecallLeafChangeTimer);
             this.quietRecallLeafChangeTimer = null;
@@ -438,9 +450,6 @@ export class PageletOrchestrator {
             onQuickReview: () => this.openQuickReview(),
             onDiscoverConnections: async () => {
                 await this.discoverConnections();
-            },
-            onPeriodicSummary: () => {
-                void this.runPeriodicSummary();
             },
             onMaintenanceReview: () => this.runMaintenanceReview(),
             onQuietRecall: () => this.runQuietRecall(),
@@ -587,21 +596,12 @@ export class PageletOrchestrator {
     async runScopeRecap(): Promise<void> {
         const routeToken = this.beginForegroundRoute("summary", "review");
         if (routeToken === null) return;
+        const scopeKey = this.currentRecapScopeKey();
         try {
             const recap = await this.withForegroundTimeout(this.host.runScopeRecap());
             if (!this.isCurrentForegroundRoute(routeToken)) return;
             this.transitionPet("analysis-done");
-            const markdown = buildScopeRecapMarkdown(recap, [recap.summary.id]);
-            const locale = getPageletUiLanguage();
-            const payload: PageletDetailPayload = {
-                title: pageletT("pagelet.tab.scopeRecap.title", locale),
-                content: [],
-                locale,
-                layoutType: "summary",
-                extra: { markdown },
-                sourcePath: recap.scope.paths?.[0],
-                entryReason: "scope-recap",
-            };
+            const payload = this.storePreparedRecap(recap, { keepPayloadWhenNoCandidate: true }, scopeKey);
             await Promise.resolve(this.host.openPageletDetailView(payload));
         } catch (error) {
             if (!this.isCurrentForegroundRoute(routeToken)) return;
@@ -610,6 +610,124 @@ export class PageletOrchestrator {
             this.host.log("Pagelet scope recap failed", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
         }
+    }
+
+    private async openPreparedRecapDelivery(): Promise<void> {
+        if (!this.preparedRecapIsCurrent()) {
+            this.clearPreparedRecapDelivery();
+            return;
+        }
+        const payload = this.preparedRecapPayload;
+        if (!payload) return;
+        await Promise.resolve(this.host.openPageletDetailView(payload));
+    }
+
+    private storePreparedRecap(
+        recap: ScopeRecapRunResult,
+        options: { keepPayloadWhenNoCandidate?: boolean } = {},
+        scopeKey = this.currentRecapScopeKey(),
+    ): PageletDetailPayload {
+        const payload = this.buildPreparedRecapPayload(recap);
+        const candidate = scopeRecapToDeliveryCandidate(recap);
+        this.preparedRecapArtifact = recap;
+        this.preparedRecapCandidate = candidate;
+        this.preparedRecapPayload = candidate || options.keepPayloadWhenNoCandidate ? payload : null;
+        this.preparedRecapScopeKey = scopeKey;
+        return payload;
+    }
+
+    private currentPreparedRecapCandidate(): (DeliveryCandidate & { kind: "recap" }) | null {
+        if (!this.preparedRecapIsCurrent()) {
+            this.clearPreparedRecapDelivery();
+            return null;
+        }
+        return this.preparedRecapCandidate;
+    }
+
+    private preparedRecapIsCurrent(): boolean {
+        return Boolean(
+            this.preparedRecapArtifact
+            && this.preparedRecapCandidate
+            && this.preparedRecapPayload
+            && this.preparedRecapScopeKey
+            && this.preparedRecapScopeKey === this.currentRecapScopeKey(),
+        );
+    }
+
+    private buildPreparedRecapPayload(recap: ScopeRecapRunResult): PageletDetailPayload {
+        const markdown = buildScopeRecapMarkdown(recap, [recap.summary.id]);
+        const locale = getPageletUiLanguage();
+        return {
+            title: pageletT("pagelet.tab.scopeRecap.title", locale),
+            content: [],
+            locale,
+            layoutType: "summary",
+            extra: { markdown, scopeRecap: recap },
+            sourcePath: recap.scope.paths?.[0],
+            entryReason: "scope-recap",
+        };
+    }
+
+    private schedulePreparedRecap(
+        reason: "pagelet-open" | "note-activity" | "idle",
+        delayMs: number,
+    ): void {
+        if (this.destroyed) return;
+        if (!this.host.settings.pagelet.enabled) return;
+        this.clearRecapPreparationTimer();
+        this.recapPreparationTimer = setPlatformTimeout(() => {
+            this.recapPreparationTimer = null;
+            void this.prepareRecapDelivery(reason);
+        }, delayMs);
+    }
+
+    private async prepareRecapDelivery(reason: "pagelet-open" | "note-activity" | "idle"): Promise<void> {
+        if (this.destroyed || this.recapPreparationInFlight) return;
+        const scopeKey = this.currentRecapScopeKey();
+        if (!scopeKey) return;
+        const now = Date.now();
+        if (
+            reason !== "note-activity"
+            && this.lastRecapPreparationScopeKey === scopeKey
+            && now - this.lastRecapPreparationAttemptAt < PageletOrchestrator.PREPARED_RECAP_MIN_INTERVAL_MS
+        ) {
+            return;
+        }
+        this.lastRecapPreparationAttemptAt = now;
+        this.lastRecapPreparationScopeKey = scopeKey;
+        this.recapPreparationInFlight = true;
+        try {
+            const recap = await this.host.runScopeRecap();
+            if (this.destroyed || this.currentRecapScopeKey() !== scopeKey) return;
+            this.storePreparedRecap(recap, {}, scopeKey);
+        } catch (error) {
+            this.host.log(`Pagelet prepared recap skipped (${reason})`, error);
+        } finally {
+            this.recapPreparationInFlight = false;
+        }
+    }
+
+    private currentRecapScopeKey(): string | null {
+        const activeFile = this.host.app.workspace.getActiveFile?.();
+        if (!activeFile || !activeFile.path.endsWith(".md")) return null;
+        const mtime = typeof activeFile.stat?.mtime === "number" ? activeFile.stat.mtime : 0;
+        const size = typeof activeFile.stat?.size === "number" ? activeFile.stat.size : 0;
+        return `${activeFile.path}:${mtime}:${size}`;
+    }
+
+    private clearRecapPreparationTimer(): void {
+        if (this.recapPreparationTimer !== null) {
+            clearPlatformTimeout(this.recapPreparationTimer);
+            this.recapPreparationTimer = null;
+        }
+    }
+
+    private clearPreparedRecapDelivery(): void {
+        this.preparedRecapArtifact = null;
+        this.preparedRecapCandidate = null;
+        this.preparedRecapPayload = null;
+        this.preparedRecapScopeKey = null;
+        this.lastRecapPreparationScopeKey = null;
     }
 
     private setPetTaskKind(taskKind: PetTaskKind): void {
@@ -856,6 +974,10 @@ export class PageletOrchestrator {
             this.scheduleQuietRecallAfterLeafChange(
                 PageletOrchestrator.QUIET_RECALL_LEAF_CHANGE_DEBOUNCE_MS);
         }
+        this.schedulePreparedRecap(
+            "pagelet-open",
+            PageletOrchestrator.PREPARED_RECAP_LEAF_CHANGE_DEBOUNCE_MS,
+        );
     }
 
     private handleFileOpen(): void {
@@ -1121,10 +1243,6 @@ export class PageletOrchestrator {
         }
     }
 
-    private async runPeriodicSummary(): Promise<void> {
-        await this.periodicSummary.run();
-    }
-
     private syncPetVisibility(): void {
         if (!this.host.settings.pagelet.petVisible) {
             this.petView?.destroy();
@@ -1144,13 +1262,19 @@ export class PageletOrchestrator {
     // ======================================================================
 
     /** Debounced note-activity handler. */
-    private handleNoteActivity(): void {
+    private handleNoteActivity(modifiedPath?: string): void {
         this.clearActivityDebounce();
         this.activityDebounceTimer = setPlatformTimeout(() => {
             this.activityDebounceTimer = null;
             this.petView?.stateMachine.transition("note-activity");
             this.backgroundPrep.noteActivity();
             void this.prepareQuietRecallBubbleNudge();
+            if (!modifiedPath || this.host.app.workspace.getActiveFile()?.path === modifiedPath) {
+                this.schedulePreparedRecap(
+                    "note-activity",
+                    PageletOrchestrator.PREPARED_RECAP_NOTE_ACTIVITY_DEBOUNCE_MS,
+                );
+            }
             this.resetIdleTimer();
         }, PageletOrchestrator.ACTIVITY_DEBOUNCE_MS);
     }
@@ -1161,6 +1285,7 @@ export class PageletOrchestrator {
         this.idleTimer = setPlatformTimeout(() => {
             this.idleTimer = null;
             this.petView?.stateMachine.transition("long-idle");
+            this.schedulePreparedRecap("idle", 0);
         }, PageletOrchestrator.IDLE_TIMEOUT_MS);
     }
 

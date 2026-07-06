@@ -9,7 +9,7 @@
  *  - review:   Timeline-based review of recent note activity.
  *  - current:  Current note AI analysis.
  *  - discover: Connection map + related notes list.
- *  - summary:  Periodic summary markdown preview.
+ *  - summary:  Recap or generated review markdown preview.
  *
  * CSS classes use the `pa-pagelet-panel-` prefix to avoid collisions.
  */
@@ -785,7 +785,7 @@ function renderConnectionItem(
 // ---------------------------------------------------------------------------
 
 /**
- * Render periodic summary preview.
+ * Render recap or generated review markdown preview.
  *
  * Displays generated markdown content as formatted HTML preview.
  * When an Obsidian `App` and `Component` are provided, uses the

@@ -33,7 +33,6 @@ function makeCallbacks(): PageletCommandCallbacks {
         onReviewCurrent: jest.fn(),
         onQuickReview: jest.fn(),
         onDiscoverConnections: jest.fn(),
-        onPeriodicSummary: jest.fn(),
         onMaintenanceReview: jest.fn(),
         onQuietRecall: jest.fn(),
         onGraphDiscovery: jest.fn(),
@@ -63,6 +62,7 @@ describe("registerPageletCommands", () => {
             PAGELET_PRELOAD_STATUS_LEGACY_COMMAND_ID,
         ]));
         expect(host.registered.map((command) => command.id)).not.toContain("pa-pagelet:weekly-review");
+        expect(host.registered.map((command) => command.id)).not.toContain("pa-pagelet:periodic-summary");
 
         expect(new Set(host.registered.map((command) => command.id)).size).toBe(host.registered.length);
         expect(new Set(host.registered.map((command) => command.name)).size).toBe(host.registered.length);

@@ -18,7 +18,6 @@
     "pa-pagelet:review-current",
     "pa-pagelet:quick-review",
     "pa-pagelet:discover-connections",
-    "pa-pagelet:periodic-summary",
     "pa-pagelet:maintenance-review",
     "pa-pagelet:quiet-recall",
     "pa-pagelet:graph-discovery",
@@ -31,6 +30,7 @@
   ];
   const RETIRED_COMMAND_IDS = [
     "pa-pagelet:weekly-review",
+    "pa-pagelet:periodic-summary",
   ];
 
   const startedAt = new Date().toISOString();

@@ -71,9 +71,6 @@ type LegacyRibbonSettingValue = "default" | "hidden";
  *  3. add the i18n keys to en.json + zh.json
  *  4. render it in `renderPageletSection`
  */
-/** Periodic summary scope preset */
-export type PageletPeriodicSummaryScope = "3d" | "7d" | "14d";
-
 export interface PageletSettings {
     /** Master toggle. Default ON during beta (D013). */
     enabled: boolean;
@@ -113,8 +110,6 @@ export interface PageletSettings {
     preloadTokenBudget: { input: number; output: number };
 
     // ── Reviews ────────────────────────────────────────────────────
-    /** Default scope for periodic summary. */
-    periodicSummaryScope: PageletPeriodicSummaryScope;
     /** Excluded folders for scope resolution. */
     excludedFolders: string[];
     /** Excluded tags for scope resolution. */
@@ -145,6 +140,8 @@ export interface PageletSettings {
     quickCaptureExplained: boolean;
     /** Whether the first Quiet Recall bridge explanation has been shown. */
     quietRecallExplained: boolean;
+    /** Whether the user has already seen the intentionally quiet Bubble explanation. */
+    quietAcknowledged: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -173,7 +170,6 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     preloadPerDayCap: 20,
     preloadTokenBudget: Object.freeze({ input: 4000, output: 1000 }),
     // Reviews
-    periodicSummaryScope: "7d",
     excludedFolders: Object.freeze([]) as readonly string[] as string[],
     excludedTags: Object.freeze([]) as readonly string[] as string[],
     excludedPatterns: Object.freeze([]) as readonly string[] as string[],
@@ -187,6 +183,7 @@ export const PAGELET_DEFAULTS: Readonly<PageletSettings> = Object.freeze({
     maintenanceScanSuggested: false,
     quickCaptureExplained: false,
     quietRecallExplained: false,
+    quietAcknowledged: false,
 });
 
 /**
@@ -331,7 +328,6 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         preloadPerDayCap: normalizeBoundedInt(raw.preloadPerDayCap, PAGELET_DEFAULTS.preloadPerDayCap, PAGELET_BOUNDS.preloadPerDayCap.min, PAGELET_BOUNDS.preloadPerDayCap.max),
         preloadTokenBudget: normalizeTokenBudget(raw.preloadTokenBudget, PAGELET_DEFAULTS.preloadTokenBudget),
         // Reviews
-        periodicSummaryScope: normalizePeriodicSummaryScope(raw.periodicSummaryScope),
         excludedFolders: normalizeStringArray(raw.excludedFolders),
         excludedTags: normalizeStringArray(raw.excludedTags),
         excludedPatterns: normalizeStringArray(raw.excludedPatterns),
@@ -345,6 +341,7 @@ export function mergePageletSettings(loaded: unknown): PageletSettings {
         maintenanceScanSuggested: typeof raw.maintenanceScanSuggested === "boolean" ? raw.maintenanceScanSuggested : PAGELET_DEFAULTS.maintenanceScanSuggested,
         quickCaptureExplained: typeof raw.quickCaptureExplained === "boolean" ? raw.quickCaptureExplained : PAGELET_DEFAULTS.quickCaptureExplained,
         quietRecallExplained: typeof raw.quietRecallExplained === "boolean" ? raw.quietRecallExplained : PAGELET_DEFAULTS.quietRecallExplained,
+        quietAcknowledged: typeof raw.quietAcknowledged === "boolean" ? raw.quietAcknowledged : PAGELET_DEFAULTS.quietAcknowledged,
     };
 }
 
@@ -515,11 +512,6 @@ function normalizePetCorner(value: unknown): PetCorner {
     const valid: PetCorner[] = ["bottom-right", "bottom-left", "top-right", "top-left"];
     if (typeof value === "string" && valid.includes(value as PetCorner)) return value as PetCorner;
     return PAGELET_DEFAULTS.petCorner;
-}
-
-function normalizePeriodicSummaryScope(value: unknown): PageletPeriodicSummaryScope {
-    if (value === "3d" || value === "7d" || value === "14d") return value;
-    return PAGELET_DEFAULTS.periodicSummaryScope;
 }
 
 function normalizeTokenBudget(
@@ -965,20 +957,6 @@ export function renderPageletSection(
 
     // ── Reviews ────────────────────────────────────────────────────────
     parentEl.createEl("h3", { text: t("pagelet.settings.reviews.heading") });
-
-    factory.create(parentEl)
-        .setName(t("pagelet.settings.periodicSummaryScope.name"))
-        .setDesc(t("pagelet.settings.periodicSummaryScope.desc"))
-        .addDropdown((dropdown) => {
-            dropdown
-                .addOption("3d", t("pagelet.settings.periodicSummaryScope.option.3d"))
-                .addOption("7d", t("pagelet.settings.periodicSummaryScope.option.7d"))
-                .addOption("14d", t("pagelet.settings.periodicSummaryScope.option.14d"))
-                .setValue(settings.periodicSummaryScope)
-                .onChange((value) => saveOnChange(() => {
-                    settings.periodicSummaryScope = normalizePeriodicSummaryScope(value);
-                }));
-        });
 
     // Exclusion rules (comma-separated text inputs)
     factory.create(parentEl)

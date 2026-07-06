@@ -14,6 +14,8 @@ import type {
     BubbleContent,
     BubbleFinding,
     BubbleQuickAccessCallbacks,
+    BubbleStateCallbacks,
+    DeliveryCandidate,
 } from "./types";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
 import type { PatternDetectionResult, QuietRecallBubbleNudge } from "../../pa";
@@ -73,51 +75,18 @@ export interface PatternDetectionNudgeCallbacks {
     onDismiss(result: PatternDetectionResult): void;
 }
 
-function buildPageletQuickAccessActions(
+function discoverRelatedAction(
     callbacks: BubbleQuickAccessCallbacks,
     locale: PageletLocale,
-    options: { primaryReview?: boolean } = {},
-): BubbleAction[] {
-    return [
-        {
-            label: pageletT("pagelet.bubble.triggerAnalysis", locale),
-            description: pageletT("pagelet.bubble.triggerAnalysisDescription", locale),
-            icon: "search",
-            primary: options.primaryReview ?? true,
-            callback: callbacks.onReviewCurrentNote,
-        },
-        {
-            label: pageletT("pagelet.bubble.discover", locale),
-            description: pageletT("pagelet.bubble.discoverDescription", locale),
-            icon: "link",
-            callback: callbacks.onDiscoverConnections,
-        },
-        {
-            label: pageletT("pagelet.bubble.periodicSummary", locale),
-            description: pageletT("pagelet.bubble.periodicSummaryDescription", locale),
-            icon: "calendar",
-            callback: callbacks.onPeriodicSummary,
-        },
-    ];
-}
-
-function laterAction(callbacks: BubbleCallbacks, locale: PageletLocale): BubbleAction {
+    primary = true,
+): BubbleAction {
     return {
-        label: pageletT("pagelet.bubble.later", locale),
-        variant: "compact",
-        callback: () => callbacks.onDismiss(),
+        label: pageletT("pagelet.bubble.findRelatedOldNotes", locale),
+        description: pageletT("pagelet.bubble.findRelatedOldNotesDescription", locale),
+        icon: "link",
+        primary,
+        callback: callbacks.onDiscoverConnections,
     };
-}
-
-function appendQuickAccessActions(
-    actions: BubbleAction[],
-    callbacks: BubbleQuickAccessCallbacks,
-    locale: PageletLocale,
-): BubbleAction[] {
-    return [
-        ...actions,
-        ...buildPageletQuickAccessActions(callbacks, locale, { primaryReview: false }),
-    ];
 }
 
 // ---------------------------------------------------------------------------
@@ -141,7 +110,7 @@ export function buildQuickReviewContent(
                 primary: true,
                 callback: () => callbacks.onExpandPanel("prepared"),
             },
-            ...buildPageletQuickAccessActions(callbacks, locale, { primaryReview: false }),
+            discoverRelatedAction(callbacks, locale, false),
         ],
     };
 }
@@ -180,7 +149,7 @@ export function buildDiscoveryContent(
     return {
         type: "discovery",
         findings: findings.slice(0, MAX_FINDINGS),
-        actions: buildPageletQuickAccessActions(callbacks, locale),
+        actions: [discoverRelatedAction(callbacks, locale)],
     };
 }
 
@@ -219,30 +188,6 @@ export function buildNudgeContent(
     };
 }
 
-/** Build a lightweight reminder for items the user already kept for later. */
-export function buildReviewQueueNudgeContent(
-    count: number,
-    callbacks: BubbleQuickAccessCallbacks,
-    locale: PageletLocale = "en",
-): BubbleContent {
-    return {
-        type: "nudge",
-        findings: [{
-            text: pageletT("pagelet.bubble.reviewQueue.count", locale, { count }),
-        }],
-        actions: appendQuickAccessActions([
-            {
-                label: pageletT("pagelet.bubble.reviewQueue.open", locale),
-                description: pageletT("pagelet.bubble.reviewQueue.openDescription", locale),
-                icon: "bookmark-check",
-                primary: true,
-                callback: () => callbacks.onExpandPanel("review"),
-            },
-            laterAction(callbacks, locale),
-        ], callbacks, locale),
-    };
-}
-
 /** Build a restrained Quiet Recall nudge. Full evidence/actions stay in the Quiet Recall Tab. */
 export function buildQuietRecallNudgeContent(
     options: QuietRecallNudgeOptions,
@@ -268,7 +213,7 @@ export function buildQuietRecallNudgeContent(
             : "pagelet.bubble.quietRecall.far";
 
     return {
-        type: "nudge",
+        type: "recall-delivery",
         findings: [
             { text: pageletT(textKey, locale) },
             ...(candidate.onboardingExplanation
@@ -290,9 +235,108 @@ export function buildQuietRecallNudgeContent(
                 callback: () => callbacks.onLink(candidate),
             },
             {
-                label: pageletT("pagelet.bubble.quietRecall.dismiss", locale),
+                label: pageletT("pagelet.bubble.later", locale),
                 variant: "compact",
-                callback: () => callbacks.onDismiss(candidate),
+                callback: () => callbacks.onLater(candidate),
+            },
+        ],
+    };
+}
+
+export interface DeliveryCandidateCallbacks {
+    onOpen(candidate: DeliveryCandidate): void;
+    onLinkToCurrent?(candidate: DeliveryCandidate): void;
+    onLater(candidate: DeliveryCandidate): void;
+}
+
+function deliveryCandidateFinding(candidate: DeliveryCandidate): BubbleFinding {
+    const firstSource = candidate.sourceRefs[0];
+    return {
+        text: candidate.body,
+        sourceLink: firstSource?.path,
+        sourceTitle: firstSource?.title ?? firstSource?.path,
+    };
+}
+
+export function buildRecallDeliveryContent(
+    candidate: DeliveryCandidate & { kind: "recall" },
+    callbacks: DeliveryCandidateCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "recall-delivery",
+        findings: [deliveryCandidateFinding(candidate)],
+        inlineHint: candidate.whyNow[0]
+            ? { text: candidate.whyNow[0], icon: "info" }
+            : undefined,
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.delivery.openSource", locale),
+                description: pageletT("pagelet.bubble.delivery.openSourceDescription", locale),
+                icon: "file-text",
+                primary: true,
+                callback: () => callbacks.onOpen(candidate),
+            },
+            ...(callbacks.onLinkToCurrent ? [{
+                label: pageletT("pagelet.bubble.quietRecall.link", locale),
+                description: pageletT("pagelet.bubble.quietRecall.linkDescription", locale),
+                icon: "link",
+                callback: () => callbacks.onLinkToCurrent?.(candidate),
+            }] satisfies BubbleAction[] : []),
+            {
+                label: pageletT("pagelet.bubble.later", locale),
+                variant: "compact",
+                callback: () => callbacks.onLater(candidate),
+            },
+        ],
+    };
+}
+
+export function buildRecallDeliveryStackContent(
+    candidates: Array<DeliveryCandidate & { kind: "recall" }>,
+    callbacks: DeliveryCandidateCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    const cards = candidates.slice(0, 3).map((candidate) => {
+        const content = buildRecallDeliveryContent(candidate, callbacks, locale);
+        return {
+            id: candidate.id,
+            findings: content.findings,
+            actions: content.actions,
+            inlineHint: content.inlineHint,
+        };
+    });
+    const firstCard = cards[0];
+    return {
+        type: "recall-delivery",
+        findings: firstCard?.findings ?? [],
+        actions: firstCard?.actions ?? [],
+        inlineHint: firstCard?.inlineHint,
+        cards,
+    };
+}
+
+export function buildPreparedRecapDeliveryContent(
+    candidate: DeliveryCandidate & { kind: "recap" },
+    callbacks: { onViewRecap(candidate: DeliveryCandidate & { kind: "recap" }): void; onLater(candidate: DeliveryCandidate & { kind: "recap" }): void },
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "recap-delivery",
+        findings: [{
+            text: pageletT("pagelet.bubble.recapDelivery", locale),
+            sourceTitle: candidate.title,
+        }],
+        inlineHint: candidate.whyNow[0]
+            ? { text: candidate.whyNow[0], icon: "calendar" }
+            : undefined,
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.recapDelivery.view", locale),
+                description: pageletT("pagelet.bubble.recapDelivery.viewDescription", locale),
+                icon: "calendar",
+                primary: true,
+                callback: () => callbacks.onViewRecap(candidate),
             },
             {
                 label: pageletT("pagelet.bubble.later", locale),
@@ -363,13 +407,10 @@ export function buildPatternDetectionNudgeContent(
     };
 }
 
-/** Build onboarding content (first-time user guide) */
-export function buildOnboardingContent(
-    onDismiss: () => void,
-    locale: PageletLocale = "en",
-): BubbleContent {
+/** Build a one-time bridge hint. Prefer real delivery when it exists. */
+export function buildOnboardingContent(onDismiss: () => void, locale: PageletLocale = "en"): BubbleContent {
     return {
-        type: "empty",
+        type: "bridge-hint",
         findings: [{ text: pageletT("pagelet.bubble.onboarding", locale) }],
         actions: [{
             label: pageletT("pagelet.bubble.onboardingAction", locale),
@@ -379,14 +420,109 @@ export function buildOnboardingContent(
     };
 }
 
-/** Build empty state content (no cached results) */
-export function buildEmptyContent(
-    callbacks: BubbleQuickAccessCallbacks,
+export function buildNeedsSetupContent(
+    callbacks: BubbleStateCallbacks,
     locale: PageletLocale = "en",
 ): BubbleContent {
     return {
-        type: "empty",
-        findings: [{ text: pageletT("pagelet.bubble.empty", locale) }],
-        actions: buildPageletQuickAccessActions(callbacks, locale),
+        type: "needs-setup",
+        findings: [{ text: pageletT("pagelet.bubble.needsSetup", locale) }],
+        actions: [
+            {
+                label: pageletT("pagelet.bubble.needsSetup.prepare", locale),
+                description: pageletT("pagelet.bubble.needsSetup.prepareDescription", locale),
+                icon: "database",
+                primary: true,
+                callback: callbacks.onPrepareMemory,
+            },
+            {
+                label: pageletT("pagelet.bubble.needsSetup.review", locale),
+                description: pageletT("pagelet.bubble.needsSetup.reviewDescription", locale),
+                icon: "search",
+                variant: "compact",
+                callback: callbacks.onReviewCurrentNote,
+            },
+        ],
+    };
+}
+
+export function buildPreparingContent(
+    progress: { current: number; total: number } | null,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    const showProgress = progress && progress.total >= 20;
+    return {
+        type: "preparing",
+        findings: [{
+            text: showProgress
+                ? pageletT("pagelet.bubble.preparing.progress", locale, {
+                    current: progress.current,
+                    total: progress.total,
+                })
+                : pageletT("pagelet.bubble.preparing", locale),
+        }],
+        actions: [],
+    };
+}
+
+export function buildReadyEmptyContent(
+    callbacks: BubbleStateCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "ready-empty",
+        findings: [{ text: pageletT("pagelet.bubble.readyEmpty", locale) }],
+        actions: [discoverRelatedAction(callbacks, locale)],
+    };
+}
+
+export function buildContextLimitedContent(
+    variant: "short" | "boundary",
+    callbacks: BubbleStateCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    if (variant === "boundary") {
+        return {
+            type: "context-limited",
+            findings: [{ text: pageletT("pagelet.bubble.contextLimited.boundary", locale) }],
+            actions: [{
+                label: pageletT("pagelet.bubble.contextLimited.settings", locale),
+                description: pageletT("pagelet.bubble.contextLimited.settingsDescription", locale),
+                icon: "settings",
+                variant: "compact",
+                callback: callbacks.onOpenSettings,
+            }],
+        };
+    }
+    return {
+        type: "context-limited",
+        findings: [{ text: pageletT("pagelet.bubble.contextLimited.short", locale) }],
+        actions: [{
+            label: pageletT("pagelet.bubble.contextLimited.capture", locale),
+            description: pageletT("pagelet.bubble.contextLimited.captureDescription", locale),
+            icon: "pencil",
+            primary: true,
+            callback: callbacks.onQuickCapture,
+        }],
+    };
+}
+
+/** Build empty state content (no cached results) */
+export function buildEmptyContent(
+    callbacks: BubbleStateCallbacks,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return buildReadyEmptyContent(callbacks, locale);
+}
+
+export function buildIntentionallyQuietContent(
+    callbacks: BubbleStateCallbacks,
+    acknowledged = false,
+    locale: PageletLocale = "en",
+): BubbleContent {
+    return {
+        type: "intentionally-quiet",
+        findings: acknowledged ? [] : [{ text: pageletT("pagelet.bubble.intentionallyQuiet", locale) }],
+        actions: [discoverRelatedAction(callbacks, locale)],
     };
 }
