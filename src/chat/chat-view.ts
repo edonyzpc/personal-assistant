@@ -228,13 +228,14 @@ export class LLMView extends ItemView {
         const { containerEl } = this;
         containerEl.empty();
         containerEl.classList.add('llm-view');
+        containerEl.classList.add('pa-chat-view');
         this.markChatDrawerHost(containerEl);
         this.observePanelDensity(containerEl);
         this.observeStatusBarClearance(containerEl);
 
-        const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container' });
+        const chatContainer = containerEl.createDiv({ cls: 'llm-chat-container pa-chat-container' });
 
-        const inputDiv = containerEl.createDiv({ cls: 'llm-input' });
+        const inputDiv = containerEl.createDiv({ cls: 'llm-input pa-chat-input' });
         this.mobileInputAdapter.setupMobileTabBarAutoHide(containerEl);
         containerEl.createDiv({
             cls: 'pa-chat-keyboard-spacer',
@@ -288,7 +289,7 @@ export class LLMView extends ItemView {
             this.focusComposerTextArea(textArea);
         });
 
-        const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-composer-actions' });
+        const buttonDiv = composerRow.createDiv({ cls: 'llm-buttons pa-chat-buttons pa-chat-composer-actions' });
         const sendButton = buttonDiv.createEl('button', {
             text: t("plugin.chat.action.ask"),
             cls: 'pa-chat-icon-button send-button-visible',
@@ -1478,9 +1479,10 @@ export class LLMView extends ItemView {
                 sourcePath?: string;
             } = {},
         ): RenderedMessage => {
-            const messageDiv = this.responseDiv.createDiv({ cls: `llm-message ${message.role}` });
+            const messageDiv = this.responseDiv.createDiv({ cls: `llm-message pa-chat-message ${message.role}` });
             if (options.animate) {
                 messageDiv.classList.add('llm-message-enter');
+                messageDiv.classList.add('pa-chat-message-enter');
             }
             if (options.showAssistantLoader) {
                 messageDiv.setAttribute('aria-busy', 'true');
@@ -1667,7 +1669,7 @@ export class LLMView extends ItemView {
         const createTerminalRow = (
             entry: TerminalTurnEntry,
         ) => {
-            const row = this.responseDiv.createDiv({ cls: `llm-message system turn-${entry.terminalKind}` });
+            const row = this.responseDiv.createDiv({ cls: `llm-message pa-chat-message system turn-${entry.terminalKind}` });
             createRoleLabel(row, entry.terminalKind === 'error' ? t("plugin.chat.role.error") : t("plugin.chat.role.cancelled"));
             row.createDiv({ cls: 'message-content', text: entry.content });
             const actions = row.createDiv({ cls: 'message-actions turn-terminal-actions' });
@@ -1755,7 +1757,7 @@ export class LLMView extends ItemView {
         };
 
         const createThinkingStatusView = (turn?: UiTurn): ThinkingStatusView => {
-            const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message system thinking-status' });
+            const messageDiv = this.responseDiv.createDiv({ cls: 'llm-message pa-chat-message system thinking-status' });
             const assistantMessageDiv = turn?.assistantMessage?.messageDiv;
             if (assistantMessageDiv?.parentElement === this.responseDiv) {
                 this.responseDiv.insertBefore(messageDiv, assistantMessageDiv);
@@ -2099,7 +2101,7 @@ export class LLMView extends ItemView {
             if (event.type === 'agent_start') {
                 canonical.active = true;
                 canonical.runId = event.runId;
-                addCanonicalActivity(turn, 'Starting assistant run...');
+                addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.startingRun', getPluginUiLanguage()));
                 return;
             }
             if (canonical.runId && event.runId !== canonical.runId) return;
@@ -2111,8 +2113,8 @@ export class LLMView extends ItemView {
                     canonical.currentTurnId = event.turnId;
                     addCanonicalHostContextMetadata(turn, event.metadata?.hostContext, event.turnId);
                     addCanonicalActivity(turn, event.metadata?.runtimeInstruction
-                        ? 'Continuing with tool results...'
-                        : 'Deciding what context to use...');
+                        ? pluginT('plugin.chat.lifecycle.continuingWithTools', getPluginUiLanguage())
+                        : pluginT('plugin.chat.lifecycle.decidingContext', getPluginUiLanguage()));
                     return;
                 case 'message_start':
                     upsertCanonicalMessage(turn, event.message);
@@ -2125,7 +2127,7 @@ export class LLMView extends ItemView {
                         turn.providerReasoningObserved = true;
                         turn.statusView ??= createThinkingStatusView(turn);
                         renderProviderReasoningNotice(turn.statusView);
-                        addCanonicalActivity(turn, 'Reading model progress...');
+                        addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.readingModelProgress', getPluginUiLanguage()));
                     } else if (event.update.kind === 'text_delta') {
                         setResponseContent((turn.assistantMessage?.copyContent ?? '') + event.update.text);
                     } else if (event.update.kind === 'toolcall_start') {
@@ -2135,13 +2137,13 @@ export class LLMView extends ItemView {
                             setResponseContent('');
                             const reclassified = event.metadata.reclassifiedPendingText.trim();
                             if (reclassified) {
-                                addCanonicalActivity(turn, `Draft before tool use: ${reclassified.slice(0, 240)}`);
+                                addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.draftBeforeToolUse', getPluginUiLanguage(), { preview: reclassified.slice(0, 240) }));
                             }
-                            addCanonicalActivity(turn, 'Moving draft text to progress before using tools...');
+                            addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.movingDraftToProgress', getPluginUiLanguage()));
                         }
                         addCanonicalActivity(turn, event.update.name
-                            ? `Preparing ${event.update.name}...`
-                            : 'Preparing tool call...');
+                            ? pluginT('plugin.chat.lifecycle.preparingTool', getPluginUiLanguage(), { tool: event.update.name })
+                            : pluginT('plugin.chat.lifecycle.preparingToolCall', getPluginUiLanguage()));
                     } else if (event.update.kind === 'toolcall_delta') {
                         canonical.sawToolCallInAssistantMessage = true;
                     }
@@ -2160,7 +2162,7 @@ export class LLMView extends ItemView {
                         if (finalText) setResponseContent(finalText);
                     } else if (event.message.role === 'toolResult') {
                         addContextUsedItems(turn, event.message.content.contextUsed ?? []);
-                        addCanonicalActivity(turn, `${event.message.toolName} result received`);
+                        addCanonicalActivity(turn, pluginT('plugin.chat.lifecycle.toolResultReceived', getPluginUiLanguage(), { tool: event.message.toolName }));
                         if (event.message.content.previewText) {
                             turn.statusView ??= createThinkingStatusView(turn);
                             appendThinkingDetail(turn.statusView, event.message.content.previewText);

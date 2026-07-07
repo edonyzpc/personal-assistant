@@ -4,7 +4,7 @@ import type { QuietRecallCandidate, QuietRecallSaveResult } from "../../../pa";
 import type { PanelQuietRecallState } from "../../panel/types";
 import type { PageletLocale } from "../../../locales/pagelet";
 import { pageletT } from "../../../locales/pagelet";
-import { clearChildren, el } from "../../dom-utils";
+import { clearChildren, el, renderEmptyCard } from "../../dom-utils";
 import type { TabSectionRenderer, TabSectionCallbacks, QuietRecallLinkResult, QuietRecallSaveState, QuietRecallLinkState } from "./types";
 
 export interface QuietRecallCallbacks {
@@ -75,8 +75,8 @@ export class QuietRecallSection implements TabSectionRenderer {
             pageletT("pagelet.tab.recall.summary", this.locale, { count: candidates.length })));
 
         if (candidates.length === 0) {
-            section.appendChild(el("div", "pa-pagelet-tab-empty-card pa-pagelet-tab-recall-empty",
-                pageletT("pagelet.tab.recall.empty", this.locale)));
+            section.appendChild(renderEmptyCard(
+                "pa-pagelet-tab-recall-empty", "pagelet.tab.recall.empty", undefined, this.locale));
             this.containerEl.appendChild(section);
             return;
         }

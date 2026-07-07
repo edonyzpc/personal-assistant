@@ -17,12 +17,12 @@
 
 import { Component } from "obsidian";
 import type { App } from "obsidian";
+import { confirmUserAction } from "../../confirm";
 
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import type { PanelFinding } from "../panel/types";
 import type { PageletDetailPayload, TabEntryReason, TabSection } from "./types";
 import {
-    groupReviewQueueItemsForTab,
     type ContextPagerState,
     type GraphDiscoveryItem,
     type MaintenanceMoveApplyResult,
@@ -31,10 +31,9 @@ import {
     type QuietRecallCandidate,
     type QuietRecallSaveResult,
     type ReviewQueueItem,
-    type ReviewQueueTabGroup,
 } from "../../pa";
 import { pageletT, type PageletLocale } from "../../locales/pagelet";
-import { clearChildren, el } from "../dom-utils";
+import { clearChildren, el, renderEmptyCard } from "../dom-utils";
 import { renderDiscoveryLayout, renderSummaryPreview } from "../panel/PanelLayouts";
 import type {
     MaintenanceActionUiState,
@@ -43,6 +42,7 @@ import type {
     QuietRecallLinkState,
     QuietRecallLinkResult,
     QuietRecallSaveState,
+    TabSectionCallbacks,
     TabSectionRenderer,
 } from "./sections/types";
 import { MemoryGovernanceSection } from "./sections/MemoryGovernanceSection";
@@ -60,6 +60,7 @@ interface TabViewOptions {
     onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
     onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     onLinkRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<QuietRecallLinkResult>;
+    onOpenSettings?: () => void;
 }
 
 type TabOpenOptions = Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason">;
@@ -92,15 +93,15 @@ export class TabView {
     private locale: PageletLocale;
     private rootEl: HTMLDivElement | null = null;
     private bodyEl: HTMLDivElement | null = null;
-    private labelEl: HTMLSpanElement | null = null;
+    private labelEl: HTMLElement | null = null;
     private containerEl: HTMLElement | null = null;
     private _isOpen = false;
     private readonly options: TabViewOptions;
     private renderComponent: Component | null = null;
     private currentContent: PanelFinding[] | TabSection[] = [];
     private currentOptions: TabOpenOptions = {};
-    private reviewQueueTabFilter: ReviewQueueTabGroup | "all" = "all";
     private readonly sectionRenderers: TabSectionRenderer[] = [];
+    private sectionsExpanded = false;
     private readonly dismissedPatternIds = new Set<string>();
     private readonly memoryCandidateActionState = new Map<string, MemoryCandidateActionState>();
     private readonly maintenanceActionState = new Map<string, MaintenanceActionUiState>();
@@ -200,17 +201,25 @@ export class TabView {
 
     private clearSectionActionState(): void {
         this.actionStateGeneration += 1;
+        this.sectionsExpanded = false;
         this.memoryCandidateActionState.clear();
         this.maintenanceActionState.clear();
         this.quietRecallSaveState.clear();
         this.quietRecallLinkState.clear();
     }
 
-    private createSectionCallbacks(): { requestRerender: () => void; canCommitActionState: () => boolean } {
+    private createSectionCallbacks(): TabSectionCallbacks {
         const generation = this.actionStateGeneration;
+        const app = this.options.app;
         return {
             requestRerender: () => this.handleSectionRerender(),
             canCommitActionState: () => !this.disposed && generation === this.actionStateGeneration,
+            confirmAction: app
+                ? (message: string) => confirmUserAction(app, {
+                    title: pageletT("pagelet.tab.memory.confirmAllTitle", this.locale),
+                    message,
+                })
+                : undefined,
         };
     }
 
@@ -248,7 +257,7 @@ export class TabView {
         if (!this.bodyEl) return;
         const nav = el("div", "pa-pagelet-tab-nav");
         nav.setAttribute("role", "navigation");
-        nav.setAttribute("aria-label", pageletT("pagelet.tab.title", this.locale));
+        nav.setAttribute("aria-label", pageletT("pagelet.tab.nav.ariaLabel", this.locale));
         for (const slot of slots) {
             const btn = el("button", "pa-pagelet-tab-nav-item", pageletT(slot.labelKey, this.locale));
             btn.setAttribute("type", "button");
@@ -285,7 +294,7 @@ export class TabView {
         root.className = "pa-pagelet-tab";
         root.setAttribute("role", "region");
 
-        const label = el("span", "pa-sr-only", pageletT("pagelet.tab.ariaLabel", this.locale));
+        const label = el("h1", "pa-sr-only", pageletT("pagelet.tab.ariaLabel", this.locale));
         label.setAttribute("id", `pa-pagelet-tab-label-${++tabLabelSequence}`);
         this.labelEl = label;
         root.setAttribute("aria-labelledby", label.getAttribute("id") ?? "");
@@ -371,13 +380,13 @@ export class TabView {
                 new MaintenanceReviewSection(this.locale, data, {
                     onApply: this.options.onApplyMaintenanceProposal,
                     onUndo: this.options.onUndoMaintenanceAction,
+                    onOpenSettings: this.options.onOpenSettings,
                 }, sectionCallbacks, this.maintenanceActionState)) },
             { id: "quiet-recall", labelKey: "pagelet.tab.recall.title", render: () => this.renderExtractedSection(options.extra?.quietRecall, (data) =>
                 new QuietRecallSection(this.locale, data, {
                     onSave: this.options.onSaveQuietRecallAsInsight,
                     onLink: this.options.onLinkRecallCandidate,
                 }, sectionCallbacks, options.sourcePath, this.quietRecallSaveState, this.quietRecallLinkState)) },
-            { id: "review-queue", labelKey: "pagelet.tab.reviewQueue.title", render: () => this.renderReviewQueueContent(options.extra?.reviewQueue) },
             { id: "graph-discovery", labelKey: "pagelet.tab.graphDiscovery.title", render: () => this.renderGraphDiscoveryContent(options.extra?.graphDiscovery) },
             { id: "pattern-detection", labelKey: "pagelet.tab.patterns.title", render: () => this.renderPatternDetectionContent(options.extra?.patternDetection) },
             { id: "saved-insights", labelKey: "pagelet.tab.savedInsights.title", render: () => this.renderSavedInsightContent(options.extra?.savedInsights) },
@@ -410,8 +419,37 @@ export class TabView {
             renderedSlots.push({ id: "context-pager", labelKey: "pagelet.panel.contextPager.usedSources", render: () => true });
         }
 
-        if (renderedSlots.length >= 3) {
-            this.renderSectionNav(renderedSlots);
+        const visibleSlots = (renderedSlots.length > 3 && !this.sectionsExpanded)
+            ? renderedSlots.slice(0, 3)
+            : renderedSlots;
+        if (visibleSlots.length >= 3) {
+            this.renderSectionNav(visibleSlots);
+        }
+
+        if (renderedSlots.length > 3 && !this.sectionsExpanded && this.bodyEl) {
+            const allSections = Array.from(this.bodyEl.querySelectorAll(".pa-pagelet-tab-section"));
+            let visibleCount = 0;
+            for (const sectionEl of allSections) {
+                if (visibleCount >= 3) {
+                    sectionEl.classList.add("pa-pagelet-tab-section--hidden");
+                }
+                visibleCount++;
+            }
+            const overflowId = `pa-tab-overflow-${++tabLabelSequence}`;
+            for (const sectionEl of allSections.slice(3)) {
+                sectionEl.setAttribute("data-overflow-group", overflowId);
+            }
+            const showMoreBtn = el("button", "pa-pagelet-tab-show-more",
+                pageletT("pagelet.tab.showMore", this.locale, { count: renderedSlots.length - 3 }));
+            showMoreBtn.setAttribute("type", "button");
+            showMoreBtn.setAttribute("aria-expanded", "false");
+            showMoreBtn.setAttribute("aria-controls", overflowId);
+            showMoreBtn.addEventListener("click", () => {
+                this.sectionsExpanded = true;
+                showMoreBtn.setAttribute("aria-expanded", "true");
+                this.rerenderCurrentContentPreservingScroll();
+            });
+            this.bodyEl.appendChild(showMoreBtn);
         }
 
         if (renderedSlots.length === 0) {
@@ -533,13 +571,13 @@ export class TabView {
 
         const overviewCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-graph-overview-card");
         const tagRow = el("div", "pa-pagelet-tab-tag-row");
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", pageletT("pagelet.tab.graphDiscovery.previewOnly", this.locale)));
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", pageletT("pagelet.tab.graphDiscovery.noQueue", this.locale)));
+        tagRow.appendChild(el("span", "pa-pagelet-tab-muted", pageletT("pagelet.tab.graphDiscovery.previewOnly", this.locale)));
         overviewCard.appendChild(tagRow);
         section.appendChild(overviewCard);
 
         if (graphDiscovery.items.length === 0) {
-            section.appendChild(el("div", "pa-pagelet-tab-empty-card", pageletT("pagelet.graphDiscovery.none", this.locale)));
+            section.appendChild(renderEmptyCard(
+                "pa-pagelet-tab-graph-empty", "pagelet.graphDiscovery.none", undefined, this.locale));
             this.bodyEl.appendChild(section);
             return true;
         }
@@ -662,88 +700,10 @@ export class TabView {
         section.appendChild(el("h2", undefined,
             pageletT("pagelet.tab.overview", this.locale)));
 
-        const card = el("div", "pa-pagelet-tab-empty-card");
-        card.appendChild(el("div", "pa-pagelet-tab-empty-title",
-            pageletT("pagelet.tab.empty.title", this.locale)));
-        card.appendChild(el("div", "pa-pagelet-tab-empty-body",
-            pageletT("pagelet.tab.empty.body", this.locale)));
-        section.appendChild(card);
+        section.appendChild(renderEmptyCard(
+            "", "pagelet.tab.empty.title", "pagelet.tab.empty.body", this.locale));
 
         this.bodyEl.appendChild(section);
-    }
-
-    private renderReviewQueueContent(reviewQueue: { items: ReviewQueueItem[]; totalCount: number } | undefined): boolean {
-        if (!this.bodyEl || !reviewQueue || reviewQueue.items.length === 0) return false;
-
-        const section = el("div", "pa-pagelet-tab-section pa-pagelet-tab-review-queue");
-        section.appendChild(el("h2", undefined, pageletT("pagelet.tab.reviewQueue.title", this.locale)));
-        const summary = el("p", "pa-pagelet-tab-review-queue-summary",
-            pageletT("pagelet.tab.reviewQueue.summary", this.locale, { count: reviewQueue.totalCount }));
-        section.appendChild(summary);
-
-        const allGroups = groupReviewQueueItemsForTab(reviewQueue.items);
-        const filters = el("div", "pa-pagelet-tab-review-queue-filters");
-        const renderFilterButton = (filter: ReviewQueueTabGroup | "all", label: string): void => {
-            const button = el("button", "pa-pagelet-tab-review-queue-filter", label);
-            button.setAttribute("type", "button");
-            button.setAttribute("aria-pressed", String(this.reviewQueueTabFilter === filter));
-            button.setAttribute("data-active", String(this.reviewQueueTabFilter === filter));
-            button.addEventListener("click", (event) => {
-                event.preventDefault();
-                this.reviewQueueTabFilter = filter;
-                this.rerenderCurrentContentPreservingScroll();
-            });
-            filters.appendChild(button);
-        };
-        renderFilterButton("all", pageletT("pagelet.tab.reviewQueue.filter.all", this.locale));
-        for (const group of allGroups) {
-            renderFilterButton(group.group, pageletT(`pagelet.tab.reviewQueue.group.${group.group}`, this.locale));
-        }
-        section.appendChild(filters);
-
-        const groups = this.reviewQueueTabFilter === "all"
-            ? allGroups
-            : allGroups.filter((group) => group.group === this.reviewQueueTabFilter);
-        for (const group of groups) {
-            const groupEl = el("div", "pa-pagelet-tab-review-queue-group");
-            groupEl.appendChild(el("h3", undefined, pageletT(`pagelet.tab.reviewQueue.group.${group.group}`, this.locale)));
-            for (const item of group.items) {
-                const isAiCallout = item.metadata?.renderStyle === "ai_callout";
-                const cardEl = el(
-                    "div",
-                    isAiCallout
-                        ? "pa-pagelet-tab-insight-card pa-pagelet-tab-review-queue-card pa-pagelet-tab-review-queue-card--ai-callout"
-                        : "pa-pagelet-tab-insight-card pa-pagelet-tab-review-queue-card",
-                );
-                cardEl.appendChild(el("h4", undefined, item.title));
-                const bodyP = el("p");
-                if (isAiCallout) {
-                    bodyP.appendChild(el(
-                        "span",
-                        "pa-pagelet-tab-review-queue-callout-label",
-                        pageletT("pagelet.tab.reviewQueue.aiGenerated", this.locale),
-                    ));
-                    bodyP.appendChild(el("span", undefined, item.claim));
-                } else {
-                    bodyP.textContent = item.claim;
-                }
-                cardEl.appendChild(bodyP);
-                const tagRow = el("div", "pa-pagelet-tab-tag-row");
-                const typeLabel = pageletT(`pagelet.tab.reviewQueue.type.${item.type}`, this.locale);
-                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", typeLabel));
-                tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", item.status));
-                const source = item.sourceRefs[0]?.path;
-                if (source) {
-                    tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
-                }
-                cardEl.appendChild(tagRow);
-                groupEl.appendChild(cardEl);
-            }
-            section.appendChild(groupEl);
-        }
-
-        this.bodyEl.appendChild(section);
-        return true;
     }
 
     /** Render state restored from Obsidian without hidden full AI output. */

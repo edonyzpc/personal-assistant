@@ -172,7 +172,7 @@ function getUpdatedAt(days: StatsDashboardDay[], locale: PluginLocale): string {
 		.sort()
 		.pop();
 	return latest
-		? latest.replace("T", " ").replace(/\.\d{3}Z$/, " UTC")
+		? new Date(latest).toLocaleString()
 		: statisticsT("plugin.statistics.noData", undefined, locale);
 }
 
@@ -266,11 +266,34 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 
 	const chartColors = useMemo(() => {
 		const el = containerRef.current;
-		if (!el) return { text: "rgb(71, 85, 105)", grid: "rgba(148, 163, 184, 0.2)" };
+		if (!el) return {
+			text: "rgb(71, 85, 105)",
+			grid: "rgba(148, 163, 184, 0.2)",
+			barBg: "rgba(225, 29, 72, 0.35)",
+			barBorder: "rgb(225, 29, 72)",
+			linePurpleBg: "rgba(147, 51, 234, 0.14)",
+			linePurpleBorder: "rgb(147, 51, 234)",
+			lineTealBg: "rgba(20, 184, 166, 0.16)",
+			lineTealBorder: "rgb(13, 148, 136)",
+			lineAmberBg: "rgba(234, 179, 8, 0.18)",
+			lineAmberBorder: "rgb(202, 138, 4)",
+			yTick: "rgb(225, 29, 72)",
+			y1Tick: "rgb(147, 51, 234)",
+		};
 		const s = getComputedStyle(el);
 		return {
 			text: s.getPropertyValue("--pa-stat-chart-text").trim() || "rgb(71, 85, 105)",
 			grid: s.getPropertyValue("--pa-stat-chart-grid").trim() || "rgba(148, 163, 184, 0.2)",
+			barBg: s.getPropertyValue("--pa-stat-chart-bar-bg").trim() || "rgba(225, 29, 72, 0.35)",
+			barBorder: s.getPropertyValue("--pa-stat-chart-bar-border").trim() || "rgb(225, 29, 72)",
+			linePurpleBg: s.getPropertyValue("--pa-stat-chart-line-purple-bg").trim() || "rgba(147, 51, 234, 0.14)",
+			linePurpleBorder: s.getPropertyValue("--pa-stat-chart-line-purple-border").trim() || "rgb(147, 51, 234)",
+			lineTealBg: s.getPropertyValue("--pa-stat-chart-line-teal-bg").trim() || "rgba(20, 184, 166, 0.16)",
+			lineTealBorder: s.getPropertyValue("--pa-stat-chart-line-teal-border").trim() || "rgb(13, 148, 136)",
+			lineAmberBg: s.getPropertyValue("--pa-stat-chart-line-amber-bg").trim() || "rgba(234, 179, 8, 0.18)",
+			lineAmberBorder: s.getPropertyValue("--pa-stat-chart-line-amber-border").trim() || "rgb(202, 138, 4)",
+			yTick: s.getPropertyValue("--pa-stat-chart-y-tick").trim() || "rgb(225, 29, 72)",
+			y1Tick: s.getPropertyValue("--pa-stat-chart-y1-tick").trim() || "rgb(147, 51, 234)",
 		};
 	}, [containerWidth]);
 
@@ -315,13 +338,13 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 				y: {
 					beginAtZero: true,
 					grid: { color: chartColors.grid },
-					ticks: { color: "rgb(225, 29, 72)", maxTicksLimit: compact ? 4 : 6 },
+					ticks: { color: chartColors.yTick, maxTicksLimit: compact ? 4 : 6 },
 				},
 				y1: {
 					beginAtZero: true,
 					position: "right" as const,
 					grid: { drawOnChartArea: false },
-					ticks: { color: "rgb(147, 51, 234)", maxTicksLimit: compact ? 4 : 6 },
+					ticks: { color: chartColors.y1Tick, maxTicksLimit: compact ? 4 : 6 },
 				},
 			},
 		}),
@@ -335,9 +358,9 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 					{
 						type: "bar" as const,
 						label: t("plugin.statistics.chart.writingWords"),
-						data: toPoints(recentDays, "words"),
-						backgroundColor: "rgba(225, 29, 72, 0.35)",
-						borderColor: "rgb(225, 29, 72)",
+						data: toPoints(chartDays, "words"),
+						backgroundColor: chartColors.barBg,
+						borderColor: chartColors.barBorder,
 						borderWidth: 1,
 						yAxisID: "y",
 						parsing: { xAxisKey: "key", yAxisKey: "value" },
@@ -353,8 +376,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 						type: "bar" as const,
 						label: t("plugin.statistics.chart.dailyWords"),
 						data: toPoints(chartDays, "words"),
-						backgroundColor: "rgba(225, 29, 72, 0.32)",
-						borderColor: "rgb(225, 29, 72)",
+						backgroundColor: chartColors.barBg,
+						borderColor: chartColors.barBorder,
 						borderWidth: 1,
 						yAxisID: "y",
 						parsing: { xAxisKey: "key", yAxisKey: "value" },
@@ -363,8 +386,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 						type: "line" as const,
 						label: t("plugin.statistics.chart.dailyPages"),
 						data: toPoints(chartDays, "pages"),
-						backgroundColor: "rgba(147, 51, 234, 0.14)",
-						borderColor: "rgb(147, 51, 234)",
+						backgroundColor: chartColors.linePurpleBg,
+						borderColor: chartColors.linePurpleBorder,
 						borderWidth: 2,
 						fill: true,
 						tension: 0.25,
@@ -383,8 +406,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 						type: "line" as const,
 						label: t("plugin.statistics.chart.totalPages"),
 						data: toPoints(chartDays, "totalPages"),
-						backgroundColor: "rgba(20, 184, 166, 0.16)",
-						borderColor: "rgb(13, 148, 136)",
+						backgroundColor: chartColors.lineTealBg,
+						borderColor: chartColors.lineTealBorder,
 						borderWidth: 2,
 						fill: true,
 						tension: 0.25,
@@ -396,8 +419,8 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 						type: "line" as const,
 						label: t("plugin.statistics.chart.totalFiles"),
 						data: toPoints(chartDays, "files"),
-						backgroundColor: "rgba(234, 179, 8, 0.18)",
-						borderColor: "rgb(202, 138, 4)",
+						backgroundColor: chartColors.lineAmberBg,
+						borderColor: chartColors.lineAmberBorder,
 						borderWidth: 2,
 						stepped: true,
 						yAxisID: "y1",
@@ -409,7 +432,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 		}
 
 		return null;
-	}, [activeView, chartDays, locale, pointRadius, recentDays]);
+	}, [activeView, chartColors, chartDays, locale, pointRadius, recentDays]);
 
 	const compositionRows = useMemo(
 		() => activeView === "composition"
@@ -438,7 +461,7 @@ const Statistics = ({ app, plugin, dashboardData }: Props) => {
 	};
 
 	const hasData = days.length > 0;
-	const showRangePicker = activeView === "daily" || activeView === "growth";
+	const showRangePicker = activeView === "overview" || activeView === "daily" || activeView === "growth";
 
 	return (
 		<div ref={containerRef} className="pa-statistics-view pa-flex pa-h-full pa-w-full pa-flex-col pa-overflow-auto">

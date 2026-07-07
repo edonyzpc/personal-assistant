@@ -114,6 +114,14 @@ jest.mock("obsidian", () => {
     };
 });
 
+jest.mock("../src/locales/plugin", () => {
+    const actual = jest.requireActual("../src/locales/plugin") as Record<string, unknown>;
+    return {
+        ...actual,
+        getPluginUiLanguage: () => "en",
+    };
+});
+
 import {
     QUICK_CAPTURE_DEFAULTS,
     QuickCaptureService,
@@ -121,7 +129,6 @@ import {
     buildQuickCaptureEntry,
     mergeQuickCaptureSettings,
     normalizeQuickCaptureInboxPath,
-    type QuickCaptureCopy,
     type QuickCapturePostProcessInput,
     type QuickCaptureResult,
     type QuickCaptureSettings,
@@ -182,17 +189,6 @@ function makeAppHarness(initialFiles: Record<string, string> = {}, activePath?: 
     };
 }
 
-const copy: QuickCaptureCopy = {
-    modalTitle: "Quick Capture",
-    modalPlaceholder: "Save a thought...",
-    save: "Save",
-    cancel: "Cancel",
-    savedDaily: "Saved to Daily Note",
-    savedInbox: "Saved to Inbox",
-    savedCurrentFile: "Saved to current note",
-    saveFailed: "Could not save Quick Capture.",
-};
-
 function makeService(
     app: App,
     quickCapture?: Partial<QuickCaptureSettings>,
@@ -219,7 +215,7 @@ function makeService(
             : undefined,
         onCaptureSaved,
         postProcessCapture,
-    }, copy);
+    });
 }
 
 beforeEach(() => {

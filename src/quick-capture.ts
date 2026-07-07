@@ -1,6 +1,7 @@
 import { App, Modal, Notice, TFile, normalizePath } from "obsidian";
 
 import { validateAppendConfinement, validateTargetConfinementSync } from "./ai-services/write-action-framework/target-confinement";
+import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 export const QUICK_CAPTURE_COMMAND_ID = "pa-quick-capture";
 export const QUICK_CAPTURE_COMMAND_NAME = "PA: Quick Capture";
@@ -27,17 +28,6 @@ export interface QuickCaptureRuntimeSettings {
     targetPath: string;
     fileFormat: string;
     quickCapture?: Partial<QuickCaptureSettings>;
-}
-
-export interface QuickCaptureCopy {
-    modalTitle: string;
-    modalPlaceholder: string;
-    save: string;
-    cancel: string;
-    savedDaily: string;
-    savedInbox: string;
-    savedCurrentFile: string;
-    saveFailed: string;
 }
 
 export interface QuickCaptureHost {
@@ -239,10 +229,11 @@ async function appendToCurrentFile(app: App, file: TFile, entry: string): Promis
     return file.path;
 }
 
-function savedMessage(copy: QuickCaptureCopy, destination: QuickCaptureDestination): string {
-    if (destination === "inbox") return copy.savedInbox;
-    if (destination === "current-file") return copy.savedCurrentFile;
-    return copy.savedDaily;
+function savedMessage(destination: QuickCaptureDestination): string {
+    const lang = getPluginUiLanguage();
+    if (destination === "inbox") return pluginT("plugin.quickCapture.notice.savedInbox", lang);
+    if (destination === "current-file") return pluginT("plugin.quickCapture.notice.savedCurrentFile", lang);
+    return pluginT("plugin.quickCapture.notice.savedDaily", lang);
 }
 
 export class QuickCaptureService {
@@ -250,11 +241,18 @@ export class QuickCaptureService {
 
     constructor(
         private readonly host: QuickCaptureHost,
-        private readonly copy: QuickCaptureCopy,
     ) { }
 
+    private destinationLabel(): string {
+        const lang = getPluginUiLanguage();
+        const settings = mergeQuickCaptureSettings(this.host.settings.quickCapture);
+        if (settings.destination === "inbox") return pluginT("plugin.quickCapture.destination.inbox", lang);
+        if (settings.destination === "current-file") return pluginT("plugin.quickCapture.destination.currentFile", lang);
+        return pluginT("plugin.quickCapture.destination.daily", lang);
+    }
+
     openModal(): void {
-        new QuickCaptureModal(this.host.app, this.copy, async (text) => {
+        new QuickCaptureModal(this.host.app, this.destinationLabel(), async (text) => {
             await this.captureText(text);
             this.host.draft?.clear();
         }, {
@@ -278,7 +276,7 @@ export class QuickCaptureService {
                 const currentFile = getCurrentQuickCaptureFile(this.host.app);
                 const path = await this.withAppendQueue(currentFile.path, () =>
                     appendToCurrentFile(this.host.app, currentFile, entry));
-                new Notice(savedMessage(this.copy, settings.destination));
+                new Notice(savedMessage(settings.destination));
                 this.schedulePostProcessing(settings, {
                     captureId,
                     rawText,
@@ -302,7 +300,7 @@ export class QuickCaptureService {
             const normalizedPath = validateQuickCaptureVaultPath(path);
             const savedPath = await this.withAppendQueue(normalizedPath, () =>
                 appendToVaultPath(this.host.app, normalizedPath, entry));
-            new Notice(savedMessage(this.copy, settings.destination));
+            new Notice(savedMessage(settings.destination));
             this.schedulePostProcessing(settings, {
                 captureId,
                 rawText,
@@ -317,7 +315,7 @@ export class QuickCaptureService {
             return result;
         } catch (error) {
             this.host.log("Quick Capture save failed", error);
-            new Notice(this.copy.saveFailed);
+            new Notice(pluginT("plugin.quickCapture.notice.saveFailed", getPluginUiLanguage()));
             throw error;
         }
     }
@@ -356,7 +354,7 @@ class QuickCaptureModal extends Modal {
 
     constructor(
         app: App,
-        private readonly copy: QuickCaptureCopy,
+        private readonly destinationLabel: string,
         private readonly onSubmit: (text: string) => Promise<void>,
         private readonly draft: {
             initialText: string;
@@ -372,12 +370,17 @@ class QuickCaptureModal extends Modal {
         (this as unknown as { modalEl?: HTMLElement }).modalEl?.addClass("pa-quick-capture-modal-shell");
         contentEl.empty();
         contentEl.addClass("pa-quick-capture-modal");
-        contentEl.createEl("h2", { text: this.copy.modalTitle });
+        contentEl.createEl("h2", { text: pluginT("plugin.quickCapture.modal.title", getPluginUiLanguage()) });
+        contentEl.createEl("div", {
+            text: `${pluginT("plugin.quickCapture.modal.savingTo", getPluginUiLanguage())} ${this.destinationLabel}`,
+            cls: "pa-quick-capture-modal__destination",
+            attr: { "aria-live": "polite" },
+        });
 
         const input = contentEl.createEl("textarea", {
             cls: "pa-quick-capture-modal__input",
             attr: {
-                placeholder: this.copy.modalPlaceholder,
+                placeholder: pluginT("plugin.quickCapture.modal.placeholder", getPluginUiLanguage()),
                 rows: "12",
             },
         }) as HTMLTextAreaElement;
@@ -385,9 +388,9 @@ class QuickCaptureModal extends Modal {
         this.inputEl = input;
 
         const actions = contentEl.createDiv({ cls: "pa-quick-capture-modal__actions" });
-        const cancelButton = actions.createEl("button", { text: this.copy.cancel });
+        const cancelButton = actions.createEl("button", { text: pluginT("plugin.quickCapture.modal.cancel", getPluginUiLanguage()) });
         const saveButton = actions.createEl("button", {
-            text: this.copy.save,
+            text: pluginT("plugin.quickCapture.modal.save", getPluginUiLanguage()),
             cls: "mod-cta",
         });
         let submitting = false;
@@ -443,7 +446,11 @@ class QuickCaptureModal extends Modal {
         if (this.closeBehavior === "discard") {
             this.draft.onDiscard();
         } else if (this.inputEl) {
-            this.draft.onChange(this.inputEl.value);
+            const value = this.inputEl.value;
+            this.draft.onChange(value);
+            if (value.trim().length > 0) {
+                new Notice(pluginT("plugin.quickCapture.notice.draftSaved", getPluginUiLanguage()));
+            }
         }
         this.inputEl = null;
     }

@@ -1161,6 +1161,27 @@ describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
         expect(merged.colorGroups).toEqual(DEFAULT_SETTINGS.colorGroups);
     });
 
+    it('force-disables memoryExtractionEnabled when consent is unconfirmed', () => {
+        const merged = mergeLoadedSettings({
+            memoryExtractionEnabled: true,
+        });
+        expect(merged.memoryExtractionEnabled).toBe(false);
+        expect(merged.memoryExtractionConsent.state).toBe("unconfirmed");
+    });
+
+    it('preserves memoryExtractionEnabled when consent is confirmed', () => {
+        const merged = mergeLoadedSettings({
+            memoryExtractionEnabled: true,
+            memoryExtractionConsent: {
+                state: "confirmed",
+                version: 1,
+                confirmedAt: "2026-07-01T00:00:00.000Z",
+            },
+        });
+        expect(merged.memoryExtractionEnabled).toBe(true);
+        expect(merged.memoryExtractionConsent.state).toBe("confirmed");
+    });
+
     it('uses the mock license tier regardless of persisted licenseTier data', () => {
         expect(DEFAULT_SETTINGS.licenseTier).toBe(MOCK_LICENSE_TIER);
         expect(mergeLoadedSettings({}).licenseTier).toBe(MOCK_LICENSE_TIER);
@@ -1370,28 +1391,30 @@ describe('Phase 3 IA reorder + provider UX', () => {
         tab.containerEl = new MockContainerEl('div') as never;
         tab.display();
 
-        // Walk every top-level child of containerEl in render order. Heading
-        // tags (h1/h2/h3) are kept by their textContent; the Featured Image
-        // section emits its content under a div sub-container with no heading,
-        // so we mark it via the "Featured image folder" Setting record's
-        // index in the Setting render queue and reconstruct ordering by
-        // scanning for the matching div.
-        const children = (tab.containerEl as unknown as { children: { tagName: string; textContent?: string; children?: unknown[] }[] }).children;
+        // Walk all nodes recursively in render order. Heading tags
+        // (h1/h2/h3) are collected by textContent. With grouped settings
+        // (<details> wrappers), headings are nested inside groups, not
+        // top-level children.
+        type MockNode = { tagName: string; textContent?: string; children?: MockNode[] };
         const headingTags = new Set(['h1', 'h2', 'h3']);
         const sectionLabels: string[] = [];
-        for (const child of children) {
-            if (headingTags.has(child.tagName)) {
-                sectionLabels.push(`${child.tagName}:${child.textContent ?? ''}`);
+        const walkNodes = (nodes: MockNode[]) => {
+            for (const node of nodes) {
+                if (headingTags.has(node.tagName)) {
+                    sectionLabels.push(`${node.tagName}:${node.textContent ?? ''}`);
+                }
+                if (node.children) walkNodes(node.children);
             }
-        }
+        };
+        const children = (tab.containerEl as unknown as { children: MockNode[] }).children;
+        walkNodes(children);
 
         // Skills uses h3, all others h2; the only un-titled section is
         // Featured Image, which we verify separately below.
         expect(sectionLabels).toEqual([
             'h1:Settings for Obsidian Assistant',
             'h2:AI Assistant',
-            // Qwen response options is an h3 nested under the AI section's
-            // qwenOptionsContainer (not a top-level child), so it is absent here.
+            'h3:Qwen response options',
             'h3:Skill guides',
             'h2:Memory',
             'h2:Data & Privacy Boundaries',
@@ -1713,15 +1736,6 @@ describe('Phase 3 IA reorder + provider UX', () => {
         const excludedTags = records.find((record) => record.name === 'Excluded tags')?.texts[0];
         const generatedNotes = records.find((record) => record.name === 'Generated notes')?.dropdowns[0];
         const providerDisclosure = records.find((record) => record.name === 'Provider disclosure');
-        const cleanupButtons = [
-            'Local cache',
-            'Review queue',
-            'Replay metadata',
-            'Candidates',
-            'Confirmed Memory',
-            'Tombstones',
-        ].map((name) => records.find((record) => record.name === name)?.buttons[0]);
-
         expect(excludedFolders?.value).toBe('.obsidian');
         expect(excludedTags?.value).toBe('');
         expect(generatedNotes?.value).toBe('exclude-generated');
@@ -1730,8 +1744,11 @@ describe('Phase 3 IA reorder + provider UX', () => {
             { value: 'include-generated', text: 'Allow generated notes' },
         ]);
         expect(providerDisclosure?.desc).toContain('PA asks before broad');
-        expect(cleanupButtons).toHaveLength(6);
-        expect(cleanupButtons.every((button) => button?.text === 'Unavailable' && button.disabled === true)).toBe(true);
+        const cleanupButtonRecords = [
+            'Local cache', 'Review queue', 'Replay metadata',
+            'Candidates', 'Confirmed Memory', 'Tombstones',
+        ].map((name) => records.find((record) => record.name === name));
+        expect(cleanupButtonRecords.every((r) => r === undefined)).toBe(true);
 
         excludedFolders?.onChange?.('private, archive/sensitive, private');
         excludedTags?.onChange?.('#sensitive, private');

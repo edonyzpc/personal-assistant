@@ -260,6 +260,36 @@ describe("PA shared contracts", () => {
         })).toEqual({ ok: false, reason: "raw_memory_text_not_allowed" });
     });
 
+    it("rejects ConfirmedMemoryRecord with corrupted sensitivity (context firewall bypass guard)", () => {
+        expect(validateMemoryLifecycleRecord({
+            id: "mem-corrupt-1",
+            type: "decision",
+            lifecycle: "active",
+            sensitivity: "HIGH" as any,
+        })).toEqual({ ok: false, reason: "invalid_sensitivity" });
+
+        expect(validateMemoryLifecycleRecord({
+            id: "mem-corrupt-2",
+            type: "decision",
+            lifecycle: "active",
+            sensitivity: "critical" as any,
+        })).toEqual({ ok: false, reason: "invalid_sensitivity" });
+
+        expect(validateMemoryLifecycleRecord({
+            id: "mem-corrupt-3",
+            type: "decision",
+            lifecycle: "active",
+            sensitivity: "" as any,
+        })).toEqual({ ok: false, reason: "invalid_sensitivity" });
+
+        expect(validateMemoryLifecycleRecord({
+            id: "mem-valid",
+            type: "decision",
+            lifecycle: "active",
+            sensitivity: "high",
+        })).toEqual({ ok: true });
+    });
+
     it("formats Context Pager summaries and persists trace metadata without private text", () => {
         const trace: ContextTrace = {
             runId: "run-1",

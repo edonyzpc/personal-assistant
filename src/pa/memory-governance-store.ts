@@ -28,7 +28,7 @@ export interface ConfirmedMemoryRecord extends MemoryLifecycleRecord {
     validUntil?: string;
     lastVerified?: string;
     updatePolicy?: "manual-only" | "suggest-update-on-conflict" | "expire-after-date" | "refresh-on-scope-review" | "ask-before-cross-scope-use";
-    confirmationStrength?: "light" | "explicit" | "special";
+    confirmationStrength?: "light" | "explicit" | "special" | "auto";
     confirmationSource?: "pagelet" | "weekly_review" | "chat" | "memory_panel";
 }
 

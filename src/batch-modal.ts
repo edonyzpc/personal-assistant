@@ -13,6 +13,9 @@ export class BatchPluginControlModal extends Modal {
     constructor(app: App) {
         super(app);
         this.obsidianPlugins = getInternalPlugins(app);
+    }
+
+    onOpen(): void {
         this.contentEl.createEl('h3', {
             text: batchModalT('plugin.modal.batch.title'),
             cls: "pa-batch-modal-title",
@@ -33,14 +36,14 @@ export class BatchPluginControlModal extends Modal {
                 name: this.obsidianPlugins.manifests[key].name,
                 id: this.obsidianPlugins.manifests[key].id,
                 desc: this.obsidianPlugins.manifests[key].description,
-                enbaled: false
+                enabled: false
             };
             // find disabled plugins
             if (!this.obsidianPlugins.enabledPlugins.has(this.obsidianPlugins.manifests[key].id)) {
-                pluginObject.enbaled = false;
+                pluginObject.enabled = false;
                 disabledPlugins.push(pluginObject);
             } else {
-                pluginObject.enbaled = true;
+                pluginObject.enabled = true;
                 enabledPlugins.push(pluginObject);
             }
             plugins.push(pluginObject);
@@ -52,9 +55,9 @@ export class BatchPluginControlModal extends Modal {
                 .setDesc(plugin.desc)
                 .addToggle(toggle => {
                     toggles.push(toggle);
-                    toggle.setValue(plugin.enbaled)
+                    toggle.setValue(plugin.enabled)
                         .onChange((value) => {
-                            if (value === plugin.enbaled) {
+                            if (value === plugin.enabled) {
                                 desiredPluginStates.delete(plugin.id);
                             } else {
                                 desiredPluginStates.set(plugin.id, { plugin, enabled: value });

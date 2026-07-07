@@ -281,11 +281,8 @@ describe("ReviewQueueStore", () => {
             { ...base, id: "snoozed", status: "snoozed" },
             { ...base, id: "dismissed", status: "dismissed" },
         ]).map((group) => [group.group, group.items.map((item) => item.id)])).toEqual([
-            ["needs_decision", ["suggested"]],
-            ["ready_to_apply", ["accepted"]],
-            ["recently_applied", ["applied"]],
-            ["snoozed", ["snoozed"]],
-            ["stale", ["dismissed"]],
+            ["active", ["suggested", "accepted"]],
+            ["history", ["applied", "snoozed", "dismissed"]],
         ]);
     });
 });

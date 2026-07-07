@@ -109,9 +109,16 @@ export interface PanelMemoryGovernanceState {
     records: ConfirmedMemoryRecord[];
     candidates?: ReviewQueueItem[];
     totalCount: number;
+    /** Routed ReviewQueue items (memory-domain) merged from the review queue. */
+    routedItems?: ReviewQueueItem[];
+    /** Number of confirmed memories (for graduated trust model). */
+    confirmedMemoryCount?: number;
 }
 
-export type PanelMaintenanceReviewState = MaintenanceReviewRunResult;
+export interface PanelMaintenanceReviewState extends MaintenanceReviewRunResult {
+    /** Routed ReviewQueue items (maintenance-domain) merged from the review queue. */
+    routedItems?: ReviewQueueItem[];
+}
 
 export type PanelQuietRecallState = QuietRecallRunResult;
 export type PanelGraphDiscoveryState = GraphDiscoveryRunResult;

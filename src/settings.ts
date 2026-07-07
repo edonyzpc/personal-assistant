@@ -173,14 +173,6 @@ const DATA_BOUNDARY_CLEANUP_LABEL_KEYS: Record<DataCleanupGroup, PluginMessageKe
     tombstones: "plugin.settings.dataBoundary.cleanup.tombstones.name",
 };
 
-const DATA_BOUNDARY_CLEANUP_DESC_KEYS: Record<DataCleanupGroup, PluginMessageKey> = {
-    cache: "plugin.settings.dataBoundary.cleanup.cache.desc",
-    queue: "plugin.settings.dataBoundary.cleanup.queue.desc",
-    replay: "plugin.settings.dataBoundary.cleanup.replay.desc",
-    candidates: "plugin.settings.dataBoundary.cleanup.candidates.desc",
-    confirmed_memory: "plugin.settings.dataBoundary.cleanup.confirmedMemory.desc",
-    tombstones: "plugin.settings.dataBoundary.cleanup.tombstones.desc",
-};
 
 export function normalizeFeaturedImageModel(value: unknown): FeaturedImageModel {
     return FEATURED_IMAGE_MODELS.includes(value as FeaturedImageModel)
@@ -248,6 +240,7 @@ export interface PluginManagerSettings {
     embeddingModelName: string;
     embeddingV4MigrationNoticeDismissed: boolean;
     memoryEnabled: boolean;
+    confirmedMemoryCount: number;
     memoryAutoCheckBeforeChat: boolean;
     memoryApprovalPolicy: "always" | "auto-refresh-after-prepare";
     showAdvancedMemoryControls: boolean;
@@ -355,6 +348,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     embeddingModelName: "text-embedding-v4",
     embeddingV4MigrationNoticeDismissed: false,
     memoryEnabled: true,
+    confirmedMemoryCount: 0,
     memoryAutoCheckBeforeChat: true,
     memoryApprovalPolicy: "always",
     showAdvancedMemoryControls: false,
@@ -930,25 +924,69 @@ export class SettingTab extends PluginSettingTab {
         this.featuredImageContainer = null;
         this.refreshQwenResponseOptionAvailability = null;
 
-        // Section order matches the user's typical configuration flow:
-        // pick a provider first (AI Assistant), then layer Memory + Skills,
-        // then per-feature settings, with diagnostics at the bottom.
         this.renderHeader(containerEl);
-        this.renderAISection(containerEl);
-        this.renderSkillsSection(containerEl);
-        this.renderMemorySection(containerEl);
-        this.renderDataBoundarySection(containerEl);
-        this.renderOperationsAgentSection(containerEl);
-        this.renderPageletSection(containerEl);
-        this.renderQuickCaptureSection(containerEl);
-        this.renderStatisticsSection(containerEl);
-        this.renderRecordSection(containerEl);
-        this.renderGraphSection(containerEl);
-        this.renderGraphColorsSection(containerEl);
-        this.renderMetadataSection(containerEl);
-        this.renderFeaturedImageSection(containerEl);
-        this.renderAdvancedSection(containerEl);
-        this.renderLegalSection(containerEl);
+
+        const groups: Array<{ id: string; labelKey: string; sections: Array<(parent: HTMLElement) => void> }> = [
+            { id: "ai-provider", labelKey: "plugin.settings.group.aiProvider", sections: [
+                (p) => this.renderAISection(p),
+                (p) => this.renderSkillsSection(p),
+                (p) => this.renderMemorySection(p),
+            ] },
+            { id: "data-privacy", labelKey: "plugin.settings.group.dataPrivacy", sections: [
+                (p) => this.renderDataBoundarySection(p),
+                (p) => this.renderOperationsAgentSection(p),
+            ] },
+            { id: "features", labelKey: "plugin.settings.group.features", sections: [
+                (p) => this.renderPageletSection(p),
+                (p) => this.renderQuickCaptureSection(p),
+                (p) => this.renderStatisticsSection(p),
+            ] },
+            { id: "appearance", labelKey: "plugin.settings.group.appearance", sections: [
+                (p) => this.renderRecordSection(p),
+                (p) => this.renderGraphSection(p),
+                (p) => this.renderGraphColorsSection(p),
+                (p) => this.renderMetadataSection(p),
+                (p) => this.renderFeaturedImageSection(p),
+            ] },
+            { id: "system", labelKey: "plugin.settings.group.system", sections: [
+                (p) => this.renderAdvancedSection(p),
+                (p) => this.renderLegalSection(p),
+            ] },
+        ];
+
+        const nav = containerEl.createDiv({ cls: "pa-settings-nav",
+            attr: { role: "navigation", "aria-label": this.t("plugin.settings.nav.ariaLabel") },
+        });
+
+        for (const group of groups) {
+            const details = containerEl.createEl("details", {
+                cls: "pa-settings-group",
+                attr: { id: `pa-settings-group-${group.id}` },
+            });
+            (details as HTMLDetailsElement).open = !this.isGroupCollapsed(group.id);
+            const summary = details.createEl("summary", {
+                cls: "pa-settings-group-summary",
+                text: this.t(group.labelKey as never),
+                attr: { id: `pa-settings-nav-target-${group.id}` },
+            });
+            details.addEventListener("toggle", () => {
+                this.persistGroupCollapseState(group.id, !details.open);
+            });
+            for (const renderSection of group.sections) {
+                renderSection(details);
+            }
+
+            const navItem = nav.createEl("button", {
+                cls: "pa-settings-nav-item",
+                text: this.t(group.labelKey as never),
+            });
+            navItem.setAttr("type", "button");
+            navItem.addEventListener("click", () => {
+                (details as HTMLDetailsElement).open = true;
+                this.persistGroupCollapseState(group.id, false);
+                (summary as HTMLElement).scrollIntoView?.({ behavior: "smooth", block: "start" });
+            });
+        }
         this.markFormControlSettings(containerEl);
         this.startSecretPickerObserver();
     }
@@ -962,6 +1000,30 @@ export class SettingTab extends PluginSettingTab {
         // the current settings object captures the user's latest input.
         this.debouncedSave.cancel();
         void this.plugin.saveSettings();
+    }
+
+    private isGroupCollapsed(groupId: string): boolean {
+        try {
+            const raw = localStorage.getItem("pa-settings-collapsed");
+            if (!raw) return false;
+            const state = JSON.parse(raw) as Record<string, boolean>;
+            return state[groupId] === true;
+        } catch {
+            return false;
+        }
+    }
+
+    private persistGroupCollapseState(groupId: string, collapsed: boolean): void {
+        try {
+            const raw = localStorage.getItem("pa-settings-collapsed");
+            const state: Record<string, boolean> = raw ? JSON.parse(raw) : {};
+            if (collapsed) {
+                state[groupId] = true;
+            } else {
+                delete state[groupId];
+            }
+            localStorage.setItem("pa-settings-collapsed", JSON.stringify(state));
+        } catch { /* localStorage unavailable — graceful degradation */ }
     }
 
     private startSecretPickerObserver(): void {
@@ -1601,13 +1663,14 @@ export class SettingTab extends PluginSettingTab {
             text: this.t("plugin.settings.dataBoundary.cleanup.desc"),
             cls: "pa-settings-section-desc-sm",
         });
+        const cleanupCard = parentEl.createDiv({ cls: "pa-settings-info-card" });
+        cleanupCard.createEl("p", {
+            text: this.t("plugin.settings.dataBoundary.cleanup.infoCard"),
+            cls: "pa-settings-info-card-text",
+        });
+        const cleanupList = cleanupCard.createEl("ul", { cls: "pa-settings-info-card-list" });
         for (const group of DATA_CLEANUP_GROUPS) {
-            new Setting(parentEl)
-                .setName(this.t(DATA_BOUNDARY_CLEANUP_LABEL_KEYS[group]))
-                .setDesc(this.t(DATA_BOUNDARY_CLEANUP_DESC_KEYS[group]))
-                .addButton(button => button
-                    .setButtonText(this.t("plugin.settings.dataBoundary.cleanup.unavailable"))
-                    .setDisabled(true));
+            cleanupList.createEl("li", { text: this.t(DATA_BOUNDARY_CLEANUP_LABEL_KEYS[group]) });
         }
     }
 
@@ -2533,7 +2596,7 @@ export class SettingTab extends PluginSettingTab {
         // Everything below the master toggle lives in a sub-container so we
         // can hide it entirely when memoryEnabled is off (mirroring the
         // enableGraphColors / enableMetadataUpdating pattern).
-        this.memorySubContainer = parentEl.createDiv();
+        this.memorySubContainer = parentEl.createDiv({ cls: "pa-settings-nested pa-settings-nested--level-1" });
         this.rebuildMemorySubSettings();
     }
 
@@ -2638,7 +2701,7 @@ export class SettingTab extends PluginSettingTab {
                 });
         }
 
-        this.memoryAdvancedContainer = container.createDiv();
+        this.memoryAdvancedContainer = container.createDiv({ cls: "pa-settings-nested pa-settings-nested--level-2" });
         this.rebuildMemoryAdvanced();
     }
 

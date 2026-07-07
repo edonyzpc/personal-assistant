@@ -14,7 +14,7 @@ export interface Plugin {
     name: string;
     id: string;
     desc: string;
-    enbaled: boolean;
+    enabled: boolean;
 }
 
 export class PluginControlModal extends SuggestModal<Plugin> {
@@ -41,14 +41,14 @@ export class PluginControlModal extends SuggestModal<Plugin> {
                 name: this.obsidianPlugins.manifests[key].name,
                 id: this.obsidianPlugins.manifests[key].id,
                 desc: this.obsidianPlugins.manifests[key].description,
-                enbaled: false
+                enabled: false
             };
             // find disabled plugins
             if (!this.obsidianPlugins.enabledPlugins.has(this.obsidianPlugins.manifests[key].id)) {
-                pluginObject.enbaled = false;
+                pluginObject.enabled = false;
                 disabledPlugins.push(pluginObject);
             } else {
-                pluginObject.enbaled = true;
+                pluginObject.enabled = true;
                 enabledPlugins.push(pluginObject);
             }
             plugins.push(pluginObject);
@@ -59,13 +59,13 @@ export class PluginControlModal extends SuggestModal<Plugin> {
 
     // Renders each suggestion item.
     renderSuggestion(plugin: Plugin, el: HTMLElement) {
-        const color = plugin.enbaled ? this.enabledColor : this.disabledColor;
+        const color = plugin.enabled ? this.enabledColor : this.disabledColor;
 
         addIcon('SWITCH_ON_STATUS', icons['SWITCH_ON_STATUS']);
         addIcon('SWITCH_OFF_STATUS', icons['SWITCH_OFF_STATUS']);
         const div = el.createEl("div");
         div.setCssStyles({ color });
-        if (plugin.enbaled) {
+        if (plugin.enabled) {
             setIcon(div, 'SWITCH_ON_STATUS');
         } else {
             setIcon(div, 'SWITCH_OFF_STATUS');
@@ -82,13 +82,13 @@ export class PluginControlModal extends SuggestModal<Plugin> {
 
     private async choosePlugin(plugin: Plugin): Promise<void> {
         const action = modalT(
-            plugin.enbaled
+            plugin.enabled
                 ? "plugin.modal.pluginAction.disable"
                 : "plugin.modal.pluginAction.enable"
         );
 
         try {
-            const result = plugin.enbaled
+            const result = plugin.enabled
                 ? await this.obsidianPlugins?.disablePluginAndSave(plugin.id)
                 : await this.obsidianPlugins?.enablePluginAndSave(plugin.id);
 

@@ -1,15 +1,16 @@
 /* Copyright 2023 edonyzpc */
 
-import type { MaintenanceMoveApplyResult, MaintenanceMoveUndoResult, MaintenanceProposal } from "../../../pa";
+import type { MaintenanceMoveApplyResult, MaintenanceMoveUndoResult, MaintenanceProposal, ReviewQueueItem } from "../../../pa";
 import type { PanelMaintenanceReviewState } from "../../panel/types";
 import type { PageletLocale } from "../../../locales/pagelet";
 import { pageletT } from "../../../locales/pagelet";
-import { clearChildren, el } from "../../dom-utils";
+import { clearChildren, el, renderEmptyCard } from "../../dom-utils";
 import type { TabSectionRenderer, TabSectionCallbacks, MaintenanceActionUiState } from "./types";
 
 export interface MaintenanceReviewCallbacks {
     onApply?: (proposal: MaintenanceProposal) => Promise<MaintenanceMoveApplyResult>;
     onUndo?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
+    onOpenSettings?: () => void;
 }
 
 export class MaintenanceReviewSection implements TabSectionRenderer {
@@ -30,7 +31,9 @@ export class MaintenanceReviewSection implements TabSectionRenderer {
     }
 
     hasContent(): boolean {
-        return this.data.categories.length > 0 || this.data.proposals.length > 0;
+        return this.data.categories.length > 0
+            || this.data.proposals.length > 0
+            || (this.data.routedItems?.length ?? 0) > 0;
     }
 
     render(container: HTMLElement): void {
@@ -65,8 +68,12 @@ export class MaintenanceReviewSection implements TabSectionRenderer {
 
         const overviewCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-maintenance-overview-card");
         const tagRow = el("div", "pa-pagelet-tab-tag-row");
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", pageletT("pagelet.tab.maintenance.previewOnly", this.locale)));
-        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", pageletT("pagelet.tab.maintenance.weeklyDisabled", this.locale)));
+        tagRow.appendChild(el("span", "pa-pagelet-tab-muted", pageletT("pagelet.tab.maintenance.previewOnly", this.locale)));
+        const weeklyBtn = el("button", "pa-pagelet-tab-tag-chip pa-pagelet-tab-tag-chip--link",
+            pageletT("pagelet.tab.maintenance.weeklyDisabled", this.locale));
+        weeklyBtn.setAttribute("type", "button");
+        weeklyBtn.addEventListener("click", () => { this.callbacks.onOpenSettings?.(); });
+        tagRow.appendChild(weeklyBtn);
         overviewCard.appendChild(tagRow);
         section.appendChild(overviewCard);
 
@@ -75,15 +82,14 @@ export class MaintenanceReviewSection implements TabSectionRenderer {
         for (const category of categories) {
             const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-maintenance-category-card");
             cardEl.appendChild(el("h4", undefined, category.label));
-            cardEl.appendChild(el("p", undefined, String(category.count)));
+            cardEl.appendChild(el("p", undefined, pageletT("pagelet.tab.maintenance.categoryCount", this.locale, { count: category.count })));
             categoriesGroup.appendChild(cardEl);
         }
         section.appendChild(categoriesGroup);
 
         if (proposals.length === 0) {
-            const emptyCard = el("div", "pa-pagelet-tab-insight-card");
-            emptyCard.appendChild(el("p", undefined, pageletT("pagelet.tab.maintenance.noProposals", this.locale)));
-            section.appendChild(emptyCard);
+            section.appendChild(renderEmptyCard(
+                "pa-pagelet-tab-maintenance-empty", "pagelet.tab.maintenance.noProposals", undefined, this.locale));
         }
         if (proposals.length > 0) {
             const proposalsGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-maintenance-proposals");
@@ -98,7 +104,7 @@ export class MaintenanceReviewSection implements TabSectionRenderer {
                     pageletT(`pagelet.tab.maintenance.action.${proposal.actionType}`, this.locale)));
                 proposalTags.appendChild(el("span", "pa-pagelet-tab-tag-chip",
                     pageletT(`pagelet.tab.maintenance.confidence.${proposal.confidence}`, this.locale)));
-                proposalTags.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+                proposalTags.appendChild(el("span", "pa-pagelet-tab-muted",
                     pageletT("pagelet.tab.maintenance.previewOnly", this.locale)));
                 cardEl.appendChild(proposalTags);
 
@@ -118,7 +124,55 @@ export class MaintenanceReviewSection implements TabSectionRenderer {
             section.appendChild(proposalsGroup);
         }
 
+        const routedItems = this.data.routedItems ?? [];
+        if (routedItems.length > 0) {
+            const suggestionsGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-maintenance-suggestions");
+            suggestionsGroup.appendChild(el("h3", undefined, pageletT("pagelet.tab.maintenance.suggestionsTitle", this.locale)));
+            for (const item of routedItems) {
+                suggestionsGroup.appendChild(this.renderRoutedItem(item));
+            }
+            section.appendChild(suggestionsGroup);
+        }
+
         this.containerEl.appendChild(section);
+    }
+
+    private renderRoutedItem(item: ReviewQueueItem): HTMLElement {
+        const isAiCallout = item.metadata?.renderStyle === "ai_callout";
+        const cardEl = el(
+            "div",
+            isAiCallout
+                ? "pa-pagelet-tab-insight-card pa-pagelet-tab-review-queue-card pa-pagelet-tab-review-queue-card--ai-callout"
+                : "pa-pagelet-tab-insight-card pa-pagelet-tab-review-queue-card",
+        );
+        cardEl.appendChild(el("h4", undefined, item.title));
+        const bodyP = el("p");
+        if (isAiCallout) {
+            bodyP.appendChild(el(
+                "span",
+                "pa-pagelet-tab-review-queue-callout-label",
+                pageletT("pagelet.tab.reviewQueue.aiGenerated", this.locale),
+            ));
+            bodyP.appendChild(el("span", undefined, item.claim));
+        } else {
+            bodyP.textContent = item.claim;
+        }
+        cardEl.appendChild(bodyP);
+
+        const tagRow = el("div", "pa-pagelet-tab-tag-row");
+        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+            pageletT(`pagelet.tab.reviewQueue.type.${item.type}`, this.locale)));
+        tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
+            pageletT(`pagelet.tab.reviewQueue.status.${item.status}`, this.locale)));
+        const source = item.sourceRefs[0]?.path;
+        if (source) tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip", source));
+        cardEl.appendChild(tagRow);
+
+        if (item.whyShown.length > 0) {
+            cardEl.appendChild(el("p", "pa-pagelet-tab-review-queue-why",
+                pageletT("pagelet.tab.common.whyNow", this.locale, { reason: item.whyShown.slice(0, 2).join("; ") })));
+        }
+        return cardEl;
     }
 
     private renderProposalActions(cardEl: HTMLElement, proposal: MaintenanceProposal): void {

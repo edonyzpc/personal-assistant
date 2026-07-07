@@ -22,6 +22,7 @@ export interface TabSectionRenderer {
 export interface TabSectionCallbacks {
     requestRerender: () => void;
     canCommitActionState?: () => boolean;
+    confirmAction?: (message: string) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------

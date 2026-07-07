@@ -13,13 +13,15 @@ Framework: [PA UI/UX Review Framework](./pa-ui-ux-review-framework.md)
 | North Star | 随手记下，需要时自然浮现 |
 | Design Philosophy | 安静且可信 |
 
-Current status note (2026-07-04): this remains a baseline audit, not a fresh
-scorecard. Pagelet Tab follow-up work has addressed several Tab findings:
-section navigation exists, Context Pager is collapsed behind `<details>`,
-Memory supports user-triggered visible-candidate batch confirmation, and pending
-section actions now survive full Tab rerenders. Statistics, Chat jargon,
-Settings navigation, and real Obsidian/mobile smoke items still need separate
-verification.
+Current status note (2026-07-07): this is the v1 baseline audit. A v2 refresh
+audit was conducted 2026-07-07, scoring overall quality at 3.97/5.0 (up from
+3.71). 81 findings identified, 62 confirmed. 15 product decisions made. The
+implementation plan is in
+[pa-ui-ux-optimization-plan.md](./pa-ui-ux-optimization-plan.md). Key
+improvements since baseline: Statistics +0.88 (dark mode fixed), Tab +0.62
+(restructured), Chat +0.31 (i18n partially migrated). Panel regressed -0.15
+(scope controls added management burden). The v2 heatmap and findings are in
+the optimization plan document.
 
 ---
 

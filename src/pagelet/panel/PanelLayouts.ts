@@ -421,7 +421,7 @@ function renderInteractiveConnectionGraph(
     const edgeElements = edges.map((edge) => {
         const line = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "line");
         line.setAttribute("class", `pa-pagelet-panel-connection-edge pa-pagelet-panel-connection-edge--${edge.strength}`);
-        line.setAttribute("stroke", edge.color);
+        line.setAttribute("style", `stroke: ${edge.color}`);
         line.setAttribute("data-strength", edge.strength);
         edgeLayer.appendChild(line);
         return line;
@@ -477,8 +477,7 @@ function renderInteractiveConnectionGraph(
         const circle = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "circle");
         circle.setAttribute("class", "pa-pagelet-panel-connection-node-dot");
         circle.setAttribute("r", String(node.radius));
-        circle.setAttribute("fill", node.fill);
-        circle.setAttribute("stroke", node.stroke);
+        circle.setAttribute("style", `fill: ${node.fill}; stroke: ${node.stroke}`);
         group.appendChild(circle);
 
         const text = doc.createElementNS(CONNECTION_GRAPH_SVG_NS, "text");
@@ -673,14 +672,14 @@ function buildConnectionGraphModel(
 }
 
 const CONNECTION_NODE_PALETTE = [
-    { fill: "#38bdf8", stroke: "#0369a1" },
-    { fill: "#a78bfa", stroke: "#6d28d9" },
-    { fill: "#34d399", stroke: "#047857" },
-    { fill: "#f59e0b", stroke: "#b45309" },
-    { fill: "#fb7185", stroke: "#be123c" },
-    { fill: "#2dd4bf", stroke: "#0f766e" },
-    { fill: "#c084fc", stroke: "#7e22ce" },
-    { fill: "#84cc16", stroke: "#4d7c0f" },
+    { fill: "var(--pa-conn-node-fill-0, #38bdf8)", stroke: "var(--pa-conn-node-stroke-0, #0369a1)" },
+    { fill: "var(--pa-conn-node-fill-1, #a78bfa)", stroke: "var(--pa-conn-node-stroke-1, #6d28d9)" },
+    { fill: "var(--pa-conn-node-fill-2, #34d399)", stroke: "var(--pa-conn-node-stroke-2, #047857)" },
+    { fill: "var(--pa-conn-node-fill-3, #f59e0b)", stroke: "var(--pa-conn-node-stroke-3, #b45309)" },
+    { fill: "var(--pa-conn-node-fill-4, #fb7185)", stroke: "var(--pa-conn-node-stroke-4, #be123c)" },
+    { fill: "var(--pa-conn-node-fill-5, #2dd4bf)", stroke: "var(--pa-conn-node-stroke-5, #0f766e)" },
+    { fill: "var(--pa-conn-node-fill-6, #c084fc)", stroke: "var(--pa-conn-node-stroke-6, #7e22ce)" },
+    { fill: "var(--pa-conn-node-fill-7, #84cc16)", stroke: "var(--pa-conn-node-stroke-7, #4d7c0f)" },
 ];
 
 function calculateConnectionGraphPositions(count: number): Array<{ x: number; y: number }> {
@@ -706,8 +705,8 @@ function calculateConnectionGraphPositions(count: number): Array<{ x: number; y:
 }
 
 function connectionEdgeColor(strength: NoteConnection["strength"], index: number): string {
-    if (strength === "strong") return "#0ea5e9";
-    if (strength === "weak") return "#a78bfa";
+    if (strength === "strong") return "var(--pa-conn-edge-strong, #0ea5e9)";
+    if (strength === "weak") return "var(--pa-conn-edge-weak, rgba(14, 165, 233, 0.3))";
     return ["#22c55e", "#f59e0b", "#ec4899", "#14b8a6"][index % 4];
 }
 

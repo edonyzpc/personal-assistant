@@ -82,6 +82,12 @@ export class BubbleCoordinator {
     private discoverRunId = 0;
     private discoverInFlightKey: string | null = null;
 
+    destroy(): void {
+        this.lastAnchorEl = null;
+        this.discoverInFlightKey = null;
+        this.memoryReadySnapshot = null;
+    }
+
     // ======================================================================
     // Pet-click entry point
     // ======================================================================
