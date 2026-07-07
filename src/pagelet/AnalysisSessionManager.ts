@@ -121,6 +121,10 @@ export class AnalysisSessionManager {
         return true;
     }
 
+    beginForegroundRouteRun(): void {
+        this.foregroundRunInProgress = true;
+    }
+
     finishForegroundReviewRun(): void {
         this.foregroundRunInProgress = false;
     }

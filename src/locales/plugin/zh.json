@@ -188,6 +188,7 @@
     "plugin.notice.qwenMemoryModelRecommended": "建议为新的 Memory 副本使用 Qwen 更新的 memory model。现有 Memory model 设置已保留。",
     "plugin.notice.apiTokenMigrationFailed": "API token 迁移失败。请在设置中重新输入 token。",
     "plugin.notice.apiTokenNotConfigured": "尚未配置 API token。请在设置 \u2192 Personal Assistant 中设置。",
+    "plugin.migration.memoryExtractionConsent": "记忆提取现在需要明确授权。请在设置 \u2192 Personal Assistant \u2192 记忆提取中重新启用。",
     "plugin.aiSetup.chooseProvider": "请先在设置中选择 AI 服务商。",
     "plugin.aiSetup.completeProvider": "请先在设置中补全 AI 服务商 URL 和模型。",
     "plugin.aiSetup.addToken": "请先在设置中添加 API token。",
