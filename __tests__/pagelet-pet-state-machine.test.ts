@@ -387,7 +387,7 @@ describe("PetView mobile positioning styles", () => {
         expect(mobileSvgBlock).toContain("height: 28px;");
         expect(mobileOutlineStrokeBlock).toContain("stroke-width: 2.8px;");
         expect(mobileDetailStrokeBlock).toContain("stroke-width: 2.35px;");
-        expect(mobileRestingBlock).toContain("opacity: 1;");
+        expect(mobileRestingBlock).toContain("opacity: 0.8;");
         expect(mobileRestingBlock).toContain("filter: none;");
         expect(mobileRestingSvgWrapBlock).toContain("filter: none;");
     });

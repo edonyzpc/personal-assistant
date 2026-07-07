@@ -3,6 +3,7 @@ import {
     getOptionalPlatformDocument,
     getPlatformDocument,
 } from "../platform-dom";
+import { pageletT, type PageletLocale } from "../locales/pagelet";
 
 export function clearChildren(node: Element): void {
     while (node.firstChild) {
@@ -36,6 +37,15 @@ export function el<K extends keyof HTMLElementTagNameMap>(
     if (className) node.className = className;
     if (text !== undefined) node.textContent = text;
     return node;
+}
+
+export function renderEmptyCard(cls: string, titleKey: string, bodyKey: string | undefined, locale: PageletLocale): HTMLElement {
+    const card = el("div", `pa-pagelet-tab-empty-card ${cls}`);
+    card.appendChild(el("div", "pa-pagelet-tab-empty-title", pageletT(titleKey, locale)));
+    if (bodyKey) {
+        card.appendChild(el("div", "pa-pagelet-tab-empty-body", pageletT(bodyKey, locale)));
+    }
+    return card;
 }
 
 const OBSIDIAN_MODAL_SELECTOR = ".modal-container, .modal";

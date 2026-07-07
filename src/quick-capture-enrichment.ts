@@ -13,6 +13,7 @@ import {
     type ReviewQueueCreateInput,
 } from "./pa";
 import type { QuickCapturePostProcessInput } from "./quick-capture";
+import { getPluginUiLanguage, pluginT } from "./locales/plugin";
 
 export const QUICK_CAPTURE_ENRICHMENT_SUGGESTION_TYPES = [
     "title",
@@ -66,14 +67,18 @@ const QUEUE_TYPE_BY_SUGGESTION_TYPE: Record<QuickCaptureQueueableSuggestionType,
     task_suggestion: "task_suggestion",
 };
 
-const DEFAULT_TITLES: Record<QuickCaptureEnrichmentSuggestionType, string> = {
-    title: "Suggested title",
-    tag: "Suggested tag",
-    related_note: "Related note",
-    memory_candidate: "Memory candidate",
-    task_suggestion: "Possible task",
-    expansion: "AI expansion",
+const ENRICHMENT_TITLE_KEY_MAP: Record<QuickCaptureEnrichmentSuggestionType, string> = {
+    title: "plugin.quickCapture.enrichment.title.title",
+    tag: "plugin.quickCapture.enrichment.title.tag",
+    related_note: "plugin.quickCapture.enrichment.title.relatedNote",
+    memory_candidate: "plugin.quickCapture.enrichment.title.memoryCandidate",
+    task_suggestion: "plugin.quickCapture.enrichment.title.taskSuggestion",
+    expansion: "plugin.quickCapture.enrichment.title.expansion",
 };
+
+function getDefaultTitle(type: QuickCaptureEnrichmentSuggestionType): string {
+    return pluginT(ENRICHMENT_TITLE_KEY_MAP[type], getPluginUiLanguage());
+}
 
 const MAX_SUGGESTIONS = 6;
 const MAX_TITLE_CHARS = 120;
@@ -138,14 +143,14 @@ function extractJsonPayload(text: string): string | null {
 
 function normalizeSuggestion(value: unknown): QuickCaptureEnrichmentSuggestion | null {
     if (!isRecord(value) || !isSuggestionType(value.type)) return null;
-    const fallbackTitle = DEFAULT_TITLES[value.type];
+    const fallbackTitle = getDefaultTitle(value.type);
     const claim = cleanInline(value.claim ?? value.suggestedText ?? value.text, MAX_CLAIM_CHARS);
     if (!claim) return null;
     const suggestion: QuickCaptureEnrichmentSuggestion = {
         type: value.type,
         title: cleanInline(value.title, MAX_TITLE_CHARS) || fallbackTitle,
         claim,
-        whyShown: normalizeWhyShown(value.whyShown ?? value.why, "Suggested after Quick Capture"),
+        whyShown: normalizeWhyShown(value.whyShown ?? value.why, pluginT("plugin.quickCapture.enrichment.whyShown", getPluginUiLanguage())),
         priority: isPriority(value.priority) ? value.priority : undefined,
     };
     if (suggestion.type === "memory_candidate") {

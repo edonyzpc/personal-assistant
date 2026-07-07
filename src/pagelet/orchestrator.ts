@@ -51,6 +51,7 @@ import { ReviewNoteSaveFlow } from "./ReviewNoteSaveFlow";
 import type { PageletHost } from "./PageletHost";
 import { resolveRelatedMarkdownNote } from "./related-note";
 import type { PageletDetailPayload } from "./tab/types";
+import { splitReviewQueueForSections } from "./tab/review-queue-routing";
 import {
     createContextPagerStateFromRetrievalOutcome,
     quietRecallCandidateToBubbleNudge,
@@ -396,6 +397,7 @@ export class PageletOrchestrator {
         this.escapeListenerDocument?.removeEventListener("keydown", this.handleQuietRecallShortcut, true);
         this.escapeListenerDocument = null;
         this.backgroundPrep.destroy();
+        this.bubbleCoordinator.destroy();
         this.petView?.destroy();
         this.bubbleView?.destroy();
         this.panelView?.destroy();
@@ -1616,10 +1618,9 @@ export class PageletOrchestrator {
         const hasPanelContent = panelFindings.length > 0
             || Boolean(tabExtra?.connections && tabExtra.connections.length > 0)
             || Boolean(tabExtra?.markdown)
-            || Boolean(tabExtra?.reviewQueue && tabExtra.reviewQueue.items.length > 0)
             || Boolean(tabExtra?.contextPager)
             || Boolean(tabExtra?.savedInsights && tabExtra.savedInsights.items.length > 0)
-            || Boolean(tabExtra?.memoryGovernance && tabExtra.memoryGovernance.records.length > 0)
+            || Boolean(tabExtra?.memoryGovernance && (tabExtra.memoryGovernance.records.length > 0 || (tabExtra.memoryGovernance.candidates?.length ?? 0) > 0 || (tabExtra.memoryGovernance.routedItems?.length ?? 0) > 0))
             || Boolean(tabExtra?.maintenanceReview)
             || Boolean(tabExtra?.graphDiscovery)
             || Boolean(tabExtra?.quietRecall);
@@ -1688,12 +1689,14 @@ export class PageletOrchestrator {
                     records: memories,
                     ...(memoryCandidates.length > 0 ? { candidates: memoryCandidates } : {}),
                     totalCount: memories.length + memoryCandidates.length,
+                    confirmedMemoryCount: this.host.settings.confirmedMemoryCount ?? 0,
                 },
             } : memoryCandidates.length > 0 ? {
                 memoryGovernance: {
                     records: [],
                     candidates: memoryCandidates,
                     totalCount: memoryCandidates.length,
+                    confirmedMemoryCount: this.host.settings.confirmedMemoryCount ?? 0,
                 },
             } : {}),
         };
@@ -1708,20 +1711,33 @@ export class PageletOrchestrator {
         if (typeof extra.markdown === "string") {
             detailExtra.markdown = extra.markdown;
         }
+        if (extra.memoryGovernance) {
+            detailExtra.memoryGovernance = extra.memoryGovernance;
+        }
+        if (extra.maintenanceReview) {
+            detailExtra.maintenanceReview = extra.maintenanceReview;
+        }
         if (extra.reviewQueue) {
-            detailExtra.reviewQueue = extra.reviewQueue;
+            const { memory, maintenance } = splitReviewQueueForSections(extra.reviewQueue.items);
+            if (memory.length > 0) {
+                detailExtra.memoryGovernance = {
+                    ...(detailExtra.memoryGovernance ?? { records: [], totalCount: 0 }),
+                    routedItems: memory,
+                };
+                detailExtra.memoryGovernance.totalCount = (detailExtra.memoryGovernance.totalCount ?? 0) + memory.length;
+            }
+            if (maintenance.length > 0) {
+                detailExtra.maintenanceReview = {
+                    ...(detailExtra.maintenanceReview ?? { proposals: [], categories: [], totalCount: 0, generatedAt: "", previewOnly: true as const, weeklyScanEnabled: false as const }),
+                    routedItems: maintenance,
+                };
+            }
         }
         if (extra.contextPager) {
             detailExtra.contextPager = extra.contextPager;
         }
         if (extra.savedInsights) {
             detailExtra.savedInsights = extra.savedInsights;
-        }
-        if (extra.memoryGovernance) {
-            detailExtra.memoryGovernance = extra.memoryGovernance;
-        }
-        if (extra.maintenanceReview) {
-            detailExtra.maintenanceReview = extra.maintenanceReview;
         }
         if (extra.graphDiscovery) {
             detailExtra.graphDiscovery = extra.graphDiscovery;
@@ -1732,7 +1748,7 @@ export class PageletOrchestrator {
         if (extra.quietRecall) {
             detailExtra.quietRecall = extra.quietRecall;
         }
-        return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.reviewQueue || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.patternDetection || detailExtra.quietRecall
+        return detailExtra.connections || detailExtra.markdown !== undefined || detailExtra.contextPager || detailExtra.savedInsights || detailExtra.memoryGovernance || detailExtra.maintenanceReview || detailExtra.graphDiscovery || detailExtra.patternDetection || detailExtra.quietRecall
             ? detailExtra
             : undefined;
     }

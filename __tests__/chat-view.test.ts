@@ -1781,7 +1781,7 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
 
         expect(allText(getElementByClass(responseDiv, 'assistant'))).not.toContain('Draft answer before tools.');
-        expect(allText(responseDiv)).toContain('Draft before tool use: Draft answer before tools.');
+        expect(allText(responseDiv)).toContain('Working on: Draft answer before tools.');
 
         emitCanonical(call, canonicalEvent({
             type: 'message_end',
@@ -3242,11 +3242,11 @@ describe('LLMView turn lifecycle', () => {
 
         expect(colorCycleStart).toBeGreaterThanOrEqual(0);
         expect(colorCycleEnd).toBeGreaterThan(colorCycleStart);
-        expect(css).toContain('--pa-chat-loader-color-rose: #ff2d55;');
-        expect(css).toContain('--pa-chat-loader-color-orange: #ff9500;');
-        expect(css).toContain('--pa-chat-loader-color-lime: #32d74b;');
-        expect(css).toContain('--pa-chat-loader-color-cyan: #00c7ff;');
-        expect(css).toContain('--pa-chat-loader-color-violet: #bf5af2;');
+        expect(css).toContain('--pa-chat-loader-color-rose: #e84466;');
+        expect(css).toContain('--pa-chat-loader-color-orange: #e89a2a;');
+        expect(css).toContain('--pa-chat-loader-color-lime: #48c25e;');
+        expect(css).toContain('--pa-chat-loader-color-cyan: #2ab8e0;');
+        expect(css).toContain('--pa-chat-loader-color-violet: #b06de0;');
         expect(colorCycleBlock).not.toContain('--interactive-accent');
         expect(colorCycleBlock).not.toContain('--color-cyan');
         expect(colorCycleBlock).not.toContain('--color-green');
@@ -4983,10 +4983,10 @@ describe('LLMView turn lifecycle', () => {
         });
 
         const text = allText(containerEl);
-        expect(text).toContain('Vault tags unavailable.');
+        expect(text).toContain('Tags complete');
         expect(text).toContain('Context Used');
-        expect(text).toContain('Vault tags unavailable');
-        expect(text).toContain('Vault context was unavailable for this turn.');
+        expect(text).toContain('Tags unavailable');
+        expect(text).toContain('Notes context was unavailable for this turn.');
         expect(text).toContain('Status only');
         expect(text).not.toContain('list_vault_tags');
     });
@@ -5016,13 +5016,13 @@ describe('LLMView turn lifecycle', () => {
         });
 
         const text = allText(containerEl);
-        expect(text).toContain('Read note structure: 2 heading(s), 2 task(s), 2 tag(s).');
+        expect(text).toContain('Note structure');
         expect(text).toContain('Context already gathered');
         expect(text).toContain('Using gathered context after reaching the planning limit.');
         expect(text).toContain('Context Used');
         expect(text).toContain('Note structure');
         expect(text).not.toContain('Note structure unavailable');
-        expect(text).not.toContain('Vault context was unavailable for this turn.');
+        expect(text).not.toContain('Notes context was unavailable for this turn.');
         expect(text).not.toContain('Context unavailable');
     });
 

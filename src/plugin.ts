@@ -10,7 +10,7 @@ import { ChatService } from "./ai-services/chat-service";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, isMemoryExtractionConsentConfirmed } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION } from './settings'
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
@@ -89,7 +89,6 @@ import {
     QUICK_CAPTURE_COMMAND_ID,
     QUICK_CAPTURE_COMMAND_NAME,
     QuickCaptureService,
-    type QuickCaptureCopy,
     type QuickCapturePostProcessInput,
 } from './quick-capture';
 import { runQuickCaptureEnrichment } from './quick-capture-enrichment';
@@ -462,6 +461,7 @@ export class PluginManager extends Plugin {
                     (item) => this.dismissMemoryCandidateFromQueueItem(item),
                     (candidate) => this.saveQuietRecallAsInsight(candidate),
                     (candidate) => this.linkQuietRecallCandidateFromActiveNote(candidate),
+                    () => { openSettings(this.app); openSettingsTab(this.app, 'personal-assistant'); },
                 );
             }
         );
@@ -1070,6 +1070,7 @@ export class PluginManager extends Plugin {
         const getContextPagerSettings = () => this.settings.contextPager;
         const getQuietRecallSettings = () => this.settings.quietRecall;
         const getFocusMode = () => this.settings.focusMode;
+        const getConfirmedMemoryCount = () => this.settings.confirmedMemoryCount ?? 0;
         return {
             app: this.app,
             settings: {
@@ -1086,6 +1087,9 @@ export class PluginManager extends Plugin {
                 },
                 get focusMode() {
                     return getFocusMode();
+                },
+                get confirmedMemoryCount() {
+                    return getConfirmedMemoryCount();
                 },
             },
             log: (...args: unknown[]) => this.log(args[0] as string, ...args.slice(1)),
@@ -2303,6 +2307,8 @@ export class PluginManager extends Plugin {
                 error,
             });
         }
+        this.settings.confirmedMemoryCount = (this.settings.confirmedMemoryCount ?? 0) + 1;
+        void this.saveSettings();
         return {
             ok: true,
             message: pageletT("pagelet.tab.memory.confirmed", this.getPageletLocale()),
@@ -2394,7 +2400,7 @@ export class PluginManager extends Plugin {
                 void this.maybeShowQuickCaptureOnboardingNudge();
             },
             postProcessCapture: (input) => this.postProcessQuickCapture(input),
-        }, this.quickCaptureCopy());
+        });
     }
 
     private async postProcessQuickCapture(input: QuickCapturePostProcessInput): Promise<void> {
@@ -2437,19 +2443,6 @@ export class PluginManager extends Plugin {
             now: () => new Date(),
             log: (...args) => this.log(args[0] as string, ...args.slice(1)),
         });
-    }
-
-    private quickCaptureCopy(): QuickCaptureCopy {
-        return {
-            modalTitle: this.t("plugin.quickCapture.modal.title"),
-            modalPlaceholder: this.t("plugin.quickCapture.modal.placeholder"),
-            save: this.t("plugin.quickCapture.modal.save"),
-            cancel: this.t("plugin.quickCapture.modal.cancel"),
-            savedDaily: this.t("plugin.quickCapture.notice.savedDaily"),
-            savedInbox: this.t("plugin.quickCapture.notice.savedInbox"),
-            savedCurrentFile: this.t("plugin.quickCapture.notice.savedCurrentFile"),
-            saveFailed: this.t("plugin.quickCapture.notice.saveFailed"),
-        };
     }
 
     private createChatHost(): ChatHost {
@@ -2858,6 +2851,12 @@ export class PluginManager extends Plugin {
             : undefined;
         this.settings = mergeLoadedSettings(loaded);
         if (rawMemoryExtractionEnabled === true && !this.settings.memoryExtractionEnabled) {
+            this.settings.memoryExtractionConsent = {
+                state: "confirmed",
+                version: MEMORY_EXTRACTION_CONSENT_VERSION,
+                confirmedAt: new Date().toISOString(),
+            };
+            this.settings.memoryExtractionEnabled = true;
             this.pendingMemoryExtractionConsentMigration = true;
         }
         if (fresh) {
@@ -2894,6 +2893,7 @@ export class PluginManager extends Plugin {
     }
 
     async saveSettings() {
+        if (this.unloading) return;
         await this.saveData(this.settings);
         await this.notifySettingsChanged();
     }

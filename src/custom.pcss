@@ -37,6 +37,16 @@ body {
 	--pa-stat-tab-active-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.08);
 	--pa-stat-chart-text: var(--text-muted);
 	--pa-stat-chart-grid: var(--background-modifier-border);
+	--pa-stat-chart-bar-bg: rgba(225, 29, 72, 0.35);
+	--pa-stat-chart-bar-border: rgb(225, 29, 72);
+	--pa-stat-chart-line-purple-bg: rgba(147, 51, 234, 0.14);
+	--pa-stat-chart-line-purple-border: rgb(147, 51, 234);
+	--pa-stat-chart-line-teal-bg: rgba(20, 184, 166, 0.16);
+	--pa-stat-chart-line-teal-border: rgb(13, 148, 136);
+	--pa-stat-chart-line-amber-bg: rgba(234, 179, 8, 0.18);
+	--pa-stat-chart-line-amber-border: rgb(202, 138, 4);
+	--pa-stat-chart-y-tick: rgb(225, 29, 72);
+	--pa-stat-chart-y1-tick: rgb(147, 51, 234);
 	background-color: var(--background-secondary);
 	color: var(--text-normal);
 }
@@ -98,9 +108,15 @@ body {
 }
 
 .pa-statistics-segment--views {
-	--pa-stat-tab-active-bg: rgb(255, 255, 255);
-	--pa-stat-tab-active-text: rgb(2, 6, 23);
+	--pa-stat-tab-active-bg: var(--background-primary);
+	--pa-stat-tab-active-text: var(--text-normal);
 	--pa-stat-tab-active-shadow: 0 1px 2px 0 rgba(15, 23, 42, 0.08);
+}
+
+.theme-dark .pa-statistics-segment--views {
+	--pa-stat-tab-active-bg: var(--background-primary-alt);
+	--pa-stat-tab-active-text: var(--text-normal);
+	--pa-stat-tab-active-shadow: 0 1px 2px 0 rgba(0, 0, 0, 0.2);
 }
 
 .pa-statistics-segment--range {
@@ -490,13 +506,15 @@ body {
 	font-size: 14px;
 }
 
-.llm-modal {
+.llm-modal,
+.pa-chat-modal {
 	padding: 20px;
 	max-width: 800px;
 	margin: 0 auto;
 }
 
-.llm-modal h2 {
+.llm-modal h2,
+.pa-chat-modal h2 {
 	margin-bottom: 20px;
 	text-align: center;
 	font-size: 1.8em;
@@ -598,6 +616,22 @@ body.is-mobile .pa-chat-history-modal-shell {
 	width: min(520px, calc(100vw - 24px));
 	max-width: calc(100vw - 24px);
 }
+
+/* ── Chat namespace migration (llm-* -> pa-chat-*) ──
+   Dual-class aliases for backward compatibility. The old llm-* classes
+   remain; the new pa-chat-* classes are added in chat-view.ts alongside
+   them. Since child selectors like `.llm-view .thinking-status` match
+   as long as the ancestor has `llm-view`, no nested selectors need
+   duplicating. Full removal of llm-* deferred to next major version.
+
+   Mapping:
+     llm-view            -> pa-chat-view
+     llm-chat-container  -> pa-chat-container
+     llm-input           -> pa-chat-input
+     llm-message         -> pa-chat-message
+     llm-message-enter   -> pa-chat-message-enter
+     llm-buttons         -> pa-chat-buttons
+     llm-modal           -> pa-chat-modal                             */
 
 .llm-view {
 	--pa-chat-role-identicon-yellow: #f6c445;
@@ -1141,11 +1175,11 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 }
 
 .llm-view .pa-chat-role-loader {
-	--pa-chat-loader-color-rose: #ff2d55;
-	--pa-chat-loader-color-orange: #ff9500;
-	--pa-chat-loader-color-lime: #32d74b;
-	--pa-chat-loader-color-cyan: #00c7ff;
-	--pa-chat-loader-color-violet: #bf5af2;
+	--pa-chat-loader-color-rose: #e84466;
+	--pa-chat-loader-color-orange: #e89a2a;
+	--pa-chat-loader-color-lime: #48c25e;
+	--pa-chat-loader-color-cyan: #2ab8e0;
+	--pa-chat-loader-color-violet: #b06de0;
 	display: inline-flex;
 	align-items: center;
 	justify-content: center;
@@ -1158,7 +1192,7 @@ body.is-mobile .llm-view.is-keyboard-open .pa-tab-bar-handle svg {
 .llm-view .pa-chat-role-loader-thinking {
 	width: 16px;
 	height: 16px;
-	animation: pa-chat-loader-color-cycle 3s linear infinite;
+	animation: pa-chat-loader-color-cycle 10s linear infinite;
 }
 
 .llm-view .pa-chat-role-loader-element {
@@ -2516,6 +2550,78 @@ body.is-mobile .llm-view.is-compact .llm-input textarea {
 	gap: 4px;
 }
 
+.pa-settings-nav {
+	position: sticky;
+	top: 0;
+	z-index: 10;
+	display: flex;
+	gap: 4px;
+	padding: 8px 0;
+	background: var(--background-primary);
+	border-bottom: 1px solid var(--background-modifier-border);
+	overflow-x: auto;
+	-webkit-overflow-scrolling: touch;
+}
+.pa-settings-nav-item {
+	padding: 4px 12px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	background: var(--background-secondary);
+	color: var(--text-normal);
+	font-size: var(--font-small);
+	cursor: pointer;
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+.pa-settings-nav-item:hover { background: var(--background-modifier-hover); }
+.pa-settings-nav-item:focus-visible { box-shadow: 0 0 0 2px var(--interactive-accent); }
+.pa-settings-group {
+	margin-bottom: 8px;
+	border: 1px solid var(--background-modifier-border);
+	border-radius: var(--radius-m);
+	overflow: hidden;
+}
+.pa-settings-group-summary {
+	padding: 12px 16px;
+	font-weight: var(--font-semibold);
+	font-size: var(--font-ui-medium);
+	cursor: pointer;
+	user-select: none;
+	list-style: none;
+	display: flex;
+	align-items: center;
+	gap: 8px;
+	background: var(--background-secondary-alt);
+}
+.pa-settings-group-summary::-webkit-details-marker { display: none; }
+.pa-settings-group-summary::before {
+	content: "";
+	display: inline-block;
+	width: 0; height: 0;
+	border-left: 5px solid var(--text-muted);
+	border-top: 4px solid transparent;
+	border-bottom: 4px solid transparent;
+	transition: transform 150ms ease;
+}
+.pa-settings-group[open] > .pa-settings-group-summary::before {
+	transform: rotate(90deg);
+}
+.pa-settings-group-summary:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: -2px;
+}
+.pa-settings-group > :not(summary) { padding: 0 16px 8px; }
+body.is-mobile .pa-settings-nav { padding: 6px 0; }
+body.is-mobile .pa-settings-nav-item {
+	min-height: 44px;
+	padding: 8px 16px;
+	font-size: var(--font-ui-small);
+}
+body.is-mobile .pa-settings-group-summary {
+	min-height: 44px;
+	padding: 12px 16px;
+}
+
 .pa-settings-tab h2,
 .pa-settings-tab h3 {
 	margin-left: 0;
@@ -2849,6 +2955,37 @@ body.pa-settings-tab-open .modal .suggestion-item.mod-complex.suggestion-secret-
 		max-width: 8ch;
 	}
 }
+
+.pa-settings-nested {
+	margin-left: 12px;
+	padding-left: 12px;
+	border-left: 2px solid var(--background-modifier-border);
+}
+.pa-settings-nested--level-2 {
+	margin-left: 8px;
+	padding-left: 8px;
+	border-left-style: dashed;
+}
+
+.pa-settings-info-card {
+	background: var(--background-secondary);
+	border-radius: var(--radius-m);
+	padding: 12px 16px;
+	margin: 8px 0;
+	border: 1px solid var(--background-modifier-border);
+}
+.pa-settings-info-card-text {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin: 0 0 8px;
+}
+.pa-settings-info-card-list {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	padding-left: 20px;
+	margin: 0;
+}
+.pa-settings-info-card-list li { margin-bottom: 2px; }
 
 /* ──────────────────────────────────────────────────────────────────────
  * Pagelet (Review Assistant) — beta settings and suggestion card baseline.
@@ -3538,6 +3675,24 @@ body.is-mobile .pa-pagelet-bubble .pa-pagelet-bubble-close {
 	font-family: var(--font-interface,inherit);
 	color: var(--text-normal,#dcddde);
 	box-sizing: border-box;
+	--pa-conn-node-fill-0: #38bdf8;
+	--pa-conn-node-stroke-0: #0369a1;
+	--pa-conn-node-fill-1: #a78bfa;
+	--pa-conn-node-stroke-1: #6d28d9;
+	--pa-conn-node-fill-2: #34d399;
+	--pa-conn-node-stroke-2: #047857;
+	--pa-conn-node-fill-3: #f59e0b;
+	--pa-conn-node-stroke-3: #b45309;
+	--pa-conn-node-fill-4: #fb7185;
+	--pa-conn-node-stroke-4: #be123c;
+	--pa-conn-node-fill-5: #2dd4bf;
+	--pa-conn-node-stroke-5: #0f766e;
+	--pa-conn-node-fill-6: #c084fc;
+	--pa-conn-node-stroke-6: #7e22ce;
+	--pa-conn-node-fill-7: #84cc16;
+	--pa-conn-node-stroke-7: #4d7c0f;
+	--pa-conn-edge-strong: #0ea5e9;
+	--pa-conn-edge-weak: rgba(14, 165, 233, 0.3);
 }
 
 @supports (height: 100dvh) {
@@ -3896,6 +4051,29 @@ body > .tooltip {
 	color: var(--text-faint,#666);
 }
 
+.pa-pagelet-panel-scope-details { margin-top: 6px; }
+.pa-pagelet-panel-scope-details > summary {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+	list-style: none;
+}
+.pa-pagelet-panel-scope-details > summary::-webkit-details-marker { display: none; }
+.pa-pagelet-panel-scope-details > summary::before {
+	content: "\25B6";
+	display: inline-block;
+	margin-right: 4px;
+	font-size: 0.7em;
+	transition: transform 0.15s ease;
+}
+.pa-pagelet-panel-scope-details[open] > summary::before {
+	transform: rotate(90deg);
+}
+.pa-pagelet-panel-scope-details > summary:focus-visible {
+	outline: 2px solid var(--interactive-accent);
+	outline-offset: 2px;
+}
+
 .pa-pagelet-panel-review-queue {
 	margin: 12px 20px 0;
 	padding: 12px;
@@ -4032,6 +4210,50 @@ body > .tooltip {
 .pa-pagelet-panel-review-queue-action:hover {
 	border-color: var(--interactive-accent,#7c9eff);
 	color: var(--text-normal,#dcddde);
+}
+
+.pa-pagelet-panel-recall-title {
+	font-size: 13px;
+	font-weight: 600;
+	color: var(--text-normal,#dcddde);
+}
+
+.pa-pagelet-panel-recall-count {
+	font-size: 11px;
+	color: var(--text-muted,#999);
+}
+
+.pa-pagelet-panel-recall-card {
+	padding: 10px;
+	border: 1px solid var(--background-modifier-border,#3a3a3a);
+	border-radius: 8px;
+	background: var(--background-secondary,#252525);
+}
+
+.pa-pagelet-panel-recall-card--candidate {
+	margin-top: 8px;
+}
+
+.pa-pagelet-panel-recall-card-title {
+	font-size: 12px;
+	font-weight: 600;
+	color: var(--text-normal,#dcddde);
+	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-panel-recall-card-claim {
+	margin-top: 5px;
+	font-size: 12px;
+	line-height: 1.5;
+	color: var(--text-muted,#999);
+	overflow-wrap: anywhere;
+}
+
+.pa-pagelet-panel-recall-card-meta {
+	margin-top: 6px;
+	font-size: 11px;
+	color: var(--text-faint,#666);
+	overflow-wrap: anywhere;
 }
 
 .pa-pagelet-panel-suggestion-card-host {
@@ -4542,6 +4764,15 @@ body.is-mobile .pa-pagelet-panel-draft-remove {
 
 }
 
+@media (prefers-reduced-motion: reduce) {
+	.pa-pagelet-pet-svg-wrap,
+	.pa-pagelet-pet-wrapper::before,
+	.pa-pagelet-pet-notification {
+		animation-duration: 0s !important;
+		animation-iteration-count: 1 !important;
+	}
+}
+
 .pa-pagelet-pet {
 	position: absolute;
 	z-index: 1000;
@@ -4640,7 +4871,7 @@ body.is-mobile .pa-pagelet-pet[data-corner=bottom-left] {
 	}
 
 	body.is-mobile .pa-pagelet-pet[data-state=resting] {
-		opacity: 1;
+		opacity: 0.8;
 		filter: none;
 	}
 
@@ -4891,6 +5122,49 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	min-height: 44px;
 }
 
+/* ──────────────────────────────────────────────────────────────────────
+ * Pagelet Tab — zero-style anchor classes.
+ *
+ * The following classes are used in TabView.ts and section renderers
+ * (MemoryGovernanceSection, MaintenanceReviewSection, QuietRecallSection)
+ * but carry NO visual styles. They exist as semantic anchors for:
+ *   - querySelector-based section navigation (tab nav scroll-to)
+ *   - test selectors
+ *   - user-CSS / snippet customization hooks
+ *
+ * Anchor classes (no rules needed — do NOT add empty rule-sets):
+ *   .pa-pagelet-tab-memory-governance
+ *   .pa-pagelet-tab-maintenance-review
+ *   .pa-pagelet-tab-quiet-recall
+ *   .pa-pagelet-tab-graph-discovery
+ *   .pa-pagelet-tab-pattern-detection
+ *   .pa-pagelet-tab-saved-insights
+ *   .pa-pagelet-tab-context-pager
+ *   .pa-pagelet-tab-memory-candidates
+ *   .pa-pagelet-tab-memory-records
+ *   .pa-pagelet-tab-memory-suggestions
+ *   .pa-pagelet-tab-memory-candidates-empty
+ *   .pa-pagelet-tab-memory-digest
+ *   .pa-pagelet-tab-memory-candidate-card
+ *   .pa-pagelet-tab-memory-card
+ *   .pa-pagelet-tab-maintenance-overview-card
+ *   .pa-pagelet-tab-maintenance-categories
+ *   .pa-pagelet-tab-maintenance-category-card
+ *   .pa-pagelet-tab-maintenance-empty
+ *   .pa-pagelet-tab-maintenance-proposals
+ *   .pa-pagelet-tab-maintenance-card
+ *   .pa-pagelet-tab-recall-empty
+ *   .pa-pagelet-tab-recall-card
+ *   .pa-pagelet-tab-graph-empty
+ *   .pa-pagelet-tab-graph-overview-card
+ *   .pa-pagelet-tab-graph-items
+ *   .pa-pagelet-tab-graph-card
+ *   .pa-pagelet-tab-pattern-items
+ *   .pa-pagelet-tab-pattern-card
+ *   .pa-pagelet-tab-saved-insight-card
+ *   .pa-pagelet-tab-maintenance-suggestions
+ * ────────────────────────────────────────────────────────────────────── */
+
 .pa-pagelet-tab {
 	background: var(--background-primary,#1e1e1e);
 	min-height: 100%;
@@ -4945,6 +5219,34 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 
 .pa-pagelet-tab-section {
 	margin-bottom: 32px;
+}
+.pa-pagelet-tab-section--hidden {
+	display: none;
+}
+.pa-pagelet-tab-show-more {
+	display: block;
+	width: 100%;
+	padding: 8px 16px;
+	margin-top: 8px;
+	background: transparent;
+	border: 1px dashed var(--background-modifier-border);
+	border-radius: var(--radius-s);
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	cursor: pointer;
+}
+.pa-pagelet-tab-show-more:hover {
+	color: var(--text-normal);
+	border-color: var(--text-muted);
+}
+.pa-pagelet-tab-show-more:focus-visible {
+	box-shadow: 0 0 0 2px var(--interactive-accent);
+	outline: none;
+}
+body.is-mobile .pa-pagelet-tab-show-more {
+	min-height: 44px;
+	padding: 10px 16px;
+	font-size: 13px;
 }
 
 .pa-pagelet-tab-section h2 {
@@ -5189,6 +5491,11 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	opacity: .75;
 }
 
+.pa-pagelet-tab-memory-card--tombstone {
+	opacity: 0.55;
+	pointer-events: none;
+}
+
 .pa-pagelet-tab-source-link {
 	padding: 2px 6px;
 	border: 0;
@@ -5295,6 +5602,17 @@ body.is-mobile .pa-pagelet-pet-wrapper {
 	overflow-wrap: anywhere;
 }
 
+.pa-pagelet-tab-tag-chip--link {
+	cursor: pointer;
+	text-decoration: underline;
+	background: transparent;
+	border: none;
+	color: var(--text-accent);
+	font-size: inherit;
+	padding: 0;
+}
+.pa-pagelet-tab-tag-chip--link:hover { color: var(--text-accent-hover); }
+
 .pa-pagelet-tab-nav {
 	display: flex;
 	flex-wrap: wrap;
@@ -5381,6 +5699,8 @@ body.is-mobile .pa-pagelet-tab-pattern-dismiss,
 body.is-mobile .pa-pagelet-tab-recall-link,
 body.is-mobile .pa-pagelet-tab-recall-save,
 body.is-mobile .pa-pagelet-tab-memory-confirm-all,
+body.is-mobile .pa-pagelet-tab-maintenance-action,
+body.is-mobile .pa-pagelet-tab-review-queue-filter,
 body.is-mobile .pa-pagelet-tab-nav-item {
 	min-height: 44px;
 	padding: 10px 14px;
@@ -5599,7 +5919,12 @@ body.is-mobile .pa-pagelet-tab-nav-item {
 }
 
 .pa-quick-capture-modal h2 {
-	margin-bottom: 12px;
+	margin-bottom: 4px;
+}
+.pa-quick-capture-modal__destination {
+	color: var(--text-muted);
+	font-size: var(--font-ui-small);
+	margin-bottom: 8px;
 }
 
 .pa-quick-capture-modal__input {

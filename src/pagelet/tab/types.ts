@@ -41,6 +41,7 @@ export type PageletDetailLayoutType = "review" | "current" | "discover" | "summa
 export interface PageletDetailExtra {
     connections?: NoteConnection[];
     markdown?: string;
+    /** @deprecated ReviewQueue items are now routed into memoryGovernance/maintenanceReview (D5 merge). Field kept for deserialization compat. */
     reviewQueue?: PanelReviewQueueState;
     contextPager?: ContextPagerState;
     savedInsights?: PanelSavedInsightState;

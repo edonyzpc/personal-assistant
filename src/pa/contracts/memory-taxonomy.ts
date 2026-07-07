@@ -88,6 +88,9 @@ export function validateMemoryLifecycleRecord(record: MemoryLifecycleRecord): Me
     if (!includesString(MEMORY_LIFECYCLE_STATES, record.lifecycle)) {
         return { ok: false, reason: "invalid_lifecycle" };
     }
+    if (!includesString(MEMORY_SENSITIVITIES, record.sensitivity)) {
+        return { ok: false, reason: "invalid_sensitivity" };
+    }
     if (typeof record.rawMemoryText === "string") {
         return { ok: false, reason: "raw_memory_text_not_allowed" };
     }

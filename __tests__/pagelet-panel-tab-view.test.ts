@@ -799,7 +799,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(container.querySelector(".pa-pagelet-tab-maintenance-review")).not.toBeNull();
         expect(container.textContent).toContain("Maintenance Review");
         expect(container.textContent).toContain("Preview only");
-        expect(container.textContent).toContain("Weekly scan is off");
+        expect(container.textContent).toContain("Weekly scan: configure in Settings");
         expect(container.textContent).toContain("Review inbox note destination");
         expect(container.textContent).toContain("Inbox/Untitled.md");
         expect(container.textContent).toContain("Notes/Untitled.md");
@@ -1027,7 +1027,7 @@ describe("Pagelet panel and tab view regressions", () => {
 
         expect(tabContainer.querySelector(".pa-pagelet-tab-quiet-recall")).not.toBeNull();
         expect(tabContainer.textContent).toContain("Why now: Source matches the note you are looking at.");
-        expect(tabContainer.textContent).toContain("Next: Compare this saved insight with the current note.");
+        expect(tabContainer.textContent).toContain("You could: Compare this saved insight with the current note.");
         const linkButton = tabContainer.querySelector(".pa-pagelet-tab-recall-link");
         expect(linkButton?.textContent).toBe("Link to current note");
         const saveButton = tabContainer.querySelector(".pa-pagelet-tab-recall-save");
@@ -1569,7 +1569,7 @@ describe("Pagelet panel and tab view regressions", () => {
 
         expect(container.querySelector(".pa-pagelet-panel-review-queue")).not.toBeNull();
         expect(container.querySelector(".pa-pagelet-panel-review-queue-card--ai-callout")).not.toBeNull();
-        expect(container.textContent).toContain("Review Queue");
+        expect(container.textContent).toContain("Saved & Suggested");
         expect(container.textContent).toContain("AI-generated suggestion");
         expect(container.textContent).toContain("This generated expansion stays separate from the original capture.");
         expect(JSON.stringify(panel.currentPanelExtra)).not.toContain("fullProviderOutput");
@@ -1623,7 +1623,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(tabContainer.textContent).not.toContain("No findings yet");
     });
 
-    it("renders and filters the global Review Queue in the native detail tab", async () => {
+    it("renders routed ReviewQueue items in Memory and Maintenance sections", async () => {
         const container = new FakeElement("div");
         container.isConnected = true;
         const tab = new TabView("en");
@@ -1632,17 +1632,20 @@ describe("Pagelet panel and tab view regressions", () => {
         tab.open("Pagelet — Detail View", [], {
             layoutType: "review",
             extra: {
-                reviewQueue: {
+                memoryGovernance: {
+                    records: [],
                     totalCount: 2,
-                    items: [
+                    routedItems: [
                         makeReviewQueueItem({
                             id: "rq-suggested",
+                            type: "evidence_insight",
                             status: "suggested",
                             title: "Needs source decision",
                             claim: "Needs a review decision.",
                         }),
                         makeReviewQueueItem({
                             id: "rq-accepted",
+                            type: "capture_enrichment",
                             status: "accepted",
                             title: "Ready to apply",
                             claim: "Ready for the next action.",
@@ -1653,23 +1656,34 @@ describe("Pagelet panel and tab view regressions", () => {
                         }),
                     ],
                 },
+                maintenanceReview: {
+                    generatedAt: "",
+                    previewOnly: true,
+                    weeklyScanEnabled: false,
+                    totalCount: 1,
+                    categories: [],
+                    proposals: [],
+                    routedItems: [
+                        makeReviewQueueItem({
+                            id: "rq-maintenance",
+                            type: "maintenance_proposal",
+                            status: "suggested",
+                            title: "Maintenance task",
+                            claim: "Maintenance action needed.",
+                        }),
+                    ],
+                },
             },
         });
 
-        expect(container.textContent).toContain("Kept Items & Actions");
-        expect(container.textContent).toContain("Kept for later");
-        expect(container.textContent).toContain("Actions to confirm");
+        expect(container.textContent).toContain("Memory");
+        expect(container.textContent).toContain("Suggestions");
         expect(container.textContent).toContain("Needs a review decision.");
         expect(container.textContent).toContain("Ready for the next action.");
         expect(container.textContent).toContain("AI-generated suggestion");
         expect(container.querySelector(".pa-pagelet-tab-review-queue-card--ai-callout")).not.toBeNull();
-
-        const readyFilter = container.querySelectorAll(".pa-pagelet-tab-review-queue-filter")
-            .find((button) => button.textContent === "Actions to confirm");
-        await readyFilter?.click();
-
-        expect(container.textContent).toContain("Ready for the next action.");
-        expect(container.textContent).not.toContain("Needs a review decision.");
+        expect(container.textContent).toContain("Maintenance Review");
+        expect(container.textContent).toContain("Maintenance action needed.");
     });
 
     it("renders suggestion cards with draft save workflow", async () => {

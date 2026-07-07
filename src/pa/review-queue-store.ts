@@ -53,11 +53,8 @@ export interface ReviewQueueListFilter {
 }
 
 export const REVIEW_QUEUE_TAB_GROUPS = [
-    "needs_decision",
-    "ready_to_apply",
-    "recently_applied",
-    "snoozed",
-    "stale",
+    "active",
+    "history",
 ] as const;
 
 export type ReviewQueueTabGroup = typeof REVIEW_QUEUE_TAB_GROUPS[number];
@@ -302,18 +299,15 @@ export function reviewQueueTabGroupForStatus(status: ReviewQueueStatus): ReviewQ
     switch (status) {
         case "suggested":
         case "failed":
-            return "needs_decision";
         case "accepted":
         case "edited":
-            return "ready_to_apply";
+            return "active";
         case "applied":
         case "undone":
-            return "recently_applied";
         case "snoozed":
-            return "snoozed";
         case "dismissed":
         case "expired":
-            return "stale";
+            return "history";
     }
 }
 

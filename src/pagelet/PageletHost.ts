@@ -87,6 +87,7 @@ export interface PageletHost {
             bubbleNudgesEnabled: boolean;
         };
         focusMode: boolean;
+        confirmedMemoryCount: number;
     };
 
     /** Structured debug log (no-op when debug is false). */

@@ -109,6 +109,7 @@ function makeHost(overrides: Partial<PageletHost> = {}): PageletHost {
                 bubbleNudgesEnabled: false,
             },
             focusMode: false,
+            confirmedMemoryCount: 0,
         },
         log: jest.fn(),
         registerEvent: jest.fn(),
@@ -870,15 +871,20 @@ describe("PageletOrchestrator detail expansion", () => {
             runMaintenanceReview,
             openPageletDetailView,
             createReviewQueueItem,
-            listReviewQueueItems: () => [
-                makeReviewQueueItem({
-                    id: "rq-maintenance",
-                    type: "maintenance_proposal",
-                    title: "Review inbox note destination",
-                    claim: "Preview only.",
-                    originSurface: "maintenance",
-                }),
-            ],
+            listReviewQueueItems: (filter?: Parameters<PageletHost["listReviewQueueItems"]>[0]) => {
+                // Return empty for memory-candidate/memory-conflict filter
+                // (withGlobalLedgerExtra queries these separately)
+                if (filter?.types?.includes("memory_candidate")) return [];
+                return [
+                    makeReviewQueueItem({
+                        id: "rq-maintenance",
+                        type: "maintenance_proposal",
+                        title: "Review inbox note destination",
+                        claim: "Preview only.",
+                        originSurface: "maintenance",
+                    }),
+                ];
+            },
         });
         const orchestrator = new PageletOrchestrator(host);
         const internals = orchestrator as unknown as {
@@ -899,10 +905,7 @@ describe("PageletOrchestrator detail expansion", () => {
                     totalCount: 1,
                     previewOnly: true,
                     weeklyScanEnabled: false,
-                }),
-                reviewQueue: expect.objectContaining({
-                    totalCount: 1,
-                    items: [expect.objectContaining({ id: "rq-maintenance", type: "maintenance_proposal" })],
+                    routedItems: [expect.objectContaining({ id: "rq-maintenance", type: "maintenance_proposal" })],
                 }),
             }),
         }));

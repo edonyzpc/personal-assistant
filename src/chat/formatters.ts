@@ -21,67 +21,26 @@ export function formatSourceSummary(sources: { path: string }[] | undefined): st
     return remaining > 0 ? `${visible}, ${ft('plugin.chat.formatter.moreCount', { count: remaining })}` : visible;
 }
 
+const TOOL_CONTEXT_MAP: Record<string, { category: ChatContextUsedItem['category']; labelKey: string; detailKey: string }> = {
+    inspect_obsidian_note: { category: 'read-only-tool', labelKey: 'plugin.chat.formatter.contextTool.inspectNote.label', detailKey: 'plugin.chat.formatter.contextTool.inspectNote.detail' },
+    read_canvas_summary: { category: 'read-only-tool', labelKey: 'plugin.chat.formatter.contextTool.readCanvas.label', detailKey: 'plugin.chat.formatter.contextTool.readCanvas.detail' },
+    search_vault_snippets: { category: 'read-only-tool', labelKey: 'plugin.chat.formatter.contextTool.searchSnippets.label', detailKey: 'plugin.chat.formatter.contextTool.searchSnippets.detail' },
+    list_vault_tags: { category: 'read-only-tool', labelKey: 'plugin.chat.formatter.contextTool.listTags.label', detailKey: 'plugin.chat.formatter.contextTool.listTags.detail' },
+    get_current_note_context: { category: 'current-note', labelKey: 'plugin.chat.formatter.contextTool.currentNote.label', detailKey: 'plugin.chat.formatter.contextTool.currentNote.detail' },
+    search_vault_metadata: { category: 'vault-metadata', labelKey: 'plugin.chat.formatter.contextTool.searchMetadata.label', detailKey: 'plugin.chat.formatter.contextTool.searchMetadata.detail' },
+    list_recent_notes: { category: 'recent-notes', labelKey: 'plugin.chat.formatter.contextTool.recentNotes.label', detailKey: 'plugin.chat.formatter.contextTool.recentNotes.detail' },
+    read_note_outline: { category: 'note-outline', labelKey: 'plugin.chat.formatter.contextTool.noteOutline.label', detailKey: 'plugin.chat.formatter.contextTool.noteOutline.detail' },
+};
+
 export function getToolContextUsedInfo(tool: string): Pick<ChatContextUsedItem, 'category' | 'label' | 'detail'> {
-    if (tool === 'inspect_obsidian_note') {
-        return {
-            category: 'read-only-tool',
-            label: 'Note structure',
-            detail: 'Read-only note structure, links/backlinks, tasks, and properties',
-        };
-    }
-    if (tool === 'read_canvas_summary') {
-        return {
-            category: 'read-only-tool',
-            label: 'Canvas structure',
-            detail: 'Read-only canvas structure',
-        };
-    }
-    if (tool === 'search_vault_snippets') {
-        return {
-            category: 'read-only-tool',
-            label: 'Note snippets',
-            detail: 'Bounded note snippet search results',
-        };
-    }
-    if (tool === 'list_vault_tags') {
-        return {
-            category: 'read-only-tool',
-            label: 'Tags',
-            detail: 'Read-only tag counts',
-        };
-    }
-    if (tool === 'get_current_note_context') {
-        return {
-            category: 'current-note',
-            label: 'Current note',
-            detail: 'Read-only current note context',
-        };
-    }
-    if (tool === 'search_vault_metadata') {
-        return {
-            category: 'vault-metadata',
-            label: 'Note metadata',
-            detail: 'Read-only metadata search results',
-        };
-    }
-    if (tool === 'list_recent_notes') {
-        return {
-            category: 'recent-notes',
-            label: 'Recent notes',
-            detail: 'Read-only recent note list',
-        };
-    }
-    if (tool === 'read_note_outline') {
-        return {
-            category: 'note-outline',
-            label: 'Note outline',
-            detail: 'Read-only note outline',
-        };
+    const entry = TOOL_CONTEXT_MAP[tool];
+    if (entry) {
+        return { category: entry.category, label: ft(entry.labelKey), detail: ft(entry.detailKey) };
     }
     return {
         category: 'read-only-tool',
-        label: 'Read-only tool',
-        detail: 'Read-only tool context',
+        label: ft('plugin.chat.formatter.contextTool.default.label'),
+        detail: ft('plugin.chat.formatter.contextTool.default.detail'),
     };
 }
 
@@ -233,8 +192,10 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
         if (status.sources.length === 0) return [];
         return [{
             category: 'memory',
-            label: 'Selected Memory',
-            detail: status.sources.length === 1 ? '1 selected note' : `${status.sources.length} selected notes`,
+            label: ft('plugin.chat.formatter.contextUsed.selectedMemory'),
+            detail: status.sources.length === 1
+                ? ft('plugin.chat.formatter.contextUsed.selectedNoteOne')
+                : ft('plugin.chat.formatter.contextUsed.selectedNoteMany', { count: status.sources.length }),
             sources: status.sources,
             citationEligible: true,
         }];
@@ -244,8 +205,8 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
         if (status.availability === 'unavailable') {
             return [{
                 category: 'tool-unavailable',
-                label: `${toolInfo.label} unavailable`,
-                detail: 'Vault context was unavailable for this turn.',
+                label: ft('plugin.chat.formatter.contextUsed.toolUnavailableLabel', { label: toolInfo.label }),
+                detail: ft('plugin.chat.formatter.contextUsed.vaultContextUnavailable'),
                 sources: status.sources,
                 citationEligible: false,
                 statusOnly: true,
@@ -254,7 +215,9 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
         return [{
             category: toolInfo.category,
             label: toolInfo.label,
-            detail: status.availability === 'partial' ? `Partial ${toolInfo.detail}` : toolInfo.detail,
+            detail: status.availability === 'partial'
+                ? ft('plugin.chat.formatter.contextUsed.partialDetail', { detail: toolInfo.detail ?? '' })
+                : toolInfo.detail,
             sources: status.sources,
             citationEligible: false,
         }];
@@ -264,8 +227,8 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
         const toolInfo = getToolContextUsedInfo(status.tool);
         return [{
             category: 'tool-unavailable',
-            label: `${toolInfo.label} unavailable`,
-            detail: 'Vault context was unavailable for this turn.',
+            label: ft('plugin.chat.formatter.contextUsed.toolUnavailableLabel', { label: toolInfo.label }),
+            detail: ft('plugin.chat.formatter.contextUsed.vaultContextUnavailable'),
             statusOnly: true,
         }];
     }
@@ -273,10 +236,12 @@ export function getContextUsedItemsFromStatus(status: ChatAgentStatus): ChatCont
         const isLoopCap = /cap reached|stopped before/i.test(status.reason);
         return [{
             category: isLoopCap ? 'loop-cap' : 'fallback',
-            label: isLoopCap ? 'Using gathered context' : 'Available context',
+            label: isLoopCap
+                ? ft('plugin.chat.formatter.contextUsed.usingGathered')
+                : ft('plugin.chat.formatter.contextUsed.availableContext'),
             detail: isLoopCap
-                ? 'Answering from context gathered before the planning limit was reached.'
-                : 'Answering from available context for this turn.',
+                ? ft('plugin.chat.formatter.contextUsed.answeredAfterLimit')
+                : ft('plugin.chat.formatter.contextUsed.answeredFromAvailable'),
             statusOnly: true,
         }];
     }
@@ -309,7 +274,10 @@ export function formatAgentStatus(status: ChatAgentStatus): string {
         return formatToolRunningStatus(status.tool);
     } else if (status.type === 'tool-done') {
         const sources = formatSourceSummary(status.sources);
-        return sources ? `${status.message}: ${sources}` : status.message;
+        const toolInfo = getToolContextUsedInfo(status.tool);
+        return sources
+            ? ft('plugin.chat.formatter.toolDoneWithSources', { label: toolInfo.label, sources })
+            : ft('plugin.chat.formatter.toolDoneNoSources', { label: toolInfo.label });
     } else if (status.type === 'tool-skipped') {
         if (isDuplicateReadOnlyToolSkip(status)) return ft('plugin.chat.formatter.contextAlreadyGathered');
         return ft('plugin.chat.formatter.contextUnavailable');
@@ -331,9 +299,9 @@ export function formatCanonicalToolStatus(toolName: string): string {
 
 export function formatCanonicalToolCompletedStatus(toolName: string, outcome: string): string {
     const label = toolName === 'search_memory'
-        ? 'Memory'
+        ? ft('plugin.chat.formatter.toolLabel.memory')
         : toolName === 'webSearch'
-            ? 'WebSearch'
+            ? ft('plugin.chat.formatter.toolLabel.webSearch')
             : getToolContextUsedInfo(toolName).label;
     if (outcome === 'success') return ft('plugin.chat.formatter.toolComplete', { label });
     if (outcome === 'budget_exceeded') return ft('plugin.chat.formatter.toolSkippedBudget', { label });

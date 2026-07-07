@@ -219,6 +219,34 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                 })),
             };
         }
+        if (payload.extra.scopeRecap) {
+            const cloneRecapItem = (item: typeof payload.extra.scopeRecap.summary) => ({
+                ...item,
+                sourceRefs: item.sourceRefs.map((ref) => ({
+                    ...ref,
+                    whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                })),
+            });
+            copy.extra.scopeRecap = {
+                ...payload.extra.scopeRecap,
+                scope: {
+                    ...payload.extra.scopeRecap.scope,
+                    paths: payload.extra.scopeRecap.scope.paths ? [...payload.extra.scopeRecap.scope.paths] : undefined,
+                    tags: payload.extra.scopeRecap.scope.tags ? [...payload.extra.scopeRecap.scope.tags] : undefined,
+                },
+                sourceCoverage: { ...payload.extra.scopeRecap.sourceCoverage },
+                skippedSources: payload.extra.scopeRecap.skippedSources.map((s) => ({ ...s })),
+                summary: cloneRecapItem(payload.extra.scopeRecap.summary),
+                themes: payload.extra.scopeRecap.themes.map(cloneRecapItem),
+                tensions: payload.extra.scopeRecap.tensions.map(cloneRecapItem),
+                openQuestions: payload.extra.scopeRecap.openQuestions.map(cloneRecapItem),
+                nextReviewActions: payload.extra.scopeRecap.nextReviewActions.map(cloneRecapItem),
+                sourceRefs: payload.extra.scopeRecap.sourceRefs.map((ref) => ({
+                    ...ref,
+                    whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+                })),
+            };
+        }
         if (payload.extra.quietRecall) {
             copy.extra.quietRecall = {
                 generatedAt: payload.extra.quietRecall.generatedAt,
@@ -277,6 +305,7 @@ export class PageletDetailView extends ItemView {
     private readonly onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>;
     private readonly onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     private readonly onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>;
+    private readonly onOpenSettings?: () => void;
     private renderer: TabView | null = null;
     private title: string;
     private content: PageletDetailContent = [];
@@ -294,6 +323,7 @@ export class PageletDetailView extends ItemView {
         onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>,
         onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>,
         onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>,
+        onOpenSettings?: () => void,
     ) {
         super(leaf);
         this.getLocale = getLocale;
@@ -304,6 +334,7 @@ export class PageletDetailView extends ItemView {
         this.onDismissMemoryCandidate = onDismissMemoryCandidate;
         this.onSaveQuietRecallAsInsight = onSaveQuietRecallAsInsight;
         this.onLinkQuietRecallCandidate = onLinkQuietRecallCandidate;
+        this.onOpenSettings = onOpenSettings;
         this.locale = getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.sessionId = createPageletDetailSessionId();
@@ -340,6 +371,7 @@ export class PageletDetailView extends ItemView {
             onDismissMemoryCandidate: this.onDismissMemoryCandidate,
             onSaveQuietRecallAsInsight: this.onSaveQuietRecallAsInsight,
             onLinkRecallCandidate: this.onLinkQuietRecallCandidate,
+            onOpenSettings: this.onOpenSettings,
         });
         this.renderer.mount(this.contentEl);
         this.renderer.open(this.title, this.content, this.payloadOptions);
