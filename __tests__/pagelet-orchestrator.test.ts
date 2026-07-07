@@ -1500,7 +1500,7 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
     });
 
-    it("keeps slower stale foreground routes from replacing newer detail content", async () => {
+    it("rejects a second foreground route while one is already in-flight", async () => {
         const maintenanceReview: MaintenanceReviewRunResult = {
             generatedAt: "2026-06-29T12:00:00.000Z",
             previewOnly: true,
@@ -1513,18 +1513,17 @@ describe("PageletOrchestrator detail expansion", () => {
             ],
             proposals: [],
         };
-        const quietRecall: QuietRecallRunResult = {
-            generatedAt: "2026-06-29T12:01:00.000Z",
-            currentPath: "notes/current.md",
-            totalCount: 0,
-            candidates: [],
-        };
         let resolveMaintenance!: (value: MaintenanceReviewRunResult) => void;
         const maintenanceGate = new Promise<MaintenanceReviewRunResult>((resolve) => {
             resolveMaintenance = resolve;
         });
         const runMaintenanceReview = jest.fn(() => maintenanceGate);
-        const runQuietRecall = jest.fn(async () => quietRecall);
+        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
+            generatedAt: "2026-06-29T12:01:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 0,
+            candidates: [],
+        }));
         const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
         const host = makeHost({
             runMaintenanceReview,
@@ -1537,16 +1536,17 @@ describe("PageletOrchestrator detail expansion", () => {
             runQuietRecall(): Promise<void>;
         };
 
-        const oldMaintenanceRun = internals.runMaintenanceReview();
+        const maintenanceRun = internals.runMaintenanceReview();
         await Promise.resolve();
         await internals.runQuietRecall();
         resolveMaintenance(maintenanceReview);
-        await oldMaintenanceRun;
+        await maintenanceRun;
 
+        expect(runQuietRecall).not.toHaveBeenCalled();
         expect(openPageletDetailView).toHaveBeenCalledTimes(1);
         expect(openPageletDetailView).toHaveBeenCalledWith(expect.objectContaining({
-            title: "Quiet Recall",
-            extra: expect.objectContaining({ quietRecall }),
+            title: "Maintenance Review",
+            extra: expect.objectContaining({ maintenanceReview }),
         }));
     });
 });

@@ -354,6 +354,7 @@ export class PluginManager extends Plugin {
         input: string;
         error: PageletReviewsFolderError;
     } | null = null;
+    private pendingMemoryExtractionConsentMigration = false;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
     private token: string = "";
@@ -388,6 +389,7 @@ export class PluginManager extends Plugin {
         // `loadSettings`) so the Notice is bound to plugin onload and respects
         // the user's installed locale.
         this.surfacePendingPageletReviewsFolderMigration();
+        this.surfacePendingMemoryExtractionConsentMigration();
 
         // showup notification of plugin starting when it is in debug mode
         if (this.settings.debug) {
@@ -2851,7 +2853,13 @@ export class PluginManager extends Plugin {
         const loaded = await this.loadData();
         const fresh = isFreshInstall(loaded);
         this.needsLegacyAiProviderMigration = isLegacyV1Install(loaded);
+        const rawMemoryExtractionEnabled = (typeof loaded === "object" && loaded !== null)
+            ? (loaded as Record<string, unknown>).memoryExtractionEnabled
+            : undefined;
         this.settings = mergeLoadedSettings(loaded);
+        if (rawMemoryExtractionEnabled === true && !this.settings.memoryExtractionEnabled) {
+            this.pendingMemoryExtractionConsentMigration = true;
+        }
         if (fresh) {
             // Force an explicit provider choice on first run instead of
             // defaulting to qwen. The Settings UI renders a "Choose your
@@ -2915,6 +2923,18 @@ export class PluginManager extends Plugin {
             "Pagelet reviewsFolder coerced on load; emitted one-time Notice",
             { error: pending.error, input: pending.input },
         );
+    }
+
+    private surfacePendingMemoryExtractionConsentMigration(): void {
+        if (!this.pendingMemoryExtractionConsentMigration) return;
+        this.pendingMemoryExtractionConsentMigration = false;
+        const message = this.t("plugin.migration.memoryExtractionConsent");
+        try {
+            new Notice(message, 10000);
+        } catch (error) {
+            this.log("Failed to fire memory extraction consent migration Notice", error);
+        }
+        this.log("Memory extraction consent migration: feature was enabled but consent is unconfirmed; emitted one-time Notice");
     }
 
     log(...msg: any) { // eslint-disable-line @typescript-eslint/no-explicit-any

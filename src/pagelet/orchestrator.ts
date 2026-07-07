@@ -511,6 +511,8 @@ export class PageletOrchestrator {
             this.petView?.flashError();
             this.host.log("Pagelet maintenance review failed", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
+        } finally {
+            this.sessionManager.finishForegroundReviewRun();
         }
     }
 
@@ -538,6 +540,8 @@ export class PageletOrchestrator {
             this.petView?.flashError();
             this.host.log("Pagelet quiet recall failed", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
+        } finally {
+            this.sessionManager.finishForegroundReviewRun();
         }
     }
 
@@ -571,6 +575,8 @@ export class PageletOrchestrator {
             this.petView?.flashError();
             this.host.log("Pagelet graph discovery failed", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
+        } finally {
+            this.sessionManager.finishForegroundReviewRun();
         }
     }
 
@@ -609,6 +615,8 @@ export class PageletOrchestrator {
             this.petView?.flashError();
             this.host.log("Pagelet scope recap failed", error);
             new Notice(this.t("pagelet.panel.status.error"), 4000);
+        } finally {
+            this.sessionManager.finishForegroundReviewRun();
         }
     }
 
@@ -735,7 +743,12 @@ export class PageletOrchestrator {
     }
 
     private beginForegroundRoute(layout: "summary" | "discover" | "current" | "review", taskKind: PetTaskKind): number | null {
+        if (this.sessionManager.isForegroundRunInProgress) {
+            new Notice(this.t("pagelet.notice.alreadyReviewing"), 4000);
+            return null;
+        }
         if (!this.sessionManager.reserveForegroundCall()) return null;
+        this.sessionManager.beginForegroundRouteRun();
         const routeToken = ++this.foregroundRouteToken;
         this.currentPanelLayout = layout;
         this.saveFlow.clearPending();

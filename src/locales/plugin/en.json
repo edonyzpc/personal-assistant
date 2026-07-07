@@ -188,6 +188,7 @@
     "plugin.notice.qwenMemoryModelRecommended": "Qwen's newer memory model is recommended for new memory copies. Your existing memory model setting was preserved.",
     "plugin.notice.apiTokenMigrationFailed": "API token migration failed. Please re-enter your token in Settings.",
     "plugin.notice.apiTokenNotConfigured": "API token not configured. Please set it in Settings \u2192 Personal Assistant.",
+    "plugin.migration.memoryExtractionConsent": "Memory Extraction now requires explicit consent. Re-enable it in Settings \u2192 Personal Assistant \u2192 Memory Extraction.",
     "plugin.aiSetup.chooseProvider": "Choose an AI provider in Settings first.",
     "plugin.aiSetup.completeProvider": "Complete the AI provider URL and model in Settings first.",
     "plugin.aiSetup.addToken": "Add your API token in Settings first.",
