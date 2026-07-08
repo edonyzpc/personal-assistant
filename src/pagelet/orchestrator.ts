@@ -125,6 +125,7 @@ export class PageletOrchestrator {
     private readonly quietRecallDismissedCandidateIds = new Set<string>();
     private readonly quietRecallSnoozedCandidateIds = new Map<string, number>();
     private foregroundRouteToken = 0;
+    private readonly activeForegroundTimers = new Set<ReturnType<typeof setTimeout>>();
     private destroyed = false;
 
     // ---- Constants --------------------------------------------------------
@@ -389,6 +390,8 @@ export class PageletOrchestrator {
         this.clearIdleTimer();
         this.clearActivityDebounce();
         this.clearRecapPreparationTimer();
+        for (const timer of this.activeForegroundTimers) clearTimeout(timer);
+        this.activeForegroundTimers.clear();
         if (this.quietRecallLeafChangeTimer !== null) {
             clearTimeout(this.quietRecallLeafChangeTimer);
             this.quietRecallLeafChangeTimer = null;
@@ -764,11 +767,13 @@ export class PageletOrchestrator {
 
     private withForegroundTimeout<T>(promise: Promise<T>): Promise<T> {
         let timer: ReturnType<typeof setTimeout>;
+        const cleanup = (): void => { clearTimeout(timer); this.activeForegroundTimers.delete(timer); };
         return Promise.race([
-            promise.finally(() => clearTimeout(timer)),
+            promise.finally(cleanup),
             new Promise<never>((_, reject) => {
-                timer = setTimeout(() => reject(new Error("Foreground LLM call timed out")),
+                timer = setTimeout(() => { cleanup(); reject(new Error("Foreground LLM call timed out")); },
                     PageletOrchestrator.FOREGROUND_TIMEOUT_MS);
+                this.activeForegroundTimers.add(timer);
             }),
         ]);
     }
@@ -1082,7 +1087,7 @@ export class PageletOrchestrator {
 
             let result: DiscoveryResult | null = null;
             try {
-                result = await this.host.discoverConnections(currentNote, relatedNotes);
+                result = await this.withForegroundTimeout(this.host.discoverConnections(currentNote, relatedNotes));
             } catch (error) {
                 if (explicitConnections.length === 0) throw error;
                 finishPet();
