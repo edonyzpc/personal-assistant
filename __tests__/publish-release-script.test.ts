@@ -68,6 +68,7 @@ function createPublishRepo(version: string): string {
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test User"]);
     git(repo, ["config", "commit.gpgsign", "false"]);
+    git(repo, ["config", "core.hooksPath", "/dev/null"]);
     writeFileSync(join(repo, "package.json"), JSON.stringify({
         name: "personal-assistant-publish-test",
         version,

@@ -70,6 +70,7 @@ function createGitRepo(): string {
     git(repo, ["config", "user.email", "test@example.com"]);
     git(repo, ["config", "user.name", "Test User"]);
     git(repo, ["config", "commit.gpgsign", "false"]);
+    git(repo, ["config", "core.hooksPath", "/dev/null"]);
     return repo;
 }
 

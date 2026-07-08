@@ -50,6 +50,7 @@ prefer the North Star unless the user explicitly chooses a different direction.
 - React components and views: `src/components/*`, `src/preview.ts`, `src/stats-view.ts`.
 - Tests live in `__tests__/*`.
 - Project docs live in `docs/*`.
+- Playbooks live in `.agents/playbooks/*` — step-by-step operational procedures (not product specs). Use when a specific scenario triggers (release, audit, migration, outreach). Skills (`.agents/skills/`) are for AI-automated flows; playbooks are for human-or-AI-driven procedures that don't need skill-level encapsulation.
 - Release automation lives in `scripts/release.mjs`, `scripts/changelog.mjs`, and `scripts/publish-release.mjs`.
 - The local test vault is `test/`.
 - Prefer `rg` and `rg --files` for searching.
