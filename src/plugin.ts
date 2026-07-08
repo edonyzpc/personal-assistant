@@ -356,6 +356,8 @@ export class PluginManager extends Plugin {
     private pendingMemoryExtractionConsentMigration = false;
     vssCacheDir: string = this.join(this.app.vault.configDir, "plugins/personal-assistant/vss-cache");
     private isVssCached: boolean = false;
+    private backlinkMapCache: { map: Map<string, string[]>; builtAt: number } | null = null;
+    private static readonly BACKLINK_MAP_TTL_MS = 30_000;
     private token: string = "";
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
@@ -1774,6 +1776,10 @@ export class PluginManager extends Plugin {
     }
 
     private buildGraphDiscoveryBacklinkMap(): Map<string, string[]> {
+        const now = Date.now();
+        if (this.backlinkMapCache && (now - this.backlinkMapCache.builtAt) < PluginManager.BACKLINK_MAP_TTL_MS) {
+            return this.backlinkMapCache.map;
+        }
         const resolvedLinks = this.app.metadataCache?.resolvedLinks as Record<string, Record<string, number>> | undefined;
         const map = new Map<string, string[]>();
         if (!resolvedLinks) return map;
@@ -1787,6 +1793,7 @@ export class PluginManager extends Plugin {
                 else map.set(normalizedTarget, [normalizedSource]);
             }
         }
+        this.backlinkMapCache = { map, builtAt: now };
         return map;
     }
 
