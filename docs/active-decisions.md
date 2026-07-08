@@ -17,7 +17,7 @@
 
 ## Active Architecture Decisions
 
-- **Context limits**: 128K 基线，maxObservationChars=64000, MAX_CHAT_HISTORY_TURNS=40 — source: project_context_limits_decision.md
+- **Context limits**: 128K 基线，maxObservationChars=64000, MAX_CHAT_HISTORY_CHARS=60000 — source: project_context_limits_decision.md
 - **Context Projector**: 4 独立类 + Manager 组合 — source: project_context_memory_architecture.md #3
 - **Micro-compaction**: 混合策略（预算压力驱动 + 最近 2 轮保护） — source: project_context_memory_architecture.md #4
 - **Architecture refactor**: 渐进式 5 Phase，PluginManager 2300→~600 行，Multi-port 窄接口 — source: project_architecture_refactor_plan.md
@@ -32,7 +32,7 @@
 - **不简化 CapabilityRegistry / PolicyEngine / capability kinds** — 为 Action Mode 预留 — source: project_action_mode_roadmap.md
 - **Ollama / 本地模型**不在主线 — source: project_ollama_not_priority.md
 - **不移除 LangChain** — source: project_langchain_keep.md
-- **不降级 React 19** — source: project_v2_review_decisions.md
+- **不降级 React** — source: project_v2_review_decisions.md
 - **Bundle size 不作为决策驱动力** — 无用户痛点驱动前不考虑 — source: project_v2_1_review_decisions.md §8
 
 ## Deferred Items
