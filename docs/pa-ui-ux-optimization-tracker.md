@@ -174,7 +174,7 @@ flowchart TD
 | Phase 2a: Quick Product Decisions | T2.1-T2.11 | 11 UX improvements: nudges, labels, density, accessibility | `[x]` | `make deploy` + smoke per decision |
 | Phase 2b-D13: Settings Navigation | T3.1.1-T3.1.5 | Collapsible grouped Settings with sticky nav | `[x]` | Unit test group coverage + smoke |
 | Phase 2b-D5: ReviewQueue Merge | T3.2.1-T3.2.5 | ReviewQueue items redistributed to Memory/Maintenance | `[x]` | Unit test routing all 14 types |
-| Phase 2b-D6: Graduated Trust | T3.3.1-T3.3.5 | Progressive auto-accept for memory candidates | `[x]` | Unit test threshold + conflict guard |
+| Phase 2b-D6: Graduated Trust | T3.3.1-T3.3.5 | Progressive auto-confirm for Memory candidates | `[x]` | Level 2 pipeline persists auto-confirmed Memory; task constraints/conflicts stay manual |
 | Phase 3: P2 Quick Fixes | T4.A1-T4.E3 | a11y, CSS tokens, i18n cleanup, code quality | `[x]` | `make deploy` + theme verification |
 | Phase 4: Design Tokens | T5.1-T5.5 | Consistent radius/shadow/font/color across surfaces | `[x]` | Visual regression gate both themes |
 | Phase 5: Structural Refactoring | T5.6-T5.8 | Tab CSS documented, Chat namespace, QC i18n | `[x]` | `make deploy` + orphan grep |
