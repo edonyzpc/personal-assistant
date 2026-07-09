@@ -9,7 +9,8 @@
  *      `eval(await app.vault.adapter.read("pagelet-smoke-runner.js"))`
  *
  * This runner intentionally avoids provider calls. It verifies the deployed
- * Pagelet shell, command registrations, and current Panel mount contract.
+ * Pagelet shell, command registrations, current Panel mount contract, and
+ * provider-free Pagelet/Memory runtime contracts.
  */
 (async () => {
   const PLUGIN_ID = "personal-assistant";
@@ -77,6 +78,108 @@
     return file;
   };
 
+  const cloneJson = (value) => JSON.parse(JSON.stringify(value));
+
+  const createMemoryCandidateInput = (sourceFile, memoryType, claim) => ({
+    type: "memory_candidate",
+    title: `Smoke ${memoryType}`,
+    claim,
+    scope: {
+      kind: "current_note",
+      paths: [sourceFile.path],
+      label: sourceFile.basename || sourceFile.path,
+    },
+    sourceRefs: [{
+      path: sourceFile.path,
+      excerptHash: `pagelet-smoke-${Date.now()}`,
+      whyShown: ["Pagelet smoke runtime probe"],
+      evidenceStrength: "strong",
+    }],
+    originSurface: "pagelet",
+    priority: "normal",
+    whyShown: ["Pagelet smoke runtime probe"],
+    dataBoundarySnapshotId: `pagelet-smoke-${Date.now()}`,
+    admissionReason: "memory_confirmation_required",
+    metadata: {
+      memoryType,
+      sensitivity: "low",
+    },
+  });
+
+  const resetGovernanceStores = (plugin) => {
+    plugin.reviewQueueStore = null;
+    plugin.memoryGovernanceStore = null;
+    plugin.autoConfirmMemoryCandidatesPromise = null;
+  };
+
+  const runD6MemorySmoke = async (plugin, sourceFile) => {
+    if (!plugin || typeof plugin.createReviewQueueItem !== "function") {
+      record("D6 Memory runtime probe available", "FAIL", "createReviewQueueItem is not callable");
+      return;
+    }
+    if (!sourceFile) {
+      record("D6 Memory runtime probe has active source note", "FAIL", "missing source file");
+      return;
+    }
+
+    const original = {
+      reviewQueue: cloneJson(plugin.settings.reviewQueue || { enabled: true, items: [] }),
+      memoryGovernance: cloneJson(plugin.settings.memoryGovernance || { records: [] }),
+      confirmedMemoryCount: plugin.settings.confirmedMemoryCount || 0,
+    };
+    const eligibleClaim = `Pagelet smoke auto memory ${Date.now()}`;
+    const taskClaim = `Pagelet smoke task constraint ${Date.now()}`;
+
+    try {
+      plugin.settings.reviewQueue = {
+        ...(plugin.settings.reviewQueue || {}),
+        enabled: true,
+        items: [],
+      };
+      plugin.settings.memoryGovernance = {
+        ...(plugin.settings.memoryGovernance || {}),
+        records: [],
+      };
+      plugin.settings.confirmedMemoryCount = 30;
+      resetGovernanceStores(plugin);
+
+      const eligible = await plugin.createReviewQueueItem(
+        createMemoryCandidateInput(sourceFile, "preference", eligibleClaim),
+      );
+      const eligibleRecord = plugin.settings.memoryGovernance.records
+        .find((record) => record.summary === eligibleClaim);
+      assert(
+        "D6 Level 2 auto-confirms eligible Memory candidates",
+        eligible?.ok === true
+          && eligible.value?.status === "applied"
+          && eligibleRecord?.confirmationStrength === "auto"
+          && plugin.settings.confirmedMemoryCount === 31,
+        `result=${JSON.stringify(eligible)}; record=${JSON.stringify(eligibleRecord)}; count=${plugin.settings.confirmedMemoryCount}`,
+      );
+
+      const taskConstraint = await plugin.createReviewQueueItem(
+        createMemoryCandidateInput(sourceFile, "task_constraint", taskClaim),
+      );
+      const taskRecord = plugin.settings.memoryGovernance.records
+        .find((record) => record.summary === taskClaim);
+      assert(
+        "D6 Level 2 keeps task constraints manual",
+        taskConstraint?.ok === true
+          && taskConstraint.value?.status === "suggested"
+          && !taskRecord
+          && plugin.settings.confirmedMemoryCount === 31,
+        `result=${JSON.stringify(taskConstraint)}; taskRecord=${JSON.stringify(taskRecord)}; count=${plugin.settings.confirmedMemoryCount}`,
+      );
+    } finally {
+      plugin.settings.reviewQueue = original.reviewQueue;
+      plugin.settings.memoryGovernance = original.memoryGovernance;
+      plugin.settings.confirmedMemoryCount = original.confirmedMemoryCount;
+      resetGovernanceStores(plugin);
+      if (typeof plugin.saveSettings === "function") await plugin.saveSettings();
+      record("D6 Memory runtime probe restored settings", "PASS");
+    }
+  };
+
   try {
     const plugin = app.plugins.plugins[PLUGIN_ID];
     assert("Personal Assistant plugin is loaded", Boolean(plugin));
@@ -118,6 +221,8 @@
       !petShouldMount || Boolean(petRoot()),
       `petVisible=${plugin?.settings?.pagelet?.petVisible}; activeLeafType=${activeLeafType}; petDom=${petRoot() ? 1 : 0}`,
     );
+
+    await runD6MemorySmoke(plugin, sourceFile);
 
     await app.commands.executeCommandById(`${PLUGIN_ID}:pa-pagelet:background-preparation-status`);
     record("Background preparation status command executed without throwing", "PASS");
