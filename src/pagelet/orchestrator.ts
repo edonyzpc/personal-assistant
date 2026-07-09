@@ -129,8 +129,8 @@ export class PageletOrchestrator {
     private destroyed = false;
 
     // ---- Constants --------------------------------------------------------
-    /** 60 s ceiling for any single foreground LLM call. */
-    private static readonly FOREGROUND_TIMEOUT_MS = 60_000;
+    /** 120 s ceiling for any single foreground provider-backed call. */
+    private static readonly FOREGROUND_TIMEOUT_MS = 120_000;
     /** 10 minutes of no activity -> Pet enters resting state. */
     private static readonly IDLE_TIMEOUT_MS = 10 * 60 * 1000;
     /** 5 s debounce for note-activity detection (vault modify events). */
@@ -1021,7 +1021,6 @@ export class PageletOrchestrator {
     private async analyzeCurrentNote(options: { preferPanel?: boolean } = {}): Promise<void> {
         const activeFile = this.host.app.workspace.getActiveFile?.();
         if (!activeFile || !activeFile.path.endsWith(".md")) return;
-        ++this.foregroundRouteToken;
 
         await this.analyzeFiles([activeFile], {
             preferPanel: options.preferPanel,
@@ -1214,6 +1213,7 @@ export class PageletOrchestrator {
     ): Promise<void> {
         if (files.length === 0) return;
         if (!this.sessionManager.beginForegroundReviewRun()) return;
+        ++this.foregroundRouteToken;
 
         this.transitionPet("analysis-start", "review");
 
@@ -1257,6 +1257,10 @@ export class PageletOrchestrator {
             this.petView?.flashError();
             this.host.log("Current note analysis failed", error);
             const message = error instanceof Error ? error.message : String(error);
+            if (options.preferPanel) {
+                this.currentPanelLayout = options.panelLayout;
+                this.panelView?.showReviewError(message || this.t("pagelet.panel.status.actionFailed"));
+            }
             new Notice(message || this.t("pagelet.panel.status.actionFailed"), 5000);
         } finally {
             this.sessionManager.finishForegroundReviewRun();

@@ -163,7 +163,11 @@ export class MemoryGovernanceStore {
 
     async confirmCandidate(
         candidate: MemoryCandidateContract,
-        options: { scope: ReviewQueueScope; confirmationSource?: ConfirmedMemoryRecord["confirmationSource"] },
+        options: {
+            scope: ReviewQueueScope;
+            confirmationSource?: ConfirmedMemoryRecord["confirmationSource"];
+            confirmationStrength?: ConfirmedMemoryRecord["confirmationStrength"];
+        },
     ): Promise<MemoryGovernanceResult<ConfirmedMemoryRecord>> {
         const candidateValidation = validateMemoryCandidate(candidate);
         if (!candidateValidation.ok) return { ok: false, reason: candidateValidation.reason };
@@ -180,7 +184,7 @@ export class MemoryGovernanceStore {
             updatedAt: now,
             confirmedAt: now,
             confirmationSource: options.confirmationSource ?? "pagelet",
-            confirmationStrength: candidate.type === "task_constraint" ? "explicit" : "light",
+            confirmationStrength: options.confirmationStrength ?? "explicit",
             updatePolicy: candidate.type === "task_constraint" ? "ask-before-cross-scope-use" : "manual-only",
         };
         const validation = validateConfirmedMemoryRecord(record);

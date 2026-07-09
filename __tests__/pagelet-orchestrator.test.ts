@@ -388,10 +388,13 @@ describe("PageletOrchestrator foreground review concurrency", () => {
         const orchestrator = new PageletOrchestrator(host);
 
         const first = orchestrator.reviewCurrentNote();
+        const tokenAfterFirstAcceptedRun = (orchestrator as unknown as { foregroundRouteToken: number }).foregroundRouteToken;
         const second = orchestrator.reviewCurrentNote();
 
         await second;
         expect(callCount).toBe(1);
+        expect((orchestrator as unknown as { foregroundRouteToken: number }).foregroundRouteToken)
+            .toBe(tokenAfterFirstAcceptedRun);
 
         releaseFirst();
         await first;
@@ -1766,6 +1769,46 @@ describe("PageletOrchestrator review panel scope flow", () => {
             }),
         );
     });
+
+    it("keeps selected review failures visible in the panel", async () => {
+        const now = Date.now();
+        const activeFile = makeTFile("notes/current.md", { size: 100, mtime: now });
+        const panelView = { open: jest.fn(), showReviewError: jest.fn() };
+        const foregroundAnalyze = jest.fn(async () => {
+            throw new Error("Pagelet review timed out. Try again, or shorten the note before retrying.");
+        });
+        const host = makeHost({
+            app: {
+                workspace: {
+                    getActiveFile: jest.fn(() => activeFile),
+                },
+                vault: {
+                    getMarkdownFiles: jest.fn(() => [activeFile]),
+                    getAbstractFileByPath: jest.fn((path: string) => (
+                        path === activeFile.path ? activeFile : null
+                    )),
+                },
+                metadataCache: {
+                    getFileCache: jest.fn(() => null),
+                },
+            } as unknown as PageletHost["app"],
+            createForegroundAnalyzeCallback: () => foregroundAnalyze,
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+        await (orchestrator as unknown as { reviewSelectedScope(): Promise<void> }).reviewSelectedScope();
+
+        expect(foregroundAnalyze).toHaveBeenCalledTimes(1);
+        expect(panelView.open).not.toHaveBeenCalled();
+        expect(panelView.showReviewError).toHaveBeenCalledWith(
+            "Pagelet review timed out. Try again, or shorten the note before retrying.",
+        );
+        expect(Notice).toHaveBeenCalledWith(
+            "Pagelet review timed out. Try again, or shorten the note before retrying.",
+            5000,
+        );
+    });
 });
 
 describe("PageletOrchestrator connection discovery", () => {
@@ -1945,6 +1988,88 @@ describe("PageletOrchestrator connection discovery", () => {
             }),
         );
         expect(log).toHaveBeenCalledWith("Discovery AI analysis failed; showing explicit wikilinks", expect.any(Error));
+    });
+
+    it("allows Discovery AI enrichment to run past the old 60s foreground ceiling", async () => {
+        jest.useFakeTimers();
+        try {
+            const currentFile = makeTFile("notes/current.md");
+            const linkedFile = makeTFile("notes/linked.md");
+            const panelView = { open: jest.fn() };
+            const log = jest.fn();
+            const discoverConnections = jest.fn<PageletHost["discoverConnections"]>(async () => {
+                await new Promise((resolve) => setTimeout(resolve, 61_000));
+                return {
+                    connections: [{
+                        fromNote: "notes/current.md",
+                        toNote: "notes/linked.md",
+                        strength: "medium" as const,
+                        sharedConcepts: ["AI enriched thread"],
+                    }],
+                    themes: [],
+                    gaps: [],
+                };
+            });
+            const host = makeHost({
+                app: {
+                    workspace: {
+                        getActiveFile: jest.fn(() => currentFile),
+                    },
+                    vault: {
+                        getMarkdownFiles: jest.fn(() => [currentFile, linkedFile]),
+                        cachedRead: jest.fn(async (file: TFile) => (
+                            file.path === linkedFile.path
+                                ? "Linked note body"
+                                : "Current note body with [[linked]]"
+                        )),
+                        getAbstractFileByPath: jest.fn((path: string) => (
+                            [currentFile, linkedFile].find((file) => file.path === path) ?? null
+                        )),
+                    },
+                    metadataCache: {
+                        getFileCache: jest.fn((file: TFile) => (
+                            file.path === currentFile.path
+                                ? { links: [{ link: "linked", original: "[[linked]]" }] }
+                                : null
+                        )),
+                        getFirstLinkpathDest: jest.fn((linkpath: string, sourcePath: string) => (
+                            linkpath === "linked" && sourcePath === currentFile.path
+                                ? linkedFile
+                                : null
+                        )),
+                    },
+                } as unknown as PageletHost["app"],
+                findRelatedNotes: async () => [],
+                log,
+                discoverConnections,
+            });
+            const orchestrator = new PageletOrchestrator(host);
+            (orchestrator as unknown as { panelView: typeof panelView }).panelView = panelView;
+
+            const run = (orchestrator as unknown as { discoverConnections(): Promise<void> }).discoverConnections();
+            await flushAsyncWork();
+            jest.advanceTimersByTime(61_000);
+            await flushAsyncWork();
+            await run;
+
+            expect(log).not.toHaveBeenCalledWith(
+                "Discovery AI analysis failed; showing explicit wikilinks",
+                expect.anything(),
+            );
+            expect(panelView.open).toHaveBeenCalledWith(
+                "discover",
+                expect.any(Array),
+                expect.objectContaining({
+                    connections: expect.arrayContaining([
+                        expect.objectContaining({
+                            sharedConcepts: expect.arrayContaining(["AI enriched thread"]),
+                        }),
+                    ]),
+                }),
+            );
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("does not read explicit wikilink targets excluded by Pagelet scope", async () => {

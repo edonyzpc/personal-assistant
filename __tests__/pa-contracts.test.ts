@@ -239,6 +239,7 @@ describe("PA shared contracts", () => {
         };
 
         expect(validateMemoryCandidate(candidate)).toEqual({ ok: true });
+        expect(canAutoConfirmMemoryCandidate({ ...candidate, type: "preference" })).toBe(true);
         expect(canAutoConfirmMemoryCandidate(candidate)).toBe(false);
         expect(validateMemoryCandidate({ ...candidate, sourceRefs: [] })).toEqual({
             ok: false,

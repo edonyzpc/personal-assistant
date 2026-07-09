@@ -95,6 +95,30 @@ describe("ReviewQueueStore", () => {
         });
     });
 
+    it("keeps direct accepted-to-suggested rollback out of the generic state machine", async () => {
+        const { store } = makeStore();
+        await store.create({
+            type: "memory_candidate",
+            title: "Memory candidate",
+            claim: "Prefers concise planning notes.",
+            scope: { kind: "current_note", paths: ["notes/source.md"] },
+            sourceRefs: [sourceRef],
+            originSurface: "pagelet",
+            dataBoundarySnapshotId: "boundary-test",
+            admissionReason: "memory_confirmation_required",
+            metadata: { memoryType: "preference", sensitivity: "low" },
+        });
+
+        await expect(store.updateStatus("rq-test", "accepted")).resolves.toMatchObject({
+            ok: true,
+            value: expect.objectContaining({ status: "accepted" }),
+        });
+        await expect(store.updateStatus("rq-test", "suggested")).resolves.toEqual({
+            ok: false,
+            reason: "invalid_transition_accepted_to_suggested",
+        });
+    });
+
     it("rejects inactive, unknown, source-less, or raw-output-shaped producer inputs", async () => {
         const { store } = makeStore();
 

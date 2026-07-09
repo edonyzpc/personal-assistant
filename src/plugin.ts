@@ -128,6 +128,7 @@ import {
     applyRetrievalHabitProfileToRecallCandidates,
     buildQuietRecallCandidates,
     buildScopeRecap,
+    canAutoConfirmMemoryCandidate,
     coerceQuietRecallSaveResult,
     detectCrossNotePatterns,
     findMaintenanceActionLogEntry,
@@ -141,6 +142,7 @@ import {
     type MaintenanceProposal,
 } from './pa';
 import { decideDataBoundaryForSource, type DataBoundaryDecision } from './pa/contracts';
+import { getMemoryTrustLevel } from './pa/memory-trust-level';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
 const CALLOUT_MANAGER_READY_TIMEOUT_MS = 2000;
@@ -243,6 +245,7 @@ function collectStringValues(value: unknown, output: Set<string>): void {
  */
 const PAGELET_MIGRATION_NOTICE_KEY = "pa-pagelet-reviews-folder-migration";
 const PAGELET_BACKGROUND_PREPARATION_NOTICE_KEY = "pa-pagelet-background-preparation-notice";
+const PAGELET_FOREGROUND_REVIEW_TIMEOUT_MS = 120_000;
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
@@ -340,6 +343,7 @@ export class PluginManager extends Plugin {
     private savedInsightStore: SavedInsightStore | null = null;
     private memoryGovernanceStore: MemoryGovernanceStore | null = null;
     private retrievalHabitProfileStore: RetrievalHabitProfileStore | null = null;
+    private autoConfirmMemoryCandidatesPromise: Promise<void> | null = null;
     private quickCaptureDraft = "";
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
@@ -713,6 +717,7 @@ export class PluginManager extends Plugin {
     private onIdle(): void {
         if (this.unloading) return;
         this.syncPageletRuntime();
+        void this.autoConfirmPendingMemoryCandidates();
         void this.maybeShowNextOnboardingNudge();
         void this.maybeRunPatternDetectionNudge();
         this.syncMemoryExtractionRuntime();
@@ -1214,7 +1219,7 @@ export class PluginManager extends Plugin {
                             providerForPricing: this.settings.aiProvider,
                             modelForPricing: this.settings.chatModelName,
                             userMessageLocale: this.getPageletLocale(),
-                            reviewTimeoutMs: 60_000,
+                            reviewTimeoutMs: PAGELET_FOREGROUND_REVIEW_TIMEOUT_MS,
                         },
                     );
 
@@ -1313,11 +1318,20 @@ export class PluginManager extends Plugin {
         return this.getReviewQueueStore().list().find((item) => item.id === id) ?? null;
     }
 
-    private createReviewQueueItem(input: ReviewQueueCreateInput): Promise<ReviewQueueResult<ReviewQueueItem>> {
+    private async createReviewQueueItem(input: ReviewQueueCreateInput): Promise<ReviewQueueResult<ReviewQueueItem>> {
         if (!this.settings.reviewQueue.enabled) {
-            return Promise.resolve({ ok: false, reason: "disabled" });
+            return { ok: false, reason: "disabled" };
         }
-        return this.getReviewQueueStore().create(input);
+        const result = await this.getReviewQueueStore().create(input);
+        if (!result.ok || result.value.type !== "memory_candidate" || !this.shouldAutoConfirmMemoryCandidates()) {
+            return result;
+        }
+        const autoConfirmed = await this.autoConfirmMemoryCandidateFromQueueItem(result.value);
+        if (!autoConfirmed) return result;
+        return {
+            ok: true,
+            value: this.getReviewQueueItemById(result.value.id) ?? result.value,
+        };
     }
 
     private dismissReviewQueueItem(id: string): Promise<ReviewQueueResult<ReviewQueueItem>> {
@@ -2226,7 +2240,75 @@ export class PluginManager extends Plugin {
         return this.getMemoryGovernanceStore().list();
     }
 
+    private shouldAutoConfirmMemoryCandidates(): boolean {
+        return getMemoryTrustLevel(this.settings.confirmedMemoryCount ?? 0) >= 2;
+    }
+
+    private async autoConfirmPendingMemoryCandidates(): Promise<void> {
+        if (this.settings.reviewQueue?.enabled !== true || !this.shouldAutoConfirmMemoryCandidates()) return;
+        if (this.autoConfirmMemoryCandidatesPromise) {
+            await this.autoConfirmMemoryCandidatesPromise;
+            return;
+        }
+        this.autoConfirmMemoryCandidatesPromise = this.runAutoConfirmPendingMemoryCandidates()
+            .finally(() => {
+                this.autoConfirmMemoryCandidatesPromise = null;
+            });
+        await this.autoConfirmMemoryCandidatesPromise;
+    }
+
+    private async runAutoConfirmPendingMemoryCandidates(): Promise<void> {
+        const pending = this.getReviewQueueStore().list({
+            types: ["memory_candidate"],
+            statuses: ["suggested"],
+        });
+        for (const item of pending) {
+            await this.autoConfirmMemoryCandidateFromQueueItem(item);
+        }
+    }
+
+    private async autoConfirmMemoryCandidateFromQueueItem(item: ReviewQueueItem): Promise<boolean> {
+        if (!this.shouldAutoConfirmMemoryCandidates()) return false;
+        const currentItem = this.getReviewQueueItemById(item.id);
+        if (!currentItem || currentItem.status !== "suggested") return false;
+        const candidate = memoryCandidateFromQueueItem(currentItem);
+        if (!candidate.ok) {
+            this.log("Memory candidate auto-confirm skipped", { id: currentItem.id, reason: candidate.reason });
+            return false;
+        }
+        if (!canAutoConfirmMemoryCandidate(candidate.value)) return false;
+        const result = await this.confirmMemoryCandidateQueueItem(currentItem, {
+            confirmationStrength: "auto",
+            failureStatus: "suggested",
+            logContext: "auto-confirm",
+            triggerLevel2Sweep: false,
+        });
+        if (!result.ok) {
+            this.log("Memory candidate auto-confirm failed", { id: currentItem.id, message: result.message });
+            return false;
+        }
+        return true;
+    }
+
     private async confirmMemoryCandidateFromQueueItem(item: ReviewQueueItem): Promise<{ ok: boolean; message: string }> {
+        const result = await this.confirmMemoryCandidateQueueItem(item, {
+            confirmationStrength: "explicit",
+            failureStatus: "failed",
+            logContext: "manual-confirm",
+            triggerLevel2Sweep: true,
+        });
+        return { ok: result.ok, message: result.message };
+    }
+
+    private async confirmMemoryCandidateQueueItem(
+        item: ReviewQueueItem,
+        options: {
+            confirmationStrength: NonNullable<ConfirmedMemoryRecord["confirmationStrength"]>;
+            failureStatus: "failed" | "suggested";
+            logContext: string;
+            triggerLevel2Sweep: boolean;
+        },
+    ): Promise<{ ok: boolean; message: string }> {
         const currentItem = this.getReviewQueueItemById(item.id);
         if (!currentItem) {
             return {
@@ -2274,25 +2356,23 @@ export class PluginManager extends Plugin {
                 }),
             };
         }
-        const result = await this.getMemoryGovernanceStore().confirmCandidate(candidate.value, {
-            scope: reserveResult.value.scope,
-            confirmationSource: "pagelet",
-        });
+        let result: Awaited<ReturnType<MemoryGovernanceStore["confirmCandidate"]>>;
+        try {
+            result = await this.getMemoryGovernanceStore().confirmCandidate(candidate.value, {
+                scope: reserveResult.value.scope,
+                confirmationSource: "pagelet",
+                confirmationStrength: options.confirmationStrength,
+            });
+        } catch (error) {
+            this.log("Memory candidate confirmation threw", {
+                id: currentItem.id,
+                context: options.logContext,
+                error,
+            });
+            result = { ok: false, reason: "confirmation_threw" };
+        }
         if (!result.ok) {
-            try {
-                const failedResult = await this.updateReviewQueueItemStatus(currentItem.id, "failed");
-                if (!failedResult.ok) {
-                    this.log("Memory candidate confirmation failed and queue failure status update failed", {
-                        id: currentItem.id,
-                        reason: failedResult.reason,
-                    });
-                }
-            } catch (error) {
-                this.log("Memory candidate confirmation failed and queue failure status persist threw", {
-                    id: currentItem.id,
-                    error,
-                });
-            }
+            await this.recoverMemoryCandidateQueueFailure(currentItem.id, options);
             return {
                 ok: false,
                 message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
@@ -2315,11 +2395,57 @@ export class PluginManager extends Plugin {
             });
         }
         this.settings.confirmedMemoryCount = (this.settings.confirmedMemoryCount ?? 0) + 1;
-        void this.saveSettings();
+        try {
+            await this.saveSettings();
+        } catch (error) {
+            this.log("Memory candidate confirmed but confirmed count persist threw", {
+                id: currentItem.id,
+                context: options.logContext,
+                error,
+            });
+        }
+        if (options.triggerLevel2Sweep) {
+            void this.autoConfirmPendingMemoryCandidates();
+        }
         return {
             ok: true,
             message: pageletT("pagelet.tab.memory.confirmed", this.getPageletLocale()),
         };
+    }
+
+    private async recoverMemoryCandidateQueueFailure(
+        itemId: string,
+        options: {
+            failureStatus: "failed" | "suggested";
+            logContext: string;
+        },
+    ): Promise<void> {
+        try {
+            const failedResult = await this.updateReviewQueueItemStatus(itemId, "failed");
+            if (!failedResult.ok) {
+                this.log("Memory candidate confirmation failed and queue failure status update failed", {
+                    id: itemId,
+                    context: options.logContext,
+                    reason: failedResult.reason,
+                });
+                return;
+            }
+            if (options.failureStatus !== "suggested") return;
+            const retryResult = await this.updateReviewQueueItemStatus(itemId, "suggested");
+            if (!retryResult.ok) {
+                this.log("Memory candidate confirmation failed and queue suggested recovery failed", {
+                    id: itemId,
+                    context: options.logContext,
+                    reason: retryResult.reason,
+                });
+            }
+        } catch (error) {
+            this.log("Memory candidate confirmation failed and queue recovery status persist threw", {
+                id: itemId,
+                context: options.logContext,
+                error,
+            });
+        }
     }
 
     private async dismissMemoryCandidateFromQueueItem(item: ReviewQueueItem): Promise<{ ok: boolean; message: string }> {

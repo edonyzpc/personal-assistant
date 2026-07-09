@@ -190,6 +190,7 @@ jest.mock('../src/stats/stats-store', () => ({ normalizeStatisticsView: (view: s
 
 import { PluginManager } from '../src/plugin';
 import { PageletDetailView } from '../src/pagelet/tab';
+import type { ReviewQueueCreateInput } from '../src/pa';
 
 const createTFile = (path: string): TFile => {
     const FileCtor = TFile as unknown as { new(path: string): TFile };
@@ -904,6 +905,111 @@ describe('Pagelet detail workspace leaf', () => {
             type: 'pa-pagelet-detail-view',
             active: true,
         });
+    });
+});
+
+describe('Pagelet Memory auto-confirm pipeline', () => {
+    function createMemoryQueueInput(memoryType = 'preference'): ReviewQueueCreateInput {
+        return {
+            type: 'memory_candidate',
+            title: 'Remember preference',
+            claim: 'Prefers concise planning notes.',
+            scope: { kind: 'current_note', paths: ['notes/current.md'], label: 'Current note' },
+            sourceRefs: [{
+                path: 'notes/current.md',
+                excerptHash: 'abc123',
+                whyShown: ['Quick Capture suggested it'],
+                evidenceStrength: 'strong',
+            }],
+            originSurface: 'quick_capture',
+            dataBoundarySnapshotId: 'boundary-test',
+            admissionReason: 'memory_confirmation_required',
+            whyShown: ['May help later'],
+            metadata: {
+                memoryType,
+                sensitivity: 'low',
+            },
+        };
+    }
+
+    function createMemoryPlugin(confirmedMemoryCount: number) {
+        const plugin = Object.create(PluginManager.prototype) as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        plugin.settings = {
+            reviewQueue: {
+                enabled: true,
+                items: [],
+            },
+            memoryGovernance: {
+                records: [],
+            },
+            confirmedMemoryCount,
+        };
+        plugin.reviewQueueStore = null;
+        plugin.memoryGovernanceStore = null;
+        plugin.autoConfirmMemoryCandidatesPromise = null;
+        plugin.saveSettings = jest.fn(async () => undefined);
+        plugin.log = jest.fn();
+        plugin.getPageletLocale = jest.fn(() => 'en');
+        return plugin;
+    }
+
+    it('auto-confirms eligible Memory candidates at Level 2 when they are created', async () => {
+        const plugin = createMemoryPlugin(30);
+
+        const result = await plugin.createReviewQueueItem(createMemoryQueueInput());
+
+        expect(result).toMatchObject({
+            ok: true,
+            value: expect.objectContaining({ status: 'applied' }),
+        });
+        expect(plugin.settings.memoryGovernance.records).toEqual([
+            expect.objectContaining({
+                summary: 'Prefers concise planning notes.',
+                confirmationStrength: 'auto',
+                confirmationSource: 'pagelet',
+            }),
+        ]);
+        expect(plugin.settings.confirmedMemoryCount).toBe(31);
+        expect(plugin.settings.reviewQueue.items[0]).toMatchObject({
+            type: 'memory_candidate',
+            status: 'applied',
+        });
+    });
+
+    it('keeps task constraints pending even at Level 2', async () => {
+        const plugin = createMemoryPlugin(30);
+
+        const result = await plugin.createReviewQueueItem(createMemoryQueueInput('task_constraint'));
+
+        expect(result).toMatchObject({
+            ok: true,
+            value: expect.objectContaining({ status: 'suggested' }),
+        });
+        expect(plugin.settings.memoryGovernance.records).toEqual([]);
+        expect(plugin.settings.confirmedMemoryCount).toBe(30);
+    });
+
+    it('restores auto-confirm failures to suggested without broadening the queue state machine', async () => {
+        const plugin = createMemoryPlugin(30);
+        plugin.getMemoryGovernanceStore = jest.fn(() => ({
+            confirmCandidate: jest.fn(async () => ({ ok: false, reason: 'store_failed' })),
+        }));
+
+        const result = await plugin.createReviewQueueItem(createMemoryQueueInput());
+
+        expect(result).toMatchObject({
+            ok: true,
+            value: expect.objectContaining({ status: 'suggested' }),
+        });
+        expect(plugin.settings.reviewQueue.items[0]).toMatchObject({
+            type: 'memory_candidate',
+            status: 'suggested',
+        });
+        expect(plugin.settings.confirmedMemoryCount).toBe(30);
+        expect(plugin.log).toHaveBeenCalledWith(
+            'Memory candidate auto-confirm failed',
+            expect.objectContaining({ message: expect.stringContaining('store_failed') }),
+        );
     });
 });
 

@@ -132,6 +132,21 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         expect(listReviewQueueItems).not.toHaveBeenCalled();
     });
 
+    it("preserves focus when Memory readiness refresh repaints a visible bubble", async () => {
+        const coordinator = makeCoordinator(() => [], {
+            isMemoryReadyForPageletDiscovery: async () => true,
+        });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const show = bubbleView.show as unknown as jest.Mock;
+        expect(show).toHaveBeenCalledTimes(2);
+        expect(show.mock.calls[1]?.[2]).toEqual({ preserveFocus: true });
+    });
+
     it("does not show user-kept Review Queue states as pending Bubble work", async () => {
         const listReviewQueueItems = jest.fn((_filter?: ReviewQueueListFilter) => {
             return [
