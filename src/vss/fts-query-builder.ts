@@ -1,5 +1,5 @@
 const FTS5_RESERVED = /^(NEAR|AND|OR|NOT)$/i;
-const FTS5_SPECIAL = /["*^+\-():]/;
+const FTS5_SAFE_BAREWORD = /^[\p{L}\p{M}\p{N}_]+$/u;
 const CJK_CHAR = /[一-鿿㐀-䶿豈-﫿]/;
 
 let _segmenter: Intl.Segmenter | null | undefined;
@@ -15,10 +15,8 @@ function getSegmenter(): Intl.Segmenter | null {
 }
 
 function escapeToken(token: string): string {
-    if (FTS5_RESERVED.test(token) || FTS5_SPECIAL.test(token)) {
-        return `"${token.replace(/"/g, '""')}"`;
-    }
-    return token;
+    if (!FTS5_RESERVED.test(token) && FTS5_SAFE_BAREWORD.test(token)) return token;
+    return `"${token.replace(/"/g, '""')}"`;
 }
 
 function buildWithSegmenter(query: string, seg: Intl.Segmenter): string | null {
