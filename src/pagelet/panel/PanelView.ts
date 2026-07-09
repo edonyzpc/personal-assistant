@@ -61,6 +61,11 @@ interface PanelDraftItem {
     suggestion?: PageletSuggestion;
 }
 
+interface PanelReviewRunError {
+    message: string;
+    detail: string;
+}
+
 /** Detect mobile context using the Obsidian convention. */
 function isMobile(): boolean {
     return getPlatformDocument().body.classList.contains("is-mobile");
@@ -158,6 +163,7 @@ export class PanelView {
     private currentFindings: PanelFinding[] = [];
     private currentExtra: PanelOpenExtra | undefined;
     private currentContentKey = "";
+    private reviewRunError: PanelReviewRunError | null = null;
     private readonly dismissedSuggestionIds = new Set<string>();
     private draftItems: PanelDraftItem[] = [];
     private suggestionRenderers: SuggestionCardRenderer[] = [];
@@ -177,6 +183,8 @@ export class PanelView {
     private unmountTransitionHandler: ((e: TransitionEvent) => void) | null = null;
     /** Fallback timeout (ms) for transitionend in reduced-motion / hidden tabs. */
     private static readonly UNMOUNT_FALLBACK_MS = 400;
+    private static readonly REVIEW_SLOW_NOTICE_MS = 30_000;
+    private slowReviewTimer: PlatformTimeoutHandle | null = null;
 
     constructor(options: PanelViewOptions) {
         this.options = options;
@@ -251,6 +259,8 @@ export class PanelView {
         this.currentLayout = layoutType;
         this.currentFindings = content;
         this.currentExtra = extra;
+        this.reviewRunError = null;
+        this.clearSlowReviewTimer();
         const contentKey = makeContentKey(content);
         if (contentKey !== this.currentContentKey) {
             this.currentContentKey = contentKey;
@@ -315,6 +325,14 @@ export class PanelView {
         contentEl.className = "pa-pagelet-panel-content-region";
         body.appendChild(contentEl);
 
+        if (
+            this.reviewRunError
+            && (layoutType === "review" || layoutType === "current")
+        ) {
+            this.renderReviewRunError(contentEl, this.reviewRunError);
+            return;
+        }
+
         switch (layoutType) {
             case "review":
                 renderReviewTimeline(contentEl, visibleFindings, this.getLocale(), renderOptions);
@@ -357,6 +375,7 @@ export class PanelView {
     /** Close the panel. */
     close(): void {
         if (!this.rootEl) return;
+        this.clearSlowReviewTimer();
         const root = this.rootEl;
         root.setAttribute("data-state", "hidden");
         this._isOpen = false;
@@ -376,6 +395,7 @@ export class PanelView {
     /** Clean up -- remove DOM, detach listeners. */
     destroy(): void {
         this.detachGlobalListeners();
+        this.clearSlowReviewTimer();
         this.cancelPendingUnmount();
         this.destroySuggestionRenderers();
         this.renderComponent?.unload();
@@ -390,6 +410,15 @@ export class PanelView {
         this.containerEl = null;
         this._isOpen = false;
         this.currentLayout = null;
+    }
+
+    showReviewError(message: string, detail?: string): void {
+        this.reviewRunError = {
+            message,
+            detail: detail ?? pageletT("pagelet.panel.error.retrySameSelection", this.getLocale()),
+        };
+        this.clearSlowReviewTimer();
+        this.renderCurrentLayout();
     }
 
     private destroySuggestionRenderers(): void {
@@ -1071,6 +1100,7 @@ export class PanelView {
                 ? this.options.callbacks.onRunSelectedReview
                 : this.options.callbacks.onRunReview;
             if (!run) return;
+            this.reviewRunError = null;
             saveBtn.disabled = true;
             saveBtn.setAttribute("aria-busy", "true");
             const previousLabel = saveBtn.textContent ?? "";
@@ -1079,9 +1109,11 @@ export class PanelView {
                 : pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
             saveBtn.textContent = progressLabel;
             this.renderReviewProgress(progressLabel);
+            this.scheduleSlowReviewNotice();
             try {
                 await run();
             } finally {
+                this.clearSlowReviewTimer();
                 if (
                     this.saveBtnEl === saveBtn
                     && (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected")
@@ -1113,7 +1145,24 @@ export class PanelView {
     }
 
 
-    private renderReviewProgress(label?: string): void {
+    private scheduleSlowReviewNotice(): void {
+        this.clearSlowReviewTimer();
+        this.slowReviewTimer = setPlatformTimeout(() => {
+            this.slowReviewTimer = null;
+            this.renderReviewProgress(
+                pageletT("pagelet.panel.status.stillReviewing", this.getLocale()),
+                pageletT("pagelet.panel.status.stillReviewingDetail", this.getLocale()),
+            );
+        }, PanelView.REVIEW_SLOW_NOTICE_MS);
+    }
+
+    private clearSlowReviewTimer(): void {
+        if (this.slowReviewTimer === null) return;
+        clearPlatformTimeout(this.slowReviewTimer);
+        this.slowReviewTimer = null;
+    }
+
+    private renderReviewProgress(label?: string, detail?: string): void {
         if (!this.bodyEl) return;
         clearChildren(this.bodyEl);
 
@@ -1126,11 +1175,59 @@ export class PanelView {
         dot.className = "pa-pagelet-panel-progress-dot";
         card.appendChild(dot);
 
+        const copy = createHtmlElement("div");
+        copy.className = "pa-pagelet-panel-progress-copy";
         const text = createHtmlElement("div");
+        text.className = "pa-pagelet-panel-progress-title";
         text.textContent = label ?? pageletT("pagelet.panel.status.reviewingCurrent", this.getLocale());
-        card.appendChild(text);
+        copy.appendChild(text);
+        if (detail) {
+            const detailEl = createHtmlElement("div");
+            detailEl.className = "pa-pagelet-panel-progress-detail";
+            detailEl.textContent = detail;
+            copy.appendChild(detailEl);
+        }
+        card.appendChild(copy);
 
         this.bodyEl.appendChild(card);
+    }
+
+    private renderReviewRunError(container: HTMLElement, error: PanelReviewRunError): void {
+        const card = createHtmlElement("div");
+        card.className = "pa-pagelet-panel-error-card";
+        card.setAttribute("role", "alert");
+
+        const title = createHtmlElement("div");
+        title.className = "pa-pagelet-panel-error-title";
+        title.textContent = pageletT("pagelet.panel.error.reviewFailedTitle", this.getLocale());
+        card.appendChild(title);
+
+        const message = createHtmlElement("div");
+        message.className = "pa-pagelet-panel-error-message";
+        message.textContent = error.message;
+        card.appendChild(message);
+
+        const detail = createHtmlElement("div");
+        detail.className = "pa-pagelet-panel-error-detail";
+        detail.textContent = error.detail;
+        card.appendChild(detail);
+
+        if (this.saveBtnEl && (this.primaryButtonMode === "run" || this.primaryButtonMode === "run-selected")) {
+            const retry = createHtmlElement("button");
+            retry.className = "pa-pagelet-panel-error-retry";
+            retry.setAttribute("type", "button");
+            retry.textContent = pageletT("pagelet.panel.action.retryReview", this.getLocale());
+            retry.addEventListener("click", (event) => {
+                event.stopPropagation();
+                if (!this.saveBtnEl) return;
+                void this.handlePrimaryButtonClick(this.saveBtnEl).catch((retryError) => {
+                    console.error("Pagelet panel retry failed", retryError);
+                });
+            });
+            card.appendChild(retry);
+        }
+
+        container.appendChild(card);
     }
 
     // -----------------------------------------------------------------------

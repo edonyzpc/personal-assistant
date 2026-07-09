@@ -93,8 +93,20 @@ class FakeElement {
         return 0;
     }
 
-    get classList(): { contains: (name: string) => boolean } {
+    get classList(): { add: (...names: string[]) => void; remove: (...names: string[]) => void; contains: (name: string) => boolean } {
         return {
+            add: (...names: string[]): void => {
+                const classes = new Set(this.className.split(/\s+/).filter(Boolean));
+                for (const name of names) classes.add(name);
+                this.className = Array.from(classes).join(" ");
+            },
+            remove: (...names: string[]): void => {
+                const remove = new Set(names);
+                this.className = this.className
+                    .split(/\s+/)
+                    .filter((name) => name.length > 0 && !remove.has(name))
+                    .join(" ");
+            },
             contains: (name: string): boolean => this.className.split(/\s+/).includes(name),
         };
     }
@@ -114,6 +126,16 @@ class FakeElement {
         child.parent = this;
         child.setConnected(this.isConnected);
         this.children.push(child);
+        return child;
+    }
+
+    prepend<T extends FakeElement>(child: T): T {
+        if (child.parent) {
+            child.parent.children = child.parent.children.filter((candidate) => candidate !== child);
+        }
+        child.parent = this;
+        child.setConnected(this.isConnected);
+        this.children.unshift(child);
         return child;
     }
 
@@ -741,6 +763,188 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(confirmCandidate).toHaveBeenNthCalledWith(2, secondCandidate);
     });
 
+    it("suppresses the Level 1 Memory digest for the current tab session when Later is clicked", async () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const candidates = [1, 2, 3].map((index) => makeReviewQueueItem({
+            id: `rq-memory-${index}`,
+            type: "memory_candidate",
+            title: `Remember preference ${index}`,
+            claim: `Preference ${index}.`,
+            admissionReason: "memory_confirmation_required",
+            metadata: { memoryType: "preference", sensitivity: "low" },
+        }));
+        const tab = new TabView("en");
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                memoryGovernance: {
+                    records: [],
+                    candidates,
+                    totalCount: candidates.length,
+                    confirmedMemoryCount: 10,
+                },
+            },
+        });
+
+        expect(container.textContent).toContain("PA learned 3 things from your recent notes.");
+
+        await container.querySelector(".pa-pagelet-tab-memory-dismiss")?.click();
+
+        expect(container.textContent).not.toContain("PA learned 3 things from your recent notes.");
+        expect(container.textContent).toContain("Memory candidates");
+        expect(container.textContent).toContain("Preference 1.");
+    });
+
+    it("keeps Level 2 task-constraint Memory candidates manual in the UI", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const candidate = makeReviewQueueItem({
+            id: "rq-task-constraint",
+            type: "memory_candidate",
+            title: "Remember task constraint",
+            claim: "Prefer source-backed answers.",
+            admissionReason: "memory_confirmation_required",
+            metadata: { memoryType: "task_constraint", sensitivity: "low" },
+        });
+        const confirmCandidate = jest.fn(async (_item: ReviewQueueItem) => ({
+            ok: true,
+            message: "Confirmed",
+        }));
+        const tab = new TabView("en", {
+            onConfirmMemoryCandidate: confirmCandidate,
+        });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                memoryGovernance: {
+                    records: [],
+                    candidates: [candidate],
+                    totalCount: 1,
+                    confirmedMemoryCount: 30,
+                },
+            },
+        });
+
+        expect(container.textContent).not.toContain("Auto-accepted");
+        expect(container.querySelector(".pa-pagelet-tab-memory-confirm")?.textContent).toBe("Confirm");
+    });
+
+    it("keeps Level 2 auto-confirm failures manual while they remain suggested", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const candidate = makeReviewQueueItem({
+            id: "rq-auto-failed",
+            type: "memory_candidate",
+            title: "Remember preference",
+            claim: "Prefers concise planning notes.",
+            status: "suggested",
+            admissionReason: "memory_confirmation_required",
+            metadata: { memoryType: "preference", sensitivity: "low" },
+        });
+        const confirmCandidate = jest.fn(async (_item: ReviewQueueItem) => ({
+            ok: true,
+            message: "Confirmed",
+        }));
+        const tab = new TabView("en", {
+            onConfirmMemoryCandidate: confirmCandidate,
+        });
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                memoryGovernance: {
+                    records: [],
+                    candidates: [candidate],
+                    totalCount: 1,
+                    confirmedMemoryCount: 30,
+                },
+            },
+        });
+
+        expect(container.textContent).toContain("Memory candidates");
+        expect(container.textContent).toContain("Suggested");
+        expect(container.textContent).not.toContain("Auto-accepted");
+        expect(container.textContent).not.toContain("1 eligible Memory suggestion was accepted automatically");
+        expect(container.querySelector(".pa-pagelet-tab-memory-confirm")?.textContent).toBe("Confirm");
+    });
+
+    it("points Show more aria-controls at the hidden section ids", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+        const recallCandidate: QuietRecallCandidate = {
+            id: "recall-alpha",
+            title: "Recall: Alpha",
+            summary: "Alpha may matter again.",
+            sourceRefs: [{ path: "notes/alpha.md", evidenceStrength: "medium" }],
+            whyNow: ["Source matches the note you are looking at."],
+            nextAction: "Compare it.",
+            relation: "related",
+            score: 80,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Pagelet — Detail View", [], {
+            layoutType: "review",
+            extra: {
+                memoryGovernance: {
+                    records: [makeMemoryRecord()],
+                    totalCount: 1,
+                },
+                maintenanceReview: {
+                    generatedAt: "2026-06-28T12:00:00.000Z",
+                    previewOnly: true,
+                    weeklyScanEnabled: false,
+                    totalCount: 1,
+                    categories: [{ category: "inbox_cleanup", label: "inbox_cleanup", count: 1 }],
+                    proposals: [makeMaintenanceProposal()],
+                },
+                quietRecall: {
+                    generatedAt: "2026-06-29T12:00:00.000Z",
+                    currentPath: "notes/current.md",
+                    totalCount: 1,
+                    candidates: [recallCandidate],
+                },
+                graphDiscovery: {
+                    generatedAt: "2026-06-29T12:00:00.000Z",
+                    totalCount: 1,
+                    skippedSourceCount: 0,
+                    items: [{
+                        id: "graph-1",
+                        type: "related_note",
+                        title: "Related note",
+                        claim: "Related note may connect.",
+                        scope: { kind: "current_note", paths: ["notes/current.md"] },
+                        sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+                        whyShown: ["Shares links"],
+                        edgeState: "suggested",
+                        outcomeStatus: "reviewable",
+                        metadata: {},
+                        generatedAt: "2026-06-29T12:00:00.000Z",
+                    }],
+                },
+            },
+        });
+
+        const showMoreButton = container.querySelector(".pa-pagelet-tab-show-more");
+        const hiddenSections = container.querySelectorAll(".pa-pagelet-tab-section--hidden");
+        const controlledIds = showMoreButton?.getAttribute("aria-controls")?.split(" ") ?? [];
+
+        expect(showMoreButton).not.toBeNull();
+        expect(hiddenSections.length).toBeGreaterThan(0);
+        expect(controlledIds).toEqual(hiddenSections.map((section) => (
+            (section as unknown as { id?: string }).id
+        )));
+        expect(controlledIds.every((id) => Boolean(id))).toBe(true);
+    });
+
     it("renders preview-only Maintenance Review results in the native detail tab", () => {
         const container = new FakeElement("div");
         container.isConnected = true;
@@ -1205,7 +1409,30 @@ describe("Pagelet panel and tab view regressions", () => {
                             sensitivity: "low",
                         },
                     })],
-                    totalCount: 2,
+                    routedItems: [makeReviewQueueItem({
+                        id: "rq-routed-memory",
+                        type: "capture_enrichment",
+                        status: "suggested",
+                        title: "Routed memory action",
+                        claim: "A routed memory-domain action should remain visible.",
+                    })],
+                    totalCount: 3,
+                    confirmedMemoryCount: 30,
+                },
+                maintenanceReview: {
+                    generatedAt: "2026-06-28T12:00:00.000Z",
+                    previewOnly: true,
+                    weeklyScanEnabled: false,
+                    totalCount: 1,
+                    categories: [],
+                    proposals: [],
+                    routedItems: [makeReviewQueueItem({
+                        id: "rq-routed-maintenance",
+                        type: "maintenance_proposal",
+                        status: "suggested",
+                        title: "Routed maintenance action",
+                        claim: "A routed maintenance action should remain visible.",
+                    })],
                 },
             },
         });
@@ -1221,7 +1448,11 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(contentEl.textContent).toContain("Saved Insights");
         expect(contentEl.textContent).toContain("Pricing notes keep coming back.");
         expect(contentEl.textContent).toContain("Memory candidates");
+        expect(contentEl.textContent).toContain("Suggested");
+        expect(contentEl.textContent).not.toContain("Auto-accepted");
         expect(contentEl.textContent).toContain("Prefers concise planning notes.");
+        expect(contentEl.textContent).toContain("A routed memory-domain action should remain visible.");
+        expect(contentEl.textContent).toContain("A routed maintenance action should remain visible.");
         expect(contentEl.textContent).toContain("Prefers concise weekly planning.");
         expect(contentEl.textContent).not.toContain("Result no longer available");
     });
@@ -1532,6 +1763,104 @@ describe("Pagelet panel and tab view regressions", () => {
 
         await container.querySelector(".pa-pagelet-panel-scope-checkbox")?.click();
         expect(toggleCandidate).toHaveBeenCalledWith("active.md", false);
+    });
+
+    it("keeps a failed selected review visible and retryable in the panel", async () => {
+        let panel: PanelView;
+        const runSelected = jest.fn(async () => {
+            panel.showReviewError("Pagelet review timed out. Try again, or shorten the note before retrying.");
+        });
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        panel = new PanelView({
+            app: {} as never,
+            callbacks: {
+                onClose: () => undefined,
+                onExpandToTab: () => undefined,
+                onSaveAsReviewNote: async () => undefined,
+                onSourceClick: () => undefined,
+                onRunSelectedReview: runSelected,
+            },
+            getLocale: () => "en",
+        });
+
+        panel.mount(container as unknown as HTMLElement);
+        panel.open("review", [], {
+            scope: {
+                range: "current",
+                candidates: [{
+                    path: "active.md",
+                    title: "active",
+                    reason: "active",
+                    included: true,
+                }],
+                includedCount: 1,
+                skippedCount: 0,
+                estimatedInputTokens: 80,
+            },
+        });
+
+        await container.querySelector(".pa-pagelet-panel-save-btn")?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(runSelected).toHaveBeenCalledTimes(1);
+        expect(container.textContent).toContain("Review did not finish");
+        expect(container.textContent).toContain("Pagelet review timed out");
+        expect(container.textContent).toContain("Retry");
+
+        await container.querySelector(".pa-pagelet-panel-error-retry")?.click();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(runSelected).toHaveBeenCalledTimes(2);
+    });
+
+    it("updates selected review progress copy after a long provider wait", async () => {
+        jest.useFakeTimers();
+        try {
+            const runSelected = jest.fn(async () => new Promise<void>(() => undefined));
+            const container = new FakeElement("div");
+            container.isConnected = true;
+            const panel = new PanelView({
+                app: {} as never,
+                callbacks: {
+                    onClose: () => undefined,
+                    onExpandToTab: () => undefined,
+                    onSaveAsReviewNote: async () => undefined,
+                    onSourceClick: () => undefined,
+                    onRunSelectedReview: runSelected,
+                },
+                getLocale: () => "en",
+            });
+
+            panel.mount(container as unknown as HTMLElement);
+            panel.open("review", [], {
+                scope: {
+                    range: "current",
+                    candidates: [{
+                        path: "active.md",
+                        title: "active",
+                        reason: "active",
+                        included: true,
+                    }],
+                    includedCount: 1,
+                    skippedCount: 0,
+                    estimatedInputTokens: 80,
+                },
+            });
+
+            await container.querySelector(".pa-pagelet-panel-save-btn")?.click();
+            expect(container.textContent).toContain("Reviewing selected notes");
+
+            jest.advanceTimersByTime(30_000);
+            await Promise.resolve();
+
+            expect(container.textContent).toContain("Still reviewing");
+            expect(container.textContent).toContain("Detailed models can take longer");
+        } finally {
+            jest.useRealTimers();
+        }
     });
 
     it("renders current-scope Review Queue cards in the panel without storing full source text", async () => {
