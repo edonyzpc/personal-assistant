@@ -54,6 +54,16 @@ describe("buildFtsQuery (Intl.Segmenter path)", () => {
         expect(result).toContain('"key:value"');
     });
 
+    it("quotes version and date tokens that are unsafe FTS5 barewords", () => {
+        expect(buildFtsQuery("iOS 2.8.4")).toBe('iOS "2.8.4"');
+        expect(buildFtsQuery("2026.07.09")).toBe('"2026.07.09"');
+    });
+
+    it("quotes dotted domain and file-name tokens", () => {
+        expect(buildFtsQuery("example.com")).toBe('"example.com"');
+        expect(buildFtsQuery("docs guide.md")).toBe('docs "guide.md"');
+    });
+
     it("strips punctuation delimiters between tokens", () => {
         expect(buildFtsQuery("hello, world! yes")).toBe("hello world yes");
     });
