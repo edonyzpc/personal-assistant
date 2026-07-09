@@ -257,7 +257,7 @@ export class BubbleView {
     }
 
     /** Show the bubble with content, positioned relative to the given element. */
-    show(content: BubbleContent, anchorEl: HTMLElement): void {
+    show(content: BubbleContent, anchorEl: HTMLElement, options: { preserveFocus?: boolean } = {}): void {
         this.ensureMounted();
         if (!this.rootEl) return;
 
@@ -279,7 +279,7 @@ export class BubbleView {
         }
 
         this.setState("visible");
-        this.focusInitialControl();
+        if (!options.preserveFocus) this.focusInitialControl();
         this.attachGlobalListeners();
     }
 

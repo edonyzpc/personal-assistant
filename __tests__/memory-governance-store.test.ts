@@ -120,10 +120,31 @@ describe("Memory governance", () => {
                 id: "mem-1",
                 lifecycle: "active",
                 summary: "Prefers concise weekly planning.",
-                confirmationStrength: "light",
+                confirmationStrength: "explicit",
             },
         });
         expect(store.list()).toHaveLength(1);
+    });
+
+    it("can mark Level 2 auto-confirmed Memory separately from explicit confirmations", async () => {
+        const store = new MemoryGovernanceStore({
+            now: () => new Date("2026-06-28T12:00:00.000Z"),
+            idFactory: () => "mem-auto",
+        });
+
+        const result = await store.confirmCandidate(makeCandidate(), {
+            scope: { kind: "current_note", paths: ["notes/current.md"], label: "Current note" },
+            confirmationSource: "pagelet",
+            confirmationStrength: "auto",
+        });
+
+        expect(result).toMatchObject({
+            ok: true,
+            value: {
+                id: "mem-auto",
+                confirmationStrength: "auto",
+            },
+        });
     });
 
     it("archives Memory without deleting its evidence and Context Firewall drops archived records", async () => {

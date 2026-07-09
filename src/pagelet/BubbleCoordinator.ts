@@ -165,6 +165,7 @@ export class BubbleCoordinator {
     showBubble(
         bubbleView: BubbleView | null,
         petView: PetView | null,
+        options: { preserveFocus?: boolean } = {},
     ): void {
         const anchorEl = petView?.rootEl;
         if (!bubbleView || !anchorEl) return;
@@ -193,7 +194,7 @@ export class BubbleCoordinator {
         }
         this.applyInlineHint(content, locale);
 
-        bubbleView.show(content, anchorEl);
+        bubbleView.show(content, anchorEl, options);
         this.acknowledgeIntentionallyQuietIfNeeded(content);
     }
 
@@ -397,7 +398,7 @@ export class BubbleCoordinator {
                 const changed = this.memoryReadySnapshot !== ready;
                 this.memoryReadySnapshot = ready;
                 if (changed && bubbleView.bubbleState === "visible") {
-                    this.showBubble(bubbleView, petView);
+                    this.showBubble(bubbleView, petView, { preserveFocus: true });
                 }
             })
             .catch((error) => {

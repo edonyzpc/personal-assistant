@@ -97,10 +97,7 @@ export function validateMemoryLifecycleRecord(record: MemoryLifecycleRecord): Me
     return { ok: true };
 }
 
-// Intentionally returns false for all types: auto-confirmation is disabled until
-// trust-layer graduation criteria are defined. The type guard is kept so the
-// activation path only needs a single change here.
 export function canAutoConfirmMemoryCandidate(candidate: Pick<MemoryCandidateContract, "type">): boolean {
     if (candidate.type === "task_constraint") return false;
-    return false;
+    return true;
 }
