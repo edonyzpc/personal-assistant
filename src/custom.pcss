@@ -4338,6 +4338,23 @@ body > .tooltip {
 	font-size: 13px;
 }
 
+.pa-pagelet-panel-progress-copy {
+	display: flex;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+.pa-pagelet-panel-progress-title {
+	color: var(--text-normal,#dcddde);
+	font-weight: 600;
+}
+
+.pa-pagelet-panel-progress-detail {
+	color: var(--text-muted,#999);
+	line-height: 1.45;
+}
+
 .pa-pagelet-panel-progress-dot {
 	width: 8px;
 	height: 8px;
@@ -4358,6 +4375,53 @@ body > .tooltip {
 		transform: scale(1.15);
 	}
 
+}
+
+.pa-pagelet-panel-error-card {
+	background: var(--background-secondary,#252525);
+	border: 1px solid var(--background-modifier-border,#3a3a3a);
+	border-left: 3px solid var(--text-error,#ff5c5c);
+	border-radius: 8px;
+	margin: 20px;
+	padding: 14px 16px;
+	display: flex;
+	flex-direction: column;
+	gap: 8px;
+}
+
+.pa-pagelet-panel-error-title {
+	color: var(--text-normal,#dcddde);
+	font-size: 13px;
+	font-weight: 700;
+}
+
+.pa-pagelet-panel-error-message {
+	color: var(--text-normal,#dcddde);
+	font-size: 13px;
+	line-height: 1.45;
+}
+
+.pa-pagelet-panel-error-detail {
+	color: var(--text-muted,#999);
+	font-size: 12px;
+	line-height: 1.45;
+}
+
+.pa-pagelet-panel-error-retry {
+	align-self: flex-start;
+	min-height: 30px;
+	padding: 5px 10px;
+	border-radius: 6px;
+	border: 1px solid var(--interactive-accent,#7c9eff);
+	background: var(--interactive-accent,#7c9eff);
+	color: var(--text-on-accent,#fff);
+	font-size: 12px;
+	font-family: inherit;
+	cursor: pointer;
+}
+
+.pa-pagelet-panel-error-retry:hover {
+	filter: brightness(1.05);
 }
 
 .pa-pagelet-panel-card-wrap {

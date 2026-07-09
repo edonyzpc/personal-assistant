@@ -107,6 +107,7 @@ export class TabView {
     private readonly maintenanceActionState = new Map<string, MaintenanceActionUiState>();
     private readonly quietRecallSaveState = new Map<string, QuietRecallSaveState>();
     private readonly quietRecallLinkState = new Map<string, QuietRecallLinkState>();
+    private memoryDigestDeferred = false;
     private actionStateGeneration = 0;
     private disposed = false;
 
@@ -337,6 +338,8 @@ export class TabView {
                     new MemoryGovernanceSection(this.locale, data, {
                         onConfirm: this.options.onConfirmMemoryCandidate,
                         onDismiss: this.options.onDismissMemoryCandidate,
+                        isDigestDeferred: () => this.memoryDigestDeferred,
+                        onDeferDigest: () => { this.memoryDigestDeferred = true; },
                     }, sectionCallbacks, this.memoryCandidateActionState),
                 );
             } else {
@@ -346,6 +349,8 @@ export class TabView {
                     new MemoryGovernanceSection(this.locale, data, {
                         onConfirm: this.options.onConfirmMemoryCandidate,
                         onDismiss: this.options.onDismissMemoryCandidate,
+                        isDigestDeferred: () => this.memoryDigestDeferred,
+                        onDeferDigest: () => { this.memoryDigestDeferred = true; },
                     }, sectionCallbacks, this.memoryCandidateActionState),
                 );
                 if (!renderedSavedInsights && !renderedMemoryGovernance) this.renderEmptyState();
@@ -375,6 +380,8 @@ export class TabView {
                 new MemoryGovernanceSection(this.locale, data, {
                     onConfirm: this.options.onConfirmMemoryCandidate,
                     onDismiss: this.options.onDismissMemoryCandidate,
+                    isDigestDeferred: () => this.memoryDigestDeferred,
+                    onDeferDigest: () => { this.memoryDigestDeferred = true; },
                 }, sectionCallbacks, this.memoryCandidateActionState)) },
             { id: "maintenance", labelKey: "pagelet.tab.maintenance.title", render: () => this.renderExtractedSection(options.extra?.maintenanceReview, (data) =>
                 new MaintenanceReviewSection(this.locale, data, {
@@ -436,14 +443,18 @@ export class TabView {
                 visibleCount++;
             }
             const overflowId = `pa-tab-overflow-${++tabLabelSequence}`;
-            for (const sectionEl of allSections.slice(3)) {
+            const controlledIds: string[] = [];
+            for (const [index, sectionEl] of allSections.slice(3).entries()) {
+                const sectionId = sectionEl.id || `${overflowId}-${index + 1}`;
+                sectionEl.id = sectionId;
                 sectionEl.setAttribute("data-overflow-group", overflowId);
+                controlledIds.push(sectionId);
             }
             const showMoreBtn = el("button", "pa-pagelet-tab-show-more",
                 pageletT("pagelet.tab.showMore", this.locale, { count: renderedSlots.length - 3 }));
             showMoreBtn.setAttribute("type", "button");
             showMoreBtn.setAttribute("aria-expanded", "false");
-            showMoreBtn.setAttribute("aria-controls", overflowId);
+            showMoreBtn.setAttribute("aria-controls", controlledIds.join(" "));
             showMoreBtn.addEventListener("click", () => {
                 this.sectionsExpanded = true;
                 showMoreBtn.setAttribute("aria-expanded", "true");

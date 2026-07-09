@@ -50,6 +50,23 @@ function createPageletDetailSessionId(): string {
     return `pagelet-detail-${Date.now().toString(36)}-${pageletDetailSessionCounter.toString(36)}`;
 }
 
+function cloneReviewQueueItem(item: ReviewQueueItem): ReviewQueueItem {
+    return {
+        ...item,
+        scope: {
+            ...item.scope,
+            paths: item.scope.paths ? [...item.scope.paths] : undefined,
+            tags: item.scope.tags ? [...item.scope.tags] : undefined,
+        },
+        sourceRefs: item.sourceRefs.map((ref) => ({
+            ...ref,
+            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+        })),
+        whyShown: [...(item.whyShown ?? [])],
+        metadata: item.metadata ? { ...item.metadata } : undefined,
+    };
+}
+
 function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetailPayload {
     const copy: PageletDetailPayload = {
         title: payload.title,
@@ -125,6 +142,7 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
         if (payload.extra.memoryGovernance) {
             copy.extra.memoryGovernance = {
                 totalCount: payload.extra.memoryGovernance.totalCount,
+                confirmedMemoryCount: payload.extra.memoryGovernance.confirmedMemoryCount,
                 records: payload.extra.memoryGovernance.records.map((record) => ({
                     ...record,
                     scope: {
@@ -137,20 +155,8 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                         whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
                     })),
                 })),
-                candidates: payload.extra.memoryGovernance.candidates?.map((item) => ({
-                    ...item,
-                    scope: {
-                        ...item.scope,
-                        paths: item.scope.paths ? [...item.scope.paths] : undefined,
-                        tags: item.scope.tags ? [...item.scope.tags] : undefined,
-                    },
-                    sourceRefs: item.sourceRefs.map((ref) => ({
-                        ...ref,
-                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-                    })),
-                    whyShown: [...(item.whyShown ?? [])],
-                    metadata: item.metadata ? { ...item.metadata } : undefined,
-                })),
+                candidates: payload.extra.memoryGovernance.candidates?.map(cloneReviewQueueItem),
+                routedItems: payload.extra.memoryGovernance.routedItems?.map(cloneReviewQueueItem),
             };
         }
         if (payload.extra.maintenanceReview) {
@@ -182,6 +188,7 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                     actionPlan: { ...proposal.actionPlan },
                     whyShown: [...proposal.whyShown],
                 })),
+                routedItems: payload.extra.maintenanceReview.routedItems?.map(cloneReviewQueueItem),
             };
         }
         if (payload.extra.graphDiscovery) {

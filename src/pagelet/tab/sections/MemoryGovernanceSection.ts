@@ -1,6 +1,6 @@
 /* Copyright 2023 edonyzpc */
 
-import type { ReviewQueueItem } from "../../../pa";
+import { canAutoConfirmMemoryCandidate, memoryCandidateFromQueueItem, type ReviewQueueItem } from "../../../pa";
 import type { PanelMemoryGovernanceState } from "../../panel/types";
 import type { PageletLocale } from "../../../locales/pagelet";
 import { pageletT } from "../../../locales/pagelet";
@@ -11,6 +11,8 @@ import { getMemoryTrustLevel } from "../../../pa/memory-trust-level";
 export interface MemoryGovernanceCallbacks {
     onConfirm?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
     onDismiss?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
+    isDigestDeferred?: () => boolean;
+    onDeferDigest?: () => void;
 }
 
 export class MemoryGovernanceSection implements TabSectionRenderer {
@@ -71,9 +73,10 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
             })));
 
         const pendingCandidates = candidates.filter((item) => item.type === "memory_candidate");
+        const autoAcceptedCandidates = pendingCandidates.filter((item) => this.isAutoAcceptedCandidate(item, trustLevel));
 
         // Level 1 batch digest card: show when trust level = 1 and 3+ pending candidates
-        if (trustLevel === 1 && pendingCandidates.length >= 3) {
+        if (trustLevel === 1 && pendingCandidates.length >= 3 && this.callbacks.isDigestDeferred?.() !== true) {
             const digestCard = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-digest");
             digestCard.appendChild(el("p", undefined,
                 pageletT("pagelet.tab.memory.trustDigest", this.locale, { count: pendingCandidates.length })));
@@ -88,7 +91,10 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
             const laterBtn = el("button", "pa-pagelet-tab-memory-dismiss",
                 pageletT("pagelet.tab.memory.trustDigestLater", this.locale));
             laterBtn.setAttribute("type", "button");
-            laterBtn.addEventListener("click", () => { this.section.requestRerender(); });
+            laterBtn.addEventListener("click", () => {
+                this.callbacks.onDeferDigest?.();
+                this.section.requestRerender();
+            });
             digestActions.appendChild(laterBtn);
 
             digestCard.appendChild(digestActions);
@@ -99,7 +105,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
             const candidateGroup = el("div", "pa-pagelet-tab-review-queue-group pa-pagelet-tab-memory-candidates");
             const headerRow = el("div", "pa-pagelet-tab-memory-candidates-header");
             headerRow.appendChild(el("h3", undefined, pageletT("pagelet.tab.memory.candidatesTitle", this.locale)));
-            // At Level 2, hide "Confirm All" — candidates are auto-accepted
+            // Level 2 hides batch confirm; candidates that still need action keep per-item controls.
             if (trustLevel < 2 && pendingCandidates.length > 1 && this.callbacks.onConfirm) {
                 const confirmAllButton = el("button", "pa-pagelet-tab-memory-confirm-all",
                     pageletT("pagelet.tab.memory.confirmAll", this.locale, { count: pendingCandidates.length }));
@@ -112,8 +118,8 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
             }
             candidateGroup.appendChild(headerRow);
             candidateGroup.appendChild(el("p", "pa-pagelet-tab-review-queue-summary",
-                trustLevel === 2
-                    ? pageletT("pagelet.tab.memory.level2Summary", this.locale, { count: pendingCandidates.length })
+                trustLevel === 2 && autoAcceptedCandidates.length > 0
+                    ? pageletT("pagelet.tab.memory.level2Summary", this.locale, { count: autoAcceptedCandidates.length })
                     : pageletT("pagelet.tab.memory.candidatesSummary", this.locale, { count: candidates.length })));
             for (const item of candidates) {
                 candidateGroup.appendChild(this.renderCandidateItem(item, trustLevel));
@@ -174,8 +180,8 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
     private renderCandidateItem(item: ReviewQueueItem, trustLevel: 0 | 1 | 2 = 0): HTMLElement {
         const state = this.actionState.get(item.id);
         const isMemoryCandidate = item.type === "memory_candidate";
-        // Level 2 auto-accept applies only to memory_candidate; memory_conflict always manual
-        const isAutoAccepted = trustLevel === 2 && isMemoryCandidate;
+        // Level 2 auto-accept applies only to eligible memory_candidate; memory_conflict and task constraints stay manual
+        const isAutoAccepted = this.isAutoAcceptedCandidate(item, trustLevel);
         const cardEl = el("div", "pa-pagelet-tab-insight-card pa-pagelet-tab-memory-candidate-card");
         cardEl.appendChild(el("h4", undefined, item.title));
         cardEl.appendChild(el("p", undefined, item.claim));
@@ -185,7 +191,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
             pageletT(`pagelet.tab.memory.candidateType.${item.type}`, this.locale)));
         tagRow.appendChild(el("span", "pa-pagelet-tab-tag-chip",
             pageletT(`pagelet.tab.reviewQueue.status.${item.status}`, this.locale)));
-        // Level 2: show "Auto-accepted" badge on memory_candidate items
+        // Level 2: show "Auto-accepted" only after the candidate was actually applied.
         if (isAutoAccepted) {
             const badge = el("span", "pa-pagelet-tab-tag-chip",
                 pageletT("pagelet.tab.memory.autoAccepted", this.locale));
@@ -203,7 +209,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
 
         const actionRow = el("div", "pa-pagelet-tab-memory-candidate-actions");
         if (isAutoAccepted) {
-            // Level 2: no Confirm button for memory_candidate — only Remove (calls onDismiss)
+                // Already-applied candidates can only be removed.
             if (this.callbacks.onDismiss) {
                 const removeButton = el("button", "pa-pagelet-tab-memory-dismiss",
                     state?.status === "dismissing"
@@ -223,7 +229,7 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
                 actionRow.appendChild(removeButton);
             }
         } else {
-            // Level 0/1: render Confirm + Dismiss as before
+            // Manual candidates render Confirm + Dismiss.
             if (this.callbacks.onConfirm && isMemoryCandidate) {
                 const confirmButton = el("button", "pa-pagelet-tab-memory-confirm",
                     state?.status === "confirming"
@@ -269,6 +275,12 @@ export class MemoryGovernanceSection implements TabSectionRenderer {
         }
         cardEl.appendChild(actionRow);
         return cardEl;
+    }
+
+    private isAutoAcceptedCandidate(item: ReviewQueueItem, trustLevel: 0 | 1 | 2): boolean {
+        if (trustLevel !== 2 || item.type !== "memory_candidate" || item.status !== "applied") return false;
+        const memoryCandidate = memoryCandidateFromQueueItem(item);
+        return memoryCandidate.ok && canAutoConfirmMemoryCandidate(memoryCandidate.value);
     }
 
     private renderRoutedItem(item: ReviewQueueItem): HTMLElement {
