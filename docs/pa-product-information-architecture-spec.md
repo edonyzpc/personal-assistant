@@ -36,6 +36,14 @@ PA needs several surfaces with clear roles:
 This document records the one-question-at-a-time product decisions confirmed on
 2026-06-28. It should guide future SDD work before runtime implementation.
 
+Memory-specific supersession: the active
+[Memory Control Center spec](./pa-memory-control-center-product-spec.md)
+supersedes IA-D1 and later standalone Memory-panel assumptions. Settings ->
+Memory and personalization is the canonical complete governance destination;
+Pagelet retains Memory Candidate review, while Chat/Recall/AI Insights keep
+contextual explanation and exact deep links. All non-Memory surface decisions
+in this document remain active.
+
 ## Confirmed Decisions
 
 | ID | Decision | Product consequence |

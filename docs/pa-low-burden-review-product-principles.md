@@ -10,7 +10,7 @@ Updated: 2026-06-29
 | Scope | Pagelet, AI Insight, Quiet Recall, Saved Insight, Weekly Review, Maintenance Review, Memory Candidate |
 | Role | Defines how PA creates review value without turning review into user workload |
 | Related north star | [PA Product North Star](./pa-product-north-star.md) |
-| Related specs | [Pagelet product design](./pagelet-product-design.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md) |
+| Related specs | [Memory Control Center spec](./pa-memory-control-center-product-spec.md), [Pagelet product design](./pagelet-product-design.md), [Quiet Recall and Insight Timing spec](./pa-quiet-recall-insight-timing-product-spec.md), [Saved Insight and Insight Ledger spec](./pa-saved-insight-ledger-product-spec.md), [Weekly Review spec](./pa-weekly-review-product-spec.md), [Pagelet Maintenance Review spec](./pagelet-maintenance-review-product-spec.md) |
 
 This document records a product constraint that cuts across Pagelet and AI
 Insight:
@@ -44,8 +44,8 @@ material for the user to manage.
 
 ## 2. Core Rule
 
-> All AI artifacts are ignorable by default. Only durable change requires
-> confirmation.
+> All AI artifacts are ignorable by default. Durable consequence receives
+> proportionate disclosure, control, and recovery.
 
 This replaces a weaker rule, "all AI artifacts are reviewable." Reviewability
 is necessary, but it is not enough. If every artifact becomes something the user
@@ -66,21 +66,24 @@ Valid outcomes:
 
 These outcomes are not failures. They are part of a quiet product.
 
-### 2.2 Confirmation Boundary
+### 2.2 Consequence Boundary
 
-Require confirmation when PA will create durable user-visible state, change
-future PA behavior, or mutate the vault.
+Use effect, sensitivity, scope, provenance, reversibility, and authority to
+decide whether a durable change may occur quietly, needs prior review, or needs
+explicit authorization. Vault mutation and external action retain their
+separate confirmation/authorization boundaries.
 
 | Type | Examples | Confirmation |
 | --- | --- | --- |
 | Recall | old note cue, related thought, source-backed hint | no confirmation |
 | Digest | weekly summary preview, theme recap, source-backed overview | no confirmation until saved |
 | Save | Saved Insight, review note, Weekly Review note | light confirmation |
-| Memory | Memory Candidate becoming Confirmed Memory | explicit confirmation |
+| Memory | Source-backed understanding affecting future answers | quiet only when low-risk, current-vault, reversible, visible in Recent changes, and correctable/undoable; otherwise prior review |
 | Maintenance | rename, move, archive, link, frontmatter, content patch | preview/diff + confirmation |
 | External action | send, publish, pay, API write | explicit authorization |
 
-User confirmation is for durable consequence, not for every AI sentence.
+User friction is for consequential risk, not for every AI sentence or every
+durable byte.
 
 ## 3. Review Types
 
@@ -233,9 +236,27 @@ Memory affects future PA behavior, so it remains stricter than Saved Insight.
 Rules:
 
 - PA may suggest Memory Candidates in intentional review moments.
-- Confirmed Memory requires explicit user confirmation.
+- Source-backed, low-sensitivity, current-vault, reversible understanding may
+  update quietly only after change-event and recovery support exists.
+- Conflicts, sensitive inference, durable task constraints, missing provenance,
+  and same-device/cross-vault scope widening require prior review or rejection.
+- `ConfirmedMemoryRecord` is the canonical user-facing Memory state. Review
+  Queue state is workflow and audit history, not the source of truth for
+  whether a Memory currently exists.
+- Every governed Memory remains inspectable and supports the lifecycle action
+  whose effect is actually implemented: Correct, Undo recent change, Pause use,
+  or permanent Forget.
+- Recent changes is an on-demand audit/recovery log, not a replacement review
+  queue, unread count, or completion obligation.
+- Disabling the Memory master setting also disables automatic acceptance.
 - Memory Candidates should be grouped and sparse.
 - Low-value candidates should be discarded before they reach the user.
+
+The current runtime's Level 0-2 and 30-confirmation behavior is retained only as
+a versioned legacy admission policy during migration. It must not be expanded,
+treated as the target product model, or used to infer per-record authority or
+same-device scope. The Memory Control Center spec supersedes it for future
+admission and lifecycle behavior.
 
 ## 5. Review Queue Policy
 

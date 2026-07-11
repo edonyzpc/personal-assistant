@@ -920,8 +920,13 @@ Store layer untouched. Full rollback in 1 commit.
 > confirmation") and the North Star ("Less full automation, more earned
 > trust"). The decision was revised to a graduated trust model that earns
 > auto-accept through demonstrated user engagement.
+>
+> **Approved amendment (2026-07-10):** The user approved silent Level 2
+> activation after 30 manual confirmations. `ConfirmedMemoryRecord` is the
+> canonical Memory state; Review Queue entries remain workflow/audit records.
+> Level 2 can be paused/resumed without decrementing the trust counter.
 
-#### Current Architecture (Opt-in, flat)
+#### Previous Architecture (Opt-in, flat)
 
 Memory candidates enter as `ReviewQueueItem` with type `memory_candidate`,
 status `suggested`. User must click **Confirm** to accept, **Dismiss** to
@@ -933,7 +938,7 @@ suggested -> (user confirms) -> accepted/applied -> ConfirmedMemoryRecord(active
 suggested -> (user dismisses) -> dismissed
 ```
 
-#### Target Architecture (Graduated Trust, 3 levels)
+#### Implemented Architecture (Graduated Trust, 3 levels)
 
 Trust is earned through cumulative manual confirmations. The user progresses
 through 3 levels:
@@ -948,7 +953,7 @@ Level 1 (10+ confirmed):
 
 Level 2 (30+ confirmed):
     Auto-accept with "Auto-accepted" badge
-    User can dismiss/remove anytime
+    User can remove any confirmed record and can pause/resume auto-accept
     memory_conflict items ALWAYS require manual review (never auto-accepted)
 ```
 
@@ -963,8 +968,21 @@ Level 2 (30+ confirmed):
 
 **Key constraints:**
 - `memory_conflict` items are NEVER auto-accepted at any level
-- `confirmationStrength: "auto"` must be added to the union type at
-  `src/pa/memory-governance-store.ts:31` (currently `"light"|"explicit"|"special"`)
+- task constraints are never auto-accepted
+- only `low`-sensitivity candidates are eligible; `medium` and `high` always
+  remain manual
+- only newly created eligible candidates are auto-confirmed; reaching Level 2
+  never sweeps historical `suggested` candidates
+- `ConfirmedMemoryRecord` is the canonical current state; an optional
+  `originReviewQueueItemId` links back to workflow/audit history
+- removing a record creates a content-free tombstone and best-effort changes a
+  linked `applied` queue item to `undone`; the tombstone is a durable retry
+  marker if that audit write fails, while legacy unlinked records remain safely
+  removable
+- `confirmationStrength: "auto"` distinguishes Level 2 records
+- `memoryAutoAcceptPaused` disables auto-confirm without changing the monotonic
+  `confirmedMemoryCount`
+- the Memory master setting disables both Memory use and automatic acceptance
 - Auto-confirmed records may be weighted lower in retrieval ranking
 - Trust level is determined by `confirmedMemoryCount` (persisted in settings)
 
@@ -997,10 +1015,13 @@ function getMemoryTrustLevel(confirmedCount: number): 0 | 1 | 2 {
 - Digest frequency: at most once per session, or weekly if items accumulate
 
 **Level 2 (auto-accept with removal):**
-- Remove Confirm button for `memory_candidate` items
-- Remove "Confirm visible" batch button
-- Add muted "Auto-accepted" badge on each card
-- Change "Dismiss" to "Remove" (calls `governance.forget()`)
+- Applied queue entries are not used as the user-facing Memory card.
+- Render the canonical `ConfirmedMemoryRecord` with a muted "Auto-accepted"
+  badge and a confirmed "Remove" action.
+- "Remove" calls `governance.forget()`, immediately renders the tombstone, and
+  reconciles linked queue audit state when available.
+- Settings shows a Level 2-only automatic acceptance toggle. Turning it off
+  pauses future automatic confirmation; turning it on resumes it.
 - Copy: "{count} memories PA learned recently. You can remove any that
   don't fit." / "{count} 条 PA 近期学到的记忆。不合适的可以随时移除。"
 - `memory_conflict` items retain manual Confirm/Dismiss at all levels
@@ -1029,23 +1050,25 @@ tracking. Each confirm increments `confirmedMemoryCount`.
    section header.
 3. Wire "Accept all" to batch confirm with `confirmationStrength: "explicit"`.
 
-**Phase 4 (medium risk):** Level 2 — auto-accept pipeline.
-1. Create `src/pa/memory-auto-confirm.ts`:
-   ```ts
-   function autoConfirmMemoryCandidate(
-       item: ReviewQueueItem,
-       options: { queue: ReviewQueueStore; governance: MemoryGovernanceStore },
-   ): Promise<MemoryGovernanceResult<ConfirmedMemoryRecord>>;
-   ```
-2. Wire into candidate creation pipeline. Guard: skip `memory_conflict`.
-3. Update `MemoryGovernanceSection` UI for Level 2 display.
+**Phase 4 (medium risk):** Level 2 — record-first auto-accept pipeline.
+1. Wire new-candidate auto-confirm into `PluginManager`; guard Level 2, pause
+   state, conflict/task-constraint types, and candidate eligibility.
+2. Persist `originReviewQueueItemId` on the resulting
+   `ConfirmedMemoryRecord` for exact audit reconciliation.
+3. Render canonical Memory records in `MemoryGovernanceSection`, including the
+   auto badge, confirmed removal, immediate tombstone state, and legacy
+   unlinked-record fallback.
+4. Add the Level 2 pause/resume setting.
 
 **Phase 5 (low risk):** Locale and copy updates.
 
-**No migration needed:** Unlike the original opt-out design, the graduated
-model does not auto-confirm existing `suggested` candidates. Users at Level 0
-continue with the current flow. Users who have already confirmed 30+ items
-will immediately reach Level 2 based on their existing `confirmedMemoryCount`.
+**No data migration needed:** Unlike the original opt-out design, the
+graduated model does not auto-confirm existing `suggested` candidates. Users
+at Level 0 continue with the current flow. Users who have already confirmed
+30+ items immediately reach Level 2 based on their existing
+`confirmedMemoryCount`, unless they pause automatic acceptance. Existing
+confirmed records without `originReviewQueueItemId` remain removable and do
+not attempt unsafe queue inference.
 
 #### New Locale Keys
 
@@ -1071,19 +1094,22 @@ will immediately reach Level 2 based on their existing `confirmedMemoryCount`.
 | User confused by changing UI behavior | Medium | Each level transition can show a one-time explanation nudge |
 | Conflict items auto-accepted | High | Explicit guard: `memory_conflict` excluded at all levels |
 | 3-level state machine complexity | Medium | Each level is a clean branch in MemoryGovernanceSection; no shared mutable state between levels |
-| Privacy concern at Level 2 | Low | User earned auto-accept through 30 manual confirmations; "Remove" is one tap; trust is reversible (see rollback) |
+| Privacy concern at Level 2 | Low | User earned auto-accept through 30 manual confirmations; records are visible/removable; automatic acceptance can be paused |
+| Memory and queue diverge during removal | Medium | Memory record is canonical; its text-free tombstone is a durable exact-link retry marker until queue audit reaches `undone` |
 
 **Rollback:** Each level is independently reversible:
-- Level 2 rollback: revert auto-confirm pipeline + UI. Query
-  `ConfirmedMemoryRecord` where `confirmationStrength === "auto"` and
-  revert to `suggested` ReviewQueue items (reverse migration function).
-  Store auto-confirmed record IDs during Phase 4 to enable this.
+- Operational Level 2 rollback: switch off automatic acceptance in Settings;
+  the trust counter and existing canonical records remain intact.
+- Code rollback: disable the new-candidate auto-confirm branch and pause UI.
+  Do not reconstruct queue candidates from Memory records; that would replace
+  canonical user state with inferred workflow state. Existing auto records stay
+  visible and individually removable.
 - Level 1 rollback: revert digest UI. No data changes.
 - Level 0: no rollback needed (current behavior).
 
-**Document update required:** If Level 2 ships, update Low-Burden Review
-Product Principles §4.7 to document that Memory confirmation is graduated:
-explicit at Level 0-1, auto at Level 2 after earned trust.
+**Document update completed (2026-07-10):** Low-Burden Review Product
+Principles §2.2 and §4.7 now document graduated, record-first, reversible
+Memory confirmation.
 
 ---
 
@@ -1263,8 +1289,11 @@ untouched/minimally extended, have clean rollback paths.
 
 **New files created:**
 - `src/pagelet/tab/review-queue-routing.ts` (D5)
-- `src/pa/memory-auto-confirm.ts` (D6)
 - `src/settings/settings-groups.ts` (D13)
+
+D6 was implemented through the existing `PluginManager`, Memory governance
+store, and Pagelet section boundaries; no parallel auto-confirm module was
+created.
 
 ---
 

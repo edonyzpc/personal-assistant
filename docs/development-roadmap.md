@@ -1,6 +1,6 @@
 # Development Roadmap
 
-> Last updated: 2026-06-29. The previous v2.7 release-prep roadmap is archived
+> Last updated: 2026-07-11. The previous v2.7 release-prep roadmap is archived
 > at [development-roadmap-v2.7.md](./archive/development-roadmap-v2.7.md).
 
 ## Current Baseline
@@ -9,7 +9,7 @@
 | --- | --- |
 | Current version in this worktree | `2.8.4` |
 | Release tag | `2.8.4` |
-| Current release theme | Post-2.8 license/compliance patch line plus active PA Agent/Pagelet product-spec implementation |
+| Current release theme | Post-2.8 patch line plus completed Memory Control Center validation and PA Agent/Pagelet release-readiness |
 | Runtime shape | PA Agent + Memory + Pagelet + Statistics + Obsidian read tools |
 | Hidden / disabled major runtime | Operations Agent append mode remains disabled by `OPERATIONS_AGENT_RUNTIME_ENABLED=false` |
 
@@ -26,6 +26,7 @@
 
 | Theme | Why it matters | Scope guard |
 | --- | --- | --- |
+| Memory Control Center and user-understanding governance | Canonical Settings, device-local governance, lifecycle, admission/use, migration/rollback, contextual routing, post-timeout confirmation, Device A/B compatibility, and iOS validation all pass. | Complete; next step is release-readiness or a separately approved future gate. No automatic cross-device sync or action authority. |
 | PA Agent product spec completion | Turns the SDD plan into shipped PA capture/review/memory/maintenance/recall layers with evidence and smoke gates. | Slices 0-G, A2, and M12 are complete; next step is release-readiness review or a new approval gate for future scope. |
 | Pagelet Delivery Preparation consolidation | Converges Bubble, Scope Recap, Preload, Recall, Pattern, and Review into one source-backed delivery model instead of separate AI feature buttons. | Implemented in Phase 6. Periodic Summary entrypoints are directly removed; prepared Recap uses a local derived cache. Next step is release-readiness review and dogfooding. |
 | Operations Agent productization | Turns the existing write-action infrastructure into a usable, confirmed note-editing mode. | Start with append-to-current-note only; do not add shell, arbitrary filesystem writes, plugin actions, or command execution without separate review. |
@@ -48,6 +49,7 @@
 
 - Current short-form status: [Project TODO](./todo.md)
 - PA Agent product spec tracker: [pa-agent-product-spec-development-tracker.md](./pa-agent-product-spec-development-tracker.md)
+- Memory Control Center tracker: [pa-memory-control-center-development-tracker.md](./pa-memory-control-center-development-tracker.md)
 - Release process: [release-process.md](./release-process.md)
 - Architecture overview: [architecture-overview.md](./architecture-overview.md)
 - Archive index: [archive/README.md](./archive/README.md)

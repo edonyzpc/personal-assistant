@@ -1,6 +1,6 @@
 # PA Agent Product Spec Development Tracker
 
-Updated: 2026-06-29
+Updated: 2026-07-10
 
 ## Current Status
 
@@ -222,7 +222,7 @@ complete.
 | Review Queue | `reviewQueue.enabled` | `false` | `true` after M5 | Store active producer types only; after Slice E preview active producers are `evidence_insight`, `task_suggestion`, `memory_candidate`, and `maintenance_proposal`; `capture_enrichment` and Quick Capture `related_note` require a future explicit Keep UI. |
 | Context Pager | `contextPager.enabled` | `false` | `true` after M6 visible adoption | Read-only trace; Pagelet pager is gated by this setting. |
 | Saved Insights | `savedInsights.items` | `[]` | `[]`; populated only by explicit local store calls | Weak-only recall assets. PA-generated/recommended/imported insights require sourceRefs; user-authored insights may be unsourced and marked. |
-| Memory Governance | `memoryGovernance.records` | `[]` | `[]`; populated only after explicit candidate confirmation/store action | Local governance shell for active/archive/stale/tombstone lifecycle. Destructive UI actions are not exposed in Slice D. |
+| Memory Governance | `memoryGovernance.records`, `confirmedMemoryCount`, `memoryAutoAcceptPaused` | `[]`, `0`, `false` | Explicit at trust Levels 0-1; after 30 manual confirmations, new eligible low-sensitivity candidates auto-confirm unless paused | `ConfirmedMemoryRecord` is canonical for active/archive/stale/tombstone lifecycle. Records remain visible/removable; conflicts, task constraints, medium/high sensitivity, and historical pending candidates remain manual. |
 | Maintenance Review weekly preparation | `maintenanceReview.weeklyScanEnabled`; `maintenanceReview.actionLog` | `false`; `[]` | `false`; move-only apply writes reversible action log entries after explicit confirmation | Manual scan command is available through Pagelet; weekly preparation remains disabled. Apply is limited to one selected move proposal with undo. |
 | Weekly Review | `weeklyReview.enabled`, `weeklyReview.preparedReviewEnabled` | `false`, `false` | `true`, `false` after M10 manual shell passes smoke | Manual Weekly Review is available; prepared review stays opt-in and no automatic weekly scan runs. |
 | Quiet Recall | `quietRecall.enabled`, `quietRecall.bubbleNudgesEnabled` | `false`, `false` | `true`, `false` after M11.1-M11.2 pass smoke | Recall Panel/Tab may ship before Bubble nudges. Bubble nudges remain disabled until M11.3. |
@@ -636,7 +636,7 @@ Validation completed:
 | PD-003 | Quick Capture is a PA-level command/service; raw text saves first. | Capture must be light and preserve original thought. | M7 | User approval required to make AI enrichment foreground or blocking. |
 | PD-004 | AI enrichment is later and visually separated. | Protects original capture and trust. | M7.4, M7.5 | User approval required for rewrite/replacement behavior. |
 | PD-005 | Maintenance is global vault-care surfaced through Pagelet review surfaces; manual trigger first. | Maintenance should be reversible and review-first. | M9, M10 | User approval required before any source-note mutation. |
-| PD-006 | Evidence Cards and Memory Cards may share card family, but lifecycle and item type stay explicit. | Prevents Memory from becoming hidden queue state. | M5, M8 | User approval required to auto-confirm Memory. |
+| PD-006 | Evidence Cards and Memory Cards may share card family, but lifecycle and item type stay explicit. `ConfirmedMemoryRecord` is canonical; Review Queue is workflow/audit only. After 30 manual confirmations, new eligible Memory candidates may be auto-confirmed, remain visible/removable, and can be paused without decrementing trust. | Prevents Memory from becoming hidden queue state while implementing earned, reversible trust. | M5, M8, D6 | Approved by user on 2026-07-10. Any lower threshold, historical sweep, conflict/task-constraint auto-confirm, or less reversible behavior requires new approval. |
 | PD-007 | Bubble is only lightweight count/nudge/route. Panel and Tab own evidence and decisions. | Keeps interruption low and review surfaces capable. | M5, M10, M11 | User approval required for full-card Bubble review. |
 | PD-008 | Scope answers where this applies; action type answers what PA may do. | Autonomy must combine both dimensions. | M3, M4, M9 | Approval required for new autonomy or write scope. |
 | PD-009 | Default relevance sorting favors current context; far-association bonus is limited. | Old thoughts should return naturally but not override evidence. | M4, M11, M12 | Approval required for broad proactive recall changes. |

@@ -30,18 +30,19 @@ archived to [project-todo-pre-2.8.0.md](./archive/project-todo-pre-2.8.0.md).
 | PA Agent latency levers | Deferred | Run a focused perf pass for read-only batch audit, compact final-answer experiment, p50/p95 samples, and direct-route go/no-go. | [Latency plan](./pa-agent-latency-optimization-plan.md); [control policy tracker](./archive/pa-agent-control-policy-development-tracker.md) |
 | Architecture quality pass | Deferred | Improve prompt/classifier builders, Chat conversation lifecycle extraction, VSS method-body extraction, and plain `tsc --noEmit` DOM/WebWorker tsconfig split. | [architecture refactor tracker](./archive/architecture-refactor-development-tracker.md) |
 | Settings IA/componentization | Partially open | Finish broader Settings IA, remaining componentization, Statistics hidden fields, text-input save churn audit, and narrow-screen Metadata UX. | [Settings current status](./settings-status.md); [historical Settings UI review](./settings-ui-review.md); [Settings SDD](./archive/settings-ui-sdd.md) |
+| Memory control center and user-understanding model | **Complete / validation passed** | Canonical Settings, governed runtime, post-timeout desktop confirmation, Chat/AI Insights runtime checks, isolated Device A/B compatibility, iCloud restoration, iOS Mirroring/Inspector, 155 suites / 2877 tests, and final review/fix/re-review pass. Use the tracker for release-readiness or open a new approval gate for deferred cross-vault/export work. | [Product spec](./pa-memory-control-center-product-spec.md); [plan](./pa-memory-control-center-development-plan.md); [tracker](./pa-memory-control-center-development-tracker.md) |
 | Android VSS real-device validation | Pending verification | Validate the SQLite/WASM VSS backend on a physical Android device before claiming full Android parity. | [README](../README.md#mobile-vss-validation-note) |
 
-## Architecture Observations (需讨论后再执行)
+## Architecture Observations
 
-以下三项来自 PR #376 review，已确认不阻塞合入，但在后续迭代前需产品/架构讨论。
-**不要直接执行修改**——每项需在对应迭代启动时先讨论方案再动代码。
+以下三项来自 PR #376 review。Memory Control Center 迭代已解决其中两项；
+剩余项仍需在触发时单独讨论，不能因历史 review 直接扩展修改范围。
 
-| 观察 | 触发时机 | 讨论要点 | 来源 |
+| 观察 | 当前状态 | 后续边界 | 来源 |
 | --- | --- | --- | --- |
-| MemoryGovernanceStore 与 MemoryManager 并行 | 当 forget 需要影响 VSS 索引，或 confirmed memories 注入 LLM context 时 | 是否加协调层？forget 是否通知 MemoryManager 标记 stale？两者注入 context 时谁管 budget？ | [PR #376 review](./pr-376-review-report.md) |
-| VALID_STATUS_TRANSITIONS 在 store 层而非 contracts 层 | 当 TabView 需要根据 status 决定按钮显示时 | 转移规则是业务语义还是存储实现？移到 contracts 后 store 只做 enforcement？ | [PR #376 review](./pr-376-review-report.md) |
-| listRecentlyConfirmed() 就绪但无 UI 消费 | Memory Panel 功能扩展时 | 最近确认列表的交互形式？7 天撤回窗口是否合理？撤回操作是 archive 还是新增 unconfirm？ | [PR #376 review](./pr-376-review-report.md)；spec checklist 1.6 |
+| MemoryGovernanceStore 与 MemoryManager 并行 | 已解决：版本化治理仓库、governed-use projection、精确生命周期协调层已接管 durable Memory 使用边界；Forget 不模糊删除 VSS 来源笔记 | VSS 仍只负责可重建的 Note Memory，不因治理 Forget 扩展为源笔记删除 | [Memory Control Center tracker](./pa-memory-control-center-development-tracker.md) |
+| `VALID_STATUS_TRANSITIONS` 在 store 层而非 contracts 层 | Deferred | 只有新的共享 UI/调用方确实需要复用迁移规则时，再讨论是否移动到 contracts | [PR #376 review](./pr-376-review-report.md) |
+| `listRecentlyConfirmed()` 就绪但无 UI 消费 | 已解决：Recent changes 使用真实 change events 与七天 recovery/GC，不再把最近确认冒充变更记录 | `listRecentlyConfirmed()` 仅保留兼容用途，不是 canonical Recent changes 数据源 | [Memory Control Center tracker](./pa-memory-control-center-development-tracker.md) |
 
 ## Triggered Evaluations
 

@@ -1,6 +1,6 @@
 # PA Product North Star
 
-Updated: 2026-07-02
+Updated: 2026-07-10
 
 ## Status
 
@@ -10,6 +10,7 @@ Updated: 2026-07-02
 | Scope | PA Agent, Pagelet, Memory, Capture, Review, Maintenance, Action |
 | Role | North Star for product design, SDD decisions, and implementation tradeoffs |
 | Source decision | [PA product discussion 2026-07-02](./pa-product-discussion-2026-07-02.md) |
+| Scoped amendment | User-approved effect/risk Memory governance; Level 2 retained only as legacy migration policy, 2026-07-10 |
 | Related research | [PA Agent AI insight research report](./pa-agent-ai-insight-research-report.md) |
 | Related product doctrine | [Low-Burden Review Product Principles](./pa-low-burden-review-product-principles.md) |
 
@@ -36,8 +37,19 @@ Expanded form:
 
 The default PA artifact is ignorable. The user should be able to read, close,
 ignore, or dismiss a recall cue, digest, or insight candidate without creating
-future debt. Explicit confirmation is required when PA will create durable
-state, change future PA behavior, mutate the vault, or act outside the vault.
+future debt. Friction for durable understanding is proportional to effect,
+sensitivity, scope, provenance, reversibility, and authority: source-backed,
+low-sensitivity, current-vault, reversible understanding may update quietly
+only when it remains inspectable, correctable, and recoverable. Conflict,
+sensitive inference, durable task constraints, cross-vault/global effects,
+vault mutation, and external action require prior user disclosure, decision,
+or authorization appropriate to their consequence.
+
+The current runtime's 30-confirmation Memory Level 2 rule is a scoped legacy
+admission policy, not this North Star's general rule. Preserve it during safe
+migration without expanding its scope or inventing record-level confirmation
+history. The Memory control-center product contract defines the target
+effect-based replacement and keeps every broader permission boundary intact.
 
 ## Design Philosophy
 

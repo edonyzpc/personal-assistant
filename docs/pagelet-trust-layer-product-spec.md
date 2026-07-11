@@ -25,6 +25,14 @@ The Trust Layer is the companion to Maintenance Review:
 - Trust Layer defines how PA's brain uses evidence, remembers, forgets, and
   explains itself without becoming a black box.
 
+Memory-specific supersession: the active
+[Memory Control Center spec](./pa-memory-control-center-product-spec.md)
+replaces standalone Memory-panel ownership and blanket confirmation assumptions
+with unified Settings governance and effect-based admission. This document's
+Evidence/Memory distinction, source provenance, Context Firewall, and Pagelet
+candidate-review responsibilities remain active and feed the real prompt-use
+gate.
+
 ## 1. Product Decision
 
 The Trust Layer should not be a separate top-level product page named "Trust".

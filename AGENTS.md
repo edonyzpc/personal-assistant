@@ -42,7 +42,7 @@ prefer the North Star unless the user explicitly chooses a different direction.
 - This is an Obsidian plugin written in TypeScript.
 - Use Node 22 LTS with npm 10.x or 11.x.
 - Entry path: `src/main.ts` -> `src/plugin.ts`.
-- Chat UI: `src/chat-view.ts`.
+- Chat UI: `src/chat/chat-view.ts`.
 - Memory orchestration: `src/memory-manager.ts`.
 - VSS facade and indexing flow: `src/vss.ts`.
 - Vector index implementations: `src/vss/*`.
@@ -77,20 +77,18 @@ src/ai-services/memory-extraction/          (v2.5 new) Memory extraction pipelin
 
 ### Context Limit Constants
 
-v2.4 起 context 限制放宽至 128K 基线。以下为 `src/ai-services/pa-agent-runtime.ts` 中的关键常量及当前值：
+Context runtime constants live in `src/ai-services/pa-agent-runtime.ts`; Memory retrieval constants live in `src/ai-services/memory-search-tool.ts`. Current values:
 
 | Constant | Current Value | Description |
 | --- | --- | --- |
-| `MAX_CHAT_HISTORY_TURNS` | 20 | 聊天历史保留最大轮次 |
-| `MAX_READ_ONLY_TOOL_CONTEXT_CHARS` | 12000 | 只读工具上下文字符上限 |
-| `MAX_MEMORY_DOCUMENTS` | 4 | 单次检索返回的最大 Memory 文档数 |
-| `MAX_MEMORY_CHARS` | 2000 | 单文档内容截断上限 |
-| `MAX_MEMORY_RERANK_CANDIDATES` | 6 | Rerank 候选数 |
-| `MAX_MEMORY_CANDIDATE_CHUNKS` | 2 | 每候选文档最大 chunk 数 |
-| `MAX_MEMORY_CANDIDATE_EXCERPT_CHARS` | 500 | 候选摘要截断上限 |
+| `MAX_CHAT_HISTORY_CHARS` | 60000 | 聊天历史字符上限 |
+| `MAX_READ_ONLY_TOOL_CONTEXT_CHARS` | 24000 | 只读工具上下文字符上限 |
+| `MAX_MEMORY_DOCUMENTS` | 8 | 单次检索返回的最大 Memory 文档数 |
+| `MAX_MEMORY_CHARS` | 4000 | 单文档内容截断上限 |
+| `MAX_MEMORY_RERANK_CANDIDATES` | 12 | Rerank 候选数 |
+| `MAX_MEMORY_CANDIDATE_CHUNKS` | 3 | 每候选文档最大 chunk 数 |
+| `MAX_MEMORY_CANDIDATE_EXCERPT_CHARS` | 1000 | 候选摘要截断上限 |
 | `MAX_TURN_WALL_CLOCK_MS` | 180000 | 单 turn 最大挂钟时间 |
-
-v2.4 Context Projector + Hygiene 上线后，上述常量中与检索管线相关的值（`MAX_MEMORY_DOCUMENTS`、`MAX_MEMORY_CHARS`、`MAX_READ_ONLY_TOOL_CONTEXT_CHARS`）将随 128K 基线同步上调。具体新值由 `PaAgentContextBudget`（v2.5）统一管控。
 
 ## Build And Local Run Commands
 

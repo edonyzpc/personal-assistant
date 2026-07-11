@@ -26,6 +26,14 @@ The product definition:
 This document records the one-question-at-a-time product decisions confirmed on
 2026-06-28.
 
+Supersession for the active iteration: the
+[Memory Control Center spec](./pa-memory-control-center-product-spec.md) keeps
+these types as internal policy/validation metadata rather than ordinary UI
+navigation. Scope defaults to the current vault; only an explicit user action
+may apply a collaboration preference across vaults on the same device.
+User-facing lifecycle language is Correct, Undo recent change, Pause use, and
+Forget. The sensitivity and Context Firewall rules here remain active.
+
 ## Confirmed Decisions
 
 | ID | Decision | Product consequence |

@@ -24,6 +24,13 @@ The product definition:
 > Retrieval Habit Profile helps PA adapt to how the user finds notes in this
 > vault. It is not a user profile.
 
+The active [Memory Control Center spec](./pa-memory-control-center-product-spec.md)
+does not promote this layer into user-profile Memory or same-device
+collaboration state. Retrieval Habit Profile remains vault-scoped, weak,
+clearable adaptation with its existing opt-in and retention controls; the
+control center may deep-link to those controls but does not materialize its
+aggregate signals as durable user claims.
+
 This document records the one-question-at-a-time product decisions confirmed on
 2026-06-28.
 

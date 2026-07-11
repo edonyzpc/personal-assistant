@@ -21,6 +21,13 @@ The goal is to keep Chat, Pagelet, Memory, Maintenance, Active Vault Indexer,
 Graph Discovery, and Eval aligned on what can be read, sent to providers,
 stored locally, exported to the vault, and cleared by the user.
 
+Ownership clarification: this spec remains canonical for PA-wide source
+eligibility, exclusions, provider disclosure, and grouped cleanup. The active
+[Memory Control Center spec](./pa-memory-control-center-product-spec.md) owns
+Memory-specific status, lifecycle recovery, local migration, and future Memory
+portability. The two Settings areas use exact deep links rather than duplicate
+controls.
+
 ## Confirmed Decisions
 
 | ID | Decision | Product consequence |
@@ -88,7 +95,8 @@ It should include:
 - generated notes inclusion policy
 - provider disclosure defaults
 - local data cleanup
-- Memory export/delete controls
+- exact deep link to Memory and personalization for Forget, future export, and
+  Memory-specific repair/recovery controls
 - optional advanced diagnostics
 
 Do not make a heavy privacy dashboard in v1.
@@ -218,8 +226,8 @@ which groups it clears.
 | VSS/local marker state | IndexedDB/local app state | device-local runtime state |
 | review/maintenance queue | local store | machine state, not vault content |
 | graph/discovery edges | local derived state | AI-inferred unless user confirms |
-| Confirmed Memory | local store + Memory panel | user-visible, not vault-polluting by default |
-| memory deletion markers | local store | text-free tombstones; clearable advanced cleanup |
+| Governed Memory | versioned device-local store + Memory and personalization | user-visible, current-vault by default; not vault-polluting or cross-device by default |
+| memory suppression markers | versioned device-local store | text-free prevention state; cleared from Memory and personalization |
 | vault artifacts | Markdown notes after user action | searchable/syncable user-owned output |
 | replay traces | local store by default | explainability/eval metadata; no private note text by default |
 

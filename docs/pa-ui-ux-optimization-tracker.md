@@ -695,10 +695,19 @@ Ordered by risk (lowest first). No inter-decision dependencies. Each is a single
 
 #### SDD-D6: Graduated Trust Model
 
+> **Implementation reconciliation (2026-07-10):** The user approved silent
+> Level 2 activation after 30 manual confirmations, record-first governance,
+> and a pause/resume control that does not decrement trust. Only new eligible
+> candidates are auto-confirmed. Historical pending candidates, conflicts, and
+> task constraints, and medium/high-sensitivity candidates remain manual.
+> `ConfirmedMemoryRecord` is canonical; its
+> optional `originReviewQueueItemId` links queue audit state without making the
+> queue the user-facing Memory source of truth.
+
 ##### T3.3.1 -- Schema and trust level logic
 
 - **Spec refs**: Plan SDD-D6 Phase 1
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Files**:
   - Modify: `src/pa/memory-governance-store.ts` (line 31: extend `confirmationStrength` union)
   - New: `src/pa/memory-trust-level.ts`
@@ -724,7 +733,7 @@ Ordered by risk (lowest first). No inter-decision dependencies. Each is a single
 ##### T3.3.2 -- Level 0 tracking (no UI change)
 
 - **Spec refs**: Plan SDD-D6 Phase 2
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Files**:
   - Modify: `src/pa/memory-governance-store.ts` (increment counter on confirm)
   - Modify: `src/pagelet/orchestrator.ts` (or plugin.ts -- persist counter)
@@ -746,7 +755,7 @@ Ordered by risk (lowest first). No inter-decision dependencies. Each is a single
 ##### T3.3.3 -- Level 1 batch digest
 
 - **Spec refs**: Plan SDD-D6 Phase 3
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Files**:
   - Modify: `src/pagelet/orchestrator.ts` (digest aggregation + thread confirmedMemoryCount)
   - Modify: `src/pagelet/tab/sections/MemoryGovernanceSection.ts` (digest UI + restructure renderInto())
@@ -787,59 +796,58 @@ Ordered by risk (lowest first). No inter-decision dependencies. Each is a single
 ##### T3.3.4 -- Level 2 auto-accept pipeline
 
 - **Spec refs**: Plan SDD-D6 Phase 4
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Files**:
-  - New: `src/pa/memory-auto-confirm.ts`
-  - New: `__tests__/memory-auto-confirm.test.ts`
-  - Modify: `src/pagelet/tab/sections/MemoryGovernanceSection.ts` (Level 2 UI)
-  - Modify: `src/pagelet/orchestrator.ts` (wire auto-confirm into candidate creation pipeline)
-- **Scope**: When trust level = 2 (30+ confirmed), new `memory_candidate` items are auto-confirmed with `confirmationStrength: "auto"`. `memory_conflict` items are NEVER auto-confirmed. UI shows "Auto-accepted" badge and "Remove" button.
-
-  **Auto-confirm function**:
-  ```ts
-  async function autoConfirmMemoryCandidate(
-      item: ReviewQueueItem,
-      options: { queue: ReviewQueueStore; governance: MemoryGovernanceStore },
-  ): Promise<MemoryGovernanceResult<ConfirmedMemoryRecord>>;
-  ```
-
-  **Guards**:
-  - `item.type === "memory_conflict"` -> skip, return `{ ok: false, reason: "conflict_requires_manual_review" }`.
-  - Trust level < 2 -> skip, return `{ ok: false, reason: "trust_level_insufficient" }`.
-
-- **Non-goals**: No retrieval-time weighting for auto-confirmed records (deferred).
+  - Modify: `src/plugin.ts` (new-candidate auto-confirm, record/queue reconciliation, pause guard)
+  - Modify: `src/pa/memory-governance-store.ts` (canonical origin link and tombstone preservation)
+  - Modify: `src/pagelet/tab/sections/MemoryGovernanceSection.ts` (record-first Level 2 UI)
+  - Modify: `src/pagelet/tab/TabView.ts`, `src/pagelet/tab/PageletDetailView.ts` (callback plumbing)
+  - Modify: `src/settings.ts` (Level 2 pause/resume control)
+  - Tests: `__tests__/plugin-record-note.test.ts`, `__tests__/memory-governance-store.test.ts`, `__tests__/pagelet-panel-tab-view.test.ts`, `__tests__/settings.test.ts`
+- **Scope**: At trust level 2 (30+ manual confirmations), each newly created eligible `memory_candidate` is auto-confirmed with `confirmationStrength: "auto"` unless automatic acceptance is paused. The resulting `ConfirmedMemoryRecord` is canonical user-facing state and stores the originating queue item ID for exact audit reconciliation. Records are visible with an "Auto-accepted" badge and can be removed after confirmation; removal writes a content-free tombstone that remains a durable retry marker until the linked queue item reaches `undone`. Legacy records without a link remain safely removable without queue inference.
+- **Guards**:
+  - `memoryEnabled !== true`, trust level below 2, or `memoryAutoAcceptPaused === true` retains the manual flow;
+  - only `low` sensitivity is eligible; `medium` and `high` retain the manual flow;
+  - `memory_conflict` and task-constraint candidates retain the manual flow;
+  - historical `suggested` candidates are never swept on startup or threshold crossing;
+  - a persistence failure leaves canonical state unchanged and preserves a retryable queue state.
+- **Non-goals**: No retrieval-time weighting for auto-confirmed records. No reverse migration from canonical Memory records into inferred queue candidates.
 - **Acceptance criteria**:
   1. New `memory_candidate` at Level 2 is auto-confirmed within the candidate creation pipeline.
   2. Auto-confirmed records have `confirmationStrength: "auto"`.
   3. `memory_conflict` items are NEVER auto-confirmed regardless of trust level.
-  4. UI shows "Auto-accepted" muted badge on auto-confirmed cards.
-  5. "Remove" button calls `governance.forget()` and shows confirmation.
-  6. `confirmedMemoryCount` increments for auto-confirmed items.
-- **Error handling**: If auto-confirm fails (governance store error), keep item in `suggested` state and log warning. Do not block the candidate creation pipeline.
+  4. Task constraints, medium/high-sensitivity candidates, and historical pending items remain manual.
+  5. Canonical record UI shows "Auto-accepted" and a confirmed "Remove" action.
+  6. Remove changes Memory to a content-free tombstone and linked queue audit state to `undone`; legacy unlinked records still remove safely.
+  7. The Level 2 Settings toggle pauses/resumes automatic acceptance without decrementing `confirmedMemoryCount`.
+  8. `confirmedMemoryCount` remains monotonic and increments for successful confirmations, including auto confirmations.
+- **Error handling**: If auto-confirm fails, keep the queue item retryable and do not block candidate creation. If canonical confirmation succeeds but its queue apply write fails, later removal/recovery advances the exact linked audit through `accepted -> applied -> undone`. If any reconciliation write fails, the canonical tombstone remains the retry marker and fixed-context diagnostics do not include Memory content.
 - **Test plan**:
-  - TC-3.3.4-01: `autoConfirmMemoryCandidate()` with `memory_candidate` at Level 2 -> success.
-  - TC-3.3.4-02: `autoConfirmMemoryCandidate()` with `memory_conflict` -> `{ ok: false, reason: "conflict_requires_manual_review" }`.
-  - TC-3.3.4-03: `autoConfirmMemoryCandidate()` at Level 1 -> `{ ok: false, reason: "trust_level_insufficient" }`.
-  - TC-3.3.4-04: Auto-confirm failure -> item stays `suggested`, no crash.
-  - TC-3.3.4-05: UI "Remove" button calls `forget()` and transitions to tombstone.
-  - TC-3.3.4-06: MemoryGovernanceSection at Level 2 shows "Auto-accepted" badge, no "Confirm" button.
-- **Validation**: `npm test -- __tests__/memory-auto-confirm.test.ts --runInBand && make deploy` + smoke
+  - TC-3.3.4-01: new eligible Level 2 candidate -> linked canonical auto record + applied audit item.
+  - TC-3.3.4-02: paused Level 2, conflict, task constraint, or old pending candidate -> no auto record.
+  - TC-3.3.4-03: persistence failure -> no partial canonical mutation; queue remains retryable.
+  - TC-3.3.4-04: exact linked removal -> tombstone + queue `undone`; legacy unlinked removal -> tombstone only.
+  - TC-3.3.4-05: record card shows auto badge, confirms removal, calls the exact record callback, and immediately shows the forgotten marker.
+  - TC-3.3.4-06: Settings pause flag defaults safely and rejects malformed persisted values.
+- **Validation**: focused store/plugin/Tab/Settings suites, type-check, lint, build, full Jest, `make deploy`, and real test-vault smoke
 - **Effort**: L
 - **Dependencies**: T3.3.3
 
 ##### T3.3.5 -- Locale and copy updates
 
 - **Spec refs**: Plan SDD-D6 Phase 5
-- **Status**: `[ ]`
+- **Status**: `[x]`
 - **Files**:
-  - Modify: `src/locales/pagelet/en.json`, `src/locales/pagelet/zh.json` (10 new keys)
-- **Scope**: Add all D6 locale keys: autoAccepted, remove, removing, removed, removeFailed, trustDigest, trustDigestReview, trustDigestAcceptAll, trustDigestLater, level2Summary.
+  - Modify: `src/locales/pagelet/en.json`, `src/locales/pagelet/zh.json`
+  - Modify: `src/locales/plugin/en.json`, `src/locales/plugin/zh.json`
+- **Scope**: Add D6 digest, automatic acceptance, removal confirmation/status copy, and the Level 2 automatic acceptance Settings label/description.
 - **Non-goals**: No code changes.
 - **Acceptance criteria**:
-  1. All 10 keys present in both EN and ZH.
-  2. ZH keys use "记忆" not "Memory".
-  3. No obligation language in ZH ("待"/"需要"/"必须").
-  4. Locale parity test passes.
+  1. Every new key is present in both EN and ZH.
+  2. User-facing copy uses the product term `Memory` where identity matters and avoids internal queue/vector/tombstone terms.
+  3. Removal confirmation explains that source notes are unchanged and only a text-free marker remains.
+  4. No obligation language in ZH ("待"/"需要"/"必须").
+  5. Locale parity tests pass.
 - **Validation**: `npm test -- __tests__/pa-locales-pagelet.test.ts --runInBand`
 - **Effort**: S
 - **Dependencies**: None (can be done early, before T3.3.3)
@@ -1214,7 +1222,7 @@ Ordered by risk (lowest first). No inter-decision dependencies. Each is a single
 | R5 | D13 sub-containers break inside `<details>` | Medium | 2b | Sub-containers use `createDiv()` on parent; not dependent on `containerEl` directly | Open |
 | R6 | Phase 4 border-radius merges cause visual regression | Medium | 4 | Before/after screenshot comparison all 8 surfaces x 2 themes | Open |
 | R7 | custom.pcss merge conflicts from parallel phases | High | All | Serialize CSS-heavy phases: 2a -> 3 -> 4 -> 5. No parallel CSS work | Open |
-| R8 | D6 conflict items auto-accepted at Level 2 | Critical | 2b | Explicit guard: `memory_conflict` excluded at all levels; unit test TC-3.3.4-02 | Open |
+| R8 | D6 conflict items auto-accepted at Level 2 | Critical | 2b | Eligibility is limited to low-sensitivity `memory_candidate`; conflicts and task constraints remain manual, with contract and production-pipeline regressions | Closed (2026-07-10) |
 | R9 | D6 batch digest trigger spams user | Medium | 2b | Frequency cap: once per session; min 3 pending threshold; "Later" suppresses for session | Open |
 | R10 | D13 localStorage unavailable on sandboxed mobile | Low | 2b | try/catch fallback: all groups start expanded | Open |
 | R11 | D5 deserialization of old Tab state breaks | Low | 2b | Keep `@deprecated` reviewQueue field; normalize on load | Open |
