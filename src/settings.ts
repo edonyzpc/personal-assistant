@@ -34,6 +34,14 @@ import {
     normalizeMemoryGovernanceState,
     type ConfirmedMemoryRecord,
 } from "./pa/memory-governance-store";
+import { getMemoryTrustLevel } from "./pa/memory-trust-level";
+import type {
+    MemoryControlCenterEffect,
+    MemoryControlCenterItem,
+    MemoryControlCenterLifecycle,
+    MemoryControlCenterOrigin,
+    MemoryControlCenterSnapshot,
+} from "./pa/memory-control-center";
 import {
     normalizeMaintenanceMoveActionLog,
     type MaintenanceMoveActionLogEntry,
@@ -241,6 +249,8 @@ export interface PluginManagerSettings {
     embeddingV4MigrationNoticeDismissed: boolean;
     memoryEnabled: boolean;
     confirmedMemoryCount: number;
+    /** User-controlled pause for Level 2 automatic Memory; trust count remains monotonic. */
+    memoryAutoAcceptPaused: boolean;
     memoryAutoCheckBeforeChat: boolean;
     memoryApprovalPolicy: "always" | "auto-refresh-after-prepare";
     showAdvancedMemoryControls: boolean;
@@ -349,6 +359,7 @@ export const DEFAULT_SETTINGS: PluginManagerSettings = {
     embeddingV4MigrationNoticeDismissed: false,
     memoryEnabled: true,
     confirmedMemoryCount: 0,
+    memoryAutoAcceptPaused: false,
     memoryAutoCheckBeforeChat: true,
     memoryApprovalPolicy: "always",
     showAdvancedMemoryControls: false,
@@ -471,6 +482,12 @@ export function safeParseInt(value: string, fallback: number, min = 0, max?: num
     return typeof max === "number" ? Math.min(parsed, max) : parsed;
 }
 
+export function normalizeConfirmedMemoryCount(value: unknown): number {
+    return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+        ? value
+        : DEFAULT_SETTINGS.confirmedMemoryCount;
+}
+
 /**
  * Merge data.json contents with DEFAULT_SETTINGS, preserving default values
  * for nested object fields whose siblings the user never customized.
@@ -503,6 +520,10 @@ export function mergeLoadedSettings(loaded: unknown): PluginManagerSettings {
     merged.colorGroups = normalizeGraphColorArray(loadedObject.colorGroups, DEFAULT_SETTINGS.colorGroups);
     merged.metadatas = normalizeMetadataArray(loadedObject.metadatas, DEFAULT_SETTINGS.metadatas);
     merged.enabledSkillIds = normalizeEnabledSkillIds(loadedObject.enabledSkillIds);
+    merged.confirmedMemoryCount = normalizeConfirmedMemoryCount(loadedObject.confirmedMemoryCount);
+    merged.memoryAutoAcceptPaused = typeof loadedObject.memoryAutoAcceptPaused === "boolean"
+        ? loadedObject.memoryAutoAcceptPaused
+        : DEFAULT_SETTINGS.memoryAutoAcceptPaused;
     merged.featuredImageModel = normalizeFeaturedImageModel(loadedObject.featuredImageModel);
     merged.numFeaturedImages = normalizeFeaturedImageCount(loadedObject.numFeaturedImages);
     // Current builds use a mock paid entitlement so all paid-capability
@@ -878,6 +899,8 @@ export class SettingTab extends PluginSettingTab {
     private patchedSecretPickerEditButtons = new WeakSet<HTMLElement>();
     private secretPickerEditClickHandler: ((event: MouseEvent) => void) | null = null;
     private secretPickerDocument: Document | null = null;
+    private memoryControlCenterGeneration = 0;
+    private pendingMemoryControlCenterTargetId: string | null = null;
 
     // Set by rebuildQwenOptions(); invoked by Base URL onChange.
     private refreshQwenResponseOptionAvailability: (() => void) | null = null;
@@ -892,12 +915,36 @@ export class SettingTab extends PluginSettingTab {
     // those are discrete user actions where each value flip is meaningful and
     // some of them rebuild dependent UI (e.g. enableGraphColors,
     // enableMetadataUpdating, aiProvider).
-    private debouncedSave = debounce(() => { void this.plugin.saveSettings(); }, 400, true);
+    private hasPendingSettingsSave = false;
+    private debouncedSaveRunner = debounce(() => {
+        if (!this.hasPendingSettingsSave) return;
+        this.hasPendingSettingsSave = false;
+        void this.plugin.saveSettings().catch((error) => {
+            this.hasPendingSettingsSave = true;
+            this.log("Failed to persist delayed Settings changes", error);
+        });
+    }, 400, true);
 
     constructor(app: App, plugin: PluginManager) {
         super(app, plugin);
         this.plugin = plugin;
         this.log = (...msg: any) => plugin.log(...msg); // eslint-disable-line @typescript-eslint/no-explicit-any
+    }
+
+    openGroup(groupId: string, memoryTargetId?: string): void {
+        const normalizedId = groupId.trim();
+        if (!normalizedId) return;
+        const normalizedTargetId = memoryTargetId?.trim();
+        if (normalizedId === "memory-personalization" && normalizedTargetId) {
+            this.pendingMemoryControlCenterTargetId = normalizedTargetId;
+        }
+        const details = this.containerEl.querySelector(`#pa-settings-group-${normalizedId}`);
+        if (!details || details.tagName.toLowerCase() !== "details") return;
+        (details as HTMLDetailsElement).open = true;
+        this.persistGroupCollapseState(normalizedId, false);
+        const summary = details.querySelector("summary");
+        summary?.scrollIntoView?.({ behavior: "smooth", block: "start" });
+        this.focusPendingMemoryControlCenterTarget(false);
     }
 
     private t(key: PluginMessageKey, params?: Readonly<Record<string, string | number>>, fallback?: string): string {
@@ -907,6 +954,7 @@ export class SettingTab extends PluginSettingTab {
     display(): void {
         const { containerEl } = this;
         const doc = getPlatformDocument();
+        this.memoryControlCenterGeneration += 1;
 
         containerEl.empty();
         (containerEl as HTMLElement & { addClass?: (cls: string) => void }).addClass?.("pa-settings-tab");
@@ -930,6 +978,9 @@ export class SettingTab extends PluginSettingTab {
             { id: "ai-provider", labelKey: "plugin.settings.group.aiProvider", sections: [
                 (p) => this.renderAISection(p),
                 (p) => this.renderSkillsSection(p),
+            ] },
+            { id: "memory-personalization", labelKey: "plugin.settings.group.memoryPersonalization", sections: [
+                (p) => this.renderMemoryControlCenterOverview(p),
                 (p) => this.renderMemorySection(p),
             ] },
             { id: "data-privacy", labelKey: "plugin.settings.group.dataPrivacy", sections: [
@@ -994,12 +1045,21 @@ export class SettingTab extends PluginSettingTab {
     hide(): void {
         // Obsidian invokes hide() when the user closes the settings tab.
         this.stopSecretPickerObserver();
+        this.memoryControlCenterGeneration += 1;
         getPlatformDocument().body?.classList.remove("pa-settings-tab-open");
-        // Flush any pending text-input save: the onChange handlers have
-        // already mutated plugin.settings.* synchronously, so persisting
-        // the current settings object captures the user's latest input.
-        this.debouncedSave.cancel();
-        void this.plugin.saveSettings();
+        this.debouncedSaveRunner.cancel();
+        if (this.hasPendingSettingsSave) {
+            this.hasPendingSettingsSave = false;
+            void this.plugin.saveSettings().catch((error) => {
+                this.hasPendingSettingsSave = true;
+                this.log("Failed to persist Settings changes on close", error);
+            });
+        }
+    }
+
+    private debouncedSave(): void {
+        this.hasPendingSettingsSave = true;
+        this.debouncedSaveRunner();
     }
 
     private isGroupCollapsed(groupId: string): boolean {
@@ -1672,6 +1732,12 @@ export class SettingTab extends PluginSettingTab {
         for (const group of DATA_CLEANUP_GROUPS) {
             cleanupList.createEl("li", { text: this.t(DATA_BOUNDARY_CLEANUP_LABEL_KEYS[group]) });
         }
+        new Setting(parentEl)
+            .setName(this.t("plugin.settings.dataBoundary.cleanup.memoryControls.name"))
+            .setDesc(this.t("plugin.settings.dataBoundary.cleanup.memoryControls.desc"))
+            .addButton((button) => button
+                .setButtonText(this.t("plugin.settings.dataBoundary.cleanup.memoryControls.button"))
+                .onClick(() => this.openGroup("memory-personalization", "memory-data-recovery")));
     }
 
     private renderGraphSection(parentEl: HTMLElement): void {
@@ -2600,6 +2666,713 @@ export class SettingTab extends PluginSettingTab {
         this.rebuildMemorySubSettings();
     }
 
+    private renderMemoryControlCenterOverview(parentEl: HTMLElement): void {
+        const generation = this.memoryControlCenterGeneration;
+        const section = parentEl.createDiv({ cls: "pa-memory-control-center" });
+        section.createEl("h2", { text: this.t("plugin.settings.memoryControlCenter.title") });
+        section.createEl("p", {
+            text: this.t("plugin.settings.memoryControlCenter.desc"),
+            cls: "pa-settings-section-desc-md",
+        });
+        const body = section.createDiv({
+            cls: "pa-memory-control-center__body",
+            attr: { "aria-live": "polite" },
+        });
+        body.createEl("p", {
+            text: this.t("plugin.settings.memoryControlCenter.loading"),
+            cls: "pa-memory-control-center__loading",
+        });
+
+        void this.plugin.getMemoryControlCenterSnapshot()
+            .then((snapshot) => {
+                if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
+                body.empty();
+                this.renderMemoryControlCenterSnapshot(body, snapshot);
+            })
+            .catch((error) => {
+                if (generation !== this.memoryControlCenterGeneration || body.isConnected === false) return;
+                this.log("Failed to render Memory control center overview", error);
+                body.empty();
+                body.createEl("p", {
+                    text: this.t("plugin.settings.memoryControlCenter.loadError"),
+                    cls: "pa-memory-control-center__error",
+                });
+            });
+    }
+
+    private renderMemoryControlCenterSnapshot(
+        parentEl: HTMLElement,
+        snapshot: MemoryControlCenterSnapshot,
+    ): void {
+        const cards = parentEl.createDiv({ cls: "pa-memory-control-center__cards" });
+        this.renderMemoryControlCenterCard(
+            cards,
+            this.t("plugin.settings.memoryControlCenter.noteMemory.title"),
+            this.formatMemoryControlCenterStatus(snapshot.noteMemory.status),
+            snapshot.noteMemory.indexedDocumentCount !== undefined
+                ? this.t("plugin.settings.memoryControlCenter.indexedCount", {
+                    count: snapshot.noteMemory.indexedDocumentCount,
+                })
+                : undefined,
+        );
+        this.renderMemoryControlCenterCard(
+            cards,
+            this.t("plugin.settings.memoryControlCenter.vaultInsights.title"),
+            this.formatMemoryControlCenterStatus(snapshot.vaultInsights.status),
+            snapshot.vaultInsights.fileCount !== undefined
+                ? this.t("plugin.settings.memoryControlCenter.count", { count: snapshot.vaultInsights.fileCount })
+                : undefined,
+        );
+        this.renderMemoryControlCenterCard(
+            cards,
+            this.t("plugin.settings.memoryControlCenter.profile.title"),
+            this.formatMemoryControlCenterStatus(snapshot.profile.status),
+            this.t("plugin.settings.memoryControlCenter.count", { count: snapshot.profile.itemCount }),
+        );
+        this.renderMemoryControlCenterCard(
+            cards,
+            this.t("plugin.settings.memoryControlCenter.durable.title"),
+            this.t("plugin.settings.memoryControlCenter.count", {
+                count: snapshot.durable.activeCount
+                    + snapshot.durable.pausedCount
+                    + snapshot.durable.staleCount,
+            }),
+        );
+
+        const boundary = parentEl.createDiv({ cls: "pa-memory-control-center__boundary" });
+        boundary.createEl("h3", { text: this.t("plugin.settings.memoryControlCenter.boundary.title") });
+        boundary.createEl("p", {
+            text: snapshot.boundary.deviceLocalProven
+                ? this.t(snapshot.boundary.explanationKey as PluginMessageKey, undefined, snapshot.boundary.explanationKey)
+                : this.t("plugin.settings.memoryControlCenter.boundary.compatibility"),
+        });
+        this.renderMemoryControlCenterFinalization(parentEl, snapshot);
+
+        if (snapshot.governanceMode === "unavailable") {
+            parentEl.createEl("p", {
+                text: this.t("plugin.settings.memoryControlCenter.governanceUnavailable"),
+                cls: "pa-memory-control-center__warning",
+                attr: { role: "status" },
+            });
+        }
+
+        if (snapshot.degradedSources.length > 0) {
+            parentEl.createEl("p", {
+                text: this.t("plugin.settings.memoryControlCenter.partialUnavailable"),
+                cls: "pa-memory-control-center__warning",
+                attr: { role: "status" },
+            });
+        }
+
+        if (snapshot.items.length === 0) {
+            parentEl.createEl("p", {
+                text: this.t("plugin.settings.memoryControlCenter.empty"),
+                cls: "pa-memory-control-center__empty",
+            });
+        } else {
+            const details = parentEl.createEl("details", { cls: "pa-memory-control-center__details" });
+            details.createEl("summary", {
+                text: this.t("plugin.settings.memoryControlCenter.details", { count: snapshot.items.length }),
+            });
+            const list = details.createDiv({ cls: "pa-memory-control-center__items" });
+            for (const item of snapshot.items) {
+                this.renderMemoryControlCenterItem(list, item);
+            }
+        }
+        this.renderMemoryControlCenterDataRecovery(parentEl, snapshot);
+        this.renderMemoryControlCenterRecentChanges(parentEl, snapshot);
+        this.focusPendingMemoryControlCenterTarget(true);
+    }
+
+    private renderMemoryControlCenterDataRecovery(
+        parentEl: HTMLElement,
+        snapshot: MemoryControlCenterSnapshot,
+    ): void {
+        const section = parentEl.createDiv({
+            cls: ["pa-memory-control-center__item", "pa-memory-control-center__recovery"],
+        });
+        section.dataset.paMemoryTargetId = "memory-data-recovery";
+        section.createEl("h3", { text: this.t("plugin.settings.memoryControlCenter.dataRecovery.title") });
+        section.createEl("p", {
+            text: this.t("plugin.settings.memoryControlCenter.dataRecovery.desc"),
+            cls: "pa-settings-section-desc-md",
+        });
+        const rollback = snapshot.compatibilityRollback;
+        if (rollback) {
+            const rollbackDescription = rollback.eligible
+                ? this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.desc", {
+                    records: rollback.legacyRecordCount,
+                    queue: rollback.legacyMemoryQueueCount,
+                })
+                : this.plugin.getMemoryRollbackStatusMessage(rollback.blockedReason);
+            new Setting(section)
+                .setName(this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.name"))
+                .setDesc(rollbackDescription)
+                .addButton((button) => button
+                    .setButtonText(this.t(
+                        rollback.phase === "rolling_back"
+                            ? "plugin.settings.memoryControlCenter.dataRecovery.rollback.retry"
+                            : "plugin.settings.memoryControlCenter.dataRecovery.rollback.action",
+                    ))
+                    .setDisabled(!rollback.eligible)
+                    .setWarning()
+                    .onClick(async () => {
+                        const generation = this.memoryControlCenterGeneration;
+                        const confirmed = await confirmUserAction(this.app, {
+                            title: this.t(
+                                "plugin.settings.memoryControlCenter.dataRecovery.rollback.confirmTitle",
+                            ),
+                            message: this.t(
+                                "plugin.settings.memoryControlCenter.dataRecovery.rollback.confirmMessage",
+                            ),
+                            confirmText: this.t(
+                                "plugin.settings.memoryControlCenter.dataRecovery.rollback.action",
+                            ),
+                        });
+                        if (!confirmed || generation !== this.memoryControlCenterGeneration) return;
+                        try {
+                            const result = await this.plugin.rollbackMemoryGovernance();
+                            new Notice(result.message, result.ok ? 5000 : 7000);
+                        } catch (error) {
+                            this.log("Memory compatibility restore failed", error);
+                            new Notice(
+                                this.t(
+                                    "plugin.settings.memoryControlCenter.dataRecovery.rollback.failed",
+                                ),
+                                7000,
+                            );
+                        }
+                        if (generation !== this.memoryControlCenterGeneration) return;
+                        this.display();
+                        this.openGroup("memory-personalization", "memory-data-recovery");
+                    }));
+        }
+        const markerCount = this.plugin.getMemorySuppressionMarkerCount();
+        new Setting(section)
+            .setName(this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.name"))
+            .setDesc(this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.desc", {
+                count: markerCount,
+            }))
+            .addButton((button) => button
+                .setButtonText(this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.clear"))
+                .setDisabled(markerCount === 0)
+                .onClick(async () => {
+                    const generation = this.memoryControlCenterGeneration;
+                    const confirmed = await confirmUserAction(this.app, {
+                        title: this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.confirmTitle"),
+                        message: this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.confirmMessage"),
+                        confirmText: this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.clear"),
+                    });
+                    if (!confirmed || generation !== this.memoryControlCenterGeneration) return;
+                    try {
+                        const result = await this.plugin.clearMemorySuppressionMarkers();
+                        new Notice(result.message, result.ok ? 4000 : 6000);
+                    } catch (error) {
+                        this.log("Memory prevention-marker cleanup failed", error);
+                        new Notice(
+                            this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.unavailable"),
+                            6000,
+                        );
+                    }
+                    if (generation !== this.memoryControlCenterGeneration) return;
+                    this.display();
+                    this.openGroup("memory-personalization", "memory-data-recovery");
+                }));
+    }
+
+    private renderMemoryControlCenterCard(
+        parentEl: HTMLElement,
+        title: string,
+        status: string,
+        detail?: string,
+    ): void {
+        const card = parentEl.createDiv({ cls: "pa-memory-control-center__card" });
+        card.createEl("h3", { text: title });
+        card.createEl("p", { text: status, cls: "pa-memory-control-center__card-status" });
+        if (detail) card.createEl("p", { text: detail, cls: "pa-memory-control-center__card-detail" });
+    }
+
+    private renderMemoryControlCenterFinalization(
+        parentEl: HTMLElement,
+        snapshot: MemoryControlCenterSnapshot,
+    ): void {
+        const finalization = snapshot.compatibilityFinalization;
+        if (!finalization) return;
+        const section = parentEl.createEl("details", {
+            cls: "pa-memory-control-center__finalization",
+        });
+        if (finalization.phase === "finalizing" || (!finalization.eligible && finalization.blockedReason)) {
+            section.open = true;
+        }
+        section.createEl("summary", {
+            text: this.t("plugin.settings.memoryControlCenter.finalization.title"),
+        });
+        section.createEl("p", {
+            text: this.t("plugin.settings.memoryControlCenter.finalization.desc"),
+            cls: "pa-settings-section-desc-md",
+        });
+        if (finalization.requiresFreshRestoreProof) {
+            section.createEl("p", {
+                text: this.t("plugin.settings.memoryControlCenter.finalization.freshProof"),
+                cls: "pa-settings-section-desc-md",
+            });
+        }
+        section.createEl("p", {
+            text: this.t("plugin.settings.memoryControlCenter.finalization.warning", {
+                records: finalization.legacyRecordCount,
+                queue: finalization.legacyMemoryQueueCount,
+            }),
+            cls: "pa-memory-control-center__warning",
+        });
+        if (!finalization.eligible || !finalization.confirmationToken) {
+            section.createEl("p", {
+                text: this.plugin.getMemoryFinalizationStatusMessage(finalization.blockedReason),
+                cls: "pa-memory-control-center__warning",
+                attr: { role: "status" },
+            });
+            return;
+        }
+        const button = section.createEl("button", {
+            text: this.t(finalization.phase === "finalizing"
+                ? "plugin.settings.memoryControlCenter.finalization.retry"
+                : "plugin.settings.memoryControlCenter.finalization.action"),
+            attr: { type: "button" },
+        });
+        button.addEventListener("click", () => {
+            const generation = this.memoryControlCenterGeneration;
+            void (async () => {
+                const confirmed = await confirmUserAction(this.app, {
+                    title: this.t("plugin.settings.memoryControlCenter.finalization.confirmTitle"),
+                    message: this.t("plugin.settings.memoryControlCenter.finalization.confirmMessage"),
+                    confirmText: this.t("plugin.settings.memoryControlCenter.finalization.action"),
+                });
+                if (!confirmed || generation !== this.memoryControlCenterGeneration) return;
+                button.disabled = true;
+                const result = await this.plugin.finalizeMemoryGovernance(finalization.confirmationToken!);
+                new Notice(result.message, result.ok ? 4000 : 6000);
+                if (generation !== this.memoryControlCenterGeneration) return;
+                this.display();
+                this.openGroup("memory-personalization");
+            })().catch((error) => {
+                this.log("Memory finalization action failed", error);
+                if (generation === this.memoryControlCenterGeneration) button.disabled = false;
+                new Notice(this.t("plugin.settings.memoryControlCenter.finalization.unavailable"), 5000);
+            });
+        });
+    }
+
+    private renderMemoryControlCenterItem(parentEl: HTMLElement, item: MemoryControlCenterItem): void {
+        const article = parentEl.createEl("article", { cls: "pa-memory-control-center__item" });
+        article.dataset.paMemoryTargetId = item.claimId ?? item.id;
+        article.createEl("h4", {
+            text: item.lifecycle === "forget_pending"
+                ? this.t("plugin.settings.memoryControlCenter.pendingForget.title")
+                : item.origin === "vault_insights"
+                ? this.t("plugin.settings.memoryControlCenter.vaultInsights.title")
+                : item.lifecycle === "forgotten_marker"
+                    ? this.t("plugin.settings.memoryControlCenter.status.forgotten")
+                    : item.label,
+        });
+        const metadata = article.createEl("dl", { cls: "pa-memory-control-center__metadata" });
+        if (item.lifecycle === "forget_pending") {
+            article.createEl("p", {
+                text: this.t("plugin.settings.memoryControlCenter.pendingForget.desc"),
+                cls: "pa-memory-control-center__warning",
+            });
+            this.renderMemoryControlCenterMetadataRow(
+                metadata,
+                this.t("plugin.settings.memoryControlCenter.field.status"),
+                this.t("plugin.settings.memoryControlCenter.status.forgetPending"),
+            );
+            if (item.updatedAt) {
+                this.renderMemoryControlCenterMetadataRow(
+                    metadata,
+                    this.t("plugin.settings.memoryControlCenter.field.updated"),
+                    this.formatMemoryControlCenterTimestamp(item.updatedAt),
+                );
+            }
+            this.renderMemoryControlCenterItemActions(article, item);
+            return;
+        }
+        if (item.lifecycle === "forgotten_marker") {
+            const timestamp = item.updatedAt ?? item.observedAt;
+            if (timestamp) {
+                this.renderMemoryControlCenterMetadataRow(
+                    metadata,
+                    this.t("plugin.settings.memoryControlCenter.field.updated"),
+                    this.formatMemoryControlCenterTimestamp(timestamp),
+                );
+            }
+            return;
+        }
+        this.renderMemoryControlCenterMetadataRow(
+            metadata,
+            this.t("plugin.settings.memoryControlCenter.field.source"),
+            this.formatMemoryControlCenterSource(item.origin),
+        );
+        this.renderMemoryControlCenterMetadataRow(
+            metadata,
+            this.t("plugin.settings.memoryControlCenter.field.authority"),
+            this.formatMemoryControlCenterAuthority(item.authority),
+        );
+        this.renderMemoryControlCenterMetadataRow(
+            metadata,
+            this.t("plugin.settings.memoryControlCenter.field.scope"),
+            item.scopeLabel,
+        );
+        this.renderMemoryControlCenterMetadataRow(
+            metadata,
+            this.t("plugin.settings.memoryControlCenter.field.effect"),
+            this.formatMemoryControlCenterEffect(item.effect),
+        );
+        this.renderMemoryControlCenterMetadataRow(
+            metadata,
+            this.t("plugin.settings.memoryControlCenter.field.status"),
+            this.formatMemoryControlCenterLifecycle(item.lifecycle),
+        );
+        const timestamp = item.updatedAt ?? item.observedAt;
+        if (timestamp) {
+            this.renderMemoryControlCenterMetadataRow(
+                metadata,
+                this.t("plugin.settings.memoryControlCenter.field.updated"),
+                this.formatMemoryControlCenterTimestamp(timestamp),
+            );
+        }
+
+        for (const provenance of item.provenance) {
+            if (provenance.kind !== "vault_aggregate") continue;
+            this.renderMemoryControlCenterMetadataRow(
+                metadata,
+                this.t("plugin.settings.memoryControlCenter.field.includedNotes"),
+                this.t("plugin.settings.memoryControlCenter.includedCount", {
+                    count: provenance.includedFileCount,
+                }),
+            );
+            this.renderMemoryControlCenterMetadataRow(
+                metadata,
+                this.t("plugin.settings.memoryControlCenter.field.coverage"),
+                this.formatMemoryControlCenterCoverage(provenance.coverage),
+            );
+        }
+
+        const sourceLabels = this.collectMemoryControlCenterSourceLabels(item);
+        if (sourceLabels.length > 0) {
+            const sources = article.createEl("ul", { cls: "pa-memory-control-center__sources" });
+            for (const label of sourceLabels) sources.createEl("li", { text: label });
+        }
+        this.renderMemoryControlCenterItemActions(article, item);
+    }
+
+    private renderMemoryControlCenterItemActions(
+        article: HTMLElement,
+        item: MemoryControlCenterItem,
+    ): void {
+        if (!item.claimId || item.supportedActions.length === 0) return;
+        const actions = article.createDiv({ cls: "pa-memory-control-center__actions" });
+        for (const action of item.supportedActions) {
+            if (action === "undo_recent_change") continue;
+            const button = actions.createEl("button", {
+                text: this.t(`plugin.settings.memoryControlCenter.action.${action}` as PluginMessageKey),
+                attr: { type: "button" },
+            });
+            button.addEventListener("click", () => {
+                if (action === "correct") {
+                    this.renderMemoryControlCenterCorrectionEditor(article, actions, item);
+                    return;
+                }
+                void this.runMemoryControlCenterAction(button, action, item.claimId!);
+            });
+        }
+    }
+
+    private renderMemoryControlCenterCorrectionEditor(
+        article: HTMLElement,
+        actions: HTMLElement,
+        item: MemoryControlCenterItem,
+    ): void {
+        if (article.querySelector(".pa-memory-control-center__correction")) return;
+        const editor = article.createDiv({ cls: "pa-memory-control-center__correction" });
+        const input = editor.createEl("textarea", {
+            text: item.label,
+            attr: {
+                rows: "3",
+                "aria-label": this.t("plugin.settings.memoryControlCenter.action.correct"),
+            },
+        });
+        const buttons = editor.createDiv({ cls: "pa-memory-control-center__actions" });
+        const save = buttons.createEl("button", {
+            text: this.t("plugin.settings.memoryControlCenter.action.saveCorrection"),
+            attr: { type: "button" },
+        });
+        const cancel = buttons.createEl("button", {
+            text: this.t("plugin.settings.memoryControlCenter.action.cancel"),
+            attr: { type: "button" },
+        });
+        save.addEventListener("click", () => {
+            const summary = input.value.trim();
+            if (!summary || summary === item.label.trim()) return;
+            void this.runMemoryControlCenterAction(save, "correct", item.claimId!, summary);
+        });
+        cancel.addEventListener("click", () => editor.remove());
+        actions.querySelectorAll("button").forEach((button) => { (button as HTMLButtonElement).disabled = true; });
+        cancel.addEventListener("click", () => {
+            actions.querySelectorAll("button").forEach((button) => { (button as HTMLButtonElement).disabled = false; });
+        }, { once: true });
+        input.focus();
+    }
+
+    private renderMemoryControlCenterRecentChanges(
+        parentEl: HTMLElement,
+        snapshot: MemoryControlCenterSnapshot,
+    ): void {
+        const section = parentEl.createDiv({ cls: "pa-memory-control-center__recent" });
+        section.createEl("h3", { text: this.t("plugin.settings.memoryControlCenter.recent.title") });
+        section.createEl("p", {
+            text: this.t("plugin.settings.memoryControlCenter.recent.desc"),
+            cls: "pa-settings-section-desc-md",
+        });
+        const changes = snapshot.recentChanges ?? [];
+        if (changes.length === 0) {
+            section.createEl("p", {
+                text: this.t("plugin.settings.memoryControlCenter.recent.empty"),
+                cls: "pa-memory-control-center__empty",
+            });
+            return;
+        }
+        const list = section.createDiv({ cls: "pa-memory-control-center__items" });
+        for (const change of changes) {
+            const article = list.createEl("article", { cls: "pa-memory-control-center__item" });
+            article.dataset.paMemoryTargetId = change.id;
+            article.createEl("h4", {
+                text: change.redacted
+                    ? this.t("plugin.settings.memoryControlCenter.recent.forgotten")
+                    : change.label ?? this.t(
+                        `plugin.settings.memoryControlCenter.recent.kind.${change.kind}` as PluginMessageKey,
+                    ),
+            });
+            const metadata = article.createEl("dl", { cls: "pa-memory-control-center__metadata" });
+            this.renderMemoryControlCenterMetadataRow(
+                metadata,
+                this.t("plugin.settings.memoryControlCenter.field.updated"),
+                this.formatMemoryControlCenterTimestamp(change.occurredAt),
+            );
+            if (!change.redacted && change.scopeLabel) {
+                this.renderMemoryControlCenterMetadataRow(
+                    metadata,
+                    this.t("plugin.settings.memoryControlCenter.field.scope"),
+                    change.scopeLabel,
+                );
+            }
+            if (!change.redacted && change.sourcePath) {
+                this.renderMemoryControlCenterMetadataRow(
+                    metadata,
+                    this.t("plugin.settings.memoryControlCenter.field.source"),
+                    this.t("plugin.settings.memoryControlCenter.source.note", { path: change.sourcePath }),
+                );
+            }
+            if (!change.redacted && change.effect) {
+                this.renderMemoryControlCenterMetadataRow(
+                    metadata,
+                    this.t("plugin.settings.memoryControlCenter.field.effect"),
+                    this.formatMemoryControlCenterEffect(change.effect),
+                );
+            }
+            if (!change.redacted && change.status) {
+                this.renderMemoryControlCenterMetadataRow(
+                    metadata,
+                    this.t("plugin.settings.memoryControlCenter.field.status"),
+                    change.status === "restored"
+                        ? this.t("plugin.settings.memoryControlCenter.status.restored")
+                        : this.formatMemoryControlCenterLifecycle(
+                            change.status === "forgotten" ? "forgotten_marker" : change.status,
+                        ),
+                );
+            }
+            if (change.supportedActions.includes("undo_recent_change")) {
+                const actions = article.createDiv({ cls: "pa-memory-control-center__actions" });
+                const undo = actions.createEl("button", {
+                    text: this.t("plugin.settings.memoryControlCenter.action.undo_recent_change"),
+                    attr: { type: "button" },
+                });
+                undo.addEventListener("click", () => {
+                    void this.runMemoryControlCenterAction(undo, "undo_recent_change", change.id);
+                });
+            }
+        }
+    }
+
+    private async runMemoryControlCenterAction(
+        button: HTMLButtonElement,
+        action: "correct" | "pause_use" | "resume_use" | "apply_device_wide"
+            | "limit_to_current_vault" | "forget" | "retry_forget" | "undo_recent_change",
+        targetId: string,
+        summary?: string,
+    ): Promise<void> {
+        const generation = this.memoryControlCenterGeneration;
+        button.disabled = true;
+        try {
+            const result = await this.plugin.runMemoryControlCenterAction(action, targetId, summary);
+            new Notice(result.message, result.ok ? 3000 : 5000);
+            if (generation !== this.memoryControlCenterGeneration) return;
+            this.display();
+            this.openGroup("memory-personalization", targetId);
+        } catch (error) {
+            this.log("Memory control-center action failed", error);
+            new Notice(this.t("plugin.settings.memoryControlCenter.action.failed"), 5000);
+            if (generation === this.memoryControlCenterGeneration) button.disabled = false;
+        }
+    }
+
+    private renderMemoryControlCenterMetadataRow(parentEl: HTMLElement, label: string, value: string): void {
+        const row = parentEl.createDiv({ cls: "pa-memory-control-center__metadata-row" });
+        row.createEl("dt", { text: label });
+        row.createEl("dd", { text: value });
+    }
+
+    private focusPendingMemoryControlCenterTarget(consumeIfMissing: boolean): void {
+        const targetId = this.pendingMemoryControlCenterTargetId;
+        if (!targetId) return;
+        const target = Array.from(this.containerEl.querySelectorAll<HTMLElement>(".pa-memory-control-center__item"))
+            .find((element) => element.dataset.paMemoryTargetId === targetId);
+        if (!target) {
+            if (consumeIfMissing) this.pendingMemoryControlCenterTargetId = null;
+            return;
+        }
+        const details = this.containerEl.querySelector(".pa-memory-control-center__details");
+        if (details && details.tagName.toLowerCase() === "details") {
+            (details as HTMLDetailsElement).open = true;
+        }
+        target.setAttr("tabindex", "-1");
+        (target as HTMLElement & { addClass?: (cls: string) => void })
+            .addClass?.("pa-memory-control-center__item--targeted");
+        target.classList?.add?.("pa-memory-control-center__item--targeted");
+        target.scrollIntoView?.({ behavior: "smooth", block: "center" });
+        target.focus?.({ preventScroll: true });
+        this.pendingMemoryControlCenterTargetId = null;
+    }
+
+    private collectMemoryControlCenterSourceLabels(item: MemoryControlCenterItem): string[] {
+        const labels: string[] = [];
+        let hasConversationEvidence = false;
+        for (const provenance of item.provenance) {
+            if (provenance.kind === "note") {
+                labels.push(this.t("plugin.settings.memoryControlCenter.source.note", {
+                    path: provenance.sourceRef.path,
+                }));
+            } else if (provenance.kind === "conversation") {
+                hasConversationEvidence = true;
+            } else if (provenance.kind === "vault_aggregate") {
+                for (const sourceRef of provenance.representativeSourceRefs.slice(0, 3)) {
+                    labels.push(this.t("plugin.settings.memoryControlCenter.source.representativeNote", {
+                        path: sourceRef.path,
+                    }));
+                }
+            }
+        }
+        if (hasConversationEvidence) {
+            labels.push(this.t("plugin.settings.memoryControlCenter.source.conversation"));
+        }
+        return [...new Set(labels)];
+    }
+
+    private formatMemoryControlCenterSource(origin: MemoryControlCenterOrigin): string {
+        switch (origin) {
+            case "vault_insights":
+            case "note_memory":
+                return this.t("plugin.settings.memoryControlCenter.source.vaultInsights");
+            case "user_profile":
+            case "collaboration_preference":
+            case "recent_context":
+                return this.t("plugin.settings.memoryControlCenter.source.userProfile");
+            case "confirmed_memory":
+                return this.t("plugin.settings.memoryControlCenter.source.confirmedMemory");
+        }
+    }
+
+    private formatMemoryControlCenterEffect(effect: MemoryControlCenterEffect): string {
+        switch (effect) {
+            case "none":
+                return this.t("plugin.settings.memoryControlCenter.effect.none");
+            case "stored_not_in_use":
+                return this.t("plugin.settings.memoryControlCenter.effect.storedNotInUse");
+            case "retrieval_only":
+                return this.t("plugin.settings.memoryControlCenter.effect.retrievalOnly");
+            case "future_answers":
+                return this.t("plugin.settings.memoryControlCenter.effect.futureAnswers");
+            case "collaboration_default":
+                return this.t("plugin.settings.memoryControlCenter.effect.collaborationDefault");
+        }
+    }
+
+    private formatMemoryControlCenterAuthority(
+        authority: MemoryControlCenterItem["authority"],
+    ): string {
+        switch (authority) {
+            case "source_observation":
+                return this.t("plugin.settings.memoryControlCenter.authority.sourceObservation");
+            case "pa_inference":
+                return this.t("plugin.settings.memoryControlCenter.authority.paInference");
+            case "explicit_user":
+                return this.t("plugin.settings.memoryControlCenter.authority.explicitUser");
+            case "user_correction":
+                return this.t("plugin.settings.memoryControlCenter.authority.userCorrection");
+        }
+    }
+
+    private formatMemoryControlCenterCoverage(
+        coverage: "exact" | "representative" | "aggregate_only",
+    ): string {
+        switch (coverage) {
+            case "exact":
+                return this.t("plugin.settings.memoryControlCenter.coverage.exact");
+            case "representative":
+                return this.t("plugin.settings.memoryControlCenter.coverage.representative");
+            case "aggregate_only":
+                return this.t("plugin.settings.memoryControlCenter.coverage.aggregateOnly");
+        }
+    }
+
+    private formatMemoryControlCenterLifecycle(lifecycle: MemoryControlCenterLifecycle): string {
+        switch (lifecycle) {
+            case "derived": return this.t("plugin.settings.memoryControlCenter.status.derived");
+            case "active": return this.t("plugin.settings.memoryControlCenter.status.active");
+            case "archived": return this.t("plugin.settings.memoryControlCenter.status.archived");
+            case "paused": return this.t("plugin.settings.memoryControlCenter.status.paused");
+            case "forget_pending": return this.t("plugin.settings.memoryControlCenter.status.forgetPending");
+            case "stale": return this.t("plugin.settings.memoryControlCenter.status.stale");
+            case "exported": return this.t("plugin.settings.memoryControlCenter.status.exported");
+            case "forgotten_marker": return this.t("plugin.settings.memoryControlCenter.status.forgotten");
+        }
+    }
+
+    private formatMemoryControlCenterStatus(status: string): string {
+        switch (status) {
+            case "disabled": return this.t("plugin.settings.memoryControlCenter.status.disabled");
+            case "unknown": return this.t("plugin.settings.memoryControlCenter.status.unknown");
+            case "unprepared": return this.t("plugin.settings.memoryControlCenter.status.unprepared");
+            case "preparing": return this.t("plugin.settings.memoryControlCenter.status.preparing");
+            case "ready": return this.t("plugin.settings.memoryControlCenter.status.ready");
+            case "stale": return this.t("plugin.settings.memoryControlCenter.status.stale");
+            case "error": return this.t("plugin.settings.memoryControlCenter.status.error");
+            case "not_loaded": return this.t("plugin.settings.memoryControlCenter.status.notLoaded");
+            case "stale_boundary": return this.t("plugin.settings.memoryControlCenter.status.staleBoundary");
+            case "loading": return this.t("plugin.settings.memoryControlCenter.status.loading");
+            case "blocked": return this.t("plugin.settings.memoryControlCenter.status.blocked");
+            case "unavailable": return this.t("plugin.settings.memoryControlCenter.status.unavailable");
+            case "empty": return this.t("plugin.settings.memoryControlCenter.status.empty");
+            default: return this.t("plugin.settings.memoryControlCenter.status.error");
+        }
+    }
+
+    private formatMemoryControlCenterTimestamp(value: string): string {
+        const date = new Date(value);
+        if (!Number.isFinite(date.getTime())) return value;
+        return new Intl.DateTimeFormat(getPluginUiLanguage() === "zh" ? "zh-CN" : "en", {
+            dateStyle: "medium",
+            timeStyle: "short",
+        }).format(date);
+    }
+
     private rebuildMemorySubSettings(): void {
         if (!this.memorySubContainer) return;
         this.memorySubContainer.empty();
@@ -2622,6 +3395,27 @@ export class SettingTab extends PluginSettingTab {
                         await plugin.saveSettings();
                     });
             });
+
+        if ((plugin.getMemoryGovernanceUiMode?.() ?? "legacy_threshold") === "legacy_threshold"
+            && getMemoryTrustLevel(normalizeConfirmedMemoryCount(plugin.settings.confirmedMemoryCount)) >= 2) {
+            new Setting(container)
+                .setName(this.t("plugin.settings.memory.autoAccept.name"))
+                .setDesc(this.t("plugin.settings.memory.autoAccept.desc"))
+                .addToggle((toggle) => {
+                    toggle
+                        .setValue(!plugin.settings.memoryAutoAcceptPaused)
+                        .onChange(async (value) => {
+                            const previousPaused = plugin.settings.memoryAutoAcceptPaused;
+                            try {
+                                await plugin.setMemoryAutoAcceptPaused(!value);
+                            } catch (error) {
+                                toggle.setValue(!previousPaused);
+                                plugin.log("Failed to persist automatic Memory setting", error);
+                                new Notice(this.t("plugin.settings.memory.autoAccept.saveFailed"), 5000);
+                            }
+                        });
+                });
+        }
 
         new Setting(container)
             .setName(this.t("plugin.settings.memory.advancedControls.name"))

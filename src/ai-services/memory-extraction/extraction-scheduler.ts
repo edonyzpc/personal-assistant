@@ -4,7 +4,11 @@ import type { ChatHistoryManager } from "../../chat/chat-history-manager";
 import { clearPlatformInterval, clearPlatformTimeout, setPlatformInterval, setPlatformTimeout, type PlatformIntervalHandle, type PlatformTimeoutHandle } from "../../platform-dom";
 import { MemoryUserProfileStore, type UserProfileStore } from "./profile-store";
 import {
-    sanitizeUserProfileSnapshot,
+    SerializedProfileGovernancePort,
+    type ProfileGovernancePort,
+    type ProfileGovernanceMutation,
+} from "./profile-governance-port";
+import {
     TypeAUserProfileExtractor,
     type UserProfileCandidate,
     type UserProfileSnapshot,
@@ -12,13 +16,36 @@ import {
 import type { PersistedConversation, PersistedTurn } from "../../chat/chat-history-store";
 import { getOptionalPlatformDocument } from "../../platform-dom";
 import { TypeCVaultMetacognitionAnalyzer, type SemanticClusterProvider, type VaultMetacognitionSnapshot } from "./type-c-analyzer";
+import type { TypeAAdmissionBaseline } from "../../pa/memory-admission-coordinator";
 
 export type CreateModelForExtraction = () => Promise<{ invoke: (prompt: string) => Promise<string> } | null>;
+
+export interface TypeAAdmissionBatch {
+    current: UserProfileSnapshot | null;
+    proposed: UserProfileSnapshot;
+    candidates: UserProfileCandidate[];
+    baseline?: TypeAAdmissionBaseline;
+    evidence: {
+        conversationId: string;
+        throughTurnIndex: number;
+    };
+}
+
+export type TypeAAdmissionResult = { status: "processed" | "retry" };
+
+export type AdmitTypeACandidates = (
+    batch: TypeAAdmissionBatch,
+) => Promise<TypeAAdmissionResult>;
+
+type TypeAAdmissionBaselineOutcome =
+    | { status: "ready"; baseline: TypeAAdmissionBaseline }
+    | { status: "failed"; error: unknown };
 
 export interface MemoryExtractionSchedulerOptions {
     app: App;
     chatHistoryManager: ChatHistoryManager;
     userProfileStore?: UserProfileStore;
+    profileGovernancePort?: ProfileGovernancePort;
     log?: (message: string, error?: unknown) => void;
     now?: () => Date;
     typeAIntervalTurns?: number;
@@ -27,11 +54,21 @@ export interface MemoryExtractionSchedulerOptions {
     includeVaultInsightsInPrompt?: boolean;
     createModelForExtraction?: CreateModelForExtraction;
     shouldHandleVaultEvent?: (file: TFile) => boolean;
+    getDataBoundaryFingerprint?: () => string;
+    admitTypeACandidates?: AdmitTypeACandidates;
+    captureTypeAAdmissionBaseline?: () => Promise<TypeAAdmissionBaseline>;
+    getTypeAProcessedTurn?: (conversationId: string) => Promise<number | undefined>;
 }
 
 export interface MemoryExtractionPromptContext {
     userProfile?: string;
     vaultInsights?: string;
+}
+
+export interface VaultInsightsSnapshotContext {
+    snapshot: VaultMetacognitionSnapshot;
+    dataBoundaryFingerprint: string;
+    representativePaths: string[];
 }
 
 const DEFAULT_TYPE_A_INTERVAL_TURNS = 8;
@@ -48,7 +85,7 @@ export class MemoryExtractionScheduler {
     private readonly typeCRefreshIntervalMs: number;
     private readonly typeCWritePath: string | null;
     private includeVaultInsightsInPrompt: boolean;
-    private readonly userProfileStore: UserProfileStore;
+    private readonly profileGovernancePort: ProfileGovernancePort;
     private readonly typeAExtractor = new TypeAUserProfileExtractor();
     private readonly typeCAnalyzer: TypeCVaultMetacognitionAnalyzer;
     private typeATimer: PlatformTimeoutHandle | null = null;
@@ -58,12 +95,18 @@ export class MemoryExtractionScheduler {
     private disposed = false;
     private userProfileSnapshot: UserProfileSnapshot | null = null;
     private vaultSnapshot: VaultMetacognitionSnapshot | null = null;
+    private vaultSnapshotDataBoundaryFingerprint = "";
+    private vaultInsightsRefreshFailed = false;
     private vaultInsightsMarkdown = "";
     private lastTypeAConversationId: string | null = null;
     private typeCRefreshInFlight: Promise<VaultMetacognitionSnapshot | null> | null = null;
     private readonly typeAProcessedTurnByConversation = new Map<string, number>();
     private readonly createModelForExtraction: CreateModelForExtraction | null;
     private readonly shouldHandleVaultEvent: (file: TFile) => boolean;
+    private readonly getDataBoundaryFingerprint: () => string;
+    private readonly admitTypeACandidates: AdmitTypeACandidates | null;
+    private readonly captureTypeAAdmissionBaseline: MemoryExtractionSchedulerOptions["captureTypeAAdmissionBaseline"];
+    private readonly getTypeAProcessedTurn: MemoryExtractionSchedulerOptions["getTypeAProcessedTurn"];
 
     constructor(options: MemoryExtractionSchedulerOptions) {
         this.app = options.app;
@@ -76,9 +119,17 @@ export class MemoryExtractionScheduler {
             ? null
             : normalizePath(options.typeCWritePath);
         this.includeVaultInsightsInPrompt = options.includeVaultInsightsInPrompt ?? false;
-        this.userProfileStore = options.userProfileStore ?? new MemoryUserProfileStore();
+        this.profileGovernancePort = options.profileGovernancePort
+            ?? new SerializedProfileGovernancePort(
+                options.userProfileStore ?? new MemoryUserProfileStore(),
+                this.now,
+            );
         this.createModelForExtraction = options.createModelForExtraction ?? null;
         this.shouldHandleVaultEvent = options.shouldHandleVaultEvent ?? (() => true);
+        this.getDataBoundaryFingerprint = options.getDataBoundaryFingerprint ?? (() => "data_boundary:unknown");
+        this.admitTypeACandidates = options.admitTypeACandidates ?? null;
+        this.captureTypeAAdmissionBaseline = options.captureTypeAAdmissionBaseline;
+        this.getTypeAProcessedTurn = options.getTypeAProcessedTurn;
         this.typeCAnalyzer = new TypeCVaultMetacognitionAnalyzer(this.app, {
             shouldIncludeFile: (file) => this.shouldHandleVaultEvent(file),
         });
@@ -107,7 +158,7 @@ export class MemoryExtractionScheduler {
         this.typeATimer = null;
         this.typeCTimer = null;
         this.typeCInterval = null;
-        void this.userProfileStore.dispose().catch((error) => {
+        void this.profileGovernancePort.dispose().catch((error) => {
             this.log("Type A user profile store failed to close", error);
         });
     }
@@ -115,7 +166,7 @@ export class MemoryExtractionScheduler {
     getPromptContext(): MemoryExtractionPromptContext {
         return {
             ...(this.userProfileSnapshot?.markdown ? { userProfile: this.userProfileSnapshot.markdown } : {}),
-            ...(this.includeVaultInsightsInPrompt && this.vaultInsightsMarkdown
+            ...(this.getVaultInsightsStatus() === "ready" && this.vaultInsightsMarkdown
                 ? { vaultInsights: summarizeVaultInsightsForPrompt(this.vaultInsightsMarkdown) }
                 : {}),
         };
@@ -124,8 +175,40 @@ export class MemoryExtractionScheduler {
     getInsightsViewerContext(): MemoryExtractionPromptContext {
         return {
             ...(this.userProfileSnapshot?.markdown ? { userProfile: this.userProfileSnapshot.markdown } : {}),
-            ...(this.vaultInsightsMarkdown ? { vaultInsights: this.vaultInsightsMarkdown } : {}),
+            ...(this.getVaultInsightsStatus() === "ready" && this.vaultInsightsMarkdown
+                ? { vaultInsights: this.vaultInsightsMarkdown }
+                : {}),
         };
+    }
+
+    getUserProfileSnapshot(): UserProfileSnapshot | null {
+        return this.userProfileSnapshot ? cloneUserProfileSnapshot(this.userProfileSnapshot) : null;
+    }
+
+    async mutateUserProfile(operation: ProfileGovernanceMutation): Promise<UserProfileSnapshot> {
+        await this.ensureUserProfileStoreReady();
+        const snapshot = await this.profileGovernancePort.mutate(operation);
+        this.userProfileSnapshot = cloneUserProfileSnapshot(snapshot);
+        return cloneUserProfileSnapshot(snapshot);
+    }
+
+    getVaultInsightsSnapshot(): VaultInsightsSnapshotContext | null {
+        if (!this.vaultSnapshot || !this.vaultSnapshotDataBoundaryFingerprint) return null;
+        return {
+            snapshot: cloneVaultMetacognitionSnapshot(this.vaultSnapshot),
+            dataBoundaryFingerprint: this.vaultSnapshotDataBoundaryFingerprint,
+            representativePaths: collectRepresentativeVaultInsightPaths(this.vaultSnapshot),
+        };
+    }
+
+    getVaultInsightsStatus(): "disabled" | "not_loaded" | "ready" | "stale_boundary" | "error" {
+        if (!this.includeVaultInsightsInPrompt) return "disabled";
+        if (this.vaultSnapshot && this.vaultSnapshotDataBoundaryFingerprint) {
+            return this.getDataBoundaryFingerprint() === this.vaultSnapshotDataBoundaryFingerprint
+                ? "ready"
+                : "stale_boundary";
+        }
+        return this.vaultInsightsRefreshFailed ? "error" : "not_loaded";
     }
 
     setIncludeVaultInsightsInPrompt(include: boolean): void {
@@ -138,6 +221,8 @@ export class MemoryExtractionScheduler {
         } else {
             this.stopTypeCRefreshLoop();
             this.vaultSnapshot = null;
+            this.vaultSnapshotDataBoundaryFingerprint = "";
+            this.vaultInsightsRefreshFailed = false;
             this.vaultInsightsMarkdown = "";
         }
     }
@@ -147,9 +232,16 @@ export class MemoryExtractionScheduler {
         if (turnCount % this.typeAIntervalTurns !== 0 && this.lastTypeAConversationId === conversationId) return;
         this.lastTypeAConversationId = conversationId;
         if (this.typeATimer) clearPlatformTimeout(this.typeATimer);
+        // Convert a rejected capture into a settled outcome immediately. The
+        // timer may be delayed, replaced, or disposed before it gets a chance
+        // to await the capture, so retaining a raw rejected Promise here would
+        // surface an unhandled rejection in the meantime.
+        const baseline = this.admitTypeACandidates
+            ? this.captureTypeAAdmissionBaselineOutcome()
+            : undefined;
         this.typeATimer = setPlatformTimeout(() => {
             this.typeATimer = null;
-            void this.runTypeAExtraction(conversationId).catch((error) => {
+            void this.runTypeAExtraction(conversationId, baseline).catch((error) => {
                 this.log("Type A user profile extraction failed", error);
             });
         }, Math.max(0, delayMs));
@@ -177,8 +269,17 @@ export class MemoryExtractionScheduler {
         }, Math.max(0, delayMs));
     }
 
-    async runTypeAExtraction(conversationId: string): Promise<UserProfileSnapshot | null> {
+    async runTypeAExtraction(
+        conversationId: string,
+        scheduledBaseline?: Promise<TypeAAdmissionBaselineOutcome>,
+    ): Promise<UserProfileSnapshot | null> {
         if (this.disposed) return null;
+        const baselineOutcome = this.admitTypeACandidates
+            ? scheduledBaseline ?? this.captureTypeAAdmissionBaselineOutcome()
+            : undefined;
+        const capturedBaseline = baselineOutcome ? await baselineOutcome : undefined;
+        if (capturedBaseline?.status === "failed") throw capturedBaseline.error;
+        const baseline = capturedBaseline?.baseline;
         await this.ensureUserProfileStoreReady();
         if (this.disposed) return null;
         const conversation = await this.chatHistoryManager.findConversation(conversationId);
@@ -186,17 +287,55 @@ export class MemoryExtractionScheduler {
         if (!conversation) return this.userProfileSnapshot;
         const turns = await this.chatHistoryManager.getTurns(conversationId);
         if (this.disposed) return null;
-        const lastProcessedTurn = this.typeAProcessedTurnByConversation.get(conversationId) ?? -1;
+        const durableProcessedTurn = this.getTypeAProcessedTurn
+            ? await this.getTypeAProcessedTurn(conversationId)
+            : undefined;
+        const lastProcessedTurn = Math.max(
+            this.typeAProcessedTurnByConversation.get(conversationId) ?? -1,
+            durableProcessedTurn ?? -1,
+        );
         const newTurns = turns.filter((turn) => turn.turnIndex > lastProcessedTurn);
         if (newTurns.length === 0) return this.userProfileSnapshot;
         const candidates = await this.extractTypeACandidates(conversation, newTurns);
-        this.userProfileSnapshot = this.typeAExtractor.mergeCandidates(this.userProfileSnapshot, candidates, this.now());
-        await this.userProfileStore.setProfile(this.userProfileSnapshot);
+        if (this.admitTypeACandidates) {
+            const current = this.userProfileSnapshot
+                ? cloneUserProfileSnapshot(this.userProfileSnapshot)
+                : null;
+            const proposed = this.typeAExtractor.mergeCandidates(current, candidates, this.now());
+            const throughTurnIndex = Math.max(...newTurns.map((turn) => turn.turnIndex));
+            const admitted = await this.admitTypeACandidates({
+                current,
+                proposed: cloneUserProfileSnapshot(proposed),
+                candidates: candidates.map((candidate) => ({ ...candidate })),
+                ...(baseline ? { baseline } : {}),
+                evidence: { conversationId, throughTurnIndex },
+            });
+            if (admitted.status === "retry") return this.userProfileSnapshot;
+        } else {
+            this.userProfileSnapshot = await this.mutateUserProfile((current) => (
+                this.typeAExtractor.mergeCandidates(current, candidates, this.now())
+            ));
+        }
         this.typeAProcessedTurnByConversation.set(
             conversationId,
             Math.max(...newTurns.map((turn) => turn.turnIndex)),
         );
         return this.userProfileSnapshot;
+    }
+
+    private captureTypeAAdmissionBaselineOutcome(): Promise<TypeAAdmissionBaselineOutcome> | undefined {
+        if (!this.captureTypeAAdmissionBaseline) return undefined;
+        try {
+            return this.captureTypeAAdmissionBaseline().then<
+                TypeAAdmissionBaselineOutcome,
+                TypeAAdmissionBaselineOutcome
+            >(
+                (baseline) => ({ status: "ready", baseline }),
+                (error: unknown) => ({ status: "failed", error }),
+            );
+        } catch (error) {
+            return Promise.resolve({ status: "failed", error });
+        }
     }
 
     private async extractTypeACandidates(
@@ -239,6 +378,16 @@ export class MemoryExtractionScheduler {
         if (this.isMobileHidden()) return null;
         if (this.typeCRefreshInFlight) return this.typeCRefreshInFlight;
         this.typeCRefreshInFlight = this.runTypeCRefreshUnlocked()
+            .then((snapshot) => {
+                if (snapshot) this.vaultInsightsRefreshFailed = false;
+                return snapshot;
+            })
+            .catch((error) => {
+                if (!this.disposed && this.includeVaultInsightsInPrompt && !this.vaultSnapshot) {
+                    this.vaultInsightsRefreshFailed = true;
+                }
+                throw error;
+            })
             .finally(() => {
                 this.typeCRefreshInFlight = null;
             });
@@ -247,14 +396,24 @@ export class MemoryExtractionScheduler {
 
     private async runTypeCRefreshUnlocked(): Promise<VaultMetacognitionSnapshot | null> {
         if (this.disposed) return null;
+        const dataBoundaryFingerprint = this.getDataBoundaryFingerprint();
         const snapshot = await this.typeCAnalyzer.analyze(this.now());
         const markdown = this.typeCAnalyzer.renderMarkdown(snapshot);
         if (this.disposed || !this.includeVaultInsightsInPrompt) return null;
+        if (this.getDataBoundaryFingerprint() !== dataBoundaryFingerprint) {
+            this.scheduleTypeCRefresh("data-boundary-changed");
+            return null;
+        }
         if (this.typeCWritePath) {
             await writeVaultInsightsIfChanged(this.app, this.typeCWritePath, markdown);
             if (this.disposed || !this.includeVaultInsightsInPrompt) return null;
+            if (this.getDataBoundaryFingerprint() !== dataBoundaryFingerprint) {
+                this.scheduleTypeCRefresh("data-boundary-changed");
+                return null;
+            }
         }
         this.vaultSnapshot = snapshot;
+        this.vaultSnapshotDataBoundaryFingerprint = dataBoundaryFingerprint;
         this.vaultInsightsMarkdown = markdown;
         return snapshot;
     }
@@ -275,13 +434,9 @@ export class MemoryExtractionScheduler {
 
     private async ensureUserProfileStoreReady(): Promise<void> {
         if (!this.userProfileStoreReady) {
-            this.userProfileStoreReady = this.userProfileStore.initialize()
-                .then(async () => {
-                    const storedProfile = await this.userProfileStore.getProfile();
-                    this.userProfileSnapshot = sanitizeUserProfileSnapshot(storedProfile, this.now());
-                    if (storedProfile && this.userProfileSnapshot && hasUserProfileSnapshotChanged(storedProfile, this.userProfileSnapshot)) {
-                        await this.userProfileStore.setProfile(this.userProfileSnapshot);
-                    }
+            this.userProfileStoreReady = this.profileGovernancePort.initialize()
+                .then((storedProfile) => {
+                    this.userProfileSnapshot = storedProfile;
                 })
                 .catch((error) => {
                     this.userProfileStoreReady = null;
@@ -292,27 +447,61 @@ export class MemoryExtractionScheduler {
     }
 }
 
-function hasUserProfileSnapshotChanged(
-    before: UserProfileSnapshot,
-    after: UserProfileSnapshot,
-): boolean {
-    if (before.markdown !== after.markdown) return true;
-    if (before.records.length !== after.records.length) return true;
-    return before.records.some((record, index) => {
-        const next = after.records[index];
-        return !next
-            || record.key !== next.key
-            || record.text !== next.text
-            || record.kind !== next.kind
-            || record.confidence !== next.confidence
-            || record.confirmed !== next.confirmed
-            || record.occurrences !== next.occurrences
-            || record.observedAt !== next.observedAt
-            || record.conversationId !== next.conversationId
-            || record.conversationIds.length !== next.conversationIds.length
-            || record.conversationIds.some((conversationId, conversationIndex) =>
-                conversationId !== next.conversationIds[conversationIndex]);
-    });
+function cloneUserProfileSnapshot(snapshot: UserProfileSnapshot): UserProfileSnapshot {
+    return {
+        updatedAt: snapshot.updatedAt,
+        markdown: snapshot.markdown,
+        records: snapshot.records.map((record) => ({
+            ...record,
+            conversationIds: [...record.conversationIds],
+        })),
+    };
+}
+
+function cloneVaultMetacognitionSnapshot(snapshot: VaultMetacognitionSnapshot): VaultMetacognitionSnapshot {
+    return {
+        generatedAt: snapshot.generatedAt,
+        fileCount: snapshot.fileCount,
+        folderThemes: snapshot.folderThemes.map((entry) => ({ ...entry })),
+        tagTaxonomy: snapshot.tagTaxonomy.map((entry) => ({ ...entry })),
+        linkTopology: {
+            hubNotes: snapshot.linkTopology.hubNotes.map((entry) => ({ ...entry })),
+            unresolvedLinks: snapshot.linkTopology.unresolvedLinks.map((entry) => ({ ...entry })),
+        },
+        writingHabits: {
+            busiestWeekdays: snapshot.writingHabits.busiestWeekdays.map((entry) => ({ ...entry })),
+            averageWords: snapshot.writingHabits.averageWords,
+            recentlyActive: [...snapshot.writingHabits.recentlyActive],
+        },
+        topicClusters: snapshot.topicClusters.map((entry) => ({
+            label: entry.label,
+            paths: [...entry.paths],
+        })),
+        knowledgeGaps: snapshot.knowledgeGaps.map((entry) => ({ ...entry })),
+        trends: snapshot.trends.map((entry) => ({ ...entry })),
+    };
+}
+
+function collectRepresentativeVaultInsightPaths(snapshot: VaultMetacognitionSnapshot): string[] {
+    const paths = new Set<string>();
+    for (const cluster of snapshot.topicClusters) {
+        for (const path of cluster.paths) {
+            const normalized = normalizePath(path);
+            if (normalized) paths.add(normalized);
+            if (paths.size >= 20) return [...paths];
+        }
+    }
+    for (const note of snapshot.linkTopology.hubNotes) {
+        const normalized = normalizePath(note.path);
+        if (normalized) paths.add(normalized);
+        if (paths.size >= 20) return [...paths];
+    }
+    for (const path of snapshot.writingHabits.recentlyActive) {
+        const normalized = normalizePath(path);
+        if (normalized) paths.add(normalized);
+        if (paths.size >= 20) break;
+    }
+    return [...paths];
 }
 
 async function writeVaultInsightsIfChanged(app: App, path: string, markdown: string): Promise<void> {

@@ -20,6 +20,8 @@ export interface UserProfileCandidate {
 }
 
 export interface UserProfileRecord extends UserProfileCandidate {
+    /** Immutable exact-link target. Missing only on pre-governance legacy rows. */
+    profileRecordId?: string;
     occurrences: number;
     conversationIds: string[];
     confirmed: boolean;
@@ -110,6 +112,7 @@ export class TypeAUserProfileExtractor {
             if (!isProfileTextEligibleForStorage(record.text)) continue;
             byKey.set(record.key, {
                 ...record,
+                profileRecordId: getOrCreateUserProfileRecordId(record),
                 conversationIds: [...record.conversationIds],
             });
         }
@@ -124,6 +127,10 @@ export class TypeAUserProfileExtractor {
                     || candidate.confidence === "high";
                 byKey.set(candidate.key, {
                     ...candidate,
+                    profileRecordId: deriveUserProfileRecordId(
+                        candidate.key,
+                        [candidate.conversationId],
+                    ),
                     occurrences: 1,
                     conversationIds: [candidate.conversationId],
                     confirmed,
@@ -246,14 +253,60 @@ export function sanitizeUserProfileSnapshot(
     now = new Date(),
 ): UserProfileSnapshot | null {
     if (!snapshot) return null;
-    const records = snapshot.records.filter((record) => isProfileTextEligibleForStorage(record.text));
+    const records = snapshot.records
+        .filter((record) => isProfileTextEligibleForStorage(record.text))
+        .map((record) => ({
+            ...record,
+            profileRecordId: getOrCreateUserProfileRecordId(record),
+            conversationIds: [...record.conversationIds],
+        }));
+    const idsAdded = records.some((record, index) => (
+        record.profileRecordId !== snapshot.records[index]?.profileRecordId
+    ));
     return {
-        updatedAt: records.length === snapshot.records.length ? snapshot.updatedAt : now.toISOString(),
+        updatedAt: records.length === snapshot.records.length && !idsAdded
+            ? snapshot.updatedAt
+            : now.toISOString(),
         records,
-        markdown: renderUserProfileMarkdown(records, records.length === snapshot.records.length
+        markdown: renderUserProfileMarkdown(records, records.length === snapshot.records.length && !idsAdded
             ? new Date(snapshot.updatedAt)
             : now),
     };
+}
+
+export function getOrCreateUserProfileRecordId(
+    record: Pick<UserProfileRecord, "profileRecordId" | "key" | "conversationId" | "conversationIds">,
+): string {
+    const existing = typeof record.profileRecordId === "string"
+        ? record.profileRecordId.trim()
+        : "";
+    if (/^profile-[a-f0-9]{32}$/.test(existing)) return existing;
+    return deriveUserProfileRecordId(
+        record.key,
+        [record.conversationId, ...(Array.isArray(record.conversationIds) ? record.conversationIds : [])],
+    );
+}
+
+export function deriveUserProfileRecordId(
+    key: string,
+    conversationIds: readonly string[],
+): string {
+    const identity = JSON.stringify([
+        "user-profile-record-v1",
+        key.trim(),
+        [...new Set(conversationIds.map((id) => id.trim()).filter(Boolean))].sort(),
+    ]);
+    return `profile-${[0x811c9dc5, 0x9e3779b9, 0x85ebca6b, 0xc2b2ae35]
+        .map((seed, lane) => {
+            let hash = seed;
+            const salted = `${lane}\0${identity}`;
+            for (let index = 0; index < salted.length; index++) {
+                hash ^= salted.charCodeAt(index);
+                hash = Math.imul(hash, 0x01000193);
+            }
+            return (hash >>> 0).toString(16).padStart(8, "0");
+        })
+        .join("")}`;
 }
 
 export function sanitizeUserProfileMarkdownForPrompt(markdown: string): string {

@@ -22,7 +22,7 @@ export interface TabSectionRenderer {
 export interface TabSectionCallbacks {
     requestRerender: () => void;
     canCommitActionState?: () => boolean;
-    confirmAction?: (message: string) => Promise<boolean>;
+    confirmAction?: (options: { title: string; message: string }) => Promise<boolean>;
 }
 
 // ---------------------------------------------------------------------------
@@ -39,6 +39,25 @@ export interface MemoryCandidateActionResult {
 export interface MemoryCandidateActionState {
     status: MemoryCandidateActionStatus;
     message: string;
+}
+
+export type MemoryRecordActionStatus =
+    | "correcting"
+    | "pausing"
+    | "resuming"
+    | "forgetting"
+    | "undoing"
+    | "succeeded"
+    | "failed";
+
+export interface MemoryRecordActionState {
+    status: MemoryRecordActionStatus;
+    message: string;
+    action: "correct" | "pause" | "resume" | "forget" | "undo";
+}
+
+export interface MemoryRecordActionResult extends MemoryCandidateActionResult {
+    record?: import("../../../pa").ConfirmedMemoryRecord;
 }
 
 // ---------------------------------------------------------------------------

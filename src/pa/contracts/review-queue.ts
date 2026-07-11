@@ -146,6 +146,18 @@ export function validateReviewQueueItemBase(value: unknown, options: {
     if (!isRecord(value.scope) || !includesString(REVIEW_QUEUE_SCOPE_KINDS, value.scope.kind)) {
         return { ok: false, reason: "invalid_scope" };
     }
+    if (value.scope.label !== undefined && typeof value.scope.label !== "string") {
+        return { ok: false, reason: "invalid_scope_label" };
+    }
+    for (const key of ["paths", "tags"] as const) {
+        const entries = value.scope[key];
+        if (entries !== undefined && (
+            !Array.isArray(entries)
+            || entries.some((entry) => typeof entry !== "string")
+        )) {
+            return { ok: false, reason: `invalid_scope_${key}` };
+        }
+    }
     const requiredStrings = ["id", "createdAt", "updatedAt", "dataBoundarySnapshotId"] as const;
     for (const key of requiredStrings) {
         if (typeof value[key] !== "string" || value[key].length === 0) {
@@ -153,7 +165,16 @@ export function validateReviewQueueItemBase(value: unknown, options: {
         }
     }
     if (!Array.isArray(value.sourceRefs)) return { ok: false, reason: "missing_source_refs" };
+    if (value.sourceRefs.some((sourceRef) => !isRecord(sourceRef))) {
+        return { ok: false, reason: "invalid_source_refs" };
+    }
     if (!Array.isArray(value.whyShown)) return { ok: false, reason: "missing_why_shown" };
+    if (value.whyShown.some((reason) => typeof reason !== "string")) {
+        return { ok: false, reason: "invalid_why_shown" };
+    }
+    if (value.replayRef !== undefined && typeof value.replayRef !== "string") {
+        return { ok: false, reason: "invalid_replay_ref" };
+    }
     if (value.admissionReason !== undefined && !isReviewQueueAdmissionReason(value.admissionReason)) {
         return { ok: false, reason: "invalid_admission_reason" };
     }

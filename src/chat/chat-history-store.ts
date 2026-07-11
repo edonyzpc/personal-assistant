@@ -581,10 +581,13 @@ function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTra
 }
 
 function cloneContextUsedItem(item: ChatContextUsedItem): ChatContextUsedItem {
-    return {
-        ...item,
-        sources: item.sources ? item.sources.map((source) => ({ ...source })) : undefined,
-    };
+    const copy: ChatContextUsedItem = { ...item };
+    if (item.memoryClaimId) {
+        delete copy.sources;
+    } else if (item.sources) {
+        copy.sources = item.sources.map((source) => ({ ...source }));
+    }
+    return copy;
 }
 
 function cloneSourceRecord(record: SourceRecord): SourceRecord {

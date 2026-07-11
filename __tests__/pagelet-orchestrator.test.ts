@@ -820,6 +820,203 @@ describe("PageletOrchestrator detail expansion", () => {
         }));
     });
 
+    it("strips governed records, Recent changes, and the legacy count before opening effect-based Pagelet", () => {
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const candidate = makeReviewQueueItem({
+            id: "rq-effect-review",
+            type: "memory_candidate",
+            title: "Review preference",
+            claim: "Prefer concise planning notes.",
+            metadata: { memoryType: "preference", sensitivity: "low" },
+        });
+        const listReviewQueueItems: PageletHost["listReviewQueueItems"] = (filter) => (
+            filter?.types?.includes("memory_candidate") ? [candidate] : []
+        );
+        const host = makeHost({
+            openPageletDetailView,
+            listReviewQueueItems,
+            getMemoryGovernancePanelState: () => ({
+                governanceMode: "effect_based",
+                records: [makeMemoryRecord({ summary: "DURABLE RECORD MUST STAY IN SETTINGS" })],
+                recentChanges: [{
+                    id: "event-private",
+                    claimId: "mem-1",
+                    kind: "correct",
+                    occurredAt: "2026-07-10T12:00:00.000Z",
+                    summary: "RECENT CHANGE MUST STAY IN SETTINGS",
+                    undoAvailable: true,
+                }],
+                totalCount: 31,
+                confirmedMemoryCount: 30,
+            }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            currentLayoutType: "review" as const,
+            currentVisibleFindings: [],
+            currentPanelExtra: undefined,
+            close: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            currentPanelLayout: "review";
+            expandPanelToTab(): void;
+        };
+        internals.panelView = panelView;
+        internals.currentPanelLayout = "review";
+
+        internals.expandPanelToTab();
+
+        const payload = openPageletDetailView.mock.calls[0]?.[0];
+        const memory = payload?.extra?.memoryGovernance;
+        expect(memory).toMatchObject({
+            governanceMode: "effect_based",
+            records: [],
+            candidates: [expect.objectContaining({ id: "rq-effect-review" })],
+            totalCount: 1,
+        });
+        expect(memory?.recentChanges).toBeUndefined();
+        expect(memory?.confirmedMemoryCount).toBeUndefined();
+        expect(JSON.stringify(memory)).not.toContain("DURABLE RECORD MUST STAY IN SETTINGS");
+        expect(JSON.stringify(memory)).not.toContain("RECENT CHANGE MUST STAY IN SETTINGS");
+    });
+
+    it("routes only exact governed claims that participated in the Pagelet result", () => {
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const candidate = makeReviewQueueItem({
+            id: "rq-contextual-review",
+            type: "memory_candidate",
+        });
+        const listReviewQueueItems: PageletHost["listReviewQueueItems"] = (filter) => (
+            filter?.types?.includes("memory_candidate") ? [candidate] : []
+        );
+        const gateAwareRecord = (id: string) => ({
+            ...makeMemoryRecord({ id, summary: `Contextual ${id}` }),
+            effect: "future_answers" as const,
+            useStatus: "active" as const,
+            durableUseStatus: "active" as const,
+            actionPolicy: {
+                correct: true,
+                pause: true,
+                resume: true,
+                forget: true,
+            },
+        });
+        const host = makeHost({
+            openPageletDetailView,
+            listReviewQueueItems,
+            getMemoryGovernancePanelState: () => ({
+                governanceMode: "effect_based",
+                records: [gateAwareRecord("mem-1"), gateAwareRecord("mem-2")],
+                recentChanges: [{
+                    id: "recent-global-only",
+                    claimId: "mem-1",
+                    kind: "correct",
+                    occurredAt: "2026-07-10T12:00:00.000Z",
+                    summary: "Must remain in Settings",
+                    undoAvailable: true,
+                }],
+                totalCount: 2,
+            }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            currentLayoutType: "review" as const,
+            currentVisibleFindings: [],
+            currentPanelExtra: { usedGovernedMemoryClaimIds: ["mem-1"] },
+            close: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            currentPanelLayout: "review";
+            expandPanelToTab(): void;
+        };
+        internals.panelView = panelView;
+        internals.currentPanelLayout = "review";
+
+        internals.expandPanelToTab();
+
+        const memory = openPageletDetailView.mock.calls[0]?.[0].extra?.memoryGovernance;
+        expect(memory).toMatchObject({
+            governanceMode: "effect_based",
+            contextual: true,
+            records: [expect.objectContaining({
+                id: "mem-1",
+                summary: "Contextual mem-1",
+                actionPolicy: {
+                    correct: true,
+                    pause: false,
+                    resume: false,
+                    forget: false,
+                },
+            })],
+            candidates: [expect.objectContaining({ id: "rq-contextual-review" })],
+            totalCount: 2,
+        });
+        expect(memory?.records.some((record) => record.id === "mem-2")).toBe(false);
+        expect(memory?.recentChanges).toBeUndefined();
+        expect(JSON.stringify(memory)).not.toContain("Must remain in Settings");
+    });
+
+    it.each([
+        ["empty", []],
+        ["unknown", ["mem-missing"]],
+        ["duplicate", ["mem-1", "mem-1"]],
+        ["non-exact", [" mem-1"]],
+    ])("fails %s contextual governed claim IDs closed", (_label, usedGovernedMemoryClaimIds) => {
+        const openPageletDetailView = jest.fn<(_payload: PageletDetailPayload) => void>();
+        const candidate = makeReviewQueueItem({
+            id: "rq-fail-closed-review",
+            type: "memory_candidate",
+        });
+        const host = makeHost({
+            openPageletDetailView,
+            listReviewQueueItems: (filter) => (
+                filter?.types?.includes("memory_candidate") ? [candidate] : []
+            ),
+            getMemoryGovernancePanelState: () => ({
+                governanceMode: "effect_based",
+                records: [{
+                    ...makeMemoryRecord({ id: "mem-1" }),
+                    effect: "future_answers",
+                    useStatus: "active",
+                    durableUseStatus: "active",
+                    actionPolicy: {
+                        correct: true,
+                        pause: true,
+                        resume: true,
+                        forget: true,
+                    },
+                }],
+                totalCount: 1,
+            }),
+        });
+        const orchestrator = new PageletOrchestrator(host);
+        const panelView = {
+            currentLayoutType: "review" as const,
+            currentVisibleFindings: [],
+            currentPanelExtra: { usedGovernedMemoryClaimIds },
+            close: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            panelView: typeof panelView;
+            currentPanelLayout: "review";
+            expandPanelToTab(): void;
+        };
+        internals.panelView = panelView;
+        internals.currentPanelLayout = "review";
+
+        internals.expandPanelToTab();
+
+        expect(openPageletDetailView.mock.calls[0]?.[0].extra?.memoryGovernance).toMatchObject({
+            governanceMode: "effect_based",
+            contextual: true,
+            records: [],
+            candidates: [expect.objectContaining({ id: "rq-fail-closed-review" })],
+            totalCount: 1,
+        });
+    });
+
     it("runs manual Maintenance Review and opens preview results in the native detail tab", async () => {
         const maintenanceReview: MaintenanceReviewRunResult = {
             generatedAt: "2026-06-28T12:00:00.000Z",
@@ -1131,6 +1328,7 @@ describe("PageletOrchestrator detail expansion", () => {
                 relation: "current",
                 score: 90,
                 generatedAt: "2026-06-29T12:00:00.000Z",
+                context: { kind: "note_retrieval" },
             }],
         };
         const runQuietRecall = jest.fn(async () => quietRecall);
@@ -1156,6 +1354,13 @@ describe("PageletOrchestrator detail expansion", () => {
                 }),
             }),
         }));
+        const payload = openPageletDetailView.mock.calls[0]?.[0];
+        expect(payload?.extra?.memoryGovernance).toBeUndefined();
+        expect(payload?.extra?.quietRecall?.candidates[0]).toMatchObject({
+            context: { kind: "note_retrieval" },
+            sourceRefs: [expect.objectContaining({ path: "notes/current.md" })],
+            whyNow: ["Source matches the note you are looking at."],
+        });
     });
 
     afterEach(() => { jest.useRealTimers(); });
@@ -2411,10 +2616,6 @@ describe("PageletOrchestrator connection discovery", () => {
     });
 
     it("links Quiet Recall Bubble candidates only when the active note still matches the nudge source", async () => {
-        const linkRecallCandidate = jest.fn(async (_currentPath: string, _candidatePath: string) => ({
-            ok: true,
-            message: "Linked",
-        }));
         const recordQuietRecallFeedback = jest.fn(async (
             _candidate: QuietRecallCandidate,
             _feedback: "view" | "accept" | "dismiss" | "later" | "not_relevant",
@@ -2430,6 +2631,17 @@ describe("PageletOrchestrator connection discovery", () => {
             score: 80,
             generatedAt: "2026-06-29T12:00:00.000Z",
         };
+        const productionOwnerCandidate: QuietRecallCandidate = {
+            ...candidate,
+            id: "quiet-recall-link:notes/current.md:notes/related.md",
+        };
+        const linkRecallCandidate = jest.fn(async (_currentPath: string, _candidatePath: string) => {
+            await recordQuietRecallFeedback(productionOwnerCandidate, "accept");
+            return {
+                ok: true,
+                message: "Linked",
+            };
+        });
         const nudge: QuietRecallBubbleNudge = {
             candidateId: candidate.id,
             currentPath: "notes/current.md",
@@ -2452,7 +2664,8 @@ describe("PageletOrchestrator connection discovery", () => {
         await internals.handleQuietRecallBubbleLink(nudge);
 
         expect(linkRecallCandidate).toHaveBeenCalledWith("notes/current.md", "notes/related.md");
-        expect(recordQuietRecallFeedback).toHaveBeenCalledWith(candidate, "accept");
+        expect(recordQuietRecallFeedback).toHaveBeenCalledTimes(1);
+        expect(recordQuietRecallFeedback).toHaveBeenCalledWith(productionOwnerCandidate, "accept");
         expect(internals.quietRecallBubbleNudge).toBeNull();
         expect(bubbleView.close).toHaveBeenCalledTimes(1);
 

@@ -27,7 +27,15 @@ import { scopeRecapToDeliveryCandidate } from "./bubble/recap-card";
 import type { DeliveryCandidate } from "./bubble/types";
 import type { OnboardingNudge, OnboardingNudgeKind } from "./bubble/BubbleContent";
 import { PanelView } from "./panel/PanelView";
-import type { DiscoveryResult, NoteConnection, PanelFinding, PanelLayoutType, PanelOpenExtra } from "./panel/types";
+import { buildContextualGovernedMemoryState } from "./contextual-memory";
+import type {
+    DiscoveryResult,
+    NoteConnection,
+    PanelFinding,
+    PanelLayoutType,
+    PanelMemoryGovernanceState,
+    PanelOpenExtra,
+} from "./panel/types";
 import type { PageletCommandCallbacks } from "./commands";
 import { ProactiveHints } from "./hints/ProactiveHints";
 import type { PetCorner, PetTaskKind } from "./pet/types";
@@ -1537,7 +1545,8 @@ export class PageletOrchestrator {
         const result = await this.host.linkRecallCandidate(currentPath, candidatePath);
         if (result.ok) {
             this.clearQuietRecallBubbleNudge();
-            this.recordQuietRecallFeedback(candidate, "accept");
+            // The shared Link host owns successful acceptance feedback for all
+            // entry points; recording here would double-count Bubble actions.
         } else {
             new Notice(result.message, 5000);
         }
@@ -1598,7 +1607,12 @@ export class PageletOrchestrator {
         this.panelView?.open(
             layoutType,
             panelFindings,
-            usePreparedFindings ? undefined : this.panelExtraForLayout(layoutType),
+            usePreparedFindings
+                ? {
+                    usedGovernedMemoryClaimIds: this.preloadCache
+                        .getUsedGovernedMemoryClaimIds(),
+                }
+                : this.panelExtraForLayout(layoutType),
         );
     }
 
@@ -1679,12 +1693,26 @@ export class PageletOrchestrator {
 
     private withGlobalLedgerExtra(extra: PanelOpenExtra | undefined): PanelOpenExtra | undefined {
         const savedInsights = this.host.listSavedInsights();
-        const memories = this.host.listConfirmedMemories();
+        const rawMemoryState: PanelMemoryGovernanceState = this.host.getMemoryGovernancePanelState?.()
+            ?? (() => {
+                const records = this.host.listConfirmedMemories();
+                return { records, totalCount: records.length };
+            })();
+        const memoryState: PanelMemoryGovernanceState = rawMemoryState.governanceMode === "effect_based"
+            ? buildContextualGovernedMemoryState(
+                rawMemoryState,
+                extra?.usedGovernedMemoryClaimIds,
+            )
+            : rawMemoryState;
+        const memories = memoryState.records;
         const memoryCandidates = this.host.listReviewQueueItems({
             types: ["memory_candidate", "memory_conflict"],
             statuses: ["suggested", "edited", "snoozed"],
         });
-        if (savedInsights.length === 0 && memories.length === 0 && memoryCandidates.length === 0) return extra;
+        if (savedInsights.length === 0
+            && memories.length === 0
+            && memoryCandidates.length === 0
+            && (memoryState.recentChanges?.length ?? 0) === 0) return extra;
         return {
             ...(extra ?? {}),
             ...(savedInsights.length > 0 ? {
@@ -1695,17 +1723,25 @@ export class PageletOrchestrator {
             } : {}),
             ...(memories.length > 0 ? {
                 memoryGovernance: {
+                    ...memoryState,
                     records: memories,
                     ...(memoryCandidates.length > 0 ? { candidates: memoryCandidates } : {}),
                     totalCount: memories.length + memoryCandidates.length,
-                    confirmedMemoryCount: this.host.settings.confirmedMemoryCount ?? 0,
+                    ...(memoryState.governanceMode !== "effect_based"
+                        && memoryState.governanceMode !== "unavailable" ? {
+                        confirmedMemoryCount: this.host.settings.confirmedMemoryCount ?? 0,
+                    } : {}),
                 },
-            } : memoryCandidates.length > 0 ? {
+            } : memoryCandidates.length > 0 || (memoryState.recentChanges?.length ?? 0) > 0 ? {
                 memoryGovernance: {
+                    ...memoryState,
                     records: [],
-                    candidates: memoryCandidates,
+                    ...(memoryCandidates.length > 0 ? { candidates: memoryCandidates } : {}),
                     totalCount: memoryCandidates.length,
-                    confirmedMemoryCount: this.host.settings.confirmedMemoryCount ?? 0,
+                    ...(memoryState.governanceMode !== "effect_based"
+                        && memoryState.governanceMode !== "unavailable" ? {
+                        confirmedMemoryCount: this.host.settings.confirmedMemoryCount ?? 0,
+                    } : {}),
                 },
             } : {}),
         };

@@ -2,7 +2,7 @@
 
 import { Modal, Notice, Platform, Setting, type App } from "obsidian";
 import type { MemoryHost } from "./memory";
-import type { VSS, VSSOperationSummary, VSSProgressEvent } from "./vss";
+import type { VSS, VSSMemoryStatus, VSSOperationSummary, VSSProgressEvent } from "./vss";
 import { getPluginUiLanguage, pluginT, type PluginLocale } from "./locales/plugin";
 import {
     clearPlatformInterval,
@@ -54,6 +54,18 @@ export interface MemoryPreparationStatus {
     chunksTotal?: number;
     failed?: number;
     startedAt: number;
+}
+
+export type MemoryStatus = "disabled" | "preparing" | VSSMemoryStatus;
+
+export interface MemoryStatusSnapshot {
+    enabled: boolean;
+    status: MemoryStatus;
+    indexedDocumentCount?: number;
+    dirtyCount: number;
+    verificationPending: number;
+    lastErrorCode?: string;
+    preparation?: MemoryPreparationStatus;
 }
 
 export interface MemoryDecisionResult {
@@ -225,6 +237,30 @@ export class MemoryManager {
             failed: this.activePreparationStatus.failed,
             startedAt: this.activePreparationStatus.startedAt,
         };
+    }
+
+    getStatusSnapshot(): MemoryStatusSnapshot {
+        const vssSnapshot = this.vss.getMemoryStatusSnapshot();
+        const enabled = this.isMemoryEnabled();
+        const preparation = enabled ? this.getActivePreparationStatus() : null;
+        const snapshot: MemoryStatusSnapshot = {
+            enabled,
+            status: enabled
+                ? (preparation ? "preparing" : vssSnapshot.status)
+                : "disabled",
+            dirtyCount: vssSnapshot.dirtyCount,
+            verificationPending: vssSnapshot.verificationPending,
+        };
+        if (vssSnapshot.indexedDocumentCount !== undefined) {
+            snapshot.indexedDocumentCount = vssSnapshot.indexedDocumentCount;
+        }
+        if (vssSnapshot.lastErrorCode) {
+            snapshot.lastErrorCode = vssSnapshot.lastErrorCode;
+        }
+        if (preparation) {
+            snapshot.preparation = preparation;
+        }
+        return snapshot;
     }
 
     startAutoMaintenance(): void {

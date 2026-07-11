@@ -25,6 +25,7 @@ import type {
     ReviewQueueItem,
     SavedInsight,
 } from "../../pa";
+import type { MemoryControlCenterEffect } from "../../pa/memory-control-center";
 
 /** Which scenario opened the Panel -- determines layout */
 export type PanelLayoutType = "review" | "current" | "discover" | "summary";
@@ -105,14 +106,64 @@ export interface PanelSavedInsightState {
     totalCount: number;
 }
 
+export type PanelMemoryUseStatus = "active" | "paused" | "stored_not_in_use";
+
+export interface PanelMemoryActionPolicy {
+    correct: boolean;
+    pause: boolean;
+    resume: boolean;
+    forget: boolean;
+}
+
+/** UI-facing projection over a legacy record; optional fields keep old payloads compatible. */
+export interface PanelMemoryGovernanceRecord extends ConfirmedMemoryRecord {
+    effect?: MemoryControlCenterEffect;
+    /** Gate-aware status shown to the user. */
+    useStatus?: PanelMemoryUseStatus;
+    /** Durable lifecycle status used to choose Pause versus Resume. */
+    durableUseStatus?: PanelMemoryUseStatus;
+    /** Shared Settings/Pagelet action policy; current durable status selects pause/resume. */
+    actionPolicy?: PanelMemoryActionPolicy;
+}
+
+export type PanelMemoryRecentChangeKind =
+    | "add"
+    | "replace"
+    | "auto_remove"
+    | "correct"
+    | "pause"
+    | "resume"
+    | "undo"
+    | "change_scope"
+    | "forget";
+
+/** Seven-day audit projection. Forget rows deliberately ignore all optional content fields. */
+export interface PanelMemoryRecentChange {
+    id: string;
+    claimId: string;
+    kind: PanelMemoryRecentChangeKind;
+    occurredAt: string;
+    summary?: string;
+    sourcePath?: string;
+    scopeLabel?: string;
+    effect?: MemoryControlCenterEffect;
+    status?: "active" | "paused" | "restored" | "forgotten";
+    undoAvailable?: boolean;
+}
+
 export interface PanelMemoryGovernanceState {
-    records: ConfirmedMemoryRecord[];
+    governanceMode?: "effect_based" | "legacy_threshold" | "unavailable";
+    /** Records are an exact current-result trace, not the global durable ledger. */
+    contextual?: boolean;
+    records: PanelMemoryGovernanceRecord[];
     candidates?: ReviewQueueItem[];
     totalCount: number;
     /** Routed ReviewQueue items (memory-domain) merged from the review queue. */
     routedItems?: ReviewQueueItem[];
     /** Number of confirmed memories (for graduated trust model). */
     confirmedMemoryCount?: number;
+    /** Real change-event projection; never synthesized from record.updatedAt. */
+    recentChanges?: PanelMemoryRecentChange[];
 }
 
 export interface PanelMaintenanceReviewState extends MaintenanceReviewRunResult {
@@ -131,6 +182,8 @@ export interface PanelOpenExtra {
     sourcePath?: string;
     reviewQueue?: PanelReviewQueueState;
     contextPager?: ContextPagerState;
+    /** Opaque claims proven to have participated in the current Pagelet result. */
+    usedGovernedMemoryClaimIds?: string[];
     savedInsights?: PanelSavedInsightState;
     memoryGovernance?: PanelMemoryGovernanceState;
     maintenanceReview?: PanelMaintenanceReviewState;

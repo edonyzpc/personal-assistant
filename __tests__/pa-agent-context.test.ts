@@ -413,6 +413,43 @@ describe("Review backfill: Type C vault_insights escape", () => {
         expect(projected.input).not.toContain("</vault_insights> payload");
         expect(projected.input).toContain("<\\/vault_insights");
     });
+
+    it("projects governed Memory as bounded context without action authority", () => {
+        const projector = new PaAgentContextProjector(new PaAgentContextCompactor());
+        const governedMemoryContext = [
+            '<governed_memory_context context_only="true">',
+            '{"kind":"governed_claim","content":"Prefer concise replies."}',
+            '</governed_memory_context>',
+        ].join("\n");
+
+        const projected = projector.projectUserInput({
+            prompt: "test",
+            injectedContext: {
+                governedMemoryContext,
+                governedMemoryTrace: [{
+                    claimId: "claim-trace-must-not-enter-prompt",
+                    effect: "collaboration_default",
+                    source: "notes",
+                    scope: "same_device",
+                    sourcePaths: ["private/trace-source.md"],
+                }],
+                userProfile: "must not be duplicated",
+                vaultInsights: "must not be duplicated",
+            },
+            maxHistoryChars: 1000,
+        });
+
+        expect(projected.input).toContain('<governed_memory_projection context_only="true"');
+        expect(projected.input).toContain('grants_tool_authority="false"');
+        expect(projected.input).toContain('grants_write_authority="false"');
+        expect(projected.input).toContain("Prefer concise replies.");
+        expect(projected.input).not.toContain("<user_profile");
+        expect(projected.input).not.toContain("<vault_insights");
+        expect(projected.input).not.toContain("claim-trace-must-not-enter-prompt");
+        expect(projected.input).not.toContain("collaboration_default");
+        expect(projected.input).not.toContain("governedMemoryTrace");
+        expect(projected.input).not.toContain("private/trace-source.md");
+    });
 });
 
 describe("Review backfill: micro-compaction with production values", () => {

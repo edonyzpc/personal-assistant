@@ -1932,18 +1932,44 @@ export class LLMView extends ItemView {
             listEl.empty();
             items.forEach((item) => {
                 const row = listEl.createDiv({ cls: `thinking-status-context-item context-used-${item.category}` });
-                row.createDiv({ cls: 'thinking-status-context-label', text: item.label });
-                if (item.detail) {
-                    row.createDiv({ cls: 'thinking-status-context-detail', text: item.detail });
+                if (item.memoryClaimId && this.host.openMemorySettings) {
+                    const target = row.createEl('button', {
+                        cls: 'thinking-status-context-label thinking-status-context-memory-link',
+                        text: t("plugin.chat.thinking.savedUnderstanding"),
+                    });
+                    target.setAttr('type', 'button');
+                    target.addEventListener('click', () => this.host.openMemorySettings?.(item.memoryClaimId));
+                } else {
+                    row.createDiv({ cls: 'thinking-status-context-label', text: item.label });
                 }
-                const sourceSummary = formatSourceSummary(item.sources);
+                const effectDetail = item.memoryEffect === 'future_answers'
+                    ? t("plugin.chat.thinking.savedUnderstandingFutureAnswers")
+                    : item.memoryEffect === 'collaboration_default'
+                        ? t("plugin.chat.thinking.savedUnderstandingCollaborationDefault")
+                        : item.detail;
+                const sourceDetail = item.memorySource
+                    ? t(`plugin.chat.thinking.savedUnderstandingSource.${item.memorySource}`)
+                    : undefined;
+                const scopeDetail = item.memoryScope
+                    ? t(`plugin.chat.thinking.savedUnderstandingScope.${item.memoryScope}`)
+                    : undefined;
+                const detail = [sourceDetail, scopeDetail, effectDetail].filter(Boolean).join(' · ');
+                if (detail) {
+                    row.createDiv({ cls: 'thinking-status-context-detail', text: detail });
+                }
+                const sourceSummary = item.memoryClaimId ? '' : formatSourceSummary(item.sources);
                 if (sourceSummary) {
                     row.createDiv({ cls: 'thinking-status-context-sources', text: sourceSummary });
                 }
                 if (item.citationEligible) {
                     row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.memoryEligible") });
                 } else if (item.statusOnly) {
-                    row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.statusOnly") });
+                    row.createDiv({
+                        cls: 'thinking-status-context-note',
+                        text: item.memoryClaimId
+                            ? t("plugin.chat.thinking.savedUnderstandingNotCitation")
+                            : t("plugin.chat.thinking.statusOnly"),
+                    });
                 } else {
                     row.createDiv({ cls: 'thinking-status-context-note', text: t("plugin.chat.thinking.notMemoryReference") });
                 }

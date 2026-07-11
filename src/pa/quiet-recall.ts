@@ -9,6 +9,10 @@ import type { SavedInsight, SavedInsightResult } from "./saved-insight-store";
 
 export type QuietRecallRelation = "current" | "related" | "far";
 
+export type QuietRecallContext =
+    | { kind: "note_retrieval" }
+    | { kind: "governed_claim"; claimId: string };
+
 export interface QuietRecallCurrentNote {
     path: string;
     title?: string;
@@ -43,6 +47,8 @@ export interface QuietRecallCandidate {
     relation: QuietRecallRelation;
     score: number;
     generatedAt: string;
+    /** Exact participation trace. Missing legacy values never imply a Memory target. */
+    context?: QuietRecallContext;
 }
 
 export interface QuietRecallRunResult {
@@ -355,6 +361,7 @@ function vaultNoteCandidate(
         relation: relationForVaultNote(signals),
         score,
         generatedAt: options.generatedAt,
+        context: { kind: "note_retrieval" },
     };
 }
 
@@ -392,6 +399,7 @@ export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): Q
             relation: relation.relation,
             score: relation.score,
             generatedAt,
+            context: { kind: "note_retrieval" },
         });
     }
     for (const note of input.vaultNotes ?? []) {
@@ -419,6 +427,12 @@ export function buildQuietRecallCandidates(input: QuietRecallBuildInput = {}): Q
         totalCount: Math.min(maxCandidates, candidates.length),
         candidates: candidates.slice(0, maxCandidates),
     };
+}
+
+export function quietRecallGovernedClaimId(candidate: QuietRecallCandidate): string | null {
+    if (candidate.context?.kind !== "governed_claim") return null;
+    const claimId = candidate.context.claimId;
+    return claimId && claimId === claimId.trim() ? claimId : null;
 }
 
 export function quietRecallCandidateToSavedInsightInput(candidate: QuietRecallCandidate): {

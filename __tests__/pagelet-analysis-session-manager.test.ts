@@ -183,6 +183,32 @@ describe("AnalysisSessionManager", () => {
             expect(result!.rawFindings).toEqual([finding]);
         });
 
+        it("threads only the analysis result's opaque governed claim IDs into panel extra", async () => {
+            const { manager } = makeManager({
+                createForegroundAnalyzeCallback: () => async () => ({
+                    findings: [],
+                    analyzedFiles: ["notes/current.md"],
+                    analyzedAt: Date.now(),
+                    tokenCost: { input: 10, output: 0 },
+                    usedGovernedMemoryClaimIds: ["claim-used-by-review"],
+                }),
+            });
+
+            await manager.analyzeFiles(
+                [{ path: "notes/current.md" } as any],
+                { range: "current", expectedActivePath: "notes/current.md" },
+                () => false,
+            );
+
+            expect(manager.panelExtraForLayout("review")).toMatchObject({
+                usedGovernedMemoryClaimIds: ["claim-used-by-review"],
+            });
+            manager.clearAnalysisSession();
+            expect(manager.panelExtraForLayout("review")).toMatchObject({
+                usedGovernedMemoryClaimIds: [],
+            });
+        });
+
         it("returns null when destroyed during analysis", async () => {
             let destroyed = false;
             const { manager } = makeManager({

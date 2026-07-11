@@ -734,6 +734,23 @@ export class PaAgentRuntime {
 
         const runId = createAgentRunId();
         const legacyEvents = new AgentEventEmitter(options.onEvent);
+        const injectedContext = this.readInjectedContext();
+        const governedMemoryTrace = injectedContext?.governedMemoryTrace ?? [];
+        if (governedMemoryTrace.length > 0) {
+            legacyEvents.turnMetadata({
+                hasMemoryContent: true,
+                allowedMemorySourcePaths: [],
+                contextUsed: governedMemoryTrace.map((trace) => ({
+                    category: "memory",
+                    label: "Saved understanding",
+                    statusOnly: true,
+                    memoryClaimId: trace.claimId,
+                    memoryEffect: trace.effect,
+                    ...(trace.source ? { memorySource: trace.source } : {}),
+                    ...(trace.scope ? { memoryScope: trace.scope } : {}),
+                })),
+            });
+        }
         const eventAdapter = new CanonicalToLegacyEventAdapter(legacyEvents, options.onLifecycleEvent);
         let additionalProvidersLoaded = false;
         await recordStartupTimingAsync(
@@ -806,7 +823,7 @@ export class PaAgentRuntime {
                 input,
                 toolConstraintsFromAgentControlSnapshot(input.controlSnapshot) ?? toolUseConstraints,
                 toolDefinitions,
-                this.readInjectedContext(),
+                injectedContext,
             );
         const model: PaAgentModel = {
             stream: async function* (input: PaAgentModelInput): AsyncIterable<PaAgentModelStreamChunk> {

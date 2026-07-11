@@ -24,4 +24,9 @@ export class PreloadCache {
     getFindings(): PreloadFinding[] {
         return this.entry?.result.findings ?? [];
     }
+
+    getUsedGovernedMemoryClaimIds(): string[] {
+        const value = this.entry?.result.usedGovernedMemoryClaimIds;
+        return Array.isArray(value) ? [...value] : [];
+    }
 }

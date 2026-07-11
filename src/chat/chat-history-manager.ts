@@ -1,4 +1,5 @@
 import type {
+    ChatContextUsedItem,
     ChatMessage,
     ChatRuntimeWarning,
     ChatTurnMemoryMetadata,
@@ -240,7 +241,7 @@ export class ChatHistoryManager {
             assistant: assistantMessage,
             ...(memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(memoryMetadata) } : {}),
             ...(entry.contextUsedItems && entry.contextUsedItems.length > 0
-                ? { contextUsed: entry.contextUsedItems.map((item) => ({ ...item })) }
+                ? { contextUsed: entry.contextUsedItems.map(cloneContextUsedItem) }
                 : {}),
             ...(entry.activityDetails && entry.activityDetails.length > 0
                 ? { activityDetails: [...entry.activityDetails] }
@@ -265,7 +266,7 @@ export class ChatHistoryManager {
             conversationId: turn.conversationId,
             turnIndex: turn.turnIndex,
             sourceRecords: turn.assistant.sourceRecords,
-            contextUsed: turn.contextUsed,
+            contextUsed: turn.contextUsed?.map(cloneContextUsedItem),
             status,
         });
         const assistantMessage: ChatMessage = {
@@ -283,7 +284,7 @@ export class ChatHistoryManager {
             assistant: assistantMessage,
             ...(memoryMetadata ? { memoryMetadata: cloneMemoryMetadata(memoryMetadata) } : {}),
             ...(turn.contextUsed && turn.contextUsed.length > 0
-                ? { contextUsedItems: turn.contextUsed.map((item) => ({ ...item })) }
+                ? { contextUsedItems: turn.contextUsed.map(cloneContextUsedItem) }
                 : {}),
             ...(turn.activityDetails && turn.activityDetails.length > 0
                 ? { activityDetails: [...turn.activityDetails] }
@@ -337,7 +338,7 @@ function rebuildCanonicalTurn(input: {
             ? { sourceRecords: input.sourceRecords.map(cloneSourceRecord) }
             : {}),
         ...(input.contextUsed && input.contextUsed.length > 0
-            ? { contextUsed: input.contextUsed.map((item) => ({ ...item })) }
+            ? { contextUsed: input.contextUsed.map(cloneContextUsedItem) }
             : {}),
         messages: [],
     };
@@ -348,13 +349,23 @@ function cloneMemoryMetadata(metadata: ChatTurnMemoryMetadata): ChatTurnMemoryMe
         hasMemoryContent: metadata.hasMemoryContent,
         allowedMemorySourcePaths: [...metadata.allowedMemorySourcePaths],
         ...(metadata.contextUsed
-            ? { contextUsed: metadata.contextUsed.map((item) => ({ ...item })) }
+            ? { contextUsed: metadata.contextUsed.map(cloneContextUsedItem) }
             : {}),
         ...(metadata.sourceRecords
             ? { sourceRecords: metadata.sourceRecords.map(cloneSourceRecord) }
             : {}),
         ...(metadata.contextTrace ? { contextTrace: cloneContextTrace(metadata.contextTrace) } : {}),
     };
+}
+
+function cloneContextUsedItem(item: ChatContextUsedItem): ChatContextUsedItem {
+    const copy: ChatContextUsedItem = { ...item };
+    if (item.memoryClaimId) {
+        delete copy.sources;
+    } else if (item.sources) {
+        copy.sources = item.sources.map((source) => ({ ...source }));
+    }
+    return copy;
 }
 
 function cloneContextTrace(trace: NonNullable<ChatTurnMemoryMetadata["contextTrace"]>): NonNullable<ChatTurnMemoryMetadata["contextTrace"]> {

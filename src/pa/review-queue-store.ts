@@ -30,6 +30,12 @@ export interface ReviewQueueState {
     items: ReviewQueueItem[];
 }
 
+/** Synchronous queue view plus an asynchronous, commit-before-publish write boundary. */
+export interface ReviewQueueRepository {
+    read(): ReviewQueueState;
+    write(state: ReviewQueueState): Promise<void>;
+}
+
 export interface ReviewQueueCreateInput {
     type: ReviewQueueItemType;
     title: string;
@@ -72,6 +78,7 @@ export interface ReviewQueueStoreOptions {
     items?: readonly ReviewQueueItem[];
     now?: () => Date;
     persist?: (state: ReviewQueueState) => Promise<void> | void;
+    repository?: ReviewQueueRepository;
     idFactory?: () => string;
 }
 
@@ -122,30 +129,54 @@ const ADMISSION_REASONS_BY_TYPE: Readonly<Record<ReviewQueueItemType, readonly R
 const MAX_QUEUE_SIZE = 200;
 const EVICTABLE_STATUSES = new Set<ReviewQueueStatus>(["dismissed", "expired", "failed"]);
 
+export class CallbackReviewQueueRepository implements ReviewQueueRepository {
+    private state: ReviewQueueState;
+
+    constructor(
+        items: readonly ReviewQueueItem[] = [],
+        private readonly persist?: (state: ReviewQueueState) => Promise<void> | void,
+    ) {
+        this.state = { items: normalizeReviewQueueItems(items) };
+    }
+
+    read(): ReviewQueueState {
+        return { items: this.state.items.map(cloneItem) };
+    }
+
+    async write(state: ReviewQueueState): Promise<void> {
+        const next = { items: normalizeReviewQueueItems(state.items) };
+        await this.persist?.({ items: next.items.map(cloneItem) });
+        this.state = next;
+    }
+}
+
 export class ReviewQueueStore {
     private items: ReviewQueueItem[];
+    private mutationTail: Promise<void> = Promise.resolve();
     private readonly now: () => Date;
-    private readonly persist?: (state: ReviewQueueState) => Promise<void> | void;
+    private readonly repository: ReviewQueueRepository;
     private readonly idFactory: () => string;
 
     constructor(options: ReviewQueueStoreOptions = {}) {
-        this.items = normalizeReviewQueueItems(options.items ?? []);
+        this.repository = options.repository ?? new CallbackReviewQueueRepository(
+            options.items ?? [],
+            options.persist,
+        );
+        this.items = this.evictItems(normalizeReviewQueueItems(this.repository.read().items));
         this.now = options.now ?? (() => new Date());
-        this.persist = options.persist;
         this.idFactory = options.idFactory ?? (() => `rq-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
-        this.evictIfNeeded();
     }
 
-    private evictIfNeeded(): void {
-        if (this.items.length <= MAX_QUEUE_SIZE) return;
+    private evictItems(items: ReviewQueueItem[]): ReviewQueueItem[] {
+        if (items.length <= MAX_QUEUE_SIZE) return items;
         const keep: ReviewQueueItem[] = [];
         const evictable: ReviewQueueItem[] = [];
-        for (const item of this.items) {
+        for (const item of items) {
             (EVICTABLE_STATUSES.has(item.status) ? evictable : keep).push(item);
         }
         evictable.sort((a, b) => a.updatedAt.localeCompare(b.updatedAt));
         const budget = MAX_QUEUE_SIZE - keep.length;
-        this.items = [...keep, ...evictable.slice(Math.max(0, evictable.length - budget))];
+        return [...keep, ...evictable.slice(Math.max(0, evictable.length - budget))];
     }
 
     snapshot(): ReviewQueueState {
@@ -194,14 +225,19 @@ export class ReviewQueueStore {
         const itemValidation = validateReviewQueueItem(item);
         if (!itemValidation.ok) return itemValidation;
 
-        const duplicate = this.items.find((existing) => isDuplicateItem(existing, item));
-        if (duplicate && shouldPreserveDuplicateStatus(duplicate.status)) {
-            return { ok: true, value: cloneItem(duplicate) };
-        }
-        this.items = [item, ...this.items.filter((existing) => !isDuplicateItem(existing, item))];
-        this.evictIfNeeded();
-        await this.flush();
-        return { ok: true, value: cloneItem(item) };
+        return this.serializeMutation(async () => {
+            const duplicate = this.items.find((existing) => isDuplicateItem(existing, item));
+            if (duplicate && shouldPreserveDuplicateStatus(duplicate.status)) {
+                return { ok: true, value: cloneItem(duplicate) };
+            }
+            const nextItems = this.evictItems([
+                item,
+                ...this.items.filter((existing) => !isDuplicateItem(existing, item)),
+            ]);
+            await this.flush(nextItems);
+            this.items = nextItems;
+            return { ok: true, value: cloneItem(item) };
+        });
     }
 
     async updateStatus(
@@ -209,24 +245,29 @@ export class ReviewQueueStore {
         status: ReviewQueueStatus,
         options: { snoozedUntil?: string } = {},
     ): Promise<ReviewQueueResult<ReviewQueueItem>> {
-        const index = this.items.findIndex((item) => item.id === id);
-        if (index < 0) return { ok: false, reason: "not_found" };
-        const current = this.items[index];
-        const allowed = VALID_STATUS_TRANSITIONS[current.status];
-        if (!allowed || !allowed.includes(status)) {
-            return { ok: false, reason: `invalid_transition_${current.status}_to_${status}` };
-        }
-        const item = cloneItem(current);
-        item.status = status;
-        item.updatedAt = this.now().toISOString();
-        if (status === "snoozed" && options.snoozedUntil) {
-            item.snoozedUntil = options.snoozedUntil;
-        } else {
-            delete item.snoozedUntil;
-        }
-        this.items[index] = item;
-        await this.flush();
-        return { ok: true, value: cloneItem(item) };
+        const snoozedUntil = options.snoozedUntil;
+        return this.serializeMutation(async () => {
+            const index = this.items.findIndex((item) => item.id === id);
+            if (index < 0) return { ok: false, reason: "not_found" };
+            const current = this.items[index];
+            const allowed = VALID_STATUS_TRANSITIONS[current.status];
+            if (!allowed || !allowed.includes(status)) {
+                return { ok: false, reason: `invalid_transition_${current.status}_to_${status}` };
+            }
+            const item = cloneItem(current);
+            item.status = status;
+            item.updatedAt = this.now().toISOString();
+            if (status === "snoozed" && snoozedUntil) {
+                item.snoozedUntil = snoozedUntil;
+            } else {
+                delete item.snoozedUntil;
+            }
+            const nextItems = [...this.items];
+            nextItems[index] = item;
+            await this.flush(nextItems);
+            this.items = nextItems;
+            return { ok: true, value: cloneItem(item) };
+        });
     }
 
     dismiss(id: string): Promise<ReviewQueueResult<ReviewQueueItem>> {
@@ -237,8 +278,14 @@ export class ReviewQueueStore {
         return this.updateStatus(id, "snoozed", { snoozedUntil: until });
     }
 
-    private async flush(): Promise<void> {
-        await this.persist?.(this.snapshot());
+    private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.mutationTail.then(operation, operation);
+        this.mutationTail = result.then(() => undefined, () => undefined);
+        return result;
+    }
+
+    private async flush(items: readonly ReviewQueueItem[]): Promise<void> {
+        await this.repository.write({ items: items.map(cloneItem) });
     }
 }
 
@@ -255,6 +302,20 @@ export function validateReviewQueueItem(item: ReviewQueueItem): ReviewQueueResul
     }
     if (typeof item.claim !== "string" || item.claim.trim().length === 0) {
         return { ok: false, reason: "missing_claim" };
+    }
+    if (item.snoozedUntil !== undefined && typeof item.snoozedUntil !== "string") {
+        return { ok: false, reason: "invalid_snoozed_until" };
+    }
+    if (item.metadata !== undefined && (
+        !isRecord(item.metadata)
+        || Object.values(item.metadata).some((value) => (
+            value !== null
+            && typeof value !== "string"
+            && typeof value !== "number"
+            && typeof value !== "boolean"
+        ))
+    )) {
+        return { ok: false, reason: "invalid_metadata" };
     }
     if (hasForbiddenPersistedTextFields(item)) {
         return { ok: false, reason: "forbidden_persisted_text" };

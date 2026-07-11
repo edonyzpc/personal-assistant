@@ -7,6 +7,7 @@ import {
     getMemoryApprovalCopy,
     type MemoryMaintenancePlan,
 } from '../src/memory-manager';
+import type { VSSMemoryStatusSnapshot } from '../src/vss';
 
 const mockNoticeMessages: string[] = [];
 const mockProgressSteps: string[] = [];
@@ -147,6 +148,11 @@ const createPlugin = (plan: MemoryMaintenancePlan, settings: Record<string, unkn
         },
         vss: {
             getMemoryReadiness: jest.fn(async () => plan),
+            getMemoryStatusSnapshot: jest.fn<() => VSSMemoryStatusSnapshot>(() => ({
+                status: 'unknown' as const,
+                dirtyCount: 0,
+                verificationPending: 0,
+            })),
             canAutoMaintain: jest.fn(async () => true),
             hasDirtyChanges: jest.fn(() => false),
             hasPendingVerification: jest.fn(() => false),
@@ -190,6 +196,54 @@ beforeEach(() => {
 });
 
 const createMockDomElement = mockCreateDomElement;
+
+describe('MemoryManager status snapshot', () => {
+    it('projects cached VSS state without running readiness work', () => {
+        const plugin = createPlugin(createPlan());
+        plugin.vss.getMemoryStatusSnapshot.mockReturnValue({
+            status: 'ready',
+            indexedDocumentCount: 4,
+            dirtyCount: 1,
+            verificationPending: 2,
+            lastErrorCode: 'cached-warning',
+        });
+        const manager = createManager(plugin);
+
+        const snapshot = manager.getStatusSnapshot();
+
+        expect(snapshot).toEqual({
+            enabled: true,
+            status: 'ready',
+            indexedDocumentCount: 4,
+            dirtyCount: 1,
+            verificationPending: 2,
+            lastErrorCode: 'cached-warning',
+        });
+        expect(plugin.vss.getMemoryReadiness).not.toHaveBeenCalled();
+
+        snapshot.dirtyCount = 99;
+        expect(manager.getStatusSnapshot().dirtyCount).toBe(1);
+    });
+
+    it('lets the disabled setting override cached VSS readiness', () => {
+        const plugin = createPlugin(createPlan(), { memoryEnabled: false });
+        plugin.vss.getMemoryStatusSnapshot.mockReturnValue({
+            status: 'ready',
+            indexedDocumentCount: 4,
+            dirtyCount: 0,
+            verificationPending: 0,
+        });
+        const manager = createManager(plugin);
+
+        expect(manager.getStatusSnapshot()).toEqual({
+            enabled: false,
+            status: 'disabled',
+            indexedDocumentCount: 4,
+            dirtyCount: 0,
+            verificationPending: 0,
+        });
+    });
+});
 
 describe('MemoryManager chat decisions', () => {
     beforeEach(() => {
@@ -672,6 +726,14 @@ describe('MemoryManager command decisions', () => {
                 action: 'rebuild',
                 message: 'Checking notes',
             });
+            expect(manager.getStatusSnapshot()).toMatchObject({
+                enabled: true,
+                status: 'preparing',
+                preparation: {
+                    action: 'rebuild',
+                    message: 'Checking notes',
+                },
+            });
 
             onProgress?.({ phase: 'writing', filesDone: 25, filesTotal: 1846, failed: 0 });
 
@@ -688,6 +750,11 @@ describe('MemoryManager command decisions', () => {
             await preparing;
 
             expect(manager.getActivePreparationStatus()).toBeNull();
+            expect(manager.getStatusSnapshot()).toMatchObject({
+                enabled: true,
+                status: 'unknown',
+            });
+            expect(manager.getStatusSnapshot()).not.toHaveProperty('preparation');
 
             onProgress?.({ phase: 'writing', filesDone: 26, filesTotal: 1846, failed: 0 });
             expect(manager.getActivePreparationStatus()).toBeNull();

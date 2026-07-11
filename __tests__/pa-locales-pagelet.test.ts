@@ -84,6 +84,16 @@ describe("pageletT lookup", () => {
             pageletT("pagelet.cost.estimate", "en", { usd: 0.04 as unknown as string }),
         ).toBe("Estimated cost: 0.04 (USD)");
     });
+
+    it("states that Forget preserves visible conversation history and how to remove it", () => {
+        const en = pageletT("pagelet.tab.memory.forgetConfirmMessage", "en");
+        const zh = pageletT("pagelet.tab.memory.forgetConfirmMessage", "zh");
+
+        expect(en).toContain("existing conversations stay unchanged");
+        expect(en).toContain("delete a message or conversation separately");
+        expect(zh).toContain("已有对话不会改动");
+        expect(zh).toContain("另行删除对应消息或对话");
+    });
 });
 
 describe("makePageletTranslator", () => {

@@ -73,20 +73,31 @@ export function mergeContextUsedItems(
 ): ChatContextUsedItem[] {
     const byKey = new Map<string, ChatContextUsedItem>();
     for (const item of [...current, ...incoming]) {
-        const key = `${item.category}:${item.label}`;
+        const key = `${item.category}:${item.label}:${item.memoryClaimId ?? ""}`;
         const existing = byKey.get(key);
         if (!existing) {
+            const safeItem = { ...item };
+            delete safeItem.sources;
             byKey.set(key, {
-                ...item,
-                sources: dedupeContextSources(item.sources),
+                ...safeItem,
+                ...(item.memoryClaimId
+                    ? {}
+                    : { sources: dedupeContextSources(item.sources) }),
             });
             continue;
         }
-        existing.sources = dedupeContextSources([
-            ...(existing.sources ?? []),
-            ...(item.sources ?? []),
-        ]);
+        if (existing.memoryClaimId) {
+            delete existing.sources;
+        } else {
+            existing.sources = dedupeContextSources([
+                ...(existing.sources ?? []),
+                ...(item.sources ?? []),
+            ]);
+        }
         existing.detail ??= item.detail;
+        existing.memoryEffect ??= item.memoryEffect;
+        existing.memorySource ??= item.memorySource;
+        existing.memoryScope ??= item.memoryScope;
         existing.citationEligible = Boolean(existing.citationEligible || item.citationEligible);
         existing.statusOnly = Boolean(existing.statusOnly || item.statusOnly);
     }
@@ -100,11 +111,14 @@ export function normalizeContextUsedItems(value: unknown): ChatContextUsedItem[]
             if (!item || typeof item !== 'object') return null;
             const record = item as Record<string, unknown>;
             if (typeof record.category !== 'string' || typeof record.label !== 'string') return null;
+            const memoryClaimId = typeof record.memoryClaimId === 'string'
+                ? record.memoryClaimId
+                : undefined;
             return {
                 category: record.category as ChatContextUsedItem['category'],
                 label: record.label,
                 detail: typeof record.detail === 'string' ? record.detail : undefined,
-                sources: Array.isArray(record.sources)
+                sources: !memoryClaimId && Array.isArray(record.sources)
                     ? record.sources
                         .map((source): NonNullable<ChatContextUsedItem['sources']>[number] | null => {
                             if (!source || typeof source !== 'object') return null;
@@ -124,6 +138,21 @@ export function normalizeContextUsedItems(value: unknown): ChatContextUsedItem[]
                     : undefined,
                 citationEligible: record.citationEligible === true,
                 statusOnly: record.statusOnly === true,
+                memoryClaimId,
+                memoryEffect: record.memoryEffect === 'future_answers'
+                    || record.memoryEffect === 'collaboration_default'
+                    ? record.memoryEffect
+                    : undefined,
+                memorySource: record.memorySource === 'notes'
+                    || record.memorySource === 'interactions'
+                    || record.memorySource === 'settings'
+                    || record.memorySource === 'mixed'
+                    ? record.memorySource
+                    : undefined,
+                memoryScope: record.memoryScope === 'current_vault'
+                    || record.memoryScope === 'same_device'
+                    ? record.memoryScope
+                    : undefined,
             };
         })
         .filter((item): item is ChatContextUsedItem => Boolean(item));
@@ -172,7 +201,7 @@ export function mergeSourceRecords(current: SourceRecord[], incoming: SourceReco
             record.path ?? '',
             record.url ?? '',
             record.title ?? '',
-        ].join(' ');
+        ].join('\u0000');
         if (!byKey.has(key)) {
             byKey.set(key, record);
         }

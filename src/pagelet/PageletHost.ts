@@ -18,7 +18,7 @@ import type { AnalyzeCallback } from "./preload/types";
 import type { GeneratedReviewNote } from "./output/types";
 import type { WriteResult } from "./output/types";
 import type { PageletDetailPayload } from "./tab/types";
-import type { DiscoveryResult } from "./panel/types";
+import type { DiscoveryResult, PanelMemoryGovernanceState } from "./panel/types";
 import type {
     ConfirmedMemoryRecord,
     GraphDiscoveryRunResult,
@@ -206,4 +206,7 @@ export interface PageletHost {
 
     /** List local Confirmed Memory governance records for the Pagelet detail shell. */
     listConfirmedMemories(): ConfirmedMemoryRecord[];
+
+    /** Governed record/effect/change projection when the device-local reader is authoritative. */
+    getMemoryGovernancePanelState?(): PanelMemoryGovernanceState;
 }

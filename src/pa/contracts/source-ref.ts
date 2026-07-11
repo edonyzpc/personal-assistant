@@ -49,20 +49,48 @@ export type SourceRefValidationResult =
     | { ok: true }
     | { ok: false; reason: string };
 
-export function validateSourceRefPathShape(ref: Pick<UISourceRef, "path" | "heading" | "blockId">): SourceRefValidationResult {
+export function validateSourceRefPathShape(ref: unknown): SourceRefValidationResult {
+    if (!isRecord(ref)) return { ok: false, reason: "source_ref_not_object" };
     if (typeof ref.path !== "string" || ref.path.trim().length === 0) {
         return { ok: false, reason: "empty_path" };
     }
     if (CONTROL_CHARS_RE.test(ref.path)) return { ok: false, reason: "control_char_path" };
-    if (ref.path.startsWith("/") || /^[a-zA-Z]:/.test(ref.path)) return { ok: false, reason: "absolute_path" };
+    if (ref.path.startsWith("/") || ref.path.startsWith("\\") || /^[a-zA-Z]:/.test(ref.path)) {
+        return { ok: false, reason: "absolute_path" };
+    }
     if (ref.path.split(/[\\/]/).some((segment) => segment === "..")) {
         return { ok: false, reason: "parent_traversal" };
     }
-    if (ref.heading !== undefined && (ref.heading.trim().length === 0 || CONTROL_CHARS_RE.test(ref.heading))) {
-        return { ok: false, reason: "invalid_heading" };
+    if (ref.heading !== undefined) {
+        if (typeof ref.heading !== "string" || ref.heading.trim().length === 0 || CONTROL_CHARS_RE.test(ref.heading)) {
+            return { ok: false, reason: "invalid_heading" };
+        }
     }
-    if (ref.blockId !== undefined && !/^\^?[A-Za-z0-9_-]+$/.test(ref.blockId)) {
-        return { ok: false, reason: "invalid_block_id" };
+    if (ref.blockId !== undefined) {
+        if (typeof ref.blockId !== "string" || !/^\^?[A-Za-z0-9_-]+$/.test(ref.blockId)) {
+            return { ok: false, reason: "invalid_block_id" };
+        }
+    }
+    if (ref.whyShown !== undefined && (
+        !Array.isArray(ref.whyShown)
+        || ref.whyShown.some((reason) => typeof reason !== "string")
+    )) {
+        return { ok: false, reason: "invalid_why_shown" };
+    }
+    if (ref.evidenceStrength !== undefined && !EVIDENCE_STRENGTHS.includes(ref.evidenceStrength as EvidenceStrength)) {
+        return { ok: false, reason: "invalid_evidence_strength" };
+    }
+    for (const key of [
+        "excerpt",
+        "generatedAt",
+        "contentHash",
+        "excerptHash",
+        "sourceId",
+        "retrievalOutcomeId",
+    ] as const) {
+        if (ref[key] !== undefined && typeof ref[key] !== "string") {
+            return { ok: false, reason: `invalid_${key}` };
+        }
     }
     return { ok: true };
 }

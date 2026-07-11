@@ -3,6 +3,7 @@ import { describe, expect, it } from "@jest/globals";
 import {
     buildQuietRecallCandidates,
     computeRecallScore,
+    quietRecallGovernedClaimId,
     quietRecallCandidateToBubbleNudge,
     quietRecallCandidateToSavedInsightInput,
     type SavedInsight,
@@ -27,6 +28,23 @@ function makeInsight(overrides: Partial<SavedInsight> = {}): SavedInsight {
 }
 
 describe("buildQuietRecallCandidates", () => {
+    it("requires an exact governed claim trace before exposing a Memory target", () => {
+        const base = buildQuietRecallCandidates({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md" },
+            savedInsights: [makeInsight()],
+        }).candidates[0];
+        expect(quietRecallGovernedClaimId(base)).toBeNull();
+        expect(quietRecallGovernedClaimId({
+            ...base,
+            context: { kind: "governed_claim", claimId: "claim-exact" },
+        })).toBe("claim-exact");
+        expect(quietRecallGovernedClaimId({
+            ...base,
+            context: { kind: "governed_claim", claimId: " claim-exact " },
+        })).toBeNull();
+    });
+
     it("scores semantic relevance as the dominant vault-note signal", () => {
         const highSemanticOld = computeRecallScore({
             semanticRelevance: 0.9,
@@ -83,6 +101,7 @@ describe("buildQuietRecallCandidates", () => {
         expect(result.candidates[0]).toEqual(expect.objectContaining({
             sourceInsightId: "ins-current",
             relation: "current",
+            context: { kind: "note_retrieval" },
         }));
         expect(result.candidates[0].score).toBeGreaterThan(result.candidates[1].score);
     });
@@ -136,6 +155,7 @@ describe("buildQuietRecallCandidates", () => {
             id: expect.stringMatching(/^qr-vault-/),
             title: "Recall: Beta plan",
             relation: "related",
+            context: { kind: "note_retrieval" },
         }));
         expect(result.candidates[0].sourceInsightId).toBeUndefined();
         expect(result.candidates[0].sourceRefs[0]).toEqual(expect.objectContaining({

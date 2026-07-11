@@ -152,6 +152,32 @@ describe("PA Agent canonical history metadata", () => {
         expect(canonicalTurn.contextUsed?.[0]).not.toBe(metadata.contextUsed?.[0]);
     });
 
+    it("keeps distinct governed Memory routes when labels match after history rehydration", () => {
+        const canonicalTurn = createPaAgentPersistedTurn({
+            runId: "run-governed-memory",
+            turnId: "turn-governed-memory",
+            contextUsed: [{
+                category: "memory",
+                label: "Saved understanding",
+                memoryClaimId: "claim-a",
+                memoryEffect: "future_answers",
+            }, {
+                category: "memory",
+                label: "Saved understanding",
+                memoryClaimId: "claim-b",
+                memoryEffect: "collaboration_default",
+            }],
+            messages: [],
+        });
+
+        const metadata = extractCanonicalTurnMetadata(canonicalTurn);
+
+        expect(metadata.contextUsed).toEqual([
+            expect.objectContaining({ memoryClaimId: "claim-a" }),
+            expect.objectContaining({ memoryClaimId: "claim-b" }),
+        ]);
+    });
+
     it("dual-reads canonical metadata first and legacy metadata as fallback", () => {
         const legacyMetadata: ChatTurnMemoryMetadata = {
             hasMemoryContent: true,

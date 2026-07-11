@@ -26,6 +26,8 @@ export interface PreloadResult {
     analyzedFiles: string[];
     analyzedAt: number;
     tokenCost: { input: number; output: number };
+    /** Exact governed claims actually supplied to this analysis run. Missing is fail-closed. */
+    usedGovernedMemoryClaimIds?: string[];
 }
 
 /** Cache entry */

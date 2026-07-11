@@ -1,6 +1,7 @@
 import {
     MEMORY_SENSITIVITIES,
     MEMORY_TYPES,
+    REVIEW_QUEUE_SCOPE_KINDS,
     hasForbiddenPersistedTextFields,
     validateMemoryCandidate,
     validateMemoryLifecycleRecord,
@@ -30,16 +31,29 @@ export interface ConfirmedMemoryRecord extends MemoryLifecycleRecord {
     updatePolicy?: "manual-only" | "suggest-update-on-conflict" | "expire-after-date" | "refresh-on-scope-review" | "ask-before-cross-scope-use";
     confirmationStrength?: "light" | "explicit" | "special" | "auto";
     confirmationSource?: "pagelet" | "weekly_review" | "chat" | "memory_panel";
+    /** Originating queue item for exact audit reconciliation; absent on legacy records. */
+    originReviewQueueItemId?: string;
 }
 
 export interface MemoryGovernanceState {
     records: ConfirmedMemoryRecord[];
 }
 
+/**
+ * Synchronous record view plus serialized persistence boundary used by the
+ * current domain store. The device-local V1 repository is adapted to this
+ * interface only after its async initialization and migration cutover.
+ */
+export interface MemoryGovernanceRecordRepository {
+    read(): MemoryGovernanceState;
+    write(state: MemoryGovernanceState): Promise<void>;
+}
+
 export interface MemoryGovernanceStoreOptions {
     records?: readonly ConfirmedMemoryRecord[];
     now?: () => Date;
     persist?: (state: MemoryGovernanceState) => Promise<void> | void;
+    repository?: MemoryGovernanceRecordRepository;
     idFactory?: () => string;
 }
 
@@ -95,9 +109,37 @@ export function memoryCandidateFromQueueItem(item: ReviewQueueItem): MemoryGover
 }
 
 export function validateConfirmedMemoryRecord(record: ConfirmedMemoryRecord): MemoryGovernanceResult<ConfirmedMemoryRecord> {
+    if (!isRecord(record)) return { ok: false, reason: "record_not_object" };
     const lifecycle = validateMemoryLifecycleRecord(record);
     if (!lifecycle.ok) return { ok: false, reason: lifecycle.reason };
     if (hasForbiddenPersistedTextFields(record)) return { ok: false, reason: "forbidden_persisted_text" };
+    if (typeof record.id !== "string" || record.id.length === 0) return { ok: false, reason: "missing_id" };
+    if (typeof record.summary !== "string") return { ok: false, reason: "missing_summary" };
+    if (!Array.isArray(record.sourceRefs)) return { ok: false, reason: "missing_source_refs" };
+    if (!isRecord(record.scope) || !includesString(REVIEW_QUEUE_SCOPE_KINDS, record.scope.kind)) {
+        return { ok: false, reason: "invalid_scope" };
+    }
+    if (record.scope.label !== undefined && typeof record.scope.label !== "string") {
+        return { ok: false, reason: "invalid_scope_label" };
+    }
+    for (const key of ["paths", "tags"] as const) {
+        const entries = record.scope[key];
+        if (entries !== undefined && (
+            !Array.isArray(entries)
+            || entries.some((entry) => typeof entry !== "string")
+        )) {
+            return { ok: false, reason: `invalid_scope_${key}` };
+        }
+    }
+    if (typeof record.createdAt !== "string" || typeof record.updatedAt !== "string") {
+        return { ok: false, reason: "invalid_timestamps" };
+    }
+    if (record.originReviewQueueItemId !== undefined && (
+        typeof record.originReviewQueueItemId !== "string"
+        || record.originReviewQueueItemId.trim().length === 0
+    )) {
+        return { ok: false, reason: "invalid_origin_review_queue_item_id" };
+    }
     if (record.lifecycle === "forgotten_tombstone") {
         if (record.summary.trim().length > 0) return { ok: false, reason: "tombstone_has_summary" };
         if (record.sourceRefs.length > 0) return { ok: false, reason: "tombstone_has_source_refs" };
@@ -119,16 +161,41 @@ export function normalizeMemoryGovernanceState(value: unknown): MemoryGovernance
     return { records: normalizeMemoryRecords(value.records) };
 }
 
+export class CallbackMemoryGovernanceRecordRepository implements MemoryGovernanceRecordRepository {
+    private state: MemoryGovernanceState;
+
+    constructor(
+        records: readonly ConfirmedMemoryRecord[] = [],
+        private readonly persist?: (state: MemoryGovernanceState) => Promise<void> | void,
+    ) {
+        this.state = { records: normalizeMemoryRecords(records) };
+    }
+
+    read(): MemoryGovernanceState {
+        return { records: this.state.records.map(cloneRecord) };
+    }
+
+    async write(state: MemoryGovernanceState): Promise<void> {
+        const next = { records: normalizeMemoryRecords(state.records) };
+        await this.persist?.({ records: next.records.map(cloneRecord) });
+        this.state = next;
+    }
+}
+
 export class MemoryGovernanceStore {
     private records: ConfirmedMemoryRecord[];
+    private mutationTail: Promise<void> = Promise.resolve();
     private readonly now: () => Date;
-    private readonly persist?: (state: MemoryGovernanceState) => Promise<void> | void;
+    private readonly repository: MemoryGovernanceRecordRepository;
     private readonly idFactory: () => string;
 
     constructor(options: MemoryGovernanceStoreOptions = {}) {
-        this.records = normalizeMemoryRecords(options.records ?? []);
+        this.repository = options.repository ?? new CallbackMemoryGovernanceRecordRepository(
+            options.records ?? [],
+            options.persist,
+        );
+        this.records = normalizeMemoryRecords(this.repository.read().records);
         this.now = options.now ?? (() => new Date());
-        this.persist = options.persist;
         this.idFactory = options.idFactory ?? (() => `mem-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`);
     }
 
@@ -167,6 +234,7 @@ export class MemoryGovernanceStore {
             scope: ReviewQueueScope;
             confirmationSource?: ConfirmedMemoryRecord["confirmationSource"];
             confirmationStrength?: ConfirmedMemoryRecord["confirmationStrength"];
+            originReviewQueueItemId?: string;
         },
     ): Promise<MemoryGovernanceResult<ConfirmedMemoryRecord>> {
         const candidateValidation = validateMemoryCandidate(candidate);
@@ -185,13 +253,17 @@ export class MemoryGovernanceStore {
             confirmedAt: now,
             confirmationSource: options.confirmationSource ?? "pagelet",
             confirmationStrength: options.confirmationStrength ?? "explicit",
+            originReviewQueueItemId: options.originReviewQueueItemId,
             updatePolicy: candidate.type === "task_constraint" ? "ask-before-cross-scope-use" : "manual-only",
         };
         const validation = validateConfirmedMemoryRecord(record);
         if (!validation.ok) return validation;
-        this.records = [record, ...this.records];
-        await this.flush();
-        return { ok: true, value: cloneRecord(record) };
+        return this.serializeMutation(async () => {
+            const nextRecords = [record, ...this.records];
+            await this.flush(nextRecords);
+            this.records = nextRecords;
+            return { ok: true, value: cloneRecord(record) };
+        });
     }
 
     async archive(id: string): Promise<MemoryGovernanceResult<ConfirmedMemoryRecord>> {
@@ -207,28 +279,33 @@ export class MemoryGovernanceStore {
     }
 
     async forget(id: string, reason = "user_forget"): Promise<MemoryGovernanceResult<ConfirmedMemoryRecord>> {
-        const index = this.records.findIndex((record) => record.id === id);
-        if (index < 0) return { ok: false, reason: "not_found" };
-        const existing = this.records[index];
-        const now = this.now().toISOString();
-        const tombstone: ConfirmedMemoryRecord = {
-            id: existing.id,
-            type: existing.type,
-            lifecycle: "forgotten_tombstone",
-            sensitivity: existing.sensitivity,
-            sourceRefs: [],
-            summary: "",
-            scope: cloneScope(existing.scope),
-            createdAt: existing.createdAt,
-            updatedAt: now,
-            forgottenAt: now,
-            tombstoneReason: reason,
-        };
-        const validation = validateConfirmedMemoryRecord(tombstone);
-        if (!validation.ok) return validation;
-        this.records[index] = tombstone;
-        await this.flush();
-        return { ok: true, value: cloneRecord(tombstone) };
+        return this.serializeMutation(async () => {
+            const index = this.records.findIndex((record) => record.id === id);
+            if (index < 0) return { ok: false, reason: "not_found" };
+            const existing = this.records[index];
+            const now = this.now().toISOString();
+            const tombstone: ConfirmedMemoryRecord = {
+                id: existing.id,
+                type: existing.type,
+                lifecycle: "forgotten_tombstone",
+                sensitivity: existing.sensitivity,
+                sourceRefs: [],
+                summary: "",
+                scope: cloneScope(existing.scope),
+                createdAt: existing.createdAt,
+                updatedAt: now,
+                forgottenAt: now,
+                tombstoneReason: reason,
+                originReviewQueueItemId: existing.originReviewQueueItemId,
+            };
+            const validation = validateConfirmedMemoryRecord(tombstone);
+            if (!validation.ok) return validation;
+            const nextRecords = [...this.records];
+            nextRecords[index] = tombstone;
+            await this.flush(nextRecords);
+            this.records = nextRecords;
+            return { ok: true, value: cloneRecord(tombstone) };
+        });
     }
 
     exportMarkdown(id: string, confirmed: boolean): MemoryGovernanceResult<string> {
@@ -258,22 +335,32 @@ export class MemoryGovernanceStore {
         lifecycle: ConfirmedMemoryRecord["lifecycle"],
         extra: Partial<ConfirmedMemoryRecord> = {},
     ): Promise<MemoryGovernanceResult<ConfirmedMemoryRecord>> {
-        const index = this.records.findIndex((record) => record.id === id);
-        if (index < 0) return { ok: false, reason: "not_found" };
-        const record = {
-            ...cloneRecord(this.records[index]),
-            ...extra,
-            lifecycle,
-            updatedAt: this.now().toISOString(),
-        };
-        const validation = validateConfirmedMemoryRecord(record);
-        if (!validation.ok) return validation;
-        this.records[index] = record;
-        await this.flush();
-        return { ok: true, value: cloneRecord(record) };
+        return this.serializeMutation(async () => {
+            const index = this.records.findIndex((record) => record.id === id);
+            if (index < 0) return { ok: false, reason: "not_found" };
+            const record = {
+                ...cloneRecord(this.records[index]),
+                ...extra,
+                lifecycle,
+                updatedAt: this.now().toISOString(),
+            };
+            const validation = validateConfirmedMemoryRecord(record);
+            if (!validation.ok) return validation;
+            const nextRecords = [...this.records];
+            nextRecords[index] = record;
+            await this.flush(nextRecords);
+            this.records = nextRecords;
+            return { ok: true, value: cloneRecord(record) };
+        });
     }
 
-    private async flush(): Promise<void> {
-        await this.persist?.(this.snapshot());
+    private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.mutationTail.then(operation, operation);
+        this.mutationTail = result.then(() => undefined, () => undefined);
+        return result;
+    }
+
+    private async flush(records: readonly ConfirmedMemoryRecord[]): Promise<void> {
+        await this.repository.write({ records: records.map(cloneRecord) });
     }
 }

@@ -31,6 +31,15 @@ export interface UserProfileStore {
     dispose(): Promise<void>;
 }
 
+export type UserProfileReadResult =
+    | { state: "not_present" | "unknown" | "blocked" | "unavailable" }
+    | { state: "ready"; snapshot: UserProfileSnapshot | null }
+    | { state: "error"; errorCode: string };
+
+export interface ExistingUserProfileReader {
+    read(): Promise<UserProfileReadResult>;
+}
+
 export class MemoryUserProfileStore implements UserProfileStore {
     private snapshot: UserProfileSnapshot | null = null;
 
@@ -139,6 +148,68 @@ export class IndexedDbUserProfileStore implements UserProfileStore {
     }
 }
 
+type ExistingDatabaseOpenResult =
+    | { state: "opened"; db: IDBDatabase }
+    | { state: "unknown" | "blocked" }
+    | { state: "error"; errorCode: string };
+
+export class IndexedDbExistingUserProfileReader implements ExistingUserProfileReader {
+    constructor(private readonly dbName: string, private readonly indexedDb: IDBFactory) {}
+
+    async read(): Promise<UserProfileReadResult> {
+        let databases: IDBFactory["databases"];
+        try {
+            databases = this.indexedDb.databases;
+        } catch {
+            return { state: "unknown" };
+        }
+        if (typeof databases !== "function") {
+            return { state: "unavailable" };
+        }
+
+        let databaseInfos: IDBDatabaseInfo[];
+        try {
+            databaseInfos = await withTimeout(
+                Promise.resolve().then(() => databases.call(this.indexedDb)),
+                IDB_TIMEOUT_MS,
+                "database enumeration",
+            );
+        } catch {
+            return { state: "unknown" };
+        }
+        if (!Array.isArray(databaseInfos)) {
+            return { state: "unknown" };
+        }
+        if (!databaseInfos.some((info) => info.name === this.dbName)) {
+            return { state: "not_present" };
+        }
+
+        const opened = await openExistingDatabase(this.indexedDb, this.dbName);
+        if (opened.state !== "opened") return opened;
+
+        const db = opened.db;
+        try {
+            if (!db.objectStoreNames.contains(PROFILE_STORE)) {
+                return { state: "error", errorCode: "profile_store_missing" };
+            }
+            const transaction = db.transaction(PROFILE_STORE, "readonly");
+            const entryRequest = transaction.objectStore(PROFILE_STORE).get(PROFILE_KEY);
+            const [entry] = await Promise.all([
+                requestToPromise<{ key: string; value: UserProfileSnapshot } | undefined>(entryRequest),
+                transactionDone(transaction),
+            ]);
+            return {
+                state: "ready",
+                snapshot: entry ? cloneSnapshot(entry.value) : null,
+            };
+        } catch {
+            return { state: "error", errorCode: "profile_read_failed" };
+        } finally {
+            db.close();
+        }
+    }
+}
+
 export function createUserProfileStore(
     vault: Vault,
     vaultId: string,
@@ -149,6 +220,23 @@ export function createUserProfileStore(
         return new MemoryUserProfileStore();
     }
     return new IndexedDbUserProfileStore(getUserProfileDbName(vault, vaultId, pluginId), indexedDb);
+}
+
+export function createExistingUserProfileReader(
+    vault: Vault,
+    vaultId: string,
+    pluginId: string,
+): ExistingUserProfileReader {
+    const indexedDb = getPlatformIndexedDB();
+    if (!indexedDb) {
+        return {
+            read: async () => ({ state: "unavailable" }),
+        };
+    }
+    return new IndexedDbExistingUserProfileReader(
+        getUserProfileDbName(vault, vaultId, pluginId),
+        indexedDb,
+    );
 }
 
 export function getUserProfileDbName(vault: Vault, vaultId: string, pluginId: string): string {
@@ -192,6 +280,62 @@ function cloneRecord(record: UserProfileRecord): UserProfileRecord {
         ...record,
         conversationIds: [...record.conversationIds],
     };
+}
+
+function openExistingDatabase(indexedDb: IDBFactory, dbName: string): Promise<ExistingDatabaseOpenResult> {
+    return new Promise<ExistingDatabaseOpenResult>((resolve) => {
+        let request: IDBOpenDBRequest;
+        try {
+            request = indexedDb.open(dbName);
+        } catch {
+            resolve({ state: "error", errorCode: "profile_db_open_failed" });
+            return;
+        }
+
+        let settled = false;
+        let timer: ReturnType<typeof setPlatformTimeout> | null = null;
+
+        const finish = (result: ExistingDatabaseOpenResult): void => {
+            if (settled) {
+                if (result.state === "opened") result.db.close();
+                return;
+            }
+            settled = true;
+            if (timer !== null) clearPlatformTimeout(timer);
+            resolve(result);
+        };
+
+        timer = setPlatformTimeout(() => {
+            finish({ state: "error", errorCode: "profile_db_open_timeout" });
+        }, IDB_TIMEOUT_MS);
+
+        request.onupgradeneeded = () => {
+            try {
+                request.transaction?.abort();
+            } catch {
+                // The request still resolves to a non-ready state below.
+            }
+            closeOpenRequestResult(request);
+            finish({ state: "unknown" });
+        };
+        request.onsuccess = () => finish({ state: "opened", db: request.result });
+        request.onerror = () => {
+            closeOpenRequestResult(request);
+            finish({ state: "error", errorCode: "profile_db_open_failed" });
+        };
+        request.onblocked = () => {
+            closeOpenRequestResult(request);
+            finish({ state: "blocked" });
+        };
+    });
+}
+
+function closeOpenRequestResult(request: IDBOpenDBRequest): void {
+    try {
+        request.result.close();
+    } catch {
+        // A blocked or failed request may not expose a database result.
+    }
 }
 
 function requestToPromise<T>(request: IDBRequest<T>): Promise<T> {

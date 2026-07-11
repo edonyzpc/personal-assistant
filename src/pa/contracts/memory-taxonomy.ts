@@ -97,7 +97,10 @@ export function validateMemoryLifecycleRecord(record: MemoryLifecycleRecord): Me
     return { ok: true };
 }
 
-export function canAutoConfirmMemoryCandidate(candidate: Pick<MemoryCandidateContract, "type">): boolean {
+export function canAutoConfirmMemoryCandidate(
+    candidate: Pick<MemoryCandidateContract, "type" | "sensitivity">,
+): boolean {
+    if (candidate.sensitivity !== "low") return false;
     if (candidate.type === "task_constraint") return false;
     return true;
 }

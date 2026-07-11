@@ -15,6 +15,21 @@ export type VectorIndexStatus =
     | "disabled"
     | "error";
 
+export type VSSMemoryStatus =
+    | "unknown"
+    | "unprepared"
+    | "ready"
+    | "stale"
+    | "error";
+
+export interface VSSMemoryStatusSnapshot {
+    status: VSSMemoryStatus;
+    indexedDocumentCount?: number;
+    dirtyCount: number;
+    verificationPending: number;
+    lastErrorCode?: string;
+}
+
 export interface EmbeddingProfile {
     provider: string;
     baseURL: string;

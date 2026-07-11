@@ -416,6 +416,68 @@ describe('VSS SQLite/WASM lifecycle', () => {
         }
     });
 
+    it('returns an unknown cold snapshot without initializing or touching storage', () => {
+        const { plugin, mockAdapter, vssStateStore } = createPlugin();
+        const initializeState = jest.spyOn(vssStateStore, 'initialize');
+        const readMarker = jest.spyOn(vssStateStore, 'getMarker');
+        const vss = new VSS(plugin, 'cache');
+        const initialize = jest.spyOn(vss, 'initialize');
+
+        expect(vss.getMemoryStatusSnapshot()).toEqual({
+            status: 'unknown',
+            dirtyCount: 0,
+            verificationPending: 0,
+        });
+        expect(initialize).not.toHaveBeenCalled();
+        expect(initializeState).not.toHaveBeenCalled();
+        expect(readMarker).not.toHaveBeenCalled();
+        expect(MockSqliteVectorIndex).not.toHaveBeenCalled();
+        expect(plugin.getVSSFiles).not.toHaveBeenCalled();
+        expect(mockAdapter.list).not.toHaveBeenCalled();
+        expect(mockAdapter.read).not.toHaveBeenCalled();
+        expect(mockAdapter.write).not.toHaveBeenCalled();
+    });
+
+    it('returns cloned cached readiness and maintenance counts', () => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const internal = vss as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        internal.initialized = true;
+        internal.localStateHydrated = true;
+        internal.status = 'ready';
+        internal.marker = createReadyMarker({ fileCount: 7 });
+        internal.dirty.set('notes/dirty.md', { firstSeenAt: 1, lastSeenAt: 1 });
+        internal.verifyQueue.set('notes/verify.md', {});
+
+        const snapshot = vss.getMemoryStatusSnapshot();
+
+        expect(snapshot).toEqual({
+            status: 'ready',
+            indexedDocumentCount: 7,
+            dirtyCount: 1,
+            verificationPending: 1,
+        });
+        snapshot.dirtyCount = 99;
+        expect(vss.getMemoryStatusSnapshot().dirtyCount).toBe(1);
+    });
+
+    it.each([
+        ['uninitialized', 'unprepared'],
+        ['missing-local-index', 'unprepared'],
+        ['stale', 'stale'],
+        ['disabled', 'error'],
+        ['error', 'error'],
+    ] as const)('maps hydrated %s state to %s', (internalStatus, expectedStatus) => {
+        const { plugin } = createPlugin();
+        const vss = new VSS(plugin, 'cache');
+        const internal = vss as any; // eslint-disable-line @typescript-eslint/no-explicit-any
+        internal.initialized = true;
+        internal.localStateHydrated = true;
+        internal.status = internalStatus;
+
+        expect(vss.getMemoryStatusSnapshot().status).toBe(expectedStatus);
+    });
+
     it('does not load legacy JSON vectors into memory during initialization without a marker', async () => {
         const { plugin, mockAdapter } = createPlugin();
         setMockSqliteIndex(new FakeVectorIndex());

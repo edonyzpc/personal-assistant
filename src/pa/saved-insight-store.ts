@@ -1,4 +1,5 @@
 import {
+    REVIEW_QUEUE_SCOPE_KINDS,
     hasForbiddenPersistedTextFields,
     validateSourceRefPathShape,
     type PersistedSourceRef,
@@ -82,11 +83,37 @@ function matchesScopePaths(insight: SavedInsight, scopePaths: Set<string>): bool
 }
 
 function validateSavedInsight(insight: SavedInsight): SavedInsightResult<SavedInsight> {
+    if (!isRecord(insight)) return { ok: false, reason: "insight_not_object" };
     if (!includesString(SAVED_INSIGHT_TYPES, insight.type)) return { ok: false, reason: "invalid_type" };
     if (!includesString(SAVED_INSIGHT_ORIGINS, insight.origin)) return { ok: false, reason: "invalid_origin" };
     if (!includesString(SAVED_INSIGHT_STATUSES, insight.status)) return { ok: false, reason: "invalid_status" };
-    if (insight.text.trim().length === 0) return { ok: false, reason: "missing_text" };
+    if (typeof insight.id !== "string" || insight.id.length === 0) return { ok: false, reason: "missing_id" };
+    if (typeof insight.text !== "string" || insight.text.trim().length === 0) {
+        return { ok: false, reason: "missing_text" };
+    }
     if (insight.influencePolicy !== "weak-only") return { ok: false, reason: "invalid_influence_policy" };
+    if (!Array.isArray(insight.sourceRefs)) return { ok: false, reason: "missing_source_refs" };
+    if (!Array.isArray(insight.whyShown) || insight.whyShown.some((reason) => typeof reason !== "string")) {
+        return { ok: false, reason: "invalid_why_shown" };
+    }
+    if (!isRecord(insight.scope) || !includesString(REVIEW_QUEUE_SCOPE_KINDS, insight.scope.kind)) {
+        return { ok: false, reason: "invalid_scope" };
+    }
+    if (insight.scope.label !== undefined && typeof insight.scope.label !== "string") {
+        return { ok: false, reason: "invalid_scope_label" };
+    }
+    for (const key of ["paths", "tags"] as const) {
+        const entries = insight.scope[key];
+        if (entries !== undefined && (
+            !Array.isArray(entries)
+            || entries.some((entry) => typeof entry !== "string")
+        )) {
+            return { ok: false, reason: `invalid_scope_${key}` };
+        }
+    }
+    if (typeof insight.createdAt !== "string" || typeof insight.updatedAt !== "string") {
+        return { ok: false, reason: "invalid_timestamps" };
+    }
     if (insight.origin !== "user-authored" && insight.sourceRefs.length === 0) {
         return { ok: false, reason: "missing_source_refs" };
     }
@@ -94,7 +121,7 @@ function validateSavedInsight(insight: SavedInsight): SavedInsightResult<SavedIn
         const sourceValidation = validateSourceRefPathShape(sourceRef);
         if (!sourceValidation.ok) return { ok: false, reason: `invalid_source_ref_${sourceValidation.reason}` };
     }
-    if (hasForbiddenPersistedTextFields(insight.sourceRefs)) return { ok: false, reason: "forbidden_source_text" };
+    if (hasForbiddenPersistedTextFields(insight)) return { ok: false, reason: "forbidden_persisted_text" };
     return { ok: true, value: cloneInsight(insight) };
 }
 
@@ -114,6 +141,7 @@ export function normalizeSavedInsightState(value: unknown): SavedInsightState {
 
 export class SavedInsightStore {
     private items: SavedInsight[];
+    private mutationTail: Promise<void> = Promise.resolve();
     private readonly now: () => Date;
     private readonly persist?: (state: SavedInsightState) => Promise<void> | void;
     private readonly idFactory: () => string;
@@ -159,9 +187,12 @@ export class SavedInsightStore {
         if (input.replayRef) insight.replayRef = input.replayRef;
         const validation = validateSavedInsight(insight);
         if (!validation.ok) return validation;
-        this.items = [insight, ...this.items];
-        await this.flush();
-        return { ok: true, value: cloneInsight(insight) };
+        return this.serializeMutation(async () => {
+            const nextItems = [insight, ...this.items];
+            await this.flush(nextItems);
+            this.items = nextItems;
+            return { ok: true, value: cloneInsight(insight) };
+        });
     }
 
     async archive(id: string): Promise<SavedInsightResult<SavedInsight>> {
@@ -173,29 +204,43 @@ export class SavedInsightStore {
     }
 
     async promote(id: string, promotedTo: string): Promise<SavedInsightResult<SavedInsight>> {
-        const index = this.items.findIndex((item) => item.id === id);
-        if (index < 0) return { ok: false, reason: "not_found" };
-        const item = cloneInsight(this.items[index]);
-        item.status = "promoted";
-        item.promotedTo = promotedTo;
-        item.updatedAt = this.now().toISOString();
-        this.items[index] = item;
-        await this.flush();
-        return { ok: true, value: cloneInsight(item) };
+        return this.serializeMutation(async () => {
+            const index = this.items.findIndex((item) => item.id === id);
+            if (index < 0) return { ok: false, reason: "not_found" };
+            const item = cloneInsight(this.items[index]);
+            item.status = "promoted";
+            item.promotedTo = promotedTo;
+            item.updatedAt = this.now().toISOString();
+            const nextItems = [...this.items];
+            nextItems[index] = item;
+            await this.flush(nextItems);
+            this.items = nextItems;
+            return { ok: true, value: cloneInsight(item) };
+        });
     }
 
     private async updateStatus(id: string, status: SavedInsightStatus): Promise<SavedInsightResult<SavedInsight>> {
-        const index = this.items.findIndex((item) => item.id === id);
-        if (index < 0) return { ok: false, reason: "not_found" };
-        const item = cloneInsight(this.items[index]);
-        item.status = status;
-        item.updatedAt = this.now().toISOString();
-        this.items[index] = item;
-        await this.flush();
-        return { ok: true, value: cloneInsight(item) };
+        return this.serializeMutation(async () => {
+            const index = this.items.findIndex((item) => item.id === id);
+            if (index < 0) return { ok: false, reason: "not_found" };
+            const item = cloneInsight(this.items[index]);
+            item.status = status;
+            item.updatedAt = this.now().toISOString();
+            const nextItems = [...this.items];
+            nextItems[index] = item;
+            await this.flush(nextItems);
+            this.items = nextItems;
+            return { ok: true, value: cloneInsight(item) };
+        });
     }
 
-    private async flush(): Promise<void> {
-        await this.persist?.(this.snapshot());
+    private serializeMutation<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.mutationTail.then(operation, operation);
+        this.mutationTail = result.then(() => undefined, () => undefined);
+        return result;
+    }
+
+    private async flush(items: readonly SavedInsight[]): Promise<void> {
+        await this.persist?.({ items: items.map(cloneInsight) });
     }
 }

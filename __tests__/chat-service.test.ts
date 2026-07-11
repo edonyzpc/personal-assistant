@@ -617,6 +617,58 @@ describe('ChatService.streamLLM integration', () => {
         expect(boundToolNames).toEqual(['get_current_note_context', 'search_memory']);
     });
 
+    it('emits exact governed Memory claim ids as turn metadata outside the model prompt', async () => {
+        const modelInputs: Record<string, string>[] = [];
+        const model = createStreamModel('Answer with saved understanding.', (input) => {
+            modelInputs.push(input);
+        });
+        mockCreateChatModel.mockResolvedValue(model);
+        const plugin = createPlugin({
+            memoryExtractionPromptContext: {
+                governedMemoryContext: [
+                    '<governed_memory_context context_only="true">',
+                    '{"kind":"governed_claim","content":"Prefer concise replies."}',
+                    '</governed_memory_context>',
+                ].join('\n'),
+                governedMemoryTrace: [{
+                    claimId: 'claim-exact-42',
+                    effect: 'future_answers',
+                    source: 'notes',
+                    scope: 'current_vault',
+                    sourcePaths: ['notes/preference.md'],
+                }],
+            },
+        });
+        const runtime = createRuntime(plugin, false, { skillContextProvider: null });
+        const events: AgentEvent[] = [];
+
+        await runtime.streamTurn({
+            prompt: 'hello',
+            memoryMode: 'auto',
+            onEvent: (event) => events.push(event),
+        });
+
+        const memoryMetadata = events.find((event) => event.kind === 'turn-metadata');
+        expect(memoryMetadata).toMatchObject({
+            kind: 'turn-metadata',
+            metadata: {
+                hasMemoryContent: true,
+                allowedMemorySourcePaths: [],
+                contextUsed: [{
+                    category: 'memory',
+                    label: 'Saved understanding',
+                    statusOnly: true,
+                    memoryClaimId: 'claim-exact-42',
+                    memoryEffect: 'future_answers',
+                    memorySource: 'notes',
+                    memoryScope: 'current_vault',
+                }],
+            },
+        });
+        expect(modelInputs[0]?.input).not.toContain('claim-exact-42');
+        expect(JSON.stringify(memoryMetadata)).not.toContain('notes/preference.md');
+    });
+
     it('exports builtin WebSearch capability when enabled for a DashScope-compatible provider', async () => {
         const model = createStreamChunksModel([{ content: 'with web search' }]);
         mockCreateChatModel.mockResolvedValue(model);

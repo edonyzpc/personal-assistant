@@ -20,9 +20,10 @@ import type { App } from "obsidian";
 import { confirmUserAction } from "../../confirm";
 
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
-import type { PanelFinding } from "../panel/types";
+import type { PanelFinding, PanelMemoryRecentChange } from "../panel/types";
 import type { PageletDetailPayload, TabEntryReason, TabSection } from "./types";
 import {
+    type ConfirmedMemoryRecord,
     type ContextPagerState,
     type GraphDiscoveryItem,
     type MaintenanceMoveApplyResult,
@@ -39,6 +40,7 @@ import type {
     MaintenanceActionUiState,
     MemoryCandidateActionState,
     MemoryCandidateActionResult,
+    MemoryRecordActionResult,
     QuietRecallLinkState,
     QuietRecallLinkResult,
     QuietRecallSaveState,
@@ -49,7 +51,7 @@ import { MemoryGovernanceSection } from "./sections/MemoryGovernanceSection";
 import { MaintenanceReviewSection } from "./sections/MaintenanceReviewSection";
 import { QuietRecallSection } from "./sections/QuietRecallSection";
 
-interface TabViewOptions {
+export interface TabViewOptions {
     app?: App;
     onConnectionNodeClick?: (noteName: string, sourcePath?: string) => void;
     onSourcePathClick?: (path: string) => void;
@@ -58,6 +60,15 @@ interface TabViewOptions {
     onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
     onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
     onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<MemoryCandidateActionResult>;
+    onCorrect?: (record: ConfirmedMemoryRecord, summary: string) => Promise<MemoryRecordActionResult>;
+    onPauseUse?: (record: ConfirmedMemoryRecord) => Promise<MemoryRecordActionResult>;
+    onResumeUse?: (record: ConfirmedMemoryRecord) => Promise<MemoryRecordActionResult>;
+    onForget?: (record: ConfirmedMemoryRecord) => Promise<MemoryRecordActionResult>;
+    onUndoRecentChange?: (change: PanelMemoryRecentChange) => Promise<MemoryRecordActionResult>;
+    onOpenSource?: (path: string) => void;
+    onOpenMemorySettings?: (targetId?: string) => void;
+    /** @deprecated Use onForget. Kept while the plugin host migrates. */
+    onForgetConfirmedMemory?: (record: ConfirmedMemoryRecord) => Promise<MemoryCandidateActionResult>;
     onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     onLinkRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<QuietRecallLinkResult>;
     onOpenSettings?: () => void;
@@ -216,10 +227,7 @@ export class TabView {
             requestRerender: () => this.handleSectionRerender(),
             canCommitActionState: () => !this.disposed && generation === this.actionStateGeneration,
             confirmAction: app
-                ? (message: string) => confirmUserAction(app, {
-                    title: pageletT("pagelet.tab.memory.confirmAllTitle", this.locale),
-                    message,
-                })
+                ? (options) => confirmUserAction(app, options)
                 : undefined,
         };
     }
@@ -338,6 +346,13 @@ export class TabView {
                     new MemoryGovernanceSection(this.locale, data, {
                         onConfirm: this.options.onConfirmMemoryCandidate,
                         onDismiss: this.options.onDismissMemoryCandidate,
+                        onCorrect: this.options.onCorrect,
+                        onPauseUse: this.options.onPauseUse,
+                        onResumeUse: this.options.onResumeUse,
+                        onForget: this.options.onForget ?? this.options.onForgetConfirmedMemory,
+                        onUndoRecentChange: this.options.onUndoRecentChange,
+                        onOpenSource: this.options.onOpenSource,
+                        onOpenMemorySettings: this.options.onOpenMemorySettings,
                         isDigestDeferred: () => this.memoryDigestDeferred,
                         onDeferDigest: () => { this.memoryDigestDeferred = true; },
                     }, sectionCallbacks, this.memoryCandidateActionState),
@@ -349,6 +364,13 @@ export class TabView {
                     new MemoryGovernanceSection(this.locale, data, {
                         onConfirm: this.options.onConfirmMemoryCandidate,
                         onDismiss: this.options.onDismissMemoryCandidate,
+                        onCorrect: this.options.onCorrect,
+                        onPauseUse: this.options.onPauseUse,
+                        onResumeUse: this.options.onResumeUse,
+                        onForget: this.options.onForget ?? this.options.onForgetConfirmedMemory,
+                        onUndoRecentChange: this.options.onUndoRecentChange,
+                        onOpenSource: this.options.onOpenSource,
+                        onOpenMemorySettings: this.options.onOpenMemorySettings,
                         isDigestDeferred: () => this.memoryDigestDeferred,
                         onDeferDigest: () => { this.memoryDigestDeferred = true; },
                     }, sectionCallbacks, this.memoryCandidateActionState),
@@ -380,6 +402,13 @@ export class TabView {
                 new MemoryGovernanceSection(this.locale, data, {
                     onConfirm: this.options.onConfirmMemoryCandidate,
                     onDismiss: this.options.onDismissMemoryCandidate,
+                    onCorrect: this.options.onCorrect,
+                    onPauseUse: this.options.onPauseUse,
+                    onResumeUse: this.options.onResumeUse,
+                    onForget: this.options.onForget ?? this.options.onForgetConfirmedMemory,
+                    onUndoRecentChange: this.options.onUndoRecentChange,
+                    onOpenSource: this.options.onOpenSource,
+                    onOpenMemorySettings: this.options.onOpenMemorySettings,
                     isDigestDeferred: () => this.memoryDigestDeferred,
                     onDeferDigest: () => { this.memoryDigestDeferred = true; },
                 }, sectionCallbacks, this.memoryCandidateActionState)) },
@@ -393,6 +422,8 @@ export class TabView {
                 new QuietRecallSection(this.locale, data, {
                     onSave: this.options.onSaveQuietRecallAsInsight,
                     onLink: this.options.onLinkRecallCandidate,
+                    onOpenSource: this.options.onOpenSource,
+                    onOpenMemorySettings: this.options.onOpenMemorySettings,
                 }, sectionCallbacks, options.sourcePath, this.quietRecallSaveState, this.quietRecallLinkState)) },
             { id: "graph-discovery", labelKey: "pagelet.tab.graphDiscovery.title", render: () => this.renderGraphDiscoveryContent(options.extra?.graphDiscovery) },
             { id: "pattern-detection", labelKey: "pagelet.tab.patterns.title", render: () => this.renderPatternDetectionContent(options.extra?.patternDetection) },

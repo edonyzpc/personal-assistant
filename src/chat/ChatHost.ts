@@ -21,4 +21,5 @@ export interface ChatHost {
     createChatService(): ChatService;
     onSettingsChanged(listener: () => void | Promise<void>): () => void;
     scheduleMemoryExtractionAfterChatTurn(conversationId: string, turnCount: number): void;
+    openMemorySettings?(claimId?: string): void;
 }

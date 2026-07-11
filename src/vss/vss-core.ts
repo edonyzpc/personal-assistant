@@ -25,6 +25,8 @@ import {
     type VSSFileRecord,
     type VSSIndexMarker,
     type VSSIndexStats,
+    type VSSMemoryStatus,
+    type VSSMemoryStatusSnapshot,
 } from './types';
 import type { MemoryMaintenancePlan } from '../memory-manager';
 import { confirmUserAction } from '../confirm';
@@ -554,6 +556,41 @@ export class VSS {
             dirtyCount: this.dirty.size,
             verificationPending: this.verifyQueue.size,
         };
+    }
+
+    getMemoryStatusSnapshot(): VSSMemoryStatusSnapshot {
+        const snapshot: VSSMemoryStatusSnapshot = {
+            status: this.getCachedMemoryStatus(),
+            dirtyCount: this.dirty.size,
+            verificationPending: this.verifyQueue.size,
+        };
+        if (this.localStateHydrated && this.marker) {
+            snapshot.indexedDocumentCount = this.marker.fileCount;
+        }
+        if (this.lastErrorCode) {
+            snapshot.lastErrorCode = this.lastErrorCode;
+        }
+        return snapshot;
+    }
+
+    private getCachedMemoryStatus(): VSSMemoryStatus {
+        if (this.disposed) return "error";
+        if (this.initializationPromise || this.status === "initializing") return "unknown";
+        if (!this.localStateHydrated) {
+            return this.initialized && this.lastErrorCode ? "error" : "unknown";
+        }
+        switch (this.status) {
+            case "ready":
+                return "ready";
+            case "stale":
+                return "stale";
+            case "uninitialized":
+            case "missing-local-index":
+                return "unprepared";
+            case "disabled":
+            case "error":
+                return "error";
+        }
     }
 
     async canAutoMaintain(): Promise<boolean> {

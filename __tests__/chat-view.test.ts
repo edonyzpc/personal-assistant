@@ -4,6 +4,7 @@ import { Component, MarkdownRenderer, MarkdownView, Modal } from 'obsidian';
 import type { ChatAgentStatus, ChatMessage, StreamLLMOptions } from '../src/ai-services/chat-service';
 import type { AgentEvent, PaAgentMessage } from '../src/ai-services/chat-types';
 import { CHAT_MENU_IDLE_CLOSE_MS, LLMView, PA_CHAT_SUBAGENT_ICON } from '../src/chat/chat-view';
+import { mergeContextUsedItems, normalizeContextUsedItems } from '../src/chat/formatters';
 import { ChatConfirmationModal, getDistinctChatHistoryPreview } from '../src/chat/modals';
 import { getChatRoleIdenticonModel } from '../src/chat/role-identicons';
 import type { MemoryMaintenancePlan } from '../src/memory-manager';
@@ -250,6 +251,10 @@ class MockElement {
 
     setAttribute(name: string, value: string) {
         this.attributes.set(name, value);
+    }
+
+    setAttr(name: string, value: string) {
+        this.setAttribute(name, value);
     }
 
     setCssProps(props: Record<string, string>) {
@@ -679,6 +684,7 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
         createChatService: jest.fn(() => ({
             streamLLM: mockStreamLLM,
         })),
+        openMemorySettings: jest.fn(),
         log: jest.fn(),
     };
     const leaf = { app, containerEl };
@@ -719,6 +725,42 @@ function createView(options: { withMarkdownLeaf?: boolean; panelWidth?: number; 
         setAISetupIssue,
     };
 }
+
+describe('Context Used formatter governed Memory identity', () => {
+    it('preserves exact claim ids through normalization and keeps distinct claims separate when merging', () => {
+        const normalized = normalizeContextUsedItems([{
+            category: 'memory',
+            label: 'Saved understanding',
+            statusOnly: true,
+            memoryClaimId: 'claim-exact-1',
+            memoryEffect: 'future_answers',
+            memorySource: 'notes',
+            memoryScope: 'current_vault',
+            sources: [{ path: 'private/governed-source.md' }],
+        }]);
+
+        expect(normalized).toEqual([expect.objectContaining({
+            memoryClaimId: 'claim-exact-1',
+            memoryEffect: 'future_answers',
+            memorySource: 'notes',
+            memoryScope: 'current_vault',
+            sources: undefined,
+        })]);
+
+        const merged = mergeContextUsedItems(normalized, [{
+            category: 'memory',
+            label: 'Saved understanding',
+            statusOnly: true,
+            memoryClaimId: 'claim-exact-2',
+            memoryEffect: 'collaboration_default',
+        }]);
+
+        expect(merged.map((item) => item.memoryClaimId)).toEqual([
+            'claim-exact-1',
+            'claim-exact-2',
+        ]);
+    });
+});
 
 describe('LLMView turn lifecycle', () => {
     let streamCalls: StreamCall[];
@@ -4210,6 +4252,43 @@ describe('LLMView turn lifecycle', () => {
         expect(text).not.toContain('0.unsorted/Dog.md');
         expect(text).not.toContain('notes/current.md');
         expect(getElementsByClass(containerEl, 'pa-chat-source-bar')).toHaveLength(0);
+    });
+
+    it('opens the exact Saved understanding Settings target from Context Used', async () => {
+        const { view, containerEl, plugin } = createView();
+        await view.onOpen();
+
+        getTextArea(containerEl).value = 'context prompt';
+        void getButtonByText(containerEl, 'Ask').click();
+        await flushPromises();
+        streamCalls[0].options.onTurnMetadata?.({
+            hasMemoryContent: true,
+            allowedMemorySourcePaths: [],
+            contextUsed: [{
+                category: 'memory',
+                label: 'Saved understanding',
+                statusOnly: true,
+                memoryClaimId: 'claim-exact-42',
+                memoryEffect: 'future_answers',
+                memorySource: 'interactions',
+                memoryScope: 'current_vault',
+            }],
+        });
+        streamCalls[0].onChunk('answer from governed Memory');
+        streamCalls[0].resolve();
+        await flushPromises();
+        await flushPromises();
+
+        getButtonByText(containerEl, 'Saved understanding').click();
+
+        expect(plugin.openMemorySettings).toHaveBeenCalledTimes(1);
+        expect(plugin.openMemorySettings).toHaveBeenCalledWith('claim-exact-42');
+        expect(allText(containerEl)).toContain('Used to shape this answer');
+        expect(allText(containerEl)).toContain('From your interactions');
+        expect(allText(containerEl)).toContain('Current vault');
+        expect(allText(containerEl)).toContain('Personalization context, not a note citation');
+        expect(allText(containerEl)).not.toContain('Status only');
+        expect(allText(containerEl)).not.toContain('Prefers concise replies');
     });
 
     it('keeps the rendered Memory references callout when metadata arrives after the final chunk', async () => {

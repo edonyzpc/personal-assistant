@@ -14,7 +14,7 @@ import { Notice, TFile, type App } from "obsidian";
 import { getPageletUiLanguage, pageletT } from "../locales/pagelet";
 
 import type { PanelFinding, PanelLayoutType, PanelOpenExtra, PanelScopeState } from "./panel/types";
-import type { PreloadFinding } from "./preload/types";
+import type { PreloadFinding, PreloadResult } from "./preload/types";
 import { PreloadBudget } from "./preload/PreloadBudget";
 import {
     applyPageletScopeToggle,
@@ -60,12 +60,7 @@ export interface AnalysisSessionHost {
             tokenBudget: { input: number; output: number };
             range: PageletReviewRange;
         },
-    ) => Promise<{
-        findings: PreloadFinding[];
-        analyzedFiles: string[];
-        analyzedAt: number;
-        tokenCost: { input: number; output: number };
-    }>;
+    ) => Promise<PreloadResult>;
 }
 
 // ---------------------------------------------------------------------------
@@ -76,6 +71,7 @@ export class AnalysisSessionManager {
     // -- analysis session state -------------------------------------------------
     private lastAnalysisFindings: PanelFinding[] = [];
     private lastAnalysisSourcePath: string | null = null;
+    private lastUsedGovernedMemoryClaimIds: string[] = [];
     private currentScopeRange: PageletReviewRange = "current";
     private currentScopePlan: PageletScopePlan | null = null;
 
@@ -183,6 +179,9 @@ export class AnalysisSessionManager {
         // Cache results for Panel data flow.
         this.lastAnalysisSourcePath = options.expectedActivePath ?? files[0]?.path ?? null;
         this.lastAnalysisFindings = this.toPanelFindings(result.findings);
+        this.lastUsedGovernedMemoryClaimIds = Array.isArray(result.usedGovernedMemoryClaimIds)
+            ? [...result.usedGovernedMemoryClaimIds]
+            : [];
 
         return {
             findings: this.lastAnalysisFindings,
@@ -252,7 +251,10 @@ export class AnalysisSessionManager {
         if (layoutType !== "review") return undefined;
         const plan = this.ensureScopePlan();
         if (!plan) return undefined;
-        return { scope: this.toPanelScope(plan) };
+        return {
+            scope: this.toPanelScope(plan),
+            usedGovernedMemoryClaimIds: [...this.lastUsedGovernedMemoryClaimIds],
+        };
     }
 
     defaultReviewPanelFindings(currentPanelLayout: PanelLayoutType | null): PanelFinding[] {
@@ -293,6 +295,7 @@ export class AnalysisSessionManager {
     clearAnalysisSession(): void {
         this.lastAnalysisFindings = [];
         this.lastAnalysisSourcePath = null;
+        this.lastUsedGovernedMemoryClaimIds = [];
     }
 
     discardAnalysisSessionIfStale(activePath: string | null): boolean {

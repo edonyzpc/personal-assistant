@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 
 jest.mock('obsidian', () => ({
     App: class { },
-    Notice: class { },
+    Notice: jest.fn(),
     TFile: class {
         path: string;
         constructor(path: string) { this.path = path; }
@@ -247,6 +247,7 @@ jest.mock('obsidian', () => ({
             setCta: () => unknown;
             setButtonText: (text: string) => unknown;
             setDisabled: (disabled: boolean) => unknown;
+            setWarning: () => unknown;
             onClick: (callback: () => void) => unknown;
         }) => void) {
             const button: { text?: string; disabled?: boolean; onClick?: () => unknown | Promise<unknown> } = {};
@@ -262,6 +263,7 @@ jest.mock('obsidian', () => ({
                     button.disabled = disabled;
                     return buttonComponent;
                 },
+                setWarning: () => buttonComponent,
                 onClick: (cb: () => void) => {
                     button.onClick = cb;
                     return buttonComponent;
@@ -377,6 +379,7 @@ import { OPERATIONS_AGENT_RUNTIME_ENABLED } from '../src/operations-agent-flags'
 import { confirmUserAction } from '../src/confirm';
 import { MOCK_LICENSE_TIER } from '../src/ai-services/capability-types';
 import { BUNDLED_SKILL_CATALOG } from '../src/ai-services/bundled-skill-catalog';
+import { buildMemoryControlCenterSnapshot } from '../src/pa/memory-control-center';
 
 function mockStringifyText(value: unknown): string {
     if (typeof value === 'string') return value;
@@ -408,6 +411,7 @@ class MockDomNode {
     classes: string[] = [];
     attrs: Record<string, string> = {};
     focus = jest.fn();
+    scrollIntoView = jest.fn();
     private eventListeners: Record<string, Array<(event: unknown) => unknown>> = {};
 
     constructor(readonly tagName: string) { }
@@ -447,6 +451,12 @@ class MockDomNode {
     appendChild(child: MockDomNode) {
         this.children.push(child);
         return child;
+    }
+
+    remove() {
+        // The bounded Settings DOM mock does not keep parent pointers. Tests
+        // only need removal to be safe when cancelling an inline editor.
+        this.children = [];
     }
 
     appendText(text: string) {
@@ -504,6 +514,9 @@ class MockDomNode {
             if (part.startsWith('.')) {
                 return node.classes.includes(part.slice(1));
             }
+            if (part.startsWith('#')) {
+                return node.attrs.id === part.slice(1);
+            }
             return node.tagName.toLowerCase() === part.toLowerCase();
         };
         const results: MockDomNode[] = [];
@@ -517,6 +530,14 @@ class MockDomNode {
         };
         walk(this);
         return results;
+    }
+
+    querySelector(selector: string): MockDomNode | null {
+        return this.findAll(selector)[0] ?? null;
+    }
+
+    querySelectorAll(selector: string): MockDomNode[] {
+        return this.findAll(selector);
     }
 }
 
@@ -664,6 +685,7 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             ...overrides,
         },
         saveSettings: jest.fn(async () => undefined),
+        setMemoryAutoAcceptPaused: jest.fn(async (_paused: boolean) => undefined),
         clearTokenCache: jest.fn(),
         log: jest.fn(),
         memoryManager: {
@@ -679,6 +701,56 @@ function makePlugin(overrides: Partial<typeof DEFAULT_SETTINGS> = {}) {
             cleanLegacyJsonCache: jest.fn(async () => undefined),
         },
         showTechnicalMemoryStatus: jest.fn(async () => undefined),
+        getMemoryControlCenterSnapshot: jest.fn(async () => ({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            items: [],
+            degradedSources: [],
+        })),
+        getMemoryGovernanceUiMode: jest.fn<() => 'effect_based' | 'legacy_threshold' | 'unavailable'>(
+            () => 'effect_based',
+        ),
+        getMemorySuppressionMarkerCount: jest.fn(() => 0),
+        clearMemorySuppressionMarkers: jest.fn(async () => ({
+            ok: true,
+            message: 'Cleared 0 prevention markers for this vault.',
+            clearedCount: 0,
+        })),
+        rollbackMemoryGovernance: jest.fn(async () => ({
+            ok: true,
+            message: 'Compatible Memory was restored for this vault.',
+        })),
+        getMemoryRollbackStatusMessage: jest.fn((reason?: string) => (
+            reason === 'rollback_pending_operations'
+                ? 'PA is still finishing another Memory change.'
+                : 'A verified compatibility restore is not available now.'
+        )),
+        runMemoryControlCenterAction: jest.fn<(
+            action: 'correct' | 'pause_use' | 'resume_use' | 'apply_device_wide'
+                | 'limit_to_current_vault' | 'forget' | 'retry_forget' | 'undo_recent_change',
+            targetId: string,
+            summary?: string,
+        ) => Promise<{ ok: boolean; message: string }>>(async () => ({
+            ok: true,
+            message: 'Memory updated.',
+        })),
+        finalizeMemoryGovernance: jest.fn(async (_confirmationToken: string) => ({
+            ok: true,
+            message: 'Device-only Memory setup is complete.',
+        })),
+        getMemoryFinalizationStatusMessage: jest.fn((reason?: string) => (
+            reason === 'finalization_pending_operations'
+                ? 'PA is still finishing another Memory change.'
+                : 'Device-only setup is not ready yet.'
+        )),
         canShowAiInsights: jest.fn(() => true),
         showAiInsights: jest.fn(),
         getAPITokenSecretId: jest.fn(() => 'pa-api-token-vault-test'),
@@ -1121,6 +1193,21 @@ describe('safeParseInt', () => {
 });
 
 describe('mergeLoadedSettings (Phase 2 deep merge)', () => {
+    it('defaults automatic Memory to active and normalizes the pause control', () => {
+        expect((DEFAULT_SETTINGS as unknown as Record<string, unknown>).memoryAutoAcceptPaused).toBe(false);
+        expect((mergeLoadedSettings({ memoryAutoAcceptPaused: true }) as unknown as Record<string, unknown>)
+            .memoryAutoAcceptPaused).toBe(true);
+        expect((mergeLoadedSettings({ memoryAutoAcceptPaused: 'corrupted' }) as unknown as Record<string, unknown>)
+            .memoryAutoAcceptPaused).toBe(false);
+    });
+
+    it('accepts only non-negative safe integer Memory confirmation counts', () => {
+        expect(mergeLoadedSettings({ confirmedMemoryCount: 30 }).confirmedMemoryCount).toBe(30);
+        for (const value of ['30', -1, 1.5, Number.POSITIVE_INFINITY, Number.NaN]) {
+            expect(mergeLoadedSettings({ confirmedMemoryCount: value }).confirmedMemoryCount).toBe(0);
+        }
+    });
+
     it('returns DEFAULT_SETTINGS when data.json is empty or missing', () => {
         expect(mergeLoadedSettings(undefined).localGraph).toEqual(DEFAULT_SETTINGS.localGraph);
         expect(mergeLoadedSettings(null).localGraph).toEqual(DEFAULT_SETTINGS.localGraph);
@@ -1383,6 +1470,653 @@ describe('Phase 3 IA reorder + provider UX', () => {
         (confirmUserAction as jest.Mock).mockClear();
     });
 
+    it('adds a stable Memory & Personalization group and moves Memory into it', () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+
+        const groupIds = containerEl.findAll('.pa-settings-group').map((node) => node.attrs.id);
+        expect(groupIds).toEqual([
+            'pa-settings-group-ai-provider',
+            'pa-settings-group-memory-personalization',
+            'pa-settings-group-data-privacy',
+            'pa-settings-group-features',
+            'pa-settings-group-appearance',
+            'pa-settings-group-system',
+        ]);
+        expect(containerEl.findAll('.pa-settings-nav-item').map((node) => node.textContent)).toEqual([
+            'AI & Provider',
+            'Memory & Personalization',
+            'Data & Privacy',
+            'Features',
+            'Appearance',
+            'System',
+        ]);
+        expect(containerEl.findAll('.pa-memory-control-center')).toHaveLength(1);
+        expect(plugin.getMemoryControlCenterSnapshot).toHaveBeenCalledTimes(1);
+    });
+
+    it('renders the canonical overview by default without Debug or preview-only copy', async () => {
+        const plugin = makePlugin({ debug: false });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: true, status: 'ready', indexedDocumentCount: 2 },
+            vaultInsights: {
+                enabled: true,
+                status: 'ready',
+                generatedAt: '2026-07-10T08:00:00.000Z',
+                fileCount: 2,
+            },
+            profile: {
+                enabled: true,
+                status: 'ready',
+                updatedAt: '2026-07-10T08:00:00.000Z',
+                itemCount: 1,
+            },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            items: [
+                {
+                    id: 'vault-insights',
+                    label: 'Internal aggregate label',
+                    origin: 'vault_insights',
+                    authority: 'pa_inference',
+                    scopeLabel: 'Test vault',
+                    effect: 'future_answers',
+                    lifecycle: 'derived',
+                    provenance: [{
+                        kind: 'vault_aggregate',
+                        generatedAt: '2026-07-10T08:00:00.000Z',
+                        dataBoundaryFingerprint: 'boundary:test',
+                        includedFileCount: 2,
+                        coverage: 'representative',
+                        representativeSourceRefs: [{ path: 'notes/example.md' }],
+                    }],
+                    observedAt: '2026-07-10T08:00:00.000Z',
+                    supportedActions: [],
+                },
+                {
+                    id: 'profile:one',
+                    label: 'Prefer concise Chinese replies.',
+                    origin: 'user_profile',
+                    authority: 'explicit_user',
+                    scopeLabel: 'Test vault',
+                    effect: 'future_answers',
+                    lifecycle: 'derived',
+                    provenance: [{
+                        kind: 'conversation',
+                        conversationId: 'conversation-private-id',
+                        observedAt: '2026-07-10T08:00:00.000Z',
+                    }],
+                    observedAt: '2026-07-10T08:00:00.000Z',
+                    supportedActions: [],
+                },
+                {
+                    id: 'saved:auto',
+                    claimId: 'saved:auto',
+                    label: 'PA inferred a concise planning preference.',
+                    origin: 'confirmed_memory',
+                    authority: 'pa_inference',
+                    scopeLabel: 'Test vault',
+                    effect: 'future_answers',
+                    lifecycle: 'active',
+                    provenance: [{ kind: 'note', sourceRef: { path: 'notes/auto.md' } }],
+                    updatedAt: '2026-07-10T08:00:00.000Z',
+                    supportedActions: [],
+                },
+                {
+                    id: 'confirmed:forgotten',
+                    label: 'secret forgotten content',
+                    origin: 'confirmed_memory',
+                    authority: 'explicit_user',
+                    scopeLabel: 'private/secret.md',
+                    effect: 'none',
+                    lifecycle: 'forgotten_marker',
+                    provenance: [{ kind: 'note', sourceRef: { path: 'private/secret.md' } }],
+                    updatedAt: '2026-07-10T08:00:00.000Z',
+                    supportedActions: [],
+                },
+            ],
+            degradedSources: [{ source: 'confirmed_memory', code: 'malformed_confirmed_record' }],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const overview = containerEl.findAll('.pa-memory-control-center')[0];
+        const collectText = (node: MockDomNode): string => [
+            node.textContent,
+            ...node.children.map(collectText),
+        ].join(' ');
+        const renderedText = collectText(overview);
+        expect(renderedText).toContain('Prefer concise Chinese replies.');
+        expect(renderedText).toContain('Learned from your interactions');
+        expect(renderedText).toContain('Explicitly stated by you');
+        expect(renderedText).toContain('Test vault');
+        expect(renderedText).toContain('May shape future answers');
+        expect(renderedText).toContain('Representative examples, not a complete source list');
+        expect(renderedText).toContain('Representative note: notes/example.md');
+        expect(renderedText).toContain('2 notes within the allowed boundary');
+        expect(renderedText).toContain('Some saved understanding could not be read');
+        expect(renderedText).toContain('Forgotten marker');
+        expect(renderedText).toContain('does not yet claim that every item is device-only');
+        expect(renderedText).not.toContain('Development preview');
+        expect(overview.findAll('.pa-memory-control-center__preview')).toHaveLength(0);
+        expect(renderedText).not.toContain('conversation-private-id');
+        expect(renderedText).not.toContain('secret forgotten content');
+        const autoSavedItem = overview.findAll('.pa-memory-control-center__item')
+            .find((item) => item.dataset.paMemoryTargetId === 'saved:auto');
+        const autoSavedText = autoSavedItem ? collectText(autoSavedItem) : '';
+        expect(autoSavedText).toContain('Saved understanding');
+        expect(autoSavedText).not.toContain('Saved after confirmation');
+        expect(renderedText).not.toContain('private/secret.md');
+        expect(renderedText).not.toMatch(/\b(VSS|RAG|OPFS|SQLite|Type A|Type C|embedding|vector)\b/i);
+        expect(overview.findAll('button')).toHaveLength(0);
+        expect(plugin.saveSettings).not.toHaveBeenCalled();
+    });
+
+    it('round-trips a legacy Pagelet record ID to the exact Settings item', async () => {
+        const legacyRecordId = 'legacy-record-exact';
+        const snapshot = buildMemoryControlCenterSnapshot({
+            now: new Date('2026-07-10T08:00:00.000Z'),
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: {
+                enabled: false,
+                storageState: 'not_loaded',
+                currentDataBoundaryFingerprint: 'boundary:test',
+                snapshot: null,
+            },
+            profile: { featureEnabled: false, storageState: 'empty', snapshot: null },
+            confirmedRecords: [{
+                id: legacyRecordId,
+                type: 'preference',
+                lifecycle: 'active',
+                sensitivity: 'low',
+                sourceRefs: [{ path: 'notes/preference.md', evidenceStrength: 'strong' }],
+                summary: 'Prefer concise replies.',
+                scope: { kind: 'current_note', paths: ['notes/preference.md'] },
+                createdAt: '2026-07-01T08:00:00.000Z',
+                updatedAt: '2026-07-09T08:00:00.000Z',
+                confirmationStrength: 'explicit',
+            }],
+            boundary: {
+                vaultScopeLabel: 'Test vault',
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            capabilities: {
+                correct: false,
+                undoRecentChange: false,
+                pauseUse: false,
+                resumeUse: false,
+                forget: false,
+            },
+        });
+        const plugin = makePlugin({ debug: false });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            ...snapshot,
+            governanceMode: 'legacy_threshold',
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.openGroup('memory-personalization', legacyRecordId);
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const target = containerEl.findAll('.pa-memory-control-center__item')
+            .find((item) => item.dataset.paMemoryTargetId === legacyRecordId);
+        expect(target).toBeDefined();
+        expect(target?.focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(target?.classes).toContain('pa-memory-control-center__item--targeted');
+    });
+
+    it('uses outcome language when saved understanding is unavailable', async () => {
+        const plugin = makePlugin({ debug: false });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'unavailable',
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const warning = containerEl.findAll('.pa-memory-control-center__warning')
+            .find((item) => item.textContent.includes('Saved understanding is temporarily unavailable'));
+        expect(warning?.textContent).toContain('will not apply new changes');
+        expect(warning?.textContent).not.toMatch(/governance|automatic-accept/i);
+    });
+
+    it('routes governed item and Recent changes actions with their exact claim and event IDs', async () => {
+        const plugin = makePlugin({ debug: false });
+        plugin.runMemoryControlCenterAction.mockResolvedValue({ ok: true, message: 'Memory updated.' });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: true, status: 'ready', indexedDocumentCount: 1 },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: true, status: 'ready', itemCount: 1 },
+            durable: { activeCount: 1, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: true,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.deviceLocal',
+            },
+            governanceMode: 'effect_based',
+            items: [{
+                id: 'item-display-id',
+                claimId: 'claim-exact-123',
+                label: 'Use concise source-backed answers.',
+                origin: 'user_profile',
+                authority: 'user_correction',
+                scopeLabel: 'Test vault',
+                effect: 'future_answers',
+                lifecycle: 'active',
+                provenance: [{
+                    kind: 'conversation',
+                    conversationId: 'conversation-private-id',
+                    observedAt: '2026-07-10T07:00:00.000Z',
+                }],
+                updatedAt: '2026-07-10T08:00:00.000Z',
+                supportedActions: ['pause_use', 'apply_device_wide'],
+            }, {
+                id: 'claim-forget-pending',
+                claimId: 'claim-forget-pending',
+                label: '',
+                origin: 'confirmed_memory',
+                authority: 'source_observation',
+                scopeLabel: '',
+                effect: 'none',
+                lifecycle: 'forget_pending',
+                provenance: [],
+                updatedAt: '2026-07-10T08:05:00.000Z',
+                supportedActions: ['retry_forget'],
+            }],
+            recentChanges: [{
+                id: 'event-exact-456',
+                claimId: 'claim-exact-123',
+                kind: 'correct',
+                occurredAt: '2026-07-10T08:00:00.000Z',
+                label: 'Use concise source-backed answers.',
+                sourcePath: 'notes/preference.md',
+                scopeLabel: 'Test vault',
+                effect: 'future_answers',
+                status: 'active',
+                redacted: false,
+                supportedActions: ['undo_recent_change'],
+            }],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.openGroup('memory-personalization', 'claim-exact-123');
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const exactTarget = containerEl.findAll('.pa-memory-control-center__item')
+            .find((item) => item.dataset.paMemoryTargetId === 'claim-exact-123');
+        expect(exactTarget).toBeDefined();
+        expect(exactTarget?.scrollIntoView).toHaveBeenCalledWith({ behavior: 'smooth', block: 'center' });
+        expect(exactTarget?.focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(exactTarget?.classes).toContain('pa-memory-control-center__item--targeted');
+
+        const pause = containerEl.findAll('button')
+            .find((button) => button.textContent === 'Pause use');
+        const applyDeviceWide = containerEl.findAll('button')
+            .find((button) => button.textContent === 'Use across vaults on this device');
+        const undo = containerEl.findAll('button')
+            .find((button) => button.textContent === 'Undo this change');
+        const retryForget = containerEl.findAll('button')
+            .find((button) => button.textContent === 'Retry cleanup');
+        expect(pause).toBeDefined();
+        expect(applyDeviceWide).toBeDefined();
+        expect(undo).toBeDefined();
+        expect(retryForget).toBeDefined();
+        const collectTargetText = (node: MockDomNode): string => [
+            node.textContent,
+            ...node.children.map(collectTargetText),
+        ].join(' ');
+        expect(collectTargetText(containerEl)).toContain('Source note: notes/preference.md');
+        expect(collectTargetText(containerEl)).toContain('The saved content and source details are already unavailable');
+        pause?.dispatchEvent('click');
+        for (let index = 0; index < 6; index += 1) await Promise.resolve();
+
+        expect(plugin.runMemoryControlCenterAction).toHaveBeenCalledWith(
+            'pause_use',
+            'claim-exact-123',
+            undefined,
+        );
+
+        applyDeviceWide?.dispatchEvent('click');
+        for (let index = 0; index < 6; index += 1) await Promise.resolve();
+
+        expect(plugin.runMemoryControlCenterAction).toHaveBeenCalledWith(
+            'apply_device_wide',
+            'claim-exact-123',
+            undefined,
+        );
+
+        undo?.dispatchEvent('click');
+        for (let index = 0; index < 6; index += 1) await Promise.resolve();
+
+        expect(plugin.runMemoryControlCenterAction).toHaveBeenCalledWith(
+            'undo_recent_change',
+            'event-exact-456',
+            undefined,
+        );
+        retryForget?.dispatchEvent('click');
+        for (let index = 0; index < 6; index += 1) await Promise.resolve();
+        expect(plugin.runMemoryControlCenterAction).toHaveBeenCalledWith(
+            'retry_forget',
+            'claim-forget-pending',
+            undefined,
+        );
+        expect(plugin.runMemoryControlCenterAction).not.toHaveBeenCalledWith(
+            expect.anything(),
+            'item-display-id',
+            expect.anything(),
+        );
+    });
+
+    it('shows fresh recovery proof and a safe reason when finalization is blocked', async () => {
+        const baseSnapshot = {
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as const;
+        const collectText = (node: MockDomNode): string => [
+            node.textContent,
+            ...node.children.map(collectText),
+        ].join(' ');
+
+        const freshPlugin = makePlugin({ debug: false });
+        freshPlugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            ...baseSnapshot,
+            compatibilityFinalization: {
+                phase: 'compatibility',
+                eligible: true,
+                confirmationToken: 'fresh-token',
+                legacyRecordCount: 1,
+                legacyMemoryQueueCount: 0,
+                warningCode: 'other_devices_may_still_depend_on_legacy_data',
+                requiresFreshRestoreProof: true,
+            },
+        } as never);
+        const freshTab = new SettingTab(makeMockApp() as never, freshPlugin as never);
+        const freshContainer = new MockContainerEl('div');
+        freshTab.containerEl = freshContainer as never;
+        freshTab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(collectText(freshContainer)).toContain(
+            'The previous recovery window ended. Before cleanup, PA will create a temporary local recovery copy',
+        );
+
+        const blockedPlugin = makePlugin({ debug: false });
+        blockedPlugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            ...baseSnapshot,
+            compatibilityFinalization: {
+                phase: 'compatibility',
+                eligible: false,
+                legacyRecordCount: 1,
+                legacyMemoryQueueCount: 0,
+                warningCode: 'other_devices_may_still_depend_on_legacy_data',
+                blockedReason: 'finalization_pending_operations',
+            },
+        } as never);
+        const blockedTab = new SettingTab(makeMockApp() as never, blockedPlugin as never);
+        const blockedContainer = new MockContainerEl('div');
+        blockedTab.containerEl = blockedContainer as never;
+        blockedTab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const blockedText = collectText(blockedContainer);
+        expect(blockedText).toContain('PA is still finishing another Memory change.');
+        expect(blockedText).not.toContain('finalization_pending_operations');
+        expect(blockedContainer.findAll('.pa-memory-control-center__finalization')[0]?.open).toBe(true);
+        expect(blockedContainer.findAll('p').some((node) => node.attrs.role === 'status')).toBe(true);
+    });
+
+    it('does not rerender Settings when a Memory action finishes after close', async () => {
+        let resolveAction!: (value: { ok: boolean; message: string }) => void;
+        const actionPending = new Promise<{ ok: boolean; message: string }>((resolve) => {
+            resolveAction = resolve;
+        });
+        const plugin = makePlugin({ debug: false });
+        plugin.runMemoryControlCenterAction.mockReturnValue(actionPending);
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 1, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: true,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.deviceLocal',
+            },
+            governanceMode: 'effect_based',
+            items: [{
+                id: 'claim-close-race',
+                claimId: 'claim-close-race',
+                label: 'Keep answers concise.',
+                origin: 'user_profile',
+                authority: 'explicit_user',
+                scopeLabel: 'Test vault',
+                effect: 'future_answers',
+                lifecycle: 'active',
+                provenance: [{ kind: 'conversation', conversationId: 'conversation-close-race' }],
+                supportedActions: ['pause_use'],
+            }],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        const displaySpy = jest.spyOn(tab, 'display');
+        displaySpy.mockClear();
+
+        containerEl.findAll('button')
+            .find((button) => button.textContent === 'Pause use')
+            ?.dispatchEvent('click');
+        await Promise.resolve();
+        tab.hide();
+        resolveAction({ ok: true, message: 'Paused' });
+        for (let index = 0; index < 6; index += 1) await Promise.resolve();
+
+        expect(displaySpy).not.toHaveBeenCalled();
+    });
+
+    it('does not rerender Settings when finalization finishes after close', async () => {
+        const globalObj = globalThis as typeof globalThis & { __paConfirmDecision?: boolean };
+        globalObj.__paConfirmDecision = true;
+        let resolveFinalization!: (value: { ok: boolean; message: string }) => void;
+        const finalizationPending = new Promise<{ ok: boolean; message: string }>((resolve) => {
+            resolveFinalization = resolve;
+        });
+        try {
+            const plugin = makePlugin({ debug: false });
+            plugin.finalizeMemoryGovernance.mockReturnValue(finalizationPending);
+            plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+                generatedAt: '2026-07-10T08:00:00.000Z',
+                noteMemory: { enabled: false, status: 'disabled' },
+                vaultInsights: { enabled: false, status: 'disabled' },
+                profile: { enabled: false, status: 'disabled', itemCount: 0 },
+                durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+                boundary: {
+                    vaultScoped: true,
+                    deviceLocalProven: false,
+                    explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+                },
+                governanceMode: 'effect_based',
+                compatibilityFinalization: {
+                    phase: 'compatibility',
+                    eligible: true,
+                    confirmationToken: 'confirmation-token',
+                    legacyRecordCount: 1,
+                    legacyMemoryQueueCount: 0,
+                    warningCode: 'other_devices_may_still_depend_on_legacy_data',
+                    requiresFreshRestoreProof: true,
+                },
+                items: [],
+                recentChanges: [],
+                degradedSources: [],
+            } as never);
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            const containerEl = new MockContainerEl('div');
+            tab.containerEl = containerEl as never;
+            tab.display();
+            await Promise.resolve();
+            await Promise.resolve();
+            const displaySpy = jest.spyOn(tab, 'display');
+            displaySpy.mockClear();
+            expect(containerEl.findAll('p').some((element) => (
+                element.textContent.includes('The previous recovery window ended')
+            ))).toBe(true);
+
+            containerEl.findAll('button')
+                .find((button) => button.textContent === 'Finish setup on this device')
+                ?.dispatchEvent('click');
+            for (let index = 0; index < 4; index += 1) await Promise.resolve();
+            expect(plugin.finalizeMemoryGovernance).toHaveBeenCalledWith('confirmation-token');
+            tab.hide();
+            resolveFinalization({ ok: true, message: 'Complete' });
+            for (let index = 0; index < 6; index += 1) await Promise.resolve();
+
+            expect(displaySpy).not.toHaveBeenCalled();
+        } finally {
+            delete globalObj.__paConfirmDecision;
+        }
+    });
+
+    it('does not start finalization when Settings closes while confirmation is pending', async () => {
+        let resolveConfirmation!: (value: boolean) => void;
+        const confirmationPending = new Promise<boolean>((resolve) => {
+            resolveConfirmation = resolve;
+        });
+        (confirmUserAction as jest.Mock).mockImplementationOnce(() => confirmationPending);
+        const plugin = makePlugin({ debug: false });
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            compatibilityFinalization: {
+                phase: 'compatibility',
+                eligible: true,
+                confirmationToken: 'stale-confirmation-token',
+                legacyRecordCount: 1,
+                legacyMemoryQueueCount: 0,
+                warningCode: 'other_devices_may_still_depend_on_legacy_data',
+            },
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        containerEl.findAll('button')
+            .find((button) => button.textContent === 'Finish setup on this device')
+            ?.dispatchEvent('click');
+        await Promise.resolve();
+        expect(confirmUserAction).toHaveBeenCalledTimes(1);
+
+        tab.hide();
+        resolveConfirmation(true);
+        for (let index = 0; index < 4; index += 1) await Promise.resolve();
+
+        expect(plugin.finalizeMemoryGovernance).not.toHaveBeenCalled();
+    });
+
+    it('ignores a stale async overview result after Settings closes', async () => {
+        let resolveSnapshot: ((value: unknown) => void) | undefined;
+        const pending = new Promise((resolve) => { resolveSnapshot = resolve; });
+        const plugin = makePlugin({ debug: true });
+        plugin.getMemoryControlCenterSnapshot.mockReturnValue(pending as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+
+        tab.display();
+        tab.hide();
+        resolveSnapshot?.({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 0, pausedCount: 0, staleCount: 0 },
+            boundary: { vaultScoped: true, deviceLocalProven: false, explanationKey: 'compatibility' },
+            items: [],
+            degradedSources: [],
+        });
+        await Promise.resolve();
+        await Promise.resolve();
+
+        expect(containerEl.findAll('.pa-memory-control-center__cards')).toHaveLength(0);
+        expect(containerEl.findAll('.pa-memory-control-center__loading')).toHaveLength(1);
+    });
+
     it('display() renders sections in the new IA order (h1/h2/h3 + featured image)', () => {
         // Use qwen so the otherwise-empty Featured Image section actually emits
         // a Setting we can locate in the order check.
@@ -1416,6 +2150,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
             'h2:AI Assistant',
             'h3:Qwen response options',
             'h3:Skill guides',
+            'h2:Memory and personalization',
             'h2:Memory',
             'h2:Data & Privacy Boundaries',
             'h3:Local recall preferences',
@@ -1724,7 +2459,7 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(memory.records[0].id).toBe('mem-1');
     });
 
-    it('renders Data Boundary settings and disabled cleanup skeleton', () => {
+    it('renders Data Boundary settings and only enables explicit forgetting-prevention cleanup', () => {
         const plugin = makePlugin();
         const tab = new SettingTab(makeMockApp() as never, plugin as never);
         tab.containerEl = new MockContainerEl('div') as never;
@@ -1744,11 +2479,15 @@ describe('Phase 3 IA reorder + provider UX', () => {
             { value: 'include-generated', text: 'Allow generated notes' },
         ]);
         expect(providerDisclosure?.desc).toContain('PA asks before broad');
-        const cleanupButtonRecords = [
+        const unavailableCleanupRecords = [
             'Local cache', 'Review queue', 'Replay metadata',
             'Candidates', 'Confirmed Memory', 'Tombstones',
         ].map((name) => records.find((record) => record.name === name));
-        expect(cleanupButtonRecords.every((r) => r === undefined)).toBe(true);
+        expect(unavailableCleanupRecords.every((r) => r === undefined)).toBe(true);
+        expect(records.find((record) => record.name === 'Memory cleanup and recovery')
+            ?.buttons[0]).toMatchObject({
+            text: 'Open Memory controls',
+        });
 
         excludedFolders?.onChange?.('private, archive/sensitive, private');
         excludedTags?.onChange?.('#sensitive, private');
@@ -1757,6 +2496,201 @@ describe('Phase 3 IA reorder + provider UX', () => {
         expect(plugin.settings.dataBoundary.excludedFolders).toEqual(['private', 'archive/sensitive']);
         expect(plugin.settings.dataBoundary.excludedTags).toEqual(['sensitive', 'private']);
         expect(plugin.settings.dataBoundary.generatedNotePolicy).toBe('include-generated');
+    });
+
+    it('routes Data cleanup to the exact canonical Memory data-and-recovery control', async () => {
+        const plugin = makePlugin();
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        const containerEl = new MockContainerEl('div');
+        tab.containerEl = containerEl as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+
+        const route = getMockSettingRecords()
+            .find((record) => record.name === 'Memory cleanup and recovery')?.buttons[0];
+        await route?.onClick?.();
+
+        const target = containerEl.findAll('.pa-memory-control-center__item')
+            .find((item) => item.dataset.paMemoryTargetId === 'memory-data-recovery');
+        expect(target).toBeDefined();
+        expect(target?.focus).toHaveBeenCalledWith({ preventScroll: true });
+        expect(target?.classes).toContain('pa-memory-control-center__item--targeted');
+    });
+
+    it('requires explicit confirmation before clearing local prevention markers', async () => {
+        const plugin = makePlugin();
+        plugin.getMemorySuppressionMarkerCount.mockReturnValue(2);
+        plugin.clearMemorySuppressionMarkers.mockResolvedValue({
+            ok: true,
+            message: 'Cleared 2 prevention markers for this vault.',
+            clearedCount: 2,
+        });
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        const action = getMockSettingRecords()
+            .find((record) => record.name === 'Forgetting prevention for this vault')?.buttons[0];
+        expect(action).toMatchObject({ disabled: false });
+
+        setMockConfirmDecision(false);
+        await action?.onClick?.();
+        expect(plugin.clearMemorySuppressionMarkers).not.toHaveBeenCalled();
+
+        setMockConfirmDecision(true);
+        await action?.onClick?.();
+        expect(plugin.clearMemorySuppressionMarkers).toHaveBeenCalledTimes(1);
+    });
+
+    it('offers verified compatibility rollback only after explicit confirmation', async () => {
+        const plugin = makePlugin();
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 1, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            compatibilityRollback: {
+                phase: 'compatibility',
+                eligible: true,
+                legacyRecordCount: 1,
+                legacyMemoryQueueCount: 1,
+                rollbackExpiresAt: '2026-07-17T08:00:00.000Z',
+            },
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        const action = getMockSettingRecords()
+            .find((record) => record.name === 'Restore the previous compatible Memory')?.buttons[0];
+        expect(action).toMatchObject({ disabled: false, text: 'Restore compatible Memory' });
+
+        setMockConfirmDecision(false);
+        await action?.onClick?.();
+        expect(plugin.rollbackMemoryGovernance).not.toHaveBeenCalled();
+
+        setMockConfirmDecision(true);
+        await action?.onClick?.();
+        expect(plugin.rollbackMemoryGovernance).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps prevention-marker cleanup failure contained in the canonical Settings control', async () => {
+        const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
+        Notice.mockClear();
+        const plugin = makePlugin();
+        plugin.getMemorySuppressionMarkerCount.mockReturnValue(1);
+        plugin.clearMemorySuppressionMarkers.mockRejectedValue(new Error('repository unavailable'));
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        const action = getMockSettingRecords()
+            .find((record) => record.name === 'Forgetting prevention for this vault')?.buttons[0];
+
+        setMockConfirmDecision(true);
+        await action?.onClick?.();
+
+        expect(plugin.log).toHaveBeenCalledWith(
+            'Memory prevention-marker cleanup failed',
+            expect.any(Error),
+        );
+        expect(Notice).toHaveBeenCalledWith(
+            'Forgetting prevention markers are not available right now.',
+            6000,
+        );
+    });
+
+    it('does not rerender Settings when prevention-marker cleanup finishes after close', async () => {
+        let resolveCleanup!: (value: { ok: boolean; message: string; clearedCount: number }) => void;
+        const cleanupPending = new Promise<{ ok: boolean; message: string; clearedCount: number }>((resolve) => {
+            resolveCleanup = resolve;
+        });
+        const plugin = makePlugin();
+        plugin.getMemorySuppressionMarkerCount.mockReturnValue(1);
+        plugin.clearMemorySuppressionMarkers.mockReturnValue(cleanupPending);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        const displaySpy = jest.spyOn(tab, 'display');
+        displaySpy.mockClear();
+        const action = getMockSettingRecords()
+            .find((record) => record.name === 'Forgetting prevention for this vault')?.buttons[0];
+
+        setMockConfirmDecision(true);
+        const run = action?.onClick?.();
+        for (let index = 0; index < 3; index += 1) await Promise.resolve();
+        expect(plugin.clearMemorySuppressionMarkers).toHaveBeenCalledTimes(1);
+        tab.hide();
+        resolveCleanup({ ok: true, message: 'Cleared.', clearedCount: 1 });
+        await run;
+
+        expect(displaySpy).not.toHaveBeenCalled();
+    });
+
+    it('does not rerender Settings when compatibility rollback finishes after close', async () => {
+        let resolveRollback!: (value: { ok: boolean; message: string }) => void;
+        const rollbackPending = new Promise<{ ok: boolean; message: string }>((resolve) => {
+            resolveRollback = resolve;
+        });
+        const plugin = makePlugin();
+        plugin.rollbackMemoryGovernance.mockReturnValue(rollbackPending);
+        plugin.getMemoryControlCenterSnapshot.mockResolvedValue({
+            generatedAt: '2026-07-10T08:00:00.000Z',
+            noteMemory: { enabled: false, status: 'disabled' },
+            vaultInsights: { enabled: false, status: 'disabled' },
+            profile: { enabled: false, status: 'disabled', itemCount: 0 },
+            durable: { activeCount: 1, pausedCount: 0, staleCount: 0 },
+            boundary: {
+                vaultScoped: true,
+                deviceLocalProven: false,
+                explanationKey: 'plugin.settings.memoryControlCenter.boundary.compatibility',
+            },
+            governanceMode: 'effect_based',
+            compatibilityRollback: {
+                phase: 'compatibility',
+                eligible: true,
+                legacyRecordCount: 1,
+                legacyMemoryQueueCount: 1,
+            },
+            items: [],
+            recentChanges: [],
+            degradedSources: [],
+        } as never);
+        const tab = new SettingTab(makeMockApp() as never, plugin as never);
+        tab.containerEl = new MockContainerEl('div') as never;
+        tab.display();
+        await Promise.resolve();
+        await Promise.resolve();
+        const displaySpy = jest.spyOn(tab, 'display');
+        displaySpy.mockClear();
+        const action = getMockSettingRecords()
+            .find((record) => record.name === 'Restore the previous compatible Memory')?.buttons[0];
+
+        setMockConfirmDecision(true);
+        const run = action?.onClick?.();
+        for (let index = 0; index < 3; index += 1) await Promise.resolve();
+        expect(plugin.rollbackMemoryGovernance).toHaveBeenCalledTimes(1);
+        tab.hide();
+        resolveRollback({ ok: true, message: 'Restored.' });
+        await run;
+
+        expect(displaySpy).not.toHaveBeenCalled();
     });
 
     it('requires explicit opt-in and supports clearing local recall preferences', async () => {
@@ -2306,7 +3240,7 @@ describe('loadSettings + migrateSettings end-to-end (fresh / legacy / second-lau
 
 describe('Phase 4 P1 UX', () => {
     type Phase4Internals = {
-        debouncedSave: { __record: MockDebounceRecord };
+        debouncedSaveRunner: { __record: MockDebounceRecord };
         rebuildMemorySubSettings: () => void;
         memorySubContainer: { children: unknown[] } | null;
     };
@@ -2325,7 +3259,7 @@ describe('Phase 4 P1 UX', () => {
             expect(excludeRecord?.texts[0]?.onChange).toBeDefined();
 
             const beforeSaves = plugin.saveSettings.mock.calls.length;
-            const debounceRecord = (tab as unknown as Phase4Internals).debouncedSave.__record;
+            const debounceRecord = (tab as unknown as Phase4Internals).debouncedSaveRunner.__record;
             const beforeDebounceCalls = debounceRecord.calls.length;
 
             await excludeRecord!.texts[0].onChange!('tmp/,drafts/');
@@ -2338,13 +3272,15 @@ describe('Phase 4 P1 UX', () => {
             expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaves);
         });
 
-        it('hide() cancels pending debounce and forces one final saveSettings()', () => {
+        it('hide() cancels a pending debounce and flushes the changed setting once', async () => {
             const plugin = makePlugin();
             const tab = new SettingTab(makeMockApp() as never, plugin as never);
             tab.containerEl = new MockContainerEl('div') as never;
             tab.display();
 
-            const debounceRecord = (tab as unknown as Phase4Internals).debouncedSave.__record;
+            const targetPath = getMockSettingRecords().find((record) => record.name === 'Target Path')?.texts[0];
+            await targetPath?.onChange?.('notes');
+            const debounceRecord = (tab as unknown as Phase4Internals).debouncedSaveRunner.__record;
             const beforeCancels = debounceRecord.cancelled;
             const beforeSaves = plugin.saveSettings.mock.calls.length;
 
@@ -2352,6 +3288,17 @@ describe('Phase 4 P1 UX', () => {
 
             expect(debounceRecord.cancelled).toBe(beforeCancels + 1);
             expect(plugin.saveSettings.mock.calls.length).toBe(beforeSaves + 1);
+        });
+
+        it('opening and closing Settings without an edit performs no persistent save', () => {
+            const plugin = makePlugin();
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            tab.hide();
+
+            expect(plugin.saveSettings).not.toHaveBeenCalled();
         });
     });
 
@@ -2380,6 +3327,57 @@ describe('Phase 4 P1 UX', () => {
             expect(names).toContain('Use memory from my notes');
             expect(names).toContain('Ask before using AI credits');
             expect(names).toContain('Advanced memory controls');
+        });
+
+        it('does not expose the legacy automatic-Memory toggle in effect-based mode', () => {
+            const plugin = makePlugin({ confirmedMemoryCount: 30, memoryAutoAcceptPaused: false });
+            plugin.getMemoryGovernanceUiMode.mockReturnValue('effect_based');
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+
+            tab.display();
+
+            expect(getMockSettingRecords().map((record) => record.name))
+                .not.toContain('Remember trusted suggestions automatically');
+        });
+
+        it('rolls back the Level 2 automatic Memory toggle when persistence fails, then persists a retry', async () => {
+            const plugin = makePlugin({ confirmedMemoryCount: 30, memoryAutoAcceptPaused: false });
+            plugin.getMemoryGovernanceUiMode.mockReturnValue('legacy_threshold');
+            plugin.setMemoryAutoAcceptPaused.mockRejectedValueOnce(new Error('disk unavailable'));
+            const tab = new SettingTab(makeMockApp() as never, plugin as never);
+            tab.containerEl = new MockContainerEl('div') as never;
+            tab.display();
+
+            const record = getMockSettingRecords()
+                .find((candidate) => candidate.name === 'Remember trusted suggestions automatically');
+            const toggle = record?.toggles[0];
+            expect(toggle).toMatchObject({ value: true });
+
+            await toggle?.onChange?.(false);
+
+            expect(plugin.settings.memoryAutoAcceptPaused).toBe(false);
+            expect(toggle?.value).toBe(true);
+            expect(plugin.log).toHaveBeenCalledWith(
+                'Failed to persist automatic Memory setting',
+                expect.any(Error),
+            );
+            const { Notice } = jest.requireMock('obsidian') as { Notice: jest.Mock };
+            expect(Notice).toHaveBeenCalledWith(
+                'Could not change automatic Memory. The previous setting is still active.',
+                5000,
+            );
+
+            let persistedPaused = false;
+            plugin.setMemoryAutoAcceptPaused.mockImplementation(async (paused: boolean) => {
+                plugin.settings.memoryAutoAcceptPaused = paused;
+                persistedPaused = paused;
+            });
+            await toggle?.onChange?.(false);
+
+            expect(plugin.settings.memoryAutoAcceptPaused).toBe(true);
+            expect(persistedPaused).toBe(true);
+            expect(mergeLoadedSettings({ memoryAutoAcceptPaused: persistedPaused }).memoryAutoAcceptPaused).toBe(true);
         });
 
         it('keeps AI Memory Extraction and Vault Insights context off until first-use confirmation', () => {

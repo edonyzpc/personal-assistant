@@ -2,6 +2,7 @@ import { describe, expect, it, jest } from "@jest/globals";
 
 import {
     SavedInsightStore,
+    normalizeSavedInsightState,
     type PersistedSourceRef,
 } from "../src/pa";
 
@@ -115,5 +116,69 @@ describe("SavedInsightStore", () => {
                 influencePolicy: "weak-only",
             },
         });
+    });
+
+    it("drops malformed persisted insights without losing valid siblings", () => {
+        const valid = {
+            id: "valid",
+            type: "theme",
+            text: "Pricing notes keep coming back.",
+            origin: "pa-generated",
+            sourceRefs: [sourceRef],
+            whyShown: ["Recurring theme"],
+            scope: { kind: "current_note", paths: ["notes/current.md"] },
+            status: "active",
+            influencePolicy: "weak-only",
+            createdAt: "2026-06-28T12:00:00.000Z",
+            updatedAt: "2026-06-28T12:00:00.000Z",
+        };
+        const normalized = normalizeSavedInsightState({
+            items: [
+                valid,
+                { ...valid, id: "missing-text", text: undefined },
+                { ...valid, id: "null-source", sourceRefs: [null] },
+                { ...valid, id: "bad-scope", scope: { kind: "current_note", paths: 42 } },
+                { ...valid, id: "forbidden-text", fullProviderOutput: "secret provider output" },
+            ],
+        });
+
+        expect(normalized.items.map((item) => item.id)).toEqual(["valid"]);
+        expect(normalized.items[0]).toMatchObject({
+            text: valid.text,
+            sourceRefs: valid.sourceRefs,
+            scope: valid.scope,
+        });
+    });
+
+    it("does not expose failed creates or status updates and retries once", async () => {
+        let rejectPersist = true;
+        let nextId = 0;
+        const store = new SavedInsightStore({
+            idFactory: () => `ins-${++nextId}`,
+            persist: async () => {
+                if (rejectPersist) throw new Error("disk unavailable");
+            },
+        });
+        const input = {
+            type: "question" as const,
+            text: "Why does pricing keep blocking launch planning?",
+            origin: "user-authored" as const,
+            scope: { kind: "custom" as const, label: "Manual insight" },
+        };
+
+        await expect(store.create(input)).rejects.toThrow("disk unavailable");
+        expect(store.snapshot()).toEqual({ items: [] });
+
+        rejectPersist = false;
+        const created = await store.create(input);
+        expect(created.ok).toBe(true);
+        if (!created.ok) return;
+        expect(store.list()).toHaveLength(1);
+        const beforeArchive = store.snapshot();
+
+        rejectPersist = true;
+        await expect(store.archive(created.value.id)).rejects.toThrow("disk unavailable");
+        expect(store.snapshot()).toEqual(beforeArchive);
+        expect(store.list()[0].status).toBe("active");
     });
 });

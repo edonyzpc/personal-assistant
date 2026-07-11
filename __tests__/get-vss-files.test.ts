@@ -81,7 +81,6 @@ jest.mock('../src/utils', () => ({
 }));
 jest.mock('../src/plugin-manifest', () => ({ PluginsUpdater: class { } }));
 jest.mock('../src/theme-manifest', () => ({ ThemeUpdater: class { } }));
-jest.mock('../src/obsidian-hack/obsidian-mobile-debug', () => ({ monkeyPatchConsole: jest.fn() }));
 jest.mock('../src/callout', () => ({ CalloutModal: class { } }));
 jest.mock('../src/preview', () => ({ RECORD_PREVIEW_TYPE: 'record-preview', RecordPreview: class { } }));
 jest.mock('../src/stats-view', () => ({ STAT_PREVIEW_TYPE: 'stat-preview', Stat: class { } }));

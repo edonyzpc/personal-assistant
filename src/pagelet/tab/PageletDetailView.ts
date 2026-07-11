@@ -10,10 +10,12 @@ import {
 
 import { getPageletUiLanguage, pageletT, type PageletLocale } from "../../locales/pagelet";
 import { getPlatformCrypto } from "../../platform-dom";
+import { quietRecallGovernedClaimId } from "../../pa";
 import type { GeneratedReviewNote, WriteResult } from "../output/types";
 import { resolveRelatedMarkdownNote } from "../related-note";
 import { TabView } from "./TabView";
 import type {
+    ConfirmedMemoryRecord,
     MaintenanceMoveApplyResult,
     MaintenanceMoveUndoResult,
     MaintenanceProposal,
@@ -27,11 +29,22 @@ import type {
     PageletDetailPayload,
     TabEntryReason,
 } from "./types";
+import type {
+    PanelMemoryGovernanceRecord,
+    PanelMemoryGovernanceState,
+    PanelMemoryRecentChange,
+} from "../panel/types";
+import {
+    buildContextualGovernedMemoryState,
+    readExactGovernedMemoryClaimIds,
+} from "../contextual-memory";
+import type { MemoryRecordActionResult } from "./sections/types";
 
 export const PAGELET_DETAIL_VIEW_TYPE = "pa-pagelet-detail-view";
 export const PAGELET_DETAIL_ICON = "pa-pagelet";
-const PAGELET_DETAIL_STATE_VERSION = 4;
+const PAGELET_DETAIL_STATE_VERSION = 5;
 const PAGELET_DETAIL_SESSION_CACHE_LIMIT = 12;
+const CONTEXTUAL_MEMORY_STATE_MARKER = "exact-governed-claims-v1";
 
 const pageletDetailSessionCache = new Map<string, PageletDetailPayload>();
 let pageletDetailSessionCounter = 0;
@@ -65,6 +78,54 @@ function cloneReviewQueueItem(item: ReviewQueueItem): ReviewQueueItem {
         whyShown: [...(item.whyShown ?? [])],
         metadata: item.metadata ? { ...item.metadata } : undefined,
     };
+}
+
+function cloneConfirmedMemoryRecord(record: PanelMemoryGovernanceRecord): PanelMemoryGovernanceRecord {
+    return {
+        ...record,
+        ...(record.actionPolicy ? { actionPolicy: { ...record.actionPolicy } } : {}),
+        scope: {
+            ...record.scope,
+            paths: record.scope.paths ? [...record.scope.paths] : undefined,
+            tags: record.scope.tags ? [...record.scope.tags] : undefined,
+        },
+        sourceRefs: record.sourceRefs.map((ref) => ({
+            ...ref,
+            whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
+        })),
+    };
+}
+
+function mergeMemoryActionRecord(
+    current: PanelMemoryGovernanceRecord,
+    next: ConfirmedMemoryRecord,
+): PanelMemoryGovernanceRecord {
+    const projectedNext = next as PanelMemoryGovernanceRecord;
+    if (projectedNext.actionPolicy || (
+        current.actionPolicy === undefined
+        && current.effect === undefined
+        && current.useStatus === undefined
+        && current.durableUseStatus === undefined
+    )) {
+        return cloneConfirmedMemoryRecord(projectedNext);
+    }
+    return cloneConfirmedMemoryRecord({
+        ...projectedNext,
+        ...(projectedNext.effect !== undefined
+            ? {} : current.effect !== undefined ? { effect: current.effect } : {}),
+        ...(projectedNext.useStatus !== undefined
+            ? {} : current.useStatus !== undefined ? { useStatus: current.useStatus } : {}),
+        ...(projectedNext.durableUseStatus !== undefined
+            ? {} : current.durableUseStatus !== undefined
+                ? { durableUseStatus: current.durableUseStatus }
+                : {}),
+        actionPolicy: {
+            correct: false,
+            pause: false,
+            resume: false,
+            forget: false,
+        },
+    });
 }
 
 function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetailPayload {
@@ -142,21 +203,13 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
         if (payload.extra.memoryGovernance) {
             copy.extra.memoryGovernance = {
                 totalCount: payload.extra.memoryGovernance.totalCount,
+                governanceMode: payload.extra.memoryGovernance.governanceMode,
+                contextual: payload.extra.memoryGovernance.contextual,
                 confirmedMemoryCount: payload.extra.memoryGovernance.confirmedMemoryCount,
-                records: payload.extra.memoryGovernance.records.map((record) => ({
-                    ...record,
-                    scope: {
-                        ...record.scope,
-                        paths: record.scope.paths ? [...record.scope.paths] : undefined,
-                        tags: record.scope.tags ? [...record.scope.tags] : undefined,
-                    },
-                    sourceRefs: record.sourceRefs.map((ref) => ({
-                        ...ref,
-                        whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
-                    })),
-                })),
+                records: payload.extra.memoryGovernance.records.map(cloneConfirmedMemoryRecord),
                 candidates: payload.extra.memoryGovernance.candidates?.map(cloneReviewQueueItem),
                 routedItems: payload.extra.memoryGovernance.routedItems?.map(cloneReviewQueueItem),
+                recentChanges: payload.extra.memoryGovernance.recentChanges?.map((change) => ({ ...change })),
             };
         }
         if (payload.extra.maintenanceReview) {
@@ -261,6 +314,7 @@ function clonePageletDetailPayload(payload: PageletDetailPayload): PageletDetail
                 totalCount: payload.extra.quietRecall.totalCount,
                 candidates: payload.extra.quietRecall.candidates.map((candidate) => ({
                     ...candidate,
+                    ...(candidate.context ? { context: { ...candidate.context } } : {}),
                     sourceRefs: candidate.sourceRefs.map((ref) => ({
                         ...ref,
                         whyShown: ref.whyShown ? [...ref.whyShown] : undefined,
@@ -303,6 +357,20 @@ export function registerPageletDetailIcon(): void {
     addIcon(PAGELET_DETAIL_ICON, buildPageletDetailIconSvg());
 }
 
+export interface PageletMemoryLifecycleCallbacks {
+    onCorrect?: (record: ConfirmedMemoryRecord, summary: string) => Promise<MemoryRecordActionResult>;
+    onPauseUse?: (record: ConfirmedMemoryRecord) => Promise<MemoryRecordActionResult>;
+    onResumeUse?: (record: ConfirmedMemoryRecord) => Promise<MemoryRecordActionResult>;
+    /** Owns the permanent-action disclosure and second confirmation. */
+    onForget?: (record: ConfirmedMemoryRecord) => Promise<MemoryRecordActionResult>;
+    onUndoRecentChange?: (change: PanelMemoryRecentChange) => Promise<MemoryRecordActionResult>;
+    onOpenSource?: (path: string) => void;
+    onOpenMemorySettings?: (targetId?: string) => void;
+    resolveContextualMemory?: (
+        claimIds: readonly string[],
+    ) => PanelMemoryGovernanceState | null;
+}
+
 export class PageletDetailView extends ItemView {
     private readonly getLocale: () => PageletLocale;
     private readonly onSaveSummaryNote?: (note: GeneratedReviewNote) => Promise<WriteResult>;
@@ -310,14 +378,22 @@ export class PageletDetailView extends ItemView {
     private readonly onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>;
     private readonly onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>;
     private readonly onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>;
+    private readonly onForgetConfirmedMemory?: (record: ConfirmedMemoryRecord) => Promise<{
+        ok: boolean;
+        message: string;
+        record?: ConfirmedMemoryRecord;
+    }>;
     private readonly onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>;
     private readonly onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>;
     private readonly onOpenSettings?: () => void;
+    private readonly memoryCallbacks: PageletMemoryLifecycleCallbacks;
     private renderer: TabView | null = null;
     private title: string;
     private content: PageletDetailContent = [];
     private locale: PageletLocale;
     private sessionId: string;
+    private contextualMemoryClaimIds: string[] = [];
+    private hasContextualMemoryState = false;
     private payloadOptions: Pick<PageletDetailPayload, "layoutType" | "extra" | "sourcePath" | "summarySaveNote" | "restoredFromState" | "entryReason"> = {};
 
     constructor(
@@ -328,9 +404,15 @@ export class PageletDetailView extends ItemView {
         onUndoMaintenanceAction?: (actionId: string) => Promise<MaintenanceMoveUndoResult>,
         onConfirmMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>,
         onDismissMemoryCandidate?: (item: ReviewQueueItem) => Promise<{ ok: boolean; message: string }>,
+        onForgetConfirmedMemory?: (record: ConfirmedMemoryRecord) => Promise<{
+            ok: boolean;
+            message: string;
+            record?: ConfirmedMemoryRecord;
+        }>,
         onSaveQuietRecallAsInsight?: (candidate: QuietRecallCandidate) => Promise<QuietRecallSaveResult>,
         onLinkQuietRecallCandidate?: (candidate: QuietRecallCandidate, currentPath?: string) => Promise<{ ok: boolean; message: string }>,
         onOpenSettings?: () => void,
+        memoryCallbacks: PageletMemoryLifecycleCallbacks = {},
     ) {
         super(leaf);
         this.getLocale = getLocale;
@@ -339,9 +421,11 @@ export class PageletDetailView extends ItemView {
         this.onUndoMaintenanceAction = onUndoMaintenanceAction;
         this.onConfirmMemoryCandidate = onConfirmMemoryCandidate;
         this.onDismissMemoryCandidate = onDismissMemoryCandidate;
+        this.onForgetConfirmedMemory = onForgetConfirmedMemory;
         this.onSaveQuietRecallAsInsight = onSaveQuietRecallAsInsight;
         this.onLinkQuietRecallCandidate = onLinkQuietRecallCandidate;
         this.onOpenSettings = onOpenSettings;
+        this.memoryCallbacks = memoryCallbacks;
         this.locale = getLocale();
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.sessionId = createPageletDetailSessionId();
@@ -365,6 +449,7 @@ export class PageletDetailView extends ItemView {
             this.locale = this.getLocale();
             this.title = pageletT("pagelet.tab.title", this.locale);
         }
+        this.rehydrateContextualMemory();
         this.renderer = new TabView(this.locale, {
             app: this.app,
             onConnectionNodeClick: (noteName, sourcePath) => this.openRelatedNote(noteName, sourcePath),
@@ -376,6 +461,23 @@ export class PageletDetailView extends ItemView {
             onUndoMaintenanceAction: this.onUndoMaintenanceAction,
             onConfirmMemoryCandidate: this.onConfirmMemoryCandidate,
             onDismissMemoryCandidate: this.onDismissMemoryCandidate,
+            onCorrect: this.memoryCallbacks.onCorrect
+                ? (record, summary) => this.correctConfirmedMemory(record, summary)
+                : undefined,
+            onPauseUse: this.memoryCallbacks.onPauseUse
+                ? (record) => this.pauseConfirmedMemory(record)
+                : undefined,
+            onResumeUse: this.memoryCallbacks.onResumeUse
+                ? (record) => this.resumeConfirmedMemory(record)
+                : undefined,
+            onForget: (this.memoryCallbacks.onForget || this.onForgetConfirmedMemory)
+                ? (record) => this.forgetConfirmedMemory(record)
+                : undefined,
+            onUndoRecentChange: this.memoryCallbacks.onUndoRecentChange
+                ? (change) => this.undoRecentMemoryChange(change)
+                : undefined,
+            onOpenSource: this.memoryCallbacks.onOpenSource,
+            onOpenMemorySettings: this.memoryCallbacks.onOpenMemorySettings,
             onSaveQuietRecallAsInsight: this.onSaveQuietRecallAsInsight,
             onLinkRecallCandidate: this.onLinkQuietRecallCandidate,
             onOpenSettings: this.onOpenSettings,
@@ -390,25 +492,47 @@ export class PageletDetailView extends ItemView {
     }
 
     setPayload(payload: PageletDetailPayload): void {
-        this.applyPayload(payload);
+        const contextual = inspectPayloadContextualMemory(payload);
+        this.hasContextualMemoryState = contextual.kind !== "none";
+        const normalizedPayload = contextual.kind === "invalid"
+            ? null
+            : normalizeLiveContextualMemoryPayload(payload);
+        const invalidContext = contextual.kind === "invalid" || normalizedPayload === null;
+        this.contextualMemoryClaimIds = !invalidContext && contextual.kind === "exact"
+            ? contextual.claimIds
+            : [];
+        if (invalidContext) {
+            pageletDetailSessionCache.delete(this.sessionId);
+        }
+        this.applyPayload(invalidContext
+            ? { ...payload, restoredFromState: true }
+            : normalizedPayload);
         this.renderPayload();
     }
 
     getState(): Record<string, unknown> {
         const payload: Record<string, unknown> = {
-            title: this.title,
             locale: this.locale,
             sessionId: this.sessionId,
             restoredFromState: true,
         };
+        if (!this.hasContextualMemoryState) {
+            payload.title = this.title;
+        }
         if (this.payloadOptions.layoutType) {
             payload.layoutType = this.payloadOptions.layoutType;
         }
-        if (this.payloadOptions.sourcePath) {
+        if (this.payloadOptions.sourcePath && !this.hasContextualMemoryState) {
             payload.sourcePath = this.payloadOptions.sourcePath;
         }
         if (this.payloadOptions.entryReason) {
             payload.entryReason = this.payloadOptions.entryReason;
+        }
+        if (this.contextualMemoryClaimIds.length > 0) {
+            payload.contextualMemory = {
+                marker: CONTEXTUAL_MEMORY_STATE_MARKER,
+                claimIds: [...this.contextualMemoryClaimIds],
+            };
         }
         return {
             version: PAGELET_DETAIL_STATE_VERSION,
@@ -420,7 +544,10 @@ export class PageletDetailView extends ItemView {
         const restored = readPageletDetailState(state, this.getLocale());
         if (restored) {
             this.sessionId = restored.sessionId;
+            this.contextualMemoryClaimIds = restored.contextualMemoryClaimIds;
+            this.hasContextualMemoryState = restored.hasContextualMemoryState;
             this.applyPayload(restored.payload);
+            this.rehydrateContextualMemory();
         } else {
             this.resetPayload();
         }
@@ -449,7 +576,64 @@ export class PageletDetailView extends ItemView {
         this.title = pageletT("pagelet.tab.title", this.locale);
         this.content = [];
         this.payloadOptions = {};
+        this.contextualMemoryClaimIds = [];
+        this.hasContextualMemoryState = false;
         this.sessionId = createPageletDetailSessionId();
+    }
+
+    private rehydrateContextualMemory(): void {
+        if (this.contextualMemoryClaimIds.length === 0) return;
+        const existing = this.payloadOptions.extra?.memoryGovernance;
+        let resolved: PanelMemoryGovernanceState | null = null;
+        try {
+            resolved = this.memoryCallbacks.resolveContextualMemory?.(
+                [...this.contextualMemoryClaimIds],
+            ) ?? null;
+        } catch {
+            resolved = null;
+        }
+        const contextual = resolved
+            ? buildContextualGovernedMemoryState(resolved, this.contextualMemoryClaimIds)
+            : {
+                governanceMode: "effect_based" as const,
+                contextual: true,
+                records: [],
+                totalCount: 0,
+            };
+        const rehydratedExactContext = resolved !== null
+            && contextual.records.length === this.contextualMemoryClaimIds.length;
+        const candidates = existing?.candidates;
+        const routedItems = existing?.routedItems;
+        const memoryGovernance: PanelMemoryGovernanceState = {
+            ...contextual,
+            ...(candidates ? { candidates } : {}),
+            ...(routedItems ? { routedItems } : {}),
+            totalCount: contextual.records.length
+                + (candidates?.length ?? 0)
+                + (routedItems?.length ?? 0),
+        };
+        const extra = { ...(this.payloadOptions.extra ?? {}) };
+        if (!rehydratedExactContext && extra.quietRecall) {
+            const candidates = extra.quietRecall.candidates.filter((candidate) => (
+                candidate.context?.kind !== "governed_claim"
+            ));
+            if (candidates.length > 0) {
+                extra.quietRecall = {
+                    ...extra.quietRecall,
+                    candidates,
+                    totalCount: candidates.length,
+                };
+            } else {
+                delete extra.quietRecall;
+            }
+        }
+        extra.memoryGovernance = memoryGovernance;
+        this.payloadOptions.extra = extra;
+        if (rehydratedExactContext) {
+            this.payloadOptions.restoredFromState = undefined;
+        } else {
+            this.payloadOptions.restoredFromState = true;
+        }
     }
 
     private renderPayload(): void {
@@ -478,6 +662,64 @@ export class PageletDetailView extends ItemView {
             summarySaveNote: this.payloadOptions.summarySaveNote,
             entryReason: this.payloadOptions.entryReason,
         });
+    }
+
+    private async correctConfirmedMemory(
+        record: ConfirmedMemoryRecord,
+        summary: string,
+    ): Promise<MemoryRecordActionResult> {
+        const callback = this.memoryCallbacks.onCorrect;
+        if (!callback) return this.memoryActionUnavailable();
+        return this.applyMemoryActionResult(await callback(record, summary));
+    }
+
+    private async pauseConfirmedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+        const callback = this.memoryCallbacks.onPauseUse;
+        if (!callback) return this.memoryActionUnavailable();
+        return this.applyMemoryActionResult(await callback(record));
+    }
+
+    private async resumeConfirmedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+        const callback = this.memoryCallbacks.onResumeUse;
+        if (!callback) return this.memoryActionUnavailable();
+        return this.applyMemoryActionResult(await callback(record));
+    }
+
+    private async forgetConfirmedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+        const callback = this.memoryCallbacks.onForget ?? this.onForgetConfirmedMemory;
+        if (!callback) return this.memoryActionUnavailable();
+        return this.applyMemoryActionResult(await callback(record));
+    }
+
+    private async undoRecentMemoryChange(
+        change: PanelMemoryRecentChange,
+    ): Promise<MemoryRecordActionResult> {
+        const callback = this.memoryCallbacks.onUndoRecentChange;
+        if (!callback) return this.memoryActionUnavailable();
+        return this.applyMemoryActionResult(await callback(change));
+    }
+
+    private applyMemoryActionResult(result: MemoryRecordActionResult): MemoryRecordActionResult {
+        const nextRecord = result.record;
+        if (result.ok && nextRecord) {
+            const governance = this.payloadOptions.extra?.memoryGovernance;
+            if (governance?.records.some((candidate) => candidate.id === nextRecord.id)) {
+                governance.records = governance.records.map((candidate) => (
+                    candidate.id === nextRecord.id
+                        ? mergeMemoryActionRecord(candidate, nextRecord)
+                        : candidate
+                ));
+                this.cacheCurrentPayload();
+            }
+        }
+        return result;
+    }
+
+    private memoryActionUnavailable(): MemoryRecordActionResult {
+        return {
+            ok: false,
+            message: pageletT("pagelet.tab.memory.actionUnavailable", this.locale),
+        };
     }
 
     private async saveSummaryNote(note: GeneratedReviewNote): Promise<WriteResult> {
@@ -523,7 +765,12 @@ export class PageletDetailView extends ItemView {
 function readPageletDetailState(
     state: unknown,
     fallbackLocale: PageletLocale,
-): { sessionId: string; payload: PageletDetailPayload } | null {
+): {
+    sessionId: string;
+    payload: PageletDetailPayload;
+    contextualMemoryClaimIds: string[];
+    hasContextualMemoryState: boolean;
+} | null {
     if (!isRecord(state)) return null;
     const payload = state.payload;
     if (!isRecord(payload)) return null;
@@ -531,16 +778,42 @@ function readPageletDetailState(
         ? payload.sessionId
         : createPageletDetailSessionId();
 
+    const persistedContext = inspectPersistedContextualMemory(payload);
+    if (persistedContext.kind === "invalid") {
+        pageletDetailSessionCache.delete(sessionId);
+    }
+
     const cachedPayload = pageletDetailSessionCache.get(sessionId);
-    if (cachedPayload) {
+    const cachedContext = cachedPayload
+        ? inspectPayloadContextualMemory(cachedPayload)
+        : { kind: "none" as const };
+    const cacheMatchesPersisted = (
+        persistedContext.kind === "none"
+        && (cachedContext.kind === "none" || cachedContext.kind === "contextual_empty")
+    ) || (
+        persistedContext.kind === "exact"
+        && cachedContext.kind === "exact"
+        && equalClaimIds(cachedContext.claimIds, persistedContext.claimIds)
+    );
+    if (cachedPayload && cacheMatchesPersisted) {
         return {
             sessionId,
             payload: clonePageletDetailPayload(cachedPayload),
+            contextualMemoryClaimIds: cachedContext.kind === "exact"
+                ? cachedContext.claimIds
+                : [],
+            hasContextualMemoryState: cachedContext.kind !== "none",
         };
     }
 
+    const contextualMemoryClaimIds = persistedContext.kind === "exact"
+        ? persistedContext.claimIds
+        : [];
+
     const locale = normalizePageletLocale(payload.locale) ?? fallbackLocale;
-    const title = typeof payload.title === "string" && payload.title.trim().length > 0
+    const title = persistedContext.kind === "none"
+        && typeof payload.title === "string"
+        && payload.title.trim().length > 0
         ? payload.title
         : pageletT("pagelet.tab.title", locale);
 
@@ -552,10 +825,115 @@ function readPageletDetailState(
     };
     const layoutType = normalizePageletDetailLayoutType(payload.layoutType);
     if (layoutType) result.layoutType = layoutType;
-    if (typeof payload.sourcePath === "string") result.sourcePath = payload.sourcePath;
+    if (persistedContext.kind === "none" && typeof payload.sourcePath === "string") {
+        result.sourcePath = payload.sourcePath;
+    }
     const entryReason = normalizeTabEntryReason(payload.entryReason);
     if (entryReason) result.entryReason = entryReason;
-    return { sessionId, payload: result };
+    return {
+        sessionId,
+        payload: result,
+        contextualMemoryClaimIds,
+        hasContextualMemoryState: persistedContext.kind !== "none"
+            || cachedContext.kind !== "none",
+    };
+}
+
+type ContextualMemoryInspection =
+    | { kind: "none" }
+    | { kind: "contextual_empty" }
+    | { kind: "invalid" }
+    | { kind: "exact"; claimIds: string[] };
+
+function inspectPayloadContextualMemory(
+    payload: PageletDetailPayload,
+): ContextualMemoryInspection {
+    const seen = new Set<string>();
+    const claimIds: string[] = [];
+    let hasContextualSurface = false;
+    const append = (claimId: string): boolean => {
+        if (!claimId || claimId !== claimId.trim()) return false;
+        if (seen.has(claimId)) return false;
+        seen.add(claimId);
+        claimIds.push(claimId);
+        return true;
+    };
+    const governance = payload.extra?.memoryGovernance;
+    if (governance?.contextual === true) {
+        hasContextualSurface = true;
+        if (governance.records.length > 0) {
+            for (const record of governance.records) {
+                if (!append(record.id)) return { kind: "invalid" };
+            }
+        }
+    }
+    for (const candidate of payload.extra?.quietRecall?.candidates ?? []) {
+        if (candidate.context?.kind !== "governed_claim") continue;
+        hasContextualSurface = true;
+        const claimId = quietRecallGovernedClaimId(candidate);
+        if (!claimId || !append(claimId)) return { kind: "invalid" };
+    }
+    if (!hasContextualSurface) return { kind: "none" };
+    return claimIds.length > 0
+        ? { kind: "exact", claimIds }
+        : { kind: "contextual_empty" };
+}
+
+function normalizeLiveContextualMemoryPayload(
+    payload: PageletDetailPayload,
+): PageletDetailPayload | null {
+    const governance = payload.extra?.memoryGovernance;
+    if (governance?.contextual !== true) return payload;
+    if (governance.governanceMode !== "effect_based") return null;
+
+    const recordIds = governance.records.map((record) => record.id);
+    const contextual = recordIds.length > 0
+        ? buildContextualGovernedMemoryState(governance, recordIds)
+        : {
+            governanceMode: "effect_based" as const,
+            contextual: true,
+            records: [],
+            totalCount: 0,
+        };
+    if (contextual.records.length !== governance.records.length) return null;
+
+    const candidates = governance.candidates;
+    const routedItems = governance.routedItems;
+    return {
+        ...payload,
+        extra: {
+            ...(payload.extra ?? {}),
+            memoryGovernance: {
+                ...contextual,
+                ...(candidates ? { candidates } : {}),
+                ...(routedItems ? { routedItems } : {}),
+                totalCount: contextual.records.length
+                    + (candidates?.length ?? 0)
+                    + (routedItems?.length ?? 0),
+            },
+        },
+    };
+}
+
+function inspectPersistedContextualMemory(
+    payload: Record<string, unknown>,
+): ContextualMemoryInspection {
+    if (!Object.prototype.hasOwnProperty.call(payload, "contextualMemory")) {
+        return { kind: "none" };
+    }
+    const value = payload.contextualMemory;
+    if (!isRecord(value) || value.marker !== CONTEXTUAL_MEMORY_STATE_MARKER) {
+        return { kind: "invalid" };
+    }
+    const claimIds = readExactGovernedMemoryClaimIds(value.claimIds);
+    return claimIds && claimIds.length > 0
+        ? { kind: "exact", claimIds }
+        : { kind: "invalid" };
+}
+
+function equalClaimIds(left: readonly string[], right: readonly string[]): boolean {
+    return left.length === right.length
+        && left.every((claimId, index) => claimId === right[index]);
 }
 
 function normalizePageletLocale(value: unknown): PageletLocale | null {

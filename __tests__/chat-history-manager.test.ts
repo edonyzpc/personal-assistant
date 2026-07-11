@@ -173,6 +173,31 @@ describe("ChatHistoryManager", () => {
         expect(rehydrated.historyEntry.providerReasoningObserved).toBe(true);
     });
 
+    it("redacts exact source paths from governed Context Used before persistence and reopen", async () => {
+        const { manager } = makeManager();
+        await manager.initialize();
+        const governed = makeContextUsedItem({
+            label: "Saved understanding",
+            memoryClaimId: "claim-exact",
+            sources: [{ path: "private/governed-source.md" }],
+        });
+        const persisted = manager.serializeTurn(makeHistoryEntry({
+            contextUsedItems: [governed],
+            memoryMetadata: makeMemoryMetadata({ contextUsed: [governed] }),
+        }), "conv-governed", 0);
+
+        expect(persisted.contextUsed?.[0]?.sources).toBeUndefined();
+        expect(persisted.memoryMetadata?.contextUsed?.[0]?.sources).toBeUndefined();
+        expect(JSON.stringify(persisted)).not.toContain("private/governed-source.md");
+
+        const rehydrated = manager.deserializeTurn({
+            ...persisted,
+            contextUsed: [{ ...governed }],
+        });
+        expect(rehydrated.historyEntry.contextUsedItems?.[0]?.sources).toBeUndefined();
+        expect(JSON.stringify(rehydrated.historyEntry)).not.toContain("private/governed-source.md");
+    });
+
     it("auto-creates a conversation on first recordTurn via startConversation", async () => {
         const { manager, store } = makeManager();
         await manager.initialize();

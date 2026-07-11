@@ -124,6 +124,14 @@ export interface ChatContextUsedItem {
     sources?: ChatAgentSource[];
     citationEligible?: boolean;
     statusOnly?: boolean;
+    /** Exact governed Memory target for Settings navigation; never model authority. */
+    memoryClaimId?: string;
+    /** Content-free governed effect retained safely in Chat history. */
+    memoryEffect?: "future_answers" | "collaboration_default";
+    /** User-facing provenance class; contains no claim content. */
+    memorySource?: "notes" | "interactions" | "settings" | "mixed";
+    /** User-facing applicability boundary; never grants cross-vault authority. */
+    memoryScope?: "current_vault" | "same_device";
 }
 
 export type SourceRecordKind =

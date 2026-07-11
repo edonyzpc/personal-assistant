@@ -176,6 +176,30 @@ describe("MemoryChatHistoryStore", () => {
         const stored = await store.getConversation(conversation.id);
         expect(stored?.title).toBe("First chat");
     });
+
+    it("redacts governed Context Used source paths on write and legacy readback", async () => {
+        const store = new MemoryChatHistoryStore();
+        const governedContext = {
+            category: "memory" as const,
+            label: "Saved understanding",
+            memoryClaimId: "claim-exact",
+            sources: [{ path: "private/governed-source.md" }],
+            statusOnly: true,
+        };
+        await store.appendTurn(makeTurn({
+            contextUsed: [governedContext],
+            memoryMetadata: {
+                hasMemoryContent: true,
+                allowedMemorySourcePaths: [],
+                contextUsed: [governedContext],
+            },
+        }));
+
+        const [stored] = await store.getTurns("conv-1");
+        expect(stored.contextUsed?.[0]?.sources).toBeUndefined();
+        expect(stored.memoryMetadata?.contextUsed?.[0]?.sources).toBeUndefined();
+        expect(JSON.stringify(stored)).not.toContain("private/governed-source.md");
+    });
 });
 
 describe("UnavailableChatHistoryStore", () => {

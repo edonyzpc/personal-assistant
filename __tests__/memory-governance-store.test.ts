@@ -1,11 +1,14 @@
 import { describe, expect, it } from "@jest/globals";
 
 import {
+    CallbackMemoryGovernanceRecordRepository,
     MemoryGovernanceStore,
     decideContextFirewall,
     memoryCandidateFromQueueItem,
+    normalizeMemoryGovernanceState,
     validateConfirmedMemoryRecord,
     type ConfirmedMemoryRecord,
+    type MemoryGovernanceRecordRepository,
     type MemoryCandidateContract,
     type PersistedSourceRef,
     type ReviewQueueItem,
@@ -136,13 +139,15 @@ describe("Memory governance", () => {
             scope: { kind: "current_note", paths: ["notes/current.md"], label: "Current note" },
             confirmationSource: "pagelet",
             confirmationStrength: "auto",
-        });
+            originReviewQueueItemId: "rq-auto",
+        } as Parameters<MemoryGovernanceStore["confirmCandidate"]>[1] & { originReviewQueueItemId: string });
 
         expect(result).toMatchObject({
             ok: true,
             value: {
                 id: "mem-auto",
                 confirmationStrength: "auto",
+                originReviewQueueItemId: "rq-auto",
             },
         });
     });
@@ -173,7 +178,10 @@ describe("Memory governance", () => {
 
     it("forgets Memory by keeping only a text-free tombstone", async () => {
         const store = new MemoryGovernanceStore({
-            records: [makeRecord()],
+            records: [{
+                ...makeRecord(),
+                originReviewQueueItemId: "rq-memory",
+            } as ConfirmedMemoryRecord],
             now: () => new Date("2026-06-28T12:30:00.000Z"),
         });
 
@@ -186,6 +194,7 @@ describe("Memory governance", () => {
                 summary: "",
                 sourceRefs: [],
                 tombstoneReason: "user_forget",
+                originReviewQueueItemId: "rq-memory",
             },
         });
         if (!forgotten.ok) return;
@@ -218,6 +227,25 @@ describe("Memory governance", () => {
         });
         const store = new MemoryGovernanceStore({ records: [record] });
         expect(store.list()).toEqual([]);
+    });
+
+    it("drops malformed persisted records without losing valid siblings", () => {
+        const valid = makeRecord({ id: "valid" });
+        const normalized = normalizeMemoryGovernanceState({
+            records: [
+                valid,
+                { ...valid, id: "missing-summary", summary: undefined },
+                { ...valid, id: "null-source", sourceRefs: [null] },
+                { ...valid, id: "bad-scope", scope: { kind: "current_note", paths: 42 } },
+            ],
+        });
+
+        expect(normalized.records.map((record) => record.id)).toEqual(["valid"]);
+        expect(normalized.records[0]).toMatchObject({
+            summary: valid.summary,
+            sourceRefs: valid.sourceRefs,
+            scope: valid.scope,
+        });
     });
 
     it("requires explicit export confirmation and leaves lifecycle unchanged", () => {
@@ -261,5 +289,85 @@ describe("Memory governance", () => {
             decision: "ask_user",
             reason: "task_constraint",
         });
+    });
+
+    it("does not expose failed confirmations or lifecycle updates and retries once", async () => {
+        let rejectPersist = true;
+        let nextId = 0;
+        const store = new MemoryGovernanceStore({
+            idFactory: () => `mem-${++nextId}`,
+            persist: async () => {
+                if (rejectPersist) throw new Error("disk unavailable");
+            },
+        });
+        const options = {
+            scope: { kind: "current_note" as const, paths: ["notes/current.md"] },
+            confirmationSource: "pagelet" as const,
+        };
+
+        await expect(store.confirmCandidate(makeCandidate(), options)).rejects.toThrow("disk unavailable");
+        expect(store.snapshot()).toEqual({ records: [] });
+
+        rejectPersist = false;
+        const confirmed = await store.confirmCandidate(makeCandidate(), options);
+        expect(confirmed.ok).toBe(true);
+        if (!confirmed.ok) return;
+        expect(store.list()).toHaveLength(1);
+        const beforeArchive = store.snapshot();
+
+        rejectPersist = true;
+        await expect(store.archive(confirmed.value.id)).rejects.toThrow("disk unavailable");
+        expect(store.snapshot()).toEqual(beforeArchive);
+        expect(store.list()[0].lifecycle).toBe("active");
+    });
+
+    it("persists through the repository interface without changing domain behavior", async () => {
+        const writes: ConfirmedMemoryRecord[][] = [];
+        const repository: MemoryGovernanceRecordRepository = {
+            read: () => ({ records: [makeRecord()] }),
+            write: async (state) => {
+                writes.push(state.records.map((record) => ({
+                    ...record,
+                    scope: { ...record.scope },
+                    sourceRefs: record.sourceRefs.map((ref) => ({ ...ref })),
+                })));
+            },
+        };
+        const store = new MemoryGovernanceStore({
+            repository,
+            now: () => new Date("2026-06-28T12:30:00.000Z"),
+        });
+
+        const archived = await store.archive("mem-1");
+
+        expect(archived).toMatchObject({ ok: true, value: { lifecycle: "archived" } });
+        expect(writes).toHaveLength(1);
+        expect(writes[0][0].lifecycle).toBe("archived");
+        writes[0][0].summary = "mutated repository argument";
+        expect(store.list()[0].summary).toBe("Prefers concise weekly planning.");
+    });
+
+    it("keeps the callback adapter clone-safe and commits its view only after persistence", async () => {
+        let rejectWrite = true;
+        const repository = new CallbackMemoryGovernanceRecordRepository(
+            [makeRecord()],
+            async () => {
+                if (rejectWrite) throw new Error("persist failed");
+            },
+        );
+        const store = new MemoryGovernanceStore({ repository });
+
+        await expect(store.archive("mem-1")).rejects.toThrow("persist failed");
+        expect(repository.read().records[0].lifecycle).toBe("active");
+        expect(store.list()[0].lifecycle).toBe("active");
+
+        rejectWrite = false;
+        await expect(store.archive("mem-1")).resolves.toMatchObject({
+            ok: true,
+            value: { lifecycle: "archived" },
+        });
+        const firstRead = repository.read();
+        firstRead.records[0].summary = "mutated read";
+        expect(repository.read().records[0].summary).toBe("Prefers concise weekly planning.");
     });
 });

@@ -114,7 +114,7 @@ function dedupeSourceRecords(records: SourceRecord[]): SourceRecord[] {
 function mergeContextUsed(items: ChatContextUsedItem[]): ChatContextUsedItem[] {
     const byKey = new Map<string, ChatContextUsedItem>();
     for (const item of items) {
-        const key = `${item.category}:${item.label}`;
+        const key = `${item.category}:${item.label}:${item.memoryClaimId ?? ""}`;
         const existing = byKey.get(key);
         if (!existing) {
             byKey.set(key, {

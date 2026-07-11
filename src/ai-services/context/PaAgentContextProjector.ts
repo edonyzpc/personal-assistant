@@ -3,8 +3,20 @@ import { sanitizeUserProfileMarkdownForPrompt } from "../memory-extraction/type-
 import { PaAgentContextCompactor } from "./PaAgentContextCompactor";
 
 export interface PaAgentInjectedContext {
+    /** Select exactly one Memory projection path for this prompt. */
+    memoryContextMode?: "legacy" | "governed";
     userProfile?: string;
     vaultInsights?: string;
+    /** Bounded output from the governed Memory selector; context only. */
+    governedMemoryContext?: string;
+    /** UI-only trace; never serialized into the model prompt. */
+    governedMemoryTrace?: Array<{
+        claimId: string;
+        effect: "future_answers" | "collaboration_default";
+        source?: "notes" | "interactions" | "settings" | "mixed";
+        scope?: "current_vault" | "same_device";
+        sourcePaths?: string[];
+    }>;
 }
 
 export interface PaAgentProjectedInputOptions {
@@ -106,6 +118,18 @@ function formatChatHistory(history: ChatMessage[]): string {
 
 function formatInjectedContext(context: PaAgentInjectedContext | undefined): string {
     if (!context) return "";
+    const governedMemoryContext = context.governedMemoryContext?.trim();
+    if (context.memoryContextMode === "governed" || (
+        context.memoryContextMode === undefined && governedMemoryContext
+    )) {
+        // An explicitly governed prompt never falls back to legacy fields,
+        // including when the governed selector intentionally returns empty.
+        if (!governedMemoryContext) return "";
+        return `<governed_memory_projection context_only="true" source="memory_governance" grants_tool_authority="false" grants_write_authority="false" grants_network_authority="false" grants_external_action_authority="false">\n${escapeTaggedBoundary(
+            governedMemoryContext.slice(0, 6_000),
+            "governed_memory_projection",
+        )}\n</governed_memory_projection>`;
+    }
     const userProfile = context.userProfile
         ? sanitizeUserProfileMarkdownForPrompt(context.userProfile)
         : "";

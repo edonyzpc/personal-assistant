@@ -6,18 +6,18 @@ import { type CalloutManager, getApi } from "obsidian-callout-manager";
 import { PA_CHAT_SUBAGENT_ICON, VIEW_TYPE_LLM, LLMView } from "./chat/chat-view";
 import { AssistantFeaturedImageHelper, AssistantHelper } from "./ai";
 import { AIUtils, getDashScopeImageGenerationEndpoint } from "./ai-services/ai-utils";
+import { stableStringify } from "./ai-services/agent-utils";
 import { ChatService } from "./ai-services/chat-service";
 import { VSS } from './vss'
 import { PluginControlModal } from './modal'
 import { BatchPluginControlModal } from './batch-modal'
-import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION } from './settings'
+import { SettingTab, type PluginManagerSettings, DEFAULT_SETTINGS, normalizeEnabledSkillIds, mergeLoadedSettings, isFreshInstall, isLegacyV1Install, normalizeFeaturedImageModel, normalizeFeaturedImageCount, normalizeConfirmedMemoryCount, isMemoryExtractionConsentConfirmed, MEMORY_EXTRACTION_CONSENT_VERSION } from './settings'
 import { OPERATIONS_AGENT_RUNTIME_ENABLED } from "./operations-agent-flags";
 import { LocalGraph } from './local-graph';
 import { openSettings, openSettingsTab } from './obsidian-internals';
 import { KEYCHAIN_API_TOKEN_ID, getVaultApiTokenId, hasSecretValue, icons } from './utils';
 import { PluginsUpdater } from './plugin-manifest';
 import { ThemeUpdater } from './theme-manifest';
-import { monkeyPatchConsole } from './obsidian-hack/obsidian-mobile-debug';
 import { CalloutModal } from './callout';
 import { RecordPreview, RECORD_PREVIEW_TYPE } from './preview';
 import { STAT_PREVIEW_TYPE, Stat } from './stats-view'
@@ -72,17 +72,34 @@ import {
     type PageletDetailPayload,
 } from './pagelet/tab';
 import type { AnalyzeCallback } from './pagelet/preload/types';
-import type { DiscoveryResult } from './pagelet/panel/types';
+import type {
+    DiscoveryResult,
+    PanelMemoryActionPolicy,
+    PanelMemoryGovernanceRecord,
+    PanelMemoryGovernanceState,
+    PanelMemoryRecentChange,
+    PanelMemoryUseStatus,
+} from './pagelet/panel/types';
+import type { MemoryRecordActionResult } from './pagelet/tab/sections/types';
 import { buildDiscoveryPrompt, buildPreloadPrompt, parseStructuredResponse } from './pagelet/llm';
 import { buildDiscoveryResultFromFindings } from './pagelet/DiscoveryAnalyzer';
 import { buildPageletRelatedNotesQuery } from './pagelet/related-notes-query';
 import {
     MemoryExtractionScheduler,
+    SerializedProfileGovernancePort,
+    createExistingUserProfileReader,
     createUserProfileStore,
-    type MemoryExtractionPromptContext,
+    renderUserProfileMarkdown,
+    sanitizeUserProfileSnapshot,
+    type ExistingUserProfileReader,
+    type TypeAAdmissionBatch,
+    type TypeAAdmissionResult,
+    type UserProfileRecord,
+    type UserProfileSnapshot,
     type UserProfileStore,
 } from './ai-services/memory-extraction';
 import type { AiServiceHost } from './ai-services/AiServiceHost';
+import type { PaAgentInjectedContext } from './ai-services/context';
 import type { MemoryHost } from './memory';
 import type { ChatHost } from './chat/ChatHost';
 import {
@@ -94,6 +111,8 @@ import {
 import { runQuickCaptureEnrichment } from './quick-capture-enrichment';
 import {
     ActiveVaultIndexer,
+    CallbackMemoryGovernanceRecordRepository,
+    CallbackReviewQueueRepository,
     MemoryGovernanceStore,
     RetrievalHabitProfileStore,
     ReviewQueueStore,
@@ -106,6 +125,8 @@ import {
     type MaintenanceMoveActionLogEntry,
     type MaintenanceMoveApplyResult,
     type MaintenanceMoveUndoResult,
+    type MemoryGovernanceRecordRepository,
+    type MemoryGovernanceState,
     type PatternDetectionInput,
     type PatternDetectionResult,
     type QuietRecallCandidate,
@@ -119,6 +140,8 @@ import {
     type ReviewQueueItem,
     type ReviewQueueListFilter,
     type ReviewQueueResult,
+    type ReviewQueueRepository,
+    type ReviewQueueState,
     type ReviewQueueStatus,
     type SavedInsight,
     type ScopeRecapRunResult,
@@ -141,7 +164,90 @@ import {
     undoMaintenanceMoveAction,
     type MaintenanceProposal,
 } from './pa';
-import { decideDataBoundaryForSource, type DataBoundaryDecision } from './pa/contracts';
+import { classifyLegacyTypeAAdoption } from './pa/legacy-type-a-adoption';
+import {
+    MemoryAdmissionCoordinator,
+    readTypeATargetGeneration,
+    type GovernedMemoryAdmissionInput,
+    type TypeAAdmissionBaseline,
+} from './pa/memory-admission-coordinator';
+import { LegacyMemoryCompatibilityBarrier } from './pa/memory-governance-compatibility';
+import {
+    MemoryGovernanceFinalizationCoordinator,
+    previewMemoryGovernanceFinalization,
+    type LegacyMemoryFinalizationSourceSnapshot,
+} from './pa/memory-governance-finalization';
+import {
+    MemoryGovernanceMigrationCoordinator,
+    checksumLegacyRollbackValue,
+    type ClassifiedLegacyTypeAAdoption,
+} from './pa/memory-governance-migration-coordinator';
+import {
+    buildLegacyReviewQueuePassthrough,
+    captureLegacyMemoryPayload,
+    hashLegacyMemoryPayload,
+    normalizeLegacyMemoryPolicy,
+    parseLegacyMemoryPayload,
+    redactExactLegacyMemoryPayload,
+    type LegacyMemoryPayload,
+} from './pa/memory-governance-migration';
+import {
+    createDeviceMemoryGovernanceRepository,
+    type DeviceMemoryGovernanceStateV1,
+    type LegacyRollbackValue,
+    type MemoryClaimRevision,
+    type MemoryGovernanceRepository,
+    type MemoryPartitionKey,
+    type MemoryProjectionLink,
+    type PersistedMemoryProvenance,
+} from './pa/memory-governance-persistence';
+import {
+    createDeviceMemoryGovernanceRecordRepository,
+    type DeviceMemoryGovernanceRecordRepository,
+} from './pa/memory-governance-record-repository';
+import {
+    buildLegacyMemoryRollbackProjection,
+    MemoryGovernanceRollbackCoordinator,
+    type LegacyMemoryRollbackProjection,
+    type LegacyMemoryRollbackWriteResult,
+} from './pa/memory-governance-rollback';
+import {
+    MemoryGovernanceCoordinator,
+    type ExactMemoryProjectionCleanupPort,
+    type LegacyCompatibilityForgetPrepareResult,
+} from './pa/memory-governance-coordinator';
+import { withMemoryExternalOperationTimeout } from './pa/memory-external-operation-timeout';
+import { MemoryProfileProjectionWorker } from './pa/memory-profile-projection-worker';
+import { buildGovernedMemoryViewSnapshot } from './pa/memory-governance-view';
+import {
+    createMemoryReviewQueueRepository,
+    type MemoryReviewQueueRepository,
+} from './pa/memory-review-queue-repository';
+import {
+    decideDataBoundaryForSource,
+    MEMORY_SENSITIVITIES,
+    MEMORY_TYPES,
+    type DataBoundaryDecision,
+    type MemorySensitivity,
+    type MemoryType,
+    type ReviewQueueScope,
+} from './pa/contracts';
+import {
+    buildMemoryControlCenterSnapshot,
+    type MemoryControlCenterProfileInput,
+    type MemoryControlCenterItem,
+    type MemoryControlCenterProvenance,
+    type MemoryControlCenterRecentChange,
+    type MemoryControlCenterSnapshot,
+    type MemoryControlCenterSourceError,
+    type MemoryControlCenterVaultInsightsInput,
+    type VaultInsightsReadSnapshot,
+} from './pa/memory-control-center';
+import {
+    selectGovernedMemoryUse,
+    type MemorySuppressionFingerprintRef,
+} from './pa/memory-use-projection';
+import { includesString, stableHash } from './pa/helpers';
 import { getMemoryTrustLevel } from './pa/memory-trust-level';
 
 const CALLOUT_MANAGER_PLUGIN_ID = 'callout-manager';
@@ -155,6 +261,139 @@ const PATTERN_DETECTION_INTERVAL_MS = 3 * 24 * 60 * 60 * 1000;
 const PATTERN_DETECTION_MIN_ACTIVE_NOTES = 5;
 const PATTERN_DETECTION_MAX_SOURCE_NOTES = 80;
 const PAGELET_MAINTENANCE_ONBOARDING_MIN_NOTES = 50;
+const MEMORY_GOVERNANCE_OPAQUE_KEY_VERSION = "memory-governance-v1";
+// The repository passed the Memory control-center SDD's real two-vault
+// Obsidian probe: one device-shared IndexedDB, distinct opaque vault keys,
+// monotonic cross-window commits/invalidation, and vault-partition isolation.
+// Scope widening still requires the explicit user action enforced below.
+const DEVICE_COLLABORATION_SCOPE_VALIDATED = true;
+
+type MemoryGovernanceBootstrapState = "not_started" | "ready" | "failed";
+
+interface AiInsightsMemoryTarget {
+    claimId: string;
+    summary: string;
+    effect: "future_answers" | "collaboration_default";
+}
+
+interface GovernedMemoryUiGateInput {
+    runtimeUseEnabled: boolean;
+    sourceEligible: boolean;
+    hasPendingOperation: boolean;
+    coordinatorAvailable: boolean;
+}
+
+interface GovernedMemoryUiProjection {
+    lifecycle: MemoryControlCenterItem["lifecycle"];
+    effect: MemoryControlCenterItem["effect"];
+    useStatus: PanelMemoryUseStatus;
+    durableUseStatus: PanelMemoryUseStatus;
+    actionPolicy: PanelMemoryActionPolicy;
+}
+
+function projectGovernedMemoryUiState(
+    entry: ReturnType<typeof buildGovernedMemoryViewSnapshot>["records"][number],
+    gates: GovernedMemoryUiGateInput,
+): GovernedMemoryUiProjection {
+    const lifecycle = entry.record.lifecycle === "forgotten_tombstone"
+        ? "forgotten_marker" as const
+        : entry.useStatus === "paused"
+            ? "paused" as const
+            : entry.record.lifecycle === "stale"
+                ? "stale" as const
+                : entry.record.lifecycle === "archived"
+                    ? "archived" as const
+                    : "active" as const;
+    const hasAnswerEffect = entry.effect === "future_answers"
+        || entry.effect === "collaboration_default";
+    const currentlyUsed = hasAnswerEffect
+        && entry.useStatus === "active"
+        && gates.runtimeUseEnabled
+        && gates.sourceEligible
+        && !gates.hasPendingOperation;
+    const useStatus: PanelMemoryUseStatus = entry.useStatus === "paused"
+        ? "paused"
+        : currentlyUsed
+            ? "active"
+            : "stored_not_in_use";
+    const effect = hasAnswerEffect && !currentlyUsed
+        ? "stored_not_in_use" as const
+        : entry.effect;
+    const lifecycleActionable = lifecycle === "active" || lifecycle === "paused";
+    const actionBase = gates.coordinatorAvailable
+        && lifecycleActionable
+        && !gates.hasPendingOperation;
+    return {
+        lifecycle,
+        effect,
+        useStatus,
+        durableUseStatus: entry.useStatus,
+        actionPolicy: {
+            correct: actionBase && gates.sourceEligible,
+            pause: actionBase,
+            resume: actionBase && gates.runtimeUseEnabled && gates.sourceEligible,
+            forget: actionBase,
+        },
+    };
+}
+
+type MemoryGovernanceBootstrapErrorCode =
+    | "legacy_save_collision"
+    | "migration_failed"
+    | "profile_read_failed"
+    | "profile_readback_mismatch"
+    | "memory_mutation_blocked"
+    | "policy_state_invalid"
+    | "vault_identity_unavailable";
+
+class MemoryGovernanceBootstrapError extends Error {
+    constructor(readonly code: MemoryGovernanceBootstrapErrorCode) {
+        super(`Memory governance bootstrap failed: ${code}`);
+        this.name = "MemoryGovernanceBootstrapError";
+    }
+}
+
+export function createMemoryGovernanceOpaqueVaultKey(
+    statisticsVaultId: string,
+    deviceVaultScope: string,
+): string {
+    const normalizedDeviceScope = deviceVaultScope.trim();
+    if (!normalizedDeviceScope) {
+        throw new Error("A device-local vault scope is required.");
+    }
+    const source = [
+        statisticsVaultId.trim() || "default-vault",
+        normalizedDeviceScope,
+    ].join("\n");
+    const digest = ["0", "1", "2", "3"]
+        .map((lane) => stableHash(`${MEMORY_GOVERNANCE_OPAQUE_KEY_VERSION}:${lane}:${source}`))
+        .join("");
+    return `vault-${digest}`;
+}
+
+function getMemoryGovernanceVaultDeviceScope(vault: {
+    configDir?: string;
+    getName?: () => string;
+    adapter?: unknown;
+}): string | null {
+    let localPath = "";
+    const adapter = vault.adapter as {
+        getBasePath?: () => string;
+        getFullPath?: (path: string) => string;
+    } | undefined;
+    try {
+        if (typeof adapter?.getBasePath === "function") {
+            localPath = adapter.getBasePath();
+        } else if (typeof adapter?.getFullPath === "function") {
+            localPath = adapter.getFullPath("");
+        }
+    } catch {
+        // A guessed name/config-dir identity could collide after a vault copy.
+        // The caller keeps governed device-local state disabled instead.
+    }
+    const normalizedLocalPath = localPath.trim();
+    return normalizedLocalPath || null;
+}
 
 interface QuietRecallVaultNoteCollection {
     vaultNotes: QuietRecallVaultNote[];
@@ -226,6 +465,22 @@ function parentFolder(path: string): string {
     return slash > 0 ? normalized.slice(0, slash) : "";
 }
 
+export function buildMemoryDataBoundaryFingerprint(
+    settings: Readonly<PluginManagerSettings["dataBoundary"]>,
+): string {
+    const canonical = {
+        excludedFolders: [...settings.excludedFolders].map((value) => value.trim()).filter(Boolean).sort(),
+        excludedTags: [...settings.excludedTags]
+            .map((value) => value.trim().replace(/^#+/, "").toLowerCase())
+            .filter(Boolean)
+            .sort(),
+        generatedNotePolicy: settings.generatedNotePolicy,
+        providerDisclosureReasons: [...settings.providerDisclosureReasons].sort(),
+        cleanupGroups: [...settings.cleanupGroups].sort(),
+    };
+    return `data_boundary:${stableHash(JSON.stringify(canonical))}`;
+}
+
 function collectStringValues(value: unknown, output: Set<string>): void {
     if (Array.isArray(value)) {
         value.forEach((entry) => collectStringValues(entry, output));
@@ -249,8 +504,80 @@ const PAGELET_FOREGROUND_REVIEW_TIMEOUT_MS = 120_000;
 const VAULT_INSIGHTS_INJECTION_NOTICE_KEY = "pa-vault-insights-injection-notice";
 const PAGELET_RATE_LIMIT_STORAGE_KEY_PREFIX = "pa-pagelet-rate-limit";
 const PAGELET_RELATED_NOTES_TIMEOUT_MS = 8000;
+const MEMORY_FORGET_RETRY_INITIAL_MS = 1_000;
+const MEMORY_FORGET_RETRY_MAX_MS = 60_000;
+const MEMORY_PROFILE_PROJECTION_RETRY_INITIAL_MS = 1_000;
+const MEMORY_PROFILE_PROJECTION_RETRY_MAX_MS = 60_000;
+const MEMORY_GOVERNANCE_GARBAGE_COLLECTION_RETRY_MS = 60_000;
+const MEMORY_GOVERNANCE_COMPLETED_HISTORY_RETENTION_MS = 7 * 24 * 60 * 60_000;
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
 type TimeoutHandle = PlatformTimeoutHandle;
 type IntervalHandle = PlatformIntervalHandle;
+
+function nextMemoryGovernanceGarbageCollectionAt(
+    state: DeviceMemoryGovernanceStateV1,
+): number | null {
+    const expirations: number[] = [];
+    const retainedUndoSnapshotIds = new Set(state.undoSnapshots.map((snapshot) => snapshot.id));
+    for (const snapshot of state.undoSnapshots) {
+        const expiresAt = Date.parse(snapshot.expiresAt);
+        if (Number.isFinite(expiresAt)) expirations.push(expiresAt);
+    }
+    const now = Date.now();
+    const eventById = new Map(state.changeEvents.map((event) => [event.id, event]));
+    const retainedEventIds = new Set<string>();
+    const eventDeadlines = new Map<string, number>();
+    for (const event of state.changeEvents) {
+        const occurredAt = Date.parse(event.occurredAt);
+        if (!Number.isFinite(occurredAt)) {
+            retainedEventIds.add(event.id);
+            continue;
+        }
+        const deadline = occurredAt + MEMORY_GOVERNANCE_COMPLETED_HISTORY_RETENTION_MS;
+        eventDeadlines.set(event.id, deadline);
+        if (deadline >= now
+            || (event.undoSnapshotId && retainedUndoSnapshotIds.has(event.undoSnapshotId))) {
+            retainedEventIds.add(event.id);
+        }
+    }
+    const pendingAncestors = [...retainedEventIds];
+    while (pendingAncestors.length > 0) {
+        const retained = eventById.get(pendingAncestors.pop()!);
+        if (!retained?.undoesEventId || retainedEventIds.has(retained.undoesEventId)) continue;
+        retainedEventIds.add(retained.undoesEventId);
+        pendingAncestors.push(retained.undoesEventId);
+    }
+    for (const event of state.changeEvents) {
+        const deadline = eventDeadlines.get(event.id);
+        if (deadline === undefined) continue;
+        const protectedBySnapshot = Boolean(
+            event.undoSnapshotId && retainedUndoSnapshotIds.has(event.undoSnapshotId),
+        );
+        if (protectedBySnapshot) continue;
+        if (deadline >= now || !retainedEventIds.has(event.id)) {
+            expirations.push(deadline);
+        }
+    }
+    for (const operation of state.pendingOperations) {
+        if (operation.kind !== "profile_projection" || operation.state !== "applied") continue;
+        const updatedAt = Date.parse(operation.updatedAt);
+        if (Number.isFinite(updatedAt)) {
+            expirations.push(updatedAt + MEMORY_GOVERNANCE_COMPLETED_HISTORY_RETENTION_MS);
+        }
+    }
+    for (const [vaultKey, migration] of Object.entries(state.migrationStates)) {
+        if (migration.phase === "finalizing" || migration.phase === "rolling_back") continue;
+        const policy = state.policyStates[vaultKey];
+        if (migration.phase === "compatibility"
+            && (!policy
+                || policy.contextProjectionMode !== "governed"
+                || policy.mode !== "effect_based")) continue;
+        if (!migration.rollbackExpiresAt) continue;
+        const expiresAt = Date.parse(migration.rollbackExpiresAt);
+        if (Number.isFinite(expiresAt)) expirations.push(expiresAt);
+    }
+    return expirations.length > 0 ? Math.min(...expirations) : null;
+}
 
 function readPageletMigrationFlag(): boolean {
     try {
@@ -266,6 +593,229 @@ function writePageletMigrationFlag(): void {
     } catch {
         /* localStorage unavailable (private mode, mobile webview restrictions) — silently skip */
     }
+}
+
+function classifyProfileForGovernedAdoption(
+    opaqueVaultKey: string,
+    record: UserProfileRecord,
+): ClassifiedLegacyTypeAAdoption {
+    const profileRecordId = record.profileRecordId;
+    if (!profileRecordId) {
+        throw new MemoryGovernanceBootstrapError("profile_readback_mismatch");
+    }
+    const decision = classifyLegacyTypeAAdoption({ opaqueVaultKey, record });
+    if (decision.status === "adoption_blocked") {
+        return {
+            status: "adoption_blocked",
+            profileRecordId,
+            reason: decision.reason,
+        };
+    }
+    return {
+        status: "adopt",
+        profileRecordId,
+        summary: record.text,
+        applicability: decision.applicability,
+        authority: decision.authority,
+        provenance: decision.provenance,
+        observedAt: record.observedAt,
+        profileProjectionState: "applied",
+    };
+}
+
+function userProfileSnapshotsEqual(
+    left: UserProfileSnapshot,
+    right: UserProfileSnapshot,
+): boolean {
+    // IndexedDB structured-clone readback may preserve every value while
+    // returning object keys in a different insertion order. Readback
+    // verification must compare the JSON value, not serialization order.
+    return stableStringify(left) === stableStringify(right);
+}
+
+function legacyMemoryRollbackProjectionsEqual(
+    left: LegacyMemoryRollbackProjection,
+    right: LegacyMemoryRollbackProjection,
+): boolean {
+    const fingerprint = (projection: LegacyMemoryRollbackProjection) => hashLegacyMemoryPayload({
+        memoryGovernance: {
+            records: [...projection.records].sort((a, b) => a.id.localeCompare(b.id)),
+        },
+        reviewQueue: {
+            items: [...projection.memoryQueueItems].sort((a, b) => a.id.localeCompare(b.id)),
+        },
+        confirmedMemoryCount: projection.confirmedMemoryCount,
+        memoryAutoAcceptPaused: projection.memoryAutoAcceptPaused,
+    });
+    return fingerprint(left) === fingerprint(right);
+}
+
+function readCurrentLocalMemoryPolicy(
+    state: DeviceMemoryGovernanceStateV1,
+    opaqueVaultKey: string,
+    expectedSourceHash: string,
+): { confirmedMemoryCount: number; memoryAutoAcceptPaused: boolean } {
+    const migration = state.migrationStates[opaqueVaultKey];
+    const policy = state.policyStates[opaqueVaultKey];
+    const baseline = policy?.legacyBaseline;
+    if (!migration
+        || (migration.phase !== "compatibility"
+            && migration.phase !== "finalizing"
+            && migration.phase !== "finalized")
+        || migration.sourceHash !== expectedSourceHash
+        || (migration.phase !== "finalizing" && migration.lastErrorCode)
+        || (policy?.mode !== "legacy_threshold" && policy?.mode !== "effect_based")
+        || !baseline
+        || baseline.importedFromSourceHash !== expectedSourceHash
+        || !Number.isSafeInteger(baseline.confirmedCount)
+        || baseline.confirmedCount < 0
+        || typeof baseline.autoAcceptPaused !== "boolean") {
+        throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+    }
+    return {
+        confirmedMemoryCount: baseline.confirmedCount,
+        memoryAutoAcceptPaused: baseline.autoAcceptPaused,
+    };
+}
+
+function writeCurrentLocalMemoryPolicy(
+    state: DeviceMemoryGovernanceStateV1,
+    opaqueVaultKey: string,
+    expectedSourceHash: string,
+    next: Partial<{ confirmedMemoryCount: number; memoryAutoAcceptPaused: boolean }>,
+    now: Date,
+): { confirmedMemoryCount: number; memoryAutoAcceptPaused: boolean } {
+    const current = readCurrentLocalMemoryPolicy(state, opaqueVaultKey, expectedSourceHash);
+    const migration = state.migrationStates[opaqueVaultKey];
+    const policy = state.policyStates[opaqueVaultKey];
+    const baseline = policy.legacyBaseline!;
+    const confirmedMemoryCount = next.confirmedMemoryCount ?? current.confirmedMemoryCount;
+    const memoryAutoAcceptPaused = next.memoryAutoAcceptPaused ?? current.memoryAutoAcceptPaused;
+    if (!Number.isSafeInteger(confirmedMemoryCount) || confirmedMemoryCount < 0) {
+        throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+    }
+
+    const rollbackExpiresAt = Date.parse(migration.rollbackExpiresAt ?? "");
+    const rollbackJournalActive = migration.phase === "compatibility"
+        && Number.isFinite(rollbackExpiresAt)
+        && rollbackExpiresAt >= now.getTime();
+    if (!rollbackJournalActive) {
+        if (policy.contextProjectionMode !== "governed"
+            || (migration.phase !== "compatibility" && migration.phase !== "finalized")) {
+            throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+        }
+        baseline.confirmedCount = confirmedMemoryCount;
+        baseline.autoAcceptPaused = memoryAutoAcceptPaused;
+        return { confirmedMemoryCount, memoryAutoAcceptPaused };
+    }
+    if (!buildLegacyMemoryRollbackProjection(state, opaqueVaultKey, now).ok) {
+        throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+    }
+
+    const partition: MemoryPartitionKey = { kind: "vault", key: opaqueVaultKey };
+    const policyEntityIds = new Set(state.rollbackPayloadEntries
+        .filter((entry) => entry.migrationRunId === migration.migrationRunId
+            && entry.partition.kind === "vault"
+            && entry.partition.key === opaqueVaultKey
+            && entry.value.kind === "policy")
+        .map((entry) => entry.entityId));
+    if (policyEntityIds.size !== 1 || !migration.rollbackExpiresAt) {
+        throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+    }
+    const deltas = state.migrationDeltas
+        .filter((delta) => delta.migrationRunId === migration.migrationRunId)
+        .sort((left, right) => left.sequence - right.sequence);
+    deltas.forEach((delta, index) => {
+        if (delta.sequence !== index + 1
+            || delta.partition.kind !== "vault"
+            || delta.partition.key !== opaqueVaultKey) {
+            throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+        }
+    });
+    const sequence = deltas.length + 1;
+    const value: LegacyRollbackValue = {
+        kind: "policy",
+        confirmedMemoryCount,
+        memoryAutoAcceptPaused,
+    };
+    const checksum = checksumLegacyRollbackValue(value);
+    const entityId = [...policyEntityIds][0];
+    const payloadId = [
+        "memory-policy-rollback",
+        stableHash(migration.migrationRunId),
+        sequence,
+        stableHash(`${entityId}:${checksum}`),
+    ].join("-");
+    if (state.rollbackPayloadEntries.some((entry) => entry.id === payloadId)) {
+        throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+    }
+
+    baseline.confirmedCount = confirmedMemoryCount;
+    baseline.autoAcceptPaused = memoryAutoAcceptPaused;
+    state.rollbackPayloadEntries.push({
+        id: payloadId,
+        migrationRunId: migration.migrationRunId,
+        partition,
+        entityId,
+        value,
+        checksum,
+        expiresAt: migration.rollbackExpiresAt,
+    });
+    state.migrationDeltas.push({
+        sequence,
+        migrationRunId: migration.migrationRunId,
+        partition,
+        committedAt: now.toISOString(),
+        kind: "policy_changed",
+        entityId,
+        payloadEntryId: payloadId,
+        payloadChecksum: checksum,
+    });
+    if (!buildLegacyMemoryRollbackProjection(state, opaqueVaultKey, now).ok) {
+        throw new MemoryGovernanceBootstrapError("policy_state_invalid");
+    }
+    return { confirmedMemoryCount, memoryAutoAcceptPaused };
+}
+
+function createFailClosedMemoryRecordRepository(
+    records: readonly ConfirmedMemoryRecord[],
+): MemoryGovernanceRecordRepository {
+    const snapshot = cloneSerializable({ records: [...records] } satisfies MemoryGovernanceState);
+    return {
+        read: () => cloneSerializable(snapshot),
+        write: async () => {
+            throw new MemoryGovernanceBootstrapError("memory_mutation_blocked");
+        },
+    };
+}
+
+function createFailClosedReviewQueueRepository(
+    items: readonly ReviewQueueItem[],
+    persist: (state: ReviewQueueState) => Promise<void>,
+): ReviewQueueRepository {
+    let snapshot: ReviewQueueState = cloneSerializable({ items: [...items] });
+    return {
+        read: () => cloneSerializable(snapshot),
+        write: async (next) => {
+            const nextState = cloneSerializable(next);
+            if (memoryQueueFingerprint(snapshot.items) !== memoryQueueFingerprint(nextState.items)) {
+                throw new MemoryGovernanceBootstrapError("memory_mutation_blocked");
+            }
+            await persist(nextState);
+            snapshot = nextState;
+        },
+    };
+}
+
+function memoryQueueFingerprint(items: readonly ReviewQueueItem[]): string {
+    return JSON.stringify(items
+        .filter((item) => item.type === "memory_candidate" || item.type === "memory_conflict")
+        .map((item) => cloneSerializable(item))
+        .sort((left, right) => left.id.localeCompare(right.id)));
+}
+
+function cloneSerializable<T>(value: T): T {
+    return JSON.parse(JSON.stringify(value)) as T;
 }
 
 function readPageletBackgroundPreparationNoticeFlag(): boolean {
@@ -342,8 +892,36 @@ export class PluginManager extends Plugin {
     private reviewQueueStore: ReviewQueueStore | null = null;
     private savedInsightStore: SavedInsightStore | null = null;
     private memoryGovernanceStore: MemoryGovernanceStore | null = null;
+    private legacyMemoryCompatibilityBarrier: LegacyMemoryCompatibilityBarrier | null = null;
+    private legacyMemoryPayload: LegacyMemoryPayload | null = null;
+    private memoryGovernanceBootstrapState: MemoryGovernanceBootstrapState = "not_started";
+    private memoryGovernanceBootstrapErrorCode: string | null = null;
+    private memoryGovernanceOpaqueVaultKey: string | null = null;
+    private memoryGovernanceSourceHash: string | null = null;
+    private deviceMemoryGovernanceRepository: MemoryGovernanceRepository | null = null;
+    private currentDeviceMemoryGovernanceState: DeviceMemoryGovernanceStateV1 | null = null;
+    private memoryGovernanceCoordinator: MemoryGovernanceCoordinator | null = null;
+    private memoryAdmissionCoordinator: MemoryAdmissionCoordinator | null = null;
+    private memoryProfileProjectionWorker: MemoryProfileProjectionWorker | null = null;
+    private memoryForgetRetryTimer: TimeoutHandle | null = null;
+    private memoryForgetRetryDelayMs = MEMORY_FORGET_RETRY_INITIAL_MS;
+    private memoryProfileProjectionRetryTimer: TimeoutHandle | null = null;
+    private memoryProfileProjectionRetryDelayMs = MEMORY_PROFILE_PROJECTION_RETRY_INITIAL_MS;
+    private memoryGovernanceGarbageCollectionTimer: TimeoutHandle | null = null;
+    private memoryGovernanceGarbageCollectionDueAt: number | null = null;
+    private memoryLifecycleMutationTail: Promise<void> = Promise.resolve();
+    private deviceMemoryRecordRepository: DeviceMemoryGovernanceRecordRepository | null = null;
+    private deviceMemoryReviewQueueRepository: MemoryReviewQueueRepository | null = null;
+    private memoryGovernanceRecordRepository: MemoryGovernanceRecordRepository | null = null;
+    private reviewQueueRepository: ReviewQueueRepository | null = null;
+    private settingsReviewQueueRepository: ReviewQueueRepository | null = null;
+    private memoryGovernanceRepositoryUnsubscribe: (() => void) | null = null;
+    private deviceMemoryCacheRefreshPromise: Promise<void> | null = null;
+    private deviceMemoryCacheRefreshTargetSequence = 0;
+    private currentLocalConfirmedMemoryCount: number | null = null;
+    private currentLocalMemoryAutoAcceptPaused: boolean | null = null;
     private retrievalHabitProfileStore: RetrievalHabitProfileStore | null = null;
-    private autoConfirmMemoryCandidatesPromise: Promise<void> | null = null;
+    private quickCaptureService: QuickCaptureService | null = null;
     private quickCaptureDraft = "";
     /**
      * Set by {@link loadSettings} when a pre-existing `pagelet.reviewsFolder`
@@ -365,6 +943,8 @@ export class PluginManager extends Plugin {
     private token: string = "";
     private memoryStatusListeners = new Set<() => void | Promise<void>>();
     private settingsChangeListeners = new Set<() => void | Promise<void>>();
+    private settingsSaveTail: Promise<void> | null = null;
+    private memoryQueueAuditPromise: Promise<void> | null = null;
     private hoverPopoverObserver: MutationObserver | null = null;
     private resizeDebounceTimer: TimeoutHandle | null = null;
     private phase3Handle: PlatformTimeoutHandle | null = null;
@@ -385,9 +965,21 @@ export class PluginManager extends Plugin {
     async onload() {
         this.memoryEventGateStartedAt = Date.now();
         await this.loadSettings();
+        void this.cleanupLegacyMobileDebugLog();
 
         // 迁移旧版本设置
-        await this.migrateSettings();
+        try {
+            await this.migrateSettings();
+        } catch (error) {
+            if (!(error instanceof MemoryGovernanceBootstrapError)
+                || error.code !== "legacy_save_collision") throw error;
+            this.failMemoryGovernanceBootstrap(
+                this.memoryGovernanceBootstrapErrorCode ?? error.code,
+            );
+        }
+        if (this.memoryGovernanceBootstrapState !== "failed") {
+            await this.initializeMemoryGovernanceBootstrap();
+        }
 
         // Surface the one-time Pagelet reviewsFolder migration Notice, if
         // `loadSettings` flagged a coerced value. We fire here (not in
@@ -399,8 +991,6 @@ export class PluginManager extends Plugin {
         // showup notification of plugin starting when it is in debug mode
         if (this.settings.debug) {
             new Notice(this.t("plugin.notice.starting"));
-            // register mobile debug log
-            monkeyPatchConsole(this);
         }
 
         // This creates an icon in the left ribbon.
@@ -465,9 +1055,24 @@ export class PluginManager extends Plugin {
                     (actionId) => this.undoMaintenanceMove(actionId),
                     (item) => this.confirmMemoryCandidateFromQueueItem(item),
                     (item) => this.dismissMemoryCandidateFromQueueItem(item),
+                    (record) => this.forgetConfirmedMemory(record),
                     (candidate) => this.saveQuietRecallAsInsight(candidate),
                     (candidate) => this.linkQuietRecallCandidateFromActiveNote(candidate),
                     () => { openSettings(this.app); openSettingsTab(this.app, 'personal-assistant'); },
+                    {
+                        onCorrect: (record, summary) => this.runPageletGovernedMemoryAction(
+                            "correct",
+                            record,
+                            summary,
+                        ),
+                        onPauseUse: (record) => this.runPageletGovernedMemoryAction("pause", record),
+                        onResumeUse: (record) => this.runPageletGovernedMemoryAction("resume", record),
+                        onForget: (record) => this.forgetMemoryFromPagelet(record),
+                        onUndoRecentChange: (change) => this.undoMemoryFromPagelet(change),
+                        onOpenSource: (path) => { void this.openMemorySource(path); },
+                        onOpenMemorySettings: (targetId) => this.openMemorySettings(targetId),
+                        resolveContextualMemory: () => this.getMemoryGovernancePanelState(),
+                    },
                 );
             }
         );
@@ -678,19 +1283,39 @@ export class PluginManager extends Plugin {
                     await this.statsManager.flush();
             })
         );
-        this.registerEvent(
-            this.app.vault.on("delete", async () => {
-                if (this.statsManager)
-                    await this.statsManager.recalcTotals();
-            })
-        );
-
         // This adds a settings tab so the user can configure various aspects of the plugin
         this.addSettingTab(this.settingTab);
 
         this.app.workspace.onLayoutReady(() => {
             void this.onLayoutReady();
         });
+    }
+
+    private async cleanupLegacyMobileDebugLog(): Promise<void> {
+        const pluginDir = this.manifest?.dir;
+        if (!pluginDir) return;
+        const logPath = normalizePath(`${pluginDir}/logs.txt`);
+        let exists: boolean;
+        try {
+            exists = await this.app.vault.adapter.exists(logPath);
+        } catch {
+            try {
+                this.log("Legacy mobile Debug log cleanup failed", { stage: "exists" });
+            } catch {
+                // Cleanup must never make plugin startup fail.
+            }
+            return;
+        }
+        if (!exists) return;
+        try {
+            await this.app.vault.adapter.remove(logPath);
+        } catch {
+            try {
+                this.log("Legacy mobile Debug log cleanup failed", { stage: "remove" });
+            } catch {
+                // Cleanup must never make plugin startup fail.
+            }
+        }
     }
 
     private async onLayoutReady(): Promise<void> {
@@ -717,7 +1342,7 @@ export class PluginManager extends Plugin {
     private onIdle(): void {
         if (this.unloading) return;
         this.syncPageletRuntime();
-        void this.autoConfirmPendingMemoryCandidates();
+        void this.reconcileMemoryQueueAudit();
         void this.maybeShowNextOnboardingNudge();
         void this.maybeRunPatternDetectionNudge();
         this.syncMemoryExtractionRuntime();
@@ -786,6 +1411,7 @@ export class PluginManager extends Plugin {
         this.pageletSettingsUnsubscribe = this.onSettingsChanged(() => {
             this.syncPageletRuntime();
             this.syncMemoryExtractionRuntime();
+            void this.reconcileMemoryQueueAudit();
         });
     }
 
@@ -919,7 +1545,8 @@ export class PluginManager extends Plugin {
     }
 
     private canRunMemoryExtractionRuntime(): boolean {
-        return this.settings.memoryExtractionEnabled
+        return this.settings.memoryEnabled === true
+            && this.settings.memoryExtractionEnabled
             && this.hasConfirmedMemoryExtractionConsent();
     }
 
@@ -934,6 +1561,16 @@ export class PluginManager extends Plugin {
                     log: (message, error) => this.log(message, error),
                     includeVaultInsightsInPrompt: includeVaultInsights,
                     shouldHandleVaultEvent: (file) => this.isDataBoundaryAllowedFile(file),
+                    getDataBoundaryFingerprint: () => this.getMemoryDataBoundaryFingerprint(),
+                    ...(this.getGovernedMemoryProjectionSnapshot() ? {
+                        admitTypeACandidates: (batch: TypeAAdmissionBatch) => (
+                            this.admitGovernedTypeABatch(batch)
+                        ),
+                        captureTypeAAdmissionBaseline: () => this.captureGovernedTypeAAdmissionBaseline(),
+                        getTypeAProcessedTurn: (conversationId: string) => (
+                            this.getGovernedTypeAProcessedTurn(conversationId)
+                        ),
+                    } : {}),
                     createModelForExtraction: async () => {
                         const model = await this.createChatModel(0, { maxTokens: 256 });
                         if (!model) return null;
@@ -975,6 +1612,254 @@ export class PluginManager extends Plugin {
                 this.memoryExtractionScheduler = null;
             }
         }
+    }
+
+    private async admitGovernedTypeABatch(
+        batch: TypeAAdmissionBatch,
+    ): Promise<TypeAAdmissionResult> {
+        // A settings change may race an already-running extraction batch.
+        // Recheck the master switch at the durable admission boundary.
+        if (this.settings.memoryEnabled !== true) return { status: "retry" };
+        const coordinator = this.memoryAdmissionCoordinator;
+        const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        if (!coordinator || !vaultKey || !batch.baseline || !this.getGovernedMemoryProjectionSnapshot()) {
+            return { status: "retry" };
+        }
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const currentById = new Map(
+                (batch.current?.records ?? [])
+                    .filter((record) => Boolean(record.profileRecordId))
+                    .map((record) => [record.profileRecordId!, record]),
+            );
+            const changed = batch.proposed.records.filter((record) => {
+                const current = record.profileRecordId
+                    ? currentById.get(record.profileRecordId)
+                    : undefined;
+                return !current || JSON.stringify(current) !== JSON.stringify(record);
+            });
+            let stateChanged = false;
+            let shouldRetry = false;
+            for (const record of changed) {
+                const admission = this.buildGovernedTypeAAdmission(
+                    vaultKey,
+                    record,
+                    batch.baseline!,
+                    batch.evidence,
+                );
+                if (!admission) {
+                    this.log("Type-A governed admission skipped", {
+                        code: "invalid_exact_profile_evidence",
+                    });
+                    continue;
+                }
+                const result = await coordinator.admit(admission);
+                if (!result.ok) {
+                    this.log("Type-A governed admission failed", { reason: result.reason });
+                    if (![
+                        "stale_type_a_batch",
+                        "user_authority_preserved",
+                        "claim_not_admissible",
+                    ].includes(result.reason)) {
+                        shouldRetry = true;
+                    }
+                    continue;
+                }
+                if (result.value.decision === "silent_durable"
+                    || result.value.decision === "require_prior_review") {
+                    stateChanged = true;
+                }
+            }
+            if (shouldRetry) return { status: "retry" };
+
+            if (stateChanged) {
+                const projection = await this.memoryProfileProjectionWorker?.resumePending();
+                if (projection && projection.pending.length > 0) {
+                    this.log("Type-A Profile projection remains pending after admission", {
+                        count: projection.pending.length,
+                    });
+                    await this.refreshGovernedMemoryActionState();
+                    await this.notifySettingsChanged();
+                    return { status: "retry" };
+                }
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+            }
+            await this.persistGovernedTypeAProcessedTurn(vaultKey, batch.evidence);
+            return { status: "processed" };
+        });
+    }
+
+    private buildGovernedTypeAAdmission(
+        vaultKey: string,
+        record: UserProfileRecord,
+        baseline: TypeAAdmissionBaseline,
+        evidence: TypeAAdmissionBatch["evidence"],
+    ): GovernedMemoryAdmissionInput | null {
+        const profileRecordId = record.profileRecordId?.trim();
+        const conversationIds = [...new Set([
+            record.conversationId,
+            ...(record.conversationIds ?? []),
+        ].map((id) => id?.trim()).filter((id): id is string => Boolean(id)))].sort();
+        if (!profileRecordId || conversationIds.length === 0 || !record.text.trim()) return null;
+
+        const classification = classifyLegacyTypeAAdoption({
+            opaqueVaultKey: vaultKey,
+            record,
+        });
+        const authority = classification.status === "adopt"
+            ? classification.authority
+            : record.kind === "user_correction"
+                ? "user_correction" as const
+                : record.kind === "user_explicit"
+                    ? "explicit_user" as const
+                    : "pa_inference" as const;
+        const sensitivity: MemorySensitivity = classification.status === "adopt"
+            ? "low"
+            : classification.reason === "unknown_sensitivity" ? "high" : "medium";
+        const provenance: PersistedMemoryProvenance[] = classification.status === "adopt"
+            ? classification.provenance.map((entry) => cloneSerializable(entry))
+            : [{
+                kind: "conversation",
+                conversationIds,
+                observedAt: record.observedAt,
+            }];
+        const sourceFingerprintId = `memory-source-${stableHash(JSON.stringify([
+            "type-a-source-v1",
+            profileRecordId,
+            conversationIds,
+            evidence.conversationId,
+            evidence.throughTurnIndex,
+        ]))}`;
+        const ruleFingerprint = "type-a-effect-admission-v1";
+        const memoryType = "preference" as const;
+        const effect = "future_answers" as const;
+        return {
+            policy: {
+                origin: "type_a",
+                memoryType,
+                authority,
+                persistenceIntent: "durable",
+                effect,
+                provenanceValidity: Number.isFinite(Date.parse(record.observedAt)) ? "valid" : "invalid",
+                sourceBacking: conversationIds.length > 0 ? "source_backed" : "unbacked",
+                sensitivity,
+                scope: "current_vault",
+                conflict: "absent",
+                durableTaskConstraint: "absent",
+                dataBoundary: "allowed",
+                writeAuthority: "none",
+                networkAuthority: "none",
+                externalActionAuthority: "none",
+                policyCompliance: "allowed",
+                ephemeralContextEligibility: "eligible",
+            },
+            summary: record.text,
+            memoryType,
+            sensitivity,
+            authority,
+            effect,
+            applicability: { kind: "whole_vault" },
+            provenance,
+            sourceFingerprintId,
+            ruleFingerprint,
+            admissionKey: `type-a:${profileRecordId}`,
+            profileRecordId,
+            expectedTargetState: baseline.targets[profileRecordId] ?? {
+                state: "absent",
+                profileRecordId,
+            },
+            queueInput: {
+                type: "memory_candidate",
+                title: pageletT("pagelet.tab.memory.typeAReviewTitle", this.getPageletLocale()),
+                claim: record.text,
+                scope: { kind: "whole_vault" },
+                sourceRefs: [],
+                originSurface: "memory",
+                priority: sensitivity === "high" ? "high" : "normal",
+                whyShown: [pageletT("pagelet.tab.memory.typeAReviewReason", this.getPageletLocale())],
+                dataBoundarySnapshotId: this.getMemoryDataBoundaryFingerprint(),
+                admissionReason: "memory_confirmation_required",
+                replayRef: conversationIds[0],
+                metadata: {
+                    memoryType,
+                    sensitivity,
+                    memorySource: "interactions",
+                    memoryScope: "current_vault",
+                    memoryEffect: effect,
+                    evidenceKind: record.kind,
+                    confidence: record.confidence,
+                    occurrences: record.occurrences,
+                    profileRecordId,
+                    throughTurnIndex: evidence.throughTurnIndex,
+                },
+            },
+        };
+    }
+
+    private captureGovernedTypeAAdmissionBaseline(): Promise<TypeAAdmissionBaseline> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const repository = this.deviceMemoryGovernanceRepository;
+            const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+            if (!repository || !vaultKey || !this.getGovernedMemoryProjectionSnapshot()) {
+                throw new Error("Governed Type-A baseline is unavailable.");
+            }
+            const state = await repository.initialize();
+            const currentVaultClaimIds = new Set(state.claims.flatMap((claim) => (
+                claim.partition.kind === "vault" && claim.partition.key === vaultKey
+                    ? [claim.id]
+                    : []
+            )));
+            const profileRecordIds = new Set(state.projectionLinks.flatMap((link) => (
+                currentVaultClaimIds.has(link.claimId) && link.target.kind === "type_a_profile"
+                    ? [link.target.profileRecordId]
+                    : []
+            )));
+            const partition = { kind: "vault" as const, key: vaultKey };
+            return {
+                version: 1,
+                capturedCommitSequence: state.commitSequence,
+                targets: Object.fromEntries([...profileRecordIds]
+                    .sort()
+                    .map((profileRecordId) => [
+                        profileRecordId,
+                        readTypeATargetGeneration(state, profileRecordId, partition),
+                    ])),
+            };
+        });
+    }
+
+    private async getGovernedTypeAProcessedTurn(conversationId: string): Promise<number | undefined> {
+        const repository = this.deviceMemoryGovernanceRepository;
+        const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        if (!repository || !vaultKey) return undefined;
+        const state = await repository.initialize();
+        return state.policyStates[vaultKey]?.typeAProcessedTurns?.[
+            this.typeAConversationCursorKey(conversationId)
+        ];
+    }
+
+    private async persistGovernedTypeAProcessedTurn(
+        vaultKey: string,
+        evidence: TypeAAdmissionBatch["evidence"],
+    ): Promise<void> {
+        const repository = this.deviceMemoryGovernanceRepository;
+        if (!repository) throw new Error("Governed Type-A repository is unavailable.");
+        const key = this.typeAConversationCursorKey(evidence.conversationId);
+        await repository.transact((draft) => {
+            const policy = draft.policyStates[vaultKey];
+            if (!policy || policy.mode !== "effect_based" || policy.contextProjectionMode !== "governed") {
+                throw new Error("Governed Type-A policy is unavailable.");
+            }
+            const previous = policy.typeAProcessedTurns?.[key] ?? -1;
+            policy.typeAProcessedTurns = {
+                ...(policy.typeAProcessedTurns ?? {}),
+                [key]: Math.max(previous, evidence.throughTurnIndex),
+            };
+        });
+    }
+
+    private typeAConversationCursorKey(conversationId: string): string {
+        return `conversation-${stableHash(`type-a-cursor-v1\u0000${conversationId}`)}`;
     }
 
     private destroyPageletRuntime(): void {
@@ -1077,7 +1962,7 @@ export class PluginManager extends Plugin {
         const getContextPagerSettings = () => this.settings.contextPager;
         const getQuietRecallSettings = () => this.settings.quietRecall;
         const getFocusMode = () => this.settings.focusMode;
-        const getConfirmedMemoryCount = () => this.settings.confirmedMemoryCount ?? 0;
+        const getConfirmedMemoryCount = () => this.getCurrentConfirmedMemoryCount();
         return {
             app: this.app,
             settings: {
@@ -1115,6 +2000,7 @@ export class PluginManager extends Plugin {
                             analyzedFiles: [],
                             analyzedAt: Date.now(),
                             tokenCost: { input: 0, output: 0 },
+                            usedGovernedMemoryClaimIds: [],
                         };
                     }
                     const relatedNotes = await this.findPageletRelatedNotes(
@@ -1159,6 +2045,7 @@ export class PluginManager extends Plugin {
                         analyzedFiles: noteContents.map((entry) => entry.path),
                         analyzedAt: Date.now(),
                         tokenCost: { input: inputTokens, output: outputTokens },
+                        usedGovernedMemoryClaimIds: [],
                     };
                 };
             },
@@ -1174,6 +2061,7 @@ export class PluginManager extends Plugin {
                             analyzedFiles: [],
                             analyzedAt: Date.now(),
                             tokenCost: { input: 0, output: 0 },
+                            usedGovernedMemoryClaimIds: [],
                         };
                     }
                     const primarySourcePath = noteContents[0]?.path ?? "";
@@ -1190,6 +2078,7 @@ export class PluginManager extends Plugin {
                             analyzedFiles: files.map((f) => f.path),
                             analyzedAt: Date.now(),
                             tokenCost: { input: 0, output: 0 },
+                            usedGovernedMemoryClaimIds: [],
                         };
                     }
 
@@ -1256,6 +2145,7 @@ export class PluginManager extends Plugin {
                             input: costEntry?.inputTokens ?? outcome.diagnostics.estimatedInputTokens ?? 0,
                             output: costEntry?.outputTokens ?? 0,
                         },
+                        usedGovernedMemoryClaimIds: [],
                     };
                 };
             },
@@ -1292,17 +2182,14 @@ export class PluginManager extends Plugin {
                 this.recordQuietRecallFeedback(candidate, feedback),
             listSavedInsights: () => this.listSavedInsights(),
             listConfirmedMemories: () => this.listConfirmedMemories(),
+            getMemoryGovernancePanelState: () => this.getMemoryGovernancePanelState(),
         };
     }
 
     private getReviewQueueStore(): ReviewQueueStore {
         if (!this.reviewQueueStore) {
             this.reviewQueueStore = new ReviewQueueStore({
-                items: this.settings.reviewQueue.items,
-                persist: async (state) => {
-                    this.settings.reviewQueue.items = state.items;
-                    await this.saveSettings();
-                },
+                repository: this.reviewQueueRepository ?? this.getOrCreateSettingsReviewQueueRepository(),
             });
         }
         return this.reviewQueueStore;
@@ -1322,6 +2209,11 @@ export class PluginManager extends Plugin {
         if (!this.settings.reviewQueue.enabled) {
             return { ok: false, reason: "disabled" };
         }
+        if (input.type === "memory_candidate"
+            && this.memoryAdmissionCoordinator
+            && this.getGovernedMemoryProjectionSnapshot()) {
+            return this.admitGovernedMemoryQueueInput(input);
+        }
         const result = await this.getReviewQueueStore().create(input);
         if (!result.ok || result.value.type !== "memory_candidate" || !this.shouldAutoConfirmMemoryCandidates()) {
             return result;
@@ -1332,6 +2224,125 @@ export class PluginManager extends Plugin {
             ok: true,
             value: this.getReviewQueueItemById(result.value.id) ?? result.value,
         };
+    }
+
+    private admitGovernedMemoryQueueInput(
+        input: ReviewQueueCreateInput,
+    ): Promise<ReviewQueueResult<ReviewQueueItem>> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const coordinator = this.memoryAdmissionCoordinator;
+            if (!coordinator) return { ok: false, reason: "admission_unavailable" };
+            const admission = this.buildGovernedMemoryQueueAdmission(input);
+            if (!admission.ok) return admission;
+            const result = await coordinator.admit(admission.value);
+            if (!result.ok) {
+                this.log("Governed Memory candidate admission failed", { reason: result.reason });
+                return { ok: false, reason: result.reason };
+            }
+            if (result.value.decision === "reject") return { ok: false, reason: "admission_rejected" };
+            if (result.value.decision === "ephemeral_only") return { ok: false, reason: "ephemeral_only" };
+            if (!result.value.queueItem) return { ok: false, reason: "queue_item_missing" };
+            await this.refreshGovernedMemoryActionState();
+            await this.notifySettingsChanged();
+            return { ok: true, value: cloneSerializable(result.value.queueItem) };
+        });
+    }
+
+    private buildGovernedMemoryQueueAdmission(
+        input: ReviewQueueCreateInput,
+    ): ReviewQueueResult<GovernedMemoryAdmissionInput> {
+        const memoryTypeValue = input.metadata?.memoryType;
+        const sensitivityValue = input.metadata?.sensitivity;
+        if (!includesString(MEMORY_TYPES, memoryTypeValue)) {
+            return { ok: false, reason: "missing_memory_type" };
+        }
+        if (!includesString(MEMORY_SENSITIVITIES, sensitivityValue)) {
+            return { ok: false, reason: "missing_sensitivity" };
+        }
+        const memoryType: MemoryType = memoryTypeValue;
+        const sensitivity: MemorySensitivity = sensitivityValue;
+        const effect = memoryType === "preference" || memoryType === "project_context"
+            ? "future_answers" as const
+            : "stored_not_in_use" as const;
+        const provenance: PersistedMemoryProvenance[] = input.sourceRefs.map((sourceRef) => ({
+            kind: "note" as const,
+            sourceRef: cloneSerializable(sourceRef),
+        }));
+        const sourceFingerprintId = this.buildMemoryCandidateSourceFingerprint(input);
+        const ruleFingerprint = `memory-candidate-effect-admission-v1:${memoryType}`;
+        const dataBoundaryAllowed = input.sourceRefs.length > 0
+            && input.sourceRefs.every((sourceRef) => this.isDataBoundaryAllowedPath(sourceRef.path));
+        const authority = "pa_inference" as const;
+        const admissionKey = [
+            input.originSurface,
+            sourceFingerprintId,
+            ruleFingerprint,
+        ].join(":");
+        const queueInput = cloneSerializable(input);
+        queueInput.metadata = {
+            ...(queueInput.metadata ?? {}),
+            memorySource: input.sourceRefs.length > 0 ? "notes" : "unknown",
+            memoryScope: "current_vault",
+            memoryEffect: effect,
+        };
+        return {
+            ok: true,
+            value: {
+                policy: {
+                    origin: "memory_candidate",
+                    memoryType,
+                    authority,
+                    // The Memory master switch removes permission for quiet
+                    // durability without turning an intentional candidate into
+                    // routine review debt. It remains available for explicit
+                    // confirmation on the existing review surface.
+                    persistenceIntent: this.settings.memoryEnabled === true
+                        ? "durable"
+                        : "unknown",
+                    effect,
+                    provenanceValidity: provenance.length > 0 ? "valid" : "invalid",
+                    sourceBacking: provenance.length > 0 ? "source_backed" : "unbacked",
+                    sensitivity,
+                    scope: "current_vault",
+                    conflict: "absent",
+                    durableTaskConstraint: memoryType === "task_constraint" ? "present" : "absent",
+                    dataBoundary: dataBoundaryAllowed ? "allowed" : "denied",
+                    writeAuthority: "none",
+                    networkAuthority: "none",
+                    externalActionAuthority: "none",
+                    policyCompliance: "allowed",
+                    ephemeralContextEligibility: "eligible",
+                },
+                summary: input.claim,
+                memoryType,
+                sensitivity,
+                authority,
+                effect,
+                applicability: cloneSerializable(input.scope),
+                provenance,
+                sourceFingerprintId,
+                ruleFingerprint,
+                admissionKey,
+                queueInput,
+            },
+        };
+    }
+
+    private buildMemoryCandidateSourceFingerprint(input: ReviewQueueCreateInput): string {
+        const producerEvidence = {
+            sourceRefs: input.sourceRefs.map((sourceRef) => ({
+                path: normalizePath(sourceRef.path).replace(/^\.\//, ""),
+                sourceId: sourceRef.sourceId ?? null,
+                excerptHash: sourceRef.excerptHash ?? null,
+                heading: sourceRef.heading ?? null,
+                blockId: sourceRef.blockId ?? null,
+            })),
+            replayRef: input.replayRef ?? null,
+            dataBoundarySnapshotId: input.dataBoundarySnapshotId,
+            captureId: input.metadata?.captureId ?? null,
+            suggestionType: input.metadata?.suggestionType ?? null,
+        };
+        return `memory-source-${stableHash(JSON.stringify(producerEvidence))}`;
     }
 
     private dismissReviewQueueItem(id: string): Promise<ReviewQueueResult<ReviewQueueItem>> {
@@ -2094,10 +3105,15 @@ export class PluginManager extends Plugin {
                 this.log("Quiet Recall accept feedback skipped", error);
             });
             new Notice(pageletT("pagelet.recall.save.saved", this.getPageletLocale()), 4000);
+            return {
+                ...coerced,
+                message: pageletT("pagelet.recall.save.saved", this.getPageletLocale()),
+            };
         } else {
-            new Notice(coerced.message, 5000);
+            const message = pageletT("pagelet.recall.save.failed", this.getPageletLocale());
+            new Notice(message, 5000);
+            return { ...coerced, message };
         }
-        return coerced;
     }
 
     private async linkQuietRecallCandidateFromActiveNote(
@@ -2135,7 +3151,7 @@ export class PluginManager extends Plugin {
         ) {
             return {
                 ok: false,
-                message: pageletT("pagelet.tab.recall.linkFailed", locale, { reason: "file-not-found" }),
+                message: this.quietRecallLinkFailureMessage("file-not-found"),
             };
         }
         if (!this.isDataBoundaryAllowedPath(currentFile.path) || !this.isDataBoundaryAllowedPath(candidateFile.path)) {
@@ -2149,7 +3165,7 @@ export class PluginManager extends Plugin {
         if (!result.ok) {
             return {
                 ok: false,
-                message: pageletT("pagelet.tab.recall.linkFailed", locale, { reason: result.reason }),
+                message: this.quietRecallLinkFailureMessage(result.reason),
             };
         }
         void this.recordQuietRecallFeedback({
@@ -2171,6 +3187,20 @@ export class PluginManager extends Plugin {
                 ? pageletT("pagelet.tab.recall.linked", locale)
                 : pageletT("pagelet.tab.recall.alreadyLinked", locale),
         };
+    }
+
+    private quietRecallLinkFailureMessage(reason: string): string {
+        const locale = this.getPageletLocale();
+        switch (reason) {
+            case "file-not-found":
+                return pageletT("pagelet.tab.recall.linkFailed.fileMissing", locale);
+            case "frontmatter-unavailable":
+                return pageletT("pagelet.tab.recall.linkFailed.frontmatterUnavailable", locale);
+            case "frontmatter-write-failed":
+                return pageletT("pagelet.tab.recall.linkFailed.writeFailed", locale);
+            default:
+                return pageletT("pagelet.tab.recall.linkFailed", locale);
+        }
     }
 
     private getRetrievalHabitProfileStore(): RetrievalHabitProfileStore {
@@ -2198,10 +3228,11 @@ export class PluginManager extends Plugin {
         if (!this.savedInsightStore) {
             this.savedInsightStore = new SavedInsightStore({
                 items: this.settings.savedInsights.items,
-                persist: async (state) => {
-                    this.settings.savedInsights.items = state.items;
-                    await this.saveSettings();
-                },
+                persist: (state) => this.persistPaSettingsSlice(
+                    () => this.settings.savedInsights.items,
+                    (items) => { this.settings.savedInsights.items = items; },
+                    state.items,
+                ),
             });
         }
         return this.savedInsightStore;
@@ -2226,45 +3257,1168 @@ export class PluginManager extends Plugin {
     private getMemoryGovernanceStore(): MemoryGovernanceStore {
         if (!this.memoryGovernanceStore) {
             this.memoryGovernanceStore = new MemoryGovernanceStore({
-                records: this.settings.memoryGovernance.records,
-                persist: async (state) => {
-                    this.settings.memoryGovernance.records = state.records;
-                    await this.saveSettings();
-                },
+                repository: this.memoryGovernanceRecordRepository
+                    ?? new CallbackMemoryGovernanceRecordRepository(
+                        this.settings.memoryGovernance.records,
+                        (state) => this.persistPaSettingsSlice(
+                    () => this.settings.memoryGovernance.records,
+                    (records) => { this.settings.memoryGovernance.records = records; },
+                    state.records,
+                        ),
+                    ),
             });
         }
         return this.memoryGovernanceStore;
     }
 
     private listConfirmedMemories(): ConfirmedMemoryRecord[] {
-        return this.getMemoryGovernanceStore().list();
+        const governed = this.getGovernedMemoryViewSnapshot();
+        return governed
+            ? governed.records.map((entry) => cloneSerializable(entry.record))
+            : this.getMemoryGovernanceStore().list();
+    }
+
+    private getMemoryGovernancePanelState(): PanelMemoryGovernanceState {
+        const governanceMode = this.getMemoryGovernanceUiMode();
+        const governedProjection = this.getGovernedMemoryProjectionSnapshot();
+        const governed = governedProjection
+            ? buildGovernedMemoryViewSnapshot(
+                governedProjection.state,
+                governedProjection.vaultScopeKey,
+            )
+            : null;
+        if (!governed) {
+            if (governanceMode !== "legacy_threshold") {
+                return { governanceMode, records: [], totalCount: 0 };
+            }
+            const records = this.getMemoryGovernanceStore().list();
+            return { governanceMode, records, totalCount: records.length };
+        }
+        const records = governed.records.map((entry) => {
+            const projection = this.projectGovernedMemoryUiEntry(
+                entry,
+                governedProjection!.state,
+            );
+            return {
+                ...cloneSerializable(entry.record),
+                effect: projection.effect,
+                useStatus: projection.useStatus,
+                durableUseStatus: projection.durableUseStatus,
+                actionPolicy: { ...projection.actionPolicy },
+            };
+        });
+        const recentChanges: PanelMemoryRecentChange[] = governed.recentChanges.map((change) => ({
+            id: change.id,
+            claimId: change.claimId,
+            kind: change.kind,
+            occurredAt: change.occurredAt,
+            ...(change.redacted ? {} : {
+                ...(change.summary ? { summary: change.summary } : {}),
+                ...(change.sourcePath ? { sourcePath: change.sourcePath } : {}),
+                ...(change.scope ? {
+                    scopeLabel: change.scope.label
+                        ?? change.scope.paths?.[0]
+                        ?? change.scope.tags?.[0]
+                        ?? pageletT("pagelet.tab.memory.scope.currentVault", this.getPageletLocale()),
+                } : {}),
+                ...(change.effect ? { effect: change.effect } : {}),
+            }),
+            ...(change.status ? { status: change.status } : {}),
+            undoAvailable: change.undoAvailable,
+        }));
+        return {
+            governanceMode,
+            records,
+            recentChanges,
+            totalCount: records.length,
+        };
+    }
+
+    private runPageletGovernedMemoryAction(
+        action: "correct" | "pause" | "resume",
+        record: ConfirmedMemoryRecord,
+        summary?: string,
+    ): Promise<MemoryRecordActionResult> {
+        if (this.getMemoryGovernanceUiMode() !== "effect_based") {
+            return Promise.resolve(this.governedMemoryActionFailure(action, "mode_unavailable"));
+        }
+        const current = this.getMemoryGovernancePanelState().records
+            .find((candidate) => candidate.id === record.id);
+        if (!current || current.actionPolicy?.[action] !== true) {
+            return Promise.resolve(this.governedMemoryActionFailure(action, "action_unavailable"));
+        }
+        if (action === "correct") return this.correctGovernedMemory(current, summary ?? "");
+        if (action === "pause") return this.pauseGovernedMemory(current);
+        return this.resumeGovernedMemory(current);
+    }
+
+    private forgetMemoryFromPagelet(
+        record: ConfirmedMemoryRecord,
+    ): Promise<MemoryRecordActionResult> {
+        const mode = this.getMemoryGovernanceUiMode();
+        if (mode === "effect_based") {
+            const current = this.getMemoryGovernancePanelState().records
+                .find((candidate) => candidate.id === record.id);
+            if (!current || current.actionPolicy?.forget !== true) {
+                return Promise.resolve(this.governedMemoryActionFailure(
+                    "forget",
+                    "action_unavailable",
+                ));
+            }
+            return this.forgetGovernedMemory(current);
+        }
+        const projected = record as PanelMemoryGovernanceRecord;
+        if (mode === "legacy_threshold"
+            && projected.actionPolicy === undefined
+            && projected.effect === undefined
+            && projected.useStatus === undefined
+            && projected.durableUseStatus === undefined) {
+            const current = this.getMemoryGovernancePanelState().records
+                .find((candidate) => candidate.id === record.id);
+            return current
+                ? this.forgetConfirmedMemory(current)
+                : Promise.resolve(this.governedMemoryActionFailure("forget", "claim_unavailable"));
+        }
+        return Promise.resolve(this.governedMemoryActionFailure("forget", "mode_unavailable"));
+    }
+
+    private undoMemoryFromPagelet(
+        change: PanelMemoryRecentChange,
+    ): Promise<MemoryRecordActionResult> {
+        if (this.getMemoryGovernanceUiMode() !== "effect_based") {
+            return Promise.resolve(this.governedMemoryActionFailure("undo", "mode_unavailable"));
+        }
+        const current = this.getMemoryGovernancePanelState().recentChanges
+            ?.find((candidate) => candidate.id === change.id && candidate.undoAvailable === true);
+        return current
+            ? this.undoGovernedMemoryChange(current)
+            : Promise.resolve(this.governedMemoryActionFailure("undo", "change_unavailable"));
+    }
+
+    private correctGovernedMemory(
+        record: ConfirmedMemoryRecord,
+        summary: string,
+    ): Promise<MemoryRecordActionResult> {
+        return this.runGovernedMemoryLifecycleAction(
+            record.id,
+            "correct",
+            (coordinator, dataBoundaryAllowed) => coordinator.correct({
+                claimId: record.id,
+                summary,
+                scopeAllowed: true,
+                dataBoundaryAllowed,
+            }),
+        );
+    }
+
+    private pauseGovernedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+        return this.runGovernedMemoryLifecycleAction(
+            record.id,
+            "pause",
+            (coordinator) => coordinator.pauseUse({ claimId: record.id }),
+        );
+    }
+
+    private resumeGovernedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+        return this.runGovernedMemoryLifecycleAction(
+            record.id,
+            "resume",
+            (coordinator, dataBoundaryAllowed) => coordinator.resumeUse({
+                claimId: record.id,
+                scopeAllowed: true,
+                dataBoundaryAllowed,
+            }),
+        );
+    }
+
+    private async applyGovernedMemoryDeviceWide(
+        record: ConfirmedMemoryRecord,
+    ): Promise<MemoryRecordActionResult> {
+        if (this.getGovernedMemoryScopeAction(record.id) !== "apply_device_wide") {
+            return this.governedMemoryActionFailure("apply_device_wide", "scope_action_unavailable");
+        }
+        const confirmed = await confirmUserAction(this.app, {
+            title: this.t("plugin.settings.memoryControlCenter.scope.deviceConfirmTitle"),
+            message: this.t("plugin.settings.memoryControlCenter.scope.deviceConfirmMessage"),
+            confirmText: this.t("plugin.settings.memoryControlCenter.action.apply_device_wide"),
+        });
+        if (!confirmed) {
+            return {
+                ok: false,
+                message: this.t("plugin.settings.memoryControlCenter.scope.cancelled"),
+            };
+        }
+        return this.runGovernedMemoryLifecycleAction(
+            record.id,
+            "apply_device_wide",
+            (coordinator, dataBoundaryAllowed) => coordinator.changeScope({
+                claimId: record.id,
+                applicability: { kind: "whole_vault" },
+                partition: { kind: "device_collaboration", key: "device" },
+                explicitDeviceScope: true,
+                scopeAllowed: true,
+                dataBoundaryAllowed,
+            }),
+        );
+    }
+
+    private limitGovernedMemoryToCurrentVault(
+        record: ConfirmedMemoryRecord,
+    ): Promise<MemoryRecordActionResult> {
+        if (this.getGovernedMemoryScopeAction(record.id) !== "limit_to_current_vault") {
+            return Promise.resolve(this.governedMemoryActionFailure(
+                "limit_to_current_vault",
+                "scope_action_unavailable",
+            ));
+        }
+        const opaqueVaultKey = this.memoryGovernanceOpaqueVaultKey;
+        if (!opaqueVaultKey) {
+            return Promise.resolve(this.governedMemoryActionFailure(
+                "limit_to_current_vault",
+                "vault_identity_unavailable",
+            ));
+        }
+        return this.runGovernedMemoryLifecycleAction(
+            record.id,
+            "limit_to_current_vault",
+            (coordinator, dataBoundaryAllowed) => coordinator.changeScope({
+                claimId: record.id,
+                applicability: { kind: "whole_vault" },
+                partition: { kind: "vault", key: opaqueVaultKey },
+                scopeAllowed: true,
+                dataBoundaryAllowed,
+            }),
+        );
+    }
+
+    private async forgetGovernedMemory(record: ConfirmedMemoryRecord): Promise<MemoryRecordActionResult> {
+        const confirmed = await confirmUserAction(this.app, {
+            title: pageletT("pagelet.tab.memory.forgetConfirmTitle", this.getPageletLocale()),
+            message: pageletT("pagelet.tab.memory.forgetConfirmMessage", this.getPageletLocale()),
+            confirmText: pageletT("pagelet.tab.memory.forgetConfirm", this.getPageletLocale()),
+        });
+        if (!confirmed) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.forgetCancelled", this.getPageletLocale()),
+            };
+        }
+        return this.runGovernedMemoryLifecycleAction(
+            record.id,
+            "forget",
+            (coordinator) => coordinator.forget({ claimId: record.id }),
+        );
+    }
+
+    private undoGovernedMemoryChange(change: PanelMemoryRecentChange): Promise<MemoryRecordActionResult> {
+        return this.runGovernedMemoryLifecycleAction(
+            change.claimId,
+            "undo",
+            (coordinator) => coordinator.undoRecentChange({ eventId: change.id }),
+        );
+    }
+
+    private retryPendingForget(claimId: string): Promise<MemoryRecordActionResult> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const coordinator = this.memoryGovernanceCoordinator;
+            const repository = this.deviceMemoryGovernanceRepository;
+            const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+            if (!coordinator || !repository || !vaultKey) {
+                return {
+                    ok: false,
+                    message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryUnavailable"),
+                };
+            }
+            const before = await repository.initialize();
+            const pending = before.pendingOperations.some((operation) => (
+                operation.kind === "forget"
+                && operation.claimId === claimId
+                && (operation.partition.kind === "device_collaboration"
+                    || operation.partition.key === vaultKey)
+            ));
+            if (!pending) {
+                return {
+                    ok: false,
+                    message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryUnavailable"),
+                };
+            }
+            const result = await coordinator.resumePendingForgets();
+            await this.refreshGovernedMemoryActionState();
+            await this.notifySettingsChanged();
+            if (!result.ok || result.value.pending.length > 0) {
+                this.scheduleMemoryForgetRetry();
+            } else {
+                this.cancelMemoryForgetRetry();
+            }
+            if (!result.ok || result.value.pending.includes(claimId)) {
+                return {
+                    ok: false,
+                    message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryPending"),
+                };
+            }
+            return {
+                ok: true,
+                message: this.t("plugin.settings.memoryControlCenter.pendingForget.retryComplete"),
+            };
+        });
+    }
+
+    runMemoryControlCenterAction(
+        action: "correct" | "pause_use" | "resume_use" | "apply_device_wide"
+            | "limit_to_current_vault" | "forget" | "retry_forget" | "undo_recent_change",
+        targetId: string,
+        summary?: string,
+    ): Promise<MemoryRecordActionResult> {
+        if (action === "retry_forget") return this.retryPendingForget(targetId);
+        if (action === "undo_recent_change") {
+            const change = this.getMemoryGovernancePanelState().recentChanges
+                ?.find((candidate) => candidate.id === targetId);
+            return change
+                ? this.undoGovernedMemoryChange(change)
+                : Promise.resolve(this.governedMemoryActionFailure("undo", "change_unavailable"));
+        }
+        const record = this.getMemoryGovernancePanelState().records
+            .find((candidate) => candidate.id === targetId);
+        if (!record) {
+            const lifecycleAction = action === "pause_use"
+                ? "pause"
+                : action === "resume_use" ? "resume" : action;
+            return Promise.resolve(this.governedMemoryActionFailure(lifecycleAction, "claim_unavailable"));
+        }
+        if (action === "correct") return this.correctGovernedMemory(record, summary ?? "");
+        if (action === "pause_use") return this.pauseGovernedMemory(record);
+        if (action === "resume_use") return this.resumeGovernedMemory(record);
+        if (action === "apply_device_wide") return this.applyGovernedMemoryDeviceWide(record);
+        if (action === "limit_to_current_vault") return this.limitGovernedMemoryToCurrentVault(record);
+        return this.forgetGovernedMemory(record);
+    }
+
+    getMemorySuppressionMarkerCount(): number {
+        const snapshot = this.getGovernedMemoryProjectionSnapshot();
+        if (!snapshot) return 0;
+        const protectedMarkerIds = new Set(snapshot.state.pendingOperations.flatMap((operation) => (
+            operation.kind === "forget" ? operation.suppressionMarkerIds : []
+        )));
+        return snapshot.state.suppressionMarkers.filter((marker) => (
+            marker.partition.kind === "vault"
+            && marker.partition.key === snapshot.vaultScopeKey
+            && !protectedMarkerIds.has(marker.id)
+        )).length;
+    }
+
+    clearMemorySuppressionMarkers(): Promise<{ ok: boolean; message: string; clearedCount: number }> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const repository = this.deviceMemoryGovernanceRepository;
+            const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+            if (!repository || !vaultKey || !this.getGovernedMemoryProjectionSnapshot()) {
+                return {
+                    ok: false,
+                    message: this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.unavailable"),
+                    clearedCount: 0,
+                };
+            }
+            let clearedCount = 0;
+            await repository.transact((draft) => {
+                const protectedMarkerIds = new Set(draft.pendingOperations.flatMap((operation) => (
+                    operation.kind === "forget" ? operation.suppressionMarkerIds : []
+                )));
+                const retained = draft.suppressionMarkers.filter((marker) => {
+                    const shouldClear = marker.partition.kind === "vault"
+                        && marker.partition.key === vaultKey
+                        && !protectedMarkerIds.has(marker.id);
+                    if (shouldClear) clearedCount += 1;
+                    return !shouldClear;
+                });
+                draft.suppressionMarkers = retained;
+            });
+            await this.refreshGovernedMemoryActionState();
+            await this.notifySettingsChanged();
+            return {
+                ok: true,
+                message: this.t("plugin.settings.memoryControlCenter.dataRecovery.prevention.done", {
+                    count: clearedCount,
+                }),
+                clearedCount,
+            };
+        });
+    }
+
+    getMemoryRollbackStatusMessage(reason?: string): string {
+        switch (reason) {
+            case "rollback_pending_operations":
+                return this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.pending");
+            case "rollback_window_expired":
+            case "rollback_not_available":
+                return this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.unavailable");
+            default:
+                return this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.failed");
+        }
+    }
+
+    rollbackMemoryGovernance(): Promise<{ ok: boolean; message: string }> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const repository = this.deviceMemoryGovernanceRepository;
+            const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+            const barrier = this.legacyMemoryCompatibilityBarrier;
+            if (!repository || !vaultKey || !barrier) {
+                return {
+                    ok: false,
+                    message: this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.unavailable"),
+                };
+            }
+            let before = await repository.initialize();
+            before = await this.clearResolvedLegacySourceReconciliation(
+                repository,
+                vaultKey,
+                before,
+            );
+            const migration = before.migrationStates[vaultKey];
+            if (migration?.phase === "rolled_back") {
+                this.completeLegacyMemoryRollbackRuntime(
+                    barrier,
+                    repository,
+                    before,
+                    vaultKey,
+                    migration.sourceHash ?? this.memoryGovernanceSourceHash ?? "",
+                );
+                await this.notifySettingsChanged();
+                return {
+                    ok: true,
+                    message: this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.complete"),
+                };
+            }
+            const expectedSourceHash = migration?.legacySourceStateHash ?? migration?.sourceHash;
+            if (!migration || !expectedSourceHash
+                || (migration.phase !== "compatibility" && migration.phase !== "rolling_back")) {
+                return {
+                    ok: false,
+                    message: this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.unavailable"),
+                };
+            }
+            const rollback = new MemoryGovernanceRollbackCoordinator({
+                repository,
+                opaqueVaultKey: vaultKey,
+                writeLegacyProjection: (projection) => this.writeLegacyMemoryProjectionForRollback(
+                    barrier,
+                    projection,
+                    expectedSourceHash,
+                ),
+                readLegacyProjection: () => this.readPersistedLegacyMemoryProjection(),
+            });
+            const result = await rollback.run();
+            if (!result.ok) {
+                this.log("Memory governance rollback did not complete", { reason: result.reason });
+                if (result.phase === "rolling_back") {
+                    // The normal cache refresh intentionally rejects the
+                    // write-blocking rolling_back phase. Keep enough current
+                    // state for Settings to expose Retry without turning this
+                    // typed, recoverable outcome into a rejected promise.
+                    this.currentDeviceMemoryGovernanceState = cloneSerializable(
+                        await repository.initialize(),
+                    );
+                    this.cancelMemoryGovernanceGarbageCollection();
+                } else {
+                    await this.refreshGovernedMemoryActionState();
+                }
+                await this.notifySettingsChanged();
+                return { ok: false, message: this.getMemoryRollbackStatusMessage(result.reason) };
+            }
+            const rolledBackState = await repository.initialize();
+            this.completeLegacyMemoryRollbackRuntime(
+                barrier,
+                repository,
+                rolledBackState,
+                vaultKey,
+                migration.sourceHash ?? expectedSourceHash,
+            );
+            await this.notifySettingsChanged();
+            return {
+                ok: true,
+                message: this.t("plugin.settings.memoryControlCenter.dataRecovery.rollback.complete"),
+            };
+        });
+    }
+
+    getMemoryFinalizationStatusMessage(reason?: string): string {
+        switch (reason) {
+            case "finalization_pending_operations":
+                return this.t("plugin.settings.memoryControlCenter.finalization.blocked.pending");
+            case "legacy_source_reconciliation_required":
+                return this.t("plugin.settings.memoryControlCenter.finalization.blocked.reconcile");
+            case "finalization_not_available":
+            case "governed_cutover_incomplete":
+            case "finalization_confirmation_stale":
+            case "finalization_state_changed":
+                return this.t("plugin.settings.memoryControlCenter.finalization.blocked.notReady");
+            case "rollback_window_expired":
+            case "legacy_source_verification_failed":
+            case "finalization_cleanup_failed":
+            case "finalization_lock_failed":
+            case "finalization_readback_not_empty":
+            case "finalization_commit_failed":
+            case "fresh_restore_state_invalid":
+            case "fresh_restore_claim_invalid":
+            case "fresh_restore_revision_missing":
+            case "fresh_restore_origin_collision":
+            case "fresh_restore_queue_invalid":
+            case "fresh_restore_entry_collision":
+            case "fresh_restore_readback_mismatch":
+                return this.t("plugin.settings.memoryControlCenter.finalization.blocked.recovery");
+            default:
+                return this.t("plugin.settings.memoryControlCenter.finalization.failed");
+        }
+    }
+
+    finalizeMemoryGovernance(
+        confirmationToken: string,
+    ): Promise<{ ok: boolean; message: string }> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const repository = this.deviceMemoryGovernanceRepository;
+            const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+            const barrier = this.legacyMemoryCompatibilityBarrier;
+            if (!repository || !vaultKey || !barrier || !confirmationToken.trim()) {
+                return {
+                    ok: false,
+                    message: this.t("plugin.settings.memoryControlCenter.finalization.unavailable"),
+                };
+            }
+            const coordinator = new MemoryGovernanceFinalizationCoordinator({
+                repository,
+                opaqueVaultKey: vaultKey,
+                clearLegacyMemorySlices: (expectedSourceHash) => (
+                    this.clearLegacyMemorySlicesForFinalization(barrier, expectedSourceHash)
+                ),
+                readLegacySourceSnapshot: () => this.readPersistedLegacyMemorySourceSnapshot(),
+            });
+            const result = await coordinator.run(confirmationToken);
+            if (!result.ok) {
+                this.log("Memory finalization did not complete", { reason: result.reason });
+                await this.cancelLegacyMemoryFinalizationIfCompatible(
+                    repository,
+                    vaultKey,
+                    barrier,
+                );
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+                return {
+                    ok: false,
+                    message: this.getMemoryFinalizationStatusMessage(result.reason),
+                };
+            }
+            barrier.finalize();
+            this.legacyMemoryPayload = captureLegacyMemoryPayload(this.settings);
+            await this.refreshGovernedMemoryActionState();
+            await this.notifySettingsChanged();
+            return {
+                ok: true,
+                message: this.t("plugin.settings.memoryControlCenter.finalization.complete"),
+            };
+        });
+    }
+
+    private async cancelLegacyMemoryFinalizationIfCompatible(
+        repository: MemoryGovernanceRepository,
+        vaultKey: string,
+        barrier: LegacyMemoryCompatibilityBarrier,
+    ): Promise<void> {
+        try {
+            const state = await repository.initialize();
+            const migration = state.migrationStates[vaultKey];
+            if (!migration || migration.phase !== "compatibility") return;
+            const persisted = await this.loadData();
+            const payload = captureLegacyMemoryPayload(persisted);
+            const liveSourceHash = hashLegacyMemoryPayload(payload);
+            const expectedSourceHash = migration.pendingLegacySourceHash
+                ?? migration.legacySourceStateHash
+                ?? migration.sourceHash;
+            if (!expectedSourceHash || liveSourceHash !== expectedSourceHash) return;
+            if (this.legacyMemoryCompatibilityBarrier !== barrier) return;
+            if (!barrier.cancelFinalization(persisted)) return;
+            this.legacyMemoryPayload = barrier.snapshot();
+        } catch (error) {
+            // Keep the barrier finalizing so ordinary saves fail closed until a
+            // later explicit retry can prove the compatibility source again.
+            this.log("Memory finalization compatibility barrier remains blocked", error);
+        }
+    }
+
+    private async clearLegacyMemorySlicesForFinalization(
+        barrier: LegacyMemoryCompatibilityBarrier,
+        expectedSourceHash: string,
+    ): Promise<boolean> {
+        let cleared = false;
+        await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error("Memory finalization stopped during plugin unload.");
+            const processed = await this.processPluginDataJson((persisted) => {
+                const liveSourceHash = hashLegacyMemoryPayload(captureLegacyMemoryPayload(persisted));
+                if (liveSourceHash !== expectedSourceHash) return persisted;
+                const composed = barrier.composeForFinalization(persisted);
+                if (!composed.ok) {
+                    throw new Error(`Memory finalization compose failed: ${composed.errorCode}`);
+                }
+                barrier.beginFinalization();
+                cleared = true;
+                return composed.payload;
+            });
+            if (!cleared) return;
+            const readbackHash = hashLegacyMemoryPayload(
+                captureLegacyMemoryPayload(processed.readback),
+            );
+            if (readbackHash === expectedSourceHash) {
+                throw new Error("Memory finalization readback was not cleared.");
+            }
+            const reviewQueue = processed.written.reviewQueue;
+            const reviewQueueItems = reviewQueue && typeof reviewQueue === "object"
+                && Array.isArray((reviewQueue as { items?: unknown }).items)
+                ? (reviewQueue as { items: ReviewQueueItem[] }).items.map(cloneSerializable)
+                : [];
+            this.settings.memoryGovernance.records = [];
+            this.settings.reviewQueue.items = reviewQueueItems;
+            this.settings.confirmedMemoryCount = 0;
+            this.settings.memoryAutoAcceptPaused = false;
+            this.currentLocalConfirmedMemoryCount = 0;
+            this.currentLocalMemoryAutoAcceptPaused = false;
+        });
+        return cleared;
+    }
+
+    private async readPersistedLegacyMemoryProjection(): Promise<LegacyMemoryRollbackProjection> {
+        return (await this.readPersistedLegacyMemorySourceSnapshot()).projection;
+    }
+
+    private async readPersistedLegacyMemorySourceSnapshot(): Promise<LegacyMemoryFinalizationSourceSnapshot> {
+        return this.buildLegacyMemorySourceSnapshot(await this.loadData());
+    }
+
+    private buildLegacyMemorySourceSnapshot(raw: unknown): LegacyMemoryFinalizationSourceSnapshot {
+        const payload = captureLegacyMemoryPayload(raw);
+        const parsed = parseLegacyMemoryPayload(payload);
+        const policy = normalizeLegacyMemoryPolicy(payload).baseline;
+        if (parsed.rejected.length > 0) {
+            throw new Error("Memory finalization readback is invalid.");
+        }
+        return {
+            sourceHash: parsed.sourceHash,
+            projection: {
+                records: parsed.acceptedClaims.map(cloneSerializable),
+                memoryQueueItems: parsed.acceptedMemoryQueueItems.map(cloneSerializable),
+                confirmedMemoryCount: policy.confirmedCount,
+                memoryAutoAcceptPaused: policy.autoAcceptPaused,
+            },
+        };
+    }
+
+    private async writeLegacyMemoryProjectionForRollback(
+        barrier: LegacyMemoryCompatibilityBarrier,
+        projection: LegacyMemoryRollbackProjection,
+        expectedSourceHash: string,
+    ): Promise<LegacyMemoryRollbackWriteResult> {
+        return this.enqueueSettingsWrite(async () => {
+            if (this.unloading) throw new Error("Memory rollback stopped during plugin unload.");
+            let changedSourceHash: string | null = null;
+            const processed = await this.processPluginDataJson((persisted) => {
+                const current = this.buildLegacyMemorySourceSnapshot(persisted);
+                if (current.sourceHash !== expectedSourceHash) {
+                    if (legacyMemoryRollbackProjectionsEqual(current.projection, projection)) {
+                        return persisted;
+                    }
+                    changedSourceHash = current.sourceHash;
+                    return persisted;
+                }
+                return this.composeLegacyMemoryRollbackPayload(persisted, projection);
+            });
+            if (changedSourceHash) {
+                return {
+                    ok: false,
+                    reason: "legacy_source_changed",
+                    sourceHash: changedSourceHash,
+                };
+            }
+            const verified = this.buildLegacyMemorySourceSnapshot(processed.readback);
+            if (!legacyMemoryRollbackProjectionsEqual(verified.projection, projection)) {
+                return {
+                    ok: false,
+                    reason: "legacy_source_changed",
+                    sourceHash: verified.sourceHash,
+                };
+            }
+            const reviewQueue = processed.readback.reviewQueue;
+            const nextItems = reviewQueue && typeof reviewQueue === "object"
+                && Array.isArray((reviewQueue as { items?: unknown }).items)
+                ? (reviewQueue as { items: ReviewQueueItem[] }).items.map(cloneSerializable)
+                : [];
+            this.settings.memoryGovernance.records = projection.records.map(cloneSerializable);
+            this.settings.reviewQueue.items = nextItems.map(cloneSerializable);
+            this.settings.confirmedMemoryCount = projection.confirmedMemoryCount;
+            this.settings.memoryAutoAcceptPaused = projection.memoryAutoAcceptPaused;
+            return { ok: true };
+        });
+    }
+
+    private async clearResolvedLegacySourceReconciliation(
+        repository: MemoryGovernanceRepository,
+        vaultKey: string,
+        state: DeviceMemoryGovernanceStateV1,
+    ): Promise<DeviceMemoryGovernanceStateV1> {
+        const migration = state.migrationStates[vaultKey];
+        const trustedSourceHash = migration?.legacySourceStateHash ?? migration?.sourceHash;
+        if (!migration?.pendingLegacySourceHash || migration.phase !== "compatibility"
+            || !trustedSourceHash) return state;
+        const live = await this.readPersistedLegacyMemorySourceSnapshot();
+        if (live.sourceHash !== trustedSourceHash) return state;
+        const pendingSourceHash = migration.pendingLegacySourceHash;
+        await repository.transact((draft) => {
+            const current = draft.migrationStates[vaultKey];
+            const currentTrustedHash = current?.legacySourceStateHash ?? current?.sourceHash;
+            if (!current || current.phase !== "compatibility"
+                || current.pendingLegacySourceHash !== pendingSourceHash
+                || currentTrustedHash !== trustedSourceHash) return;
+            delete current.pendingLegacySourceHash;
+            delete current.lastErrorCode;
+        });
+        return repository.initialize();
+    }
+
+    private completeLegacyMemoryRollbackRuntime(
+        barrier: LegacyMemoryCompatibilityBarrier,
+        repository: MemoryGovernanceRepository,
+        state: DeviceMemoryGovernanceStateV1,
+        vaultKey: string,
+        sourceHash: string,
+    ): void {
+        if (!sourceHash.trim() || state.migrationStates[vaultKey]?.phase !== "rolled_back") {
+            throw new MemoryGovernanceBootstrapError("migration_failed");
+        }
+        barrier.finalize();
+        this.legacyMemoryPayload = captureLegacyMemoryPayload(this.settings);
+        this.installLegacyMemoryRuntimeAfterRollback(
+            repository,
+            state,
+            vaultKey,
+            sourceHash,
+        );
+    }
+
+    private composeLegacyMemoryRollbackPayload(
+        persisted: Record<string, unknown>,
+        projection: LegacyMemoryRollbackProjection,
+    ): Record<string, unknown> {
+        const passthrough = buildLegacyReviewQueuePassthrough(persisted.reviewQueue);
+        const preserved = passthrough.preservedRawEntries
+            .filter((entry) => entry.reason !== "memory_item")
+            .sort((left, right) => left.originalIndex - right.originalIndex);
+        const nextItems: unknown[] = [
+            ...projection.memoryQueueItems.map(cloneSerializable),
+            ...passthrough.liveNonMemoryItems.map(cloneSerializable),
+        ];
+        const knownIds = new Set(nextItems.flatMap((item) => (
+            typeof item === "object" && item !== null && typeof (item as { id?: unknown }).id === "string"
+                ? [(item as { id: string }).id]
+                : []
+        )));
+        if (knownIds.size !== nextItems.length) {
+            throw new Error("Memory rollback queue IDs collide.");
+        }
+        for (const entry of preserved) {
+            if (entry.id && knownIds.has(entry.id)) {
+                throw new Error("Memory rollback queue IDs collide.");
+            }
+            if (entry.id) knownIds.add(entry.id);
+            const index = Math.max(0, Math.min(entry.originalIndex, nextItems.length));
+            nextItems.splice(index, 0, cloneSerializable(entry.value));
+        }
+        const payload = cloneSerializable(persisted);
+        payload.memoryGovernance = {
+            ...(payload.memoryGovernance && typeof payload.memoryGovernance === "object"
+                && !Array.isArray(payload.memoryGovernance)
+                ? payload.memoryGovernance as Record<string, unknown>
+                : {}),
+            records: projection.records.map(cloneSerializable),
+        };
+        payload.reviewQueue = {
+            ...(payload.reviewQueue && typeof payload.reviewQueue === "object"
+                && !Array.isArray(payload.reviewQueue)
+                ? payload.reviewQueue as Record<string, unknown>
+                : {}),
+            items: nextItems,
+        };
+        payload.confirmedMemoryCount = projection.confirmedMemoryCount;
+        payload.memoryAutoAcceptPaused = projection.memoryAutoAcceptPaused;
+        return payload;
+    }
+
+    private installLegacyMemoryRuntimeAfterRollback(
+        repository: MemoryGovernanceRepository,
+        state: DeviceMemoryGovernanceStateV1,
+        opaqueVaultKey: string,
+        sourceHash: string,
+    ): void {
+        this.cancelMemoryForgetRetry();
+        this.cancelMemoryProfileProjectionRetry();
+        this.cancelMemoryGovernanceGarbageCollection();
+        this.memoryGovernanceRepositoryUnsubscribe?.();
+        this.memoryGovernanceRepositoryUnsubscribe = null;
+        this.deviceMemoryRecordRepository?.dispose();
+        this.memoryGovernanceOpaqueVaultKey = opaqueVaultKey;
+        this.memoryGovernanceSourceHash = sourceHash;
+        this.deviceMemoryGovernanceRepository = repository;
+        this.currentDeviceMemoryGovernanceState = cloneSerializable(state);
+        this.memoryGovernanceCoordinator = null;
+        this.memoryAdmissionCoordinator = null;
+        this.memoryProfileProjectionWorker = null;
+        this.deviceMemoryRecordRepository = null;
+        this.deviceMemoryReviewQueueRepository = null;
+        this.memoryGovernanceRecordRepository = new CallbackMemoryGovernanceRecordRepository(
+            this.settings.memoryGovernance.records,
+            (next) => this.persistPaSettingsSlice(
+                () => this.settings.memoryGovernance.records,
+                (records) => { this.settings.memoryGovernance.records = records; },
+                next.records,
+            ),
+        );
+        this.settingsReviewQueueRepository = null;
+        this.reviewQueueRepository = this.getOrCreateSettingsReviewQueueRepository();
+        this.currentLocalConfirmedMemoryCount = normalizeConfirmedMemoryCount(
+            this.settings.confirmedMemoryCount,
+        );
+        this.currentLocalMemoryAutoAcceptPaused = this.settings.memoryAutoAcceptPaused === true;
+        this.memoryGovernanceBootstrapState = "ready";
+        this.memoryGovernanceBootstrapErrorCode = null;
+        this.memoryGovernanceStore = null;
+        this.reviewQueueStore = null;
+    }
+
+    private runGovernedMemoryLifecycleAction(
+        claimId: string,
+        action: "correct" | "pause" | "resume" | "apply_device_wide"
+            | "limit_to_current_vault" | "forget" | "undo",
+        operation: (
+            coordinator: MemoryGovernanceCoordinator,
+            dataBoundaryAllowed: boolean,
+        ) => Promise<{ ok: boolean; reason?: string; pending?: boolean }>,
+    ): Promise<MemoryRecordActionResult> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const coordinator = this.memoryGovernanceCoordinator;
+            if (!coordinator) return this.governedMemoryActionFailure(action, "coordinator_unavailable");
+            const boundary = await this.readGovernedMemoryActionBoundary(claimId);
+            if (boundary === null) return this.governedMemoryActionFailure(action, "claim_unavailable");
+
+            let result: Awaited<ReturnType<typeof operation>>;
+            try {
+                result = await operation(coordinator, boundary);
+            } catch (error) {
+                this.log("Governed Memory lifecycle action threw", { action, claimId, error });
+                return this.governedMemoryActionFailure(action, "operation_threw");
+            }
+            if (!result.ok) {
+                this.log("Governed Memory lifecycle action failed", {
+                    action,
+                    claimId,
+                    reason: result.reason ?? "unknown",
+                    pending: result.pending === true,
+                });
+                if (result.pending === true) this.scheduleMemoryForgetRetry();
+                return this.governedMemoryActionFailure(
+                    action,
+                    result.reason ?? "unknown",
+                    result.pending === true,
+                );
+            }
+
+            if (action === "correct" || action === "undo"
+                || action === "apply_device_wide" || action === "limit_to_current_vault") {
+                const recovery = await this.memoryProfileProjectionWorker?.resumePending();
+                if (recovery && recovery.pending.length > 0) {
+                    this.log("Memory Profile projection remains pending after lifecycle action", {
+                        action,
+                        claimId,
+                        count: recovery.pending.length,
+                    });
+                    this.scheduleMemoryProfileProjectionRetry();
+                    if (action === "undo" && recovery.pending.includes(claimId)) {
+                        await this.refreshGovernedMemoryActionState();
+                        await this.notifySettingsChanged();
+                        return this.governedMemoryActionFailure(action, "undo_cleanup_pending", true);
+                    }
+                    if (action === "apply_device_wide" && recovery.pending.includes(claimId)) {
+                        await this.refreshGovernedMemoryActionState();
+                        await this.notifySettingsChanged();
+                        return this.governedMemoryActionFailure(action, "scope_cleanup_pending", true);
+                    }
+                }
+            }
+            await this.refreshGovernedMemoryActionState();
+            await this.notifySettingsChanged();
+            const nextRecord = this.getMemoryGovernancePanelState().records
+                .find((record) => record.id === claimId);
+            return {
+                ok: true,
+                message: this.governedMemoryActionSuccessMessage(action),
+                ...(nextRecord ? { record: cloneSerializable(nextRecord) } : {}),
+            };
+        });
+    }
+
+    private serializeGovernedMemoryLifecycle<T>(operation: () => Promise<T>): Promise<T> {
+        const result = this.memoryLifecycleMutationTail.then(operation, operation);
+        this.memoryLifecycleMutationTail = result.then(() => undefined, () => undefined);
+        return result;
+    }
+
+    private async readGovernedMemoryActionBoundary(claimId: string): Promise<boolean | null> {
+        const repository = this.deviceMemoryGovernanceRepository;
+        const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        if (this.memoryGovernanceBootstrapState !== "ready" || !repository || !vaultKey) return null;
+        const state = await repository.initialize();
+        const claim = state.claims.find((candidate) => candidate.id === claimId);
+        if (!claim || (claim.partition.kind === "vault"
+            ? claim.partition.key !== vaultKey
+            : claim.partition.kind !== "device_collaboration" || claim.partition.key !== "device")) {
+            return null;
+        }
+        const revision = claim.activeRevisionId
+            ? state.revisions.find((candidate) => (
+                candidate.id === claim.activeRevisionId && candidate.claimId === claim.id
+            ))
+            : undefined;
+        if (!revision) return null;
+        this.currentDeviceMemoryGovernanceState = cloneSerializable(state);
+        return this.isGovernedMemoryRevisionAllowed(
+            revision,
+            this.getMemoryDataBoundaryFingerprint(),
+        );
+    }
+
+    private async refreshGovernedMemoryActionState(): Promise<void> {
+        const scheduledRefresh = this.deviceMemoryCacheRefreshPromise;
+        if (scheduledRefresh) await scheduledRefresh;
+        await this.refreshDeviceMemoryCaches();
+    }
+
+    private scheduleMemoryForgetRetry(): void {
+        if (this.unloading || this.memoryForgetRetryTimer !== null
+            || this.memoryGovernanceBootstrapState !== "ready"
+            || !this.memoryGovernanceCoordinator) return;
+        const delay = this.memoryForgetRetryDelayMs;
+        this.memoryForgetRetryTimer = setPluginTimeout(() => {
+            this.memoryForgetRetryTimer = null;
+            void this.serializeGovernedMemoryLifecycle(async () => {
+                const coordinator = this.memoryGovernanceCoordinator;
+                if (!coordinator || this.unloading
+                    || this.memoryGovernanceBootstrapState !== "ready") return;
+                const recovery = await coordinator.resumePendingForgets();
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+                if (recovery.ok && recovery.value.pending.length === 0) {
+                    this.cancelMemoryForgetRetry();
+                    return;
+                }
+                if (!recovery.ok) {
+                    this.log("Memory Forget background retry remains pending", {
+                        ok: false,
+                    });
+                }
+                this.memoryForgetRetryDelayMs = Math.min(
+                    delay * 2,
+                    MEMORY_FORGET_RETRY_MAX_MS,
+                );
+                this.scheduleMemoryForgetRetry();
+            }).catch((error) => {
+                this.log("Memory Forget background retry failed", {
+                    errorType: error instanceof Error ? "error" : "unknown_error",
+                });
+                this.memoryForgetRetryDelayMs = Math.min(
+                    delay * 2,
+                    MEMORY_FORGET_RETRY_MAX_MS,
+                );
+                this.scheduleMemoryForgetRetry();
+            });
+        }, delay);
+    }
+
+    private cancelMemoryForgetRetry(): void {
+        if (this.memoryForgetRetryTimer !== null) {
+            clearPluginTimeout(this.memoryForgetRetryTimer);
+            this.memoryForgetRetryTimer = null;
+        }
+        this.memoryForgetRetryDelayMs = MEMORY_FORGET_RETRY_INITIAL_MS;
+    }
+
+    private scheduleMemoryProfileProjectionRetry(): void {
+        if (this.unloading || this.memoryProfileProjectionRetryTimer !== null
+            || !this.memoryProfileProjectionWorker) return;
+        const delay = this.memoryProfileProjectionRetryDelayMs;
+        this.memoryProfileProjectionRetryTimer = setPluginTimeout(() => {
+            this.memoryProfileProjectionRetryTimer = null;
+            void this.serializeGovernedMemoryLifecycle(async () => {
+                const worker = this.memoryProfileProjectionWorker;
+                if (!worker) return;
+                const recovery = await worker.resumePending();
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+                if (recovery.pending.length === 0) {
+                    this.memoryProfileProjectionRetryDelayMs = MEMORY_PROFILE_PROJECTION_RETRY_INITIAL_MS;
+                    return;
+                }
+                this.memoryProfileProjectionRetryDelayMs = Math.min(
+                    delay * 2,
+                    MEMORY_PROFILE_PROJECTION_RETRY_MAX_MS,
+                );
+                this.scheduleMemoryProfileProjectionRetry();
+            }).catch((error) => {
+                this.log("Memory Profile projection background retry failed", error);
+                this.memoryProfileProjectionRetryDelayMs = Math.min(
+                    delay * 2,
+                    MEMORY_PROFILE_PROJECTION_RETRY_MAX_MS,
+                );
+                this.scheduleMemoryProfileProjectionRetry();
+            });
+        }, delay);
+    }
+
+    private cancelMemoryProfileProjectionRetry(): void {
+        if (this.memoryProfileProjectionRetryTimer !== null) {
+            clearPluginTimeout(this.memoryProfileProjectionRetryTimer);
+            this.memoryProfileProjectionRetryTimer = null;
+        }
+        this.memoryProfileProjectionRetryDelayMs = MEMORY_PROFILE_PROJECTION_RETRY_INITIAL_MS;
+    }
+
+    private scheduleMemoryGovernanceGarbageCollection(minimumDelayMs = 0): void {
+        const state = this.currentDeviceMemoryGovernanceState;
+        if (this.unloading
+            || this.memoryGovernanceBootstrapState !== "ready"
+            || !this.memoryGovernanceCoordinator
+            || !state) {
+            this.cancelMemoryGovernanceGarbageCollection();
+            return;
+        }
+        const expiresAt = nextMemoryGovernanceGarbageCollectionAt(state);
+        if (expiresAt === null) {
+            this.cancelMemoryGovernanceGarbageCollection();
+            return;
+        }
+        // GC uses a strict expiry comparison so the documented seven-day
+        // window remains available through the exact boundary millisecond.
+        const dueAt = Math.max(expiresAt + 1, Date.now() + Math.max(0, minimumDelayMs));
+        if (this.memoryGovernanceGarbageCollectionTimer != null
+            && this.memoryGovernanceGarbageCollectionDueAt === dueAt) return;
+        this.cancelMemoryGovernanceGarbageCollection();
+        this.memoryGovernanceGarbageCollectionDueAt = dueAt;
+        this.memoryGovernanceGarbageCollectionTimer = setPluginTimeout(() => {
+            this.memoryGovernanceGarbageCollectionTimer = null;
+            this.memoryGovernanceGarbageCollectionDueAt = null;
+            void this.serializeGovernedMemoryLifecycle(async () => {
+                const coordinator = this.memoryGovernanceCoordinator;
+                if (this.unloading
+                    || this.memoryGovernanceBootstrapState !== "ready"
+                    || !coordinator) return;
+                const result = await coordinator.collectGarbage();
+                if (!result.ok) {
+                    throw new Error(`Memory governance garbage collection failed: ${result.reason}`);
+                }
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+                const nextAt = this.currentDeviceMemoryGovernanceState
+                    ? nextMemoryGovernanceGarbageCollectionAt(this.currentDeviceMemoryGovernanceState)
+                    : null;
+                this.scheduleMemoryGovernanceGarbageCollection(
+                    nextAt !== null && nextAt < Date.now()
+                        ? MEMORY_GOVERNANCE_GARBAGE_COLLECTION_RETRY_MS
+                        : 0,
+                );
+            }).catch((error) => {
+                this.log("Memory governance garbage collection failed", error);
+                this.scheduleMemoryGovernanceGarbageCollection(
+                    MEMORY_GOVERNANCE_GARBAGE_COLLECTION_RETRY_MS,
+                );
+            });
+        }, Math.min(Math.max(0, dueAt - Date.now()), MAX_TIMER_DELAY_MS));
+    }
+
+    private cancelMemoryGovernanceGarbageCollection(): void {
+        if (this.memoryGovernanceGarbageCollectionTimer != null) {
+            clearPluginTimeout(this.memoryGovernanceGarbageCollectionTimer);
+            this.memoryGovernanceGarbageCollectionTimer = null;
+        }
+        this.memoryGovernanceGarbageCollectionDueAt = null;
+    }
+
+    private governedMemoryActionSuccessMessage(
+        action: "correct" | "pause" | "resume" | "apply_device_wide"
+            | "limit_to_current_vault" | "forget" | "undo",
+    ): string {
+        switch (action) {
+            case "correct":
+                return pageletT("pagelet.tab.memory.corrected", this.getPageletLocale());
+            case "pause":
+                return pageletT("pagelet.tab.memory.paused", this.getPageletLocale());
+            case "resume":
+                return pageletT("pagelet.tab.memory.resumed", this.getPageletLocale());
+            case "apply_device_wide":
+                return this.t("plugin.settings.memoryControlCenter.scope.deviceApplied");
+            case "limit_to_current_vault":
+                return this.t("plugin.settings.memoryControlCenter.scope.vaultApplied");
+            case "forget":
+                return pageletT("pagelet.tab.memory.removed", this.getPageletLocale());
+            case "undo":
+                return pageletT("pagelet.tab.memory.undone", this.getPageletLocale());
+        }
+    }
+
+    private governedMemoryActionFailure(
+        action: "correct" | "pause" | "resume" | "apply_device_wide"
+            | "limit_to_current_vault" | "forget" | "undo",
+        reason: string,
+        pending = false,
+    ): MemoryRecordActionResult {
+        this.log("Governed Memory lifecycle action unavailable", { action, reason, pending });
+        return {
+            ok: false,
+            message: pending
+                ? action === "forget"
+                    ? pageletT("pagelet.tab.memory.forgetPending", this.getPageletLocale())
+                    : action === "undo"
+                        ? pageletT("pagelet.tab.memory.undoCleanupPending", this.getPageletLocale())
+                        : action === "apply_device_wide"
+                            ? this.t("plugin.settings.memoryControlCenter.scope.cleanupPending")
+                        : pageletT("pagelet.tab.memory.actionUnavailable", this.getPageletLocale())
+                : pageletT("pagelet.tab.memory.actionUnavailable", this.getPageletLocale()),
+        };
+    }
+
+    private async openMemorySource(path: string): Promise<void> {
+        const normalizedPath = normalizePath(path).replace(/^\.\//, "");
+        const file = this.app.vault.getAbstractFileByPath(normalizedPath);
+        if (!(file instanceof TFile)) {
+            new Notice(pageletT("pagelet.tab.memory.sourceUnavailable", this.getPageletLocale()));
+            return;
+        }
+        await this.app.workspace.getLeaf(false).openFile(file);
+    }
+
+    private openMemorySettings(targetId?: string): void {
+        openSettings(this.app);
+        openSettingsTab(this.app, "personal-assistant");
+        this.settingTab.openGroup("memory-personalization", targetId);
+        setPlatformTimeout(() => this.settingTab.openGroup("memory-personalization", targetId), 0);
+    }
+
+    private getCurrentConfirmedMemoryCount(): number {
+        return this.currentLocalConfirmedMemoryCount
+            ?? normalizeConfirmedMemoryCount(this.settings.confirmedMemoryCount);
+    }
+
+    private getCurrentMemoryAutoAcceptPaused(): boolean {
+        return this.currentLocalMemoryAutoAcceptPaused
+            ?? this.settings.memoryAutoAcceptPaused === true;
     }
 
     private shouldAutoConfirmMemoryCandidates(): boolean {
-        return getMemoryTrustLevel(this.settings.confirmedMemoryCount ?? 0) >= 2;
-    }
-
-    private async autoConfirmPendingMemoryCandidates(): Promise<void> {
-        if (this.settings.reviewQueue?.enabled !== true || !this.shouldAutoConfirmMemoryCandidates()) return;
-        if (this.autoConfirmMemoryCandidatesPromise) {
-            await this.autoConfirmMemoryCandidatesPromise;
-            return;
-        }
-        this.autoConfirmMemoryCandidatesPromise = this.runAutoConfirmPendingMemoryCandidates()
-            .finally(() => {
-                this.autoConfirmMemoryCandidatesPromise = null;
-            });
-        await this.autoConfirmMemoryCandidatesPromise;
-    }
-
-    private async runAutoConfirmPendingMemoryCandidates(): Promise<void> {
-        const pending = this.getReviewQueueStore().list({
-            types: ["memory_candidate"],
-            statuses: ["suggested"],
-        });
-        for (const item of pending) {
-            await this.autoConfirmMemoryCandidateFromQueueItem(item);
-        }
+        return this.getMemoryGovernanceUiMode() === "legacy_threshold"
+            && this.settings.memoryEnabled === true
+            && getMemoryTrustLevel(this.getCurrentConfirmedMemoryCount()) >= 2
+            && !this.getCurrentMemoryAutoAcceptPaused();
     }
 
     private async autoConfirmMemoryCandidateFromQueueItem(item: ReviewQueueItem): Promise<boolean> {
@@ -2281,7 +4435,6 @@ export class PluginManager extends Plugin {
             confirmationStrength: "auto",
             failureStatus: "suggested",
             logContext: "auto-confirm",
-            triggerLevel2Sweep: false,
         });
         if (!result.ok) {
             this.log("Memory candidate auto-confirm failed", { id: currentItem.id, message: result.message });
@@ -2295,7 +4448,6 @@ export class PluginManager extends Plugin {
             confirmationStrength: "explicit",
             failureStatus: "failed",
             logContext: "manual-confirm",
-            triggerLevel2Sweep: true,
         });
         return { ok: result.ok, message: result.message };
     }
@@ -2306,7 +4458,6 @@ export class PluginManager extends Plugin {
             confirmationStrength: NonNullable<ConfirmedMemoryRecord["confirmationStrength"]>;
             failureStatus: "failed" | "suggested";
             logContext: string;
-            triggerLevel2Sweep: boolean;
         },
     ): Promise<{ ok: boolean; message: string }> {
         const currentItem = this.getReviewQueueItemById(item.id);
@@ -2336,6 +4487,9 @@ export class PluginManager extends Plugin {
                 }),
             };
         }
+        if (this.memoryAdmissionCoordinator && this.getGovernedMemoryProjectionSnapshot()) {
+            return this.confirmGovernedMemoryQueueItem(currentItem);
+        }
         let reserveResult: ReviewQueueResult<ReviewQueueItem>;
         try {
             reserveResult = await this.updateReviewQueueItemStatus(currentItem.id, "accepted");
@@ -2362,6 +4516,7 @@ export class PluginManager extends Plugin {
                 scope: reserveResult.value.scope,
                 confirmationSource: "pagelet",
                 confirmationStrength: options.confirmationStrength,
+                originReviewQueueItemId: currentItem.id,
             });
         } catch (error) {
             this.log("Memory candidate confirmation threw", {
@@ -2382,7 +4537,7 @@ export class PluginManager extends Plugin {
         }
         try {
             const queueResult = await this.updateReviewQueueItemStatus(currentItem.id, "applied");
-            if (!queueResult.ok) {
+            if (!queueResult.ok && this.getReviewQueueItemById(currentItem.id)?.status !== "applied") {
                 this.log("Memory candidate confirmed but queue status update failed", {
                     id: currentItem.id,
                     reason: queueResult.reason,
@@ -2394,9 +4549,19 @@ export class PluginManager extends Plugin {
                 error,
             });
         }
-        this.settings.confirmedMemoryCount = (this.settings.confirmedMemoryCount ?? 0) + 1;
+        await this.reconcileMemoryQueueAudit();
         try {
-            await this.saveSettings();
+            if (this.memoryGovernanceBootstrapState === "ready") {
+                await this.updateCurrentLocalMemoryPolicy({
+                    confirmedMemoryCount: this.getCurrentConfirmedMemoryCount() + 1,
+                });
+                await this.notifySettingsChanged();
+            } else {
+                this.settings.confirmedMemoryCount = normalizeConfirmedMemoryCount(
+                    this.settings.confirmedMemoryCount,
+                ) + 1;
+                await this.saveSettings();
+            }
         } catch (error) {
             this.log("Memory candidate confirmed but confirmed count persist threw", {
                 id: currentItem.id,
@@ -2404,13 +4569,54 @@ export class PluginManager extends Plugin {
                 error,
             });
         }
-        if (options.triggerLevel2Sweep) {
-            void this.autoConfirmPendingMemoryCandidates();
-        }
         return {
             ok: true,
             message: pageletT("pagelet.tab.memory.confirmed", this.getPageletLocale()),
         };
+    }
+
+    private confirmGovernedMemoryQueueItem(
+        item: ReviewQueueItem,
+    ): Promise<{ ok: boolean; message: string }> {
+        return this.serializeGovernedMemoryLifecycle(async () => {
+            const coordinator = this.memoryAdmissionCoordinator;
+            if (!coordinator) {
+                return {
+                    ok: false,
+                    message: pageletT("pagelet.tab.memory.actionUnavailable", this.getPageletLocale()),
+                };
+            }
+            const dataBoundaryAllowed = item.sourceRefs.length === 0
+                || item.sourceRefs.every((sourceRef) => this.isDataBoundaryAllowedPath(sourceRef.path));
+            const result = await coordinator.confirmQueueItem({
+                queueItemId: item.id,
+                dataBoundaryAllowed,
+            });
+            if (!result.ok) {
+                this.log("Governed Memory candidate confirmation failed", {
+                    id: item.id,
+                    reason: result.reason,
+                });
+                return {
+                    ok: false,
+                    message: pageletT("pagelet.tab.memory.confirmFailed", this.getPageletLocale(), {
+                        reason: result.reason,
+                    }),
+                };
+            }
+            const projection = await this.memoryProfileProjectionWorker?.resumePending();
+            if (projection && projection.pending.length > 0) {
+                this.log("Memory Profile projection remains pending after confirmation", {
+                    count: projection.pending.length,
+                });
+            }
+            await this.refreshGovernedMemoryActionState();
+            await this.notifySettingsChanged();
+            return {
+                ok: true,
+                message: pageletT("pagelet.tab.memory.confirmed", this.getPageletLocale()),
+            };
+        });
     }
 
     private async recoverMemoryCandidateQueueFailure(
@@ -2449,6 +4655,31 @@ export class PluginManager extends Plugin {
     }
 
     private async dismissMemoryCandidateFromQueueItem(item: ReviewQueueItem): Promise<{ ok: boolean; message: string }> {
+        if (this.memoryAdmissionCoordinator && this.getGovernedMemoryProjectionSnapshot()) {
+            return this.serializeGovernedMemoryLifecycle(async () => {
+                const result = await this.memoryAdmissionCoordinator!.dismissQueueItem({
+                    queueItemId: item.id,
+                });
+                if (!result.ok) {
+                    this.log("Governed Memory candidate dismissal failed", {
+                        id: item.id,
+                        reason: result.reason,
+                    });
+                    return {
+                        ok: false,
+                        message: pageletT("pagelet.tab.memory.dismissFailed", this.getPageletLocale(), {
+                            reason: result.reason,
+                        }),
+                    };
+                }
+                await this.refreshGovernedMemoryActionState();
+                await this.notifySettingsChanged();
+                return {
+                    ok: true,
+                    message: pageletT("pagelet.tab.memory.dismissed", this.getPageletLocale()),
+                };
+            });
+        }
         const result = await this.dismissReviewQueueItem(item.id);
         if (!result.ok) {
             return {
@@ -2462,6 +4693,148 @@ export class PluginManager extends Plugin {
             ok: true,
             message: pageletT("pagelet.tab.memory.dismissed", this.getPageletLocale()),
         };
+    }
+
+    private async forgetConfirmedMemory(record: ConfirmedMemoryRecord): Promise<{
+        ok: boolean;
+        message: string;
+        record?: ConfirmedMemoryRecord;
+    }> {
+        const current = this.getMemoryGovernanceStore().list().find((candidate) => candidate.id === record.id);
+        if (!current || current.lifecycle === "forgotten_tombstone") {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.removeFailed", this.getPageletLocale(), {
+                    reason: current ? "already_removed" : "not_found",
+                }),
+            };
+        }
+
+        let forgotten: Awaited<ReturnType<MemoryGovernanceStore["forget"]>>;
+        try {
+            forgotten = await this.getMemoryGovernanceStore().forget(current.id, "user_remove");
+        } catch (error) {
+            this.log("Confirmed Memory removal persist failed", { id: current.id, error });
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.removeFailed", this.getPageletLocale(), {
+                    reason: "persist_failed",
+                }),
+            };
+        }
+        if (!forgotten.ok) {
+            return {
+                ok: false,
+                message: pageletT("pagelet.tab.memory.removeFailed", this.getPageletLocale(), {
+                    reason: forgotten.reason,
+                }),
+            };
+        }
+
+        await this.reconcileMemoryQueueAudit();
+
+        return {
+            ok: true,
+            message: pageletT("pagelet.tab.memory.removed", this.getPageletLocale()),
+            record: forgotten.value,
+        };
+    }
+
+    /**
+     * Canonical Memory records are durable retry markers for their exact linked
+     * Review Queue audit entries. This intentionally bypasses the user-facing
+     * `reviewQueue.enabled` gate: disabling the queue must not strand an active
+     * record at `accepted` or a removed record at `accepted`/`applied`.
+     */
+    private reconcileMemoryQueueAudit(): Promise<void> {
+        if (this.unloading) return Promise.resolve();
+        if (this.memoryQueueAuditPromise) return this.memoryQueueAuditPromise;
+        const result = this.runMemoryQueueAuditReconciliation();
+        this.memoryQueueAuditPromise = result;
+        void result.then(
+            () => {
+                if (this.memoryQueueAuditPromise === result) {
+                    this.memoryQueueAuditPromise = null;
+                }
+            },
+            () => {
+                if (this.memoryQueueAuditPromise === result) {
+                    this.memoryQueueAuditPromise = null;
+                }
+            },
+        );
+        return result;
+    }
+
+    private async runMemoryQueueAuditReconciliation(): Promise<void> {
+        try {
+            const records = this.getMemoryGovernanceStore().list()
+                .filter((record) => Boolean(record.originReviewQueueItemId));
+            if (records.length === 0) return;
+            const queueStore = this.getReviewQueueStore();
+            for (const record of records) {
+                const queueItemId = record.originReviewQueueItemId;
+                if (!queueItemId) continue;
+                const queueItem = queueStore.list().find((item) => item.id === queueItemId);
+                if (!queueItem) continue;
+                const isTombstone = record.lifecycle === "forgotten_tombstone";
+                if ((!isTombstone && queueItem.status === "applied")
+                    || (isTombstone && queueItem.status === "undone")) continue;
+                let auditStatus = queueItem.status;
+                if (auditStatus === "accepted") {
+                    try {
+                        const appliedResult = await queueStore.updateStatus(queueItemId, "applied");
+                        if (!appliedResult.ok) {
+                            const latestStatus = queueStore.list().find((item) => item.id === queueItemId)?.status;
+                            if (latestStatus !== "applied") {
+                                this.log("Memory queue audit apply reconciliation failed", {
+                                    id: record.id,
+                                    queueItemId,
+                                    reason: appliedResult.reason,
+                                });
+                                continue;
+                            }
+                        }
+                        auditStatus = "applied";
+                    } catch (error) {
+                        this.log("Memory queue audit apply reconciliation threw", {
+                            id: record.id,
+                            queueItemId,
+                            error,
+                        });
+                        continue;
+                    }
+                }
+                if (!isTombstone && auditStatus === "applied") continue;
+                if (auditStatus !== "applied") {
+                    this.log("Memory queue audit requires manual reconciliation", {
+                        id: record.id,
+                        queueItemId,
+                        status: auditStatus,
+                    });
+                    continue;
+                }
+                try {
+                    const queueResult = await queueStore.updateStatus(queueItemId, "undone");
+                    if (!queueResult.ok
+                        && queueStore.list().find((item) => item.id === queueItemId)?.status !== "undone") {
+                        this.log("Memory queue audit reconciliation failed", {
+                            id: record.id,
+                            queueItemId,
+                            reason: queueResult.reason,
+                        });
+                    }
+                } catch (error) {
+                    this.log("Memory queue audit reconciliation threw", {
+                        id: record.id,
+                        queueItemId,
+                        error,
+                    });
+                }
+            }
+        } catch (error) {
+            this.log("Memory queue audit scan failed", error);
+        }
     }
 
     private createMemoryHost(): MemoryHost {
@@ -2518,7 +4891,8 @@ export class PluginManager extends Plugin {
     }
 
     private createQuickCaptureService(): QuickCaptureService {
-        return new QuickCaptureService({
+        if (this.quickCaptureService) return this.quickCaptureService;
+        this.quickCaptureService = new QuickCaptureService({
             app: this.app,
             settings: this.settings,
             formatDate: (format: string) => moment().format(format),
@@ -2534,6 +4908,7 @@ export class PluginManager extends Plugin {
             },
             postProcessCapture: (input) => this.postProcessQuickCapture(input),
         });
+        return this.quickCaptureService;
     }
 
     private async postProcessQuickCapture(input: QuickCapturePostProcessInput): Promise<void> {
@@ -2606,6 +4981,7 @@ export class PluginManager extends Plugin {
             onSettingsChanged: (listener) => this.onSettingsChanged(listener),
             scheduleMemoryExtractionAfterChatTurn: (conversationId, turnCount) =>
                 this.scheduleMemoryExtractionAfterChatTurn(conversationId, turnCount),
+            openMemorySettings: (claimId) => this.openMemorySettings(claimId),
         };
     }
 
@@ -2936,6 +5312,33 @@ export class PluginManager extends Plugin {
         this.chatHistoryManager = undefined;
         this.memoryExtractionScheduler?.dispose();
         this.memoryExtractionScheduler = null;
+        this.cancelMemoryForgetRetry();
+        this.cancelMemoryProfileProjectionRetry();
+        this.cancelMemoryGovernanceGarbageCollection();
+        this.memoryGovernanceRepositoryUnsubscribe?.();
+        this.memoryGovernanceRepositoryUnsubscribe = null;
+        this.deviceMemoryRecordRepository?.dispose();
+        this.deviceMemoryRecordRepository = null;
+        const deviceMemoryGovernanceRepository = this.deviceMemoryGovernanceRepository;
+        this.deviceMemoryGovernanceRepository = null;
+        this.currentDeviceMemoryGovernanceState = null;
+        this.memoryGovernanceCoordinator = null;
+        this.memoryAdmissionCoordinator = null;
+        this.memoryProfileProjectionWorker = null;
+        this.memoryLifecycleMutationTail = Promise.resolve();
+        if (deviceMemoryGovernanceRepository) {
+            await deviceMemoryGovernanceRepository.dispose().catch((error) => {
+                this.log("Failed to dispose Memory governance repository", error);
+            });
+        }
+        this.deviceMemoryReviewQueueRepository = null;
+        this.memoryGovernanceRecordRepository = null;
+        this.reviewQueueRepository = null;
+        this.settingsReviewQueueRepository = null;
+        this.deviceMemoryCacheRefreshPromise = null;
+        this.deviceMemoryCacheRefreshTargetSequence = 0;
+        this.currentLocalConfirmedMemoryCount = null;
+        this.currentLocalMemoryAutoAcceptPaused = null;
         this.pageletSettingsUnsubscribe?.();
         this.pageletSettingsUnsubscribe = null;
         if (this.pageletOrchestrator) {
@@ -2958,16 +5361,704 @@ export class PluginManager extends Plugin {
         this.savedInsightStore = null;
         this.memoryGovernanceStore = null;
         this.retrievalHabitProfileStore = null;
+        this.quickCaptureService = null;
         this.pageletRateLimiterInstance = null;
         clearPageletDetailSessionCache();
     }
 
-    getMemoryExtractionPromptContext(): MemoryExtractionPromptContext {
-        if (!this.canRunMemoryExtractionRuntime()) return {};
+    getMemoryExtractionPromptContext(): PaAgentInjectedContext {
+        const governedSnapshot = this.getGovernedMemoryProjectionSnapshot();
+        if (!governedSnapshot) return this.getLegacyMemoryExtractionPromptContext();
+        if (!this.canRunMemoryExtractionRuntime()) {
+            // Governed cutover must preserve the same master/extraction/consent
+            // boundary as the legacy reader. An empty explicit mode prevents
+            // the projector from reviving legacy context as a fallback.
+            return { memoryContextMode: "governed" };
+        }
+
+        const { state, vaultScopeKey } = governedSnapshot;
+        const currentDataBoundaryFingerprint = this.getMemoryDataBoundaryFingerprint();
+        const includeVaultInsights = this.settings.memoryExtractionIncludeVaultInsights === true;
+        try {
+            const governed = selectGovernedMemoryUse({
+                vaultScopeKey,
+                currentScope: this.getGovernedMemoryCurrentScope(),
+                claims: state.claims,
+                revisions: state.revisions,
+                suppressionMarkers: state.suppressionMarkers,
+                pendingOperations: state.pendingOperations,
+                claimSuppressionFingerprints: this.buildClaimSuppressionFingerprints(
+                    state.projectionLinks,
+                ),
+                includeVaultInsights,
+                vaultInsights: this.readGovernedVaultInsightsSnapshot(includeVaultInsights),
+                currentDataBoundaryFingerprint,
+                dataBoundaryAllowed: (revision) => this.isGovernedMemoryRevisionAllowed(
+                    revision,
+                    currentDataBoundaryFingerprint,
+                ),
+            });
+            return {
+                memoryContextMode: "governed",
+                ...(governed.boundedContext
+                    ? { governedMemoryContext: governed.boundedContext }
+                    : {}),
+                ...(governed.usedClaimIds.length > 0 ? {
+                    governedMemoryTrace: governed.usedClaimIds.flatMap((claimId) => {
+                        const trace = this.buildGovernedMemoryTrace(state, claimId);
+                        return trace ? [trace] : [];
+                    }),
+                } : {}),
+            };
+        } catch {
+            // Once cut over, selector failure must not revive a legacy source.
+            // The explicit mode also prevents projector fallback on an empty result.
+            this.log("Governed Memory prompt projection unavailable", {
+                code: "governed_projection_failed",
+            });
+            return { memoryContextMode: "governed" };
+        }
+    }
+
+    private buildGovernedMemoryTrace(
+        state: DeviceMemoryGovernanceStateV1,
+        claimId: string,
+    ): NonNullable<PaAgentInjectedContext["governedMemoryTrace"]>[number] | null {
+        const claim = state.claims.find((candidate) => candidate.id === claimId);
+        if (!claim || (claim.effect !== "future_answers" && claim.effect !== "collaboration_default")) {
+            return null;
+        }
+        const revision = claim.activeRevisionId
+            ? state.revisions.find((candidate) => (
+                candidate.id === claim.activeRevisionId && candidate.claimId === claim.id
+            ))
+            : undefined;
+        if (!revision) return null;
+        const sourcePaths: string[] = [];
+        let hasNotes = false;
+        let hasInteractions = false;
+        let hasSettings = false;
+        for (const provenance of revision.provenance) {
+            if (provenance.kind === "note") {
+                hasNotes = true;
+                sourcePaths.push(provenance.sourceRef.path);
+            } else if (provenance.kind === "vault_aggregate") {
+                hasNotes = true;
+                sourcePaths.push(...provenance.representativeSourceRefs.map((source) => source.path));
+            } else if (provenance.kind === "conversation") {
+                hasInteractions = true;
+            } else if (provenance.kind === "explicit_setting") {
+                hasSettings = true;
+            }
+        }
+        const source = hasNotes && (hasInteractions || hasSettings)
+            || hasInteractions && hasSettings
+            ? "mixed" as const
+            : hasNotes
+                ? "notes" as const
+                : hasInteractions
+                    ? "interactions" as const
+                    : "settings" as const;
+        return {
+            claimId,
+            effect: claim.effect,
+            source,
+            scope: claim.partition.kind === "device_collaboration"
+                ? "same_device"
+                : "current_vault",
+            sourcePaths: [...new Set(sourcePaths)],
+        };
+    }
+
+    private getLegacyMemoryExtractionPromptContext(): PaAgentInjectedContext {
+        if (!this.canRunMemoryExtractionRuntime()) return { memoryContextMode: "legacy" };
         const context = this.memoryExtractionScheduler?.getPromptContext() ?? {};
-        if (this.settings.memoryExtractionIncludeVaultInsights && this.hasConfirmedMemoryExtractionConsent()) return context;
+        if (this.settings.memoryExtractionIncludeVaultInsights
+            && this.hasConfirmedMemoryExtractionConsent()) {
+            return { memoryContextMode: "legacy", ...context };
+        }
         const { userProfile } = context;
-        return userProfile ? { userProfile } : {};
+        return {
+            memoryContextMode: "legacy",
+            ...(userProfile ? { userProfile } : {}),
+        };
+    }
+
+    private getGovernedMemoryProjectionSnapshot(): {
+        state: DeviceMemoryGovernanceStateV1;
+        vaultScopeKey: string;
+    } | null {
+        if (this.memoryGovernanceBootstrapState !== "ready") return null;
+        const state = this.currentDeviceMemoryGovernanceState;
+        const vaultScopeKey = this.memoryGovernanceOpaqueVaultKey;
+        const sourceHash = this.memoryGovernanceSourceHash;
+        if (!state || !vaultScopeKey || !sourceHash) return null;
+
+        const migration = state.migrationStates[vaultScopeKey];
+        const policy = state.policyStates[vaultScopeKey];
+        if (!migration
+            || (migration.phase !== "compatibility" && migration.phase !== "finalized")
+            || migration.sourceHash !== sourceHash
+            || migration.lastErrorCode
+            || !policy
+            || policy.mode !== "effect_based"
+            || policy.contextProjectionMode !== "governed") return null;
+        return { state, vaultScopeKey };
+    }
+
+    getMemoryGovernanceUiMode(): "effect_based" | "legacy_threshold" | "unavailable" {
+        if (this.getGovernedMemoryProjectionSnapshot()) return "effect_based";
+        if (this.memoryGovernanceBootstrapState !== "ready") return "unavailable";
+        const state = this.currentDeviceMemoryGovernanceState;
+        const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        if (!state || !vaultKey) return "unavailable";
+        const policy = state.policyStates[vaultKey];
+        const migration = state.migrationStates[vaultKey];
+        return policy?.mode === "legacy_threshold"
+            && policy.contextProjectionMode === "legacy"
+            && migration?.phase !== "rolling_back"
+            && !migration?.lastErrorCode
+            ? "legacy_threshold"
+            : "unavailable";
+    }
+
+    private getGovernedMemoryViewSnapshot() {
+        const governed = this.getGovernedMemoryProjectionSnapshot();
+        return governed
+            ? buildGovernedMemoryViewSnapshot(governed.state, governed.vaultScopeKey)
+            : null;
+    }
+
+    private projectGovernedMemoryUiEntry(
+        entry: ReturnType<typeof buildGovernedMemoryViewSnapshot>["records"][number],
+        state: DeviceMemoryGovernanceStateV1,
+        overrides: Partial<Pick<
+            GovernedMemoryUiGateInput,
+            "runtimeUseEnabled" | "sourceEligible"
+        >> = {},
+    ): GovernedMemoryUiProjection {
+        const claim = state.claims.find((candidate) => candidate.id === entry.claimId);
+        const revision = claim?.activeRevisionId
+            ? state.revisions.find((candidate) => (
+                candidate.id === claim.activeRevisionId && candidate.claimId === claim.id
+            ))
+            : undefined;
+        let sourceEligible = overrides.sourceEligible ?? false;
+        if (overrides.sourceEligible === undefined && revision) {
+            try {
+                sourceEligible = this.isGovernedMemoryRevisionAllowed(
+                    revision,
+                    this.getMemoryDataBoundaryFingerprint(),
+                );
+            } catch {
+                // Settings and Pagelet both fail closed during a boundary/cache race.
+            }
+        }
+        const hasPendingOperation = state.pendingOperations.some((operation) => (
+            operation.claimId === entry.claimId
+            && (operation.kind === "forget" || operation.state === "pending")
+        ));
+        return projectGovernedMemoryUiState(entry, {
+            runtimeUseEnabled: overrides.runtimeUseEnabled
+                ?? this.canRunMemoryExtractionRuntime(),
+            sourceEligible,
+            hasPendingOperation,
+            coordinatorAvailable: Boolean(this.memoryGovernanceCoordinator),
+        });
+    }
+
+    private getGovernedMemoryCurrentScope(): {
+        notePath?: string;
+        folderPath?: string;
+        tags: string[];
+    } {
+        let activeFile: TFile | null = null;
+        try {
+            activeFile = this.app.workspace?.getActiveFile?.() ?? null;
+        } catch {
+            return { tags: [] };
+        }
+        if (!activeFile || typeof activeFile.path !== "string") return { tags: [] };
+        const notePath = normalizePath(activeFile.path).replace(/^\.\//, "");
+        if (!notePath) return { tags: [] };
+        let tags: string[] = [];
+        try {
+            tags = this.getDataBoundaryTags(activeFile);
+        } catch {
+            // A metadata-cache race hides tag-scoped claims without affecting
+            // otherwise eligible whole-vault or path-scoped siblings.
+        }
+        const folderPath = parentFolder(notePath);
+        return {
+            notePath,
+            ...(folderPath ? { folderPath } : {}),
+            tags,
+        };
+    }
+
+    private buildClaimSuppressionFingerprints(
+        links: readonly MemoryProjectionLink[],
+    ): Readonly<Record<string, MemorySuppressionFingerprintRef | undefined>> {
+        const byClaim = new Map<string, MemorySuppressionFingerprintRef | null>();
+        for (const link of links) {
+            if (link.state !== "active") continue;
+            const sourceFingerprintId = link.sourceFingerprintId?.trim();
+            const ruleFingerprint = link.ruleFingerprint?.trim();
+            if (!sourceFingerprintId || !ruleFingerprint) continue;
+            const prior = byClaim.get(link.claimId);
+            if (prior === null) continue;
+            if (prior && (
+                prior.sourceFingerprintId !== sourceFingerprintId
+                || prior.ruleFingerprint !== ruleFingerprint
+            )) {
+                byClaim.set(link.claimId, null);
+                continue;
+            }
+            byClaim.set(link.claimId, { sourceFingerprintId, ruleFingerprint });
+        }
+
+        const result = Object.create(null) as Record<
+            string,
+            MemorySuppressionFingerprintRef | undefined
+        >;
+        for (const [claimId, fingerprint] of byClaim) {
+            if (fingerprint) result[claimId] = fingerprint;
+        }
+        return result;
+    }
+
+    private readGovernedVaultInsightsSnapshot(
+        enabled: boolean,
+    ): VaultInsightsReadSnapshot | null {
+        if (!enabled) return null;
+        try {
+            const snapshot = this.memoryExtractionScheduler?.getVaultInsightsSnapshot() ?? null;
+            if (!snapshot) return null;
+            return {
+                snapshot: snapshot.snapshot,
+                dataBoundaryFingerprint: snapshot.dataBoundaryFingerprint,
+                representativeSourceRefs: snapshot.representativePaths.map((path) => ({
+                    path,
+                    generatedAt: snapshot.snapshot.generatedAt,
+                })),
+            };
+        } catch {
+            return null;
+        }
+    }
+
+    private isGovernedMemoryRevisionAllowed(
+        revision: MemoryClaimRevision,
+        currentDataBoundaryFingerprint: string,
+    ): boolean {
+        if (!Array.isArray(revision.provenance) || revision.provenance.length === 0) return false;
+        return revision.provenance.every((provenance) => {
+            switch (provenance.kind) {
+                case "note":
+                    return this.isDataBoundaryAllowedPath(provenance.sourceRef.path);
+                case "vault_aggregate":
+                    return provenance.dataBoundaryFingerprint === currentDataBoundaryFingerprint
+                        && provenance.representativeSourceRefs.every(
+                            (sourceRef) => this.isDataBoundaryAllowedPath(sourceRef.path),
+                        );
+                case "conversation":
+                case "explicit_setting":
+                    return true;
+                default:
+                    return false;
+            }
+        });
+    }
+
+    async getMemoryControlCenterSnapshot(): Promise<MemoryControlCenterSnapshot> {
+        const sourceErrors: MemoryControlCenterSourceError[] = [];
+        const noteStatus = this.memoryManager?.getStatusSnapshot() ?? {
+            enabled: this.settings.memoryEnabled === true,
+            status: this.settings.memoryEnabled === true ? "unknown" as const : "disabled" as const,
+            dirtyCount: 0,
+            verificationPending: 0,
+        };
+        if (noteStatus.lastErrorCode) {
+            sourceErrors.push({ source: "note_memory", code: noteStatus.lastErrorCode });
+        }
+        const profile = await this.readMemoryControlCenterProfile(sourceErrors);
+        const vaultInsights = this.readMemoryControlCenterVaultInsights();
+        const governedProjection = this.getGovernedMemoryProjectionSnapshot();
+        const governanceMode = this.getMemoryGovernanceUiMode();
+        const governanceState = this.memoryGovernanceBootstrapState === "ready"
+            ? this.currentDeviceMemoryGovernanceState
+            : null;
+        const governanceVaultKey = this.memoryGovernanceOpaqueVaultKey;
+        const migration = governanceState && governanceVaultKey
+            ? governanceState.migrationStates[governanceVaultKey]
+            : undefined;
+        const deviceLocalProven = migration?.phase === "finalized";
+        const deviceCollaborationAvailable = this.isDeviceCollaborationScopeAvailable();
+        const finalizationPreview = governanceState && governanceVaultKey
+            && (migration?.phase === "compatibility" || migration?.phase === "finalizing")
+            ? previewMemoryGovernanceFinalization(governanceState, governanceVaultKey, new Date())
+            : undefined;
+        const rollbackProjection = governanceState && governanceVaultKey
+            && (migration?.phase === "compatibility" || migration?.phase === "rolling_back")
+            ? buildLegacyMemoryRollbackProjection(governanceState, governanceVaultKey, new Date())
+            : undefined;
+        const rollbackHasPendingOperations = governanceState && governanceVaultKey
+            ? governanceState.pendingOperations.some((operation) => {
+                if (operation.kind === "forget") {
+                    return operation.partition.kind === "device_collaboration"
+                        || operation.partition.key === governanceVaultKey;
+                }
+                if (operation.state !== "pending") return false;
+                const claim = governanceState.claims.find(
+                    (candidate) => candidate.id === operation.claimId,
+                );
+                return claim?.partition.kind === "device_collaboration"
+                    || (claim?.partition.kind === "vault"
+                        && claim.partition.key === governanceVaultKey)
+                    || (operation.action === "remove"
+                        && operation.ownerVaultKey === governanceVaultKey);
+            })
+            : false;
+
+        const base = buildMemoryControlCenterSnapshot({
+            now: new Date(),
+            noteMemory: {
+                enabled: noteStatus.enabled,
+                status: noteStatus.status,
+                ...(noteStatus.indexedDocumentCount !== undefined
+                    ? { indexedDocumentCount: noteStatus.indexedDocumentCount }
+                    : {}),
+            },
+            vaultInsights,
+            profile,
+            confirmedRecords: !governedProjection && Array.isArray(this.settings.memoryGovernance?.records)
+                ? this.settings.memoryGovernance.records
+                : [],
+            boundary: {
+                vaultScopeLabel: this.app.vault.getName?.() || this.t("plugin.settings.memoryControlCenter.currentVault"),
+                deviceLocalProven,
+                explanationKey: deviceLocalProven
+                    ? deviceCollaborationAvailable
+                        ? "plugin.settings.memoryControlCenter.boundary.deviceLocal"
+                        : "plugin.settings.memoryControlCenter.boundary.deviceLocalVaultOnly"
+                    : "plugin.settings.memoryControlCenter.boundary.compatibility",
+            },
+            capabilities: {
+                correct: false,
+                undoRecentChange: false,
+                pauseUse: false,
+                resumeUse: false,
+                forget: false,
+            },
+            sourceErrors,
+        });
+        const compatibilityFinalization = finalizationPreview && migration
+            ? {
+                phase: migration.phase as "compatibility" | "finalizing",
+                eligible: finalizationPreview.eligible,
+                ...(finalizationPreview.confirmationToken
+                    ? { confirmationToken: finalizationPreview.confirmationToken }
+                    : {}),
+                legacyRecordCount: finalizationPreview.legacyRecordCount,
+                legacyMemoryQueueCount: finalizationPreview.legacyMemoryQueueCount,
+                warningCode: finalizationPreview.warningCode,
+                ...(finalizationPreview.requiresFreshRestoreProof
+                    ? { requiresFreshRestoreProof: true }
+                    : {}),
+                ...(finalizationPreview.blockedReason
+                    ? { blockedReason: finalizationPreview.blockedReason }
+                    : {}),
+            }
+            : undefined;
+        const compatibilityRollback = rollbackProjection && migration
+            && (migration.phase === "compatibility" || migration.phase === "rolling_back")
+            ? {
+                phase: migration.phase,
+                eligible: rollbackProjection.ok && !rollbackHasPendingOperations,
+                legacyRecordCount: rollbackProjection.ok
+                    ? rollbackProjection.projection.records.length
+                    : 0,
+                legacyMemoryQueueCount: rollbackProjection.ok
+                    ? rollbackProjection.projection.memoryQueueItems.length
+                    : 0,
+                ...(migration.rollbackExpiresAt
+                    ? { rollbackExpiresAt: migration.rollbackExpiresAt }
+                    : {}),
+                ...(!rollbackProjection.ok || rollbackHasPendingOperations ? {
+                    blockedReason: rollbackHasPendingOperations
+                        ? "rollback_pending_operations"
+                        : rollbackProjection.ok ? undefined : rollbackProjection.reason,
+                } : {}),
+            }
+            : undefined;
+        if (!governedProjection) {
+            return {
+                ...base,
+                governanceMode,
+                ...(compatibilityFinalization ? { compatibilityFinalization } : {}),
+                ...(compatibilityRollback ? { compatibilityRollback } : {}),
+            };
+        }
+
+        const governed = buildGovernedMemoryViewSnapshot(
+            governedProjection.state,
+            governedProjection.vaultScopeKey,
+        );
+        const linkedProfileRecordIds = new Set(governedProjection.state.projectionLinks.flatMap((link) => (
+            link.target.kind === "type_a_profile" ? [link.target.profileRecordId] : []
+        )));
+        const governedItems = governed.records.map((entry) => this.toMemoryControlCenterItem(
+            entry,
+            undefined,
+            governedProjection.state,
+        ));
+        const pendingForgetItems = governed.pendingForgets.map((pending): MemoryControlCenterItem => ({
+            id: pending.claimId,
+            claimId: pending.claimId,
+            label: "",
+            origin: "confirmed_memory",
+            authority: "source_observation",
+            scopeLabel: "",
+            effect: "none",
+            lifecycle: "forget_pending",
+            provenance: [],
+            updatedAt: pending.updatedAt,
+            supportedActions: this.memoryGovernanceCoordinator ? ["retry_forget"] : [],
+        }));
+        const retainedBaseItems = base.items.filter((item) => (
+            item.origin !== "confirmed_memory"
+            && (!item.profileRecordId || !linkedProfileRecordIds.has(item.profileRecordId))
+        ));
+        const recentChanges = governed.recentChanges.map((change): MemoryControlCenterRecentChange => ({
+            id: change.id,
+            claimId: change.claimId,
+            kind: change.kind,
+            occurredAt: change.occurredAt,
+            ...(change.redacted ? {} : {
+                ...(change.summary ? { label: change.summary } : {}),
+                ...(change.sourcePath ? { sourcePath: change.sourcePath } : {}),
+                ...(change.scope ? {
+                    scopeLabel: change.effect === "collaboration_default"
+                        ? this.t("plugin.settings.memoryControlCenter.deviceVaults")
+                        : this.memoryScopeLabel(change.scope),
+                } : {}),
+                ...(change.effect ? { effect: change.effect } : {}),
+            }),
+            ...(change.status ? { status: change.status } : {}),
+            redacted: change.redacted,
+            supportedActions: change.undoAvailable ? ["undo_recent_change"] : [],
+        }));
+        return {
+            ...base,
+            governanceMode,
+            ...(compatibilityFinalization ? { compatibilityFinalization } : {}),
+            ...(compatibilityRollback ? { compatibilityRollback } : {}),
+            durable: {
+                activeCount: governedItems.filter((item) => item.lifecycle === "active").length,
+                pausedCount: governedItems.filter((item) => item.lifecycle === "paused").length,
+                staleCount: governedItems.filter((item) => item.lifecycle === "stale").length,
+            },
+            items: [...retainedBaseItems, ...governedItems, ...pendingForgetItems],
+            recentChanges,
+        };
+    }
+
+    private toMemoryControlCenterItem(
+        entry: ReturnType<typeof buildGovernedMemoryViewSnapshot>["records"][number],
+        useGateOverrides?: {
+            runtimeUseEnabled: boolean;
+            sourceEligible: boolean;
+        },
+        stateOverride?: DeviceMemoryGovernanceStateV1,
+    ): MemoryControlCenterItem {
+        const state = stateOverride ?? this.currentDeviceMemoryGovernanceState;
+        const projection = state
+            ? this.projectGovernedMemoryUiEntry(entry, state, useGateOverrides)
+            : projectGovernedMemoryUiState(entry, {
+                runtimeUseEnabled: useGateOverrides?.runtimeUseEnabled ?? false,
+                sourceEligible: useGateOverrides?.sourceEligible ?? false,
+                hasPendingOperation: false,
+                coordinatorAvailable: Boolean(this.memoryGovernanceCoordinator),
+            });
+        const profileLink = entry.projectionLinks.find((link) => link.target.kind === "type_a_profile");
+        const supportedActions: MemoryControlCenterItem["supportedActions"] = [];
+        if (projection.actionPolicy.correct) supportedActions.push("correct");
+        if (projection.durableUseStatus === "active" && projection.actionPolicy.pause) {
+            supportedActions.push("pause_use");
+        }
+        if (projection.durableUseStatus === "paused" && projection.actionPolicy.resume) {
+            supportedActions.push("resume_use");
+        }
+        if (projection.actionPolicy.correct) {
+            const scopeAction = this.getGovernedMemoryScopeAction(entry.claimId);
+            if (scopeAction) supportedActions.push(scopeAction);
+        }
+        if (projection.actionPolicy.forget) supportedActions.push("forget");
+        return {
+            id: entry.claimId,
+            claimId: entry.claimId,
+            ...(profileLink?.target.kind === "type_a_profile"
+                ? { profileRecordId: profileLink.target.profileRecordId }
+                : {}),
+            label: projection.lifecycle === "forgotten_marker" ? "" : entry.record.summary,
+            origin: profileLink
+                ? "user_profile"
+                : entry.effect === "collaboration_default"
+                    ? "collaboration_preference"
+                    : "confirmed_memory",
+            authority: entry.authority,
+            scopeLabel: projection.lifecycle === "forgotten_marker"
+                ? ""
+                : entry.effect === "collaboration_default"
+                    ? this.t("plugin.settings.memoryControlCenter.deviceVaults")
+                    : this.memoryScopeLabel(entry.record.scope),
+            effect: projection.effect,
+            lifecycle: projection.lifecycle,
+            provenance: entry.provenance.flatMap((provenance): MemoryControlCenterProvenance[] => {
+                if (provenance.kind === "note") {
+                    return [{ kind: "note", sourceRef: cloneSerializable(provenance.sourceRef) }];
+                }
+                if (provenance.kind === "conversation") {
+                    return provenance.conversationIds.map((conversationId) => ({
+                        kind: "conversation",
+                        conversationId,
+                        observedAt: provenance.observedAt,
+                    }));
+                }
+                if (provenance.kind === "explicit_setting") return [{ ...provenance }];
+                return [{
+                    ...provenance,
+                    representativeSourceRefs: provenance.representativeSourceRefs.map(
+                        (sourceRef) => cloneSerializable(sourceRef),
+                    ),
+                }];
+            }),
+            observedAt: entry.record.confirmedAt ?? entry.record.createdAt,
+            updatedAt: entry.record.updatedAt,
+            supportedActions,
+        };
+    }
+
+    private getGovernedMemoryScopeAction(
+        claimId: string,
+    ): "apply_device_wide" | "limit_to_current_vault" | null {
+        const governed = this.getGovernedMemoryProjectionSnapshot();
+        if (!governed) return null;
+        const claim = governed.state.claims.find((candidate) => candidate.id === claimId);
+        if (!claim || (claim.lifecycle !== "active" && claim.lifecycle !== "paused")) return null;
+        if (governed.state.pendingOperations.some((operation) => (
+            operation.claimId === claimId
+            && (operation.kind === "forget" || operation.state === "pending")
+        ))) return null;
+        if (claim.partition.kind === "device_collaboration" && claim.partition.key === "device") {
+            return claim.effect === "collaboration_default"
+                ? "limit_to_current_vault"
+                : null;
+        }
+        if (!this.isDeviceCollaborationScopeAvailable()) return null;
+        if (claim.partition.kind !== "vault" || claim.partition.key !== governed.vaultScopeKey) return null;
+        if (governed.state.migrationStates[governed.vaultScopeKey]?.phase !== "finalized") return null;
+        if (claim.memoryType !== "preference"
+            || claim.sensitivity !== "low"
+            || claim.applicability.kind !== "whole_vault"
+            || claim.effect !== "future_answers"
+            || !claim.activeRevisionId) return null;
+        const revision = governed.state.revisions.find((candidate) => (
+            candidate.id === claim.activeRevisionId && candidate.claimId === claim.id
+        ));
+        if (!revision
+            || (revision.authority !== "explicit_user" && revision.authority !== "user_correction")
+            || revision.provenance.length === 0
+            || revision.provenance.some((source) => (
+                source.kind !== "conversation" && source.kind !== "explicit_setting"
+            ))) return null;
+        return "apply_device_wide";
+    }
+
+    private isDeviceCollaborationScopeAvailable(): boolean {
+        return DEVICE_COLLABORATION_SCOPE_VALIDATED;
+    }
+
+    private memoryScopeLabel(scope: ReviewQueueScope): string {
+        return scope.label?.trim()
+            || scope.paths?.[0]
+            || scope.tags?.[0]
+            || this.app.vault.getName?.()
+            || this.t("plugin.settings.memoryControlCenter.currentVault");
+    }
+
+    private async readMemoryControlCenterProfile(
+        sourceErrors: MemoryControlCenterSourceError[],
+    ): Promise<MemoryControlCenterProfileInput> {
+        const featureEnabled = this.canRunMemoryExtractionRuntime();
+        const loadedSnapshot = this.memoryExtractionScheduler?.getUserProfileSnapshot() ?? null;
+        if (loadedSnapshot) {
+            return { featureEnabled, storageState: "ready", snapshot: loadedSnapshot };
+        }
+
+        try {
+            const result = await this.createExistingUserProfileReader().read();
+            switch (result.state) {
+                case "ready":
+                    return {
+                        featureEnabled,
+                        storageState: result.snapshot ? "ready" : "empty",
+                        snapshot: result.snapshot,
+                    };
+                case "not_present":
+                    return { featureEnabled, storageState: "empty", snapshot: null };
+                case "unknown":
+                case "blocked":
+                case "unavailable":
+                    return { featureEnabled, storageState: result.state, snapshot: null };
+                case "error":
+                    sourceErrors.push({ source: "user_profile", code: result.errorCode });
+                    return { featureEnabled, storageState: "error", snapshot: null };
+            }
+        } catch {
+            sourceErrors.push({ source: "user_profile", code: "profile_read_failed" });
+            return { featureEnabled, storageState: "error", snapshot: null };
+        }
+    }
+
+    private readMemoryControlCenterVaultInsights(): MemoryControlCenterVaultInsightsInput {
+        const enabled = this.canRunMemoryExtractionRuntime()
+            && this.settings.memoryExtractionIncludeVaultInsights === true;
+        const currentDataBoundaryFingerprint = this.getMemoryDataBoundaryFingerprint();
+        if (!enabled) {
+            return {
+                enabled: false,
+                storageState: "not_loaded",
+                currentDataBoundaryFingerprint,
+                snapshot: null,
+            };
+        }
+
+        const schedulerSnapshot = this.memoryExtractionScheduler?.getVaultInsightsSnapshot() ?? null;
+        const schedulerStatus = this.memoryExtractionScheduler?.getVaultInsightsStatus() ?? "not_loaded";
+        return {
+            enabled: true,
+            storageState: schedulerStatus === "stale_boundary"
+                ? "stale_boundary"
+                : schedulerStatus === "ready"
+                    ? "ready"
+                    : schedulerStatus === "error"
+                        ? "error"
+                        : "not_loaded",
+            currentDataBoundaryFingerprint,
+            snapshot: schedulerSnapshot ? {
+                snapshot: schedulerSnapshot.snapshot,
+                dataBoundaryFingerprint: schedulerSnapshot.dataBoundaryFingerprint,
+                representativeSourceRefs: schedulerSnapshot.representativePaths.map((path) => ({
+                    path,
+                    generatedAt: schedulerSnapshot.snapshot.generatedAt,
+                })),
+            } : null,
+        };
+    }
+
+    private getMemoryDataBoundaryFingerprint(): string {
+        return buildMemoryDataBoundaryFingerprint(this.settings.dataBoundary);
     }
 
     scheduleMemoryExtractionAfterChatTurn(conversationId: string, turnCount: number): void {
@@ -2975,8 +6066,675 @@ export class PluginManager extends Plugin {
         this.memoryExtractionScheduler?.scheduleTypeAExtraction(conversationId, turnCount);
     }
 
+    private async initializeMemoryGovernanceBootstrap(): Promise<void> {
+        if (this.memoryGovernanceBootstrapState === "ready" || this.unloading) return;
+        const rawPayload = this.legacyMemoryPayload;
+        if (!rawPayload) {
+            this.failMemoryGovernanceBootstrap("legacy_payload_missing");
+            return;
+        }
+        const compatibilityCheck = this.legacyMemoryCompatibilityBarrier?.composeForSave(this.settings);
+        if (compatibilityCheck && !compatibilityCheck.ok) {
+            this.failMemoryGovernanceBootstrap(compatibilityCheck.errorCode);
+            return;
+        }
+        const payload = rawPayload;
+
+        const deviceVaultScope = getMemoryGovernanceVaultDeviceScope(this.app.vault);
+        if (!deviceVaultScope) {
+            this.failMemoryGovernanceBootstrap("vault_identity_unavailable");
+            return;
+        }
+        const opaqueVaultKey = createMemoryGovernanceOpaqueVaultKey(
+            this.settings.statisticsVaultId || "default-vault",
+            deviceVaultScope,
+        );
+        const repository = this.createMemoryGovernanceDeviceRepository();
+        let recordRepository: DeviceMemoryGovernanceRecordRepository | null = null;
+        try {
+            const expectedSourceHash = hashLegacyMemoryPayload(payload);
+            const existingState = await repository.initialize();
+            const existingMigration = existingState.migrationStates[opaqueVaultKey];
+            let sourceHash = expectedSourceHash;
+            if (existingMigration?.phase === "rolling_back") {
+                const barrier = this.legacyMemoryCompatibilityBarrier;
+                if (!barrier || !existingMigration.sourceHash) {
+                    throw new MemoryGovernanceBootstrapError("migration_failed");
+                }
+                sourceHash = existingMigration.sourceHash;
+                const rollback = new MemoryGovernanceRollbackCoordinator({
+                    repository,
+                    opaqueVaultKey,
+                    writeLegacyProjection: (projection) => this.writeLegacyMemoryProjectionForRollback(
+                        barrier,
+                        projection,
+                        existingMigration.legacySourceStateHash ?? existingMigration.sourceHash!,
+                    ),
+                    readLegacyProjection: () => this.readPersistedLegacyMemoryProjection(),
+                });
+                const recovered = await rollback.run();
+                if (!recovered.ok) {
+                    this.memoryGovernanceBootstrapErrorCode = recovered.reason;
+                    throw new MemoryGovernanceBootstrapError("migration_failed");
+                }
+                barrier.finalize();
+                this.legacyMemoryPayload = captureLegacyMemoryPayload(this.settings);
+                const rolledBackState = await repository.initialize();
+                this.installLegacyMemoryRuntimeAfterRollback(
+                    repository,
+                    rolledBackState,
+                    opaqueVaultKey,
+                    sourceHash,
+                );
+                return;
+            }
+            if (existingMigration?.phase === "rolled_back") {
+                sourceHash = existingMigration.sourceHash ?? expectedSourceHash;
+                this.legacyMemoryCompatibilityBarrier?.finalize();
+                this.installLegacyMemoryRuntimeAfterRollback(
+                    repository,
+                    existingState,
+                    opaqueVaultKey,
+                    sourceHash,
+                );
+                return;
+            }
+            if (existingMigration?.phase === "finalizing" && existingMigration.sourceHash) {
+                sourceHash = existingMigration.sourceHash;
+            } else if (existingMigration?.phase === "compatibility"
+                && existingMigration.sourceHash
+                && (existingMigration.legacySourceStateHash ?? existingMigration.sourceHash)
+                    === expectedSourceHash
+                && !existingMigration.lastErrorCode
+                && buildLegacyMemoryRollbackProjection(existingState, opaqueVaultKey).ok) {
+                sourceHash = existingMigration.sourceHash;
+            } else {
+                const typeAAdoptions = await this.prepareLegacyTypeAAdoptions(opaqueVaultKey);
+                const migration = await new MemoryGovernanceMigrationCoordinator({
+                    repository,
+                    opaqueVaultKey,
+                    payload,
+                    typeAAdoptions,
+                }).run();
+                if (!migration.ok) {
+                    this.memoryGovernanceBootstrapErrorCode = migration.reason;
+                    throw new MemoryGovernanceBootstrapError("migration_failed");
+                }
+                sourceHash = migration.sourceHash;
+            }
+
+            let state = await repository.initialize();
+            if (state.migrationStates[opaqueVaultKey]?.phase === "finalizing") {
+                const barrier = this.legacyMemoryCompatibilityBarrier;
+                if (!barrier) throw new MemoryGovernanceBootstrapError("memory_mutation_blocked");
+                const finalization = new MemoryGovernanceFinalizationCoordinator({
+                    repository,
+                    opaqueVaultKey,
+                    clearLegacyMemorySlices: (expectedSourceHash) => (
+                        this.clearLegacyMemorySlicesForFinalization(barrier, expectedSourceHash)
+                    ),
+                    readLegacySourceSnapshot: () => this.readPersistedLegacyMemorySourceSnapshot(),
+                });
+                const preview = await finalization.preview();
+                if (preview.eligible && preview.confirmationToken) {
+                    const recovered = await finalization.run(preview.confirmationToken);
+                    if (recovered.ok) {
+                        barrier.finalize();
+                        this.legacyMemoryPayload = captureLegacyMemoryPayload(this.settings);
+                    } else {
+                        await this.cancelLegacyMemoryFinalizationIfCompatible(
+                            repository,
+                            opaqueVaultKey,
+                            barrier,
+                        );
+                        this.log("Memory finalization recovery remains pending", recovered);
+                    }
+                }
+                state = await repository.initialize();
+            }
+            const migrationAtBootstrap = state.migrationStates[opaqueVaultKey];
+            const compatibilityProjectionAvailable = migrationAtBootstrap?.phase === "compatibility"
+                && buildLegacyMemoryRollbackProjection(state, opaqueVaultKey).ok;
+            if (compatibilityProjectionAvailable) {
+                recordRepository = await createDeviceMemoryGovernanceRecordRepository({
+                    repository,
+                    opaqueVaultKey,
+                    expectedSourceHash: sourceHash,
+                });
+            }
+            const settingsQueueRepository = this.getOrCreateSettingsReviewQueueRepository();
+            const queueRepository = await createMemoryReviewQueueRepository({
+                repository,
+                settingsRepository: settingsQueueRepository,
+                opaqueVaultKey,
+            });
+            if (state.policyStates[opaqueVaultKey]?.contextProjectionMode === "governed"
+                && state.policyStates[opaqueVaultKey]?.mode === "legacy_threshold") {
+                await repository.transact((draft) => {
+                    const policy = draft.policyStates[opaqueVaultKey];
+                    if (!policy || policy.contextProjectionMode !== "governed") return;
+                    policy.mode = "effect_based";
+                });
+                state = await repository.initialize();
+            }
+            const cleanupPort: ExactMemoryProjectionCleanupPort = {
+                cleanupExactProjection: (input) => this.cleanupExactMemoryProjection(input.projectionLink),
+                prepareLegacyCompatibilityForget: (input) => (
+                    this.prepareLegacyCompatibilityForget(input)
+                ),
+                commitLegacyCompatibilityForget: (input) => (
+                    this.commitLegacyCompatibilityForget(input)
+                ),
+            };
+            const coordinator = new MemoryGovernanceCoordinator({
+                repository,
+                opaqueVaultKey,
+                projectionCleanupPort: cleanupPort,
+            });
+            const garbageCollection = await coordinator.collectGarbage();
+            if (!garbageCollection.ok) {
+                throw new MemoryGovernanceBootstrapError("migration_failed");
+            }
+            state = await repository.initialize();
+            const admissionCoordinator = new MemoryAdmissionCoordinator({
+                repository,
+                opaqueVaultKey,
+            });
+            const profileProjectionWorker = new MemoryProfileProjectionWorker({
+                repository,
+                opaqueVaultKey,
+                applyProjection: (input) => this.applyExactProfileProjection(
+                    input.profileRecordId,
+                    input.summary,
+                    input.occurredAt,
+                    input.claimId,
+                ),
+                removeProjection: (input) => this.mutateExactProfileRecord(
+                    input.profileRecordId,
+                    () => null,
+                    true,
+                ),
+            });
+            // Publish the repository/worker boundary before recovery so an
+            // upsert that crashed before creating its Profile row can still
+            // read exact revision provenance and reconstruct that row.
+            this.memoryGovernanceOpaqueVaultKey = opaqueVaultKey;
+            this.memoryGovernanceSourceHash = sourceHash;
+            this.deviceMemoryGovernanceRepository = repository;
+            this.memoryGovernanceCoordinator = coordinator;
+            this.memoryAdmissionCoordinator = admissionCoordinator;
+            this.memoryProfileProjectionWorker = profileProjectionWorker;
+            let forgetRecoveryPending = false;
+            let profileRecoveryPending = false;
+            if (state.policyStates[opaqueVaultKey]?.contextProjectionMode === "governed") {
+                const forgetRecovery = await coordinator.resumePendingForgets();
+                if (!forgetRecovery.ok || forgetRecovery.value.pending.length > 0) {
+                    forgetRecoveryPending = true;
+                    this.log("Memory Forget recovery remains pending", forgetRecovery.ok
+                        ? { ok: true, pendingCount: forgetRecovery.value.pending.length }
+                        : { ok: false });
+                }
+                const profileRecovery = await profileProjectionWorker.resumePending();
+                if (profileRecovery.pending.length > 0) {
+                    profileRecoveryPending = true;
+                    this.log("Memory profile projection recovery remains pending", {
+                        count: profileRecovery.pending.length,
+                    });
+                }
+                state = await repository.initialize();
+            }
+            const localPolicy = readCurrentLocalMemoryPolicy(
+                state,
+                opaqueVaultKey,
+                sourceHash,
+            );
+
+            this.memoryGovernanceOpaqueVaultKey = opaqueVaultKey;
+            this.memoryGovernanceSourceHash = sourceHash;
+            this.deviceMemoryGovernanceRepository = repository;
+            this.currentDeviceMemoryGovernanceState = cloneSerializable(state);
+            this.memoryGovernanceCoordinator = coordinator;
+            this.memoryAdmissionCoordinator = admissionCoordinator;
+            this.memoryProfileProjectionWorker = profileProjectionWorker;
+            this.deviceMemoryRecordRepository = recordRepository;
+            this.deviceMemoryReviewQueueRepository = queueRepository;
+            this.memoryGovernanceRecordRepository = recordRepository
+                ?? createFailClosedMemoryRecordRepository(
+                    buildGovernedMemoryViewSnapshot(state, opaqueVaultKey).records
+                        .map((entry) => entry.record),
+                );
+            this.reviewQueueRepository = queueRepository;
+            this.currentLocalConfirmedMemoryCount = localPolicy.confirmedMemoryCount;
+            this.currentLocalMemoryAutoAcceptPaused = localPolicy.memoryAutoAcceptPaused;
+            if (state.migrationStates[opaqueVaultKey]?.phase === "compatibility") {
+                this.settings.confirmedMemoryCount = localPolicy.confirmedMemoryCount;
+                this.settings.memoryAutoAcceptPaused = localPolicy.memoryAutoAcceptPaused;
+            }
+            this.memoryGovernanceBootstrapState = "ready";
+            this.memoryGovernanceBootstrapErrorCode = null;
+            this.memoryGovernanceStore = null;
+            this.reviewQueueStore = null;
+            this.deviceMemoryCacheRefreshTargetSequence = state.commitSequence;
+            this.memoryGovernanceRepositoryUnsubscribe = repository.subscribe((commitSequence) => {
+                this.scheduleDeviceMemoryCacheRefresh(commitSequence);
+            });
+            if (forgetRecoveryPending) this.scheduleMemoryForgetRetry();
+            if (profileRecoveryPending) this.scheduleMemoryProfileProjectionRetry();
+            this.scheduleMemoryGovernanceGarbageCollection();
+        } catch (error) {
+            recordRepository?.dispose();
+            await repository.dispose().catch(() => undefined);
+            this.failMemoryGovernanceBootstrap(
+                this.memoryGovernanceBootstrapErrorCode
+                    ?? (error instanceof MemoryGovernanceBootstrapError
+                        ? error.code
+                        : error instanceof Error ? error.name : "bootstrap_failed"),
+            );
+        }
+    }
+
+    private createMemoryGovernanceDeviceRepository(): MemoryGovernanceRepository {
+        const pluginId = (this.manifest as { id?: string } | undefined)?.id ?? "personal-assistant";
+        return createDeviceMemoryGovernanceRepository(pluginId);
+    }
+
+    private async prepareLegacyTypeAAdoptions(
+        opaqueVaultKey: string,
+    ): Promise<ClassifiedLegacyTypeAAdoption[] | undefined> {
+        const existing = await this.createExistingUserProfileReader().read();
+        if (existing.state === "error") {
+            throw new MemoryGovernanceBootstrapError("profile_read_failed");
+        }
+        if (existing.state === "not_present") return [];
+        if (existing.state !== "ready") return undefined;
+        if (!existing.snapshot) return [];
+
+        const sanitized = sanitizeUserProfileSnapshot(existing.snapshot, new Date());
+        if (!sanitized) return undefined;
+        const profileStore = this.createUserProfileStore();
+        try {
+            await profileStore.initialize();
+            await profileStore.setProfile(sanitized);
+            const readback = await profileStore.getProfile();
+            if (!readback || !userProfileSnapshotsEqual(sanitized, readback)) {
+                throw new MemoryGovernanceBootstrapError("profile_readback_mismatch");
+            }
+        } finally {
+            await profileStore.dispose().catch(() => undefined);
+        }
+        return sanitized.records.map((record) => classifyProfileForGovernedAdoption(
+            opaqueVaultKey,
+            record,
+        ));
+    }
+
+    private async prepareLegacyCompatibilityForget(input: {
+        recordIdFingerprints: string[];
+        memoryQueueItemIdFingerprints: string[];
+        trustedSourceHash: string;
+        pendingSourceHash?: string;
+    }): Promise<LegacyCompatibilityForgetPrepareResult> {
+        const persisted = await this.readPluginDataJson();
+        const payload = captureLegacyMemoryPayload(persisted);
+        const expectedSourceHash = hashLegacyMemoryPayload(payload);
+        const matchesTrusted = expectedSourceHash === input.trustedSourceHash;
+        const matchesPending = Boolean(input.pendingSourceHash)
+            && expectedSourceHash === input.pendingSourceHash;
+        const redacted = redactExactLegacyMemoryPayload(payload, {
+            recordIdFingerprints: input.recordIdFingerprints,
+            memoryQueueItemIdFingerprints: input.memoryQueueItemIdFingerprints,
+        });
+        if (!redacted.ok) {
+            throw new Error(`Legacy Memory Forget preparation failed: ${redacted.reason}`);
+        }
+        if (!matchesTrusted && !matchesPending) {
+            return { ok: false, reason: 'source_changed', sourceHash: expectedSourceHash };
+        }
+        return {
+            ok: true,
+            expectedSourceHash,
+            resultingSourceHash: redacted.sourceHash,
+            preservePendingReconciliation: !matchesTrusted && matchesPending,
+        };
+    }
+
+    private commitLegacyCompatibilityForget(input: {
+        recordIdFingerprints: string[];
+        memoryQueueItemIdFingerprints: string[];
+        expectedSourceHash: string;
+        resultingSourceHash: string;
+    }): Promise<
+        | { ok: true; sourceHash: string }
+        | { ok: false; reason: "source_changed"; sourceHash: string }
+    > {
+        return this.enqueueSettingsWrite(async () => {
+            const barrier = this.legacyMemoryCompatibilityBarrier;
+            if (!barrier?.isActive() || this.unloading) {
+                throw new Error("Legacy Memory compatibility write is unavailable.");
+            }
+            let sourceChanged = false;
+            const processed = await this.processPluginDataJson((persisted) => {
+                const payload = captureLegacyMemoryPayload(persisted);
+                const currentSourceHash = hashLegacyMemoryPayload(payload);
+                const redacted = redactExactLegacyMemoryPayload(payload, {
+                    recordIdFingerprints: input.recordIdFingerprints,
+                    memoryQueueItemIdFingerprints: input.memoryQueueItemIdFingerprints,
+                });
+                if (!redacted.ok) {
+                    throw new Error(`Legacy Memory Forget failed: ${redacted.reason}`);
+                }
+                if (currentSourceHash === input.resultingSourceHash) {
+                    if (redacted.changed || redacted.sourceHash !== input.resultingSourceHash) {
+                        throw new Error("Legacy Memory Forget readback is inconsistent.");
+                    }
+                    return persisted;
+                }
+                if (currentSourceHash !== input.expectedSourceHash
+                    || redacted.sourceHash !== input.resultingSourceHash) {
+                    sourceChanged = true;
+                    return persisted;
+                }
+                const next = cloneSerializable(persisted);
+                next.memoryGovernance = cloneSerializable(redacted.payload.memoryGovernance);
+                next.reviewQueue = cloneSerializable(redacted.payload.reviewQueue);
+                return next;
+            });
+            const readbackPayload = captureLegacyMemoryPayload(processed.readback);
+            const readbackHash = hashLegacyMemoryPayload(readbackPayload);
+            if (sourceChanged && readbackHash !== input.resultingSourceHash) {
+                if (!barrier.refreshFromPersisted(processed.readback)) {
+                    throw new Error("Legacy Memory compatibility snapshot refresh failed.");
+                }
+                this.legacyMemoryPayload = barrier.snapshot();
+                await this.synchronizeNonMemoryQueueFromPersisted(processed.readback);
+                return { ok: false, reason: "source_changed", sourceHash: readbackHash };
+            }
+            const readbackRedaction = redactExactLegacyMemoryPayload(readbackPayload, {
+                recordIdFingerprints: input.recordIdFingerprints,
+                memoryQueueItemIdFingerprints: input.memoryQueueItemIdFingerprints,
+            });
+            if (readbackHash !== input.resultingSourceHash
+                || !readbackRedaction.ok
+                || readbackRedaction.changed) {
+                throw new Error("Legacy Memory Forget readback verification failed.");
+            }
+            if (!barrier.refreshFromPersisted(processed.readback)) {
+                throw new Error("Legacy Memory compatibility snapshot refresh failed.");
+            }
+            this.legacyMemoryPayload = barrier.snapshot();
+            await this.synchronizeNonMemoryQueueFromPersisted(processed.readback);
+            return { ok: true, sourceHash: readbackHash };
+        });
+    }
+
+    private async cleanupExactMemoryProjection(link: MemoryProjectionLink): Promise<void> {
+        if (link.target.kind === "review_queue" || link.target.kind === "prompt_projection") {
+            // Both are committed/redacted by the same governance transaction;
+            // the cleanup port is only the external derived-store boundary.
+            return;
+        }
+        await this.mutateExactProfileRecord(link.target.profileRecordId, () => null, true);
+    }
+
+    private async applyExactProfileProjection(
+        profileRecordId: string,
+        summary: string,
+        occurredAt: string,
+        claimId: string,
+    ): Promise<void> {
+        const normalizedSummary = summary.trim();
+        if (!profileRecordId.trim() || !normalizedSummary) {
+            throw new Error("Invalid exact Profile projection input.");
+        }
+        const repository = this.deviceMemoryGovernanceRepository;
+        const snapshot = repository ? await repository.initialize() : null;
+        const claim = snapshot?.claims.find((candidate) => candidate.id === claimId);
+        const revision = claim?.activeRevisionId
+            ? snapshot?.revisions.find((candidate) => (
+                candidate.id === claim.activeRevisionId && candidate.claimId === claim.id
+            ))
+            : undefined;
+        const conversation = revision?.provenance.find((entry) => entry.kind === "conversation");
+        const conversationIds = conversation?.kind === "conversation"
+            ? [...conversation.conversationIds]
+            : [];
+        const observedAt = conversation?.kind === "conversation"
+            ? conversation.observedAt
+            : occurredAt;
+        await this.mutateExactProfileRecord(profileRecordId, (record) => ({
+            ...record,
+            text: normalizedSummary,
+            kind: "user_correction",
+            confidence: "high",
+            confirmed: true,
+            observedAt: occurredAt,
+        }), false, () => {
+            if (conversationIds.length === 0) {
+                throw new Error("Exact Profile projection conversation evidence is missing.");
+            }
+            return {
+                profileRecordId,
+                key: `governed-${claimId}`,
+                text: normalizedSummary,
+                kind: revision?.authority === "user_correction"
+                    ? "user_correction"
+                    : "user_explicit",
+                confidence: "high",
+                conversationId: conversationIds[0],
+                observedAt,
+                occurrences: Math.max(1, conversationIds.length),
+                conversationIds,
+                confirmed: true,
+            };
+        });
+    }
+
+    private async mutateExactProfileRecord(
+        profileRecordId: string,
+        transform: (record: UserProfileRecord) => UserProfileRecord | null,
+        allowMissing: boolean,
+        createMissing?: () => UserProfileRecord,
+    ): Promise<void> {
+        const now = new Date();
+        const mutation = (current: UserProfileSnapshot | null): UserProfileSnapshot => {
+            const records = current?.records ?? [];
+            const index = records.findIndex((record) => record.profileRecordId === profileRecordId);
+            if (index < 0) {
+                if (createMissing) {
+                    const nextRecords = [createMissing(), ...records.map((record) => ({
+                        ...record,
+                        conversationIds: [...record.conversationIds],
+                    }))];
+                    return {
+                        updatedAt: now.toISOString(),
+                        records: nextRecords,
+                        markdown: renderUserProfileMarkdown(nextRecords, now),
+                    };
+                }
+                if (!allowMissing) throw new Error("Exact Profile projection is missing.");
+                return current ?? {
+                    updatedAt: now.toISOString(),
+                    records: [],
+                    markdown: renderUserProfileMarkdown([], now),
+                };
+            }
+            const nextRecords = records.map((record) => ({
+                ...record,
+                conversationIds: [...record.conversationIds],
+            }));
+            const nextRecord = transform(nextRecords[index]);
+            if (nextRecord) nextRecords[index] = nextRecord;
+            else nextRecords.splice(index, 1);
+            return {
+                updatedAt: now.toISOString(),
+                records: nextRecords,
+                markdown: renderUserProfileMarkdown(nextRecords, now),
+            };
+        };
+
+        if (this.memoryExtractionScheduler) {
+            await this.memoryExtractionScheduler.mutateUserProfile(mutation);
+            return;
+        }
+        const port = new SerializedProfileGovernancePort(this.createUserProfileStore(), () => now);
+        try {
+            await port.initialize();
+            await port.mutate(mutation);
+        } finally {
+            await port.dispose().catch(() => undefined);
+        }
+    }
+
+    private failMemoryGovernanceBootstrap(errorCode: string): void {
+        this.cancelMemoryForgetRetry();
+        this.cancelMemoryProfileProjectionRetry();
+        this.cancelMemoryGovernanceGarbageCollection();
+        this.memoryGovernanceBootstrapState = "failed";
+        this.memoryGovernanceBootstrapErrorCode = errorCode;
+        this.memoryGovernanceOpaqueVaultKey = null;
+        this.memoryGovernanceSourceHash = null;
+        this.deviceMemoryGovernanceRepository = null;
+        this.currentDeviceMemoryGovernanceState = null;
+        this.memoryGovernanceCoordinator = null;
+        this.memoryAdmissionCoordinator = null;
+        this.memoryProfileProjectionWorker = null;
+        this.deviceMemoryRecordRepository = null;
+        this.deviceMemoryReviewQueueRepository = null;
+        this.currentLocalConfirmedMemoryCount = null;
+        this.currentLocalMemoryAutoAcceptPaused = null;
+        this.deviceMemoryCacheRefreshTargetSequence = 0;
+        this.memoryGovernanceRecordRepository = createFailClosedMemoryRecordRepository(
+            this.settings.memoryGovernance?.records ?? [],
+        );
+        this.reviewQueueRepository = createFailClosedReviewQueueRepository(
+            this.settings.reviewQueue?.items ?? [],
+            (state) => this.persistPaSettingsSlice(
+                () => this.settings.reviewQueue.items,
+                (items) => { this.settings.reviewQueue.items = items; },
+                state.items,
+            ),
+        );
+        this.memoryGovernanceStore = null;
+        this.reviewQueueStore = null;
+        try {
+            this.log("Memory governance bootstrap unavailable", { code: errorCode });
+        } catch {
+            // Bootstrap failure must not prevent the legacy prompt path.
+        }
+    }
+
+    private getOrCreateSettingsReviewQueueRepository(): ReviewQueueRepository {
+        if (!this.settingsReviewQueueRepository) {
+            this.settingsReviewQueueRepository = new CallbackReviewQueueRepository(
+                this.settings.reviewQueue.items,
+                (state) => this.persistPaSettingsSlice(
+                    () => this.settings.reviewQueue.items,
+                    (items) => { this.settings.reviewQueue.items = items; },
+                    state.items,
+                ),
+            );
+        }
+        return this.settingsReviewQueueRepository;
+    }
+
+    private scheduleDeviceMemoryCacheRefresh(commitSequence: number): void {
+        this.deviceMemoryCacheRefreshTargetSequence = Math.max(
+            this.deviceMemoryCacheRefreshTargetSequence,
+            commitSequence,
+        );
+        if (this.unloading
+            || this.memoryGovernanceBootstrapState !== "ready"
+            || this.deviceMemoryCacheRefreshPromise) return;
+        const refresh = Promise.resolve().then(async () => {
+            while (!this.unloading && this.memoryGovernanceBootstrapState === "ready") {
+                await this.refreshDeviceMemoryCaches();
+                const observed = this.currentDeviceMemoryGovernanceState?.commitSequence ?? 0;
+                if (observed >= this.deviceMemoryCacheRefreshTargetSequence) return;
+            }
+        });
+        this.deviceMemoryCacheRefreshPromise = refresh;
+        void refresh.then(
+            () => {
+                if (this.deviceMemoryCacheRefreshPromise === refresh) {
+                    this.deviceMemoryCacheRefreshPromise = null;
+                }
+            },
+            (error) => {
+                if (this.deviceMemoryCacheRefreshPromise === refresh) {
+                    this.deviceMemoryCacheRefreshPromise = null;
+                }
+                try {
+                    this.log("Memory governance cache refresh failed", error);
+                } catch {
+                    // Repository notifications must never block callers.
+                }
+            },
+        );
+    }
+
+    private async refreshDeviceMemoryCaches(): Promise<void> {
+        const repository = this.deviceMemoryGovernanceRepository;
+        const recordRepository = this.deviceMemoryRecordRepository;
+        const opaqueVaultKey = this.memoryGovernanceOpaqueVaultKey;
+        const sourceHash = this.memoryGovernanceSourceHash;
+        if (!repository || !opaqueVaultKey || !sourceHash || this.unloading) return;
+
+        const state = await repository.initialize();
+        const localPolicy = readCurrentLocalMemoryPolicy(state, opaqueVaultKey, sourceHash);
+        if (recordRepository
+            && state.migrationStates[opaqueVaultKey]?.phase === "compatibility"
+            && buildLegacyMemoryRollbackProjection(state, opaqueVaultKey).ok) {
+            await recordRepository.refresh();
+        }
+        const queueRepository = await createMemoryReviewQueueRepository({
+            repository,
+            settingsRepository: this.getOrCreateSettingsReviewQueueRepository(),
+            opaqueVaultKey,
+        });
+        if (this.unloading || this.memoryGovernanceBootstrapState !== "ready") return;
+        this.currentDeviceMemoryGovernanceState = cloneSerializable(state);
+        this.currentLocalConfirmedMemoryCount = localPolicy.confirmedMemoryCount;
+        this.currentLocalMemoryAutoAcceptPaused = localPolicy.memoryAutoAcceptPaused;
+        if (state.migrationStates[opaqueVaultKey]?.phase === "compatibility") {
+            this.settings.confirmedMemoryCount = localPolicy.confirmedMemoryCount;
+            this.settings.memoryAutoAcceptPaused = localPolicy.memoryAutoAcceptPaused;
+        }
+        this.deviceMemoryReviewQueueRepository = queueRepository;
+        this.reviewQueueRepository = queueRepository;
+        this.memoryGovernanceStore = null;
+        this.reviewQueueStore = null;
+        this.scheduleMemoryGovernanceGarbageCollection();
+    }
+
+    private async updateCurrentLocalMemoryPolicy(
+        next: Partial<{ confirmedMemoryCount: number; memoryAutoAcceptPaused: boolean }>,
+    ): Promise<void> {
+        const repository = this.deviceMemoryGovernanceRepository;
+        const opaqueVaultKey = this.memoryGovernanceOpaqueVaultKey;
+        const sourceHash = this.memoryGovernanceSourceHash;
+        if (this.memoryGovernanceBootstrapState !== "ready"
+            || !repository
+            || !opaqueVaultKey
+            || !sourceHash) {
+            throw new MemoryGovernanceBootstrapError("memory_mutation_blocked");
+        }
+        const updated = await repository.transact((draft) => writeCurrentLocalMemoryPolicy(
+            draft,
+            opaqueVaultKey,
+            sourceHash,
+            next,
+            new Date(),
+        ));
+        this.currentLocalConfirmedMemoryCount = updated.confirmedMemoryCount;
+        this.currentLocalMemoryAutoAcceptPaused = updated.memoryAutoAcceptPaused;
+        this.settings.confirmedMemoryCount = updated.confirmedMemoryCount;
+        this.settings.memoryAutoAcceptPaused = updated.memoryAutoAcceptPaused;
+    }
+
     async loadSettings() {
         const loaded = await this.loadData();
+        this.legacyMemoryCompatibilityBarrier = new LegacyMemoryCompatibilityBarrier(loaded);
+        this.legacyMemoryPayload = this.legacyMemoryCompatibilityBarrier.snapshot();
         const fresh = isFreshInstall(loaded);
         this.needsLegacyAiProviderMigration = isLegacyV1Install(loaded);
         const rawMemoryExtractionEnabled = (typeof loaded === "object" && loaded !== null)
@@ -3026,9 +6784,167 @@ export class PluginManager extends Plugin {
     }
 
     async saveSettings() {
-        if (this.unloading) return;
-        await this.saveData(this.settings);
-        await this.notifySettingsChanged();
+        const saved = await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) return false;
+            await this.saveSettingsData();
+            return true;
+        });
+        if (saved) await this.notifySettingsChanged();
+    }
+
+    async setMemoryAutoAcceptPaused(paused: boolean): Promise<void> {
+        if (this.memoryGovernanceBootstrapState === "ready") {
+            await this.updateCurrentLocalMemoryPolicy({ memoryAutoAcceptPaused: paused });
+            await this.notifySettingsChanged();
+            return;
+        }
+        if (this.memoryGovernanceBootstrapState === "failed") {
+            throw new MemoryGovernanceBootstrapError("memory_mutation_blocked");
+        }
+        await this.persistPaSettingsSlice(
+            () => this.settings.memoryAutoAcceptPaused,
+            (value) => { this.settings.memoryAutoAcceptPaused = value; },
+            paused,
+        );
+    }
+
+    private async persistPaSettingsSlice<T>(
+        read: () => T,
+        write: (value: T) => void,
+        next: T,
+    ): Promise<void> {
+        const saved = await this.enqueueSettingsWrite(async () => {
+            if (this.unloading) return false;
+            const previous = read();
+            write(next);
+            try {
+                await this.saveSettingsData();
+                return true;
+            } catch (error) {
+                write(previous);
+                throw error;
+            }
+        });
+        if (saved) await this.notifySettingsChanged();
+    }
+
+    private async saveSettingsData(): Promise<void> {
+        const barrier = this.legacyMemoryCompatibilityBarrier;
+        if (!barrier) {
+            await this.saveData(this.settings);
+            return;
+        }
+        if (!barrier.isActive() && !barrier.isFinalizing()) {
+            await this.saveData(this.settings);
+            return;
+        }
+        const processed = await this.processPluginDataJson((persisted) => {
+            const composed = barrier.composeForSave(this.settings, persisted);
+            if (!composed.ok) {
+                this.memoryGovernanceBootstrapErrorCode = composed.errorCode;
+                throw new MemoryGovernanceBootstrapError("legacy_save_collision");
+            }
+            return composed.payload;
+        });
+        if (!barrier.refreshFromPersisted(processed.readback)) {
+            throw new MemoryGovernanceBootstrapError("legacy_save_collision");
+        }
+        this.legacyMemoryPayload = barrier.snapshot();
+        await this.synchronizeNonMemoryQueueFromPersisted(processed.readback);
+    }
+
+    private async synchronizeNonMemoryQueueFromPersisted(raw: unknown): Promise<void> {
+        const items = buildLegacyReviewQueuePassthrough(
+            captureLegacyMemoryPayload(raw).reviewQueue,
+        ).liveNonMemoryItems.map(cloneSerializable);
+        this.settings.reviewQueue.items = items;
+        if (!this.settingsReviewQueueRepository && !this.deviceMemoryGovernanceRepository) return;
+        this.settingsReviewQueueRepository = new CallbackReviewQueueRepository(
+            items,
+            (state) => this.persistPaSettingsSlice(
+                () => this.settings.reviewQueue.items,
+                (next) => { this.settings.reviewQueue.items = next; },
+                state.items,
+            ),
+        );
+        const repository = this.deviceMemoryGovernanceRepository;
+        const vaultKey = this.memoryGovernanceOpaqueVaultKey;
+        if (repository && vaultKey && this.memoryGovernanceBootstrapState === "ready") {
+            const combined = await createMemoryReviewQueueRepository({
+                repository,
+                settingsRepository: this.settingsReviewQueueRepository,
+                opaqueVaultKey: vaultKey,
+            });
+            this.deviceMemoryReviewQueueRepository = combined;
+            this.reviewQueueRepository = combined;
+        } else {
+            this.reviewQueueRepository = this.settingsReviewQueueRepository;
+        }
+        this.reviewQueueStore = null;
+    }
+
+    private getPluginDataJsonPath(): string {
+        const manifestDir = this.manifest?.dir?.trim();
+        const pluginDir = manifestDir
+            ? normalizePath(manifestDir)
+            : joinVaultConfigPath(
+                getVaultConfigDir(this.app.vault),
+                `plugins/${this.manifest?.id?.trim() || "personal-assistant"}`,
+            );
+        return normalizePath(`${pluginDir}/data.json`);
+    }
+
+    private async processPluginDataJson(
+        mutate: (persisted: Record<string, unknown>) => Record<string, unknown>,
+    ): Promise<{
+        written: Record<string, unknown>;
+        readback: Record<string, unknown>;
+    }> {
+        const adapter = this.app.vault.adapter;
+        if (typeof adapter.process !== "function" || typeof adapter.read !== "function") {
+            throw new MemoryGovernanceBootstrapError("legacy_save_collision");
+        }
+        const path = this.getPluginDataJsonPath();
+        return withMemoryExternalOperationTimeout(
+            "plugin_data_json_transaction",
+            async () => {
+                const writtenText = await adapter.process(path, (currentText) => {
+                    const current = this.parsePluginDataJson(currentText);
+                    return JSON.stringify(mutate(current), null, 2);
+                });
+                const written = this.parsePluginDataJson(writtenText);
+                const readback = this.parsePluginDataJson(await adapter.read(path));
+                return { written, readback };
+            },
+        );
+    }
+
+    private async readPluginDataJson(): Promise<Record<string, unknown>> {
+        const adapter = this.app.vault.adapter;
+        if (typeof adapter.read !== "function") {
+            throw new MemoryGovernanceBootstrapError("legacy_save_collision");
+        }
+        return this.parsePluginDataJson(await adapter.read(this.getPluginDataJsonPath()));
+    }
+
+    private parsePluginDataJson(value: string): Record<string, unknown> {
+        let parsed: unknown;
+        try {
+            parsed = value.trim() ? JSON.parse(value) : {};
+        } catch {
+            throw new MemoryGovernanceBootstrapError("legacy_save_collision");
+        }
+        if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+            throw new MemoryGovernanceBootstrapError("legacy_save_collision");
+        }
+        return parsed as Record<string, unknown>;
+    }
+
+    private enqueueSettingsWrite<T>(operation: () => Promise<T>): Promise<T> {
+        this.settingsSaveTail ??= Promise.resolve();
+        const result = this.settingsSaveTail.then(operation, operation);
+        this.settingsSaveTail = result.then(() => undefined, () => undefined);
+        return result;
     }
 
     /**
@@ -3539,6 +7455,15 @@ export class PluginManager extends Plugin {
         );
     }
 
+    createExistingUserProfileReader(): ExistingUserProfileReader {
+        const manifest = this.manifest as { id?: string } | undefined;
+        return createExistingUserProfileReader(
+            this.app.vault,
+            this.settings.statisticsVaultId || "default-vault",
+            manifest?.id ?? "personal-assistant",
+        );
+    }
+
     private async cacheVectors() {
         if (this.vss) {
             try {
@@ -3863,14 +7788,50 @@ export class PluginManager extends Plugin {
 
     showAiInsights(): void {
         if (!this.canShowAiInsights()) return;
-        const context = this.memoryExtractionScheduler?.getInsightsViewerContext() ?? {};
-        this.openInsightsViewer(context);
+        const rawContext = this.memoryExtractionScheduler?.getInsightsViewerContext() ?? {};
+        const memoryTargets = this.getAiInsightsMemoryTargets();
+        const context = this.getMemoryGovernanceUiMode() === "legacy_threshold"
+            ? rawContext
+            : rawContext.vaultInsights
+                ? { vaultInsights: rawContext.vaultInsights }
+                : {};
+        this.openInsightsViewer(context, memoryTargets);
     }
 
-    private openInsightsViewer(context: { userProfile?: string; vaultInsights?: string }): void {
+    private getAiInsightsMemoryTargets(): AiInsightsMemoryTarget[] {
+        const governed = this.getGovernedMemoryViewSnapshot();
+        if (!governed) return [];
+        return governed.records.flatMap((entry): AiInsightsMemoryTarget[] => {
+            if (entry.record.lifecycle === "forgotten_tombstone"
+                || entry.useStatus !== "active"
+                || (entry.effect !== "future_answers" && entry.effect !== "collaboration_default")
+                || !entry.projectionLinks.some((link) => (
+                    link.target.kind === "type_a_profile"
+                ))) return [];
+            return [{
+                claimId: entry.claimId,
+                summary: entry.record.summary,
+                effect: entry.effect,
+            }];
+        });
+    }
+
+    private openInsightsViewer(
+        context: { userProfile?: string; vaultInsights?: string },
+        memoryTargets: readonly AiInsightsMemoryTarget[] = [],
+    ): void {
         const title = this.t("plugin.insightsViewer.title");
         const emptyText = this.t("plugin.insightsViewer.noInsights");
+        const traceTitle = this.t("plugin.insightsViewer.savedUnderstanding.title");
+        const traceSource = this.t("plugin.insightsViewer.savedUnderstanding.source");
+        const openTargetText = this.t("plugin.insightsViewer.savedUnderstanding.openTarget");
+        const openOverviewText = this.t("plugin.insightsViewer.savedUnderstanding.openOverview");
+        const effectFutureAnswers = this.t("plugin.insightsViewer.savedUnderstanding.effect.futureAnswers");
+        const effectCollaboration = this.t(
+            "plugin.insightsViewer.savedUnderstanding.effect.collaborationDefault",
+        );
         const app = this.app;
+        const openMemorySettings = (targetId?: string) => this.openMemorySettings(targetId);
         const logRenderError = (message: string, error: unknown) => this.log(message, error);
         const modal = new class extends Modal {
             private renderHost = new Component();
@@ -3881,7 +7842,7 @@ export class PluginManager extends Plugin {
                 this.contentEl.addClass("pa-insights-viewer");
                 this.contentEl.createEl("h2", { text: title });
 
-                if (!context.userProfile && !context.vaultInsights) {
+                if (!context.userProfile && !context.vaultInsights && memoryTargets.length === 0) {
                     this.contentEl.createEl("p", {
                         cls: "pa-insights-viewer__empty",
                         text: emptyText,
@@ -3899,6 +7860,37 @@ export class PluginManager extends Plugin {
                     const section = this.contentEl.createDiv({ cls: "pa-insights-viewer__section" });
                     void Promise.resolve(MarkdownRenderer.render(app, context.vaultInsights, section, "", this.renderHost)).catch((error) => {
                         logRenderError("Failed to render vault insights", error);
+                    });
+                }
+                if (memoryTargets.length > 0) {
+                    const section = this.contentEl.createDiv({ cls: "pa-insights-viewer__section" });
+                    section.createEl("h3", { text: traceTitle });
+                    for (const target of memoryTargets) {
+                        const row = section.createDiv({ cls: "pa-insights-viewer__memory-trace" });
+                        row.createEl("p", { text: target.summary });
+                        row.createEl("p", {
+                            text: `${traceSource} · ${target.effect === "collaboration_default"
+                                ? effectCollaboration
+                                : effectFutureAnswers}`,
+                        });
+                        const button = row.createEl("button", {
+                            text: openTargetText,
+                            attr: { type: "button" },
+                        });
+                        button.addEventListener("click", () => {
+                            this.close();
+                            openMemorySettings(target.claimId);
+                        });
+                    }
+                }
+                if (context.vaultInsights) {
+                    const button = this.contentEl.createEl("button", {
+                        text: openOverviewText,
+                        attr: { type: "button" },
+                    });
+                    button.addEventListener("click", () => {
+                        this.close();
+                        openMemorySettings();
                     });
                 }
             }
