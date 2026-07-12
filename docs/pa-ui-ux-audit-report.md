@@ -23,6 +23,12 @@ improvements since baseline: Statistics +0.88 (dark mode fixed), Tab +0.62
 (scope controls added management burden). The v2 heatmap and findings are in
 the optimization plan document.
 
+Targeted refresh note (2026-07-11): the Memory control center and its affected
+Settings, Pagelet, Quiet Recall, and Chat routes were re-audited against the
+effect/risk-based North Star amendment. See
+[PA UI/UX Targeted Audit — 2026-07-11](./pa-ui-ux-audit-report-2026-07-11.md)
+for the verified findings and implementation closeout.
+
 ---
 
 ## 1. Score Heatmap
