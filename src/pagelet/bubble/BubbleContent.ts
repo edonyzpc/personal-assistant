@@ -40,7 +40,7 @@ export interface QuietRecallNudgeOptions {
 
 export interface QuietRecallNudgeCallbacks {
     onView(candidate: QuietRecallBubbleNudge): void;
-    onLink(candidate: QuietRecallBubbleNudge): void;
+    onLink?(candidate: QuietRecallBubbleNudge): void;
     onDismiss(candidate: QuietRecallBubbleNudge): void;
     onLater(candidate: QuietRecallBubbleNudge): void;
 }
@@ -228,12 +228,12 @@ export function buildQuietRecallNudgeContent(
                 primary: true,
                 callback: () => callbacks.onView(candidate),
             },
-            {
+            ...(callbacks.onLink ? [{
                 label: pageletT("pagelet.bubble.quietRecall.link", locale),
                 description: pageletT("pagelet.bubble.quietRecall.linkDescription", locale),
                 icon: "link",
-                callback: () => callbacks.onLink(candidate),
-            },
+                callback: () => callbacks.onLink?.(candidate),
+            }] satisfies BubbleAction[] : []),
             {
                 label: pageletT("pagelet.bubble.later", locale),
                 variant: "compact",
@@ -246,6 +246,7 @@ export function buildQuietRecallNudgeContent(
 export interface DeliveryCandidateCallbacks {
     onOpen(candidate: DeliveryCandidate): void;
     onLinkToCurrent?(candidate: DeliveryCandidate): void;
+    canLinkToCurrent?(candidate: DeliveryCandidate): boolean;
     onLater(candidate: DeliveryCandidate): void;
 }
 
@@ -277,7 +278,7 @@ export function buildRecallDeliveryContent(
                 primary: true,
                 callback: () => callbacks.onOpen(candidate),
             },
-            ...(callbacks.onLinkToCurrent ? [{
+            ...(callbacks.onLinkToCurrent && callbacks.canLinkToCurrent?.(candidate) !== false ? [{
                 label: pageletT("pagelet.bubble.quietRecall.link", locale),
                 description: pageletT("pagelet.bubble.quietRecall.linkDescription", locale),
                 icon: "link",

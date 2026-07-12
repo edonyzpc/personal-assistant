@@ -766,7 +766,11 @@ describe("Pagelet panel and tab view regressions", () => {
 
         expect(container.querySelectorAll("h4")[0]?.textContent).toBe("Prefers concise weekly planning.");
         expect(container.textContent).toContain("Can shape future answers");
-        expect(container.textContent).toContain("2026-06-28 12:00");
+        expect(container.textContent).toContain(new Intl.DateTimeFormat("en", {
+            dateStyle: "medium",
+            timeStyle: "short",
+        }).format(new Date("2026-06-28T12:00:00.000Z")));
+        expect(container.textContent).not.toContain("2026-06-28 12:00");
         expect(container.textContent).not.toContain("low sensitivity");
         expect(container.textContent).not.toContain("PreferencePrefers");
 
@@ -888,6 +892,9 @@ describe("Pagelet panel and tab view regressions", () => {
 
         expect(container.textContent).toContain("Saved, not currently used");
         expect(container.textContent).toContain("Saved, not in use");
+        expect(container.textContent).toContain("Understanding used for this result");
+        expect(container.querySelector(".pa-pagelet-tab-memory-candidates")).toBeNull();
+        expect(container.querySelector(".pa-pagelet-tab-memory-candidates-empty")).toBeNull();
         expect(container.textContent).not.toContain("Can shape future answers");
         expect(container.textContent).not.toContain("In use");
         expect(container.textContent).not.toContain("Global change");
@@ -1215,7 +1222,7 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(restoredContent.textContent).not.toContain("PRIVATE OLD INSIGHT");
     });
 
-    it("keeps a contextual candidate-only detail available without inventing a claim trace", async () => {
+    it("does not present contextual candidates as understanding used by the result", async () => {
         const candidate = makeReviewQueueItem({
             id: "candidate-only",
             type: "memory_candidate",
@@ -1249,7 +1256,9 @@ describe("Pagelet panel and tab view regressions", () => {
         const content = view.contentEl as unknown as FakeElement;
         const state = view.getState() as { payload?: { contextualMemory?: unknown } };
         const stateText = JSON.stringify(state);
-        expect(content.textContent).toContain("Prefers short weekly plans.");
+        expect(content.textContent).not.toContain("Prefers short weekly plans.");
+        expect(content.querySelector(".pa-pagelet-tab-memory-candidates")).toBeNull();
+        expect(content.querySelector(".pa-pagelet-tab-memory-candidates-empty")).toBeNull();
         expect(content.textContent).not.toContain("Result no longer available");
         expect(state.payload?.contextualMemory).toBeUndefined();
         expect(stateText).not.toContain("PRIVATE CANDIDATE TITLE");
@@ -2320,7 +2329,10 @@ describe("Pagelet panel and tab view regressions", () => {
             title: "Recall: current",
             summary: "A saved insight may matter now.",
             sourceInsightId: "ins-1",
-            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+            sourceRefs: [
+                { path: "notes/current.md", evidenceStrength: "medium" },
+                { path: "notes/related.md", evidenceStrength: "medium" },
+            ],
             whyNow: ["Source matches the note you are looking at."],
             nextAction: "Compare this saved insight with the current note.",
             relation: "current",
@@ -2430,6 +2442,63 @@ describe("Pagelet panel and tab view regressions", () => {
         expect(tabContainer.textContent).toContain("Recall saved as insight.");
         expect((globalRecord.document as FakeDocument).activeElement)
             .toBe(tabContainer.querySelector(".pa-pagelet-tab-recall-card"));
+    });
+
+    it("hides Quiet Recall Link when the candidate has no distinct source note", () => {
+        const candidate: QuietRecallCandidate = {
+            id: "qr-self-only",
+            title: "Recall: current",
+            summary: "The current note backed this saved insight.",
+            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+            whyNow: ["Source matches the note you are looking at."],
+            nextAction: "Compare this saved insight with the current note.",
+            relation: "current",
+            score: 90,
+            generatedAt: "2026-06-29T12:00:00.000Z",
+        };
+        const onLinkRecallCandidate = jest.fn(async () => ({ ok: true, message: "Linked" }));
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en", { onLinkRecallCandidate });
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Quiet Recall", [], {
+            layoutType: "current",
+            extra: {
+                quietRecall: {
+                    generatedAt: candidate.generatedAt,
+                    currentPath: "notes/current.md",
+                    totalCount: 1,
+                    candidates: [candidate],
+                },
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-recall-card")).not.toBeNull();
+        expect(container.querySelector(".pa-pagelet-tab-recall-link")).toBeNull();
+        expect(onLinkRecallCandidate).not.toHaveBeenCalled();
+    });
+
+    it("renders the dedicated Quiet Recall empty state when no candidate is strong enough", () => {
+        const container = new FakeElement("div");
+        container.isConnected = true;
+        const tab = new TabView("en");
+        tab.mount(container as unknown as HTMLElement);
+        tab.open("Quiet Recall", [], {
+            layoutType: "current",
+            extra: {
+                quietRecall: {
+                    generatedAt: "2026-06-29T12:00:00.000Z",
+                    currentPath: "notes/current.md",
+                    totalCount: 0,
+                    candidates: [],
+                },
+            },
+        });
+
+        expect(container.querySelector(".pa-pagelet-tab-quiet-recall")).not.toBeNull();
+        expect(container.querySelector(".pa-pagelet-tab-recall-empty")).not.toBeNull();
+        expect(container.textContent).toContain("No strong recall signal right now.");
+        expect(container.textContent).not.toContain("No findings yet");
     });
 
     it("routes a Quiet Recall Memory target only for an exact governed-claim trace", async () => {

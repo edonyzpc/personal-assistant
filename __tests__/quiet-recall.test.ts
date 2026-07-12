@@ -6,6 +6,7 @@ import {
     quietRecallGovernedClaimId,
     quietRecallCandidateToBubbleNudge,
     quietRecallCandidateToSavedInsightInput,
+    quietRecallLinkTargetPath,
     type SavedInsight,
 } from "../src/pa";
 
@@ -130,7 +131,53 @@ describe("buildQuietRecallCandidates", () => {
             sourceInsightId: "ins-related",
             relation: "related",
         }));
-        expect(result.candidates[0].whyNow.join(" ")).toContain("Memory search");
+        expect(result.candidates[0].whyNow).toContain(
+            "A related note connects this source to what you are viewing.",
+        );
+        expect(result.candidates[0].whyNow.join(" ")).not.toContain("Memory search");
+    });
+
+    it("puts the actually matched Saved Insight source first", () => {
+        const result = buildQuietRecallCandidates({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md" },
+            savedInsights: [makeInsight({
+                sourceRefs: [
+                    { path: "Archive/First.md", evidenceStrength: "medium" },
+                    { path: "Projects/Alpha.md", evidenceStrength: "strong" },
+                ],
+            })],
+        });
+
+        expect(result.candidates[0].sourceRefs.map((ref) => ref.path)).toEqual([
+            "Projects/Alpha.md",
+            "Archive/First.md",
+        ]);
+        expect(result.candidates[0].title).toBe("Recall: Alpha");
+    });
+
+    it("keeps the matched current source first while selecting a distinct link target", () => {
+        const result = buildQuietRecallCandidates({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            currentNote: { path: "Projects/Alpha.md" },
+            savedInsights: [makeInsight({
+                sourceRefs: [
+                    { path: "Archive/First.md", evidenceStrength: "medium" },
+                    { path: "Projects/Alpha.md", evidenceStrength: "strong" },
+                ],
+            })],
+        });
+
+        const candidate = result.candidates[0];
+        expect(candidate.sourceRefs.map((ref) => ref.path)).toEqual([
+            "Projects/Alpha.md",
+            "Archive/First.md",
+        ]);
+        expect(quietRecallLinkTargetPath(candidate, "./Projects/Alpha.md"))
+            .toBe("Archive/First.md");
+        expect(quietRecallLinkTargetPath({
+            sourceRefs: [{ path: "Projects/Alpha.md" }],
+        }, "Projects/Alpha.md")).toBeNull();
     });
 
     it("builds vault-note candidates without sourceInsightId", () => {
@@ -168,6 +215,49 @@ describe("buildQuietRecallCandidates", () => {
             relation: "related",
             generatedAt: "2026-06-29T12:00:00.000Z",
         });
+    });
+
+    it("localizes generated recall copy for Chinese UI", () => {
+        const result = buildQuietRecallCandidates({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            locale: "zh",
+            currentNote: { path: "Projects/Alpha.md" },
+            relatedNotes: [{ path: "Projects/Beta.md", score: 0.86 }],
+            vaultNotes: [{
+                path: "Projects/Beta.md",
+                title: "Beta 计划",
+                content: "# Beta\n\n这是一篇值得重新查看的计划笔记。",
+                tags: ["项目", "计划"],
+                modifiedAt: "2026-06-28T12:00:00.000Z",
+            }],
+        });
+
+        const candidate = result.candidates[0];
+        expect(candidate.title).toBe("回忆：Beta 计划");
+        expect(candidate.summary).toBe("Beta 计划 可能再次对当前情境有用。标签：项目、计划。");
+        expect(candidate.whyNow.join(" ")).toMatch(/[\u3400-\u9fff]/);
+        expect(candidate.nextAction).toBe("打开来源笔记，看看这条联系现在是否仍然重要。");
+        expect(JSON.stringify(candidate)).not.toContain("Memory search");
+    });
+
+    it("persists Chinese recall reasons without an English relation marker", () => {
+        const result = buildQuietRecallCandidates({
+            now: new Date("2026-06-29T12:00:00.000Z"),
+            locale: "zh",
+            currentNote: { path: "Projects/Alpha.md" },
+            relatedNotes: [{ path: "Projects/Beta.md", score: 0.86 }],
+            vaultNotes: [{
+                path: "Projects/Beta.md",
+                title: "Beta 计划",
+                content: "# Beta\n\n这是一篇值得重新查看的计划笔记。",
+            }],
+        });
+
+        const candidate = result.candidates[0];
+        const input = quietRecallCandidateToSavedInsightInput(candidate);
+        expect(input.whyShown).toEqual(candidate.whyNow);
+        expect(input.whyShown.join(" ")).toMatch(/[\u3400-\u9fff]/);
+        expect(JSON.stringify(input)).not.toContain("Quiet Recall relation");
     });
 
     it("lets vault notes coexist with saved insight candidates", () => {

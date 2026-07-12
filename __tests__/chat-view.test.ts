@@ -4498,7 +4498,7 @@ describe('LLMView turn lifecycle', () => {
     });
 
     it('exposes composer More menu actions and technical Memory status', async () => {
-        const { view, containerEl, plugin } = createView();
+        const { view, containerEl, plugin, app } = createView();
         await view.onOpen();
 
         const moreButton = getButtonByClass(containerEl, 'pa-chat-more-button');
@@ -4516,6 +4516,11 @@ describe('LLMView turn lifecycle', () => {
         expect(memoryStatusButton.children).toEqual([memoryStatusIcon, memoryStatusText]);
         memoryStatusButton.click();
         expect(plugin.memoryStatus.showTechnicalStatus).toHaveBeenCalledTimes(1);
+
+        getButtonByText(composerMenu, 'Open settings').click();
+        expect(app.setting.open).toHaveBeenCalledTimes(1);
+        expect(app.setting.openTabById).toHaveBeenCalledWith('personal-assistant');
+        expect(plugin.openMemorySettings).not.toHaveBeenCalled();
     });
 
     it('auto-closes the composer More menu after idle time and resets on activity', async () => {
@@ -4877,14 +4882,30 @@ describe('LLMView turn lifecycle', () => {
         await flushPromises();
         let memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
         getButtonByText(memoryMenu, 'Open settings').click();
-        expect(app.setting.open).toHaveBeenCalledTimes(1);
-        expect(app.setting.openTabById).toHaveBeenCalledWith('personal-assistant');
+        expect(plugin.openMemorySettings).toHaveBeenCalledWith();
+        expect(app.setting.open).not.toHaveBeenCalled();
+        expect(app.setting.openTabById).not.toHaveBeenCalled();
 
         getButtonByClass(containerEl, 'pa-chat-memory-chip').click();
         await flushPromises();
         memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
         getButtonByText(memoryMenu, 'Show Memory Status').click();
         expect(plugin.memoryStatus.showTechnicalStatus).toHaveBeenCalledTimes(1);
+    });
+
+    it('falls back to the plugin root settings when the Memory settings entry is unavailable', async () => {
+        const { view, containerEl, plugin, app } = createView();
+        delete (plugin as { openMemorySettings?: () => void }).openMemorySettings;
+        await view.onOpen();
+        await flushPromises();
+
+        getButtonByClass(containerEl, 'pa-chat-memory-chip').click();
+        await flushPromises();
+        const memoryMenu = getElementByClass(containerEl, 'pa-chat-memory-menu');
+        getButtonByText(memoryMenu, 'Open settings').click();
+
+        expect(app.setting.open).toHaveBeenCalledTimes(1);
+        expect(app.setting.openTabById).toHaveBeenCalledWith('personal-assistant');
     });
 
     it('adds a polite live region and keyboard toggle to the activity row', async () => {

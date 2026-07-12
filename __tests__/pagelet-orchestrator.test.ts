@@ -1431,8 +1431,65 @@ describe("PageletOrchestrator detail expansion", () => {
         expect(host.updatePageletSetting).toHaveBeenCalledWith("quietRecallExplained", true);
     });
 
+    it("keeps proactive Quiet Recall quiet below the Bubble score threshold", async () => {
+        jest.useFakeTimers();
+        const runQuietRecall = jest.fn(async (): Promise<QuietRecallRunResult> => ({
+            generatedAt: "2026-06-29T12:00:00.000Z",
+            currentPath: "notes/current.md",
+            totalCount: 1,
+            candidates: [{
+                id: "qr-vault-low-signal",
+                title: "Recall: Low signal",
+                summary: "This connection is not strong enough to interrupt.",
+                sourceRefs: [{ path: "notes/low-signal.md", evidenceStrength: "weak" }],
+                whyNow: ["A weak structural overlap was found."],
+                nextAction: "Open only when useful.",
+                relation: "related",
+                score: 64,
+                generatedAt: "2026-06-29T12:00:00.000Z",
+            }],
+        }));
+        const host = makeHost({ runQuietRecall });
+        host.settings.pagelet.proactiveHints = true;
+        host.settings.quietRecall.bubbleNudgesEnabled = true;
+        const orchestrator = new PageletOrchestrator(host);
+        const petView = {
+            unmount: jest.fn(),
+            mount: jest.fn(),
+            destroy: jest.fn(),
+            stateMachine: {
+                proactiveHintsEnabled: true,
+                forceState: jest.fn(),
+                transition: jest.fn(),
+            },
+            setTaskKind: jest.fn(),
+        };
+        const internals = orchestrator as unknown as {
+            petView: typeof petView;
+            quietRecallBubbleNudge: QuietRecallBubbleNudge | null;
+            handleLeafChange(leaf: unknown): void;
+        };
+        internals.petView = petView;
+
+        internals.handleLeafChange({
+            view: {
+                getViewType: () => "markdown",
+                file: makeTFile("notes/current.md"),
+                contentEl: {} as HTMLElement,
+            },
+        });
+        jest.advanceTimersByTime(300);
+        await flushAsyncWork();
+
+        expect(runQuietRecall).toHaveBeenCalledTimes(1);
+        expect(internals.quietRecallBubbleNudge).toBeNull();
+        expect(petView.stateMachine.forceState).not.toHaveBeenCalled();
+        expect(host.updatePageletSetting).not.toHaveBeenCalledWith("quietRecallExplained", true);
+    });
+
     it("keeps Quiet Recall onboarding explanation pending when quiet hours block the nudge", async () => {
         jest.useFakeTimers();
+        jest.setSystemTime(new Date("2026-06-29T12:00:00.000Z"));
         const candidate: QuietRecallCandidate = {
             id: "qr-vault-quiet-hours",
             title: "Recall: Quiet",
@@ -2683,5 +2740,28 @@ describe("PageletOrchestrator connection discovery", () => {
         expect(internals.quietRecallBubbleNudge).toBe(nudge);
         expect(bubbleView.close).not.toHaveBeenCalled();
         expect(Notice).toHaveBeenCalledWith("Open a Markdown note before linking.", 4000);
+
+        linkRecallCandidate.mockClear();
+        jest.mocked(Notice).mockClear();
+        (host.app.workspace.getActiveFile as jest.Mock).mockReturnValue(makeTFile("notes/current.md"));
+        internals.quietRecallNudgeCandidate = {
+            ...candidate,
+            id: "qr-self-only",
+            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" }],
+            relation: "current",
+        };
+        internals.quietRecallBubbleNudge = {
+            ...nudge,
+            candidateId: "qr-self-only",
+            relation: "current",
+        };
+
+        await internals.handleQuietRecallBubbleLink(internals.quietRecallBubbleNudge);
+
+        expect(linkRecallCandidate).not.toHaveBeenCalled();
+        expect(Notice).toHaveBeenCalledWith(
+            "This recall does not have another note to link.",
+            4000,
+        );
     });
 });

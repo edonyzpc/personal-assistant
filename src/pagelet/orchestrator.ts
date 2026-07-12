@@ -61,8 +61,10 @@ import { resolveRelatedMarkdownNote } from "./related-note";
 import type { PageletDetailPayload } from "./tab/types";
 import { splitReviewQueueForSections } from "./tab/review-queue-routing";
 import {
+    QUIET_RECALL_BUBBLE_MIN_SCORE,
     createContextPagerStateFromRetrievalOutcome,
     quietRecallCandidateToBubbleNudge,
+    quietRecallLinkTargetPath,
     reviewQueueItemHasUserIntentOrDurableConsequence,
     buildScopeRecapMarkdown,
     toReplaySourceRef,
@@ -1473,7 +1475,10 @@ export class PageletOrchestrator {
             const recall = await this.host.runQuietRecall();
             if (runId !== this.quietRecallNudgeRunId || this.destroyed) return;
             const now = Date.now();
-            const candidate = recall.candidates.find((item) => !this.isQuietRecallCandidateSuppressed(item.id, now));
+            const candidate = recall.candidates.find((item) => (
+                item.score >= QUIET_RECALL_BUBBLE_MIN_SCORE
+                && !this.isQuietRecallCandidateSuppressed(item.id, now)
+            ));
             if (!candidate) {
                 this.clearQuietRecallBubbleNudge();
                 return;
@@ -1530,16 +1535,19 @@ export class PageletOrchestrator {
     private async handleQuietRecallBubbleLink(nudge: QuietRecallBubbleNudge): Promise<void> {
         const candidate = this.quietRecallCandidateForNudge(nudge);
         const activeFile = this.host.app.workspace.getActiveFile();
-        const candidatePath = candidate?.sourceRefs[0]?.path;
         const currentPath = nudge.currentPath ? normalizePath(nudge.currentPath).replace(/^\.\//, "") : "";
+        const candidatePath = quietRecallLinkTargetPath(candidate, currentPath);
         if (
             !currentPath
             || !(activeFile instanceof TFile)
             || activeFile.extension !== "md"
             || activeFile.path !== currentPath
-            || !candidatePath
         ) {
             new Notice(pageletT("pagelet.tab.recall.linkNoActiveNote", getPageletUiLanguage()), 4000);
+            return;
+        }
+        if (!candidatePath) {
+            new Notice(pageletT("pagelet.tab.recall.linkNoDistinctSource", getPageletUiLanguage()), 4000);
             return;
         }
         const result = await this.host.linkRecallCandidate(currentPath, candidatePath);

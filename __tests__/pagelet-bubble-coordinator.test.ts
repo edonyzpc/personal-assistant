@@ -336,7 +336,7 @@ describe("BubbleCoordinator Review Queue reminders", () => {
         const runQuietRecall = jest.fn(async () => ({
             generatedAt: "2026-07-05T12:00:00.000Z",
             currentPath: "notes/current.md",
-            totalCount: 2,
+            totalCount: 3,
             candidates: [{
                 id: "recall-alpha",
                 title: "Recall: Alpha",
@@ -357,6 +357,16 @@ describe("BubbleCoordinator Review Queue reminders", () => {
                 relation: "far" as const,
                 score: 40,
                 generatedAt: "2026-07-05T12:00:00.000Z",
+            }, {
+                id: "recall-current",
+                title: "Recall: Current",
+                summary: "The current note backed this saved insight.",
+                sourceRefs: [{ path: "notes/current.md", generatedAt: "2026-07-05T12:00:00.000Z" }],
+                whyNow: ["Source matches the note you are looking at."],
+                nextAction: "Compare it.",
+                relation: "current" as const,
+                score: 90,
+                generatedAt: "2026-07-05T12:00:00.000Z",
             }],
         }));
         const coordinator = makeCoordinator(() => [], { runQuietRecall }, { onSourceClick });
@@ -374,10 +384,61 @@ describe("BubbleCoordinator Review Queue reminders", () => {
 
         const content = shownContent(bubbleView);
         expect(content.type).toBe("recall-delivery");
-        expect(content.cards).toHaveLength(1);
+        expect(content.cards).toHaveLength(2);
         expect(JSON.stringify(content)).toContain("Alpha may matter again.");
+        expect(content.cards?.[0]?.actions.map((action) => action.label))
+            .toContain("Link");
+        expect(content.cards?.[1]?.actions.map((action) => action.label))
+            .not.toContain("Link");
 
         content.cards?.[0]?.actions[0].callback();
         expect(onSourceClick).toHaveBeenCalledWith("notes/alpha.md");
+    });
+
+    it("hides proactive Quiet Recall Link when no distinct source exists", () => {
+        const candidate = {
+            id: "recall-current",
+            title: "Recall: Current",
+            summary: "The current note backed this saved insight.",
+            sourceRefs: [{ path: "notes/current.md", evidenceStrength: "medium" as const }],
+            whyNow: ["Source matches the note you are looking at."],
+            nextAction: "Compare it.",
+            relation: "current" as const,
+            score: 90,
+            generatedAt: "2026-07-05T12:00:00.000Z",
+        };
+        const nudge = {
+            candidateId: candidate.id,
+            currentPath: "notes/current.md",
+            relation: candidate.relation,
+            generatedAt: candidate.generatedAt,
+        };
+        const onQuietRecallLink = jest.fn();
+        const coordinator = makeCoordinator(() => [], {
+            settings: {
+                pagelet: {
+                    enabled: true,
+                    onboardingShown: true,
+                    proactiveHints: true,
+                    quietAcknowledged: false,
+                },
+                quietRecall: {
+                    enabled: true,
+                    bubbleNudgesEnabled: true,
+                },
+            } as PageletHost["settings"],
+        }, {
+            getQuietRecallNudge: () => nudge,
+            getQuietRecallCandidate: () => candidate,
+            onQuietRecallLink,
+        });
+        const bubbleView = makeBubbleView();
+
+        coordinator.showBubble(bubbleView, makePetView());
+
+        const content = shownContent(bubbleView);
+        expect(content.type).toBe("recall-delivery");
+        expect(content.actions.map((action) => action.label)).not.toContain("Link");
+        expect(onQuietRecallLink).not.toHaveBeenCalled();
     });
 });

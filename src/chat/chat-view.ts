@@ -955,6 +955,10 @@ export class LLMView extends ItemView {
             });
             openSettingsButton.onclick = () => {
                 closeMemoryMenu();
+                if (this.host.openMemorySettings) {
+                    this.host.openMemorySettings?.();
+                    return;
+                }
                 const appWithSettings = this.app as typeof this.app & {
                     setting?: {
                         open: () => void;
