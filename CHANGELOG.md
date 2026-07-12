@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file. See [standard-version](https://github.com/conventional-changelog/standard-version) for commit guidelines.
 
+## [2.9.0-beta.1](https://github.com/edonyzpc/personal-assistant/compare/2.8.4...2.9.0-beta.1) (2026-07-12)
+
+### Features
+- core: add low-burden PA and pagelet runtime modules
+- pa: redesign pagelet workflows for quiet recall and onboarding
+- pagelet: unify delivery candidates and migrate recap runtime
+- pagelet: add foreground protection and consent migration
+- pagelet: UI/UX optimization and audit findings
+- pagelet: add level-2 memory auto-confirm pipeline
+- pagelet: improve review panel and memory governance UI states
+- memory-control-center: implement memory control center and governance pipeline
+- skills: automate PA project lifecycle routing
+- settings: add responsive navigation and aligned controls
+
+### Fix
+- vss: preserve snapshot consistency during refresh
+- featured-image: add timeout to LLM prompt generation call
+- pagelet: address review findings — remove CSS leak and add timeout safety
+- vss: quote unsafe FTS query tokens
+- memory-ui: make recall interactions safe and contextual
+- pagelet: anchor mobile pet to active note toolbar
+
+### Improvements
+- agents: setup skills infrastructure and validation
+- pagelet: restructure Tab with section renderers, remove Weekly Review
+- release: harden BRAT beta release workflow
+- agents: add skills and playbooks
+- pa: cache backlink map with 30s TTL
+- smoke: add pagelet D6 memory runtime smoke coverage
+- mobile: remove obsidian mobile debug helper
+- add GitHub workflow for memory center pipeline
+- skills: harden validation and review workflows
+- docs: enforce documentation lifecycle integrity
+- css: refresh generated plugin stylesheet
+- integrate UI/UX optimizations
+
+### Docs
+- pa: add product research and planning specs
+- pa: add product spec development plan
+- pa: add PR review report and address re-review findings
+- pa: add product redesign decisions, development plan, and SDD tracker
+- pa: export active decisions from memory system
+- pa: add commercialization analysis with competitive references
+- memory-control-center: add specs, sdd, tracker and review docs
+- governance: reorganize project documentation lifecycle
+- ui-ux: record targeted memory audit closeout
+- settings: define responsive layout optimization
+
+### Tests
+- memory: add error recovery test for preparation guard
+
 ## [2.8.4](https://github.com/edonyzpc/personal-assistant/compare/2.8.3...2.8.4) (2026-06-28)
 
 ### Fix
