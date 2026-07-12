@@ -2,10 +2,11 @@
 
 import { afterEach, describe, expect, it, jest } from "@jest/globals";
 import { readFileSync } from "fs";
+import { Platform } from "obsidian";
 
 import { PetStateMachine } from "../src/pagelet/pet/PetStateMachine";
 import type { PetEvent } from "../src/pagelet/pet/PetStateMachine";
-import { getPetAriaLabel, PetView } from "../src/pagelet/pet/PetView";
+import { getPetAriaLabel, PetView, resolvePetMountTarget } from "../src/pagelet/pet/PetView";
 
 afterEach(() => {
     jest.useRealTimers();
@@ -320,14 +321,125 @@ describe("PetView touch suppression", () => {
     });
 });
 
-describe("PetView mobile chrome layer mounting", () => {
-    it("mounts phone-sized mobile pets into document.body instead of the markdown content container", () => {
+describe("PetView mobile toolbar mounting", () => {
+    function makeMountFixture(options: {
+        mobile: boolean;
+        width: number;
+        height: number;
+        toolbar: boolean;
+    }) {
+        const sidebarToggle = { parentElement: null as unknown };
+        const toolbarLeft = {
+            querySelector: jest.fn((selector: string) => (
+                selector === ".sidebar-toggle-button.mod-left" ? sidebarToggle : null
+            )),
+        };
+        sidebarToggle.parentElement = toolbarLeft;
+        const leafContent = {
+            querySelector: jest.fn((selector: string) => (
+                options.toolbar && selector === ".view-header-left" ? toolbarLeft : null
+            )),
+        };
+        const ownerDocument = {
+            body: {
+                classList: {
+                    contains: (className: string) => options.mobile && className === "is-mobile",
+                },
+            },
+            documentElement: {
+                clientWidth: options.width,
+                clientHeight: options.height,
+            },
+            defaultView: {
+                innerWidth: options.width,
+                innerHeight: options.height,
+            },
+        };
+        const containerEl = {
+            ownerDocument,
+            closest: jest.fn((selector: string) => (
+                selector === ".workspace-leaf-content" ? leafContent : null
+            )),
+        };
+        return {
+            containerEl: containerEl as unknown as HTMLElement,
+            leafContent: leafContent as unknown as HTMLElement,
+            toolbarLeft: toolbarLeft as unknown as HTMLElement,
+            sidebarToggle: sidebarToggle as unknown as HTMLElement,
+        };
+    }
+
+    it("anchors a phone pet beside the current Markdown leaf sidebar toggle", () => {
+        const fixture = makeMountFixture({ mobile: true, width: 390, height: 844, toolbar: true });
+
+        const target = resolvePetMountTarget(fixture.containerEl);
+
+        expect(target).toEqual({
+            mountEl: fixture.toolbarLeft,
+            insertAfterEl: fixture.sidebarToggle,
+            mobileToolbar: true,
+        });
+    });
+
+    it("keeps the toolbar anchor when the phone rotates to landscape", () => {
+        const fixture = makeMountFixture({ mobile: true, width: 844, height: 390, toolbar: true });
+
+        expect(resolvePetMountTarget(fixture.containerEl).mobileToolbar).toBe(true);
+    });
+
+    it("does not treat a narrow iPad split as an iPhone", () => {
+        const platform = Platform as unknown as { isDesktop: boolean; isPhone: boolean };
+        const originalDesktop = platform.isDesktop;
+        const originalPhone = platform.isPhone;
+        platform.isDesktop = false;
+        platform.isPhone = false;
+        const fixture = makeMountFixture({ mobile: true, width: 500, height: 1024, toolbar: true });
+
+        try {
+            expect(resolvePetMountTarget(fixture.containerEl).mobileToolbar).toBe(false);
+        } finally {
+            platform.isDesktop = originalDesktop;
+            platform.isPhone = originalPhone;
+        }
+    });
+
+    it("uses the native phone signal regardless of orientation dimensions", () => {
+        const platform = Platform as unknown as { isDesktop: boolean; isPhone: boolean };
+        const originalDesktop = platform.isDesktop;
+        const originalPhone = platform.isPhone;
+        platform.isDesktop = false;
+        platform.isPhone = true;
+        const fixture = makeMountFixture({ mobile: true, width: 1024, height: 768, toolbar: true });
+
+        try {
+            expect(resolvePetMountTarget(fixture.containerEl).mobileToolbar).toBe(true);
+        } finally {
+            platform.isDesktop = originalDesktop;
+            platform.isPhone = originalPhone;
+        }
+    });
+
+    it("falls back to the current note content instead of document.body", () => {
+        const fixture = makeMountFixture({ mobile: true, width: 390, height: 844, toolbar: false });
+
+        expect(resolvePetMountTarget(fixture.containerEl)).toEqual({
+            mountEl: fixture.containerEl,
+            insertAfterEl: null,
+            mobileToolbar: false,
+        });
+    });
+
+    it("keeps desktop pets in the Markdown content container", () => {
+        const fixture = makeMountFixture({ mobile: false, width: 1440, height: 900, toolbar: true });
+
+        expect(resolvePetMountTarget(fixture.containerEl).mountEl).toBe(fixture.containerEl);
+    });
+
+    it("inserts toolbar pets after the native left toggle and marks their placement", () => {
         const source = readFileSync("src/pagelet/pet/PetView.ts", "utf8");
 
-        expect(source).toContain("function shouldMountPetInMobileChromeLayer()");
-        expect(source).toContain("doc.body.classList.contains(\"is-mobile\") && viewportWidth <= 600");
-        expect(source).toContain("const mountEl = shouldMountPetInMobileChromeLayer() ? getPlatformDocument().body : containerEl;");
-        expect(source).toContain("mountEl.appendChild(root);");
+        expect(source).toContain('root.classList.add("pa-pagelet-pet--mobile-toolbar")');
+        expect(source).toContain("mountEl.insertBefore(root, mountTarget.insertAfterEl.nextSibling)");
     });
 });
 
@@ -347,34 +459,31 @@ describe("PetView mobile positioning styles", () => {
         );
     });
 
-    it("pins the pet beside the top-left mobile chrome on phone-sized screens", () => {
+    it("lets the phone Pet follow the active leaf toolbar instead of the viewport", () => {
         const css = readFileSync("src/custom.pcss", "utf8");
-        const phoneMediaStart = css.indexOf("@media (max-width:600px)");
-        expect(phoneMediaStart).toBeGreaterThan(-1);
+        const selector = "body.is-mobile .pa-pagelet-pet--mobile-toolbar";
+        const mobileTopbarBlock = getCssRuleBlock(css, selector);
+        const mobileCornerOverrideBlock = getCssRuleBlock(css, `${selector}[data-corner]`);
+        const mobileWrapperBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-wrapper`);
+        const mobileSvgBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-svg-wrap svg`);
+        const mobileOutlineStrokeBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-stroke-outline`);
+        const mobileDetailStrokeBlock = getCssRuleBlock(css, `${selector} .pa-pagelet-pet-stroke-detail`);
+        const mobileRestingBlock = getCssRuleBlock(css, `${selector}[data-state=resting]`);
+        const mobileRestingSvgWrapBlock = getCssRuleBlock(css, `${selector}[data-state=resting] .pa-pagelet-pet-svg-wrap`);
 
-        const phoneCss = css.slice(phoneMediaStart);
-        const mobileTopbarBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet");
-        const mobileCornerOverrideBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet[data-corner]");
-        const mobileWrapperBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-wrapper");
-        const mobileSvgBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-svg-wrap svg");
-        const mobileOutlineStrokeBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-stroke-outline");
-        const mobileDetailStrokeBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet .pa-pagelet-pet-stroke-detail");
-        const mobileRestingBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet[data-state=resting]");
-        const mobileRestingSvgWrapBlock = getCssRuleBlock(phoneCss, "body.is-mobile .pa-pagelet-pet[data-state=resting] .pa-pagelet-pet-svg-wrap");
-
-        expect(mobileTopbarBlock).toContain("--pa-pagelet-mobile-topbar-pet-top: 59px;");
-        expect(mobileTopbarBlock).toContain("--pa-pagelet-mobile-topbar-pet-left: calc(env(safe-area-inset-left, 0px) + 60px);");
-        expect(mobileTopbarBlock).toContain("position: fixed;");
-        expect(mobileTopbarBlock).toContain("top: var(--pa-pagelet-mobile-topbar-pet-top);");
-        expect(mobileTopbarBlock).toContain("left: var(--pa-pagelet-mobile-topbar-pet-left);");
+        expect(mobileTopbarBlock).toContain("position: relative;");
+        expect(mobileTopbarBlock).not.toContain("position: fixed;");
         expect(mobileTopbarBlock).toContain("width: 44px;");
         expect(mobileTopbarBlock).toContain("height: 44px;");
+        expect(mobileTopbarBlock).toContain("flex: 0 0 44px;");
         expect(mobileTopbarBlock).toContain("display: flex;");
         expect(mobileTopbarBlock).toContain("align-items: center;");
         expect(mobileTopbarBlock).toContain("justify-content: center;");
         expect(mobileTopbarBlock).toContain("right: auto;");
         expect(mobileTopbarBlock).toContain("bottom: auto;");
-        expect(mobileTopbarBlock).toContain("z-index: 1002;");
+        expect(mobileTopbarBlock).toContain("z-index: auto;");
+        expect(css).not.toContain("--pa-pagelet-mobile-topbar-pet-top");
+        expect(css).not.toContain("--pa-pagelet-mobile-topbar-pet-left");
         expect(mobileCornerOverrideBlock).toContain("right: auto;");
         expect(mobileCornerOverrideBlock).toContain("bottom: auto;");
         expect(mobileWrapperBlock).toContain("width: 44px;");

@@ -72,7 +72,7 @@
     "pagelet.settings.petVisible.name": "Show Pet",
     "pagelet.settings.petVisible.desc": "Show the floating Pet mascot in the workspace.",
     "pagelet.settings.petCorner.name": "Pet corner",
-    "pagelet.settings.petCorner.desc": "Which corner of the workspace the Pet floats in.",
+    "pagelet.settings.petCorner.desc": "Choose the Pet corner on desktop and iPad. On iPhone, it follows the active note toolbar.",
     "pagelet.settings.petCorner.option.bottom-right": "Bottom right",
     "pagelet.settings.petCorner.option.bottom-left": "Bottom left",
     "pagelet.settings.petCorner.option.top-right": "Top right",
