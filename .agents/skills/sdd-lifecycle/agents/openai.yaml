@@ -1,0 +1,6 @@
+interface:
+  display_name: "PA SDD Lifecycle"
+  short_description: "Stage PA planning and delivery with explicit stop points."
+  default_prompt: "Use $sdd-lifecycle to plan and implement approved PA scope through validation, and do not close or archive unless I explicitly request full lifecycle or closeout."
+policy:
+  allow_implicit_invocation: false

@@ -1,419 +1,232 @@
 ---
 name: sdd-lifecycle
-description: Orchestrate the full SDD (Software Design Document) lifecycle for non-trivial features — planning, SDD drafting, phased implementation with loop engineering, testing, review, smoke, and closeout. Use when the user asks to start SDD for X, plan feature X, implement spec X, track SDD progress, run a feature through the full dev cycle, or says "开始做 X 的设计", "按 SDD 流程做", "走一遍完整开发流程", "plan and implement X". For one-file bug fixes, use the normal review/fix/test/commit path instead.
+description: Orchestrate staged SDD work for non-trivial personal-assistant features with explicit plan-only, SDD-only, implement-approved-spec, and full-lifecycle authorization modes. Use when explicitly invoked or routed by pa-docs-lifecycle-manager to plan a feature, draft or review an SDD, implement approved product scope, track progress, or run an explicitly requested full lifecycle. Treat "plan and implement" as implement-approved-spec that may bootstrap missing Plan/SDD and stops after validated implementation; run closeout/archive only after explicit full-lifecycle or closeout intent. Keep commits separately authorized. For one-file bug fixes, use the focused review/fix/test path.
 ---
 
 # SDD Lifecycle
 
-Orchestrate the repeatable development lifecycle used by this project for every
-non-trivial feature:
-
-```
-plan → SDD → implement → test → review → smoke → close
-```
-
-Every phase embeds loop engineering. Review is not ceremonial — it catches
-real bugs that implementation introduces (~30% first-pass error rate observed
-in this project). The dependency surface is always bigger than expected (2x
-rule).
-
-## When to Use
-
-Use this skill when a change:
-
-- Needs a product spec, SDD, or development tracker before code
-- Touches runtime architecture, product behavior, data/privacy boundaries, or
-  Obsidian UI behavior
-- Requires multiple phases instead of a single narrow fix
-- Has risks that should be tracked across dev, test, review, fix, and smoke
-  loops
-
-For a one-file bug fix or small patch, use the normal focused
-review/fix/test/commit path instead.
-
-## Before Starting
-
-Read these project sources:
-
-1. `AGENTS.md` — project conventions, architecture rules, commit rules
-2. `docs/pa-product-north-star.md` — product standard
-3. `docs/refactor-workflow.md` — reusable refactor workflow (this skill
-   orchestrates on top of it, not in place of it)
-4. Related memories and existing product specs in `docs/`
-
-## Phase 0: Planning
-
-**Goal:** Establish product context, scope, and a development plan.
-
-**Loop:** `draft plan -> review plan -> revise -> approve`
-
-Steps:
-
-1. Read North Star (`docs/pa-product-north-star.md`) and related memories for
-   context.
-2. Read or create the product spec (`docs/<feature>-product-spec.md`). If the
-   spec already exists, verify it is current.
-3. Draft the development plan (`docs/<feature>-plan.md` or
-   `docs/<feature>-development-plan.md`) with:
-   - Goal and non-goals
-   - Phased roadmap with dependencies
-   - Out-of-scope items
-   - Risk assessment
-4. Create the development tracker (`docs/<feature>-tracker.md` or
-   `docs/<feature>-development-tracker.md`) using the tracker template below.
-5. Review the plan against product spec, North Star, and existing architecture.
-   Check:
-   - Does the plan align with product instincts from North Star?
-   - Are dependencies identified (grep the codebase for touched modules)?
-   - Are out-of-scope items explicit?
-6. Revise until the plan is internally consistent and the user approves.
-
-**Exit gate:** Plan and tracker committed (`docs(<scope>): ...`). User
-approved scope and phasing.
-
-## Phase 1: SDD (Structural/Refactoring Work)
-
-**Goal:** Write an implementation SDD that is grep-verified and
-dependency-audited before any runtime code is written.
-
-**Loop:** `draft SDD -> SDD review -> fix SDD -> approve SDD`
-
-**When to use Phase 1:** Structural refactors, new module boundaries, shared
-infrastructure changes, or multi-file feature additions. Skip for small
-additive features that do not change existing structure.
-
-Steps:
-
-1. Write the SDD (`docs/<feature>-sdd.md`) with:
-   - Implementation steps per phase
-   - Method/type/file names (MUST be grep-verified against actual code)
-   - Interface contracts and lifecycle
-   - Migration path from current state
-   - Shared resources affected (locale keys, CSS classes, settings keys,
-     command IDs, exports)
-2. SDD review — verify before implementing:
-   - **Method names match actual code:** `rg -n "methodName" src/` for every
-     method/type referenced in the SDD. If the name does not exist yet, say so
-     explicitly.
-   - **Dependency surface audit:** grep all modules the SDD touches. The
-     actual dependency count is >= 2x what you initially expect. For feature
-     removal or rename, do an exhaustive multi-layer grep before writing the
-     removal plan.
-   - **Interface lifecycle:** can the proposed interface support the required
-     mount/unmount/reload lifecycle in Obsidian?
-   - **Shared resources:** locale keys, CSS classes, settings keys, command
-     IDs used by other features?
-   - **Migration path:** does the SDD account for existing user data, settings,
-     and persisted state?
-3. Fix SDD based on review findings.
-4. Repeat until SDD review is clean.
-
-**Anti-patterns:**
-- SDD with wrong method names — implementers will search for the name you
-  wrote. Grep to confirm every method/type name.
-- Skipping SDD review — SDD reviews are cheap (read-only). SDD bugs become
-  implementation bugs that cost 10x more to fix.
-- Dependency undercount — dependency surfaces are always >= 2x what you expect.
-
-**Exit gate:** SDD committed (`docs(<scope>): ...`). All method names
-grep-verified. Dependency surface documented.
-
-## Phase 2: Implementation
-
-**Goal:** Implement per SDD/plan with continuous verification loops.
-
-**Inner loop (per implementation batch):**
-
-```
-implement -> make deploy -> review batch -> fix findings -> verify fixes
-```
-
-Steps:
-
-1. Read `AGENTS.md`, the active plan, tracker, SDD (if exists), nearby code,
-   and relevant tests.
-2. Record the phase as `[~] In progress` in the tracker.
-3. Implement one behavior slice at a time. Prefer existing module boundaries
-   and helper APIs.
-4. After each coherent slice, run the Local Validation Gate from AGENTS.md:
-   ```bash
-   npm test -- --runInBand <focused suites>
-   npx tsc -noEmit -skipLibCheck
-   git diff --check
-   ```
-5. When the slice needs app-runtime confidence, run `make deploy` (full gate:
-   Jest + lint + build + deploy to `test/`).
-6. Review the implementation batch. Common implementation-introduced bugs:
-   - Data path breakage (e.g., entryReason disconnected — entire feature
-     becomes dead code)
-   - Locale param mismatch (UI displays literal `{count}` instead of number)
-   - Shared resource rename incomplete (half the callers still use old name)
-   - Lifecycle cleanup missing (observer/timer/listener not cleared on
-     unmount/unload)
-   - CSS scope leak into Obsidian core UI
-7. Fix review findings. Each fix gets its own build verification.
-8. The inner loop terminates when review returns no P0/P1/P2 findings.
-
-**"First refactor, then delete" rule:** When restructuring, extract (pure
-refactor) in one phase, delete (behavior change) in the next. Tests can verify
-behavioral equivalence only if the two are separated.
-
-**Commit after coherent milestones** using Conventional Commits with
-`git commit -s`:
-- `feat(<scope>): ...` for new behavior
-- `fix(<scope>): ...` for corrections
-- `refactor(<scope>): ...` for structural changes
-- `test(<scope>): ...` for test additions
-
-**Exit gate:** All implementation slices pass the inner loop. Tracker updated.
-
-## Phase 3: Testing
-
-**Goal:** Add test coverage for new/changed code and verify the full gate.
-
-**Loop:** `add tests -> run focused suites -> fix failures -> run full gate`
-
-Steps:
-
-1. Add regression tests for the implemented behavior. Cover:
-   - Success path
-   - Failure/error paths
-   - Edge cases (empty data, stale async, concurrent runs, large vault)
-   - Compatibility paths (old settings, persisted data, command IDs)
-   - Product contract (privacy, write guards, cost disclosure)
-2. Run focused test suites:
-   ```bash
-   npm test -- --runInBand <affected suites>
-   ```
-3. Fix any test failures. If failures reveal implementation bugs, return to
-   Phase 2 inner loop.
-4. Run the full validation gate:
-   ```bash
-   make deploy
-   ```
-   `make deploy` runs full Jest, lint, build, and deploys assets to `test/`.
-5. Verify test coverage is meaningful — tests that only prove the easiest
-   success path and do not pin product, privacy, compatibility, or lifecycle
-   behavior are insufficient.
-
-**Exit gate:** Full `make deploy` passes. Test coverage includes failure,
-edge, and contract paths.
-
-## Phase 4: Final Review + Smoke
-
-**Goal:** Multi-lane code review and end-to-end Obsidian smoke validation.
-
-**Loop:** `review -> fix -> verify -> re-review` until clean
-
-Steps:
-
-1. Invoke `personal-assistant-review` skill for multi-lane code review:
-   - Functional state and concurrency
-   - Spec, docs, tests, i18n, product contract
-   - Obsidian/community compatibility and lifecycle
-   - UI/UX/accessibility/mobile
-   - Performance, safety, and maintainability
-
-   Do NOT duplicate the review skill's logic here — delegate to it.
-
-2. Triage review findings using `personal-assistant-review-followup` skill:
-   - Classify: must-fix / should-fix-now / defer
-   - Identify product decisions needed
-   - Implement confirmed fixes
-
-3. Each fix goes through its own verification:
-   ```bash
-   npm test -- --runInBand <affected suites>
-   npx tsc -noEmit -skipLibCheck
-   ```
-
-4. Invoke `obsidian-test-vault-smoke` skill for end-to-end validation:
-   - Pick the appropriate tier: `quick`, `app-runtime`, `full-ui`, or
-     `release-gate`
-   - Runtime/UI changes require `make deploy` and real Obsidian test-vault
-     smoke
-   - Do not claim Obsidian validation without deployed evidence
-
-   Do NOT duplicate the smoke skill's logic here — delegate to it.
-
-5. Any P0/P1/P2 findings from review or smoke → return to Phase 2 inner loop.
-
-6. Re-review after fixes until clean.
-
-**Exit gate:** Review returns no P0/P1/P2 findings. Smoke passes at the
-appropriate tier. Tracker updated with evidence.
-
-## Phase 5: Close
-
-**Goal:** Update all artifacts to reflect completion.
-
-Steps:
-
-1. Update the development tracker:
-   - All phase rows marked `[x]`
-   - Verification log recorded
-   - Risk table matches final behavior
-   - Open decisions resolved or explicitly deferred
-2. Update `docs/todo.md` with any follow-up items that should not reopen the
-   tracker.
-3. Update related docs if behavior, commands, release process, packaging, or
-   architecture changed.
-4. Commit docs/tracker updates:
-   ```bash
-   git commit -s
-   ```
-   Use `docs(<scope>): ...` for documentation changes.
-5. Verify plan, tracker, and todo do not contradict each other.
-
-**Exit gate:** Tracker is fully closed. No unresolved P0/P1/P2 findings.
-Docs are consistent.
-
-## Loop Engineering Principles
-
-These principles apply across all phases. They are extracted from the
-UI/UX review methodology (`.agents/skills/ui-ux-design-audit/SKILL.md`)
-and proven across 4+ feature cycles in this project.
-
-1. **Every phase has an explicit loop.** Linear "do X then Y" steps miss
-   implementation-introduced bugs. The loop catches them.
-
-2. **Review catches real bugs, not just style issues.** Observed in this
-   project: entryReason data path completely disconnected (entire feature was
-   dead code), locale `{count}` displayed as literal string, shared resource
-   renames leaving half the callers broken.
-
-3. **The dependency surface is always >= 2x expected.** When planning a
-   change that touches N files, grep will reveal 2N+ dependents. Budget for
-   this.
-
-4. **SDD method names must be grep-verified.** Implementers search for the
-   exact name written in the SDD. If the name is wrong, implementation
-   silently diverges from the design.
-
-5. **First refactor, then delete.** Extract (pure structural change) in one
-   commit, delete (behavior change) in the next. Tests can verify behavioral
-   equivalence only when the two are separated.
-
-6. **~30% of LLM-generated review findings are false positives.** Always
-   verify audit findings against actual source code before committing to
-   fixes. This is handled by `personal-assistant-review-followup`.
-
-7. **`make deploy` is the verification gate, not `npm test`.** `make deploy`
-   runs full Jest + lint + build + deploy. Use it for app-runtime confidence.
-
-## Tracker Template
-
-Create `docs/<feature>-development-tracker.md` with this structure:
-
-```markdown
-# [Feature Name] Development Tracker
-
-Updated: YYYY-MM-DD
-Plan: [<feature>-plan.md](./<feature>-plan.md)
-SDD: [<feature>-sdd.md](./<feature>-sdd.md) (if applicable)
-
-## Status Legend
-
-| Mark | Meaning |
-|------|---------|
-| `[ ]` | Todo |
-| `[~]` | In progress |
-| `[x]` | Done |
-| `[!]` | Blocked |
-
-## Phase Status
-
-| Phase | Status | Notes |
-|-------|--------|-------|
-| P0 Planning | [ ] | |
-| P1 SDD | [ ] | Skip if no structural change |
-| P2 Implementation | [ ] | |
-| P3 Testing | [ ] | |
-| P4 Review + Smoke | [ ] | |
-| P5 Close | [ ] | |
-
-## Verification Log
-
-| Check | Result | Notes |
-|-------|--------|-------|
-| `make deploy` | | |
-| Focused tests | | |
-| Type check | | |
-| Review findings | | |
-| Smoke tier | | |
-
-## Risk Table
-
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| | | | |
-
-## Open Decisions
-
-| Decision | Options | Chosen | Rationale |
-|----------|---------|--------|-----------|
-| | | | |
+## Core Boundaries
+
+Choose the narrowest mode authorized by the request. Do not treat planning as
+permission to implement, implementation as permission to commit, or a local
+commit as permission to push.
+
+An upstream explicit `review-only`, `analysis-only`, `read-only`,
+`no-file-changes`, “只分析”, or “不要改文件” request means **zero writes**. Do
+not create planning artifacts, edit runtime, update trackers, or touch git.
+
+When resuming work directly, accept an explicit `B-xxx`/slug first, then a
+current-conversation Active Package, then the only Active Package. If the target
+is still absent or ambiguous, ask one target question and perform zero writes.
+
+Read these current sources before acting:
+
+1. `AGENTS.md`
+2. `docs/index.md`, `docs/development-roadmap.md`, and `docs/backlog.md`
+3. `docs/product/pa-product-north-star.md` and the related Product Spec for PA
+   behavior, or the related Governance Contract for repo-only governance work
+4. `docs/development/documentation-workflow.md`
+5. `docs/development/workflows/refactor-workflow.md` for repo-scale work
+6. The active Feature Home, architecture docs, plan, SDD, tracker, and nearby code/tests
+
+Treat `docs/archive/` as historical evidence, not current approval. Read
+`../../../docs/development/templates/tracker.md` only when creating a tracker.
+
+## Authorization Modes
+
+| Mode | Select when | Allowed work | Stop point |
+| --- | --- | --- | --- |
+| `plan-only` | The user asks to plan, scope, or design a feature | Inspect evidence; draft or update approved product scope, plan, and tracker | Stop before SDD and runtime edits |
+| `sdd-only` | The user asks to write or review an implementation SDD | Verify the approved plan and write/review the SDD | Stop before runtime edits |
+| `implement-approved-spec` | The user asks to implement approved product scope, including “先规划并实现 / plan and implement”; Plan/SDD may be missing | Bootstrap required Plan/SDD, implement, test, review, fix, smoke, and update active tracking artifacts | Stop after validated implementation; no closeout or commit |
+| `full-lifecycle` | The user explicitly asks for “full lifecycle / 完整生命周期 / 端到端做到收尾”, closeout, or archive | Run planning through closeout | Stop after artifacts, validation, closeout, and archive agree |
+
+If the request is ambiguous, choose the earlier mode. Ask only when moving to a
+later mode would materially change product semantics or user authority.
+“Plan and implement” is not full-lifecycle authority. Implementation never
+implies closeout, archive, or commit.
+
+When an explicit “实现 / 落地 / 修复 / 先规划并实现” request selects
+`implement-approved-spec`, treat creation and source-review of a missing
+Plan/SDD as an authorized implementation prerequisite. Stop only when approved product scope is missing,
+the design exposes a new product/risk decision, or the requested runtime/Git
+boundary remains ambiguous; do not ask the user to authorize the document phase
+itself. Treat Plan/SDD approval as a source-review gate, not a ceremonial user
+confirmation: when no user-owned product or risk decision remains, complete the
+review and record approval automatically.
+
+## Artifact Routing
+
+- Keep current Product Specs in `docs/product/specs/`.
+- Keep repo-only documentation/checker/CI/release-tooling/Agent-skill contracts
+  in `docs/development/governance/`. Use exactly one authority lane per Active
+  Package. If the work changes PA runtime or user behavior, use the Product
+  Decision/Product Spec lane; never disguise engineering governance as a
+  Product Spec.
+- Start active planning work in `docs/development/active/<feature>/` with
+  `README.md`, `plan.md`, and `tracker.md`; add `sdd.md` in Phase 1. Never
+  fabricate an empty SDD for a plan-only or pre-SDD cancelled track.
+- Use `docs/development/templates/` as the canonical artifact templates; do not
+  maintain a second project tracker format inside this skill.
+- Keep workflow documents in `docs/development/workflows/`; do not create a
+  feature-specific workflow there.
+- Keep only unresolved, not-yet-active work in `docs/backlog.md`.
+- Follow `docs/development/documentation-workflow.md` for closeout and archive
+  placement.
+
+Do not create long plan/SDD packages for an unapproved idea. Return raw or
+unapproved intake to `pa-docs-lifecycle-manager`; raw ideas remain in the Linear
+inbox until a promotion gate is met.
+
+## Phase 0: Plan
+
+Run when planning does not already exist in `plan-only`, `sdd-only`, and
+`full-lifecycle`. Also run in `implement-approved-spec` when approved product
+scope exists but the Plan/Active Package is missing; this is prerequisite
+bootstrap, not closeout authority.
+
+1. Verify the feature against the North Star and current decisions.
+2. Read or update the selected authority contract: Product Spec after product
+   scope is approved, or Governance Contract for explicitly authorized
+   repo-only governance work.
+3. Create `docs/development/active/<feature>/README.md`, `plan.md`, and
+   `tracker.md`, then register the Feature Home in
+   `docs/development/active/README.md`.
+4. Define goals, non-goals, dependencies, risks, validation strategy, rollback,
+   and explicit stop points.
+5. Grep the actual codebase for the dependency surface.
+6. Review and revise the plan until it is internally consistent and approved.
+
+Exit with an approved plan and tracker. Stop here in `plan-only`; otherwise
+continue only through the selected mode. Do not commit unless the user
+explicitly asked for a commit.
+
+## Phase 1: SDD
+
+Run in `sdd-only` and `full-lifecycle` modes. In `implement-approved-spec`,
+require an approved SDD whenever the work changes module boundaries, shared
+infrastructure, product behavior, lifecycle, data, privacy, or multiple files.
+If it is missing and approved product scope exists, create and source-review it
+as an already-authorized implementation prerequisite. Do not request ceremonial
+authorization for the missing Plan or SDD, and do not convert the mode to
+`full-lifecycle`.
+
+1. Write `docs/development/active/<feature>/sdd.md` with interfaces, data flow,
+   lifecycle, migration, rollback, shared resources, and test matrix.
+2. Verify every existing method, type, file, setting key, command ID, locale key,
+   and CSS class named in the SDD with `rg`.
+3. Mark proposed names explicitly instead of presenting them as current code.
+4. Audit compatibility with persisted state, old settings, desktop/mobile, and
+   Obsidian mount/unmount/reload behavior.
+5. Review, fix, and repeat until no P0/P1/P2 design findings remain or the user
+   explicitly defers them.
+
+Exit with an approved, source-verified SDD. In `sdd-only`, stop here.
+
+## Phase 2: Implement
+
+Run only in `implement-approved-spec` or `full-lifecycle` mode.
+
+For each behavior slice, loop:
+
+```text
+implement -> focused validation -> review -> fix -> verify
 ```
 
-## Commit Conventions
+1. Confirm the selected Product Spec or Governance Contract, plan, SDD, and
+   tracker agree before editing code.
+2. Mark the active tracker slice `[~]` and keep scope/non-goals visible.
+3. Implement through existing module boundaries and update regression tests in
+   the same slice.
+4. Run the **Local Validation Gate** from `AGENTS.md`, scoped to the changed
+   surface. Do not copy or redefine that gate in this skill.
+5. Use `personal-assistant-review` for the review pass and
+   `personal-assistant-review-followup` for confirmed fixes.
+6. Re-run the smallest checks that prove each fix, then re-review the trigger.
 
-Per AGENTS.md and project memory:
+Do not run `make deploy` after every batch. Use it when app-runtime confidence
+is required, including runtime/UI/shared-infrastructure behavior and the final
+gate specified by the active plan.
 
-- Use Conventional Commits: `feat`, `fix`, `refactor`, `test`, `docs`, `chore`
-- Always sign commits: `git commit -s`
-- Do NOT add `Co-Authored-By` trailer
-- Split commits by intent: runtime/tests, docs/tracker, TODO/future milestones
-- Stage only intended files; do not include unrelated user edits
-- Before committing, inspect: `git status --short`, `git diff --stat`,
-  targeted `git diff -- <path>`
+## Phase 3: Final Review and Smoke
 
-## Integration with Other Skills
+1. Run a final `personal-assistant-review` pass over the complete scoped diff.
+2. Triage and fix only confirmed findings authorized by the implementation
+   request.
+3. Use `obsidian-test-vault-smoke` at the lightest tier that proves the changed
+   behavior.
+4. Require `make deploy` plus observed test-vault behavior for runtime/UI work.
+5. Use `obsidian-ios-real-device-smoke` only when real-device behavior is in
+   scope.
+6. Use `obsidian-community-check` for the release/community gate when required.
+7. Repeat review/fix/verification until no unresolved P0/P1/P2 findings remain
+   or the user explicitly defers them.
 
-This skill orchestrates the full lifecycle. It delegates specialized work:
+Do not claim Obsidian validation without deployed, observed evidence.
 
-- **`personal-assistant-review`**: used in Phase 4 for multi-lane code review.
-  This skill triggers the review; the review skill owns the methodology.
-- **`personal-assistant-review-followup`**: used in Phase 4 to triage and
-  implement fixes from review findings.
-- **`obsidian-test-vault-smoke`**: used in Phase 4 for end-to-end Obsidian
-  validation. This skill specifies the appropriate tier; the smoke skill owns
-  the procedure.
-- **`obsidian-community-check`**: used in Phase 4 for release-gate tier smoke
-  to verify community compliance.
+## Phase 4: Closeout
 
-This skill does NOT duplicate logic from any of those skills. It references
-them by name and delegates execution.
+Run closeout only for `full-lifecycle` or when the user explicitly asks to close
+or archive the active track. Never enter this phase merely because
+`implement-approved-spec` reached validated implementation.
 
-## Anti-Patterns
+Before any terminal-status edit, closeout document creation, rename, or move:
 
-1. **Implement before planning.** SDD bugs become implementation bugs at 10x
-   cost. Always plan structural work before coding.
+1. Resolve the exact `docs/archive/<year>/<feature>/` target.
+2. Read the annual and root Archive indexes and inspect that exact path.
+3. If the exact archive target already exists, fail closed. Do not merge,
+   overwrite, auto-suffix, change source statuses, or partially archive. Report
+   the collision and wait for one explicit target decision.
 
-2. **Skip the inner loop.** "Code compiles" is not "phase done." A phase is
-   done only when tracker, tests, review findings, smoke evidence, and risk
-   table agree with actual behavior.
+After the preflight passes:
 
-3. **Review as ceremony.** If review is not finding bugs, either the
-   implementation is unusually clean or the review is too shallow. In this
-   project, review consistently catches ~30% of implementation-introduced
-   issues.
+1. Reconcile the selected Product Spec or Governance Contract, architecture,
+   plan, SDD, tracker, and actual behavior.
+2. Record focused checks, review findings, smoke evidence, risks, and decisions
+   in the tracker, then create `closeout.md` from the canonical template.
+3. Move unresolved follow-up into `docs/backlog.md` without duplicating the
+   design.
+4. Follow `docs/development/documentation-workflow.md`: retain durable product
+   and governance contracts only when delivered, map every artifact disposition,
+   archive Cancelled/Superseded governance records under the annual Archive,
+   and move the complete package to `docs/archive/<year>/<feature>/`.
+5. Update affected indexes and links.
 
-4. **Mix refactoring with deletion.** Tests cannot verify behavioral
-   equivalence when structural change and behavior change are in the same
-   commit.
+## Commit Boundary
 
-5. **Trust LLM audit at face value.** ~30% false positive rate. Always verify
-   against actual source code.
+Do not stage, commit, push, tag, or publish unless the user explicitly requests
+that exact level of git action.
 
-6. **Use `npm test` as the final gate.** Use `make deploy` — it runs the full
-   chain (Jest + lint + build + deploy).
+When a local commit is requested:
 
-## Related Docs
+1. Inspect `git status --short`, `git diff --stat`, and targeted diffs.
+2. Stage only intended files.
+3. Use a non-interactive Conventional Commit with sign-off, for example
+   `git commit -s -m "feat(<scope>): <summary>"`.
+4. Do not add `Co-Authored-By` trailers.
+5. Keep runtime/tests, docs/tracker, backlog, and release changes split by intent.
 
-- `AGENTS.md` — project conventions and architecture rules
-- `docs/refactor-workflow.md` — reusable refactor workflow (this skill builds
-  on top of it)
-- `docs/pagelet-sdd-guide.md` — Pagelet-specific SDD reference
-- `docs/pa-product-north-star.md` — product standard
-- `docs/todo.md` — deferred items
-- `docs/development-roadmap.md` — release roadmap
+## Output
+
+Report:
+
+- selected authorization mode and stop point
+- artifacts created or updated
+- implementation and review status, when authorized
+- validation run and validation not run
+- unresolved decisions, deferred findings, and residual risk
+
+Never imply that a later phase, commit, smoke tier, or release action ran when it
+did not.
+
+## Related Skills and Docs
+
+- `pa-docs-lifecycle-manager`: natural-language intake, authority routing, and
+  automatic repo-doc maintenance before/around this staged delivery workflow
+- `personal-assistant-review`: code-level review methodology
+- `personal-assistant-review-followup`: finding triage and confirmed fixes
+- `obsidian-test-vault-smoke`: local app/runtime/UI validation
+- `obsidian-ios-real-device-smoke`: real-device iOS validation
+- `obsidian-community-check`: community compliance gate
+- `docs/development/workflows/pagelet-sdd-guide.md`: Pagelet-specific delivery
+- `docs/development/workflows/refactor-workflow.md`: repo-scale phase loop

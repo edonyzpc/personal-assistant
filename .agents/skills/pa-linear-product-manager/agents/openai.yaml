@@ -1,4 +1,6 @@
 interface:
   display_name: "PA Linear Product Manager"
-  short_description: "用 Linear 管理 PA 规划"
-  default_prompt: "Use $pa-linear-product-manager to 记录一个 PA idea 并按 SOP 路由到 Linear。"
+  short_description: "管理 Linear raw idea 收件箱、晋升、版本规划与依赖"
+  default_prompt: "使用 $pa-linear-product-manager 把 raw PA idea 先记录到 Linear 收件箱，仅在需要决策、版本候选或跨会话研究/执行时晋升并链接 B-xxx。"
+policy:
+  allow_implicit_invocation: false
