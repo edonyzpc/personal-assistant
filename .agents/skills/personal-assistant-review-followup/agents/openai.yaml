@@ -1,4 +1,4 @@
 interface:
   display_name: "PA Review Follow-up"
-  short_description: "Triage PA review findings, ask product decisions first, then fix."
+  short_description: "Triage PA review findings and fix only approved issues."
   default_prompt: "Use $personal-assistant-review-followup to triage review findings, ask before product or burden-boundary decisions, and implement validated fixes only when requested."

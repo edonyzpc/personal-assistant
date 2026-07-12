@@ -1,0 +1,4 @@
+interface:
+  display_name: "PA UI/UX Design Audit"
+  short_description: "Audit PA interfaces with real UI evidence and verified findings."
+  default_prompt: "Use $ui-ux-design-audit to audit PA UI/UX in audit-only mode with real interface evidence and verified findings."

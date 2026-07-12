@@ -1,218 +1,167 @@
 ---
 name: stable-release
-description: Execute the stable release workflow for the Personal Assistant Obsidian plugin. Use when the user asks to release, publish a stable version, cut a release, or says "release", "发版", "publish stable", "cut release", "stable release", "发布正式版", "正式发版". For BRAT beta prerelease builds, use `pa-brat-beta-release` instead.
+description: Execute the stable release workflow for the Personal Assistant Obsidian plugin. Use when the user asks to prepare, validate, cut, or publish a stable release; asks for a stable release dry run or follow-up verification; or says "release", "发版", "publish stable", "cut release", "stable release", "发布正式版", or "正式发版". For BRAT beta prerelease builds, use `pa-brat-beta-release` instead.
 ---
 
 # Stable Release
 
-Use this skill for stable (non-prerelease) releases of the Personal Assistant
-Obsidian plugin. The detailed repo SOP is `docs/release-process.md`; read it
-before changing the workflow. Release automation lives in `scripts/release.mjs`,
-`scripts/changelog.mjs`, and `scripts/publish-release.mjs`.
+Read `docs/operations/release-process.md` before every stable-release execution
+or workflow change. Treat that runbook and the current release scripts as the
+canonical command and asset contract. If this skill disagrees with them, stop
+and report the drift instead of improvising.
 
-For BRAT beta prerelease builds, use `pa-brat-beta-release` instead.
+Run commands from the repository root. For prerelease versions, use
+`pa-brat-beta-release` instead.
+
+## Resolve Intent
+
+Classify the current request before changing state:
+
+- `prepare`: inspect state and show the dry run. Do not create a release commit
+  or tag, push anything, create a GitHub Release, or submit a hosted community
+  scan unless the user explicitly requested that scan.
+- `local-release`: prepare, pass the hosted community gate, then create the
+  local release commit and annotated tag. Do not push.
+- `publish`: complete the local release when needed, push `master` and the tag,
+  wait for the workflow, and verify the GitHub Release.
+
+Treat an explicit current-turn request that names the target version and asks to
+publish as authorization for the complete `publish` flow. Do not ask again only
+because the dry run finished. Ask before mutation only when:
+
+- the target version, branch, or requested intent is ambiguous;
+- the proposed version or scope differs from what the user authorized;
+- the dry run reveals unexpected commits, release notes, or risk;
+- a blocking gate requires a product or risk-acceptance decision; or
+- recovery would delete, rewrite, or move a release tag.
 
 ## Safety Boundaries
 
-- Never publish, push tags, or create GitHub Releases without explicit user
-  confirmation in the current turn.
-- Never skip the dry-run step. Always show the dry-run output and wait for user
-  approval before creating the release commit and tag.
-- If any gate fails, stop and report the failure. Do not auto-fix, retry, or
-  work around failures.
-- Do not delete, rewrite, or move release tags unless the user explicitly
-  requests it.
-- Stable releases must run from `master`. The publish script enforces this.
+- Cut stable releases only from `master` with a clean worktree.
+- Never publish without explicit publish intent in the current turn.
+- Never delete, rewrite, or move release tags without an explicit maintainer
+  decision.
+- Stop on failed validation, hosted community `Error`, or workflow failure.
+  Report the evidence; do not bypass the gate.
+- Preserve unrelated user changes. Do not stash, clean, switch branches, or
+  reconcile divergence without authorization.
 
-## Pre-flight Inspection
+## Inspect State
 
-When the user asks to release or prepare a release:
-
-1. Inspect current state:
-   ```bash
-   git status --short --branch
-   git branch --show-current
-   node -p "require('./package.json').version"
-   git tag --sort=-v:refname | head -10
-   ```
-   If `git status --short` shows any uncommitted changes, stop. Ask the user to
-   commit, stash, or clean before proceeding.
-
-2. Confirm the current branch is `master`:
-   - If not on `master`, stop and inform the user. Stable releases must be cut
-     from `master`.
-
-3. Confirm `master` is up to date with `origin/master`:
-   ```bash
-   git fetch origin master
-   git rev-parse master
-   git rev-parse origin/master
-   ```
-   If they diverge, stop and ask the user to reconcile.
-
-4. Determine the target version. If the user did not specify one, suggest the
-   next patch/minor/major based on the changelog subjects:
-   ```bash
-   node scripts/changelog.mjs --target-version <candidate>
-   ```
-
-## Step 1 — Full Validation Gate
-
-Run `make deploy` to execute the full local validation chain (lint, build, test,
-deploy to test vault):
+Run:
 
 ```bash
-make deploy
+git status --short --branch
+git branch --show-current
+node -p "require('./package.json').version"
+git tag --sort=-v:refname | sed -n '1,20p'
+git fetch origin master
+git rev-parse HEAD
+git rev-parse origin/master
 ```
 
-If `make deploy` fails, stop and report the error. Do not proceed.
+Stop if the worktree is dirty or the branch is not `master`.
 
-## Step 2 — Dry Run (mandatory)
+Resolve one of these states:
 
-Show the user what the release will contain. Never skip this step:
+- Fresh source state: the target is greater than `package.json`, its tag does
+  not exist, and `HEAD` equals `origin/master`. Use `HEAD` as `source_head`.
+- Existing local-release state: `package.json` equals the target, the target tag
+  points to `HEAD`, and `HEAD^` equals `origin/master`. Use `HEAD^` as
+  `source_head`; do not recreate the release commit.
+
+Stop on any other local/remote or version/tag relationship and ask the user how
+to reconcile it. If no version was supplied, use the read-only changelog preview
+to propose one, then obtain approval before changing release state:
+
+```bash
+node scripts/changelog.mjs --target-version <candidate>
+```
+
+## Preview Fresh Releases
+
+For a fresh source state, always run:
 
 ```bash
 make release-dry-run VERSION=<target-version>
 ```
 
-Present the dry-run output to the user, including:
-- Current version and target version
-- Changelog range and commit subjects
-- Generated changelog section
+Report the current and target versions, changelog range, commit subjects, and
+generated section. Continue directly when they match an already-authorized
+`local-release` or `publish` request. A previously created local-release state
+cannot be dry-run again with the same version; validate its release commit and
+tag instead.
 
-Then ask for explicit confirmation:
+## Hosted Community Gate
 
-> The dry-run above shows the release plan for `<target-version>`. Shall I
-> proceed with creating the release commit and tag?
+Before `local-release` or `publish`, use `obsidian-community-check` to trigger or
+inspect the hosted scan for the exact `source_head` commit.
 
-**Do not proceed without user approval.**
+Verify all of the following:
 
-## Step 3 — Create Release Commit and Tag
+- `source_head` equals `origin/master`.
+- The hosted result reports the same commit SHA as `source_head`.
+- The scan completed successfully and contains no `Error` findings.
 
-After explicit user approval:
+Wait for a pending matching scan. Treat `Error` or `Failed` as a blocker. Do not
+reuse a result for another commit. For `prepare`, only report this as a remaining
+gate unless the user explicitly asked to submit the hosted scan.
+
+## Create Local Release
+
+For a fresh `local-release` or `publish` flow, run the complete release gate:
 
 ```bash
 make release VERSION=<target-version>
 ```
 
-This will:
-1. Verify clean worktree
-2. Verify version validity and tag availability
-3. Verify the current package.json version is already tagged
-4. Generate the changelog section
-5. Run `git diff --check`, third-party notice check, tests, lint, build, and
-   bundle audit (unless `SKIP_CHECKS=1` and checks were already run in Step 1)
-6. Update `package.json`, `package-lock.json`, `manifest.json`,
-   `manifest-beta.json`, `versions.json`, `CHANGELOG.md`, and `NOTICE`
-7. Create commit `[release] v<target-version>, check the CHANGELOG.md for details`
-8. Create annotated tag `<target-version>`
+Do not pass `SKIP_CHECKS=1` or `--skip-checks`. Do not use `make deploy` as a
+substitute: `make release` must run its own whitespace, notices, coverage test,
+lint, build, and bundle-audit checks.
 
-If `make deploy` was run in Step 1 and no files changed between then and now,
-pass `SKIP_CHECKS=1` to avoid re-running the full check suite:
-
-```bash
-make release VERSION=<target-version> SKIP_CHECKS=1
-```
-
-After the release commit is created, verify the result:
+Verify:
 
 ```bash
 git log --oneline -1
 git tag --list <target-version>
-git status --short
-```
-
-## Step 4 — Publish Confirmation Gate
-
-Before publishing, present the state to the user:
-
-```bash
-git status --short
-git branch --show-current
-node -p "require('./package.json').version"
 git rev-parse <target-version>^{}
 git rev-parse HEAD
+git rev-parse HEAD^
+git status --short
 ```
 
-Verify all of these before asking to publish:
-- `git status --short` is empty (clean worktree)
-- Current branch is `master`
-- `package.json` version equals `<target-version>`
-- `git rev-parse <target-version>^{}` equals `git rev-parse HEAD` (tag points
-  to HEAD)
+Require the tag to point to `HEAD`, the worktree to be clean, and the release
+commit parent to equal the scanned `source_head`.
 
-Then ask for explicit confirmation:
+Stop here for `local-release`.
 
-> Release commit and tag `<target-version>` are ready. Shall I publish to
-> GitHub? This will push the branch and tag to origin and trigger the release
-> workflow.
+## Publish And Verify
 
-**Do not publish without user approval.**
-
-## Step 5 — Publish
-
-After explicit user approval:
+For `publish`, recheck the clean worktree, `master`, package version, and tag at
+`HEAD`, then run:
 
 ```bash
 make publish VERSION=<target-version>
 ```
 
-This pushes both `master` and the tag to `origin`, then watches the GitHub
-Actions release workflow via `gh run watch --exit-status`.
-
-If the workflow fails, report the failure and the workflow URL. Do not retry
-automatically.
-
-## Step 6 — Post-Publish Verification
-
-After successful publish, verify the GitHub Release:
+Do not claim completion until the GitHub Actions release workflow succeeds and
+the Release object is non-draft, non-prerelease, and contains the canonical
+assets:
 
 ```bash
 gh release view <target-version> \
-  --json tagName,name,isPrerelease,isDraft,assets \
-  --jq '{tagName,name,isPrerelease,isDraft,assets:[.assets[].name]}'
+  --json url,tagName,name,isPrerelease,isDraft,assets \
+  --jq '{url,tagName,name,isPrerelease,isDraft,assets:[.assets[].name]}'
 ```
 
-Expected:
-- `tagName` and `name` equal `<target-version>`
-- `isPrerelease` is `false`
-- `isDraft` is `false`
-- Assets include `main.js`, `manifest.json`, `styles.css`, `LICENSE`,
-  `NOTICE`, and `THIRD_PARTY_NOTICES.md`
-
-Optionally verify the released `manifest.json` asset version:
-
-```bash
-gh release download <target-version> --pattern manifest.json --output - | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version"
-```
-
-## Post-Publish Checklist
-
-Report the following to the user after a successful publish:
-
-1. GitHub Release URL and asset verification status
-2. Whether community plugin check should be run (use `obsidian-community-check`
-   skill if needed)
-3. Whether app smoke test should be run (use `obsidian-test-vault-smoke` skill
-   if needed)
-4. Remind the user to verify in Obsidian community plugin update flow when the
-   release is indexed
-
-## Recovery
-
-- If `make release` fails before the release commit, inspect `git status
-  --short`, fix the issue, and rerun the command.
-- If the release commit exists but the tag was not pushed, rerun
-  `make publish VERSION=<target-version>`.
-- If a tag was created incorrectly, do not delete or retag without an explicit
-  user decision.
-- If the GitHub Actions workflow fails, inspect the workflow run before
-  retrying. Report the URL and failure details to the user.
+Use the canonical runbook for the exact asset set and recovery procedure. If the
+workflow or Release verification is unavailable, report the push separately and
+leave publication unverified.
 
 ## Related Skills
 
-- For BRAT beta prerelease builds, use `pa-brat-beta-release`.
-- For app-level smoke validation, use `obsidian-test-vault-smoke`.
-- For real-device iOS validation, use `obsidian-ios-real-device-smoke`.
-- For community compliance scan, use `obsidian-community-check`.
-- For code-level release-readiness review, use `personal-assistant-review`.
+- Use `pa-brat-beta-release` for BRAT prereleases.
+- Use `personal-assistant-review` for code-level release readiness.
+- Use `obsidian-community-check` for the hosted pre-publication gate.
+- Use `obsidian-test-vault-smoke` for app smoke evidence.
+- Use `obsidian-ios-real-device-smoke` for real-device iOS evidence.

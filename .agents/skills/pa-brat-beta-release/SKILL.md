@@ -6,7 +6,7 @@ description: Manage Personal Assistant BRAT beta prerelease workflow. Use when t
 # PA BRAT Beta Release
 
 Use this skill for Personal Assistant prerelease builds intended for BRAT beta
-testers. The detailed repo SOP is `docs/brat-beta-testing.md`; read it before
+testers. The detailed repo SOP is `docs/operations/brat-beta-testing.md`; read it before
 changing the workflow or executing a beta release.
 
 ## Branch Model

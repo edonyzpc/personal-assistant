@@ -5,439 +5,101 @@ description: Validate the personal-assistant Obsidian plugin in the repo-local t
 
 # Obsidian Test Vault Smoke
 
-## Core Rule
+## Core Rules
 
-Per AGENTS.md Testing Instructions, do not claim Obsidian validation without deployed evidence. Specifically:
+- Do not claim Obsidian validation without deploying the current build to `test/` and observing the affected behavior in the running app.
+- Treat Jest, lint, type-check, build, and source scans as implementation validation, not app smoke.
+- Require visible-window interaction for UI/UX PASS; CLI, DOM, and screenshots support the finding but do not replace real interaction.
+- Use `obsidian vault=test <command>` for every Obsidian CLI call. `vault=test` must precede the command.
+- Choose the lightest tier that covers the changed surface.
 
-- App smoke requires `make deploy` into the repo-local `test/` vault and observed behavior through CLI evidence, DOM/runtime artifacts, screenshots, console output, or direct UI inspection.
-- Automated Jest/lint/build checks are implementation validation, not app smoke.
-- UI/UX smoke requires the visible app window and real user-like interaction, not CLI or DOM checks alone.
+## Validation Gate
+
+For every code, DOM, or CSS change, run the complete **Local Validation Gate** from repo-root `AGENTS.md` before app smoke. Run all commands currently listed there, including the runtime `<style>` / `innerHTML` / `outerHTML` source scan.
+
+Treat the source-scan `rg` exit code `1` with no output as PASS. Inspect every match manually. `make deploy` and the hosted community scan do not replace this local source scan.
 
 ## Smoke Tiers
 
-Pick the lightest tier that covers the changed surface. Do not blindly run both full Jest and `make deploy` when `make deploy` will already run test, lint, and build; use focused checks first for fast failure localization, then close with the appropriate app tier.
-
 | Tier | Use when | Required checks |
 | --- | --- | --- |
-| `quick` | Narrow code-only or test-only change | `git status --short`, relevant `git diff`, nearest Jest suites, `npx tsc -noEmit -skipLibCheck` when type-sensitive, `git diff --check` |
-| `app-runtime` | Runtime, command, packaging, Pagelet shell, Chat/Preview/Stats mount, Memory readiness | `make deploy`, plugin reload, CLI/DOM runner checks, fresh console/error capture |
-| `full-ui` | Visible UI, CSS/layout/copy, Pagelet workflow, settings, release/beta confidence | `app-runtime` plus real Obsidian window interaction, screenshots, UX notes, and provider/write-path checks when applicable |
-| `release-gate` | Release, broad refactor, shared infrastructure | Focused checks if useful, then `make deploy`, full app runtime, required UI/UX surfaces, docs/tracker reconciliation if smoke evidence changes. Also run `obsidian-community-check` for community compliance |
+| `quick` | Narrow code-only or test-only change | Complete Local Validation Gate with focused suites; stop before app smoke only when no runtime/user path changed |
+| `app-runtime` | Runtime, command, packaging, Pagelet shell, Chat/Preview/Stats mount, Memory readiness | Local Validation Gate, `make deploy`, plugin reload, affected CLI/DOM probes, fresh console/error capture |
+| `full-ui` | Visible UI, CSS/layout/copy, Pagelet workflow, settings, keyboard/focus, mobile emulation | `app-runtime` plus real Obsidian interaction, screenshots, UX notes, and provider/write-path checks when applicable |
+| `release-gate` | Release, broad refactor, shared infrastructure | Local Validation Gate, `make deploy`, broad runtime matrix, required UI surfaces, and release evidence reconciliation |
 
-If `make deploy` passes, it has already run full Jest, lint, build, and asset deployment. Run standalone `npm test -- --runInBand` before `make deploy` only when you need serialized failure detail or a broad pre-deploy signal.
+`make deploy` already runs full Jest, lint, build, and asset deployment. Run standalone full Jest first only when serialized failure detail or a separate pre-deploy signal is useful.
 
-## Fast Path
+## Workflow
 
-Run from the `personal-assistant` repo root.
-
-1. Inspect scope:
-   - `git status --short`
-   - Review relevant diffs and identify affected surfaces: Chat, Memory/VSS, Pagelet, Preview, Stats, settings, packaging, or release.
-
-2. Run focused tests first:
-   - Use nearest Jest tests for narrow changes.
-   - For shared runtime or type-sensitive changes, include `npx tsc -noEmit -skipLibCheck`.
-   - For broad or release-facing work, prefer `make deploy` as the final local gate because it runs tests, lint, build, and deploys assets.
-
-3. Deploy and reload the real plugin:
+1. Inspect `git status --short`, relevant diffs, and affected surfaces.
+2. Run the complete Local Validation Gate from `AGENTS.md`.
+3. Select the smoke tier.
+4. For app smoke, deploy and reload:
 
 ```bash
 make deploy
-obsidian vault info=path vault=test
-obsidian plugin:reload id=personal-assistant vault=test
-obsidian plugin id=personal-assistant vault=test
+obsidian vault=test vault info=path
+obsidian vault=test plugin:reload id=personal-assistant
+obsidian vault=test plugin id=personal-assistant
 ```
 
-Prefer `obsidian plugin:reload id=personal-assistant vault=test` after `make deploy`; do not restart or manually disable/enable the plugin unless reload fails or stale app state is suspected.
-
-4. Run CLI runtime smoke for fast functional confidence:
+5. Read only the references required by the changed surface:
+   - For any `app-runtime`, `full-ui`, or `release-gate` run, read [CLI runtime smoke](references/cli-runtime.md).
+   - For visible UI/UX work, read [UI/UX interaction smoke](references/ui-ux-smoke.md).
+   - For Pagelet work, read both CLI runtime smoke and [Pagelet smoke](references/pagelet-smoke.md).
+6. For historical fixtures, regression expectations, and prior evidence, consult the current [Pagelet smoke checklist](../../../docs/development/validation/pagelet-smoke-checklist.md). Treat its verification log as provenance, not current-run evidence.
+7. Record concrete `PASS`, `FAIL`, `BLOCKED`, or `SKIP` outcomes.
+8. Always restore debug/mobile state, including after failure or interruption:
 
 ```bash
-obsidian open path=pagelet-smoke-golden.md vault=test
-obsidian command id=personal-assistant:pa-pagelet:open-panel vault=test
-obsidian dev:dom selector=.pa-pagelet-panel total vault=test
-obsidian dev:dom selector=.pa-pagelet-panel text vault=test
+obsidian vault=test dev:debug off
+obsidian vault=test dev:mobile off
 ```
 
-5. Decide whether UI/UX smoke is required:
-   - Required for visible UI, CSS, layout, copy, navigation, keyboard, focus, modal, mobile, or interaction changes.
-   - Required for broad release/beta confidence even when CLI smoke passes.
-   - Optional only for purely internal changes with no visible user path.
-
-6. Record evidence with concrete `PASS`, `FAIL`, `BLOCKED`, or `SKIP` outcomes.
-
-## Obsidian CLI Rules
-
-First check `command -v obsidian`. If the CLI says it cannot find Obsidian, open the test vault once:
-
-```bash
-/Applications/Obsidian.app/Contents/MacOS/Obsidian "obsidian://open?vault=test&file=pagelet-smoke-golden.md"
-```
-
-If the CLI still cannot find Obsidian from the sandbox but the app is running, rerun the `obsidian ...` command with approval outside the sandbox. This CLI talks to the running app over local IPC, which can be blocked by sandboxing.
-
-Always add `vault=test` when multiple vaults exist or when the active vault is not certain:
-
-```bash
-obsidian vaults verbose
-obsidian vault info=path vault=test
-obsidian version vault=test
-```
-
-Useful confirmed commands for this repo:
-
-```bash
-obsidian plugins:enabled filter=community versions format=tsv vault=test
-obsidian plugin id=personal-assistant vault=test
-obsidian commands filter=personal-assistant vault=test
-obsidian command id=personal-assistant:open-chat vault=test
-obsidian command id=personal-assistant:pa-pagelet:open-panel vault=test
-obsidian command id=personal-assistant:pa-pagelet:review-current vault=test
-obsidian tabs ids vault=test
-obsidian workspace ids vault=test
-```
-
-Use file commands for setup and post-run evidence:
-
-```bash
-obsidian open path=pagelet-smoke-golden.md vault=test
-obsidian files folder=.pagelet ext=md vault=test
-obsidian read path=.pagelet/<review-file>.md vault=test
-obsidian search query="pagelet: true" path=.pagelet limit=5 vault=test
-```
-
-Use `obsidian reload vault=test` for a vault reload and `obsidian restart` only when plugin reload and vault reload cannot clear stale state.
-
-## Developer Inspection
-
-Use CLI developer commands for setup, instrumentation, and debugging. Use Computer Use or direct visible-app inspection for the actual UI/UX interaction path when user experience is in scope.
-
-DOM assertions:
-
-```bash
-obsidian dev:dom selector=.pa-pagelet-panel total vault=test
-obsidian dev:dom selector=.pa-pagelet-panel text vault=test
-obsidian dev:dom selector=.pa-pagelet-panel attr=aria-label vault=test
-obsidian dev:dom selector=.pa-pagelet-panel css=display vault=test
-```
-
-Runtime eval:
-
-```bash
-obsidian eval code="app.vault.getName()" vault=test
-obsidian eval code="Object.keys(app.plugins.plugins).filter(id => id.includes('personal'))" vault=test
-obsidian eval code="app.plugins.plugins['personal-assistant']?.settings?.aiProvider" vault=test
-```
-
-`eval` does not support top-level `await`. Wrap async work in an async IIFE:
-
-```bash
-obsidian eval code="(async()=>await app.vault.adapter.read('pagelet-smoke-runner.js').catch(()=> 'missing'))()" vault=test
-```
-
-Console capture must be sequential. Use a fresh debug window so old buffered errors are not mistaken for this smoke run. Do not run `dev:console` and `dev:debug off` in parallel:
-
-```bash
-obsidian dev:debug off vault=test
-obsidian dev:debug on vault=test
-# run the action under test
-obsidian dev:console limit=120 vault=test
-obsidian dev:errors vault=test
-obsidian dev:debug off vault=test
-```
-
-Treat `dev:errors` entries whose timestamps predate the fresh `dev:debug on` as historical noise unless they recur during the current action. Record low-risk Obsidian/app noise separately from plugin errors.
-
-Screenshots and mobile emulation:
-
-```bash
-obsidian dev:screenshot path=/private/tmp/personal-assistant-smoke.png vault=test
-obsidian dev:mobile on vault=test
-obsidian dev:mobile off vault=test
-```
-
-Use CLI developer commands for instrumentation and setup. Do not use them as a substitute for UI/UX smoke when the user-facing experience is part of the change.
-
-For real-device iOS validation after local smoke passes, use `obsidian-ios-real-device-smoke`.
-
-### UI Evidence Mismatch
-
-When Computer Use, screenshot, accessibility tree, and DOM disagree, do not guess. Cross-check visibility and hit testing (pixel coordinates below assume ~1440px-wide Obsidian window — measure the actual panel rect first and adjust):
-
-```bash
-obsidian eval code="(()=>{const el=document.querySelector('.pa-pagelet-panel'); if(!el) return null; const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return {x:r.x,y:r.y,width:r.width,height:r.height,display:s.display,visibility:s.visibility,opacity:s.opacity,zIndex:s.zIndex,text:el.textContent?.slice(0,160)}})()" vault=test
-obsidian eval code="(()=>[[900,80],[1050,120],[1240,120]].map(([x,y])=>{const el=document.elementFromPoint(x,y); return {x,y,tag:el?.tagName,cls:el?.className,text:el?.textContent?.slice(0,80)}}))()" vault=test
-```
-
-Use this as supporting evidence only. A visible UI/UX PASS still needs real-window observation or screenshot evidence after the UI settles.
-
-## UI/UX Interaction Smoke
-
-Run UI/UX smoke when the change touches visible UI, copy, layout, CSS, commands, settings, modals, keyboard/focus behavior, mobile layout, or any workflow a real user clicks through. CLI runtime smoke proves the plugin can execute; UI/UX smoke proves the product experience is usable, understandable, and visually sound.
-
-Use the real Obsidian window. Prefer Computer Use for clicking, typing, scrolling, dragging, keyboard shortcuts, modal confirmation, and visual inspection. Use CLI only to prepare state, open the target file/view, reload the plugin, capture screenshots, and query DOM details that support the visual finding.
-
-Before interacting:
-
-```bash
-make deploy
-obsidian plugin:reload id=personal-assistant vault=test
-obsidian open path=<target-note>.md vault=test
-obsidian dev:screenshot path=/private/tmp/before-smoke.png vault=test
-```
-
-Then use Computer Use or direct visible-app inspection to complete the user path.
-
-### Required UI/UX Checks
-
-Entry and discoverability:
-
-- Verify the user can start the feature from the expected visible entry: ribbon icon, command palette, sidebar view, settings control, or in-panel button.
-- Confirm labels match product language and are understandable without reading docs.
-- Confirm similar entry points remain distinct, such as Pagelet panel open vs current-note review.
-
-Real interaction:
-
-- Click primary and secondary actions, not only command IDs.
-- Type into real textareas/inputs and verify focus, cursor, selection, shortcuts, and submit behavior.
-- Exercise close/reopen, cancel, escape, stop, retry, remove, and back-out paths when present.
-- Scroll panels and long content; verify headers, toolbars, buttons, and modals remain reachable.
-- Verify keyboard navigation and visible focus rings for the changed workflow when practical.
-
-Visual design:
-
-- Check hierarchy, spacing, alignment, density, and whether the most important action is visually obvious.
-- Check that text does not overlap, clip, truncate awkwardly, or overflow at realistic sidebar widths.
-- Check empty, loading, success, error, disabled, and long-content states when affected.
-- Check light/dark theme or narrow/mobile emulation when CSS/layout risk is present.
-- Treat screenshots as evidence, but still state what was visually observed.
-
-UX feedback:
-
-- Verify the user receives timely feedback for slow, costly, provider-backed, or background actions.
-- Verify progress, status, notices, and error copy are calm, specific, and actionable.
-- Verify destructive, write, provider-call, or cost-bearing actions have clear confirmation or preview when required.
-- Verify successful actions land the user somewhere sensible and do not unexpectedly overwrite drafts or navigation state.
-
-Product language: follow **Memory/VSS Product Rules** from AGENTS.md.
-
-Accessibility and robustness:
-
-- Check visible focus, aria labels for icon-only controls, modal focus behavior, and keyboard escape paths when the area changed.
-- Verify UI state survives close/reopen or reload when persistence is expected.
-- If GUI automation cannot expose the live accessibility tree, combine visible inspection, screenshots, and DOM/locale checks instead of over-trusting one source.
-
-### Surface UI/UX Paths
-
-Pagelet:
-
-- Keep `open-panel` distinct from `review-current` (`personal-assistant:pa-pagelet:open-panel` vs `personal-assistant:pa-pagelet:review-current`).
-- Click the Pagelet ribbon icon and command palette entry `Pagelet: Review current note`; verify immediate current-note review behavior.
-- Run command palette `Pagelet: Open Pagelet`; verify the panel opens without provider call until the panel button is used.
-- Click scope controls `Current`, `Yesterday`, `Last 3 days`, and `Last 7 days`; verify included/skipped rows are understandable and not noisy.
-- Click `Review selected`, `Stop`, preview modal `Confirm`/`Cancel`, `Add to draft`, draft textarea edit, `Remove`, `Dismiss`, `Source`, `Related notes`, and `Research` when those affordances are present.
-- Verify `.pagelet/` generated review notes are summarized rather than overwhelming scope rows.
-- Verify the panel status, mascot/status treatment, draft area, suggestion cards, and modal hierarchy help the workflow rather than distracting from it.
-- Treat provider quota/rate limits as `BLOCKED`, not success.
-
-Chat:
-
-- Open with `obsidian command id=personal-assistant:open-chat vault=test` or the visible command/sidebar path.
-- Send only the minimal prompt needed for the changed path.
-- Click/type in the composer, observe streaming, stop/retry/copy/menu behavior when affected.
-- Verify the composer remains reachable while results stream and after scrolling history.
-- For Memory prompts, verify the blocking/non-blocking state feels intentional and the user understands what will happen before AI provider calls.
-- Confirm chat is not blocked by background changed-note refresh when durable Memory is ready and auto policy allows background maintenance.
-- For mobile or keyboard changes, verify real-device or mobile-emulation behavior and do not treat static CSS inspection as sufficient.
-
-Memory/VSS:
-
-- Trigger `Prepare memory` or `Update memory` prompts through the real chat path when the change affects user-facing Memory readiness.
-- Verify first-use, missing local index, settings-stale, and costly rebuild paths ask for explicit user confirmation.
-- Verify confirmation copy, progress, and background-state claims match **Memory/VSS Product Rules** from AGENTS.md.
-
-Records Preview / Vault Statistics Preview:
-
-- Open the view from the visible command path and inspect real layout.
-- Resize or use narrow panes when layout changed.
-- Close/reopen the view and verify no stale render, duplicate root, or lost user settings.
-- Preserve settings such as `previewLimits`, `targetPath`, and `statisticsType`.
-
-Settings:
-
-- Open Settings -> Personal Assistant through the Obsidian UI when settings controls changed.
-- Click toggles, dropdowns, text inputs, secret/key controls, and any reset/update actions touched by the change.
-- Verify saved state, validation, disabled states, warnings, and copy in the actual settings pane.
-- Distinguish persisted `test/.obsidian/plugins/personal-assistant/data.json` from current code defaults.
-
-### UI/UX Evidence
-
-Report UI/UX smoke separately from CLI runtime smoke:
-
-```markdown
-UI/UX smoke:
-- PASS: `<visible path>` - `<what was clicked/typed and what the user saw>`
-- FAIL: `<visible path>` - `<user-facing issue and why it matters>`
-- BLOCKED: `<path>` - `<external blocker>`
-
-Screenshots:
-- `/private/tmp/before-smoke.png`
-- `/private/tmp/after-smoke.png`
-
-UX notes:
-- Discoverability:
-- Visual hierarchy:
-- Feedback/error states:
-- Keyboard/focus:
-- Residual risk:
-```
-
-Classify UX findings by user impact:
-
-- `UX-P0`: blocks the core workflow or can cause unintended writes/provider calls.
-- `UX-P1`: likely to confuse users, hide important safety/cost information, or make recovery hard.
-- `UX-P2`: polish issue that does not block the task but weakens trust or clarity.
-
-## Pagelet Runner
-
-For Pagelet regressions, prefer the durable shell runner after deployment and plugin reload:
-
-```bash
-make deploy
-cp scripts/pagelet-smoke-runner.js test/pagelet-smoke-runner.js
-obsidian plugin:reload id=personal-assistant vault=test
-obsidian open path=pagelet-smoke-golden.md vault=test
-obsidian eval code="(async()=>eval(await app.vault.adapter.read('pagelet-smoke-runner.js')))()" vault=test
-```
-
-If CLI eval fails, use Obsidian DevTools Console:
-
-```js
-eval(await app.vault.adapter.read("pagelet-smoke-runner.js"))
-```
-
-After the runner completes:
-
-```bash
-node - <<'NODE'
-const result = require("./test/pagelet-smoke-runtime-result.json");
-const totals = result.checks.reduce((memo, check) => {
-  memo[check.status] = (memo[check.status] || 0) + 1;
-  return memo;
-}, {});
-console.log({ env: result.env, totals, bugs: result.bugs });
-NODE
-```
-
-Interpretation:
-
-- `PASS`: expected product behavior was observed in the live app.
-- `FAIL`: likely regression or product gap; inspect `detail` before severity.
-- `BLOCKED`: external dependency prevented a full assertion, usually provider quota or rate limits.
-- `SKIP`: optional UI affordance or fixture was not present in that run.
-
-If the runner sends prompts to the configured AI provider, treat that as allowed for smoke unless the user says otherwise, and report which smoke path ran plus the provider/model from the result artifact.
-
-## Pagelet Full Flow Smoke
-
-Use this when Pagelet UI, state, save flow, write actions, related notes, provider integration, or docs for the user workflow changed. Keep the target markdown note active before review.
-
-Recommended sequence:
-
-```bash
-make deploy
-cp scripts/pagelet-smoke-runner.js test/pagelet-smoke-runner.js
-obsidian plugin:reload id=personal-assistant vault=test
-obsidian open path=pagelet-smoke-golden.md vault=test
-obsidian eval code="app.workspace.getActiveFile()?.path" vault=test
-obsidian dev:debug off vault=test
-obsidian dev:debug on vault=test
-obsidian eval code="(async()=>eval(await app.vault.adapter.read('pagelet-smoke-runner.js')))()" vault=test
-```
-
-Then use the real Obsidian window for the UX path where practical:
-
-- Open Pagelet from the visible pet/ribbon or command path.
-- Toggle `Current`, `Yesterday`, `Last 3 days`, and `Last 7 days`; verify selected rows, skipped rows, and text-unit estimates.
-- Run `Review selected` only on test-vault fixture notes; report provider/model and note paths.
-- Verify loading/progress, result cards, related notes, source buttons, `Research`, `Add to draft`, `Dismiss`, `Remove`, draft textarea editing, and `Expand to tab`.
-- For save flow, verify preview/confirmation appears before writing, then confirm and read the generated `.pagelet/` note.
-- Verify Write Action Framework evidence in console when saving: `gate.target-confinement.ok`, `gate.preview.shown`, `gate.confirmation.received`, `gate.stale-reread.ok`, and `execute.ok`.
-
-Useful post-save evidence:
-
-```bash
-obsidian files folder=.pagelet ext=md vault=test
-obsidian read path=.pagelet/<new-review-note>.md vault=test
-obsidian dev:console limit=200 vault=test
-obsidian dev:errors vault=test
-obsidian dev:debug off vault=test
-```
-
-Provider-backed review is allowed only for repo-local test-vault fixture content unless the user approves broader data. If CLI/Computer Use action is blocked because note text may be sent to an AI provider, do not work around the block; ask for explicit approval or mark that path `BLOCKED`.
-
-## Cross-Surface Mount Matrix
-
-Run this lightweight matrix after broad plugin, command registration, packaging, or shared UI changes. It is not a substitute for surface-specific UI/UX smoke.
-
-```bash
-obsidian command id=personal-assistant:open-chat vault=test
-obsidian dev:dom selector=.llm-view total vault=test
-obsidian dev:dom selector=.llm-chat-container total vault=test
-obsidian dev:dom selector=.llm-input total vault=test
-
-obsidian command id=personal-assistant:preview-records vault=test
-obsidian dev:dom selector=#persoanl-assistant-record-list total vault=test  # typo matches source code RecordList.tsx
-obsidian dev:dom selector=.pa-recordlist-preview-view total vault=test
-
-obsidian command id=personal-assistant:show-statistics vault=test
-obsidian dev:dom selector=.pa-statistics-view total vault=test
-obsidian dev:dom selector=.pa-statistics-view text vault=test
-
-obsidian eval code="(()=>{const s=app.plugins.plugins['personal-assistant']?.settings; return {aiProvider:s?.aiProvider ?? null, chatModelName:s?.chatModelName ?? null, pageletEnabled:s?.pagelet?.enabled ?? null, pageletPreloadEnabled:s?.pagelet?.preloadEnabled ?? null};})()" vault=test
-```
-
-Do not send a Chat prompt, trigger Memory rebuild, or change settings in this matrix unless the changed code requires it.
-
-## Stop Conditions
-
-Stop and ask before continuing when:
-
-- The smoke path would publish, push, create releases, or mutate non-test external systems.
-- The test requires deleting or rewriting test vault data that may be user-authored.
-- Provider configuration is missing and the requested validation specifically depends on a live provider response.
-- A release path is ambiguous, especially around version/tag baseline.
+## Safety Boundaries
+
+- Limit provider-backed checks to repo-local test-vault fixtures unless the user approves broader data. Report provider/model, note paths, and prompts sent.
+- If a provider, browser, CLI, or GUI tool blocks the action, do not bypass the block; report `BLOCKED` and residual risk.
+- Stop before deleting or rewriting test-vault data that may be user-authored.
+- Stop before publishing, pushing, creating releases, or mutating non-test external systems unless the user authorized that action.
+- Keep hosted Obsidian Community scans distinct from the local source scan. A hosted scan submits a ref to an external service and is never an automatic part of this skill.
+- During `release-gate`, invoke `obsidian-community-check` only when the user explicitly requested the hosted scan or the active `stable-release` workflow explicitly authorized it. Otherwise report it as not run.
 
 ## Output
 
-Use a concise verification log:
-
 ```markdown
 Validation:
-- PASS: `<test command>` - `<observed result>`
-- BLOCKED: `<path>` - `<external blocker and residual risk>`
+- PASS: `<check>` - `<observed result>`
 - FAIL: `<path>` - `<regression or product gap>`
+- BLOCKED: `<path>` - `<external blocker and residual risk>`
+- SKIP: `<path>` - `<why it was outside this tier>`
 
 CLI runtime smoke:
 - Vault: `test/`
-- Deployment: `make deploy`
-- Reload: `obsidian plugin:reload id=personal-assistant vault=test`
-- Obsidian: `<obsidian version vault=test>`
+- Tier: `<quick/app-runtime/full-ui/release-gate>`
+- Deployment/reload: `<result>`
+- Obsidian: `<version>`
 - Target: `<note/view/command>`
-- Provider/model: `<if used>`
-- Prompt sent: `<if any>`
-- Artifact: `<runtime file, DOM output, console excerpt>`
+- Provider/model/prompt: `<if used>`
+- Artifact: `<DOM output, console excerpt, runtime file>`
 
 UI/UX smoke:
-- Visible path: `<ribbon/menu/command/panel/modal path>`
-- Interaction: `<clicks, typing, keyboard shortcuts, scroll, close/reopen>`
-- Observed UX: `<visual clarity, feedback, layout, copy, accessibility>`
+- Visible path: `<entry and interaction>`
+- Observed UX: `<layout, copy, feedback, accessibility>`
 - Screenshot: `<path if captured>`
 - UX findings: `<UX-P0/UX-P1/UX-P2 or none>`
+
+Cleanup:
+- Debug off: PASS/FAIL
+- Mobile emulation off: PASS/FAIL
+
+Hosted community scan:
+- Authorized and run / not authorized and not run / BLOCKED
 ```
 
 ## Related Skills
 
-- For code-level review, use `personal-assistant-review`.
-- For real-device iOS validation, use `obsidian-ios-real-device-smoke`.
-- For community compliance scan, use `obsidian-community-check`.
+- Use `personal-assistant-review` for code-level review.
+- Use `obsidian-ios-real-device-smoke` after local app smoke for real-device iOS validation.
+- Use `obsidian-community-check` only for an authorized hosted community scan.

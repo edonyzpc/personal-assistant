@@ -88,9 +88,9 @@ Product:
 
 ## Fix Discipline
 
-- Do not fix deferred findings unless the user asks or the fix is essentially
-  free and touches the same lines safely.
-- If fixing a non-must issue opportunistically, say so and keep it tiny.
+- Do not fix deferred findings unless the user explicitly adds them to the
+  confirmed fix set.
+- Do not make opportunistic changes outside the confirmed fix set.
 - Preserve user edits and existing uncommitted changes.
 - Use `apply_patch` for manual edits.
 - Per AGENTS.md Testing Instructions, do not claim Obsidian validation without

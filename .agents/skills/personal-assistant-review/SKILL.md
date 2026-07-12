@@ -1,6 +1,6 @@
 ---
 name: personal-assistant-review
-description: Review uncommitted or PR diffs in the personal-assistant Obsidian plugin with project-specific risk lanes, second-layer future-risk checks, severity discipline, subagent review routing, and validation boundaries. Use when the user asks for code review, agent team review, multi-angle review, review-first analysis, code-level release-readiness review, hidden side effects, compatibility risk, edge cases, security/performance risk, test gaps, maintenance cost, or comparison of review quality in this repository. For product/milestone-level release readiness via Linear, use `pa-linear-product-manager` instead.
+description: Review uncommitted or PR diffs in the personal-assistant Obsidian plugin with project-specific risk lanes, second-layer future-risk checks, severity discipline, subagent review routing, and validation boundaries. Use when the user asks for code review, agent team review, multi-angle review, review-first analysis, code-level release-readiness review, hidden side effects, compatibility risk, edge cases, security/performance risk, test gaps, maintenance cost, or comparison of review quality in this repository. For a cross-surface UI/UX design audit, use `ui-ux-design-audit`; for product/milestone-level release readiness via Linear, use `pa-linear-product-manager`.
 ---
 
 # Personal Assistant Review
@@ -231,6 +231,7 @@ and list remaining validation gaps.
 ## Related Skills
 
 - To triage and implement fixes from this review, use `personal-assistant-review-followup`.
+- For cross-surface UI/UX design audits and visual baselines, use `ui-ux-design-audit`.
 - For app-level smoke validation, use `obsidian-test-vault-smoke`.
 - For real-device iOS validation, use `obsidian-ios-real-device-smoke`.
 - For community compliance scan before release, use `obsidian-community-check`.

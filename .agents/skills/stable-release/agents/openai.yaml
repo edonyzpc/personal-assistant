@@ -1,0 +1,4 @@
+interface:
+  display_name: "PA Stable Release"
+  short_description: "Personal Assistant 稳定版验证、提交、发布与结果核验流程"
+  default_prompt: "使用 $stable-release 准备并发布指定版本的 Personal Assistant 稳定版。"

@@ -1,4 +1,4 @@
 interface:
   display_name: "Personal Assistant Review"
   short_description: "Project review gates, lanes, and future-risk checks."
-  default_prompt: "Review the current personal-assistant diff using the project review gates and second-layer risk lens."
+  default_prompt: "Use $personal-assistant-review to review the current personal-assistant diff with project gates and the second-layer risk lens."
