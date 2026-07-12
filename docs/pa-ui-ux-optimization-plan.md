@@ -1115,6 +1115,12 @@ Memory confirmation.
 
 ### SDD-D13: Settings Navigation -- Grouped Collapsible + Sticky Jump Nav
 
+> **Superseded for current navigation layout (2026-07-12):** The sticky jump
+> navigation below is historical implementation provenance. The active
+> authority for navigation placement, responsive behavior, and Settings row
+> alignment is the [Settings Layout Optimization SDD](./settings-layout-optimization-sdd.md).
+> Existing group membership and collapse persistence remain valid.
+
 #### Current Architecture
 
 `PersonalAssistantSettingTab.display()` (line 913 of `src/settings.ts`) calls

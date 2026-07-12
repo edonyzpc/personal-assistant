@@ -477,6 +477,12 @@ Ordered by risk (lowest first). No inter-decision dependencies. Each is a single
 
 #### SDD-D13: Settings Navigation
 
+> **Superseded for current navigation layout (2026-07-12):** D13 task history
+> remains as implementation provenance, but its sticky jump-bar target is no
+> longer authoritative. Continue current work from the
+> [Settings Layout Optimization SDD](./settings-layout-optimization-sdd.md) and
+> [tracker](./settings-layout-optimization-development-tracker.md).
+
 ##### T3.1.1 -- Settings group configuration module
 
 - **Spec refs**: Plan SDD-D13 Phase 1
