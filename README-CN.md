@@ -3,7 +3,7 @@
 <p align="center">
     <span>An Obsidian plugin which help you to automatically manage Obsidian.</span>
     <br/>
-    <a href="/README_cn.md">简体中文</a>
+    <a href="./README-CN.md">简体中文</a>
     ·
     <a href="/README.md">English</a>
     <br/>
@@ -13,7 +13,9 @@
 
 > ***号外***: 新特性来啦！Personal Assistant 的聊天助手可以读取来自你笔记的 Memory；准备 Memory 前会说明数据流、AI 服务商调用和可能成本，并先征求你的确认。
 
-> ***v2.7 用户指南***: 发布前建议先阅读 [v2.7 用户指南：AI Insights、Memory 与 Pagelet 最佳实践](./docs/v2.7-user-guide.md)。它从用户工作流出发，说明 AI Insights、Memory、Pagelet、Research 和安全保存应该怎么搭配使用，也包含可录制发布视频的脚本。海外用户可查看 [English v2.7 user guide](./docs/v2.7-user-guide-en.md)。
+> ***v2.7 用户指南***: 发布前建议先阅读 [v2.7 用户指南：AI Insights、Memory 与 Pagelet 最佳实践](./docs/archive/v2.7-user-guide.md)。它从用户工作流出发，说明 AI Insights、Memory、Pagelet、Research 和安全保存应该怎么搭配使用，也包含可录制发布视频的脚本。海外用户可查看 [English v2.7 user guide](./docs/archive/v2.7-user-guide-en.md)。
+
+> ***项目文档***: 项目需求、讨论、决策、产品/架构契约、开发 workflow、Backlog 与历史资料统一从 [项目文档导航](./docs/index.md) 进入。
 
 ## Personal Assistant 演示
 
@@ -32,46 +34,46 @@ https://github.com/user-attachments/assets/4832e962-85da-477f-b341-0c3443b718cd
 </div>
 
 <div align="center">
-<video src="./docs/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
+<video src="./docs/assets/featured-images-ai-generation.mp4" placeholder="personal assistant support generating featured images by AI" autoplay loop controls muted title="featured image generation"></video>
 </div>
 
 > ***AI 助手帮助管理 Obsidian***
 <div align="center">
-<img src="./docs/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
+<img src="./docs/assets/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
 </div>
 
 > ***展示 vault 的统计数据***
 <div align="center">
-<img src="./docs/personal-assistant-v1.3.3.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.3.3.gif" alt="usage video"/>
 </div>
 
 <div align="center">
-<img src="./docs/personal-assistant-v1.3.1.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.3.1.gif" alt="usage video"/>
 </div>
 
 > ***记录预览***
 <div align="center">
-<img src="./docs/personal-assistant-v1.2.4.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.2.4.gif" alt="usage video"/>
 </div>
 
 > ***快速输入 callout***
 <div align="center">
-<img src="./docs/personal-assistant-v1.3.2.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.3.2.gif" alt="usage video"/>
 </div>
 
 > ***自动更新 metadata***
 <div align="center">
-<img src="./docs/personal-assistant-v1.2.0.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.2.0.gif" alt="usage video"/>
 </div>
 
 > ***自动更新插件、主题***
 <div align="center">
-<img src="./docs/personal-assistant-v1.1.6.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.1.6.gif" alt="usage video"/>
 </div>
 
 > ***使基本使用方法示例***
 <div align="center">
-<img src="./docs/personal-assistant-v1.1.1.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.1.1.gif" alt="usage video"/>
 </div>
 
 ## 功能特性
@@ -135,7 +137,7 @@ Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statist
 ## 安装
 
 插件已经在[插件市场](https://obsidian.md/plugins?search=personal%20assistant#)上架了，现在你可以直接在 Obsidian 应用程序中安装这个插件，请查看[手册](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin)获取更多详细信息。
-![install with plugin market](./docs/install-within-plugin-market.png)
+![install with plugin market](./docs/assets/install-within-plugin-market.png)
 
 ### 通过 BRAT 安装
 
@@ -156,25 +158,25 @@ Personal Assistant 不包含 telemetry 或 analytics。默认情况下，Statist
 
 ### 1. 在指定目录自动创建 note
 - 打开命令面板找到对应的命令
-![command 1](./docs/command-1.png)
+![command 1](./docs/assets/command-1.png)
 - note 自动创建并打开，此时可以直接开始你的记录了
 - 【***推荐***】使用 [Templater](https://github.com/SilentVoid13/Templater) 插件的 `Folder Templates` 配置 note 模版，从而实现目录级别的模版自定义
 ### 2. 在 hover 打开 memos
 - 打开命令面板找到对应的命令
-![command 2](./docs/command-2.png)
+![command 2](./docs/assets/command-2.png)
 - 开始你的 memos 之旅
 ### 3. 打开当前笔记的关系图
 - 打开命令面板找到对应的命令
-![command 3](./docs/command-3.png)
+![command 3](./docs/assets/command-3.png)
 - 插件的设置中有更多设置选项，包括深度、展示标签等
 - 查看包括 backlink 和 outgoing-link 关系图
 ### 4. 开关插件
 - 打开命令面板找到对应的命令
-![command 4](./docs/command-5.png)
+![command 4](./docs/assets/command-5.png)
 - 选择你要开关的插件，该命令支持根据插件名检索
 - 【***注意***】插件选择界面中，插件名前面绿色的 checkbox 代表插件已经打开，红色的 uncheckbox 代表插件已经关闭
 ### 5. 更新插件
 - 打开命令面板找到对应的命令
-![command 6](./docs/command-6.png)
+![command 6](./docs/assets/command-6.png)
 - 触发该命令
 - 在右上角的通知窗口查看插件更新状态

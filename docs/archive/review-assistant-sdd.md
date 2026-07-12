@@ -21,7 +21,7 @@
 | 主作者 | PA core |
 | 上次更新 | 2026-06-06 |
 
-> **解阻塞标记（2026-06-03）**：D025 + D030 决定写路径走 **Write Action Framework create-file path**（基础设施层）。`docs/write-action-framework-sdd.md` 已落地、`src/ai-services/write-action-framework/**` 4 子模块 + PolicyEngine 参数化已实现、`pagelet.write_review_output` 作为首个真实 caller 跑通端到端测试。本 SDD §2.4 / §3 / §14 的契约面占位已去 stub 化，Pagelet beta 随 PA `2.2.0-beta.1` 发布（详见 [[D031]]）。
+> **解阻塞标记（2026-06-03）**：D025 + D030 决定写路径走 **Write Action Framework create-file path**（基础设施层）。`docs/architecture/write-action-framework-sdd.md` 已落地、`src/ai-services/write-action-framework/**` 4 子模块 + PolicyEngine 参数化已实现、`pagelet.write_review_output` 作为首个真实 caller 跑通端到端测试。本 SDD §2.4 / §3 / §14 的契约面占位已去 stub 化，Pagelet beta 随 PA `2.2.0-beta.1` 发布（详见 [[D031]]）。
 >
 > **历史背景（保留可追溯）**：Pagelet 立项时 OQ001 被升级为 Pagelet beta Hard Blocker（Pagelet 唯一写动作"创建 review note"是框架的首个真实 caller，没有框架就没有 Pagelet beta）。
 
@@ -662,7 +662,7 @@ src/i18n/
 
 - 单 SVG inline 渲染，~12 个 path。
 - stroke-width 1.6px，stroke-linecap `round`，stroke-linejoin `round`。
-- 抖动用 SVG path 顶点 ±0.1~0.3 微偏移模拟手绘（参考 `docs/pagelet-visual-spec.html` §② "手绘抖动"），不依赖 SVG filter。
+- 抖动用 SVG path 顶点 ±0.1~0.3 微偏移模拟手绘（参考 `docs/archive/assets/pagelet-visual-spec.html` §② "手绘抖动"），不依赖 SVG filter。
 - 状态切换用 CSS class（`--idle` / `--thinking` / `--done` / `--error`），不重新挂 DOM。
 
 ### 10.2 SuggestionCard 渲染
@@ -783,7 +783,7 @@ Pagelet
 
 ### 13.3 CHANGELOG
 
-沿用 PA 现有 `docs/release-process.md` 规范，Pagelet 特性单独段落标注 `[Beta]`：
+沿用 PA 现有 `docs/operations/release-process.md` 规范，Pagelet 特性单独段落标注 `[Beta]`：
 
 ```markdown
 ## 2.5.0-beta.1
@@ -812,9 +812,9 @@ Pagelet
 | ID | 内容 | 严重程度 | 影响 SDD 章节 |
 |----|------|---------|--------------|
 | ~~**OQ001**~~ | ~~**Write Action Framework create-file path + PolicyEngine 参数化**~~ | **✅ Resolved（2026-06-03，[[D031]]）** | §2.4 / §3 / §7 / §14.3 占位已去 stub |
-| ~~**OQ002**~~ | ~~**F5 Provider 兼容性 spike**~~ | **✅ Resolved（2026-06-05）** — spike 确认双路径架构可用；live 测试制度化到 `docs/pagelet-smoke-checklist.md` P1 section | §4.2（兼容矩阵已更新）、§4.3（失败矩阵实际触发率） |
+| ~~**OQ002**~~ | ~~**F5 Provider 兼容性 spike**~~ | **✅ Resolved（2026-06-05）** — spike 确认双路径架构可用；live 测试制度化到 `docs/development/validation/pagelet-smoke-checklist.md` P1 section | §4.2（兼容矩阵已更新）、§4.3（失败矩阵实际触发率） |
 
-> **OQ001 解阻塞标记（2026-06-03）**：Write Action Framework SDD 落地（`docs/write-action-framework-sdd.md`），`src/ai-services/write-action-framework/**` 4 个 gate 实现就绪，PolicyEngine 参数化（runKind + allowWrite）完成，`pagelet.write_review_output` 作为首个真实 caller 接入并通过 E2E + prompt-injection 测试。本 SDD §2.4 与 §3 的契约面占位已 1:1 映射到 framework SDD §3 capability contract 与 §4 PolicyEngine diff。Append / replace / multi-file / shell action family 扩展走 Operations Agent mode 路线，参 [[D031]]。
+> **OQ001 解阻塞标记（2026-06-03）**：Write Action Framework SDD 落地（`docs/architecture/write-action-framework-sdd.md`），`src/ai-services/write-action-framework/**` 4 个 gate 实现就绪，PolicyEngine 参数化（runKind + allowWrite）完成，`pagelet.write_review_output` 作为首个真实 caller 接入并通过 E2E + prompt-injection 测试。本 SDD §2.4 与 §3 的契约面占位已 1:1 映射到 framework SDD §3 capability contract 与 §4 PolicyEngine diff。Append / replace / multi-file / shell action family 扩展走 Operations Agent mode 路线，参 [[D031]]。
 >
 > **H-B3.2 两层闭环（更新 2026-06-04，issue #358 关闭后）**：`PaReviewToolProvider` 的 `targetConfinement.allowedRoots` 由两层独立防线保护——
 >

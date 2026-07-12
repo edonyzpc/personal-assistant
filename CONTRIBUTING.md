@@ -40,13 +40,17 @@ npm run check:third-party-notices
 ## Development
 
 Use the repository-local development commands documented in AGENTS.md and
-docs/release-process.md. For broad runtime or packaging changes, run the
+docs/operations/release-process.md. Product requirements, discussions,
+decisions, specs, active development, closeout, archive, and deletion follow
+docs/development/documentation-workflow.md; external issues are mirrors, not the
+only source of project truth. For broad runtime or packaging changes, run the
 release gate checks before asking for review:
 
 ```bash
 npm test -- --runInBand
 npm run lint
 npm run build
+npm run docs:check
 git diff --check
 ```
 

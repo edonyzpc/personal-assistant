@@ -404,7 +404,7 @@ describe("mergePageletSettings", () => {
 // would propagate to the capability and Gate 1 of the Write Action
 // Framework would happily accept writes inside the user's Obsidian config
 // folder. Each forbidden shape below maps to a real attacker fixture
-// documented in `docs/write-action-framework-sdd.md` §8.3.
+// documented in `docs/architecture/write-action-framework-sdd.md` §8.3.
 // ---------------------------------------------------------------------------
 
 describe("normalizeReviewsFolder (settings-layer validator)", () => {

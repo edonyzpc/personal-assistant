@@ -8,7 +8,7 @@
 - 移动端策略：Mobile 默认不自动初始化 VSS 后台任务；聊天可尝试原生流式，失败时回退为非流式响应。
 - 开发顺序：先网络 adapter，再服务替换，再 Mobile gating，最后构建和验证。
 
-> VSS lifecycle note: this document records the older mobile-network compatibility plan. Current SQLite/WASM Memory behavior is documented in [VSS SQLite/WASM 架构设计](../vss-sqlite-wasm-architecture.md) and [VSS Embedding 刷新方案说明](../vss-embedding-refresh.md): first prepare/rebuild still requires user confirmation, while changed notes can be maintained automatically after successful approval when the durable SQLite/WASM backend is ready.
+> VSS lifecycle note: this document records the older mobile-network compatibility plan. Current SQLite/WASM Memory behavior is documented in [VSS SQLite/WASM 架构设计](../architecture/vss-sqlite-wasm-architecture.md) and [VSS Embedding 刷新方案说明](../architecture/vss-embedding-refresh.md): first prepare/rebuild still requires user confirmation, while changed notes can be maintained automatically after successful approval when the durable SQLite/WASM backend is ready.
 
 ## Implementation Changes
 

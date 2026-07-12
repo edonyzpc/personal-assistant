@@ -1,7 +1,7 @@
 # Pagelet Beta Closeout Work Plan
 
 > Status date: 2026-06-06. This plan starts from the latest Pagelet
-> workbench smoke in `docs/pagelet-smoke-checklist.md` and reconciles it
+> workbench smoke in `docs/development/validation/pagelet-smoke-checklist.md` and reconciles it
 > against the current code.
 
 ## Scope
@@ -63,8 +63,8 @@ Newly covered in this pass:
 
 | ID | Task | Status | Verification |
 | --- | --- | --- | --- |
-| C1 | Keep latest smoke evidence in `docs/pagelet-smoke-checklist.md` | In progress | Updated after each smoke pass |
-| C2 | Keep `docs/todo.md` active gate aligned with Pagelet state | In progress | This plan is linked from TODO |
+| C1 | Keep latest smoke evidence in `docs/development/validation/pagelet-smoke-checklist.md` | In progress | Updated after each smoke pass |
+| C2 | Keep `docs/backlog.md` active gate aligned with Pagelet state | In progress | This plan is linked from TODO |
 | C3 | Keep SDD/rollout wording historical where implementation has diverged | Pending | Code-led doc pass before release planning |
 
 ## Product Decisions To Preserve
@@ -85,5 +85,5 @@ Newly covered in this pass:
 2. Run focused Pagelet tests plus type-check and whitespace check.
 3. Run `make deploy` before any new Obsidian GUI smoke.
 4. Manually smoke A3-A6 and append evidence to
-   `docs/pagelet-smoke-checklist.md`.
+   `docs/development/validation/pagelet-smoke-checklist.md`.
 5. Revisit B1-B4 only after the core beta workbench is functionally complete.

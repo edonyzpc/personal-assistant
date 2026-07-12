@@ -21,7 +21,7 @@
  * Design references:
  *  - `src/pagelet/orchestrator.ts` -- research prompt pattern
  *  - `src/locales/pagelet/{en,zh}.json` -- `pagelet.research.prompt.*`
- *  - `docs/pagelet-product-design.md` -- Privacy and Trust, WebSearch
+ *  - `docs/product/pagelet-product-design.md` -- Privacy and Trust, WebSearch
  */
 
 import { Notice } from "obsidian";

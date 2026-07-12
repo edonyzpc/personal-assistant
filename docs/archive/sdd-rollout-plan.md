@@ -12,7 +12,7 @@
 |----|----|
 | 日期 | 2026-06-02 |
 | 触发 | [[D025]] + [[D030]]；[[OQ001]] 升级为 Pagelet beta Hard Blocker |
-| 依据 SDD | `docs/write-action-framework-sdd.md`（986 行）+ `docs/review-assistant-sdd.md`（819 行） |
+| 依据 SDD | `docs/architecture/write-action-framework-sdd.md`（986 行）+ `docs/review-assistant-sdd.md`（819 行） |
 | 执行模式 | 单人串切，双 worktree（`framework-impl` + `pagelet-non-write`），Step 0 锚点先行 |
 | 估算总时长 | **~17-18 工作日**（与纯串行接近；worktree 主收益是心智隔离 + CR 拆分 + 测试隔离，不是时间节省） |
 | 关键里程碑 | Pagelet beta `v2.(x+1).0-beta.1`（参 [[D013]]） |
@@ -371,8 +371,8 @@ gh pr merge <pagelet-pr-id> --squash
 3. 更新文档：
    - `docs/review-assistant-decisions.md`：OQ001 状态 `Hard Blocker` → `Resolved`，新增 D031（framework 实现完成）
    - `docs/review-assistant-sdd.md`：§0 status + §14.1 解阻塞标记
-   - `docs/write-action-framework-sdd.md`：§0 status 加"已实现" 标
-4. Release SOP：沿用 PA `docs/release-process.md`
+   - `docs/architecture/write-action-framework-sdd.md`：§0 status 加"已实现" 标
+4. Release SOP：沿用 PA `docs/operations/release-process.md`
 5. 公告渠道：GitHub Release notes + Obsidian Community Plugins description 更新（D011 已定）
 
 ### 5.4 验收（Track C Done / 项目交付）
@@ -520,7 +520,7 @@ Step 0 commit 把 framework 的**所有公开 API 类型**冻结到 master。两
 | [[D013]] Release Channel 策略 | §5.3 |
 | [[D026]] Structured Output 实现 | Track B · B1 |
 | [[D029]] F29 兼容性 R1-R4 | Track B · B5（R1/R2/R4）+ Track C · C1（R3 通过 framework self-write Set） |
-| `docs/write-action-framework-sdd.md` §9 Rollout | §1.4 phase 映射 |
+| `docs/architecture/write-action-framework-sdd.md` §9 Rollout | §1.4 phase 映射 |
 | `docs/review-assistant-sdd.md` §13 Rollout | §5.3 沿用 SemVer / CHANGELOG / 反馈渠道 |
 
 ---
@@ -528,5 +528,5 @@ Step 0 commit 把 framework 的**所有公开 API 类型**冻结到 master。两
 > 文档结束。落地后需同步更新：
 > - `docs/review-assistant-decisions.md`：OQ001 → Resolved，新增 D031（framework 实现完成）
 > - `docs/review-assistant-sdd.md`：§0 / §2.4 / §3 / §7 / §14.1 去 stub
-> - `docs/write-action-framework-sdd.md`：§0 status 加"已实现"标
+> - `docs/architecture/write-action-framework-sdd.md`：§0 status 加"已实现"标
 > - 本文件 §9 timeline 加"实际耗时"对照列，便于未来项目估算校准

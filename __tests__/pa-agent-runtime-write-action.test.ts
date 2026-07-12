@@ -1,6 +1,6 @@
 /**
  * Integration test for Write Action Framework v1 wiring into PaAgentRuntime
- * (Track A · A3 acceptance — see docs/sdd-rollout-plan.md §3.2 + framework
+ * (Track A · A3 acceptance — see docs/archive/sdd-rollout-plan.md §3.2 + framework
  * SDD §5.2).
  *
  * Goal: exercise the `createWriteActionAwareToolExecutor` seam end-to-end on

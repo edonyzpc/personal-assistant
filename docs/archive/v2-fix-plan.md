@@ -68,11 +68,11 @@ The current code-led status is split by document so release checks can find the 
 | File | Current role |
 | --- | --- |
 | `docs/v2-fix-plan.md` | Tracks the original v2 review plan against current code and keeps the still-open Phase 1-2 items visible. |
-| `docs/settings-ui-review.md` | Preserves the historical Settings review and adds the current fixed/partial/open status for each finding. |
-| `docs/vss-local-state-plan.md` | Defines the current local-state boundary: no foreground marker recovery; manual diagnostics can recover a compatible OPFS index. |
+| `docs/archive/settings-ui-review.md` | Preserves the historical Settings review and adds the current fixed/partial/open status for each finding. |
+| `docs/architecture/vss-local-state-plan.md` | Defines the current local-state boundary: no foreground marker recovery; manual diagnostics can recover a compatible OPFS index. |
 | `docs/vss-local-state-development-tracker.md` | Records the OPFS-lock follow-up verification, Obsidian smoke evidence, and completed high-risk manual checks. |
-| `docs/vss-sqlite-wasm-architecture.md` | Documents the runtime OPFS/marker lifecycle, including foreground lock handling and manual-only missing-marker reconstruction. |
-| `docs/todo.md` | Holds the release gate for accepting/deferring remaining v2 review items and high-risk smoke checks. |
+| `docs/architecture/vss-sqlite-wasm-architecture.md` | Documents the runtime OPFS/marker lifecycle, including foreground lock handling and manual-only missing-marker reconstruction. |
+| `docs/backlog.md` | Holds the release gate for accepting/deferring remaining v2 review items and high-risk smoke checks. |
 | `docs/sdd-*.md` Phase 3 records | Historical design records for implemented Phase 3 items; they are not current open implementation plans. |
 
 Runtime/test changes were split by module (`vss`, `settings`, `chat-history`, `ui styles`). Keep the document files above synchronized when the release gate changes.

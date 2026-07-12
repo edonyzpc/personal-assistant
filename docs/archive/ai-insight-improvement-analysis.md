@@ -564,7 +564,7 @@ Type A 可以记录用户明确表达的长期偏好，用于 AI Insights 展示
 |------|------|
 | `docs/agent-memory-extraction-research.md` | 5 个 agent 项目的跨会话记忆提取研究 |
 | `docs/agent-context-management-research.md` | 5 个 agent 项目的上下文管理架构研究 |
-| `docs/pagelet-product-design.md` | Pagelet 产品设计（Scenario 3 Knowledge Discovery） |
+| `docs/product/pagelet-product-design.md` | Pagelet 产品设计（Scenario 3 Knowledge Discovery） |
 | `src/ai-services/pa-agent-runtime.ts` | PA Agent 运行时（prompt 构建、检索管线） |
 | `src/pagelet/llm/prompts.ts` | Pagelet LLM prompt 定义 |
 | `src/vss.ts` | VSS 向量搜索门面 |

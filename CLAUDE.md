@@ -4,11 +4,17 @@ This repository's primary agent instructions live in [AGENTS.md](./AGENTS.md).
 Follow them for development commands, architecture boundaries, testing, release
 rules, and documentation conventions.
 
+Repository docs are the current authority for PA requirements, decisions,
+product specs, development state, and historical disposition. Follow
+[Documentation Workflow](./docs/development/documentation-workflow.md); Claude
+memory or other external planning state may provide input, but must not replace
+repo-local Backlog, Decision, Product Spec, or Active Tracker records.
+
 ## Product North Star
 
 Before product design, UX, planning, SDD, Pagelet, Memory, Capture, Review,
 Maintenance, or PA Agent behavior work, read
-[docs/pa-product-north-star.md](./docs/pa-product-north-star.md).
+[docs/product/pa-product-north-star.md](./docs/product/pa-product-north-star.md).
 
 The product standard:
 

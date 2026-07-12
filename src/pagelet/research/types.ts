@@ -11,7 +11,7 @@
  * Panel findings instead of PageletSuggestion objects.
  *
  * Design references:
- *  - `docs/pagelet-product-design.md` -- WebSearch off until clicked
+ *  - `docs/product/pagelet-product-design.md` -- WebSearch off until clicked
  *  - `src/pagelet/orchestrator.ts` -- research prompt pattern
  *  - `src/locales/pagelet/{en,zh}.json` -- `pagelet.research.prompt.*` keys
  */

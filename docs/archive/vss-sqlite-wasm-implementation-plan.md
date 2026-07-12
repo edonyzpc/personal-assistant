@@ -1,6 +1,6 @@
 # VSS SQLite/WASM 实施计划
 
-> 2026-05-20 superseded note: this historical implementation plan describes the original marker/manifest and `MemoryVectorIndex` fallback design. The current VSS local state behavior is defined by [VSS Local State Plan](../vss-local-state-plan.md): runtime marker/dirty state is stored in local IndexedDB, manifest generation and JSON fallback are removed, and old vault files are not auto-deleted.
+> 2026-05-20 superseded note: this historical implementation plan describes the original marker/manifest and `MemoryVectorIndex` fallback design. The current VSS local state behavior is defined by [VSS Local State Plan](../architecture/vss-local-state-plan.md): runtime marker/dirty state is stored in local IndexedDB, manifest generation and JSON fallback are removed, and old vault files are not auto-deleted.
 
 ## Summary
 
@@ -405,6 +405,6 @@ Manual verification：
 
 ## Related Documents
 
-- [VSS SQLite/WASM 架构设计](../vss-sqlite-wasm-architecture.md)
-- [VSS Embedding 刷新方案说明](../vss-embedding-refresh.md)：当前 SQLite/WASM Memory refresh、Rebuild batch、embedding throttle 和进度事件说明。
+- [VSS SQLite/WASM 架构设计](../architecture/vss-sqlite-wasm-architecture.md)
+- [VSS Embedding 刷新方案说明](../architecture/vss-embedding-refresh.md)：当前 SQLite/WASM Memory refresh、Rebuild batch、embedding throttle 和进度事件说明。
 - [Obsidian 插件移动端网络兼容优化方案](./mobile-network-optimization-plan.md)：移动网络兼容背景文档；其中 VSS 自动/手动生命周期以本文和架构设计为准。

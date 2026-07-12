@@ -6,7 +6,7 @@
 | --- | --- |
 | Status | Implemented through SPEC-04; SPEC-05 latency levers deferred |
 | Created | 2026-06-07 |
-| Source plan | [PA Agent Control Policy And Latency Optimization Plan](../pa-agent-latency-optimization-plan.md) |
+| Source plan | [PA Agent Control Policy And Latency Optimization Plan](./pa-agent-latency-optimization-plan.md) |
 | Tracker | [PA Agent Control Policy Development Tracker](./pa-agent-control-policy-development-tracker.md) |
 | Runtime boundary | PA Agent answer-stream tool loop only |
 | Product boundary | Pi-style model-driven tool choice with Obsidian source-aware host policy |

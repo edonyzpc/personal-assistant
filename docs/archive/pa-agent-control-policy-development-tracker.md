@@ -4,7 +4,7 @@
 
 This tracker records SPEC-driven implementation status for [SDD: PA Agent Control Policy](./pa-agent-control-policy-sdd.md).
 
-The architecture/product source of truth is [PA Agent Control Policy And Latency Optimization Plan](../pa-agent-latency-optimization-plan.md). The SDD is the implementation contract. This tracker is the execution record. If they drift, update all affected docs before continuing runtime work.
+The architecture/product source of truth is [PA Agent Control Policy And Latency Optimization Plan](./pa-agent-latency-optimization-plan.md). The SDD is the implementation contract. This tracker is the execution record. If they drift, update all affected docs before continuing runtime work.
 
 ## Status Legend
 
@@ -39,7 +39,7 @@ Docs-only SPECs may skip deploy/smoke, but this tracker must state why.
 | Created | 2026-06-07 |
 | Current phase | Closeout complete for SPEC-00 through SPEC-04; SPEC-05 deferred |
 | Current status | [x] Control-policy architecture implemented and validated; weather latency residual recorded for SPEC-05 rather than hidden as a host constraint |
-| Source plan | `docs/pa-agent-latency-optimization-plan.md` |
+| Source plan | `docs/archive/pa-agent-latency-optimization-plan.md` |
 | SDD | `docs/pa-agent-control-policy-sdd.md` |
 | Runtime implementation | [x] SPEC-01 control snapshot plumbing, SPEC-02 metrics, SPEC-03 source-scoped exposure, and SPEC-04 answer-ready/follow-up controls implemented |
 | Worktree strategy | [x] Used one integration worktree; parallel worktrees deferred because `pa-agent-loop.ts` and `pa-agent-runtime.ts` stayed shared hot spots |
@@ -113,7 +113,7 @@ Goal: lock implementation contract before runtime code changes.
 Expected commands:
 
 ```bash
-rg -n "[[:blank:]]+$" docs/pa-agent-control-policy-sdd.md docs/pa-agent-control-policy-development-tracker.md docs/pa-agent-latency-optimization-plan.md
+rg -n "[[:blank:]]+$" docs/pa-agent-control-policy-sdd.md docs/pa-agent-control-policy-development-tracker.md docs/archive/pa-agent-latency-optimization-plan.md
 git diff --check
 git diff --no-index --check /dev/null docs/pa-agent-control-policy-sdd.md
 git diff --no-index --check /dev/null docs/pa-agent-control-policy-development-tracker.md
@@ -282,7 +282,7 @@ make deploy
 | Date | SPEC | Command / Evidence | Status | Notes |
 | --- | --- | --- | --- | --- |
 | 2026-06-07 | SPEC-00 | Create SDD and tracker | Passed | Docs added and source plan linked |
-| 2026-06-07 | SPEC-00 | `rg -n "[[:blank:]]+$" docs/pa-agent-control-policy-sdd.md docs/pa-agent-control-policy-development-tracker.md docs/pa-agent-latency-optimization-plan.md` | Passed | No trailing whitespace matches |
+| 2026-06-07 | SPEC-00 | `rg -n "[[:blank:]]+$" docs/pa-agent-control-policy-sdd.md docs/pa-agent-control-policy-development-tracker.md docs/archive/pa-agent-latency-optimization-plan.md` | Passed | No trailing whitespace matches |
 | 2026-06-07 | SPEC-00 | `git diff --check` | Passed | No whitespace warnings |
 | 2026-06-07 | SPEC-00 | `git diff --no-index --check /dev/null <new-doc>` for SDD, tracker, and latency plan | Passed | No whitespace warnings; command returns non-zero because the files are new or differ from `/dev/null` |
 | 2026-06-07 | SPEC-01 | `npm test -- __tests__/pa-agent-loop.test.ts --runInBand` | Passed | 1 suite passed, 58 tests passed; used ignored `node_modules` symlink to main worktree dependencies |

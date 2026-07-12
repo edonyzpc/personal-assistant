@@ -1,6 +1,6 @@
 # VSS SQLite/WASM 重构开发测试进展
 
-> 2026-05-20 superseded note: rows below are historical status for the SQLite/WASM refactor. Marker/manifest vault writes and `MemoryVectorIndex` fallback were removed by [VSS Local State Plan](../vss-local-state-plan.md); current progress is tracked in [VSS Local State Development Tracker](./vss-local-state-development-tracker.md).
+> 2026-05-20 superseded note: rows below are historical status for the SQLite/WASM refactor. Marker/manifest vault writes and `MemoryVectorIndex` fallback were removed by [VSS Local State Plan](../architecture/vss-local-state-plan.md); current progress is tracked in [VSS Local State Development Tracker](./vss-local-state-development-tracker.md).
 
 ## 文档目的
 
@@ -8,7 +8,7 @@
 
 设计依据：
 
-- [VSS SQLite/WASM 架构设计](../vss-sqlite-wasm-architecture.md)
+- [VSS SQLite/WASM 架构设计](../architecture/vss-sqlite-wasm-architecture.md)
 - [VSS SQLite/WASM 实施计划](./vss-sqlite-wasm-implementation-plan.md)
 
 本文档不是架构设计的替代品。涉及方案原则、存储模型、状态机、交互策略和风险缓解时，以架构设计和实施计划为准；本文档只记录执行状态和验证证据。

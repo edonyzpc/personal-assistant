@@ -2,9 +2,9 @@
 
 ## Purpose
 
-This tracker records the SPEC-driven development plan, phase status, review evidence, verification results, and risk handling for [Statistics v3 Plan](../statistics-v3-plan.md).
+This tracker records the SPEC-driven development plan, phase status, review evidence, verification results, and risk handling for [Statistics v3 Plan](../architecture/statistics-v3-plan.md).
 
-This document is not the architecture source of truth. Product goals, storage model, migration rules, sync semantics, and UI copy boundaries come from `docs/statistics-v3-plan.md`. If the plan and tracker drift, update both in the same reviewed change before implementation continues.
+This document is not the architecture source of truth. Product goals, storage model, migration rules, sync semantics, and UI copy boundaries come from `docs/architecture/statistics-v3-plan.md`. If the plan and tracker drift, update both in the same reviewed change before implementation continues.
 
 ## Status Legend
 
@@ -47,7 +47,7 @@ Smoke gate:
 | Item | Status |
 | --- | --- |
 | Created | 2026-05-19 |
-| Source of truth | `docs/statistics-v3-plan.md` |
+| Source of truth | `docs/architecture/statistics-v3-plan.md` |
 | Current phase | Phase 4: UI, Diagnostics, And Closeout |
 | Current status | [x] Final review fixes complete; v2 cleanup deferred to read-only import, dashboard reads import synced JSONL, runtime edge cases hardened, and Obsidian smoke passed on 2026-05-20 |
 | Runtime implementation | [x] SPEC-04 UI/copy hardening implemented, reviewed, deployed, and smoke-tested in the Obsidian test vault |
@@ -59,7 +59,7 @@ Smoke gate:
 
 | SPEC | Goal | Status | Owner Areas | Exit Gate |
 | --- | --- | --- | --- | --- |
-| SPEC-00 | Plan and tracker source of truth | [x] Done | `docs/statistics-v3-plan.md`, this tracker | Docs checks pass and review records no P0/P1/P2 blockers |
+| SPEC-00 | Plan and tracker source of truth | [x] Done | `docs/architecture/statistics-v3-plan.md`, this tracker | Docs checks pass and review records no P0/P1/P2 blockers |
 | SPEC-01 | Store facade extraction | [x] Done | `src/stats/*`, focused tests | Existing v2 behavior preserved behind `StatsRepository` facade |
 | SPEC-02A | Local v3 IndexedDB store | [x] Done; smoke backfilled | stats local store, repository, settings migration, tests | Default mode no longer creates v3 JSONL and Obsidian dashboard reloads local edits |
 | SPEC-02B | v2 read-only import | [x] Done; smoke backfilled | stats migration, repository, tests | Existing v2 fixture history imports into the Obsidian dashboard with low-noise issue reporting |
@@ -105,8 +105,8 @@ Goal: Lock the product and architecture plan before runtime code changes.
 
 Expected commands:
 
-- `git diff --check -- docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`
-- `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`
+- `git diff --check -- docs/architecture/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`
+- `rg -n "[[:blank:]]+$" docs/architecture/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`
 
 ### Phase 1: Store Facade Without Behavior Change
 
@@ -313,16 +313,16 @@ Expected commands:
 
 | Date | Scope | Command / Evidence | Result | Notes |
 | --- | --- | --- | --- | --- |
-| 2026-05-19 | SPEC-00 docs creation | Create `docs/statistics-v3-plan.md` and `docs/archive/statistics-v3-development-tracker.md` | Passed | Docs-only setup; no runtime code changed |
-| 2026-05-19 | SPEC-00 docs whitespace | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md` | Passed | No trailing whitespace matches |
+| 2026-05-19 | SPEC-00 docs creation | Create `docs/architecture/statistics-v3-plan.md` and `docs/archive/statistics-v3-development-tracker.md` | Passed | Docs-only setup; no runtime code changed |
+| 2026-05-19 | SPEC-00 docs whitespace | `rg -n "[[:blank:]]+$" docs/architecture/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md` | Passed | No trailing whitespace matches |
 | 2026-05-19 | SPEC-00 new-file diff checks | `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings after removing extra EOF blank lines; `--no-index` returns non-zero because the files are new |
-| 2026-05-19 | SPEC-00 review incorporation checks | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`; `git diff --check -- docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`; `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings or trailing whitespace matches after review-driven revisions; new-file `--no-index` returns non-zero because the files are new |
+| 2026-05-19 | SPEC-00 review incorporation checks | `rg -n "[[:blank:]]+$" docs/architecture/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`; `git diff --check -- docs/architecture/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md`; `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings or trailing whitespace matches after review-driven revisions; new-file `--no-index` returns non-zero because the files are new |
 | 2026-05-19 | SPEC-01 focused tests | `npm test -- __tests__/stats-store.test.ts __tests__/stats-manager.test.ts __tests__/statistics.test.ts --runInBand` | Passed | 3 suites passed, 18 tests passed |
 | 2026-05-19 | SPEC-01 typecheck | `npx tsc -noEmit -skipLibCheck` | Passed | No TypeScript errors |
 | 2026-05-19 | SPEC-01 lint | `npm run lint` | Passed | ESLint passed |
 | 2026-05-19 | SPEC-01 whitespace checks | `git diff --check`; `git diff --no-index --check -- /dev/null src/stats/stats-repository.ts`; new-doc `--no-index --check` checks | Passed | No whitespace warnings; `--no-index` returns non-zero because the files are new |
 | 2026-05-19 | SPEC-01 post-review focused tests | `npm test -- __tests__/stats-store.test.ts __tests__/stats-manager.test.ts __tests__/statistics.test.ts --runInBand` | Passed | 3 suites passed, 18 tests passed after review follow-up docs fixes |
-| 2026-05-19 | SPEC-01 post-review whitespace checks | `rg -n "[[:blank:]]+$" docs/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md src/stats/stats-repository.ts src/stats/stats-manager.ts`; `git diff --check` | Passed | No trailing whitespace matches and no diff whitespace warnings |
+| 2026-05-19 | SPEC-01 post-review whitespace checks | `rg -n "[[:blank:]]+$" docs/architecture/statistics-v3-plan.md docs/archive/statistics-v3-development-tracker.md src/stats/stats-repository.ts src/stats/stats-manager.ts`; `git diff --check` | Passed | No trailing whitespace matches and no diff whitespace warnings |
 | 2026-05-19 | SPEC-02A focused implementation tests | `npm test -- __tests__/stats-repository.test.ts __tests__/stats-local-store.test.ts __tests__/stats-store.test.ts __tests__/stats-manager.test.ts __tests__/statistics.test.ts __tests__/settings.test.ts __tests__/plugin-record-note.test.ts --runInBand` | Passed | 7 suites passed, 40 tests passed |
 | 2026-05-19 | SPEC-02A typecheck | `npx tsc -noEmit -skipLibCheck` | Passed | No TypeScript errors |
 | 2026-05-19 | SPEC-02A lint | `npm run lint` | Passed | ESLint passed |
@@ -373,7 +373,7 @@ Expected commands:
 ## Update Rules
 
 - When a SPEC status changes, update Current Status, SPEC Index, Phase Ledger, Review Log, and Verification Log in the same change.
-- When product or architecture decisions change, update `docs/statistics-v3-plan.md` and this tracker together.
+- When product or architecture decisions change, update `docs/architecture/statistics-v3-plan.md` and this tracker together.
 - Do not start SPEC-01 runtime work until SPEC-00 has docs checks and review evidence.
 - Do not mark a runtime SPEC done until focused tests, subagent review, `make deploy`, Obsidian smoke, and tracker evidence are complete, except for an explicit `[x] Done; smoke deferred` state under the next rule.
 - Obsidian smoke may be deferred only when the environment blocks app access and the user explicitly approves continuing. Deferred smoke must stay visible in Current Status, the owning SPEC smoke row, and Verification Log until it is backfilled; runtime specs may use `[x] Done; smoke deferred` only in that state.

@@ -65,7 +65,7 @@
   - AI 出错时角色化会放大反差挫败感（uncanny valley of competence）
   - 独立开发者维护成本结构 A 更优（乐高式延展）
   - 可逆性 A→B 友好，B→A 困难
-- **视觉规范**：`docs/pagelet-visual-spec.html`（合并 D004 + D005 执行规范）
+- **视觉规范**：`docs/archive/assets/pagelet-visual-spec.html`（合并 D004 + D005 执行规范）
 
 #### D005 · 视觉锚点
 
@@ -82,7 +82,7 @@
   - 差异化最强，其他三套都跟某大厂撞调性
   - "拾页"语义贴合度最高（手绘纸张 = 被翻动过的页）
   - AI 出错时容错度高（手绘风带"轻盈、不严肃"的隐喻）
-- **视觉规范**：`docs/pagelet-visual-spec.html`（合并 D004 + D005 执行规范）
+- **视觉规范**：`docs/archive/assets/pagelet-visual-spec.html`（合并 D004 + D005 执行规范）
 - **配色 token**：
   - 中性灰：`#e8e8e8`
   - Thinking 蓝：`#7c9eff`
@@ -342,9 +342,9 @@
   - 框架可复用，不应每个新 feature 重做一套
   - 避免后续重构成本
 - **Cross-ref**：
-  - PA 已有边界文档 `docs/write-action-design-handoff.md`（候选 action 家族 + 7 gates + Preview/Audit Contract + 7-step minimal implementation sequence）
-  - PA 已有边界文档 `docs/operations-agent-plan.md`（Operations Agent mode 的 scope / 5 子模块 / open decisions）
-  - 待新增 `docs/write-action-framework-sdd.md`（合并上述两个边界文档为单一 SDD），追踪于 [[OQ001]]
+  - PA 已有边界文档 `docs/archive/write-action-design-handoff.md`（候选 action 家族 + 7 gates + Preview/Audit Contract + 7-step minimal implementation sequence）
+  - PA 已有边界文档 `docs/development/proposals/operations-agent/operations-agent-plan.md`（Operations Agent mode 的 scope / 5 子模块 / open decisions）
+  - 待新增 `docs/architecture/write-action-framework-sdd.md`（合并上述两个边界文档为单一 SDD），追踪于 [[OQ001]]
 
 #### D026 · Structured Output 实现（F5）
 
@@ -421,7 +421,7 @@
     ```
 - **上下文**：
   - 审计 Pagelet 文档 ↔ PA 现有文档时发现"Operations Agent v0"是 Pagelet 内部生造名词，PA 仓库没有同名文档
-  - PA 仓库有两份边界文档（`docs/write-action-design-handoff.md` + `docs/operations-agent-plan.md`），但语义切分模糊
+  - PA 仓库有两份边界文档（`docs/archive/write-action-design-handoff.md` + `docs/development/proposals/operations-agent/operations-agent-plan.md`），但语义切分模糊
   - `src/ai-services/capability-types.ts:20` 声明了 `kind="action"` 但**零实现**，`policy-engine.ts:35` 对其默认拒绝
 - **替代方案**：
   - **B · Pagelet 走 B-min 单独实现**：临时给 Pagelet 一套最小写能力，框架以后再统一 → 历史负债，违反用户"架构完整和演进"诉求
@@ -434,7 +434,7 @@
 - **本次会话范围**：
   - ✅ 更新 Pagelet 三份文档命名 + 阻塞强化（decisions / product-design / sdd）
   - ✅ 更新 memory `project_action_mode_roadmap`
-  - ⏭ 写 `docs/write-action-framework-sdd.md` 留给下一会话
+  - ⏭ 写 `docs/architecture/write-action-framework-sdd.md` 留给下一会话
 - **依赖追踪**：[[OQ001]]（升级为 Hard Blocker），[[D025]]（命名替换 + cross-ref）
 
 #### D031 · Write Action Framework v1 实现完成 + Pagelet beta 解阻塞
@@ -446,7 +446,7 @@
   - 本批 PR（#354 framework / #355 Pagelet runtime-stub / #356 Pagelet 测试 + 文档）合入 master 后，framework + Pagelet 已能跑通端到端：5 个 prompt-injection fixture 全部被 Gate 1 拒绝，benign control + sanitiser fixture 写入 `.pagelet/`，settings-layer validator（H-B3.2）守护 `reviewsFolder` 边界
   - 发布通道沿用 [[D013]]（`v2.(x+1).0-beta.N`）→ 实际取 `v2.2.0-beta.1`
 - **本次落地范围**：
-  - ✅ 框架 4 子模块 + PolicyEngine 参数化（详见 `docs/write-action-framework-sdd.md` §2-§4）
+  - ✅ 框架 4 子模块 + PolicyEngine 参数化（详见 `docs/architecture/write-action-framework-sdd.md` §2-§4）
   - ✅ Pagelet `pagelet.write_review_output` capability 解 stub（pa-review-tool-provider.ts:285-296）
   - ✅ 设置层 `normalizeReviewsFolder` 验证器（fail-closed 默认 `.pagelet`，inline UI error），关闭 H-B3.2 + PR #356 B2 prod-gap
   - ✅ CHANGELOG `v2.2.0-beta.1`、versions.json、manifest{,.beta}.json 同步
@@ -468,11 +468,11 @@
 
 ### OQ001 · Write Action Framework v1 SDD 撰写
 
-- **状态**：**✅ Resolved**（2026-06-03 解阻塞；framework SDD 落地 + v1 实现随 Pagelet beta `v2.2.0-beta.1` 发布；详见 [[D031]] 与 `docs/write-action-framework-sdd.md` §0）
+- **状态**：**✅ Resolved**（2026-06-03 解阻塞；framework SDD 落地 + v1 实现随 Pagelet beta `v2.2.0-beta.1` 发布；详见 [[D031]] 与 `docs/architecture/write-action-framework-sdd.md` §0）
 - **日期**：2026-06-01（升级 2026-06-02 → Resolved 2026-06-03）
-- **背景**：D025 决定 Pagelet 走 B-full，依赖 Write Action Framework v1；但 PA 当时只有两份边界文档（`docs/write-action-design-handoff.md` + `docs/operations-agent-plan.md`），尚无完整 SDD，且 `src/ai-services/policy-engine.ts:35` 仍对 `kind="action"` 默认拒绝
+- **背景**：D025 决定 Pagelet 走 B-full，依赖 Write Action Framework v1；但 PA 当时只有两份边界文档（`docs/archive/write-action-design-handoff.md` + `docs/development/proposals/operations-agent/operations-agent-plan.md`），尚无完整 SDD，且 `src/ai-services/policy-engine.ts:35` 仍对 `kind="action"` 默认拒绝
 - **解决路径**：
-  1. ✅ `docs/write-action-framework-sdd.md` 落地（合并 2 份边界文档 + 4 子模块契约 + PolicyEngine 参数化方案）
+  1. ✅ `docs/architecture/write-action-framework-sdd.md` 落地（合并 2 份边界文档 + 4 子模块契约 + PolicyEngine 参数化方案）
   2. ✅ `src/ai-services/write-action-framework/**` 实现 4 个 gate（target-confinement / preview-confirmation / stale-reread / execute + 自动 rollback）
   3. ✅ PolicyEngine 参数化（runKind + allowWrite）；chat backward-compat 由 §4.4 单测守护
   4. ✅ `pagelet.write_review_output` 作为首个真实 caller 接入；E2E + prompt-injection fixtures 全绿
@@ -489,7 +489,7 @@
   3. **DeepSeek（直连）**：不支持 json_schema，仅支持 json_object。structured output path 会失败并 fall through 到 JSON-mode fallback，fallback parser 可靠兜底。
   4. **OpenAI / Groq / Together**：原生支持 json_schema。
   5. **整体判定**：当前双路径架构（structured output → JSON-mode fallback）充分可用。不需要重新设计（排除 option B / D026 reopen）。
-- **Live 测试制度化**：原始 spike 的 live API 测试残留项已整合到 `docs/pagelet-smoke-checklist.md`「Provider structured output (OQ002)」section（P1 release gate），每个 `beta.N` 打 tag 前重复验证，不再作为一次性待办
+- **Live 测试制度化**：原始 spike 的 live API 测试残留项已整合到 `docs/development/validation/pagelet-smoke-checklist.md`「Provider structured output (OQ002)」section（P1 release gate），每个 `beta.N` 打 tag 前重复验证，不再作为一次性待办
 - **降级为**：**Resolved**（Soft Blocker → Resolved）
 
 ### OQ003 · v2 异常熔断细化方案
@@ -525,9 +525,9 @@
 | D007 (a11y) | `docs/review-assistant-sdd.md` 实现章节 |
 | D008-D010 (存储) | `docs/review-assistant-product-design.md` 持久化 + `docs/review-assistant-sdd.md` 文件 IO |
 | D011-D012 (Beta) | `docs/review-assistant-product-design.md` Beta 章节 |
-| D013 (Release) | `docs/release-process.md`（沿用） |
+| D013 (Release) | `docs/operations/release-process.md`（沿用） |
 | D014-D017 (i18n) | `docs/review-assistant-sdd.md` 语言策略 |
 | D018-D023 (Cost) | `docs/review-assistant-sdd.md` Cost ceiling 章节 |
 | D024-D028 (架构) | `docs/review-assistant-sdd.md` 架构章节 |
 | D029 (兼容性) | `docs/review-assistant-sdd.md` 插件兼容性 |
-| D030 (写路径基础设施) | `docs/review-assistant-sdd.md` §2.4 / §3 / §14；下一会话 `docs/write-action-framework-sdd.md` |
+| D030 (写路径基础设施) | `docs/review-assistant-sdd.md` §2.4 / §3 / §14；下一会话 `docs/architecture/write-action-framework-sdd.md` |

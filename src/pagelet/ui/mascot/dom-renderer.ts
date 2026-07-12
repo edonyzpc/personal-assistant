@@ -3,7 +3,7 @@
 /**
  * Pagelet — Mascot DOM renderer.
  *
- * Spec source: `docs/archive/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html`.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §10.1 + `docs/archive/assets/pagelet-visual-spec.html`.
  *
  * Responsibility split:
  *  - `markup.ts` decides WHAT the markup looks like for a given state.

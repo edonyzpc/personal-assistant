@@ -19,37 +19,38 @@
 | --- | --- | --- |
 | v2.2-v2.7 implementation train | Complete, historical | [v2 post-release tracker](./archive/v2-post-release-spec-driven-development.md) |
 | v2.7 consolidated feature release | Complete, historical | [archived roadmap](./archive/development-roadmap-v2.7.md) and release tags |
-| v2.8.0 license migration | Complete, historical one-time migration | [license migration sign-off](./license-migration-2.8.0.md) |
+| v2.8.0 license migration | Complete, historical one-time migration | [license migration sign-off](./archive/license-migration-2.8.0.md) |
 | v2.8.1-v2.8.4 patch line | Current shipped baseline | [changelog](../CHANGELOG.md) and release metadata |
 
-## Next Candidate Themes
+## Current Product Baseline
 
-| Theme | Why it matters | Scope guard |
+| Theme | Current meaning | Current authority |
 | --- | --- | --- |
-| Memory Control Center and user-understanding governance | Canonical Settings, device-local governance, lifecycle, admission/use, migration/rollback, contextual routing, post-timeout confirmation, Device A/B compatibility, and iOS validation all pass. | Complete; next step is release-readiness or a separately approved future gate. No automatic cross-device sync or action authority. |
-| PA Agent product spec completion | Turns the SDD plan into shipped PA capture/review/memory/maintenance/recall layers with evidence and smoke gates. | Slices 0-G, A2, and M12 are complete; next step is release-readiness review or a new approval gate for future scope. |
-| Pagelet Delivery Preparation consolidation | Converges Bubble, Scope Recap, Preload, Recall, Pattern, and Review into one source-backed delivery model instead of separate AI feature buttons. | Implemented in Phase 6. Periodic Summary entrypoints are directly removed; prepared Recap uses a local derived cache. Next step is release-readiness review and dogfooding. |
-| Operations Agent productization | Turns the existing write-action infrastructure into a usable, confirmed note-editing mode. | Start with append-to-current-note only; do not add shell, arbitrary filesystem writes, plugin actions, or command execution without separate review. |
-| User custom Skills | Lets advanced users extend PA Agent behavior without waiting for bundled skills. | Requires product design first; keep scripts/tools out until allowed-tools policy is explicit. |
-| Pagelet async result UX | Prevents paid provider results from being discarded when the user changes notes mid-run. | First pass is in-memory source-bound results only; no hidden persistence of full provider output. |
-| Architecture quality pass | Keeps the mature codebase maintainable after large v2.x feature work. | Behavior-preserving extraction first; run focused tests plus Obsidian smoke for runtime/UI surfaces. |
-| Android VSS validation | Closes the remaining mobile validation note in README. | Real-device validation only; do not infer Android parity from desktop/iOS smoke. |
+| Memory Control Center | Validated device-local Memory governance; broader sync/action authority is not implied | [Product Spec](./product/specs/pa-memory-control-center-product-spec.md) |
+| PA Agent | Capture/review/memory/maintenance/recall runtime with source-backed evidence and current safety boundaries | [Product index](./product/README.md), [Architecture](./architecture/pa-agent-architecture-plan.md) |
+| Pagelet Delivery | Bubble、Scope Recap、Recall、Pattern 与 Review 的安静、可忽略 delivery model | [Pagelet Product Design](./product/pagelet-product-design.md) |
+
+## Candidate Directions
+
+Roadmap 只表达方向，不复制执行状态。每项当前状态、下一步与启动条件以 Backlog 或 Active Tracker 为准。
+
+| Direction | Work item | Why it may matter | Scope guard |
+| --- | --- | --- | --- |
+| Operations Agent productization | B-101 | 把既有 write-action substrate 变成可确认的有限笔记编辑模式 | runtime flag 保持关闭；不加入 shell、任意文件写入、plugin action 或 command execution |
+| Pagelet async result UX | B-002 | 避免用户切换笔记时丢失已付费 provider result | 先复核现有实现；不隐藏持久化完整 provider output |
+| Architecture quality pass | B-105 | 降低成熟 v2.x codebase 的维护成本 | 行为保持、按独立 slice 验证；runtime/UI 需要 app smoke |
+| Android VSS validation | B-003 | 关闭 README 中剩余 mobile parity 证据缺口 | 只接受物理 Android 证据，不从 desktop/iOS 推断 |
+| User custom Skills | B-103 | 让高级用户扩展 PA Agent 行为 | 先批准产品价值、权限和 Settings UX；不提前开放 scripts/tools |
 
 ## Deferred / Triggered Work
 
-| Work | Start condition |
-| --- | --- |
-| Obsidian Operations CLI read adapter | Desktop CLI reads become important enough to justify a full SPEC-05 pass. |
-| PA Agent latency levers | There is a focused latency investigation with comparable p50/p95 evidence. |
-| React to Preact evaluation | React-only features or incompatible libraries are introduced. |
-| SQLite/WASM inline strategy review | Mobile cold-start or OOM triggers fire. |
-| Paid hosted/commercial services | Separate Terms, privacy, billing, entitlement, and counsel review are complete. |
+Deferred and trigger-gated work is maintained only in [Project Backlog](./backlog.md#已延期的产品与工程工作) so roadmap and execution status cannot drift into separate ledgers.
 
 ## Links
 
-- Current short-form status: [Project TODO](./todo.md)
-- PA Agent product spec tracker: [pa-agent-product-spec-development-tracker.md](./pa-agent-product-spec-development-tracker.md)
-- Memory Control Center tracker: [pa-memory-control-center-development-tracker.md](./pa-memory-control-center-development-tracker.md)
-- Release process: [release-process.md](./release-process.md)
-- Architecture overview: [architecture-overview.md](./architecture-overview.md)
-- Archive index: [archive/README.md](./archive/README.md)
+- Unresolved work: [Project Backlog](./backlog.md)
+- Product contracts: [Product index](./product/README.md)
+- Architecture contracts: [Architecture index](./architecture/README.md)
+- Development workflow: [Development index](./development/README.md)
+- Release process: [Release process](./operations/release-process.md)
+- Historical evidence: [Archive index](./archive/README.md)

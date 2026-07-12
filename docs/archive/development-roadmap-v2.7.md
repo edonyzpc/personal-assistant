@@ -3,7 +3,7 @@
 > **Created**: 2026-06-15 · **Last updated**: 2026-06-19
 >
 > SPEC details live in [`v2-post-release-spec-driven-development.md`](./v2-post-release-spec-driven-development.md).
-> Architecture context in [`architecture-overview.md`](../architecture-overview.md).
+> Architecture context in [`architecture-overview.md`](../architecture/architecture-overview.md).
 
 ---
 
@@ -66,8 +66,8 @@ v2.7  Release prepared      local tag 2.7.0; publish pending
   Jest、typecheck、lint、build、bundle audit、whitespace scan、source review
   scan、`make deploy`。该记录覆盖 final Settings native color picker /
   `vanilla-picker` removal follow-up。
-- 2026-06-19 补齐 v2.7 英文/中文用户说明：`docs/v2.7-user-guide-en.md`
-  面向海外用户作为主入口，`docs/v2.7-user-guide.md` 保留中文版。两者从
+- 2026-06-19 补齐 v2.7 英文/中文用户说明：`docs/archive/v2.7-user-guide-en.md`
+  面向海外用户作为主入口，`docs/archive/v2.7-user-guide.md` 保留中文版。两者从
   用户工作流说明 AI Insights、Memory、Pagelet、Research、安全保存、最佳
   实践和发布视频脚本，并从 README / README-CN / docs index 建立入口。
 

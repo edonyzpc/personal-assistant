@@ -61,7 +61,7 @@ AI note companion — chat with your vault, let past notes resurface when they m
 2. **最低成本推荐路径**：DashScope（国内）或 Google AI Studio（海外），3 步截图教程
 3. **PA 内配置步骤**：Settings → AI → 选 Provider → 粘贴 key → 验证
 
-格式：独立 Markdown 文件 `docs/byok-quick-start.md`，README 和社区帖都可链接。
+格式：获批并开始编写时，在 `docs/guides/` 创建独立 BYOK 指南，并从 README 和社区帖链接；未创建前不要引用一个假定存在的文件。
 
 ### 0.4 清理 open issues
 

@@ -3,7 +3,7 @@
 /**
  * Pagelet — Mascot markup builder (pure).
  *
- * Spec source: `docs/archive/review-assistant-sdd.md` §10.1 + `docs/pagelet-visual-spec.html` §①.
+ * Spec source: `docs/archive/review-assistant-sdd.md` §10.1 + `docs/archive/assets/pagelet-visual-spec.html` §①.
  *
  * Why a pure builder (separate from the DOM renderer):
  *  - Without jsdom in the test setup, exercising real DOM calls
@@ -243,7 +243,7 @@ function stripAnimClasses(shapes: MascotSvgShapes): MascotSvgShapes {
 }
 
 // ---------------------------------------------------------------------------
-// SVG geometry tables — copied verbatim from `docs/pagelet-visual-spec.html`.
+// SVG geometry tables — copied verbatim from `docs/archive/assets/pagelet-visual-spec.html`.
 //
 // Path strings include intentional ±0.1~0.3 jitter (Tldraw-like 手绘 per
 // D005); do NOT "tidy" the decimals — they are the visual signature.

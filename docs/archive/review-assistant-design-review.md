@@ -83,10 +83,10 @@
 
 `src/ai-services/policy-engine.ts:35-40` 硬拒 `kind === "action"` 与非 read-only/network-read。Review Assistant 是 PA Agent v1 历史上**第一次 vault write**，文档说"should not weaken read-only tool policy"但没说怎么走。两条路：
 
-- **方案 A**：完全绕开 CapabilityRegistry，直接调 `vault.create`。后果：v1 引入第二条写入路径，未来 Operations Agent 的 target confinement / stale re-read / audit（`docs/operations-agent-plan.md`）出现"特例先例"，回头很难收回。
+- **方案 A**：完全绕开 CapabilityRegistry，直接调 `vault.create`。后果：v1 引入第二条写入路径，未来 Operations Agent 的 target confinement / stale re-read / audit（`docs/development/proposals/operations-agent/operations-agent-plan.md`）出现"特例先例"，回头很难收回。
 - **方案 B**：扩展 PolicyEngine 允许 `permission: "write" + requiresConfirmation: true`。后果：必须在 Review Assistant 上线前先实现 Operations Agent 的 preview/confirmation/target confinement 框架，scope 显著膨胀。
 
-**必须在实现前选定，并在 `docs/operations-agent-plan.md` 同步登记**。若选 A，明确登记为「已知例外」并列入未来迁移项。
+**必须在实现前选定，并在 `docs/development/proposals/operations-agent/operations-agent-plan.md` 同步登记**。若选 A，明确登记为「已知例外」并列入未来迁移项。
 
 ### 2.5 Structured Output Contract 缺执行基线（F5）
 
@@ -365,7 +365,7 @@ L450 假定能识别 daily/periodic note，但跨插件高度分裂。**建议 V
 6. **First-Run Consent & Legal** —— 法律免责一行；隐私矩阵新增 Review Assistant 行；首次 Pet 强同意 modal 复用 `confirmUserAction`
 7. **Plugin Compatibility Matrix** —— Hover Editor / Periodic Notes / Tasks / Dataview / Calendar / Popout Window / Mobile 行为定义
 8. **Graceful Degradation** —— 空 vault / 0 findings / provider 失败 / 配额耗尽 / Memory 未就绪 的文案矩阵
-9. **Write Path Decision Record** —— 选 A（旁路）或 B（扩展 PolicyEngine），与 `docs/operations-agent-plan.md` 同步登记
+9. **Write Path Decision Record** —— 选 A（旁路）或 B（扩展 PolicyEngine），与 `docs/development/proposals/operations-agent/operations-agent-plan.md` 同步登记
 10. **Structured Output Runtime Decision** —— zod + withStructuredOutput vs 手写 parser；provider 兼容性测试矩阵
 
 ---
@@ -395,13 +395,13 @@ L450 假定能识别 daily/periodic note，但跨插件高度分裂。**建议 V
 
 - 被评审文档：`docs/review-assistant-product-design.md`
 - 相关架构基线：
-  - `docs/pa-agent-architecture-plan.md`
-  - `docs/pa-agent-runtime-lifecycle-plan.md`
-  - `docs/pa-agent-mcp-adapter-decision.md`
-  - `docs/operations-agent-plan.md`
-  - `docs/obsidian-operations-agent-plan.md`
-  - `docs/pa-agent-telemetry-baseline.md`
-  - `docs/pa-agent-product-safety-review.md`
+  - `docs/architecture/pa-agent-architecture-plan.md`
+  - `docs/architecture/pa-agent-runtime-lifecycle-plan.md`
+  - `docs/product/decisions/pa-agent-mcp-adapter-decision.md`
+  - `docs/development/proposals/operations-agent/operations-agent-plan.md`
+  - `docs/architecture/obsidian-operations-agent-plan.md`
+  - `docs/operations/pa-agent-telemetry-baseline.md`
+  - `docs/archive/pa-agent-product-safety-review.md`
   - `docs/archive/community-scan-remediation-plan.md`
 - 关键代码定位：
   - `src/ai-services/policy-engine.ts:35-40`（写入边界冲突点）

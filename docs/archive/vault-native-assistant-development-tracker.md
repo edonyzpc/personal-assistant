@@ -1,7 +1,7 @@
 # Vault-native Assistant Development Tracker
 
 > [!IMPORTANT]
-> Archived historical record. This document is no longer an active implementation tracker. Use [PA Agent Architecture Plan](../pa-agent-architecture-plan.md) and [PA Agent Runtime Lifecycle Plan](../pa-agent-runtime-lifecycle-plan.md) for current PA Agent design, runtime boundaries, and verification. Any guidance below is historical evidence only; if it conflicts with the current PA Agent docs, the current PA Agent docs win.
+> Archived historical record. This document is no longer an active implementation tracker. Use [PA Agent Architecture Plan](../architecture/pa-agent-architecture-plan.md) and [PA Agent Runtime Lifecycle Plan](../architecture/pa-agent-runtime-lifecycle-plan.md) for current PA Agent design, runtime boundaries, and verification. Any guidance below is historical evidence only; if it conflicts with the current PA Agent docs, the current PA Agent docs win.
 
 ## Purpose
 
@@ -11,7 +11,7 @@
 
 - [Archived Vault-native Obsidian Assistant Refactor Plan](./vault-native-assistant-refactor-plan.md)
 
-本文档不是当前架构设计的替代品。当前 PA Agent 当前产品定位、架构边界、Memory workflow、native rollout、隐私和写入边界以 `docs/pa-agent-architecture-plan.md` 和 `docs/pa-agent-runtime-lifecycle-plan.md` 为准。
+本文档不是当前架构设计的替代品。当前 PA Agent 当前产品定位、架构边界、Memory workflow、native rollout、隐私和写入边界以 `docs/architecture/pa-agent-architecture-plan.md` 和 `docs/architecture/pa-agent-runtime-lifecycle-plan.md` 为准。
 
 ## Status Legend
 
@@ -302,7 +302,7 @@ Goal: Keep write action and command execution out of this implementation track u
 
 | Step | Task | Owner Files | Status | Acceptance |
 | --- | --- | --- | --- | --- |
-| dev | Draft separate write action design if requested | `docs/write-action-design-handoff.md`, `docs/PLAN.md` | [x] Done | No runtime write action lands in this phase |
+| dev | Draft separate write action design if requested | `docs/archive/write-action-design-handoff.md`, `docs/PLAN.md` | [x] Done | No runtime write action lands in this phase |
 | test | Validate docs and scope only | docs | [x] Done | `git diff --check` passed for docs |
 | review | Codex subagents review write action design | docs | [x] Done | Product/security review passed; architecture/QA P2 status findings fixed |
 | fix | Address design findings | docs | [x] Done | Phase 5 test status and Phase 6 closeout status aligned |
@@ -422,8 +422,8 @@ Goal: Keep write action and command execution out of this implementation track u
 | 2026-05-10 | Phase 5 qwen default rollout | `npm run build` | [x] Passed | Build passed; emitted only Browserslist stale-data warning |
 | 2026-05-10 | Phase 5 qwen default smoke setup | `make deploy` | [x] Passed | Ran full Jest 20 suites / 214 tests, lint, build, and copied plugin assets into `test/.obsidian/plugins/personal-assistant/` |
 | 2026-05-10 | Phase 5 qwen default Obsidian smoke | Default qwen native metadata path | [x] Passed | With `nativeToolPlanningSmokeEnabled=false`, reloaded Obsidian, asked for notes with tag `canine-variety`; Thinking showed metadata search and `Found 1 metadata match(es).: 0.unsorted/Dog.md`, final answer was `0.unsorted/Dog.md`, and no fallback status appeared |
-| 2026-05-10 | Phase 6 docs draft | `docs/write-action-design-handoff.md` | [x] Passed | Drafted write-action boundary, preview/confirm gates, local-only redacted audit contract, runtime boundary, test matrix, and open decisions |
-| 2026-05-10 | Phase 6 docs check | `git diff --check -- docs/PLAN.md docs/vault-native-assistant-development-tracker.md docs/write-action-design-handoff.md` | [x] Passed | Docs whitespace check passed after handoff draft |
+| 2026-05-10 | Phase 6 docs draft | `docs/archive/write-action-design-handoff.md` | [x] Passed | Drafted write-action boundary, preview/confirm gates, local-only redacted audit contract, runtime boundary, test matrix, and open decisions |
+| 2026-05-10 | Phase 6 docs check | `git diff --check -- docs/PLAN.md docs/vault-native-assistant-development-tracker.md docs/archive/write-action-design-handoff.md` | [x] Passed | Docs whitespace check passed after handoff draft |
 | 2026-05-10 | Phase 6 Obsidian smoke decision | Docs-only handoff | [x] Skipped | No Chat UI, runtime, Memory routing, ToolRegistry/native path, lifecycle behavior, or write prototype changed |
 
 ## Risk Register

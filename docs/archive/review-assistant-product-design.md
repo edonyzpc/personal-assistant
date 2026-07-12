@@ -269,7 +269,7 @@ The mascot follows visual direction **A · 极简线稿** (D004) and is anchored
 
 Visual spec:
 
-- `docs/pagelet-visual-spec.html` — 4 states + art tokens + colors + scene mockups (D004 + D005 merged execution reference).
+- `docs/archive/assets/pagelet-visual-spec.html` — 4 states + art tokens + colors + scene mockups (D004 + D005 merged execution reference).
 
 Avoid:
 

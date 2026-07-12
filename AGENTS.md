@@ -10,7 +10,7 @@ Use this file as the project README for coding agents. Keep changes aligned with
 
 Before product design, UX, planning, SDD, Pagelet, Memory, Capture, Review,
 Maintenance, or PA Agent behavior work, read
-`docs/pa-product-north-star.md` and use it as the top-level product standard.
+`docs/product/pa-product-north-star.md` and use it as the top-level product standard.
 
 North Star:
 
@@ -199,28 +199,51 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 
 ## Documentation Instructions
 
+- Use `.agents/skills/pa-docs-lifecycle-manager` as the default low-burden
+  entrypoint when the user expresses PA ideas, decisions, planning,
+  implementation, continuation, status, closeout, or archive intent in ordinary
+  language. Infer the lane, IDs, artifacts, and status transitions; ask the user
+  only for product judgment or explicit implementation/Git/release authority.
 - For architecture or plan work, prefer durable docs in `docs/` over chat-only analysis when the user asks for a plan or design.
+- Follow `docs/development/documentation-workflow.md` for document roles,
+  active-package placement, closeout, archive, Backlog extraction, and docs
+  validation. Run `npm run docs:check` after moves or lifecycle cleanup.
+- Treat repo docs as the current authority: external chat, Linear, issues, or
+  machine-local memory may be intake/mirrors, but decisions and active product
+  work must be synchronized into Backlog, Discovery, Decision, Product Spec,
+  or an Active Package before they drive implementation.
+- Use `docs/development/governance/` for substantial repo-only documentation,
+  checker, CI/release-tooling, or Agent-skill contracts that do not change PA
+  runtime or user behavior. Do not create a Product Decision/Spec merely to
+  satisfy Active Package metadata; use the Governance Contract lane defined by
+  the Documentation Workflow. Closed governance tracks keep delivered GOV
+  contracts current; Cancelled/Superseded GOV contracts move to the annual
+  Archive. Superseded records must link a new Current successor GOV; without a
+  successor, use `Cancelled`.
+- Use `docs/development/templates/` for new lifecycle artifacts. Preserve stable
+  `B-xxx`, `DEC-xxx`, `B-xxx/REQ-xx`, and `B-xxx/AC-xx` traceability across
+  closeout.
 - Use Mermaid diagrams inside Markdown for architecture and flow visualizations unless the user explicitly asks for image assets.
 - Keep architecture docs separate from implementation trackers when both are needed.
 - Make docs match actual commands and behavior; do not document aspirational flows as current behavior.
-- For release process changes, update `docs/release-process.md`.
+- For release process changes, update `docs/operations/release-process.md`.
 - For VSS/Memory behavior changes, update relevant VSS docs such as:
-  - `docs/vss-sqlite-wasm-architecture.md`
-  - `docs/vss-embedding-refresh.md`
+  - `docs/architecture/vss-sqlite-wasm-architecture.md`
+  - `docs/architecture/vss-embedding-refresh.md`
 
 ## Refactor Workflow
 
-- For repo-scale refactors, follow `docs/refactor-workflow.md`.
+- For repo-scale refactors, follow `docs/development/workflows/refactor-workflow.md`.
 - Start with a plan doc and a separate development tracker.
 - Each phase must loop through `dev -> test -> review -> fix -> Obsidian smoke test -> fix` until P2/P1/P0 issues are closed or explicitly deferred.
 - Use Codex subagents for phase review when available.
 - Runtime/UI changes require `make deploy` and real Obsidian test-vault smoke before the phase is marked done.
-- Keep tracker status, risk table, verification log, open decisions, and `docs/todo.md` aligned with the actual final behavior.
+- Keep tracker status, risk table, verification log, open decisions, and `docs/backlog.md` aligned with the actual final behavior.
 - Split commits by intent: runtime/tests, docs/tracker, TODO/future milestones, and release automation.
 
 ## Release Instructions
 
-- See `docs/release-process.md` for the full release workflow.
+- See `docs/operations/release-process.md` for the full release workflow.
 - Preview without writing files: `make release-dry-run VERSION=x.y.z`.
 - Create local release commit and annotated tag: `make release VERSION=x.y.z`.
 - Publish only after explicit user request or confirmation: `make publish VERSION=x.y.z`.
@@ -252,26 +275,43 @@ Use `make deploy` when app-runtime confidence is needed — it runs full Jest, l
 
 ## SDD-Driven Development
 
-This project follows SPEC-Driven Development (SDD). Each substantial feature
+This project follows SPEC-Driven Development (SDD). Each substantial PA feature
 goes through product spec -> implementation SDD -> development tracker ->
-focused tests/review/smoke before runtime code is written.
+focused tests/review/smoke before runtime code is written. Substantial repo-only
+governance work uses Governance Contract -> SDD -> Tracker instead, and must not
+pollute the PA product authority chain.
 
 Current entry points:
 
-- Product and release priority: `docs/development-roadmap.md` and `docs/todo.md`.
-- Active/current product specs: root `docs/*-product-spec.md` files linked from
-  `docs/index.md`.
-- Pagelet feature delivery: `docs/pagelet-sdd-guide.md`.
-- Write/action boundary: `docs/write-action-framework-sdd.md`,
-  `docs/operations-agent-plan.md`, and `docs/operations-agent-mode-sdd.md`.
-- Reusable repo-scale refactor workflow: `docs/refactor-workflow.md`.
+- Low-burden natural-language orchestration:
+  `.agents/skills/pa-docs-lifecycle-manager/SKILL.md`.
+- Product and release priority: `docs/development-roadmap.md` and `docs/backlog.md`.
+- Documentation lifecycle and closeout rules:
+  `docs/development/documentation-workflow.md`.
+- Active/current product specs: `docs/product/specs/` files linked from
+  `docs/product/README.md` and `docs/index.md`.
+- Discovery and decision entry points:
+  `docs/development/discovery/README.md`,
+  `docs/product/active-decisions.md`, and
+  `docs/product/decisions/README.md`.
+- Active feature execution packages start with
+  `docs/development/active/<feature>/{README,plan,tracker}.md`; add `sdd.md`
+  during the SDD phase and require it before implementation.
+- Completed/cancelled package closeout:
+  create `closeout.md`, then move the full package to
+  `docs/archive/<year>/<feature>/` and update the disposition/index records.
+- Pagelet feature delivery: `docs/development/workflows/pagelet-sdd-guide.md`.
+- Write/action boundary: `docs/architecture/write-action-framework-sdd.md`,
+  `docs/development/proposals/operations-agent/operations-agent-plan.md`, and `docs/development/proposals/operations-agent/operations-agent-mode-sdd.md`.
+- Reusable repo-scale refactor workflow: `docs/development/workflows/refactor-workflow.md`.
 
 Historical trackers and research are retained under `docs/archive/`, including
 `docs/archive/v2-post-release-spec-driven-development.md`,
 `docs/archive/agent-context-management-research.md`, and
 `docs/archive/agent-memory-extraction-research.md`. Treat archived documents as
-evidence/provenance, not as current approval gates unless a current root doc
-explicitly points to them.
+evidence/provenance, not as current approval gates unless a current Product
+Spec, Architecture doc, active Tracker, or Backlog item explicitly points to
+them.
 
 ## Final Checklist For Agents
 

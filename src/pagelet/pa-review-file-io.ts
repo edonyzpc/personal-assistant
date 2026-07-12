@@ -159,7 +159,8 @@ export interface ResolveReviewNotePathInput {
  *
  * Production callers can build their own `WriteActionCapability` adapter
  * that translates `input + context + hooks` into this call without changing
- * either side. See the C1 task description in `docs/sdd-rollout-plan.md` §4.4.
+ * either side. See the historical C1 task description in
+ * `docs/archive/sdd-rollout-plan.md` §4.4.
  */
 export interface WriteReviewNoteInput {
     /** Source note vault-relative path (used for filename + frontmatter). */

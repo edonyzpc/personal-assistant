@@ -7,8 +7,8 @@
  * the write framework.
  *
  * Design references:
- *  - `docs/pagelet-product-design.md` §Review Note Output
- *  - `docs/pagelet-sdd-guide.md` §Review Note Output
+ *  - `docs/product/pagelet-product-design.md` §Review Note Output
+ *  - `docs/development/workflows/pagelet-sdd-guide.md` §Review Note Output
  */
 
 // ---------------------------------------------------------------------------

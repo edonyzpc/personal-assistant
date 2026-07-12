@@ -55,7 +55,7 @@ Verification completed for this remediation pass:
   - `gh release create` 上传同一组三个文件，不上传 `manifest-beta.json`。
   - workflow permissions 保留 `contents: write`，新增 `id-token: write` 和 `attestations: write`。
   - 不启用 `artifact-metadata: write`，因为当前只为 release files 生成 attestation，不创建 linked artifacts storage records。
-- 更新 `docs/release-process.md`：
+- 更新 `docs/operations/release-process.md`：
   - GitHub Release 只包含 `main.js`、`manifest.json`、`styles.css`。
   - `manifest-beta.json` 仍可用于本地部署或 beta 流程，但不是正式社区 release asset。
 

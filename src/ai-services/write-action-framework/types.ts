@@ -8,7 +8,7 @@ import type {
  * Write Action Framework v1 — type skeleton (Step 0).
  *
  * v1 仅支持一种 action family（create-file）；扩展到 append / replace / multi-file / command
- * 推迟到 Operations Agent mode (v2+)。详见 docs/write-action-framework-sdd.md §1.4。
+ * 推迟到 Operations Agent mode (v2+)。详见 docs/architecture/write-action-framework-sdd.md §1.4。
  */
 export type WriteActionFamily = "create-file" | "append-to-current-note";
 

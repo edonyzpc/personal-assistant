@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This document drives SPEC-first implementation of [Obsidian Operations Agent Plan](../obsidian-operations-agent-plan.md).
+This document drives SPEC-first implementation of [Obsidian Operations Agent Plan](../architecture/obsidian-operations-agent-plan.md).
 
 Use the plan as the product, architecture, safety, and source-boundary contract. Use this SPEC tracker to split the contract into implementable slices, record approvals, track phase status, capture review findings, and close each phase with verification evidence.
 
@@ -12,10 +12,10 @@ No runtime code should be changed from this tracker until the relevant SPEC is r
 
 | Document | Role | Conflict Rule |
 | --- | --- | --- |
-| `docs/obsidian-operations-agent-plan.md` | Contract source of truth for product behavior, read risk, v1A tools, v1B CLI adapter boundary, source-boundary rules, and deferred actions. | This wins for Obsidian Operations product/runtime/source-boundary decisions. |
+| `docs/architecture/obsidian-operations-agent-plan.md` | Contract source of truth for product behavior, read risk, v1A tools, v1B CLI adapter boundary, source-boundary rules, and deferred actions. | This wins for Obsidian Operations product/runtime/source-boundary decisions. |
 | `docs/obsidian-operations-spec-driven-development.md` | Active SPEC tracker for task slicing, execution status, review records, verification evidence, and smoke closeout. | If it drifts from the plan, update both docs in the same reviewed change before implementation continues. |
-| `docs/write-action-design-handoff.md` | Contract for future write actions and command execution. | This tracker cannot approve write or command execution by weakening read-only tools. |
-| `docs/pa-agent-architecture-plan.md` + `docs/pa-agent-runtime-lifecycle-plan.md` | Current PA Agent runtime reference (replaced the historical Ralpha plan in v2.0.0). | Use as runtime reference; do not edit their status for this feature unless the shared runtime contract changes. |
+| `docs/archive/write-action-design-handoff.md` | Contract for future write actions and command execution. | This tracker cannot approve write or command execution by weakening read-only tools. |
+| `docs/architecture/pa-agent-architecture-plan.md` + `docs/architecture/pa-agent-runtime-lifecycle-plan.md` | Current PA Agent runtime reference (replaced the historical Ralpha plan in v2.0.0). | Use as runtime reference; do not edit their status for this feature unless the shared runtime contract changes. |
 
 ## Status Legend
 
@@ -36,7 +36,7 @@ No runtime code should be changed from this tracker until the relevant SPEC is r
 
 A SPEC may move to `[R] Ready for review` only when all of these are true:
 
-- Contract references point to headings in `docs/obsidian-operations-agent-plan.md` and have been checked for drift.
+- Contract references point to headings in `docs/architecture/obsidian-operations-agent-plan.md` and have been checked for drift.
 - Runtime-affecting open decisions for that SPEC are resolved in the plan, or the SPEC is explicitly marked `[!] Blocked`.
 - Deliverables include implementation boundaries, expected code/test areas, source-boundary rules, and known non-goals.
 - Acceptance checklist includes product behavior, runtime behavior, negative assertions, and verification commands.
@@ -88,7 +88,7 @@ Loop rules:
 | Field | Value |
 | --- | --- |
 | Created | 2026-05-17 |
-| Contract source | `docs/obsidian-operations-agent-plan.md` |
+| Contract source | `docs/architecture/obsidian-operations-agent-plan.md` |
 | Current stage | SPEC-06 post-finding hardening implemented; focused automated verification, full Jest, post-fix `make deploy`, and targeted live Obsidian smoke passed; SPEC-05 CLI adapter remains design-only and unimplemented |
 | Runtime code changes in this pass | SPEC-01 added a local catalog source module. SPEC-02 added v1A tool-name/policy scaffolding, read-only result chokepoints, Context Used/status mappings, and aggregate tool-context caps. SPEC-03 registered and implemented v1A App API read tools with deterministic smoke fixtures. SPEC-04 added final-answer source-boundary copy and tests for bounded tool context, non-executable write/command requests, and citation-ineligible tool paths. SPEC-06 added graceful unavailable-source reporting for missing metadata cache or vault file reads, mobile-safe pre-read size guards for large notes/Canvas/snippet files, capped tag metadata scans, post-subagent fixes for failure final-context, direct output budgets, validation reasons, missing snippet scopes, catalog-guidance drift, dotted folders, task status markers, wikilink subpaths, and a completed pre-hardening v1A smoke matrix. Latest post-finding hardening fail-closes malformed note-inspection inputs, includes frontmatter tags without a silent per-file cap, carries unavailable/partial tool status into Chat Agent and Context Used, expands native-tool fallback intent detection for v1A requests, reports existing non-Markdown snippet scopes as unsupported, skips fenced-code examples during Markdown structure parsing, and suppresses duplicate read-only tool skips from unavailable Context Used output. |
 | Open contract decisions | No blocking product decisions for v1A. SPEC-05 CLI adapter implementation has not started and must proceed under SPEC-05 if pursued. |
@@ -145,7 +145,7 @@ Contract refs:
 
 Deliverables:
 
-- Create `docs/obsidian-operations-agent-plan.md`.
+- Create `docs/architecture/obsidian-operations-agent-plan.md`.
 - Create `docs/obsidian-operations-spec-driven-development.md`.
 - Record current runtime chokepoints that must be updated before new tools can work.
 - Record initial risks and smoke scenarios.
@@ -450,20 +450,20 @@ Acceptance checklist:
 
 | Date | Scope | Command / Method | Result | Notes |
 | --- | --- | --- | --- | --- |
-| 2026-05-17 | SPEC-00 docs whitespace | `git diff --check -- docs/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md`; `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings. `--no-index` exits non-zero for new-file diffs even when no warnings are present. |
-| 2026-05-17 | SPEC-00 docs trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
-| 2026-05-17 | SPEC-00 review hardening docs whitespace | `git diff --no-index --check -- /dev/null docs/obsidian-operations-agent-plan.md`; `git diff --no-index --check -- /dev/null docs/obsidian-operations-spec-driven-development.md` | Passed | No whitespace warnings. `--no-index` exits non-zero for new-file diffs even when no warnings are present. |
-| 2026-05-17 | SPEC-00 review hardening trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
+| 2026-05-17 | SPEC-00 docs whitespace | `git diff --check -- docs/architecture/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md`; `git diff --no-index --check -- /dev/null <new-doc>` for each new doc | Passed | No whitespace warnings. `--no-index` exits non-zero for new-file diffs even when no warnings are present. |
+| 2026-05-17 | SPEC-00 docs trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/architecture/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
+| 2026-05-17 | SPEC-00 review hardening docs whitespace | `git diff --no-index --check -- /dev/null docs/architecture/obsidian-operations-agent-plan.md`; `git diff --no-index --check -- /dev/null docs/obsidian-operations-spec-driven-development.md` | Passed | No whitespace warnings. `--no-index` exits non-zero for new-file diffs even when no warnings are present. |
+| 2026-05-17 | SPEC-00 review hardening trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/architecture/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
 | 2026-05-17 | SPEC-00 readiness repository whitespace | `git diff --check` | Passed | Repository-wide whitespace check passed after latest SPEC-00 hardening. |
 | 2026-05-17 | SPEC-00 second-review hardening repository whitespace | `git diff --check` | Passed | Repository-wide whitespace check passed after second-review hardening. |
-| 2026-05-17 | SPEC-00 second-review hardening trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
+| 2026-05-17 | SPEC-00 second-review hardening trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/architecture/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
 | 2026-05-17 | SPEC-00 status transition whitespace | `git diff --check` | Passed | Repository-wide whitespace check passed after moving SPEC-00 to `[R]` and starting SPEC-01 drafting. |
-| 2026-05-17 | SPEC-00 status transition trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
+| 2026-05-17 | SPEC-00 status transition trailing whitespace scan | `rg -n "[[:blank:]]+$" docs/architecture/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches. |
 | 2026-05-17 | SPEC-01 focused catalog tests | `npm test -- __tests__/obsidian-operations-capability-catalog.test.ts --runInBand` | Passed | 10 tests passed after removing a traversal string from a positive catalog example. |
 | 2026-05-17 | SPEC-01 type check | `npx tsc -noEmit -skipLibCheck` | Passed | No TypeScript diagnostics. |
 | 2026-05-17 | SPEC-01 lint | `npm run lint` | Passed | Added source file passed repository lint. |
 | 2026-05-17 | SPEC-01 whitespace | `git diff --check` | Passed | Repository tracked diff whitespace check passed. |
-| 2026-05-17 | SPEC-01 trailing whitespace scan | `rg -n "[[:blank:]]+$" src/ai-services/obsidian-operations-capability-catalog.ts __tests__/obsidian-operations-capability-catalog.test.ts docs/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches, including new untracked files. |
+| 2026-05-17 | SPEC-01 trailing whitespace scan | `rg -n "[[:blank:]]+$" src/ai-services/obsidian-operations-capability-catalog.ts __tests__/obsidian-operations-capability-catalog.test.ts docs/architecture/obsidian-operations-agent-plan.md docs/obsidian-operations-spec-driven-development.md` | Passed | No trailing whitespace matches, including new untracked files. |
 | 2026-05-17 | SPEC-01 chat planner serialization | `npm test -- __tests__/chat-service.test.ts --runInBand` | Skipped | SPEC-01 did not change planner prompt serialization, runtime registration, provider schemas, or final prompt construction. |
 | 2026-05-17 | SPEC-02 tool policy tests | `npm test -- __tests__/chat-tools.test.ts --runInBand` | Passed | 6 tests passed. Validates v1A name helper, registration-driven schemas, strict metadata policy, output-budget failures, and result guard shape. |
 | 2026-05-17 | SPEC-02 Chat Agent source-boundary tests | `npm test -- __tests__/chat-service.test.ts --runInBand` | Passed | 136 tests passed. Added v1A read-only result guards, product-safe observation messages, and 12000-char aggregate `<tool_context>` cap coverage. |
@@ -620,6 +620,6 @@ SPEC-03 must create or update these deterministic fixtures before SPEC-06 smoke 
 
 - Keep this tracker as the only active SPEC tracker for the Obsidian Operations Agent feature family.
 - When a SPEC status changes, update Current Status, the SPEC Index, Phase Ledger, Review Log, and Verification Log in the same change.
-- When contract language changes, update `docs/obsidian-operations-agent-plan.md` and this tracker together.
+- When contract language changes, update `docs/architecture/obsidian-operations-agent-plan.md` and this tracker together.
 - Do not mark runtime/UI SPECs `[A] Approved for implementation` without a review record.
 - Do not mark runtime/UI SPECs `[x] Done` without automated tests, `make deploy`, and Obsidian smoke evidence or explicit deferral.

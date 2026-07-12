@@ -234,7 +234,7 @@ export const PAGELET_FIXED_CALL_LIMITS = Object.freeze({
  * settings layer is the fail-closed boundary that prevents these from
  * EVER reaching `PaReviewToolProvider.targetConfinement.allowedRoots`.
  *
- * See `docs/write-action-framework-sdd.md` §8.3 for the upstream attacker
+ * See `docs/architecture/write-action-framework-sdd.md` §8.3 for the upstream attacker
  * model these categories defend against.
  */
 export type PageletReviewsFolderError =

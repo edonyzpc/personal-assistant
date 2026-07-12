@@ -19,4 +19,4 @@ Current rules:
   reference is strictly necessary for users.
 
 For the 2.8.0 commercial and license boundary, see
-`docs/license-migration-2.8.0.md`.
+`docs/archive/license-migration-2.8.0.md`.

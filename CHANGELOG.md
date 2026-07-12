@@ -232,7 +232,7 @@ All notable changes to this project will be documented in this file. See [standa
 
 ### Tests
 - 4 new automated test suites for Pagelet E2E flow (happy path, self-write no-loop, cancel/abort, prompt-injection rejection).
-- 1 new manual smoke checklist (`docs/pagelet-smoke-checklist.md`) for real-Obsidian verification with explicit release-gate severity tiers.
+- 1 new manual smoke checklist (`docs/development/validation/pagelet-smoke-checklist.md`) for real-Obsidian verification with explicit release-gate severity tiers.
 
 ### Notes
 - Pagelet is **beta** — feedback via GitHub Issues. Enabled by default for beta users; toggle off via `settings.pagelet.enabled` if you'd rather opt out.

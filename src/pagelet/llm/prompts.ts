@@ -8,7 +8,7 @@
  * provided token budget using a chars/4 approximation.
  *
  * Design references:
- *  - `docs/pagelet-product-design.md` §Scenario descriptions
+ *  - `docs/product/pagelet-product-design.md` §Scenario descriptions
  *  - Reuses language-matching and JSON-output patterns from structured review
  *    `pa-review-schemas.ts`
  */

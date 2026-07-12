@@ -4,7 +4,7 @@
 
 - Plan: `docs/architecture-refactor-plan.md`
 - SDD execution spec: `docs/sdd-architecture-refactor.md`
-- Workflow: `docs/refactor-workflow.md`
+- Workflow: `docs/development/workflows/refactor-workflow.md`
 
 ## Current Status
 

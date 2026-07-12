@@ -16,7 +16,9 @@
 
 > ***NOTE***: Newest beta feature: **Pagelet** — a quiet review assistant for your notes (produces structured suggestions, saves as review notes). Also supports LLM chat with Memory. Before preparing memory, the assistant explains data flow, AI provider usage, and possible cost, then asks for your approval.
 
-> ***v2.7 guide***: Before trying the release, read the [v2.7 user guide](./docs/v2.7-user-guide-en.md). It explains AI Insights, Memory, Pagelet, Research, safe save flows, best practices, and a short release-video script from a user workflow perspective. Chinese version: [v2.7 用户指南](./docs/v2.7-user-guide.md).
+> ***v2.7 guide***: Before trying the release, read the [v2.7 user guide](./docs/archive/v2.7-user-guide-en.md). It explains AI Insights, Memory, Pagelet, Research, safe save flows, best practices, and a short release-video script from a user workflow perspective. Chinese version: [v2.7 用户指南](./docs/archive/v2.7-user-guide.md).
+
+> ***Project docs***: Use the [documentation index](./docs/index.md) for repo-local requirements, decisions, product/architecture contracts, active development, backlog, and historical records.
 
 ## Personal Assistant demos
 
@@ -61,41 +63,41 @@ https://github.com/user-attachments/assets/aa246889-0c32-4ce5-bde1-32eba813d034
 ---
 > ***AI Helper to improve your Obsidian notes management***
 <div align="center">
-<img src="./docs/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
+<img src="./docs/assets/Personal-Assitant-With-AI.gif" alt="personal assistant support AI"/>
 </div>
 
 > ***Animation rendering statistics***
 <div align="center">
-<img src="./docs/personal-assistant-v1.3.6.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.3.6.gif" alt="usage video"/>
 </div>
 
 <div align="center">
-<img src="./docs/personal-assistant-v1.3.1.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.3.1.gif" alt="usage video"/>
 </div>
 
 > ***Preview records***
 <div align="center">
-<img src="./docs/personal-assistant-v1.2.4.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.2.4.gif" alt="usage video"/>
 </div>
 
 > ***List callout***
 <div align="center">
-<img src="./docs/personal-assistant-v1.3.2.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.3.2.gif" alt="usage video"/>
 </div>
 
 > ***Update metadata***
 <div align="center">
-<img src="./docs/personal-assistant-v1.2.0.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.2.0.gif" alt="usage video"/>
 </div>
 
 > ***Update Plugins and Themes***
 <div align="center">
-<img src="./docs/personal-assistant-v1.1.6.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.1.6.gif" alt="usage video"/>
 </div>
 
 > ***Basic Usage***
 <div align="center">
-<img src="./docs/personal-assistant-v1.1.1.gif" alt="usage video"/>
+<img src="./docs/assets/personal-assistant-v1.1.1.gif" alt="usage video"/>
 </div>
 
 ## Features
@@ -160,7 +162,7 @@ The local VSS SQLite/WASM backend has been smoke-tested on Obsidian Desktop and 
 
 ## Install
 Now Personal Assistant plugin is available in [plugin market](https://obsidian.md/plugins?search=personal%20assistant#), you can install this plugin directly within Obsidian App, please check this [mannual](https://help.obsidian.md/Extending+Obsidian/Community+plugins#Install+a+community+plugin) to get more details.
-![install with plugin market](./docs/install-within-plugin-market.png)
+![install with plugin market](./docs/assets/install-within-plugin-market.png)
 
 ### Install
 - Download from the release
@@ -177,7 +179,7 @@ Now Personal Assistant plugin is available in [plugin market](https://obsidian.m
 - Find the beta plugin you just installed and Enable it.
 
 Maintainers should use the repository BRAT release workflow before inviting beta
-testers: [docs/brat-beta-testing.md](./docs/brat-beta-testing.md).
+testers: [docs/operations/brat-beta-testing.md](./docs/operations/brat-beta-testing.md).
 
 ### Manually Install
 
@@ -188,30 +190,30 @@ testers: [docs/brat-beta-testing.md](./docs/brat-beta-testing.md).
 
 ### 1. Create note in specificed directory
 - Open the command palette and find the command
-![command 1](./docs/command-1.png)
+![command 1](./docs/assets/command-1.png)
 - New note is created and start your recording
 - [***Recommendation***] Use `Folder Templates` of plugin [Templater](https://github.com/SilentVoid13/Templater) to format the created notes by the command above, the example is as following
-![folder templates](./docs/folder-templates.png)
+![folder templates](./docs/assets/folder-templates.png)
 ### 2. Open memos in hover editor
 - Open the command palette and find the command
-![command 2](./docs/command-2.png)
+![command 2](./docs/assets/command-2.png)
 - Do anything you like in memos
 ### 3. Open graph view of current note
 - Open the command palette and find the command
-![command 3](./docs/command-3.png)
+![command 3](./docs/assets/command-3.png)
 - Open setting tab for more customize
 - Navigate your current note graph view with backlink and outgoing link
 - configure color of graph view
 
 ### 4. Enable/Disable plugins for obsidian with one command
 - Open the command palette and find the command
-![command 5](./docs/command-5.png)
+![command 5](./docs/assets/command-5.png)
 - Select the suggestion to enable/disable plugin(or you can search the plugin by its name)
 - [***Note***] In suggestion tab, the green checkbox means plugin is already enabled and the red uncheckbox means plugin is already disabled
 
 ### 5. Update plugins for obsidian with one command
 - Open the command palette and find the command
-![command 6](./docs/command-6.png)
+![command 6](./docs/assets/command-6.png)
 - Trigger the command to update plugins
 - See the updating result which is displayed in the right corner
 
